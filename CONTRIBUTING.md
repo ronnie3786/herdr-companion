@@ -15,3 +15,7 @@ secret scanner before proposing changes. Retain third-party notices.
 
 Describe resulting behavior and relevant verification in pull requests. Use
 screenshots from synthetic demo mode for visible UI changes.
+
+Maintain the README’s plain-English feature list when adding, removing, or changing
+user-facing capabilities. State which client supports the feature and whether it
+needs an optional service. Keep per-version changes in release notes.

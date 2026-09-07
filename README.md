@@ -9,6 +9,38 @@ attachments, and state. Install the upstream Herdr terminal separately. Git,
 Pi, and optional integrations are ordinary external tools; no other dashboard
 or orchestration repository is required.
 
+## What Herdr can do today
+
+Herdr is an experimental personal tool under active development. Expect rough
+edges and changing workflows. This is a running feature list, not a promise that
+every client supports every feature or that all integrations work without setup.
+
+| Feature | What it does |
+| --- | --- |
+| Multiple computers | Save your computers in one private configuration and switch between their workspaces and sessions. Connection credentials stay in Keychain in the native apps. |
+| Mac, iPhone, and browser clients | Follow work from a native desktop app, your phone, or a browser connected to your companion server. The clients have different capabilities. |
+| Terminal sessions | Browse workspaces and panes, see terminal output, and send input to a running upstream Herdr terminal session. |
+| Pi agent conversations | Chat with Pi agents, follow their replies and tool activity, attach files, and choose available models and reasoning settings. Requires Pi and its configured providers. |
+| Floating Mac assistant | Use a compact floating panel to send prompts and follow agent progress and results without keeping the main window in front. |
+| Notes | Capture ideas, keep notes alongside your work, and use them as context for agents. |
+| Active Work board | Organize work items, follow their status, and return to the sessions doing the work. Optional automation can connect this board to other tools. |
+| Activity and attention | See recent activity and identify sessions that need attention, so you can decide where to return next. |
+| Git changes | Inspect repository changes and diffs from a workspace. Requires Git and the built web assets for the Mac Git view. |
+| Files and skills | Search workspace files, attach context, and browse available agent skills. |
+| Agent results | View returned files and other result attachments alongside agent responses. |
+| Voice input and spoken replies | Dictate prompts or notes and listen to responses when compatible transcription and speech services are configured. |
+| GitHub and Jira context | Bring review requests and tickets into your workflow using your own authenticated GitHub and Jira command-line tools. |
+| Fleet management | Manage configured skill catalogs and destinations across your computers. Requires a trusted catalog and local configuration. |
+| Workspace cleanup | Preview suggested cleanup decisions and inspect what will be affected before applying them. |
+| Notifications and app links | Receive configured push notifications and open supported destinations in the iPhone app. Requires your own Apple push and domain setup. |
+| Mac app updates | Check a signed GitHub Releases feed, see an update banner, and choose to install and relaunch. Includes an optional preview channel. Existing custom installations need a one-time setup; see the update guide below. |
+| Independent components | Update the Mac app, iPhone app, or companion server separately when their API versions are compatible. Mac self-updates leave the server running. |
+| Private local setup | Keep machine addresses, provider settings, and credentials outside Git while continuing to pull the shared source. A downloadable sample shows what to fill in. |
+| Demo mode | Explore the native apps with synthetic data using `-HerdrDemoMode`, without connecting a real cluster. |
+
+When adding or changing a user-facing feature, update this list and describe any
+setup it needs. Release notes record what changed in a particular version.
+
 ## Start the server
 
 Clone this repository, then run the commands below from your checkout.
@@ -195,7 +227,11 @@ Check for Updates…**. Settings controls automatic checks and optional preview
 builds. This updates the Mac app independently of the companion server and uses
 no App Store submission.
 
-See [macOS releases](docs/macos-releases.md) for signing prerequisites, the
+Personal testing releases can use Apple Development signing without Developer ID
+or notarization. Signed update verification stays enabled. These builds are
+experimental and may need normal macOS approval on first installation.
+
+See [macOS releases](docs/macos-releases.md) for signing modes, the
 prepare/publish commands, and the first transition from a private app identity.
 The release metadata and tooling do not imply that a public binary has been
 published or that a signing certificate is configured.
@@ -207,7 +243,7 @@ an installed revision and artifact hash for each component. Check the release's 
 and state-format requirements before updating one side; independence does not make
 arbitrary versions compatible.
 
-For a **Mac-only update** of a configured public release, use the app's update
+For a **Mac-only update** of a configured release, use the app's update
 controls described above. For a custom private build, generate Apple settings from
 your existing private TOML, build and test the selected Mac revision, and install
 its signed app bundle. Retain

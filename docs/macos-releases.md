@@ -44,9 +44,13 @@ Required tools and credentials:
 
 - Xcode and Python 3.11 or newer, plus `gh` authenticated with permission to publish
   releases to the configured repository.
-- A **Developer ID Application** certificate and its private key in Keychain.
-  Apple Development and ad-hoc signatures are not accepted by the public publisher.
-- A notarytool Keychain profile, referenced by `notary_profile`. An optional
+- For personal testing, set `signing_mode = "development"` and use an existing
+  **Apple Development** identity and its private key in Keychain. Set `signing_team`
+  to the certificate’s actual team ID; its display-name suffix may be different. Developer ID,
+  notarization credentials, and App Store submission are not required.
+- For wider distribution, set `signing_mode = "developer-id"` (the default when
+  omitted), use a **Developer ID Application** identity, and configure a
+  notarytool Keychain profile referenced by `notary_profile`. An optional
   `notary_keychain` selects another Keychain file. For interactive setup, use
   `xcrun notarytool store-credentials herdr-notary` and follow its prompts.
 - The official Sparkle 2.9.6 tools directory, containing `generate_appcast`,
@@ -61,8 +65,11 @@ first preparation, macOS may ask permission for `generate_appcast` to access its
 signing key. Complete that Keychain prompt deliberately on the publishing Mac.
 A timed-out prompt leaves a failed preparation, not a publishable manifest.
 
-Developer ID code signatures publicly identify their certificate's publisher
-name and team ID. Privacy scanning cannot make those certificate fields anonymous.
+Both development and Developer ID code signatures identify their certificate's publisher
+name and team ID. Assets uploaded to this public GitHub repository are public,
+even when they are experimental prereleases intended for personal use. Development
+mode changes signing requirements, not who can download the assets. Privacy
+scanning cannot make those certificate fields anonymous.
 Keep explicitly authorized public certificate identity and team metadata out of
 your list of forbidden private patterns.
 For a downstream fork, deliberately establish its repository, bundle identity,
@@ -156,13 +163,27 @@ Choose a fresh output directory that does not yet exist, and adjust the notes
 and output paths for later versions. `--sparkle-tools /absolute/path`
 can override the TOML tools directory for one invocation.
 
-`prepare` exports the committed source with `git archive`, builds a neutral public
-app, validates its identity and signatures, and scans the artifact before sending
-it to Apple's notarization service. It then notarizes and staples the app,
-creates and signs the archive/feed metadata, and preserves previous stable and
-preview entries in the feed. Generated private Xcode settings, machine bootstrap
-files, server addresses, and credentials are excluded from the public source
-export. A private app build is not accepted as a public release artifact.
+`prepare` exports committed source with `git archive`, builds an app with the
+shared neutral identity, and validates its signatures and privacy. Generated
+private Xcode settings, machine bootstrap files, server addresses, and credentials
+are excluded. Development mode does not permit private configuration in artifacts.
+
+In `development` mode, the app and Sparkle helpers are signed with your configured
+Apple Development certificate. The script skips Developer ID export, all
+notarytool calls, stapling, and notarization assessment. It keeps hardened runtime,
+helper signature checks, archive/feed signatures, privacy checks, and exact-source
+CI requirements. The signed release metadata records that the build is not notarized.
+
+In `developer-id` mode, the script exports with Developer ID, scans before uploading
+to Apple, then notarizes and staples the app. Publication requires the preparation's
+signing mode to match the local publisher configuration; it cannot silently treat a
+development build as a notarized release.
+
+Both modes create and sign archive/feed metadata and retain previous stable and
+preview feed entries. Keep using the same app identity and release key across
+updates. A development certificate can expire or be replaced, so retest Keychain
+access and installation when changing it. First installation may require normal
+macOS approval. Do not disable Gatekeeper or other macOS protections.
 
 Successful output includes the app ZIP, release notes, signed `appcast.xml`,
 `release.json`, its Ed25519 signature, `SHA256SUMS`, and `prepared.json`. Review the
@@ -215,7 +236,7 @@ credentials when needed. Verify machine connections and notes before retiring
 the previous app. Never embed private credentials in the public artifact to
 bridge this transition.
 
-Once the public app identity is installed and paired, routine updates follow its
+Once the shared app identity is installed and paired, routine updates follow its
 signed feed. They keep using the configured server. See
 [independent component updates](../README.md#update-components-independently) for
 server updates and rollback boundaries.

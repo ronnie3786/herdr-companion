@@ -99,6 +99,58 @@ class ReleaseSafetyTests(unittest.TestCase):
             self.assertIn("Developer ID", errors.getvalue())
             command.assert_not_called()
 
+    def test_development_is_explicit_and_needs_no_notary_profile(self):
+        settings = {"signing_mode": "development", "signing_team": "TEAM123456", "signing_identity": "Apple Development: Example (ABCDEFGHIJ)"}
+        release.validate_signing_settings(settings)
+        self.assertEqual(release.release_signing_policy(settings), {"mode": "development", "notarized": False})
+        for change in ({"signing_team": ""}, {"signing_team": "bad"}, {"signing_mode": "typo"}, {"signing_identity": "-"},
+                       {"signing_identity": "Developer ID Application: Example (ABCDEFGHIJ)"}):
+            with self.subTest(change=change), self.assertRaises(release.ReleaseError):
+                release.validate_signing_settings({**settings, **change})
+        with self.assertRaisesRegex(release.ReleaseError, "notarytool"):
+            release.validate_signing_settings({"signing_identity": "Developer ID Application: Example (ABCDEFGHIJ)"})
+
+    def test_development_preflight_never_calls_notarytool_even_with_old_profile(self):
+        settings = {"signing_mode": "development", "signing_team": "TEAM123456", "signing_identity": "Apple Development: Example (ABCDEFGHIJ)",
+                    "notary_profile": "obsolete"}
+        outputs = [SimpleNamespace(stdout=b'"Apple Development: Example (ABCDEFGHIJ)"'),
+                   SimpleNamespace(stdout=release.PUBLIC_KEY.encode())]
+        with patch.object(release, "run", side_effect=outputs) as command:
+            release.signing_preflight(settings, Path("/tools"))
+        self.assertEqual(len(command.call_args_list), 2)
+        self.assertNotIn("notarytool", str(command.call_args_list))
+
+    def test_development_preflight_still_rejects_missing_identity_or_wrong_update_key(self):
+        settings = {"signing_mode": "development", "signing_team": "TEAM123456", "signing_identity": "Apple Development: Example (ABCDEFGHIJ)"}
+        for outputs in ([SimpleNamespace(stdout=b"")],
+                        [SimpleNamespace(stdout=b'"Apple Development: Example (ABCDEFGHIJ)"'), SimpleNamespace(stdout=b"wrong")]):
+            with self.subTest(outputs=outputs), patch.object(release, "run", side_effect=outputs), self.assertRaises(release.ReleaseError):
+                release.signing_preflight(settings, Path("/tools"))
+
+    def test_development_export_signs_helpers_inside_out_without_export_or_notarization(self):
+        settings = {"signing_mode": "development", "signing_team": "TEAM123456", "signing_identity": "Apple Development: Example (ABCDEFGHIJ)"}
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            app = work / "Herdr.xcarchive/Products/Applications/source.app"
+            app.mkdir(parents=True)
+            with patch.object(release, "run") as command:
+                result = release.export_app(work, "ABCDEFGHIJ", settings)
+            self.assertEqual(result, work / "Herdr.app")
+            self.assertTrue(result.is_dir())
+            calls = [call.args[0] for call in command.call_args_list]
+            self.assertEqual([call[-1] for call in calls], release.signing_targets(result))
+            self.assertTrue(all(call[0] == "codesign" and "runtime" in call and
+                                "--preserve-metadata=identifier,entitlements" in call for call in calls))
+
+    def test_prepared_development_cannot_be_published_as_notarized(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = Path(directory) / "prepared.json"
+            manifest.write_text(json.dumps({"release": PREVIEW,
+                "signing": {"mode": "development", "notarized": False}}))
+            with patch.object(release, "run") as command, self.assertRaisesRegex(release.ReleaseError, "signing policy"):
+                release.verify_prepared(manifest, Path("/tools"), {})
+            command.assert_not_called()
+
     def test_release_config_resolves_relative_paths_without_loading_provider_secrets(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "settings.toml"

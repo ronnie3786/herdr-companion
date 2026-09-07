@@ -154,11 +154,15 @@ apns_environment = "development"
 # ssh_identity_file = "~/.ssh/herdr"
 
 
-# Optional public macOS release publishing, configured in this SAME private file.
+# Optional macOS release publishing, configured in this SAME private file.
 # See docs/macos-releases.md. Values below are fictional examples or local references.
 # The signing certificate and Ed25519 private key stay in Keychain.
 # [deployment.macos_release]
-# signing_identity = "Developer ID Application: Example Publisher (ABCDE12345)"
+# signing_mode = "development" # Personal testing, no Developer ID or notarization.
+# signing_identity = "Apple Development: Example Publisher (ABCDE12345)"
+# signing_team = "TEAM123456" # Actual certificate team ID, not its name suffix.
+# For wider distribution, use signing_mode = "developer-id", a Developer ID
+# Application identity, and notary_profile below. Omitted mode defaults to developer-id.
 # notary_profile = "herdr-notary" # Existing notarytool Keychain profile name.
 # notary_keychain = "~/Library/Keychains/login.keychain-db" # Optional custom Keychain path.
 # sparkle_key_account = "org.example.herdr.release" # Existing account matching the pinned public key.

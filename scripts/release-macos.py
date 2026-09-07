@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare and explicitly publish public, signed Mac updates. No private builds."""
+"""Prepare and publish sanitized, signed Mac updates for experimenters."""
 from __future__ import annotations
 import argparse
 import hashlib
@@ -140,7 +140,7 @@ def release_settings(args):
     config = load_configuration(args.config, args.machine, resolve_secrets=False)
     settings = config.section("deployment").get("macos_release", {})
     if not isinstance(settings, dict): raise ReleaseError("deployment.macos_release must be a table")
-    allowed = {"signing_identity", "notary_profile", "notary_keychain", "sparkle_key_account", "sparkle_tools", "private_patterns_file"}
+    allowed = {"signing_mode", "signing_team", "signing_identity", "notary_profile", "notary_keychain", "sparkle_key_account", "sparkle_tools", "private_patterns_file"}
     if set(settings) - allowed: raise ReleaseError("Unknown deployment.macos_release field")
     if any(not isinstance(value, str) or not value or "\x00" in value or "\n" in value for value in settings.values()):
         raise ReleaseError("Release settings must be nonempty strings; use Keychain profile references, not secrets")
@@ -153,12 +153,27 @@ def release_settings(args):
     return settings
 
 
+def signing_mode(settings):
+    mode = settings.get("signing_mode", "developer-id")
+    if mode not in ("development", "developer-id"):
+        raise ReleaseError("signing_mode must be development or developer-id")
+    return mode
+
+
 def validate_signing_settings(settings):
-    identity = settings.get("signing_identity", "")
-    if not re.fullmatch(r"Developer ID Application: .+ \([A-Z0-9]{10}\)", identity):
-        raise ReleaseError("Public preparation requires a configured Developer ID Application identity")
-    if not settings.get("notary_profile"):
-        raise ReleaseError("Public preparation requires a configured notarytool Keychain profile")
+    mode = signing_mode(settings)
+    prefix = "Apple Development" if mode == "development" else "Developer ID Application"
+    if not re.fullmatch(re.escape(prefix) + r": .+ \([A-Z0-9]{10}\)", settings.get("signing_identity", "")):
+        raise ReleaseError(f"{mode} preparation requires a configured {prefix} identity")
+    if mode == "development" and not re.fullmatch(r"[A-Z0-9]{10}", settings.get("signing_team", "")):
+        raise ReleaseError("Development preparation requires the certificate signing_team (not its name suffix)")
+    if mode == "developer-id" and not settings.get("notary_profile"):
+        raise ReleaseError("Developer ID preparation requires a configured notarytool Keychain profile")
+
+
+def release_signing_policy(settings):
+    mode = signing_mode(settings)
+    return {"mode": mode, "notarized": mode == "developer-id"}
 
 
 def tools_path(args, settings):
@@ -186,10 +201,11 @@ def signing_preflight(settings, tools):
     validate_signing_settings(settings)
     identities = run(["security", "find-identity", "-v", "-p", "codesigning"]).stdout.decode()
     if '"' + settings["signing_identity"] + '"' not in identities:
-        raise ReleaseError("Configured Developer ID Application certificate/private key is unavailable")
+        raise ReleaseError("Configured signing certificate/private key is unavailable")
     public_key = run([tools / "generate_keys", *key_arguments(settings), "-p"]).stdout.decode().strip()
     if public_key != PUBLIC_KEY: raise ReleaseError("Sparkle Keychain account does not match the pinned public key")
-    run(["xcrun", "notarytool", "history", *notary_arguments(settings), "--output-format", "json"], timeout=120)
+    if signing_mode(settings) == "developer-id":
+        run(["xcrun", "notarytool", "history", *notary_arguments(settings), "--output-format", "json"], timeout=120)
 
 
 def source_revision():
@@ -313,7 +329,10 @@ def privacy_check(path, settings=None, certificate=None):
                 raise ReleaseError("Artifact privacy audit failed; no matching values were printed")
 
 
-def audit_app(app, version, settings, *, notarized=True):
+def audit_app(app, version, settings, *, notarized=None):
+    validate_signing_settings(settings)
+    if notarized is None:
+        notarized = signing_mode(settings) == "developer-id"
     info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
     expected = {"CFBundleIdentifier": BUNDLE_ID, "CFBundleShortVersionString": version["version"],
                 "CFBundleVersion": str(version["build"]), "SUFeedURL": FEED_URL, "SUPublicEDKey": PUBLIC_KEY,
@@ -327,15 +346,12 @@ def audit_app(app, version, settings, *, notarized=True):
     if info.get("HerdrKeychainService") not in (None, "", BUNDLE_ID): raise ReleaseError("Public app has an unexpected Keychain service")
     if app.name != "Herdr.app": raise ReleaseError("Public update bundle must retain the canonical Herdr.app name")
     if list(app.rglob("HerdrBootstrap.plist")): raise ReleaseError("Public app contains a generated machine roster")
-    framework = app / "Contents/Frameworks/Sparkle.framework"
-    helpers = [framework / "Versions/B/Autoupdate", framework / "Versions/B/Updater.app",
-               framework / "Versions/B/XPCServices/Installer.xpc", framework / "Versions/B/XPCServices/Downloader.xpc"]
-    for target in [*helpers, framework, app]:
+    for target in signing_targets(app):
         if not target.exists(): raise ReleaseError("A required Sparkle update helper is missing")
         run(["codesign", "--verify", "--strict", target])
         signature = run(["codesign", "-d", "--verbose=4", target]).stderr.decode()
-        if "Authority=" + settings["signing_identity"] not in signature:
-            raise ReleaseError("App and every Sparkle helper must carry the configured Developer ID signature")
+        if "Authority=" + settings["signing_identity"] + "\n" not in signature:
+            raise ReleaseError("App and every Sparkle helper must carry the configured code signature")
         if target == app and "runtime" not in signature: raise ReleaseError("Public app must use hardened runtime")
     run(["codesign", "--verify", "--deep", "--strict", app])
     with tempfile.TemporaryDirectory(prefix="herdr-public-certificate-") as temporary:
@@ -356,6 +372,35 @@ def export_source(source, directory):
         raise ReleaseError("Clean source export contains private generated build inputs")
 
 
+def signing_targets(app):
+    framework = app / "Contents/Frameworks/Sparkle.framework"
+    return [framework / "Versions/B/Autoupdate", framework / "Versions/B/Updater.app",
+            framework / "Versions/B/XPCServices/Installer.xpc",
+            framework / "Versions/B/XPCServices/Downloader.xpc", framework, app]
+
+
+def export_app(work, team, settings):
+    """Development archives need explicit inside-out helper signing, no Apple upload."""
+    validate_signing_settings(settings)
+    if signing_mode(settings) == "developer-id":
+        options = work / "ExportOptions.plist"
+        options.write_bytes(plistlib.dumps({"method": "developer-id", "teamID": team,
+            "signingStyle": "manual", "signingCertificate": settings["signing_identity"]}))
+        run(["xcodebuild", "-exportArchive", "-archivePath", work / "Herdr.xcarchive",
+             "-exportPath", work / "export", "-exportOptionsPlist", options])
+        exported = list((work / "export").glob("*.app"))
+    else:
+        exported = list((work / "Herdr.xcarchive/Products/Applications").glob("*.app"))
+    if len(exported) != 1: raise ReleaseError("Archive export must produce exactly one Mac app")
+    app = work / "Herdr.app"
+    shutil.move(exported[0], app)
+    if signing_mode(settings) == "development":
+        for target in signing_targets(app):
+            run(["codesign", "--force", "--sign", settings["signing_identity"],
+                 "--options", "runtime", "--preserve-metadata=identifier,entitlements", target])
+    return app
+
+
 def prepare(args):
     version = validate_version(json.loads(VERSION_FILE.read_text()))
     settings = release_settings(args); validate_signing_settings(settings)
@@ -372,32 +417,27 @@ def prepare(args):
         with tempfile.TemporaryDirectory(prefix="herdr-public-release-") as temporary:
             work = Path(temporary); checkout = work / "source"; checkout.mkdir(); export_source(source, checkout)
             project = checkout / "herdr-harness-mac/herdr-harness-mac.xcodeproj"
-            team = settings["signing_identity"].rsplit("(", 1)[1][:-1]
+            team = settings["signing_team"] if signing_mode(settings) == "development" else settings["signing_identity"].rsplit("(", 1)[1][:-1]
             run(["xcodebuild", "-project", project, "-scheme", "herdr-harness-mac", "-configuration", "Release",
                  "-derivedDataPath", work / "DerivedData", "-archivePath", work / "Herdr.xcarchive", "CODE_SIGN_STYLE=Manual",
                  "CODE_SIGN_IDENTITY=" + settings["signing_identity"], "DEVELOPMENT_TEAM=" + team,
                  "MARKETING_VERSION=" + version["version"], "CURRENT_PROJECT_VERSION=" + str(version["build"]),
                  "HERDR_MAC_BUNDLE_ID=" + BUNDLE_ID, "CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO", "ONLY_ACTIVE_ARCH=NO", "archive"])
-            export_options = work / "ExportOptions.plist"
-            export_options.write_bytes(plistlib.dumps({"method": "developer-id", "teamID": team,
-                "signingStyle": "manual", "signingCertificate": settings["signing_identity"]}))
-            run(["xcodebuild", "-exportArchive", "-archivePath", work / "Herdr.xcarchive",
-                 "-exportPath", work / "export", "-exportOptionsPlist", export_options])
-            exported = list((work / "export").glob("*.app"))
-            if len(exported) != 1: raise ReleaseError("Archive export must produce exactly one Mac app")
-            app = work / "Herdr.app"; shutil.move(exported[0], app)
+            app = export_app(work, team, settings)
             # This gate runs before transmitting any artifact to Apple.
             audit_app(app, version, settings, notarized=False)
             archive = output / ("Herdr-" + release_tag(version).removeprefix("macos-v") + ".zip")
             run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", app, archive])
-            result = json.loads(run(["xcrun", "notarytool", "submit", archive, *notary_arguments(settings), "--wait", "--output-format", "json"]).stdout)
-            if result.get("status") != "Accepted": raise ReleaseError("Apple notarization was not accepted")
-            run(["xcrun", "stapler", "staple", app]); audit_app(app, version, settings)
-            archive.unlink(); run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", app, archive])
+            if signing_mode(settings) == "developer-id":
+                result = json.loads(run(["xcrun", "notarytool", "submit", archive, *notary_arguments(settings), "--wait", "--output-format", "json"]).stdout)
+                if result.get("status") != "Accepted": raise ReleaseError("Apple notarization was not accepted")
+                run(["xcrun", "stapler", "staple", app]); audit_app(app, version, settings)
+                archive.unlink(); run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", app, archive])
         notes_file = archive.with_suffix(".md"); notes_file.write_bytes(notes)
         feed = assemble_feed(output, version, tools, settings, previous)
         payload_names = [archive.name, notes_file.name, "appcast.xml"]
         metadata = {"schema": 1, "source": source, "tag": release_tag(version), "release": version,
+                    "signing": release_signing_policy(settings),
                     "bundle_id": BUNDLE_ID, "sparkle": SPARKLE_VERSION, "feed_url": FEED_URL,
                     "public_key": PUBLIC_KEY, "archive": archive.name, "notes": notes_file.name,
                     "previous_feed_sha256": hashlib.sha256(previous).hexdigest() if previous else None,
@@ -463,6 +503,8 @@ def safe_zip(archive, destination):
 def verify_prepared(path, tools, settings):
     manifest = json.loads(path.read_text()); directory = path.parent
     version = validate_version(manifest["release"])
+    if manifest.get("signing", {"mode": "developer-id", "notarized": True}) != release_signing_policy(settings):
+        raise ReleaseError("Prepared signing policy differs from the configured publisher")
     if manifest.get("schema") != 1 or manifest.get("tag") != release_tag(version) or manifest.get("bundle_id") != BUNDLE_ID or manifest.get("public_key") != PUBLIC_KEY or manifest.get("feed_url") != FEED_URL:
         raise ReleaseError("Prepared release manifest has an unexpected identity")
     if not re.fullmatch(r"[0-9a-f]{40}", manifest.get("source", "")): raise ReleaseError("Prepared source revision is invalid")

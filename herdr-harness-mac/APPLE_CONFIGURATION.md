@@ -106,23 +106,60 @@ The creating-app-only ACL follows [SecAccessCreate](https://developer.apple.com/
 
 ## Verify signed credential access before deployment
 
-Run the final signed app executable with the same newly generated UUID for each
-invocation. The probe exits before app models or windows initialize, accesses only
-its synthetic Keychain item, and emits JSON containing numeric statuses and
-verification booleans. It never reads saved settings, server tokens, or legacy
-plaintext fallback entries. A failed verification exits nonzero.
+Test the exact final signed app through LaunchServices in the destination Mac's
+logged-in GUI session. Directly invoking its executable from SSH can fail with a
+CSSM security-session error even when the same binary works in the GUI session.
+Use `open -a` with the exact app path, and require the probe's JSON result; a
+successful `open` command alone does not establish Keychain access.
+
+The probe exits before app models or windows initialize, accesses only a synthetic
+Keychain item addressed by a new UUID, and reports numeric statuses and verification
+booleans. It never reads saved settings, server tokens, or legacy plaintext entries.
+Each invocation starts a separate process, verifying persistence across relaunches.
+
+Run this Bash block on the destination, replacing the app path. Each operation gets
+a fresh owner-only JSON file and private stderr log. The exit trap always attempts
+deletion, including after a failed write or read, and requires confirmed absence:
 
 ```bash
-probe_id=$(uuidgen)
-app_binary="/path/to/Herdr.app/Contents/MacOS/herdr-harness-mac"
-"$app_binary" --herdr-keychain-probe write "$probe_id"
-"$app_binary" --herdr-keychain-probe read "$probe_id"
-"$app_binary" --herdr-keychain-probe read "$probe_id"
-"$app_binary" --herdr-keychain-probe delete "$probe_id"
+(
+  set -e
+  umask 077
+  probe_id=$(uuidgen)
+  probe_dir=$(mktemp -d)
+  app="/absolute/path/to/Herdr.app"
+
+  run_probe() {
+    local operation="$1" label="$2"
+    local result_file="$probe_dir/$label.json"
+    local error_file="$probe_dir/$label.log"
+    : > "$result_file"
+    : > "$error_file"
+    /usr/bin/open -n -W -g --stdout "$result_file" --stderr "$error_file" \
+      -a "$app" --args --herdr-keychain-probe "$operation" "$probe_id"
+    python3 - "$result_file" <<'PYCODE'
+import json, sys
+with open(sys.argv[1]) as result:
+    report = json.load(result)
+if report.get("ok") is not True:
+    raise SystemExit("Synthetic Keychain verification failed")
+PYCODE
+  }
+
+  cleanup() {
+    local probe_exit_code=$?
+    trap - EXIT
+    if ! run_probe delete cleanup; then probe_exit_code=1; fi
+    printf 'Private probe reports: %s\n' "$probe_dir"
+    exit "$probe_exit_code"
+  }
+  trap cleanup EXIT
+  run_probe write write
+  run_probe read read-1
+  run_probe read read-2
+)
 ```
 
-Each command starts a separate process, so the reads verify persistence across
-relaunches. Always run the delete step, including after a failed read. Deletion
-also verifies that the synthetic item is absent. Test the installed copy on the
-destination Mac: a unit-test host or a differently signed build does not prove
-that the delivered app has usable Keychain entitlements.
+Do not add `open -F`: it discards saved persistent application state. Repeat the
+probe against the installed copy after replacement. A unit-test host or differently
+signed build does not prove that the delivered app can access its Keychain.

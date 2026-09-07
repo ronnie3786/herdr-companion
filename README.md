@@ -186,6 +186,34 @@ Direct Mac installations use the secure login Keychain by default and require no
 App Store submission. See [Apple configuration](herdr-harness-mac/APPLE_CONFIGURATION.md)
 for the optional Data Protection backend and the credential deployment probe.
 
+## Update components independently
+
+The Mac app and companion server can run different tested source revisions. Record
+an installed revision and artifact hash for each component. Check the release's API
+and state-format requirements before updating one side; independence does not make
+arbitrary versions compatible.
+
+For a **Mac-only update**, generate Apple settings from your existing private TOML,
+build and test the selected Mac revision, and install its signed app bundle. Retain
+the bundle and Keychain identities, back up the installed app and settings, and run
+the [signed credential probe](herdr-harness-mac/APPLE_CONFIGURATION.md#verify-signed-credential-access-before-deployment)
+on the destination. Keep the server runtime and its services running at their
+current revision. Verify that the new app connects to that server before retiring
+the previous app bundle.
+
+For a **server-only update**, build the web assets and wheel from the selected
+tested revision, install a new versioned runtime, and follow the
+[server update procedure](herdr_harness/README.md#update-the-server).
+Keep the installed native apps. Update the matching installed CLIs, Pi extension,
+and any enabled background workers as part of the server change. Configuration-only
+changes need validation and a restart of affected processes, not a new wheel.
+
+Preserve the private TOML, credential files, and configured state locations during
+both kinds of update. Keep the previous artifacts and service definitions for
+rollback. Restore only the affected component unless compatibility requires a
+matched pair; do not restore an older database over new user data without a
+separate, consistent backup and a state migration plan.
+
 ## Development and verification
 
 ```sh

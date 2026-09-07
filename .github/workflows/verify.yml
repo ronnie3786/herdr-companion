@@ -1,6 +1,9 @@
 name: Verify
 on:
   push:
+    # Release tags and the publisher lock point to an already verified commit.
+    # Rechecking them creates redundant runs during publication and retry.
+    branches: ['**']
   pull_request:
 permissions:
   contents: read

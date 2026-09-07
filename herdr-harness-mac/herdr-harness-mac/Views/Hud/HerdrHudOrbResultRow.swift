@@ -37,8 +37,10 @@ struct HerdrHudOrbResultRow: View {
                 .frame(width: 32, height: 32)
                 .background(HerdrTheme.elevated, in: .circle)
                 .overlay { Circle().strokeBorder(HerdrTheme.graphite, lineWidth: 3) }
+                .scaleEffect(0.5)
                 .contentShape(.circle)
                 .buttonStyle(.plain)
+                .offset(y: -4)
                 .help("Hide HUD. Restore it with Show HUD in the Herdr menu bar.")
                 .accessibilityIdentifier("hud-quick-hide")
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)

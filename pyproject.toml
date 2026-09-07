@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=77,<83", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "herdr-companion"
+version = "0.1.0"
+description = "Standalone Mac, iPhone, and web companion server for Herdr"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{name = "Herdr contributors"}]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["build>=1.2,<2"]
+
+[project.scripts]
+herdr-server = "herdr_dashboard:main"
+herdr-config = "herdr_harness.configuration_cli:main"
+herdr-notes = "herdr_harness.commands:notes"
+herdr-active-work = "herdr_harness.commands:active_work"
+herdr-active-work-sync = "herdr_commands.herdr_active_work_sync:main"
+herdr-pr-review-watch = "herdr_commands.herdr_pr_review_watch:main"
+herdr-demo = "herdr_commands.setup_herdr_demo:main"
+
+[tool.setuptools]
+packages = ["herdr_harness", "herdr_commands"]
+py-modules = ["herdr_dashboard"]
+include-package-data = true
+
+[tool.setuptools.package-dir]
+herdr_commands = "scripts"
+
+[tool.setuptools.package-data]
+herdr_harness = ["static/**/*", "workflows/*.json", "_bundled/**/*"]

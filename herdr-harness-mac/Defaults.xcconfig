@@ -1,0 +1,15 @@
+// Portable development identities. Override through the single private cluster TOML.
+HERDR_DEVELOPMENT_TEAM =
+HERDR_MAC_BUNDLE_ID = org.herdr.companion.macos
+HERDR_IOS_BUNDLE_ID = org.herdr.companion.ios
+HERDR_WIDGET_BUNDLE_ID = org.herdr.companion.ios.widgets
+HERDR_KEYCHAIN_SERVICE =
+HERDR_LEGACY_KEYCHAIN_SERVICE =
+HERDR_TERMINAL_BUNDLE_ID =
+HERDR_APNS_ENVIRONMENT = development
+APS_ENVIRONMENT = $(HERDR_APNS_ENVIRONMENT)
+INFOPLIST_KEY_HerdrTestedAppBundleIdentifier = $(HERDR_MAC_BUNDLE_ID)
+HERDR_CODE_SIGN_ENTITLEMENTS = herdr-harness-mac/herdr_harness_mac.entitlements
+
+// Generated locally by Scripts/configure-apple.py. Never commit this file.
+#include? "Local.xcconfig"

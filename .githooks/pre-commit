@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+python_command="${HERDR_PYTHON:-python3}"
+exec "$python_command" scripts/check-public-source.py --staged

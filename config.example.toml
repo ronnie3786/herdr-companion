@@ -1,0 +1,159 @@
+# Copy to ~/.config/herdr-companion/config.toml (recommended) or ./config.local.toml.
+# Both are private operator files, never commit the filled-in copy.
+# chmod 600 ~/.config/herdr-companion/config.toml
+# Run: herdr-server --config ~/.config/herdr-companion/config.toml --machine desktop
+# Precedence: explicit CLI flags, process environment, selected machine, shared values.
+# Optional integrations are disabled until you configure their URLs and credentials.
+version = 1
+# machine = "desktop" # Or select with --machine / HERDR_MACHINE on each computer.
+
+[server]
+host = "127.0.0.1"
+port = 9092
+state_dir = "~/.local/share/herdr-companion"
+no_browser = true
+# api_token = "replace-with-a-long-random-token" # Keep only in your PRIVATE copy.
+# api_token_file = "~/.config/herdr-companion/secrets/api-token" # Optional existing private file.
+# api_token = { env = "MY_HERDR_API_TOKEN" } # Optional secret-manager injection.
+# socket_path = "~/.config/herdr/api.sock"
+# session = "default"
+# terminal_command = "herdr"
+# attachments_dir = "~/.local/share/herdr-companion/uploads"
+
+# The SAME file can describe every computer. Select the local computer explicitly.
+# URLs contain only public-to-your-cluster connection metadata, never tokens.
+# Tailscale is optional: substitute your private hostname or another reachable URL.
+[machines.desktop]
+name = "Desktop"
+role = "local"
+url = "https://desktop.example.invalid"
+ssh_host = "desktop.example.invalid"
+ssh_user = "your-username"
+
+[machines.desktop.server]
+# Set host to a reachable interface only after configuring authentication.
+host = "127.0.0.1"
+# api_token = { env = "DESKTOP_HERDR_TOKEN" }
+
+[machines.laptop]
+name = "Laptop"
+role = "work"
+url = "https://laptop.example.invalid"
+ssh_host = "laptop.example.invalid"
+ssh_user = "your-username"
+
+[machines.laptop.server]
+port = 9092
+# api_token = { env = "LAPTOP_HERDR_TOKEN" }
+
+[machines.worker]
+name = "Worker"
+role = "development"
+url = "https://worker.example.invalid"
+ssh_host = "worker.example.invalid"
+ssh_user = "your-username"
+
+# Machine-specific implementation overrides can use any shared section.
+[machines.worker.environment]
+# PI_CODING_AGENT_DIR = "/home/your-username/.pi/agent"
+
+[providers.cleanup]
+# model = "your-provider/your-model" # Optional cleanup model selection.
+# thinking_level = "medium"
+# pi_binary = "/path/to/pi"
+
+[providers.activity]
+# url = "http://model.example.invalid:8000/v1"
+# model = "your-model-id"
+debounce_seconds = 20
+
+[providers.summary]
+# OpenAI-compatible endpoint, optional Pi provider lookup when provider is set.
+# url = "http://model.example.invalid:8000/v1"
+# provider = "your-pi-provider"
+# model = "your-model-id"
+# api_key = { env = "SUMMARY_API_KEY" }
+# api_key_file = "~/.config/herdr-companion/secrets/summary-key"
+
+[providers.tts]
+# Kokoro/OpenAI-compatible speech API; leave URL unset to disable response audio.
+# url = "http://speech.example.invalid:8000"
+voice = "af_jessica"
+speed = 1.0
+
+[providers.voice]
+# Required to dispatch quick voice agents. Provider/model must exist in Pi.
+# provider = "your-pi-provider"
+# model = "your-model-id"
+thinking_level = "high"
+
+[providers.transcription]
+# backend = "openai" # Or "parakeet" for an audio-field multipart API.
+# url = "http://speech.example.invalid:8000/v1/audio/transcriptions"
+# model = "your-transcription-model"
+# token = { env = "TRANSCRIPTION_API_KEY" }
+
+[fleet]
+# Explicitly selecting a repository establishes the trusted catalog origin.
+# repository = "https://github.com/YOUR-OWNER/YOUR-CATALOG.git"
+# checkout = "~/.local/share/herdr-fleet/catalog"
+# allow_local_repository = true # Opt in only for a catalog you trust on disk.
+
+# Optional separate skill roots. Catalog destination names must be configured here.
+# Roots must not overlap each other or the standard agents/Pi install roots.
+[fleet.skill_destinations]
+# assistant = "~/.local/share/your-assistant/skills"
+
+[active_work]
+# url = "https://desktop.example.invalid"
+# token = { env = "HERDR_BOARD_TOKEN" }
+# manage_token_file = "~/.config/herdr-companion/secrets/manage-token"
+# ingest_token_file = "~/.config/herdr-companion/secrets/ingest-token"
+# workflow_root = "~/projects/your-workflows" # Optional Buzz integration.
+# workflows_dir = "~/.local/share/herdr-companion/workflows" # Local workflow JSON definitions; defaults to <state_dir>/workflows.
+
+[remote_activity]
+# url = "https://worker.example.invalid"
+# token = { env = "WORKER_HERDR_TOKEN" }
+prefix = "worker"
+poll_seconds = 10
+
+[integrations]
+# github_repository = "YOUR-OWNER/YOUR-REPOSITORY" # Optional PR review watcher.
+# jira_url = "https://YOUR-SITE.atlassian.net"
+# review_model = "your-provider/your-model"
+# review_exclude_globs = "*.generated.*,vendor/*" # Optional; default includes every file.
+# review_assessor = "~/.pi/agent/agents/pr-review-assessor.md"
+
+[apple]
+# Set an identifier namespace that you own when signing/distributing builds.
+bundle_prefix = "org.herdr.companion"
+# team_id = "YOUR_TEAM_ID"
+# ios_bundle_id = "org.yourname.herdr.ios"
+# mac_bundle_id = "org.yourname.herdr.macos"
+# widget_bundle_id = "org.yourname.herdr.ios.widget"
+# terminal_bundle_id = "org.yourname.terminal" # Optional Mac terminal application.
+# keychain_service = "org.yourname.herdr"
+# legacy_keychain_service = "" # Private upgrade compatibility only.
+associated_domains = []
+apns_environment = "development"
+
+[push]
+# key_id = "YOUR_APNS_KEY_ID"
+# team_id = "YOUR_TEAM_ID"
+# key_path = "~/.config/herdr-companion/secrets/AuthKey.p8"
+# topic = "org.yourname.herdr.ios"
+# environment = "sandbox"
+
+[deployment]
+# Operator metadata for local deployment scripts, never application defaults.
+# checkout = "~/projects/herdr"
+# python = "/opt/homebrew/bin/python3.13"
+# install_root = "~/Applications"
+# ssh_identity_file = "~/.ssh/herdr"
+
+[environment]
+# Escape hatch for any documented environment setting. Values are data, not shell.
+# HERDR_HARNESS_ACTIVE_WORK_STORE_PATH = "~/.local/share/herdr-companion/active-work.sqlite3"
+# GH_HOST = "github.com"
+# PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"

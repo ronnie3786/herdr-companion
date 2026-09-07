@@ -1,0 +1,53 @@
+{
+  "ok": true,
+  "alerts": [
+    {
+      "id": "demo-alert-1",
+      "kind": "agent_status",
+      "status": "blocked",
+      "previousStatus": "working",
+      "severity": "warning",
+      "title": "Choose a garden theme",
+      "message": "The synthetic planning task is waiting for a color choice.",
+      "workspaceId": "w1",
+      "workspaceLabel": "Garden planner",
+      "tabId": "w1:t1",
+      "tabLabel": "Demo tasks",
+      "paneId": "w1:p2",
+      "paneTitle": "Demo task 2",
+      "agentName": "pi",
+      "createdAt": "2030-01-01T12:00:00Z",
+      "isRead": false,
+      "readAt": null,
+      "action": {
+        "type": "open_pane",
+        "paneId": "w1:p2"
+      }
+    },
+    {
+      "id": "demo-alert-2",
+      "kind": "agent_status",
+      "status": "done",
+      "previousStatus": "working",
+      "severity": "info",
+      "title": "Reading list exported",
+      "message": "The synthetic export includes three example books.",
+      "workspaceId": "w1",
+      "workspaceLabel": "Garden planner",
+      "tabId": "w1:t1",
+      "tabLabel": "Demo tasks",
+      "paneId": "w1:p3",
+      "paneTitle": "Demo task 3",
+      "agentName": "pi",
+      "createdAt": "2030-01-01T12:00:00Z",
+      "isRead": true,
+      "readAt": "2030-01-01T12:00:00Z",
+      "action": {
+        "type": "open_pane",
+        "paneId": "w1:p3"
+      }
+    }
+  ],
+  "unreadCount": 1,
+  "generatedAt": "2030-01-01T12:00:00Z"
+}

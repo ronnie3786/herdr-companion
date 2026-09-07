@@ -1,0 +1,52 @@
+[
+  {
+    "event": "ready",
+    "id": "1",
+    "data": "{\"id\":1,\"event\":\"ready\",\"data\":{\"protocol\":{\"name\":\"herdr.pi.semantic\",\"version\":1},\"pane_id\":\"w1:p1\",\"session_id\":\"demo-session-1-1\",\"cursor\":1,\"event\":{\"connected\":true},\"generated_at\":\"2030-01-01T12:00:00Z\"},\"generatedAt\":\"2030-01-01T12:00:00Z\"}"
+  },
+  {
+    "event": "pi.message_start",
+    "id": "2",
+    "data": "{\"id\":2,\"event\":\"pi.message_start\",\"data\":{\"protocol\":{\"name\":\"herdr.pi.semantic\",\"version\":1},\"pane_id\":\"w1:p1\",\"session_id\":\"demo-session-1-1\",\"cursor\":2,\"event\":{\"type\":\"message_start\",\"message\":{\"role\":\"assistant\",\"content\":[]}},\"generated_at\":\"2030-01-01T12:00:00Z\"},\"generatedAt\":\"2030-01-01T12:00:00Z\"}"
+  },
+  {
+    "event": "pi.message_update",
+    "id": "3",
+    "data": "{\"id\":3,\"event\":\"pi.message_update\",\"data\":{\"protocol\":{\"name\":\"herdr.pi.semantic\",\"version\":1},\"pane_id\":\"w1:p1\",\"session_id\":\"demo-session-1-1\",\"cursor\":3,\"event\":{\"type\":\"message_update\",\"assistantMessageEvent\":{\"type\":\"text_delta\",\"contentIndex\":0,\"delta\":\"Preparing a synthetic garden plan.\"}},\"generated_at\":\"2030-01-01T12:00:00Z\"},\"generatedAt\":\"2030-01-01T12:00:00Z\"}"
+  },
+  {
+    "event": "pi.bridge.connection",
+    "id": "4",
+    "data": "{\"id\":4,\"event\":\"pi.bridge.connection\",\"data\":{\"protocol\":{\"name\":\"herdr.pi.semantic\",\"version\":1},\"pane_id\":\"w1:p1\",\"session_id\":\"demo-session-1-1\",\"cursor\":4,\"event\":{\"type\":\"bridge.connection\",\"connected\":true},\"generated_at\":\"2030-01-01T12:00:00Z\"},\"generatedAt\":\"2030-01-01T12:00:00Z\"}"
+  },
+  {
+    "event": "pi.tool_execution_start",
+    "id": "5",
+    "data": "{\"id\":5,\"event\":\"pi.tool_execution_start\",\"data\":{\"protocol\":{\"name\":\"herdr.pi.semantic\",\"version\":1},\"pane_id\":\"w1:p1\",\"session_id\":\"demo-session-1-1\",\"cursor\":5,\"event\":{\"type\":\"tool_execution_start\",\"toolCallId\":\"demo-tool-1\",\"toolName\":\"read\",\"args\":{\"path\":\"/tmp/herdr-demo/garden.txt\"}},\"generated_at\":\"2030-01-01T12:00:00Z\"},\"generatedAt\":\"2030-01-01T12:00:00Z\"}"
+  },
+  {
+    "event": "pi.tool_execution_update",
+    "id": "6",
+    "data": "{\"id\":6,\"event\":\"pi.tool_execution_update\",\"data\":{\"protocol\":{\"name\":\"herdr.pi.semantic\",\"version\":1},\"pane_id\":\"w1:p1\",\"session_id\":\"demo-session-1-1\",\"cursor\":6,\"event\":{\"type\":\"tool_execution_update\",\"toolCallId\":\"demo-tool-1\",\"toolName\":\"read\",\"partialResult\":{\"content\":[{\"type\":\"text\",\"text\":\"Basil, mint, and thyme.\"}]}},\"generated_at\":\"2030-01-01T12:00:00Z\"},\"generatedAt\":\"2030-01-01T12:00:00Z\"}"
+  },
+  {
+    "event": "pi.tool_execution_end",
+    "id": "7",
+    "data": "{\"id\":7,\"event\":\"pi.tool_execution_end\",\"data\":{\"protocol\":{\"name\":\"herdr.pi.semantic\",\"version\":1},\"pane_id\":\"w1:p1\",\"session_id\":\"demo-session-1-1\",\"cursor\":7,\"event\":{\"type\":\"tool_execution_end\",\"toolCallId\":\"demo-tool-1\",\"toolName\":\"read\",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"Basil, mint, and thyme.\"}]},\"isError\":false},\"generated_at\":\"2030-01-01T12:00:00Z\"},\"generatedAt\":\"2030-01-01T12:00:00Z\"}"
+  },
+  {
+    "event": "pi.message_end",
+    "id": "8",
+    "data": "{\"id\":8,\"event\":\"pi.message_end\",\"data\":{\"protocol\":{\"name\":\"herdr.pi.semantic\",\"version\":1},\"pane_id\":\"w1:p1\",\"session_id\":\"demo-session-1-1\",\"cursor\":8,\"event\":{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"The example garden plan is ready.\"}],\"stopReason\":\"stop\"}},\"generated_at\":\"2030-01-01T12:00:00Z\"},\"generatedAt\":\"2030-01-01T12:00:00Z\"}"
+  },
+  {
+    "event": "pi.turn_end",
+    "id": "9",
+    "data": "{\"id\":9,\"event\":\"pi.turn_end\",\"data\":{\"protocol\":{\"name\":\"herdr.pi.semantic\",\"version\":1},\"pane_id\":\"w1:p1\",\"session_id\":\"demo-session-1-1\",\"cursor\":9,\"event\":{\"type\":\"turn_end\",\"turnIndex\":1},\"generated_at\":\"2030-01-01T12:00:00Z\"},\"generatedAt\":\"2030-01-01T12:00:00Z\"}"
+  },
+  {
+    "event": "pi.turn_start",
+    "id": "10",
+    "data": "{\"id\":10,\"event\":\"pi.turn_start\",\"data\":{\"protocol\":{\"name\":\"herdr.pi.semantic\",\"version\":1},\"pane_id\":\"w1:p1\",\"session_id\":\"demo-session-1-1\",\"cursor\":10,\"event\":{\"type\":\"turn_start\",\"turnIndex\":2,\"timestamp\":1893499200000},\"generated_at\":\"2030-01-01T12:00:00Z\"},\"generatedAt\":\"2030-01-01T12:00:00Z\"}"
+  }
+]

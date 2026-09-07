@@ -1,0 +1,419 @@
+{
+  "ok": true,
+  "workspaces": [
+    {
+      "workspace_id": "w1",
+      "number": 1,
+      "label": "Garden planner",
+      "focused": true,
+      "pane_count": 3,
+      "tab_count": 1,
+      "active_tab_id": "w1:t1",
+      "agent_status": "working",
+      "tabs": [
+        {
+          "tab_id": "w1:t1",
+          "workspace_id": "w1",
+          "number": 1,
+          "label": "Demo tasks",
+          "focused": true,
+          "pane_count": 3,
+          "agent_status": "working"
+        }
+      ],
+      "panes": [
+        {
+          "pane_id": "w1:p1",
+          "terminal_id": "demo-terminal-1-1",
+          "workspace_id": "w1",
+          "tab_id": "w1:t1",
+          "focused": true,
+          "cwd": "/tmp/herdr-demo/project-1",
+          "foreground_cwd": "/tmp/herdr-demo/project-1",
+          "label": "Demo task 1",
+          "agent_status": "working",
+          "scroll": {
+            "offset_from_bottom": 0,
+            "max_offset_from_bottom": 12,
+            "viewport_rows": 32
+          },
+          "revision": 11,
+          "agent": "pi",
+          "terminal_title": "Garden demo task 1",
+          "terminal_title_stripped": "Garden demo task 1",
+          "agent_session": {
+            "source": "environment",
+            "agent": "pi",
+            "kind": "session_id",
+            "value": "demo-session-1-1"
+          },
+          "pi_semantic": {
+            "available": true,
+            "connected": true,
+            "protocol_version": 1,
+            "session_id": "demo-session-1-1",
+            "cursor": 3,
+            "oldest_cursor": 1,
+            "capabilities": {
+              "prompt": true,
+              "steer": true,
+              "followUp": true,
+              "abort": true,
+              "listModels": true,
+              "setModel": true,
+              "setThinkingLevel": true,
+              "interactionResponse": true
+            },
+            "generated_at": "2030-01-01T12:00:00Z"
+          }
+        },
+        {
+          "pane_id": "w1:p2",
+          "terminal_id": "demo-terminal-1-2",
+          "workspace_id": "w1",
+          "tab_id": "w1:t1",
+          "focused": false,
+          "cwd": "/tmp/herdr-demo/project-1",
+          "foreground_cwd": "/tmp/herdr-demo/project-1",
+          "label": "Demo task 2",
+          "agent_status": "blocked",
+          "scroll": {
+            "offset_from_bottom": 0,
+            "max_offset_from_bottom": 12,
+            "viewport_rows": 32
+          },
+          "revision": 12,
+          "agent": "pi",
+          "terminal_title": "Garden demo task 2",
+          "terminal_title_stripped": "Garden demo task 2",
+          "agent_session": {
+            "source": "environment",
+            "agent": "pi",
+            "kind": "session_id",
+            "value": "demo-session-1-2"
+          }
+        },
+        {
+          "pane_id": "w1:p3",
+          "terminal_id": "demo-terminal-1-3",
+          "workspace_id": "w1",
+          "tab_id": "w1:t1",
+          "focused": false,
+          "cwd": "/tmp/herdr-demo/project-1",
+          "foreground_cwd": "/tmp/herdr-demo/project-1",
+          "label": "Demo task 3",
+          "agent_status": "done",
+          "scroll": {
+            "offset_from_bottom": 0,
+            "max_offset_from_bottom": 12,
+            "viewport_rows": 32
+          },
+          "revision": 13,
+          "agent": "pi",
+          "terminal_title": "Garden demo task 3",
+          "terminal_title_stripped": "Garden demo task 3",
+          "agent_session": {
+            "source": "environment",
+            "agent": "pi",
+            "kind": "session_id",
+            "value": "demo-session-1-3"
+          }
+        }
+      ],
+      "agents": [
+        {
+          "terminal_id": "demo-terminal-1-1",
+          "agent": "pi",
+          "agent_status": "working",
+          "agent_session": {
+            "source": "environment",
+            "agent": "pi",
+            "kind": "session_id",
+            "value": "demo-session-1-1"
+          },
+          "workspace_id": "w1",
+          "tab_id": "w1:t1",
+          "pane_id": "w1:p1",
+          "focused": true,
+          "cwd": "/tmp/herdr-demo/project-1",
+          "foreground_cwd": "/tmp/herdr-demo/project-1",
+          "revision": 11,
+          "name": "Demo agent 1",
+          "interactive_ready": true,
+          "state_change_seq": 1
+        },
+        {
+          "terminal_id": "demo-terminal-1-2",
+          "agent": "pi",
+          "agent_status": "blocked",
+          "agent_session": {
+            "source": "environment",
+            "agent": "pi",
+            "kind": "session_id",
+            "value": "demo-session-1-2"
+          },
+          "workspace_id": "w1",
+          "tab_id": "w1:t1",
+          "pane_id": "w1:p2",
+          "focused": false,
+          "cwd": "/tmp/herdr-demo/project-1",
+          "foreground_cwd": "/tmp/herdr-demo/project-1",
+          "revision": 12,
+          "name": "Demo agent 2",
+          "interactive_ready": true,
+          "state_change_seq": 2
+        },
+        {
+          "terminal_id": "demo-terminal-1-3",
+          "agent": "pi",
+          "agent_status": "done",
+          "agent_session": {
+            "source": "environment",
+            "agent": "pi",
+            "kind": "session_id",
+            "value": "demo-session-1-3"
+          },
+          "workspace_id": "w1",
+          "tab_id": "w1:t1",
+          "pane_id": "w1:p3",
+          "focused": false,
+          "cwd": "/tmp/herdr-demo/project-1",
+          "foreground_cwd": "/tmp/herdr-demo/project-1",
+          "revision": 13,
+          "name": "Demo agent 3",
+          "interactive_ready": true,
+          "state_change_seq": 3
+        }
+      ],
+      "layouts": [
+        {
+          "workspace_id": "w1",
+          "tab_id": "w1:t1",
+          "zoomed": false,
+          "area": {
+            "x": 0,
+            "y": 0,
+            "width": 100,
+            "height": 32
+          },
+          "focused_pane_id": "w1:p1",
+          "panes": [
+            {
+              "pane_id": "w1:p1",
+              "focused": true,
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "width": 33,
+                "height": 32
+              }
+            },
+            {
+              "pane_id": "w1:p2",
+              "focused": false,
+              "rect": {
+                "x": 33,
+                "y": 0,
+                "width": 33,
+                "height": 32
+              }
+            },
+            {
+              "pane_id": "w1:p3",
+              "focused": false,
+              "rect": {
+                "x": 66,
+                "y": 0,
+                "width": 33,
+                "height": 32
+              }
+            }
+          ],
+          "splits": []
+        }
+      ],
+      "worktree": {
+        "repo_key": "demo-garden",
+        "repo_name": "garden-planner",
+        "repo_root": "/tmp/herdr-demo/project-1",
+        "checkout_path": "/tmp/herdr-demo/project-1",
+        "is_linked_worktree": false
+      }
+    },
+    {
+      "workspace_id": "w2",
+      "number": 2,
+      "label": "Reading journal",
+      "focused": false,
+      "pane_count": 2,
+      "tab_count": 1,
+      "active_tab_id": "w2:t1",
+      "agent_status": "idle",
+      "tabs": [
+        {
+          "tab_id": "w2:t1",
+          "workspace_id": "w2",
+          "number": 1,
+          "label": "Demo tasks",
+          "focused": true,
+          "pane_count": 2,
+          "agent_status": "idle"
+        }
+      ],
+      "panes": [
+        {
+          "pane_id": "w2:p1",
+          "terminal_id": "demo-terminal-2-1",
+          "workspace_id": "w2",
+          "tab_id": "w2:t1",
+          "focused": false,
+          "cwd": "/tmp/herdr-demo/project-2",
+          "foreground_cwd": "/tmp/herdr-demo/project-2",
+          "label": "Demo task 1",
+          "agent_status": "idle",
+          "scroll": {
+            "offset_from_bottom": 0,
+            "max_offset_from_bottom": 12,
+            "viewport_rows": 32
+          },
+          "revision": 11,
+          "agent": "pi",
+          "terminal_title": "Garden demo task 1",
+          "terminal_title_stripped": "Garden demo task 1",
+          "agent_session": {
+            "source": "environment",
+            "agent": "pi",
+            "kind": "session_id",
+            "value": "demo-session-2-1"
+          }
+        },
+        {
+          "pane_id": "w2:p2",
+          "terminal_id": "demo-terminal-2-2",
+          "workspace_id": "w2",
+          "tab_id": "w2:t1",
+          "focused": false,
+          "cwd": "/tmp/herdr-demo/project-2",
+          "foreground_cwd": "/tmp/herdr-demo/project-2",
+          "label": "Demo task 2",
+          "agent_status": "unknown",
+          "scroll": {
+            "offset_from_bottom": 0,
+            "max_offset_from_bottom": 12,
+            "viewport_rows": 32
+          },
+          "revision": 12
+        }
+      ],
+      "agents": [
+        {
+          "terminal_id": "demo-terminal-2-1",
+          "agent": "pi",
+          "agent_status": "idle",
+          "agent_session": {
+            "source": "environment",
+            "agent": "pi",
+            "kind": "session_id",
+            "value": "demo-session-2-1"
+          },
+          "workspace_id": "w2",
+          "tab_id": "w2:t1",
+          "pane_id": "w2:p1",
+          "focused": false,
+          "cwd": "/tmp/herdr-demo/project-2",
+          "foreground_cwd": "/tmp/herdr-demo/project-2",
+          "revision": 11,
+          "name": "Demo agent 1",
+          "interactive_ready": true,
+          "state_change_seq": 1
+        }
+      ],
+      "layouts": [
+        {
+          "workspace_id": "w2",
+          "tab_id": "w2:t1",
+          "zoomed": false,
+          "area": {
+            "x": 0,
+            "y": 0,
+            "width": 100,
+            "height": 32
+          },
+          "focused_pane_id": "w2:p1",
+          "panes": [
+            {
+              "pane_id": "w2:p1",
+              "focused": false,
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "width": 50,
+                "height": 32
+              }
+            },
+            {
+              "pane_id": "w2:p2",
+              "focused": false,
+              "rect": {
+                "x": 50,
+                "y": 0,
+                "width": 50,
+                "height": 32
+              }
+            }
+          ],
+          "splits": []
+        }
+      ]
+    }
+  ],
+  "alerts": [
+    {
+      "id": "demo-alert-1",
+      "kind": "agent_status",
+      "status": "blocked",
+      "previousStatus": "working",
+      "severity": "warning",
+      "title": "Choose a garden theme",
+      "message": "The synthetic planning task is waiting for a color choice.",
+      "workspaceId": "w1",
+      "workspaceLabel": "Garden planner",
+      "tabId": "w1:t1",
+      "tabLabel": "Demo tasks",
+      "paneId": "w1:p2",
+      "paneTitle": "Demo task 2",
+      "agentName": "pi",
+      "createdAt": "2030-01-01T12:00:00Z",
+      "isRead": false,
+      "readAt": null,
+      "action": {
+        "type": "open_pane",
+        "paneId": "w1:p2"
+      }
+    },
+    {
+      "id": "demo-alert-2",
+      "kind": "agent_status",
+      "status": "done",
+      "previousStatus": "working",
+      "severity": "info",
+      "title": "Reading list exported",
+      "message": "The synthetic export includes three example books.",
+      "workspaceId": "w1",
+      "workspaceLabel": "Garden planner",
+      "tabId": "w1:t1",
+      "tabLabel": "Demo tasks",
+      "paneId": "w1:p3",
+      "paneTitle": "Demo task 3",
+      "agentName": "pi",
+      "createdAt": "2030-01-01T12:00:00Z",
+      "isRead": true,
+      "readAt": "2030-01-01T12:00:00Z",
+      "action": {
+        "type": "open_pane",
+        "paneId": "w1:p3"
+      }
+    }
+  ],
+  "generatedAt": "2030-01-01T12:00:00Z"
+}

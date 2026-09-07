@@ -1,0 +1,29 @@
+[
+  {
+    "type": "terminal.frame",
+    "bytes": "G1syShtbSBtbMTszMm1HYXJkZW4gcGxhbm5lciBkZW1vG1swbQ0KUHJlcGFyaW5nIGFuIGV4YW1wbGUgcGxhbnRpbmcgc2NoZWR1bGUuLi4NClByb2dyZXNzOiAwJQ==",
+    "encoding": "base64",
+    "full": true,
+    "height": 32,
+    "seq": 1,
+    "width": 100
+  },
+  {
+    "type": "terminal.frame",
+    "bytes": "G1szOzFIG1sySxtbMzNtUHJvZ3Jlc3M6IDUwJRtbMG0NCkJhc2lsLCBtaW50LCBhbmQgdGh5bWUgc2VsZWN0ZWQu",
+    "encoding": "base64",
+    "full": false,
+    "height": 32,
+    "seq": 2,
+    "width": 100
+  },
+  {
+    "type": "terminal.frame",
+    "bytes": "G1szOzFIG1sySxtbMzJtUHJvZ3Jlc3M6IDEwMCUbWzBtG1s1OzFIG1sxbVN5bnRoZXRpYyB0YXNrIGNvbXBsZXRlLhtbMG0=",
+    "encoding": "base64",
+    "full": false,
+    "height": 32,
+    "seq": 3,
+    "width": 100
+  }
+]

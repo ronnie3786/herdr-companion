@@ -1,0 +1,37 @@
+# Machine configuration and secrets stay local.
+config.local.toml
+config.*.local.toml
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p8
+*.p12
+*.mobileprovision
+# Runtime state and generated artifacts.
+.venv/
+__pycache__/
+*.py[cod]
+*.sqlite*
+*.db
+*.log
+*.jsonl
+.pytest_cache/
+node_modules/
+build/
+dist/
+*.egg-info/
+.DS_Store
+DerivedData/
+*.xcarchive/
+*.xcresult/
+*.ipa
+xcuserdata/
+*.xcuserstate
+**/Local.xcconfig
+**/GeneratedConfig/
+herdr_harness/static/herdr-web/
+**/Local.entitlements
+**/HerdrBootstrap.plist
+*.tmp

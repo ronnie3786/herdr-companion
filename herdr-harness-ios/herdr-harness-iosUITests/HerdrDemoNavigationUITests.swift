@@ -1,0 +1,146 @@
+import XCTest
+
+final class HerdrDemoNavigationUITests: XCTestCase {
+    private let screenshotDirectory = URL(fileURLWithPath: "/tmp/herdr-ios-goal-screens", isDirectory: true)
+
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+        try FileManager.default.createDirectory(
+            at: screenshotDirectory,
+            withIntermediateDirectories: true
+        )
+    }
+
+    @MainActor
+    func testFullScreenPaneModesAndExpandableControls() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-HerdrDemoMode"]
+        app.launch()
+
+        let workspace = app.buttons["Garden Planner, Needs you, 3 panes"]
+        XCTAssertTrue(workspace.waitForExistence(timeout: 8), "The workspace switcher should appear in demo mode")
+        workspace.tap()
+
+        let blockedPane = app.buttons["Choose sample garden colors, Claude, Needs you"]
+        XCTAssertTrue(blockedPane.waitForExistence(timeout: 3))
+        blockedPane.tap()
+
+        XCTAssertTrue(app.navigationBars["Choose sample garden colors"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.textFields["prompt-composer"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.tabBars.firstMatch.exists, "Pane detail should hide the app tab bar")
+        XCTAssertFalse(app.buttons["Yes, proceed"].exists, "Canned response chips should not consume pane space")
+
+        for key in ["up", "down", "tab", "enter"] {
+            XCTAssertTrue(app.buttons["terminal-key-\(key)"].exists)
+        }
+        XCTAssertFalse(app.buttons["terminal-key-left"].exists)
+        try saveScreenshot("01-terminal-collapsed", app: app)
+
+        app.buttons["terminal-controls-toggle"].tap()
+        XCTAssertTrue(app.buttons["terminal-key-left"].waitForExistence(timeout: 2))
+        for key in ["left", "right", "escape", "backspace"] {
+            XCTAssertTrue(app.buttons["terminal-key-\(key)"].exists)
+        }
+        try saveScreenshot("02-terminal-expanded", app: app)
+
+        try selectPaneMode("Git", app: app)
+        XCTAssertTrue(app.staticTexts["staged"].waitForExistence(timeout: 3))
+        try saveScreenshot("03-git-status", app: app)
+
+        let diffButton = app.buttons["View diff for Sources/Garden/GardenCanvas.swift"]
+        XCTAssertTrue(diffButton.waitForExistence(timeout: 2))
+        diffButton.tap()
+        XCTAssertTrue(app.navigationBars["Sources/Garden/GardenCanvas.swift"].waitForExistence(timeout: 3))
+        try saveScreenshot("04-git-diff", app: app)
+        app.buttons["Done"].tap()
+
+        try selectPaneMode("Skills", app: app)
+        XCTAssertTrue(app.staticTexts["workspace skills"].waitForExistence(timeout: 3))
+        try saveScreenshot("05-skills", app: app)
+
+        try selectPaneMode("Terminal", app: app)
+        app.buttons["terminal-controls-toggle"].tap()
+        XCTAssertTrue(app.buttons["Insert a workspace file path"].waitForExistence(timeout: 2))
+
+        app.buttons["Insert a workspace file path"].tap()
+        let fileSearch = app.textFields["Search project files"]
+        XCTAssertTrue(fileSearch.waitForExistence(timeout: 3))
+        fileSearch.tap()
+        fileSearch.typeText("Garden")
+        XCTAssertTrue(app.buttons["Insert Sources/Garden/GardenCanvas.swift"].waitForExistence(timeout: 3))
+        try saveScreenshot("06-file-search", app: app)
+        app.buttons["Done"].tap()
+
+        XCTAssertTrue(app.buttons["Insert Jira ticket context"].waitForExistence(timeout: 3))
+        app.buttons["Insert Jira ticket context"].tap()
+        XCTAssertTrue(app.navigationBars["JIRA CONTEXT"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["TASK-101"].waitForExistence(timeout: 3))
+        try saveScreenshot("07-jira-context", app: app)
+        app.buttons["Done"].tap()
+
+        let voice = app.buttons["composer-record-voice"]
+        XCTAssertTrue(voice.waitForExistence(timeout: 3))
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == %@", "Record a voice note")).count, 1)
+        voice.tap()
+        XCTAssertTrue(app.navigationBars["VOICE NOTE"].waitForExistence(timeout: 3))
+        try saveScreenshot("08-voice-note", app: app)
+        app.buttons["Close"].tap()
+    }
+
+    @MainActor
+    func testVoiceActionsRemainReachableInLandscapeAccessibilityText() throws {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
+
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-HerdrDemoMode",
+            "-UIPreferredContentSizeCategoryName",
+            "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge",
+        ]
+        app.launch()
+
+        let workspace = app.buttons["Garden Planner, Needs you, 3 panes"]
+        XCTAssertTrue(workspace.waitForExistence(timeout: 8))
+        workspace.tap()
+
+        let blockedPane = app.buttons["Choose sample garden colors, Claude, Needs you"]
+        XCTAssertTrue(blockedPane.waitForExistence(timeout: 3))
+        blockedPane.tap()
+
+        let controls = app.buttons["terminal-controls-toggle"]
+        XCTAssertTrue(controls.waitForExistence(timeout: 3))
+        controls.tap()
+
+        let voice = app.buttons["composer-record-voice"]
+        XCTAssertTrue(voice.waitForExistence(timeout: 3))
+        voice.tap()
+
+        XCTAssertTrue(app.navigationBars["VOICE NOTE"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Start recording"].isHittable)
+        XCTAssertTrue(app.buttons["Close"].isHittable)
+        XCTAssertTrue(app.buttons["Attach audio without transcribing"].exists)
+        XCTAssertTrue(app.buttons["Transcribe"].exists)
+    }
+
+    @MainActor
+    private func selectPaneMode(_ mode: String, app: XCUIApplication) throws {
+        let menu = app.buttons["Pane actions"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 3))
+        menu.tap()
+        let modeButton = app.buttons["\(mode) view"]
+        XCTAssertTrue(modeButton.waitForExistence(timeout: 2), "The pane menu should expose \(mode)")
+        modeButton.tap()
+    }
+
+    @MainActor
+    private func saveScreenshot(_ name: String, app: XCUIApplication) throws {
+        let screenshot = app.screenshot()
+        try screenshot.pngRepresentation.write(to: screenshotDirectory.appending(path: "\(name).png"))
+
+        let attachment = XCTAttachment(screenshot: screenshot)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+}

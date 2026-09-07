@@ -1,0 +1,36 @@
+{
+  "name": "@herdr/pi-semantic-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Herdr integration for Pi's stock TUI",
+  "keywords": [
+    "pi-package"
+  ],
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./extensions/pi-semantic-bridge.ts",
+      "./extensions/notes-discovery.ts",
+      "./extensions/send-to-herdr.ts",
+      "./extensions/present-result.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.84.2 <0.85.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "jiti": "2.7.0",
+    "@earendil-works/pi-ai": "0.84.2"
+  }
+}

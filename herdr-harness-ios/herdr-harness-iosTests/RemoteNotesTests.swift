@@ -144,6 +144,25 @@ struct RemoteNotesStoreTests {
         #expect(store.notes.isEmpty)
     }
 
+    @Test("A refresh started before saving cannot overwrite the saved note")
+    func saveInvalidatesOlderRefresh() async throws {
+        let store = RemoteNotesStore()
+        let old = try NotesTestPayload.response(notes: [NotesTestPayload.note(body: "Old")])
+        await store.refresh(machineIDs: ["work", "home"]) { _ in old }
+        let gate = NotesResponseGate()
+        let task = Task { await store.refresh(machineIDs: ["work", "home"]) { id in
+            if id == "work" { return await gate.wait() }
+            return old
+        } }
+        await waitUntilStarted(gate)
+        store.acceptSavedNote(try NotesTestPayload.note(body: "Saved").stamped(machineID: "work"))
+        await gate.resolve(old)
+        await task.value
+        #expect(store.notes.first(where: { $0.machineID == "work" })?.body == "Saved")
+        #expect(store.notes.first(where: { $0.machineID == "home" })?.body == "Old")
+        #expect(!store.isRefreshing)
+    }
+
     private func waitUntilStarted(_ gate: NotesResponseGate) async {
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
         while !(await gate.hasStarted), ContinuousClock.now < deadline { await Task.yield() }

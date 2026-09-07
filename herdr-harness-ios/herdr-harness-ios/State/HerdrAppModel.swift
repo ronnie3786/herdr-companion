@@ -884,6 +884,23 @@ final class HerdrAppModel {
         }
     }
 
+    func reloadPiSession(in pane: HerdrPane) async {
+        noteUserInteraction(machineID: pane.machineID)
+        if isDemoMode {
+            toastMessage = "reload requested"
+            return
+        }
+        guard canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else { return }
+        do {
+            try await client.sendText(toPane: pane.paneID, text: "/reload", submit: false)
+            try await client.sendKeys(toPane: pane.paneID, keys: ["enter"])
+            toastMessage = "reload requested"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func startNewPiChat(in pane: HerdrPane) async {
         noteUserInteraction(machineID: pane.machineID)
         if isDemoMode {
@@ -1143,6 +1160,13 @@ final class HerdrAppModel {
         if let selectedPane = pane(id: selectedPaneID) { return selectedPane.machineID }
         if let selectedWorkspace = workspace(id: selectedWorkspaceID) { return selectedWorkspace.machineID }
         return machines.first?.id
+    }
+
+    func updateNote(_ note: RemoteNote, title: String, body: AttributedString) async throws -> RemoteNote {
+        guard !isDemoMode, let client = client(forMachine: note.machineID) else {
+            throw APIError.noActiveConnection(machineID: machineName(note.machineID))
+        }
+        return try await client.updateNote(note, title: title, body: body)
     }
 
     func fetchNotes(machineID: String) async throws -> RemoteNotesResponse {

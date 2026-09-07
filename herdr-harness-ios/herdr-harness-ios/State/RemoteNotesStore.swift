@@ -74,6 +74,16 @@ final class RemoteNotesStore {
         }
     }
 
+    func acceptSavedNote(_ note: RemoteNote) {
+        // Invalidate any fetch that began before this write completed.
+        refreshRevision += 1
+        isRefreshing = false
+        notes.removeAll { $0.id == note.id }
+        notes.append(note)
+        notes.sort { $0.updatedAt > $1.updatedAt }
+        machineErrors[note.machineID] = nil
+    }
+
     func reset() {
         refreshRevision += 1
         notes = []

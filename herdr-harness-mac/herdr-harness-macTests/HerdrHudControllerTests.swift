@@ -7,6 +7,20 @@ import SwiftUI
 @Suite("Herdr HUD controller", .serialized)
 @MainActor
 struct HerdrHudControllerTests {
+    @Test("Resizing notes respects bounds and survives controller recreation")
+    func noteResizePersists() throws {
+        let name = "NoteResizeTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let controller = HerdrHudController(userDefaults: defaults)
+        controller.resizeNote(to: CGSize(width: 440, height: 400))
+        #expect(controller.noteCardSize.width == 440)
+        let restored = HerdrHudController(userDefaults: defaults)
+        #expect(restored.noteCardSize == controller.noteCardSize)
+        controller.resizeNote(to: .zero)
+        #expect(controller.noteCardSize == HerdrHudPlacement.noteCardSize)
+    }
+
     @Test("Summon, open, and summon again drive expansion and note state together")
     func summonOpenNoteRoundTrip() async throws {
         let harness = makeHarness()

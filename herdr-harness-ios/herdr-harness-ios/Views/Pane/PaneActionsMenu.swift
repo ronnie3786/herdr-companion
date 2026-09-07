@@ -32,93 +32,106 @@ struct PaneActionsMenu: View {
                 }
             }
 
-            Divider()
+            Section("Focus and control") {
+                Button("Focus on Mac", systemImage: "scope") {
+                    Task { await model.focus(pane) }
+                }
+                .disabled(!model.canControl(machineID: pane.machineID))
 
-            Button("Focus on Mac", systemImage: "scope") {
-                Task { await model.focus(pane) }
+                Button("Focus on Mac + Zoom", systemImage: "arrow.up.left.and.arrow.down.right") {
+                    Task { await model.focusAndZoom(pane) }
+                }
+                .disabled(!model.canControl(machineID: pane.machineID))
+
+                Button("Interrupt", systemImage: "stop.fill", role: .destructive) {
+                    Task { await model.sendKeys(["ctrl+c"], to: pane) }
+                }
+                .disabled(!model.canControl(machineID: pane.machineID))
+
             }
-            .disabled(!model.canControl)
 
-            Button("Focus on Mac + Zoom", systemImage: "arrow.up.left.and.arrow.down.right") {
-                Task { await model.focusAndZoom(pane) }
+            Section("Pi session") {
+                // Gated on the Pi session id, not on `supportsPiSemanticChat`: the
+                // summary reads the transcript off disk in a separate headless
+                // session, so a pane whose semantic bridge is no longer connected
+                // can still be summarized.
+                if showsPiSessionSummary {
+                    Button("Summarize Pi session", systemImage: "list.bullet.clipboard", action: summarizePiSession)
+                        // The run is dispatched to the pane's machine, not the
+                        // primary connection, so this row checks that machine.
+                        .disabled(!model.canControl(machineID: pane.machineID))
+                        .accessibilityIdentifier("pane-summarize-pi-session")
+                        .accessibilityHint("Opens a short summary generated in a separate headless Pi session")
+                }
+
+                if pane.supportsPiSemanticChat || [pane.agent, pane.displayAgent].contains(where: { $0?.caseInsensitiveCompare("pi") == .orderedSame }) {
+                    Button("Reload Pi extensions", systemImage: "arrow.clockwise") {
+                        Task { await model.reloadPiSession(in: pane) }
+                    }
+                    .accessibilityIdentifier("pane-action-reload-pi-session")
+                    .disabled(piSessionMutationIsDisabled)
+
+                    Button("Compact Pi chat", systemImage: "arrow.down.right.and.arrow.up.left") {
+                        Task { await model.compactPiChat(in: pane) }
+                    }
+                    .accessibilityIdentifier("pane-action-compact-pi-chat")
+                    .disabled(piSessionMutationIsDisabled)
+
+                    Button("New Pi chat", systemImage: "plus.bubble") {
+                        Task { await model.startNewPiChat(in: pane) }
+                    }
+                    .accessibilityIdentifier("pane-action-new-pi-chat")
+                    .disabled(piSessionMutationIsDisabled)
+
+                    Button("End Pi session", systemImage: "xmark.bubble", role: .destructive) {
+                        Task { await model.endPiSession(in: pane) }
+                    }
+                    .accessibilityIdentifier("pane-action-end-pi-session")
+                    .disabled(piSessionMutationIsDisabled)
+
+                    Button("End Pi & close pane", systemImage: "xmark.rectangle", role: .destructive) {
+                        isConfirmingEndPiAndClose = true
+                    }
+                    .accessibilityIdentifier("pane-action-end-pi-and-close-pane")
+                    .disabled(piSessionMutationIsDisabled)
+                }
+
             }
-            .disabled(!model.canControl)
 
-            Button("Interrupt", systemImage: "stop.fill", role: .destructive) {
-                Task { await model.sendKeys(["ctrl+c"], to: pane) }
-            }
-            .disabled(!model.canControl)
+            Section("Pane") {
+                Button("Rename pane", systemImage: "pencil") {
+                    renameText = pane.displayTitle
+                    isRenaming = true
+                }
+                .disabled(!model.canControl(machineID: pane.machineID))
 
-            // Gated on the Pi session id, not on `supportsPiSemanticChat`: the
-            // summary reads the transcript off disk in a separate headless
-            // session, so a pane whose semantic bridge is no longer connected
-            // can still be summarized.
-            if showsPiSessionSummary {
-                Button("Summarize Pi session", systemImage: "list.bullet.clipboard", action: summarizePiSession)
-                    // The run is dispatched to the pane's machine, not the
-                    // primary connection, so this row checks that machine.
+                Menu("Split pane", systemImage: "rectangle.split.2x1") {
+                    Button("Split right", systemImage: "rectangle.split.2x1") {
+                        Task { await model.split(pane, direction: "right") }
+                    }
+                    Button("Split down", systemImage: "rectangle.split.1x2") {
+                        Task { await model.split(pane, direction: "down") }
+                    }
+                }
+                .disabled(!model.canControl(machineID: pane.machineID))
+
+                if pane.agentStatus == .unknown {
+                    Menu("Start agent", systemImage: "cpu") {
+                        Button("Codex") { Task { await model.startAgent(in: pane, kind: "codex") } }
+                        Button("Claude") { Task { await model.startAgent(in: pane, kind: "claude") } }
+                        Button("OpenCode") { Task { await model.startAgent(in: pane, kind: "opencode") } }
+                    }
                     .disabled(!model.canControl(machineID: pane.machineID))
-                    .accessibilityIdentifier("pane-summarize-pi-session")
-                    .accessibilityHint("Opens a short summary generated in a separate headless Pi session")
+                }
+
             }
 
-            if pane.supportsPiSemanticChat || [pane.agent, pane.displayAgent].contains(where: { $0?.caseInsensitiveCompare("pi") == .orderedSame }) {
-                Button("Compact Pi chat", systemImage: "arrow.down.right.and.arrow.up.left") {
-                    Task { await model.compactPiChat(in: pane) }
+            Section("Close") {
+                Button("Close pane", systemImage: "xmark.rectangle", role: .destructive) {
+                    isConfirmingClose = true
                 }
-                .accessibilityIdentifier("pane-action-compact-pi-chat")
-                .disabled(piSessionMutationIsDisabled)
-
-                Button("New Pi chat", systemImage: "plus.bubble") {
-                    Task { await model.startNewPiChat(in: pane) }
-                }
-                .accessibilityIdentifier("pane-action-new-pi-chat")
-                .disabled(piSessionMutationIsDisabled)
-
-                Button("End Pi session", systemImage: "xmark.bubble", role: .destructive) {
-                    Task { await model.endPiSession(in: pane) }
-                }
-                .accessibilityIdentifier("pane-action-end-pi-session")
-                .disabled(piSessionMutationIsDisabled)
-
-                Button("End Pi & close pane", systemImage: "xmark.rectangle", role: .destructive) {
-                    isConfirmingEndPiAndClose = true
-                }
-                .accessibilityIdentifier("pane-action-end-pi-and-close-pane")
-                .disabled(piSessionMutationIsDisabled)
+                .disabled(!model.canControl(machineID: pane.machineID))
             }
-
-            Button("Rename pane", systemImage: "pencil") {
-                renameText = pane.displayTitle
-                isRenaming = true
-            }
-            .disabled(!model.canControl)
-
-            Menu("Split pane", systemImage: "rectangle.split.2x1") {
-                Button("Split right", systemImage: "rectangle.split.2x1") {
-                    Task { await model.split(pane, direction: "right") }
-                }
-                Button("Split down", systemImage: "rectangle.split.1x2") {
-                    Task { await model.split(pane, direction: "down") }
-                }
-            }
-            .disabled(!model.canControl)
-
-            if pane.agentStatus == .unknown {
-                Menu("Start agent", systemImage: "cpu") {
-                    Button("Codex") { Task { await model.startAgent(in: pane, kind: "codex") } }
-                    Button("Claude") { Task { await model.startAgent(in: pane, kind: "claude") } }
-                    Button("OpenCode") { Task { await model.startAgent(in: pane, kind: "opencode") } }
-                }
-                .disabled(!model.canControl)
-            }
-
-            Divider()
-
-            Button("Close pane", systemImage: "xmark.rectangle", role: .destructive) {
-                isConfirmingClose = true
-            }
-            .disabled(!model.canControl)
         }
         .confirmationDialog(
             "Close this pane?",

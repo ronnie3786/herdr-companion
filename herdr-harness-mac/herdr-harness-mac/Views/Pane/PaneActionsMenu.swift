@@ -53,12 +53,10 @@ struct PaneActionsMenu: View {
     private var paneActionsMenu: some View {
         Menu("Pane actions", systemImage: "ellipsis.circle") {
             viewModeSection
-            Divider()
-            focusActions
-            piSessionActions
-            paneManagementActions
-            Divider()
-            closeAction
+            Section("Focus and control") { focusActions }
+            Section("Pi session") { piSessionActions }
+            Section("Pane") { paneManagementActions }
+            Section("Close") { closeAction }
         }
     }
 
@@ -100,6 +98,12 @@ struct PaneActionsMenu: View {
     @ViewBuilder
     private var piSessionActions: some View {
         if pane.supportsPiSemanticChat || isPiPane {
+            Button("Reload Pi extensions", systemImage: "arrow.clockwise") {
+                Task { await model.reloadPiSession(in: pane) }
+            }
+            .accessibilityIdentifier("pane-action-reload-pi-session")
+            .disabled(piSessionMutationIsDisabled)
+
             Button("Compact Pi chat", systemImage: "arrow.down.right.and.arrow.up.left") {
                 Task { await model.compactPiChat(in: pane) }
             }

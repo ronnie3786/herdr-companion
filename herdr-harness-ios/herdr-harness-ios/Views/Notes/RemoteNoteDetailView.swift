@@ -4,6 +4,8 @@ struct RemoteNoteDetailView: View {
     @Bindable var store: RemoteNotesStore
     let noteID: String
     let machineName: String
+    let save: (RemoteNote, String, AttributedString) async throws -> RemoteNote
+    @State private var editingNote: RemoteNote?
     let refresh: () async -> Void
 
     var body: some View {
@@ -68,7 +70,16 @@ struct RemoteNoteDetailView: View {
         }
         .navigationTitle("Note")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $editingNote) { note in
+            RemoteNoteEditorView(note: note) { title, body in
+                store.acceptSavedNote(try await save(note, title, body))
+            }
+        }
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Edit", systemImage: "pencil") { editingNote = store.note(id: noteID) }
+                    .disabled(store.note(id: noteID) == nil)
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Refresh note", systemImage: "arrow.clockwise") { Task { await refresh() } }
                     .disabled(store.isRefreshing)

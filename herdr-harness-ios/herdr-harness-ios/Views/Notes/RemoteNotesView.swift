@@ -61,6 +61,9 @@ struct RemoteNotesView: View {
                 RemoteNoteDetailView(
                     store: store, noteID: id,
                     machineName: machineName(MachineScopedID.split(id)?.machineID ?? ""),
+                    save: { note, title, body in
+                        try await model.updateNote(note, title: title, body: body)
+                    },
                     refresh: refresh
                 )
             }
@@ -100,7 +103,7 @@ struct RemoteNotesView: View {
             }
             .pickerStyle(.menu)
             .accessibilityIdentifier("notes-machine-picker")
-            Text("Edits from your Mac or agents appear here automatically while Notes is open.")
+            Text("Edit a note here to sync it back to your Mac. Changes appear automatically while Notes is open.")
                 .font(.caption)
                 .foregroundStyle(HerdrTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)

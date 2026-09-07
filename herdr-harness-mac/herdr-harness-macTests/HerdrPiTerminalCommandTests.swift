@@ -41,6 +41,20 @@ struct HerdrPiTerminalCommandTests {
         #expect(fixture.model.toastMessage == "compaction started")
     }
 
+    @Test("Reload uses the pane terminal command and submits it")
+    func reloadSendsSlashCommand() async throws {
+        PiTerminalCommandURLProtocol.recorder.reset()
+        let fixture = try makeFixture(supportsSemanticCompaction: true)
+        await fixture.model.reloadPiSession(in: fixture.pane)
+        let requests = PiTerminalCommandURLProtocol.recorder.requests()
+        #expect(requests.map(\.path) == [
+            "/api/v1/panes/w1:p1/send-text",
+            "/api/v1/panes/w1:p1/send-keys",
+        ])
+        #expect(requests.first?.body["text"] as? String == "/reload")
+        #expect(requests.last?.body["keys"] as? [String] == ["enter"])
+    }
+
     private func makeFixture(
         supportsSemanticCompaction: Bool
     ) throws -> (model: HerdrAppModel, pane: HerdrPane) {

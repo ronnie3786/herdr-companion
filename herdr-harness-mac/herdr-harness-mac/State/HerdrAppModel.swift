@@ -1530,6 +1530,23 @@ final class HerdrAppModel {
         }
     }
 
+    func reloadPiSession(in pane: HerdrPane) async {
+        noteUserInteraction(machineID: pane.machineID)
+        if isDemoMode {
+            toastMessage = "reload requested"
+            return
+        }
+        guard canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else { return }
+        do {
+            try await client.sendText(toPane: pane.paneID, text: "/reload", submit: false)
+            try await client.sendKeys(toPane: pane.paneID, keys: ["enter"])
+            toastMessage = "reload requested"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func startNewPiChat(in pane: HerdrPane) async {
         noteUserInteraction(machineID: pane.machineID)
         if isDemoMode {

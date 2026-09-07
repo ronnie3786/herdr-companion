@@ -18,6 +18,15 @@ actor HerdrAPIClient {
         try await request(path: "/api/v1/workspaces")
     }
 
+    func updateNote(_ note: RemoteNote, title: String, body: AttributedString) async throws -> RemoteNote {
+        let response: RemoteNoteMutationResponse = try await request(
+            path: "/api/v1/notes/\(note.rawID.uuidString)", method: "PATCH",
+            body: RemoteNoteUpdateRequest(expectedRevision: note.revision, changes: .init(title: title, body: body))
+        )
+        guard response.ok else { throw APIError.invalidResponse }
+        return response.note.stamped(machineID: note.machineID)
+    }
+
     func fetchNotes() async throws -> RemoteNotesResponse {
         try await request(path: "/api/v1/notes")
     }

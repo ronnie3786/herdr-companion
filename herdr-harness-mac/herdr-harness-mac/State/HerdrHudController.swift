@@ -54,6 +54,7 @@ final class HerdrHudController {
     private var frameAnimationGeneration = 0
     private var enabledRevision = 0
 
+    private(set) var noteCardSize = HerdrHudPlacement.noteCardSize
     private(set) var isExpanded = false
     private(set) var isDraggingPanel = false
     /// Set while a HUD prompt runs with the card auto-collapsed, so the run's
@@ -94,6 +95,11 @@ final class HerdrHudController {
         attachmentHoverGrace: Duration = .milliseconds(180)
     ) {
         self.userDefaults = userDefaults
+        let width = userDefaults.double(forKey: "herdr.hud.noteWidth")
+        let height = userDefaults.double(forKey: "herdr.hud.noteHeight")
+        if width.isFinite, height.isFinite, width >= 320, height >= 360 {
+            noteCardSize = CGSize(width: min(width, 720), height: min(height, 800))
+        }
         self.chipRegroupDelay = chipRegroupDelay
         self.attachmentHoverGrace = attachmentHoverGrace
     }
@@ -408,6 +414,25 @@ final class HerdrHudController {
         }
     }
 
+    func resizeNote(to size: CGSize) {
+        noteCardSize = constrainedNoteSize(size)
+        userDefaults.set(noteCardSize.width, forKey: "herdr.hud.noteWidth")
+        userDefaults.set(noteCardSize.height, forKey: "herdr.hud.noteHeight")
+        applyFrame(animated: false)
+    }
+
+    private func constrainedNoteSize(_ size: CGSize) -> CGSize {
+        let screen = visibleFrame(for: panel)
+        let margin = HerdrHudPlacement.shadowMargin * 2
+        let otherHeight = HerdrHudPlacement.collapsedSize.height + HerdrHudPlacement.notesGap
+            + (isVoiceReplyCardVisible ? HerdrHudPlacement.voiceReplyCardSize.height + HerdrHudPlacement.notesGap : 0)
+            + (quickVoice?.isExpanded == true ? HerdrHudPlacement.quickVoiceCardSize.height + HerdrHudPlacement.chipSpacing : 0)
+        return CGSize(
+            width: min(max(320, size.width), max(320, min(720, screen.width - margin))),
+            height: min(max(360, size.height), max(360, min(800, screen.height - margin - otherHeight)))
+        )
+    }
+
     func notesLayoutDidChange() {
         guard let panel else { return }
         let currentLayout = notes?.layout ?? .hidden
@@ -584,6 +609,10 @@ final class HerdrHudController {
         let visibleFrame = visibleFrame(for: panel)
         let fontScale = fontScaleStore?.scale.rawValue ?? 1
         var notesSize = HerdrHudPlacement.notesContentSize(notes?.layout ?? .hidden, isExpanded: isExpanded)
+        if case .card = notes?.layout {
+            noteCardSize = constrainedNoteSize(noteCardSize)
+            notesSize = noteCardSize
+        }
         let voiceReplySize = isVoiceReplyCardVisible ? HerdrHudPlacement.voiceReplyCardSize : .zero
         let quickVoiceSize = quickVoice?.isExpanded == true ? HerdrHudPlacement.quickVoiceCardSize : .zero
         if case let .compact(count) = notes?.layout {

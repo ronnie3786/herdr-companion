@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct HerdrNoteCardView: View {
@@ -9,6 +10,8 @@ struct HerdrNoteCardView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var isBodyFocused: Bool
     @State private var bodySelection = AttributedTextSelection()
+    @State private var resizeStart: CGSize?
+    @State private var resizeMouseOrigin: CGPoint?
     @State private var isDeleteArmed = false
     @State private var deleteArmTask: Task<Void, Never>?
 
@@ -35,6 +38,7 @@ struct HerdrNoteCardView: View {
                 .frame(maxHeight: .infinity)
                 details(note)
                 footer(note)
+                    .padding(.bottom, 20)
             }
             .padding(12)
 
@@ -47,13 +51,51 @@ struct HerdrNoteCardView: View {
                     .offset(x: -82, y: 0)
             }
         }
-        .frame(width: HerdrHudPlacement.noteCardSize.width, height: HerdrHudPlacement.noteCardSize.height)
+        .frame(width: controller.noteCardSize.width, height: controller.noteCardSize.height)
         .foregroundStyle(note.color.ink)
         .tint(note.color.ink)
         .background(note.color.fill, in: .rect(cornerRadius: 12))
         .overlay {
             RoundedRectangle(cornerRadius: 12)
                 .strokeBorder(.white.opacity(0.35), lineWidth: 1)
+        }
+        .overlay(alignment: .bottomLeading) {
+            Image(systemName: "arrow.up.right.and.arrow.down.left")
+                .font(.caption)
+                .padding(8)
+                .contentShape(.rect)
+                .gesture(
+                    DragGesture(coordinateSpace: .global)
+                        .onChanged { value in
+                            let mouse = NSEvent.mouseLocation
+                            if resizeStart == nil {
+                                resizeStart = controller.noteCardSize
+                                resizeMouseOrigin = CGPoint(
+                                    x: mouse.x - value.translation.width,
+                                    y: mouse.y + value.translation.height
+                                )
+                            }
+                            guard let start = resizeStart, let origin = resizeMouseOrigin else { return }
+                            // Screen coordinates stay stable as the panel grows leftward.
+                            controller.resizeNote(to: CGSize(
+                                width: start.width - (mouse.x - origin.x),
+                                height: start.height - (mouse.y - origin.y)
+                            ))
+                        }
+                        .onEnded { _ in
+                            resizeStart = nil
+                            resizeMouseOrigin = nil
+                        }
+                )
+                .accessibilityLabel("Resize note")
+                .accessibilityAdjustableAction { direction in
+                    let delta: CGFloat = direction == .increment ? 40 : -40
+                    controller.resizeNote(to: CGSize(
+                        width: controller.noteCardSize.width + delta,
+                        height: controller.noteCardSize.height + delta
+                    ))
+                }
+                .help("Drag to resize note")
         }
         .shadow(color: HerdrTheme.ink.opacity(0.45), radius: 16, y: 8)
         .clipShape(.rect(cornerRadius: 12))

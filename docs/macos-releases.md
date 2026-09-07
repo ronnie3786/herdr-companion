@@ -169,7 +169,12 @@ private Xcode settings, machine bootstrap files, server addresses, and credentia
 are excluded. Development mode does not permit private configuration in artifacts.
 
 In `development` mode, the app and Sparkle helpers are signed with your configured
-Apple Development certificate. The script skips Developer ID export, all
+Apple Development certificate. Helpers use the exact certificate selected by
+Xcode, even when Keychain contains duplicate certificate names. Development
+signing requirements pin that certificate by fingerprint, keeping personal names
+out of resource manifests. Renewing or changing this certificate requires testing
+the identity transition and may require re-pairing Keychain credentials.
+The script skips Developer ID export, all
 notarytool calls, stapling, and notarization assessment. It keeps hardened runtime,
 helper signature checks, archive/feed signatures, privacy checks, and exact-source
 CI requirements. The signed release metadata records that the build is not notarized.

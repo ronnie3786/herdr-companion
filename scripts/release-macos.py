@@ -356,7 +356,7 @@ def audit_app(app, version, settings, *, notarized=None):
     run(["codesign", "--verify", "--deep", "--strict", app])
     with tempfile.TemporaryDirectory(prefix="herdr-public-certificate-") as temporary:
         prefix = Path(temporary) / "certificate"
-        run(["codesign", "-d", "--extract-certificates", prefix, app])
+        run(["codesign", "-d", "--extract-certificates=" + str(prefix), app])
         privacy_check(app, settings, certificate=Path(str(prefix) + "0").read_bytes())
     if notarized:
         run(["xcrun", "stapler", "validate", app])
@@ -379,6 +379,29 @@ def signing_targets(app):
             framework / "Versions/B/XPCServices/Downloader.xpc", framework, app]
 
 
+def certificate_identity(app):
+    """Use Apple's certificate fingerprint selector, not an ambiguous display name."""
+    with tempfile.TemporaryDirectory(prefix="herdr-signing-certificate-") as temporary:
+        prefix = Path(temporary) / "certificate"
+        run(["codesign", "-d", "--extract-certificates=" + str(prefix), app])
+        # SHA-1 here identifies a local certificate to codesign; it does not sign updates.
+        return hashlib.sha1(Path(str(prefix) + "0").read_bytes()).hexdigest().upper()
+
+
+def sign_development_app(app):
+    identity = certificate_identity(app)
+    for target in signing_targets(app):
+        signature = run(["codesign", "-d", "--verbose=2", target]).stderr.decode()
+        match = re.search(r"^Identifier=([A-Za-z0-9_.-]+)$", signature, re.M)
+        if not match: raise ReleaseError("Cannot determine a helper's signing identifier")
+        # Pin the existing certificate without copying its personal common name into
+        # designated requirements and enclosing resource manifests.
+        requirement = (f'designated => identifier "{match[1]}" and anchor apple generic '
+                       f'and certificate leaf = H"{identity}"')
+        run(["codesign", "--force", "--sign", identity, "--options", "runtime",
+             "--preserve-metadata=identifier,entitlements", "--requirements", "=" + requirement, target])
+
+
 def export_app(work, team, settings):
     """Development archives need explicit inside-out helper signing, no Apple upload."""
     validate_signing_settings(settings)
@@ -395,9 +418,7 @@ def export_app(work, team, settings):
     app = work / "Herdr.app"
     shutil.move(exported[0], app)
     if signing_mode(settings) == "development":
-        for target in signing_targets(app):
-            run(["codesign", "--force", "--sign", settings["signing_identity"],
-                 "--options", "runtime", "--preserve-metadata=identifier,entitlements", target])
+        sign_development_app(app)
     return app
 
 
@@ -643,7 +664,7 @@ def main(argv=None):
             print(json.dumps({"ok": True, "release": value, "commit_required": True})); return 0
         if args.command == "plan":
             value = validate_version(json.loads(VERSION_FILE.read_text()))
-            print(json.dumps({"release": value, "tag": release_tag(value), "bundle_id": BUNDLE_ID, "feed_url": FEED_URL, "sparkle": SPARKLE_VERSION, "public_signing_required": True}, indent=2)); return 0
+            print(json.dumps({"release": value, "tag": release_tag(value), "bundle_id": BUNDLE_ID, "feed_url": FEED_URL, "sparkle": SPARKLE_VERSION, "supported_signing_modes": ["development", "developer-id"], "signed_updates_required": True}, indent=2)); return 0
         (prepare if args.command == "prepare" else publish)(args)
         return 0
     except (ReleaseError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:

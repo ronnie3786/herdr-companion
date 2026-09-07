@@ -133,14 +133,15 @@ class ReleaseSafetyTests(unittest.TestCase):
             work = Path(directory)
             app = work / "Herdr.xcarchive/Products/Applications/source.app"
             app.mkdir(parents=True)
-            with patch.object(release, "run") as command:
-                result = release.export_app(work, "ABCDEFGHIJ", settings)
+            with patch.object(release, "run", return_value=SimpleNamespace(stderr=b"Identifier=org.example.synthetic\n")) as command, patch.object(release, "certificate_identity", return_value="A" * 40):
+                result = release.export_app(work, "TEAM123456", settings)
             self.assertEqual(result, work / "Herdr.app")
             self.assertTrue(result.is_dir())
-            calls = [call.args[0] for call in command.call_args_list]
+            calls = [call.args[0] for call in command.call_args_list if "--force" in call.args[0]]
             self.assertEqual([call[-1] for call in calls], release.signing_targets(result))
-            self.assertTrue(all(call[0] == "codesign" and "runtime" in call and
-                                "--preserve-metadata=identifier,entitlements" in call for call in calls))
+            self.assertTrue(all(call[0] == "codesign" and call[3] == "A" * 40 and "runtime" in call and
+                                "--preserve-metadata=identifier,entitlements" in call and
+                                f'certificate leaf = H"{"A" * 40}"' in call[-2] for call in calls))
 
     def test_prepared_development_cannot_be_published_as_notarized(self):
         with tempfile.TemporaryDirectory() as directory:

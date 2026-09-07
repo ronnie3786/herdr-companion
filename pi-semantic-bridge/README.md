@@ -85,7 +85,22 @@ also tag an existing untagged session; it never overwrites saved lineage.
 inheritance. Invalid and self-referential IDs are rejected. Pi persists custom
 entries with the rest of its session: a fresh session is not written to disk
 until Pi saves its first assistant response, and `--no-session` stays ephemeral.
-Already running sessions need `/reload` to start tracking newly spawned work.
+Already running sessions need to load the updated package before tracking newly
+spawned work. Follow the upgrade steps below.
+
+## Upgrade running Pi sessions
+
+New Pi sessions load the updated global package automatically. If a running
+session loads this package only through global settings, use `/reload` when idle.
+
+If a session was launched with an explicit `-e` or `--extension` path, exit when
+safe, launch Pi using the updated global installation without the old extension
+override, then resume the saved session. This includes Herdr sessions launched
+with a previous versioned package path. `/reload` retains launch-time extension
+paths, so it can load both versions, keep the old bridge active, or register
+duplicate commands. Do not rerun the old launch command unchanged.
+
+Saved session IDs, ancestry, and conversation history survive a normal resume.
 
 ## Send an existing session to Herdr
 
@@ -148,8 +163,9 @@ always rejected; another local bind interface can be selected only through the
 socket-specific, owner-private server record.
 
 The command is deliberately a no-op inside an already Herdr-managed Pi pane.
-Existing Pi processes started before installation can load the command with
-`/reload`; newly started processes discover it automatically.
+Existing Pi processes started before installation can load the command by
+following [the upgrade steps](#upgrade-running-pi-sessions); newly started
+processes discover it automatically.
 
 ## Present finished results in the HUD
 
@@ -177,7 +193,8 @@ after the harness expires a download. Opening an expired file shows an
 unavailable alert. Results whose original response was omitted by compaction
 stay in a separately labeled session attachment group while the harness still
 retains them. Install the extension and harness changes together; already
-running Pi sessions use `/reload` to load the updated tool.
+running Pi sessions follow [the upgrade steps](#upgrade-running-pi-sessions)
+to load the updated tool.
 
 The extension socket is derived from the complete Herdr socket path and a full
 SHA-256 of `HERDR_PANE_ID`, so multiple Pi panes coexist safely. The socket is

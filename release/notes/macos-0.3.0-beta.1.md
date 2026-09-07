@@ -6,7 +6,7 @@ The Herdr Pi package records a single parent session ID and derives children fro
 
 ## Setup and compatibility
 
-Install the companion server and its matching Pi package from this release's source revision on each machine. Restart the companion, then reload the package in existing Pi sessions with `/reload` when they are idle, or start a new session. Historical parentage is not guessed.
+Install the companion server and its matching Pi package from this release's source revision on each machine. Restart the companion. New Pi sessions use the updated package automatically. Sessions using only the globally installed package can run `/reload` when idle. Sessions launched with an explicit `-e` or `--extension` path should be exited and resumed using the updated installation: `/reload` retains the old launch-time extension path and can load both versions. Historical parentage is not guessed.
 
 The parent field is additive. Existing iPhone and web clients continue to work. The Mac app still connects to older companions, but session families require the updated server and Pi package. Grouping is scoped to the selected machine and spans its workspaces.
 

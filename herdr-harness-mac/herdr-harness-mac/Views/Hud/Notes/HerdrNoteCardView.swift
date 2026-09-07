@@ -77,6 +77,9 @@ struct HerdrNoteCardView: View {
                 .herdrFont(.subheadline, weight: .bold)
                 .foregroundStyle(note.color.ink)
             Spacer(minLength: 0)
+            headerButton(symbol: "bubble.left", help: "Ask about this note", identifier: "hud-note-ask", note: note) {
+                model.presentContextualAssistant(note: note)
+            }
             headerButton(symbol: "sparkles", help: "Tidy with AI", identifier: "hud-note-ai", note: note) {
                 Task { await notes.cleanUp(note.id, model: model) }
             }

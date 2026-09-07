@@ -21,6 +21,7 @@ every client supports every feature or that all integrations work without setup.
 | Mac, iPhone, and browser clients | Follow work from a native desktop app, your phone, or a browser connected to your companion server. The clients have different capabilities. |
 | Terminal sessions | Browse workspaces and panes, see terminal output, and send input to a running upstream Herdr terminal session. |
 | Pi agent conversations | Chat with Pi agents, follow their replies and tool activity, attach files, and choose available models and reasoning settings. Requires Pi and its configured providers. |
+| Contextual questions | Ask about selected Git code, the current Herdr pane from the Mac HUD, or a note. Inspect and add context, resume questions, and explicitly continue in an agent for actions. Requires a companion with `contextual-question-v1`; the initial question profile uses supplied context with all tools disabled. |
 | Floating Mac assistant | Use a compact floating panel to send prompts and follow agent progress and results without keeping the main window in front. |
 | Notes | Capture ideas, keep notes alongside your work, and use them as context for agents. |
 | Active Work board | Organize work items, follow their status, and return to the sessions doing the work. Optional automation can connect this board to other tools. |

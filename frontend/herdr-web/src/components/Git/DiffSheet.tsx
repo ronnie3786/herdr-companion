@@ -197,7 +197,7 @@ export function DiffInspector({ paneId }: { paneId: string }) {
           </div>
         )}
       </div>
-      <SelectionAskLauncher paneId={paneId} file={sheet.file} containerRef={diffBodyRef} />
+      <SelectionAskLauncher paneId={paneId} file={sheet.file} section={sheet.section} rootPath={entry.snapshot?.rootPath} revision={sheet.commitHash ?? undefined} containerRef={diffBodyRef} />
     </section>
   );
 }

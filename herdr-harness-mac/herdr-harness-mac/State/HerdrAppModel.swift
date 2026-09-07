@@ -47,6 +47,7 @@ final class HerdrAppModel {
     var connectionState: ConnectionState = .disconnected
     var selectedTab: AppTab = .workspaces
     var selectedWorkspaceID: String?
+    @ObservationIgnored let assistantCoordinator = AssistantCoordinator()
     var selectedPaneID: String?
     var workspacePath: [WorkspaceRoute] = []
     var isSidebarPresented = false
@@ -212,7 +213,8 @@ final class HerdrAppModel {
         credentials: any HerdrCredentialStore = KeychainCredentialStore(),
         arguments: [String] = ProcessInfo.processInfo.arguments,
         userDefaults: UserDefaults = .standard,
-        resultArtifactOpener: AgentResultArtifactOpener? = nil
+        resultArtifactOpener: AgentResultArtifactOpener? = nil,
+        configuredMachines: [HerdrMachine] = HerdrMachine.configuredMachines()
     ) {
         self.credentials = credentials
         self.userDefaults = userDefaults
@@ -239,7 +241,7 @@ final class HerdrAppModel {
         let uiTestServerURL: String? = nil
         let uiTestToken = ""
         #endif
-        Self.migrateMachinesIfNeeded(defaults: defaults, credentials: credentials)
+        Self.migrateMachinesIfNeeded(defaults: defaults, credentials: credentials, configuredMachines: configuredMachines)
         let bundledURL = Bundle.main.object(forInfoDictionaryKey: "HerdrDemoServerURL") as? String
         let persistedMachines = Self.loadMachines(defaults: defaults)
         machines = uiTestServerURL.map {
@@ -2121,6 +2123,52 @@ final class HerdrAppModel {
             return "\(name): \(message)"
         }
         activityFeedError = failures.isEmpty ? nil : failures.joined(separator: "\n")
+    }
+
+    func presentContextualAssistant(machineID preferredMachineID: String? = nil, note: HerdrNote? = nil) {
+        let selectedPane = selectedPaneID.flatMap { pane(id: $0) }
+        guard let machineID = preferredMachineID ?? selectedPane?.machineID ?? machines.first?.id else {
+            toastMessage = "Connect a machine to ask a contextual question."
+            return
+        }
+        let originPane = selectedPane?.machineID == machineID && note == nil ? selectedPane : nil
+        let machineName = machines.first(where: { $0.id == machineID })?.name ?? "Machine"
+        let context: AssistantContext
+        let title: String
+        if let note {
+            title = machineName + " · " + note.title
+            context = AssistantContext(source: .init(feature: "notes", instanceId: note.id.uuidString),
+                                       items: [.init(id: note.id.uuidString, kind: "note.v1", label: note.title, text: note.body)])
+        } else {
+            title = machineName + " · " + (originPane?.label ?? originPane?.title ?? "No feature context")
+            let detail = originPane.map { "Herdr pane: \($0.label ?? $0.title ?? "Untitled")\nWorking directory: \($0.foregroundCWD ?? $0.cwd ?? "Unknown")\nStatus: \($0.agentStatus)" } ?? "No Herdr pane is selected. Ask a general question or attach context."
+            context = AssistantContext(source: .init(feature: "hud", instanceId: originPane?.paneID ?? "machine"),
+                                       items: [.init(id: "origin", kind: "view.v1", label: "Current Herdr view", text: detail)])
+        }
+        #if DEBUG
+        if isDemoMode {
+            assistantCoordinator.present(title: title, machineID: "demo-" + machineID, paneID: originPane?.paneID,
+                                         rootPath: originPane?.foregroundCWD ?? originPane?.cwd, context: context,
+                                         transport: AssistantDemo().transport)
+            return
+        }
+        #endif
+        guard let client = client(forMachine: machineID) else {
+            toastMessage = "Connect the selected machine before asking a question."
+            return
+        }
+        let transport = AssistantTransport(
+            capabilities: { try await client.assistantCapabilities() },
+            start: { try await client.startAssistant($0).run },
+            fetch: { try await client.fetchHeadlessAgent(id: $0).run },
+            stop: { try await client.cancelHeadlessAgent(id: $0).run },
+            models: { try await client.fetchAgentModels() },
+            promote: { try await client.promoteHeadlessAgent(id: $0, workspaceID: nil).run },
+            openAgent: { HerdrMacAppDelegate.openPaneURLWithFallback(MachineScopedID.compose(machineID: machineID, rawID: $0)) }
+        )
+        assistantCoordinator.present(title: title, machineID: machineID, paneID: originPane?.paneID,
+                                     rootPath: originPane?.foregroundCWD ?? originPane?.cwd,
+                                     context: context, transport: transport)
     }
 
     func startHeadlessAgent(
@@ -4060,10 +4108,10 @@ final class HerdrAppModel {
         return machines
     }
 
-    private static func migrateMachinesIfNeeded(defaults: UserDefaults, credentials: any HerdrCredentialStore) {
+    private static func migrateMachinesIfNeeded(defaults: UserDefaults, credentials: any HerdrCredentialStore, configuredMachines: [HerdrMachine]) {
         guard defaults.object(forKey: "herdr.machines") == nil else { return }
         guard let urlString = defaults.string(forKey: "herdr.serverURL") else {
-            defaults.set(try? JSONEncoder().encode(HerdrMachine.configuredMachines()), forKey: "herdr.machines")
+            defaults.set(try? JSONEncoder().encode(configuredMachines), forKey: "herdr.machines")
             return
         }
         let machine = HerdrMachine(id: UUID().uuidString, name: Self.machineName(for: urlString), urlString: urlString)

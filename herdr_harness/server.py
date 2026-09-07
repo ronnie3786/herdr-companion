@@ -409,6 +409,7 @@ def api_description() -> dict:
             "cleanupModels": "/api/v1/cleanup/models",
             "agentRuns": "/api/v1/agent-runs",
             "agentRun": "/api/v1/agent-runs/{runId}",
+            "assistantCapabilities": "/api/v1/agent-runs/capabilities",
             "agentModels": "/api/v1/agent-runs/models",
             "agentPrompts": "/api/v1/agent-runs/prompts",
             "fleet": "/api/v1/fleet",
@@ -1662,6 +1663,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         "continueFromRunId",
                         "systemPrompt",
                         "paneId",
+                        "profile", "context", "scope", "clientRequestId",
                     }
                     for key in body
                 ):
@@ -1694,6 +1696,10 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         continue_from_run_id = _agent_run_id(body.get("continueFromRunId"))
                     except HTTPValidationError as exc:
                         raise HTTPValidationError("continueFromRunId is invalid") from exc
+                if body.get("profile") is not None:
+                    return service.start_contextual_question(body), 202
+                if any(key in body for key in ("context", "scope", "clientRequestId")):
+                    raise HTTPValidationError("Contextual fields require a question profile")
                 return (
                     service.start_agent_run(
                         prompt=prompt,
@@ -1708,12 +1714,18 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     ),
                     202,
                 )
+            if method == "GET" and tail == ["agent-runs", "capabilities"]:
+                from .assistant import capabilities
+                return capabilities()
             if method == "GET" and tail == ["agent-runs", "models"]:
                 return service.list_agent_models()
             if method == "GET" and tail == ["agent-runs", "prompts"]:
                 return service.agent_prompt_defaults()
             if len(tail) >= 2 and tail[0] == "agent-runs":
                 run_id = _agent_run_id(tail[1])
+                if method == "GET" and len(tail) == 3 and tail[2] == "turns":
+                    from .assistant import history
+                    return history(service.agent_runs, run_id, _query_int(query, "offset", default=0, minimum=0, maximum=100000))
                 if method == "GET" and len(tail) == 2:
                     return service.get_agent_run(run_id)
                 if method == "DELETE" and len(tail) == 2:

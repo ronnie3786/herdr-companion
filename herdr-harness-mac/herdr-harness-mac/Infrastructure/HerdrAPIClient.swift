@@ -692,6 +692,14 @@ actor HerdrAPIClient: HerdrNotesClient {
         try fileManager.moveItem(at: stagingURL, to: destinationURL)
     }
 
+    func assistantCapabilities() async throws -> AssistantCapabilities {
+        try await request(path: "/api/v1/agent-runs/capabilities")
+    }
+
+    func startAssistant(_ body: AssistantRequest) async throws -> HeadlessAgentRunEnvelope {
+        try await request(path: "/api/v1/agent-runs", method: "POST", body: body)
+    }
+
     func startHeadlessAgent(
         prompt: String,
         mode: HeadlessAgentRunMode = .ask,

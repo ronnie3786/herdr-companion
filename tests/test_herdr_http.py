@@ -970,6 +970,20 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertNotIn("workspace_label", self.service.calls[-1][1])
         self.assertNotIn("tab_label", self.service.calls[-1][1])
 
+    def test_contextual_question_capabilities_and_dispatch(self):
+        status, _, body = self.request("/api/v1/agent-runs/capabilities")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["tools"], "supplied-context-only")
+        status, _, _ = self.request("/api/v1/agent-runs/capabilities", token="wrong")
+        self.assertEqual(status, 401)
+        self.service.start_contextual_question = Mock(return_value={"ok": True, "run": {"id": "agr_0123456789ab"}})
+        request = {"prompt": "Explain", "profile": "contextual-question-v1", "clientRequestId": "fixture-request-00001", "context": {"version": 1}}
+        status, _, _ = self.request("/api/v1/agent-runs", method="POST", payload=request)
+        self.assertEqual(status, 202)
+        self.service.start_contextual_question.assert_called_once_with(request)
+        status, _, _ = self.request("/api/v1/agent-runs", method="POST", payload={"prompt": "Explain", "context": {}})
+        self.assertEqual(status, 400)
+
     def test_agent_run_routes_use_async_start_and_stable_envelope(self):
         status, _, body = self.request(
             "/api/v1/agent-runs",

@@ -14,6 +14,8 @@ export interface SelectedDiffLine {
 
 export interface SelectionAskContext {
   code: string;
+  exactCode?: string;
+  spans?: { side: "old" | "new" | "unknown"; startLine: number; endLine: number }[];
   startLine: number | null;
   endLine: number | null;
 }
@@ -87,6 +89,12 @@ export function selectionAskContext(
   const code = perLine.length > 0 ? normalizeSelectedCode(perLine.join("\n")) : normalizeSelectedCode(selectionText);
   return {
     code,
+    exactCode: perLine.length > 0 ? perLine.join("\n") : selectionText,
+    spans: lines.flatMap((line) => line.lineNumber === null ? [] : [{
+      side: line.lineType === "change-deletion" || line.lineType === "deletion" ? "old" as const :
+        line.lineType === "change-addition" || line.lineType === "addition" ? "new" as const : "unknown" as const,
+      startLine: line.lineNumber, endLine: line.lineNumber,
+    }]),
     startLine: numbers.length > 0 ? Math.min(...numbers) : null,
     endLine: numbers.length > 0 ? Math.max(...numbers) : null,
   };

@@ -2668,6 +2668,21 @@ class HerdrService:
             continue_from_run_id=continue_from_run_id,
         )
 
+    def start_contextual_question(self, request: dict) -> dict:
+        from .assistant import start, validate_context
+        validate_context(request.get("context"))
+        pane_id = request.get("paneId")
+        cwd = str(self._server_home())
+        workspace_id = None
+        if pane_id is not None:
+            pane, root = self._pane_tool_context(pane_id)
+            if request.get("context", {}).get("source", {}).get("feature") == "git.diff":
+                root = workspace_tools.git_root(root)
+            cwd = str(root)
+            workspace_id = pane.get("workspace_id")
+        return start(self.agent_runs, request=request, cwd=cwd,
+                     pane_id=pane_id, workspace_id=workspace_id)
+
     def get_agent_run(self, run_id: str) -> dict:
         return self.agent_runs.get(run_id)
 
@@ -2700,6 +2715,20 @@ class HerdrService:
             if run.get("status") == "promoted":
                 return self.agent_runs.get(run_id)
             try:
+                if run.get("profile") == "contextual-question-v1":
+                    scope = run["assistantScope"]
+                    if scope.get("paneId"):
+                        _, current_root = self._pane_tool_context(scope["paneId"])
+                        if run.get("context", {}).get("source", {}).get("feature") == "git.diff":
+                            current_root = workspace_tools.git_root(current_root)
+                        if str(current_root.resolve()) != scope["rootPath"]:
+                            raise AgentRunError("The source repository changed before handoff.", code="assistant_scope_changed", status=409)
+                    if workspace_id is not None and workspace_id != scope.get("workspaceId"):
+                        raise AgentRunError("Handoff must use the question's workspace.", code="assistant_scope_changed", status=409)
+                    if cwd is not None and str(Path(cwd).resolve()) != scope["rootPath"]:
+                        raise AgentRunError("Handoff must use the question's directory.", code="assistant_scope_changed", status=409)
+                    workspace_id = scope.get("workspaceId")
+                    cwd = scope["rootPath"]
                 result = self.quick_pi_session(
                     str(run.get("label") or "Agent chat")[:120],
                     workspace_id=workspace_id,

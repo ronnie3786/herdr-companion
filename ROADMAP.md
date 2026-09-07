@@ -3,6 +3,23 @@
 Herdr is an experimental personal tool. These are topics to revisit, not release
 commitments or promised dates.
 
+## Contextual question assistant
+
+**Status:** Initial implementation complete; private validation and rollout in progress.
+
+A reusable question conversation component supports Git selection, HUD, and Notes.
+The initial question profile uses supplied context with tools disabled. Scoped
+repository tools, iOS adoption, and streaming remain follow-up work.
+
+The architecture describes a reusable question conversation component for Git selections, the
+floating Mac HUD, and additional features. Presenting features provide structured
+location and context; shared infrastructure handles conversations, recovery, and
+an explicit handoff to an agent for actions.
+
+See the [architecture and implementation plan](docs/contextual-assistant-architecture.md)
+for existing integration points, the proposed context/API contract, compatibility,
+and phased acceptance criteria.
+
 ## Reassess the web companion
 
 **Status:** Deferred. Direction undecided.

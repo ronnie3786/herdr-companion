@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
 import { clampAnchor, selectionAskContext, type SelectionAskContext } from "./selectionAsk";
-import { InlineAskPanel, type InlineAskAnchor } from "./InlineAskPanel";
+import { InlineAskPanel, gitQuestionKey, hasGitQuestion, type InlineAskAnchor } from "./InlineAskPanel";
 
 const BUTTON_WIDTH = 108;
 const BUTTON_HEIGHT = 30;
 const PANEL_WIDTH = 380;
-const PANEL_HEIGHT = 420;
+const PANEL_HEIGHT = 480;
 const SELECTION_SETTLE_MS = 90;
 
 interface FloatingAskTarget {
@@ -17,6 +17,9 @@ interface FloatingAskTarget {
 interface SelectionAskLauncherProps {
   paneId: string;
   file: string;
+  section?: string;
+  rootPath?: string;
+  revision?: string;
   /** The scrollable diff container; Pierre's shadow DOM lives below it. */
   containerRef: React.MutableRefObject<HTMLDivElement | null>;
 }
@@ -27,7 +30,7 @@ interface SelectionAskLauncherProps {
  * clicking it opens the inline chat panel with the highlighted code, file,
  * and line range already attached.
  */
-export function SelectionAskLauncher({ paneId, file, containerRef }: SelectionAskLauncherProps) {
+export function SelectionAskLauncher({ paneId, file, containerRef, section, rootPath, revision }: SelectionAskLauncherProps) {
   const [pending, setPending] = useState<FloatingAskTarget | null>(null);
   const [open, setOpen] = useState<FloatingAskTarget | null>(null);
   const debounceRef = useRef<number | null>(null);
@@ -184,9 +187,18 @@ export function SelectionAskLauncher({ paneId, file, containerRef }: SelectionAs
           <span>Ask AI</span>
         </button>
       ) : null}
+      {open === null && hasGitQuestion(gitQuestionKey(paneId, file, section, rootPath)) ? (
+        <button className="hz-inline-ask-launcher" style={{ right: 26, bottom: 26 }} onClick={() => setOpen({
+          anchor: clampAnchor(window.innerWidth - PANEL_WIDTH - 26, 90, PANEL_WIDTH, PANEL_HEIGHT, window.innerWidth, window.innerHeight),
+          context: { code: "", startLine: null, endLine: null },
+        })}>Resume question</button>
+      ) : null}
       {open !== null ? (
         <InlineAskPanel
           paneId={paneId}
+          section={section}
+          rootPath={rootPath}
+          revision={revision}
           file={file}
           context={open.context}
           anchor={open.anchor}

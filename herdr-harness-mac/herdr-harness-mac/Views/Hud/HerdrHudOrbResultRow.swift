@@ -37,7 +37,7 @@ struct HerdrHudOrbResultRow: View {
                 .frame(width: 32, height: 32)
                 .background(HerdrTheme.elevated, in: .circle)
                 .overlay { Circle().strokeBorder(HerdrTheme.graphite, lineWidth: 3) }
-                .scaleEffect(0.5)
+                .scaleEffect(0.625)
                 .contentShape(.circle)
                 .buttonStyle(.plain)
                 .offset(y: -4)

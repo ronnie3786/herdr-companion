@@ -56,6 +56,19 @@ ssh_user = "private-user"
                 self.assertEqual(entitlements["com.apple.developer.associated-domains"], ["applinks:app.example.test"])
                 if platform == "mac":
                     self.assertTrue(entitlements["com.apple.security.app-sandbox"])
+                    self.assertNotIn("keychain-access-groups", entitlements)
+                    self.assertIn("HERDR_MAC_KEYCHAIN_BACKEND = login", (project / "Local.xcconfig").read_text())
+
+    def test_mac_keychain_group_preserves_signing_build_variables(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.generate(root, 'mac_keychain_backend = "data-protection"\n')
+            generated = root / "herdr-harness-mac" / "Local.entitlements"
+            entitlements = plistlib.loads(generated.read_bytes())
+            self.assertEqual(
+                entitlements["keychain-access-groups"],
+                ["$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)"],
+            )
 
     def test_predictable_temporary_symlink_cannot_overwrite_another_file(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -82,6 +95,11 @@ ssh_user = "private-user"
         with tempfile.TemporaryDirectory() as temp:
             with self.assertRaisesRegex(ValueError, "team_id"):
                 self.generate(Path(temp), 'team_id = "TEAM\\nOTHER_SETTING=unsafe"\n')
+
+    def test_unknown_mac_keychain_backend_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with self.assertRaisesRegex(ValueError, "mac_keychain_backend"):
+                self.generate(Path(temp), 'mac_keychain_backend = "plaintext"\n')
 
     def test_widget_identity_must_belong_to_parent_app(self):
         with tempfile.TemporaryDirectory() as temp:

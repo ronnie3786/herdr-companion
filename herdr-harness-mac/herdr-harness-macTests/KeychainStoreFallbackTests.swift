@@ -9,7 +9,11 @@ struct KeychainStoreFallbackTests {
     func neverPersistsPlaintextFallback() {
         let account = "security-test-\(UUID().uuidString)"
         let fallbackKey = "herdr.keychainFallback.\(account)"
-        defer { KeychainStore.removeValue(for: account) }
+        defer {
+            KeychainStore.removeValue(for: account)
+            UserDefaults.standard.removeObject(forKey: fallbackKey)
+            UserDefaults.standard.removeObject(forKey: "herdr.keychainDeleted.\(account)")
+        }
 
         let status = KeychainStore.set("test-only-token", for: account)
 
@@ -29,7 +33,11 @@ struct KeychainStoreFallbackTests {
         let account = "security-migration-test-\(UUID().uuidString)"
         let fallbackKey = "herdr.keychainFallback.\(account)"
         UserDefaults.standard.set("legacy-test-token", forKey: fallbackKey)
-        defer { KeychainStore.removeValue(for: account) }
+        defer {
+            KeychainStore.removeValue(for: account)
+            UserDefaults.standard.removeObject(forKey: fallbackKey)
+            UserDefaults.standard.removeObject(forKey: "herdr.keychainDeleted.\(account)")
+        }
 
         let recovered = KeychainStore.value(for: account)
         if recovered.isEmpty {

@@ -63,7 +63,11 @@ def main() -> None:
     environment = str(apple.get("apns_environment", "development"))
     if environment not in ("development", "production"):
         raise ValueError("apple.apns_environment must be development or production")
+    mac_backend = str(apple.get("mac_keychain_backend", "login"))
+    if mac_backend not in ("login", "data-protection"):
+        raise ValueError("apple.mac_keychain_backend must be login or data-protection")
     settings = {
+        "HERDR_MAC_KEYCHAIN_BACKEND": mac_backend,
         "HERDR_DEVELOPMENT_TEAM": identifier(apple.get("team_id"), "apple.team_id", empty=True),
         "HERDR_MAC_BUNDLE_ID": mac_id,
         "HERDR_IOS_BUNDLE_ID": ios_id,
@@ -91,6 +95,11 @@ def main() -> None:
         project = ROOT / f"herdr-harness-{platform}"
         app = project / f"herdr-harness-{platform}"
         entitlements = plistlib.loads((app / f"herdr_harness_{platform}.entitlements").read_bytes())
+        if platform == "mac":
+            if mac_backend == "data-protection":
+                entitlements["keychain-access-groups"] = ["$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)"]
+            else:
+                entitlements.pop("keychain-access-groups", None)
         if domains or platform == "ios":
             entitlements["com.apple.developer.associated-domains"] = domains
         if platform == "ios":

@@ -182,6 +182,10 @@ Configure signing team, bundle IDs, Keychain identity, associated domains, and A
 topic together. Existing installations may need private identity overrides or
 re-pairing when these values change.
 
+Direct Mac installations use the secure login Keychain by default and require no
+App Store submission. See [Apple configuration](herdr-harness-mac/APPLE_CONFIGURATION.md)
+for the optional Data Protection backend and the credential deployment probe.
+
 ## Development and verification
 
 ```sh

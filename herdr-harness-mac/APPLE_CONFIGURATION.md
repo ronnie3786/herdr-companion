@@ -16,6 +16,7 @@ mac_bundle_id = "org.example.herdr.macos"
 ios_bundle_id = "org.example.herdr.ios"
 widget_bundle_id = "org.example.herdr.ios.widgets"
 keychain_service = ""
+mac_keychain_backend = "login"
 legacy_keychain_service = ""
 associated_domains = []
 apns_environment = "development"
@@ -69,3 +70,59 @@ application identity.
 Build public releases from a clean checkout without these private generated files.
 Local app artifacts include configured machine addresses, domains, and signing
 identity even though they contain no API tokens.
+
+## Mac credential storage for direct installation
+
+The default `apple.mac_keychain_backend = "login"` uses the encrypted macOS
+file-based login Keychain through the SecItem APIs. Items receive an access-control
+list that trusts the creating application. A stable signing identity helps preserve
+that trust across updates. Keychain may ask for authorization when an app's identity
+changes or the login Keychain is locked. No App Store submission, Data Protection
+access group, or provisioning profile is required for this default backend.
+
+The login Keychain uses macOS file-based access controls. It does not provide the
+Data Protection backend's `ThisDeviceOnly` accessibility class, biometric access
+controls, or access-group authorization. Herdr does not claim those properties for
+login-Keychain items. It never configures an allow-all-applications access list.
+
+For a separately provisioned app, set `mac_keychain_backend = "data-protection"`.
+The generator then adds `$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)` as the
+Mac Keychain access group. This option requires the appropriate signed entitlements
+and Mac provisioning profile. Backend selection is explicit: a failed DP access
+never silently switches a configured DP app to login storage. iOS continues to use
+its existing Keychain implementation.
+
+When the selected backend has no item, Herdr can securely copy an accessible item
+from the previous backend or configured prior service. The source is retained for
+rollback. Existing plaintext from older builds is removed only after its value is
+successfully written to Keychain. Locked or denied reads and failed writes preserve
+migration sources and leave the credential unavailable. New failed saves never create plaintext.
+Deleting a credential removes accessible copies and records a nonsecret deletion
+marker, so an inaccessible old backend cannot later restore a deleted credential.
+
+Apple documents the two storage and access-control models in [TN3137: On Mac
+keychain APIs and implementations](https://developer.apple.com/documentation/technotes/tn3137-on-mac-keychains).
+The creating-app-only ACL follows [SecAccessCreate](https://developer.apple.com/documentation/security/secaccesscreate(_:_:_:)).
+
+## Verify signed credential access before deployment
+
+Run the final signed app executable with the same newly generated UUID for each
+invocation. The probe exits before app models or windows initialize, accesses only
+its synthetic Keychain item, and emits JSON containing numeric statuses and
+verification booleans. It never reads saved settings, server tokens, or legacy
+plaintext fallback entries. A failed verification exits nonzero.
+
+```bash
+probe_id=$(uuidgen)
+app_binary="/path/to/Herdr.app/Contents/MacOS/herdr-harness-mac"
+"$app_binary" --herdr-keychain-probe write "$probe_id"
+"$app_binary" --herdr-keychain-probe read "$probe_id"
+"$app_binary" --herdr-keychain-probe read "$probe_id"
+"$app_binary" --herdr-keychain-probe delete "$probe_id"
+```
+
+Each command starts a separate process, so the reads verify persistence across
+relaunches. Always run the delete step, including after a failed read. Deletion
+also verifies that the synthetic item is absent. Test the installed copy on the
+destination Mac: a unit-test host or a differently signed build does not prove
+that the delivered app has usable Keychain entitlements.

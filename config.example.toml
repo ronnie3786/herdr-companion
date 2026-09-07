@@ -134,6 +134,7 @@ bundle_prefix = "org.herdr.companion"
 # widget_bundle_id = "org.yourname.herdr.ios.widget"
 # terminal_bundle_id = "org.yourname.terminal" # Optional Mac terminal application.
 # keychain_service = "org.yourname.herdr"
+mac_keychain_backend = "login" # Use "data-protection" only for a provisioned Mac app.
 # legacy_keychain_service = "" # Private upgrade compatibility only.
 associated_domains = []
 apns_environment = "development"

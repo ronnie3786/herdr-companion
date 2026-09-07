@@ -72,6 +72,8 @@
 	<false/>
 	<key>NSSupportsSuddenTermination</key>
 	<false/>
+	<key>HerdrMacKeychainBackend</key>
+	<string>$(HERDR_MAC_KEYCHAIN_BACKEND)</string>
 	<key>HerdrKeychainService</key>
 	<string>$(HERDR_KEYCHAIN_SERVICE)</string>
 	<key>HerdrLegacyKeychainService</key>

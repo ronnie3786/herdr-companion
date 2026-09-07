@@ -4,6 +4,9 @@ import Foundation
 enum HerdrAppIdentity {
     static var bundleIdentifier: String { Bundle.main.bundleIdentifier ?? "org.herdr.companion" }
     static var keychainService: String { setting("HerdrKeychainService") ?? bundleIdentifier }
+    static var keychainBackend: MacKeychainBackend {
+        setting("HerdrMacKeychainBackend").flatMap(MacKeychainBackend.init(rawValue:)) ?? .login
+    }
     static var legacyKeychainService: String? { setting("HerdrLegacyKeychainService") }
     static var terminalBundleIdentifier: String? { setting("HerdrTerminalBundleIdentifier") }
     static var pushEnvironment: String {

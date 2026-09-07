@@ -18,7 +18,6 @@ enum HerdrExternalEvent {
     static let paneRoutes: Set<String> = ["herdr://", "/open/pane"]
 }
 
-@main
 struct HerdrHarnessMacApp: App {
     @NSApplicationDelegateAdaptor(HerdrMacAppDelegate.self) private var appDelegate
     @State private var model = HerdrAppModel()

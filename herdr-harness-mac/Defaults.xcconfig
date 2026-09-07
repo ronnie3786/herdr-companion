@@ -4,6 +4,7 @@ HERDR_MAC_BUNDLE_ID = org.herdr.companion.macos
 HERDR_IOS_BUNDLE_ID = org.herdr.companion.ios
 HERDR_WIDGET_BUNDLE_ID = org.herdr.companion.ios.widgets
 HERDR_KEYCHAIN_SERVICE =
+HERDR_MAC_KEYCHAIN_BACKEND = login
 HERDR_LEGACY_KEYCHAIN_SERVICE =
 HERDR_TERMINAL_BUNDLE_ID =
 HERDR_APNS_ENVIRONMENT = development

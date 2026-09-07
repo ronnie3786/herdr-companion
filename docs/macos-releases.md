@@ -197,6 +197,12 @@ checks existing assets before resuming. If another release changed the feed sinc
 preparation, prepare again in a new output directory. Do not manually edit signed
 artifacts or overwrite versioned release assets to make a retry pass.
 
+If the rolling feed became unavailable during GitHub's replacement upload,
+ordinary retry stops. After confirming that no newer release was published, rerun
+the same publish command with `--restore-missing-feed`. This explicit repair
+requires the versioned release to be published already, with its tag and every
+asset matching the prepared manifest. It never replaces versioned assets.
+
 ## First transition from a private app identity
 
 An existing private build may use a different bundle identifier, preferences

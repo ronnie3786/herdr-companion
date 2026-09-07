@@ -41,6 +41,9 @@ every client supports every feature or that all integrations work without setup.
 When adding or changing a user-facing feature, update this list and describe any
 setup it needs. Release notes record what changed in a particular version.
 
+See the [roadmap](ROADMAP.md) for deferred work and open product decisions,
+including whether to improve or retire the standalone web companion.
+
 ## Start the server
 
 Clone this repository, then run the commands below from your checkout.

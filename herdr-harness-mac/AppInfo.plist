@@ -82,5 +82,27 @@
 	<string>$(HERDR_TERMINAL_BUNDLE_ID)</string>
 	<key>HerdrAPNsEnvironment</key>
 	<string>$(APS_ENVIRONMENT)</string>
+	<key>SUFeedURL</key>
+	<string>$(HERDR_UPDATE_FEED_URL)</string>
+	<key>SUPublicEDKey</key>
+	<string>$(HERDR_UPDATE_PUBLIC_ED_KEY)</string>
+	<key>HerdrUpdateBundleIdentifier</key>
+	<string>$(HERDR_UPDATE_BUNDLE_ID)</string>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
+	<key>SUEnableInstallerLauncherService</key>
+	<true/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUAllowsAutomaticUpdates</key>
+	<false/>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUSendProfileInfo</key>
+	<false/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>14400</integer>
 </dict>
 </plist>

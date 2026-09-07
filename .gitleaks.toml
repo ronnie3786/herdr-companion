@@ -1,0 +1,18 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Herdr public Ed25519 verification key; the private signing key stays in Keychain"
+condition = "AND"
+regexTarget = "secret"
+regexes = ['^kXHvYAhLjLOEfXqCkkRxJUsqAygWHtgzk82h6qOJNUQ=$']
+paths = ['(^|/)(herdr-harness-mac/Defaults\.xcconfig|scripts/release-macos\.py)$']
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "Pinned SHA256 of the official Sparkle generate_keys executable, not a credential"
+condition = "AND"
+regexTarget = "secret"
+regexes = ['^2d18ed3a9c744e58150513d9b2e3c2eb76fd0b9621e3e4678d46dd972547e8fe$']
+paths = ['(^|/)scripts/release-macos\.py$']

@@ -21,6 +21,7 @@ enum HerdrExternalEvent {
 struct HerdrHarnessMacApp: App {
     @NSApplicationDelegateAdaptor(HerdrMacAppDelegate.self) private var appDelegate
     @State private var model = HerdrAppModel()
+    @State private var updates = HerdrUpdateController()
     @State private var herdPulse = HerdPulseCoordinator()
     @State private var shell = HerdrShellState()
     @State private var activeWorkStore = ActiveWorkStore()
@@ -65,6 +66,12 @@ struct HerdrHarnessMacApp: App {
                 modelFavorites: modelFavorites,
                 fontScale: fontScale
             )
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    if let version = updates.availableVersion {
+                        HerdrUpdateBanner(version: version, updates: updates)
+                    }
+                }
+                .task { updates.start() }
                 .environment(herdPulse)
                 // Apple documents `dynamicTypeSize` as not affecting text size
                 // on macOS, so Herdr uses this custom scale environment instead.
@@ -88,7 +95,8 @@ struct HerdrHarnessMacApp: App {
                 herdPulse: herdPulse,
                 fontScale: fontScale,
                 hudController: hudController,
-                quickVoiceController: quickVoiceController
+                quickVoiceController: quickVoiceController,
+                updates: updates
             )
         }
 
@@ -111,7 +119,8 @@ struct HerdrHarnessMacApp: App {
                 agentSettings: agentSettings,
                 promptSettings: promptSettings,
                 modelFavorites: modelFavorites,
-                hudController: hudController
+                hudController: hudController,
+                updates: updates
             )
                 .environment(\.herdrFontScale, fontScale.scale)
                 .frame(width: 560, height: 640)
@@ -135,12 +144,21 @@ struct HerdrMacCommands: Commands {
     @Bindable var fontScale: HerdrFontScaleStore
     let hudController: HerdrHudController
     let quickVoiceController: QuickVoicePanelController
+    let updates: HerdrUpdateController
 
     var body: some Commands {
         // On macOS ⌘B/⌘I/⌘U are Format ▸ Font key equivalents, not text-view
         // key bindings. Without this menu nothing claims them and AppKit beeps,
         // which is exactly what the rich-text note editor was doing.
         TextFormattingCommands()
+
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") {
+                updates.checkForUpdates()
+            }
+            .disabled(!updates.canCheckForUpdates)
+            .accessibilityIdentifier("menu-check-for-updates")
+        }
 
         CommandGroup(replacing: .newItem) {
             Button("New Workspace") {

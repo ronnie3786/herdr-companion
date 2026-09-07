@@ -8,6 +8,7 @@ struct SettingsView: View {
     let promptSettings: HerdrPromptSettingsStore
     let modelFavorites: ModelFavoritesStore
     let hudController: HerdrHudController
+    @Bindable var updates: HerdrUpdateController
     @State private var isPresentingMachines = false
     @State private var isPresentingMachineEditor = false
     @State private var editingMachine: HerdrMachine?
@@ -32,6 +33,7 @@ struct SettingsView: View {
             textSizeSection
             privacySection
             ScreenRecordingSettingsSection()
+            updatesSection
             aboutSection
         }
         .formStyle(.grouped)
@@ -485,6 +487,47 @@ struct SettingsView: View {
             Text("The menu bar is visible in screen shares, recordings, and screenshots.")
         }
         .herdrFont(.subheadline)
+    }
+
+    private var updatesSection: some View {
+        Section {
+            Toggle("Automatically check for updates", isOn: $updates.automaticallyChecksForUpdates)
+                .disabled(!updates.isConfigured)
+                .accessibilityIdentifier("settings-updates-automatic-checks")
+
+            Toggle("Include preview builds", isOn: $updates.includesPreviewUpdates)
+                .disabled(!updates.isConfigured || updates.isUpdateSessionInProgress)
+                .accessibilityIdentifier("settings-updates-preview-builds")
+
+            Button("Check for Updates…") {
+                updates.checkForUpdates()
+            }
+            .disabled(!updates.canCheckForUpdates)
+            .accessibilityIdentifier("settings-check-for-updates")
+
+            if let message = updates.statusMessage {
+                Text(message)
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.mist)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("settings-updates-status")
+            } else if !updates.isConfigured {
+                Text("Updates are not available in this build.")
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.mist)
+                    .accessibilityIdentifier("settings-updates-status")
+            }
+        } header: {
+            Label("App updates", systemImage: "arrow.down.circle")
+        } footer: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Updates come from GitHub Releases. You review an update before choosing to install it. Preview builds include changes that are still being tested.")
+                if updates.isUpdateSessionInProgress {
+                    Text("Finish or skip the current update before changing release channels.")
+                        .accessibilityIdentifier("settings-updates-channel-session-notice")
+                }
+            }
+        }
     }
 
     private var aboutSection: some View {

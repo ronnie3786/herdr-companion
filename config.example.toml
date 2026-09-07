@@ -153,6 +153,19 @@ apns_environment = "development"
 # install_root = "~/Applications"
 # ssh_identity_file = "~/.ssh/herdr"
 
+
+# Optional public macOS release publishing, configured in this SAME private file.
+# See docs/macos-releases.md. Values below are fictional examples or local references.
+# The signing certificate and Ed25519 private key stay in Keychain.
+# [deployment.macos_release]
+# signing_identity = "Developer ID Application: Example Publisher (ABCDE12345)"
+# notary_profile = "herdr-notary" # Existing notarytool Keychain profile name.
+# notary_keychain = "~/Library/Keychains/login.keychain-db" # Optional custom Keychain path.
+# sparkle_key_account = "org.example.herdr.release" # Existing account matching the pinned public key.
+# sparkle_tools = "~/Developer/Sparkle-2.9.6/bin" # Official distribution's verified tool directory.
+# private_patterns_file = "~/.config/herdr-companion/release-private-patterns.json"
+# Optional patterns input: owner-only JSON array of regex strings. chmod 600; never commit.
+
 [environment]
 # Escape hatch for any documented environment setting. Values are data, not shell.
 # HERDR_HARNESS_ACTIVE_WORK_STORE_PATH = "~/.local/share/herdr-companion/active-work.sqlite3"

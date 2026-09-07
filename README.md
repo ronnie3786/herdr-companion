@@ -186,6 +186,20 @@ Direct Mac installations use the secure login Keychain by default and require no
 App Store submission. See [Apple configuration](herdr-harness-mac/APPLE_CONFIGURATION.md)
 for the optional Data Protection backend and the credential deployment probe.
 
+## Mac app updates
+
+Configured release builds check their signed GitHub Releases feed every four hours.
+An available update appears in a banner: choose **Review update…**, then use
+Sparkle's confirmation to install and relaunch. You can also choose **Herdr →
+Check for Updates…**. Settings controls automatic checks and optional preview
+builds. This updates the Mac app independently of the companion server and uses
+no App Store submission.
+
+See [macOS releases](docs/macos-releases.md) for signing prerequisites, the
+prepare/publish commands, and the first transition from a private app identity.
+The release metadata and tooling do not imply that a public binary has been
+published or that a signing certificate is configured.
+
 ## Update components independently
 
 The Mac app and companion server can run different tested source revisions. Record
@@ -193,8 +207,10 @@ an installed revision and artifact hash for each component. Check the release's 
 and state-format requirements before updating one side; independence does not make
 arbitrary versions compatible.
 
-For a **Mac-only update**, generate Apple settings from your existing private TOML,
-build and test the selected Mac revision, and install its signed app bundle. Retain
+For a **Mac-only update** of a configured public release, use the app's update
+controls described above. For a custom private build, generate Apple settings from
+your existing private TOML, build and test the selected Mac revision, and install
+its signed app bundle. Retain
 the bundle and Keychain identities, back up the installed app and settings, and run
 the [signed credential probe](herdr-harness-mac/APPLE_CONFIGURATION.md#verify-signed-credential-access-before-deployment)
 on the destination. Keep the server runtime and its services running at their

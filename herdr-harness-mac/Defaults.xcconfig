@@ -13,4 +13,8 @@ INFOPLIST_KEY_HerdrTestedAppBundleIdentifier = $(HERDR_MAC_BUNDLE_ID)
 HERDR_CODE_SIGN_ENTITLEMENTS = herdr-harness-mac/herdr_harness_mac.entitlements
 
 // Generated locally by Scripts/configure-apple.py. Never commit this file.
+// The public verification key is safe to commit. Its private counterpart stays in Keychain.
+HERDR_UPDATE_BUNDLE_ID = org.herdr.companion.macos
+HERDR_UPDATE_FEED_URL = https:/$()/github.com/ronnie3786/herdr-companion/releases/download/macos-updates/appcast.xml
+HERDR_UPDATE_PUBLIC_ED_KEY = kXHvYAhLjLOEfXqCkkRxJUsqAygWHtgzk82h6qOJNUQ=
 #include? "Local.xcconfig"

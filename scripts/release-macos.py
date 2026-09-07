@@ -570,6 +570,20 @@ def tag_commit(tag):
     raise ReleaseError("Release tag does not resolve to a commit")
 
 
+def release_by_tag(tag):
+    # GitHub's tag endpoint excludes drafts. Authenticated release listings
+    # include them, and their numeric ID remains valid after publication.
+    page = 1
+    while True:
+        releases = api(f"releases?per_page=100&page={page}")
+        for item in releases:
+            if item["tag_name"] == tag:
+                return api(f"releases/{item['id']}")
+        if len(releases) < 100:
+            raise ReleaseError("Expected release is missing from the authenticated listing")
+        page += 1
+
+
 def verify_remote_assets(release, manifest, *, complete):
     remote = {item["name"]: item for item in release.get("assets", [])}
     expected = manifest["assets"]
@@ -617,13 +631,13 @@ def publish(args):
             arguments = ["release", "create", manifest["tag"], "--repo", REPOSITORY, "--verify-tag", "--draft", "--latest=false", "--title", "Herdr " + manifest["tag"].removeprefix("macos-v"), "--notes-file", str(path.parent / manifest["notes"])]
             if manifest["release"]["channel"] == "preview": arguments += ["--prerelease"]
             gh(*arguments)
-        existing = api("releases/tags/" + manifest["tag"])
+        existing = release_by_tag(manifest["tag"])
         if restoring_missing and existing.get("draft"):
             raise ReleaseError("Missing feed restoration cannot publish a draft version")
         missing = verify_remote_assets(existing, manifest, complete=not existing.get("draft"))
         if missing:
             gh("release", "upload", manifest["tag"], "--repo", REPOSITORY, *[str(path.parent / name) for name in sorted(missing)])
-        uploaded = api("releases/tags/" + manifest["tag"])
+        uploaded = release_by_tag(manifest["tag"])
         verify_remote_assets(uploaded, manifest, complete=True)
         if tag_commit(manifest["tag"]) != manifest["source"]:
             raise ReleaseError("Release tag changed during preparation; draft will not be published")

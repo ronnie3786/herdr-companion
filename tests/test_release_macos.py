@@ -299,6 +299,19 @@ class PreparationBoundaryTests(unittest.TestCase):
 
 
 class PublishTransactionTests(unittest.TestCase):
+    def test_draft_lookup_uses_numeric_id_and_paginates(self):
+        first_page = [{"tag_name": f"older-{n}", "id": n} for n in range(100)]
+        draft = {"id": 101, "tag_name": "preview", "draft": True}
+        with patch.object(release, "api", side_effect=[first_page, [draft], draft]) as api:
+            self.assertEqual(release.release_by_tag("preview"), draft)
+        self.assertEqual([call.args[0] for call in api.call_args_list], [
+            "releases?per_page=100&page=1", "releases?per_page=100&page=2", "releases/101"
+        ])
+
+    def test_missing_release_lookup_fails_closed(self):
+        with patch.object(release, "api", return_value=[]), self.assertRaisesRegex(release.ReleaseError, "missing"):
+            release.release_by_tag("missing")
+
     def exercise(self, *, resume=False, competing_tag=False, restore_missing=False):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "prepared.json"
@@ -312,7 +325,9 @@ class PublishTransactionTests(unittest.TestCase):
                 events.append(("api", endpoint, kwargs))
                 if endpoint == "releases/tags/" + release.FEED_TAG:
                     return {"prerelease": True, "draft": False, "immutable": False}
-                if endpoint == "releases/tags/" + manifest["tag"]:
+                if endpoint == "releases?per_page=100&page=1":
+                    return [{"tag_name": manifest["tag"], "id": 101}]
+                if endpoint == "releases/101":
                     return remote
             def call_gh(*args, **kwargs):
                 events.append(("gh", args, kwargs))

@@ -24,7 +24,7 @@ from .cleanup import CleanupError
 from .fleet import FleetError, FleetManager
 from .network import public_base_url
 from .notes import NotesError, MAX_NOTE_BYTES, MAX_NOTES
-from .pi_semantic import PI_SEMANTIC_PROTOCOL, PiSemanticError
+from .pi_semantic import PI_SEMANTIC_PROTOCOL, PiSemanticError, valid_pi_session_id
 from .secret_file import (
     SecretFileError,
     load_private_bearer_token_file,
@@ -1596,6 +1596,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         "cwd",
                         "sessionFile",
                         "sessionId",
+                        "parentSessionId",
                         "requestId",
                         "workspaceLabel",
                         "tabLabel",
@@ -1635,6 +1636,13 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 else:
                     reuse_named_tab = True
                 extra: dict[str, Any] = {}
+                if body.get("parentSessionId") is not None:
+                    parent_session_id = body["parentSessionId"]
+                    if not valid_pi_session_id(parent_session_id):
+                        raise HTTPValidationError("parentSessionId is invalid")
+                    if session_file is not None:
+                        raise HTTPValidationError("parentSessionId requires a new session")
+                    extra["parent_session_id"] = parent_session_id
                 if workspace_label is not None:
                     extra["workspace_label"] = workspace_label
                 if tab_label is not None:

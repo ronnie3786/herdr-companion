@@ -1,6 +1,7 @@
 import json
 import os
 import socket
+import sqlite3
 import stat
 import tempfile
 import threading
@@ -8,6 +9,7 @@ import time
 import unittest
 from pathlib import Path
 from typing import Optional
+from unittest.mock import patch
 
 from herdr_harness.pi_semantic import (
     PI_SEMANTIC_PROTOCOL,
@@ -724,6 +726,115 @@ class PiSemanticTests(unittest.TestCase):
                 with self.assertRaises(PiSemanticError) as error:
                     manager.command(pane_id, "set_thinking_level", {"level": "high"})
                 self.assertEqual(error.exception.status, expected_status)
+
+
+class PiSessionLineageTests(unittest.TestCase):
+    def test_lineage_is_durable_scalar_metadata_and_crosses_workspace_boundaries(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = str(Path(temporary) / "semantic.sqlite3")
+            manager = PiSemanticManager("/tmp/lineage.sock", environ={}, journal=PiSemanticJournal(path))
+            snapshot = {
+                "panes": [
+                    {"pane_id": "w1:p1", "workspace_id": "w1", "agent": "pi"},
+                    {"pane_id": "w2:p1", "workspace_id": "w2", "agent": "pi"},
+                ],
+                "agents": [],
+            }
+            manager.sync_snapshot(snapshot)
+            for pane_id, session_id, parent in (("w1:p1", "parent-session", None), ("w2:p1", "child-session", "parent-session")):
+                manager.journal.ingest(pane_id, bridge_record(
+                    pane_id, "snapshot", snapshot={
+                        "session": {"id": session_id, "parent_session_id": parent}, "entries": [],
+                    },
+                ), namespace=manager.namespace)
+            manager.close()
+
+            manager = PiSemanticManager("/tmp/lineage.sock", environ={}, journal=PiSemanticJournal(path))
+            self.addCleanup(manager.close)
+            manager.sync_snapshot(snapshot)
+            with patch("herdr_harness.pi_semantic.json.loads", side_effect=AssertionError("lineage must not load transcripts")):
+                enriched = manager.enrich_snapshot(snapshot)
+                workspaces = manager.enrich_workspaces(snapshot, [
+                    {"workspace_id": "w1", "panes": [snapshot["panes"][0]]},
+                    {"workspace_id": "w2", "panes": [snapshot["panes"][1]]},
+                ])
+            parent, child = [pane["pi_semantic"] for pane in enriched["panes"]]
+            self.assertIsNone(parent["parent_session_id"])
+            self.assertEqual(child["parent_session_id"], parent["session_id"])
+            self.assertEqual(workspaces[1]["panes"][0]["pi_semantic"]["parent_session_id"], child["parent_session_id"])
+            self.assertEqual(manager.snapshot_response("w2:p1")["session"]["parent_session_id"], "parent-session")
+
+    def test_hello_updates_parent_and_ordinary_events_preserve_it(self):
+        journal = PiSemanticJournal(":memory:")
+        self.addCleanup(journal.close)
+        journal.ingest("w1:p1", bridge_record("w1:p1", "hello", session_id="child", parent_session_id="parent"))
+        journal.ingest("w1:p1", bridge_record("w1:p1", "event", sequence=1, session_id="child", event={"type": "turn_start"}))
+        self.assertEqual(journal.capability_state("w1:p1")["parent_session_id"], "parent")
+        journal.ingest("w1:p1", bridge_record("w1:p1", "hello", session_id="child"))
+        self.assertEqual(journal.capability_state("w1:p1")["parent_session_id"], "parent")
+        journal.ingest("w1:p1", bridge_record("w1:p1", "hello", session_id="child", parent_session_id=None))
+        self.assertIsNone(journal.capability_state("w1:p1")["parent_session_id"])
+
+    def test_session_replacement_never_inherits_previous_parent(self):
+        for replacement in (
+            {"kind": "hello", "session_id": "new-root"},
+            {"kind": "event", "session_id": "new-root", "event": {"type": "session_start"}},
+            {"kind": "snapshot", "snapshot": {"session": {"id": "new-root"}, "entries": []}},
+            {"kind": "reset", "snapshot": {"session": {"id": "new-root"}, "entries": []}},
+        ):
+            with self.subTest(kind=replacement["kind"]):
+                journal = PiSemanticJournal(":memory:")
+                self.addCleanup(journal.close)
+                journal.ingest("w1:p1", bridge_record("w1:p1", "snapshot", snapshot={
+                    "session": {"id": "old-child", "parent_session_id": "parent"}, "entries": [],
+                }))
+                journal.ingest("w1:p1", {**bridge_record("w1:p1", "event", sequence=1), **replacement})
+                state = journal.capability_state("w1:p1")
+                self.assertEqual(state["session_id"], "new-root")
+                self.assertIsNone(state["parent_session_id"])
+
+    def test_recovery_snapshot_replaces_lineage_and_legacy_snapshot_clears_it(self):
+        journal = PiSemanticJournal(":memory:")
+        self.addCleanup(journal.close)
+        journal.ingest("w1:p1", bridge_record("w1:p1", "reset", snapshot={
+            "session": {"id": "child", "parent_session_id": "parent"}, "entries": [],
+        }))
+        self.assertEqual(journal.capability_state("w1:p1")["parent_session_id"], "parent")
+        journal.ingest("w1:p1", bridge_record("w1:p1", "snapshot", snapshot={"session": {"id": "child"}, "entries": []}))
+        self.assertIsNone(journal.capability_state("w1:p1")["parent_session_id"])
+
+    def test_invalid_or_self_parent_metadata_does_not_break_transcripts(self):
+        journal = PiSemanticJournal(":memory:")
+        self.addCleanup(journal.close)
+        for invalid in ("child", "", " parent ", "../session", "--flag", "x" * 257, "parent\n", 123, {"id": "parent"}):
+            with self.subTest(parent=invalid):
+                journal.ingest("w1:p1", bridge_record("w1:p1", "snapshot", snapshot={
+                    "session": {"id": "child", "parent_session_id": invalid}, "entries": [{"id": "entry-1"}],
+                }))
+                self.assertIsNone(journal.capability_state("w1:p1")["parent_session_id"])
+                self.assertEqual(journal.snapshot("w1:p1")["entries"], [{"id": "entry-1"}])
+
+    def test_existing_journal_schema_upgrades_without_losing_history(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = str(Path(temporary) / "legacy.sqlite3")
+            with sqlite3.connect(path) as database:
+                database.execute(
+                    "CREATE TABLE pi_semantic_state (pane_id TEXT PRIMARY KEY, instance_id TEXT, "
+                    "source_sequence INTEGER NOT NULL DEFAULT 0, session_id TEXT, snapshot_json TEXT, "
+                    "snapshot_cursor INTEGER NOT NULL DEFAULT 0, connected INTEGER NOT NULL DEFAULT 0, "
+                    "has_content INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)"
+                )
+                database.execute("INSERT INTO pi_semantic_state (pane_id, session_id, snapshot_json, has_content, updated_at) VALUES (?, ?, ?, ?, ?)", (
+                    "w1:p1", "legacy", json.dumps({"session": {"id": "legacy"}, "entries": [{"id": "retained"}]}), 1, "now",
+                ))
+            journal = PiSemanticJournal(path)
+            self.addCleanup(journal.close)
+            self.assertEqual(journal.snapshot("w1:p1")["entries"], [{"id": "retained"}])
+            self.assertIsNone(journal.capability_state("w1:p1")["parent_session_id"])
+            journal.ingest("w1:p1", bridge_record("w1:p1", "snapshot", snapshot={
+                "session": {"id": "legacy", "parent_session_id": "parent"}, "entries": [{"id": "retained"}],
+            }))
+            self.assertEqual(journal.capability_state("w1:p1")["parent_session_id"], "parent")
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import os
+import re
 import socket
 import sqlite3
 import stat
@@ -29,6 +30,7 @@ PI_SEMANTIC_PROTOCOL = {"name": "herdr.pi.semantic", "version": 1}
 PI_SEMANTIC_MAX_LINE_BYTES = 512 * 1024
 PI_SEMANTIC_MAX_COMMAND_BYTES = 256 * 1024
 PI_SEMANTIC_SOCKET_PATH_BYTES = 100
+_PI_SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?\Z")
 
 
 @dataclass
@@ -160,6 +162,24 @@ def _record_session_id(record: dict) -> Optional[str]:
     return None
 
 
+def valid_pi_session_id(value: object) -> bool:
+    """Accept Pi's bounded opaque session IDs without accepting paths or flags."""
+
+    return isinstance(value, str) and len(value) <= 256 and _PI_SESSION_ID_PATTERN.fullmatch(value) is not None
+
+
+def _record_parent_session_id(record: dict, session_id: Optional[str]) -> tuple[bool, Optional[str]]:
+    session = record.get("session")
+    for source in (session, record):
+        if not isinstance(source, dict):
+            continue
+        for key in ("parent_session_id", "parentSessionId"):
+            if key in source:
+                value = source[key]
+                return True, value if valid_pi_session_id(value) and value != session_id else None
+    return False, None
+
+
 class PiSemanticJournal:
     """Bounded SQLite journal with stable per-pane cursors across restarts."""
 
@@ -244,6 +264,7 @@ class PiSemanticJournal:
                     instance_id TEXT,
                     source_sequence INTEGER NOT NULL DEFAULT 0,
                     session_id TEXT,
+                    parent_session_id TEXT,
                     snapshot_json TEXT,
                     snapshot_cursor INTEGER NOT NULL DEFAULT 0,
                     connected INTEGER NOT NULL DEFAULT 0,
@@ -260,6 +281,8 @@ class PiSemanticJournal:
             # values NULL so capability_state can backfill exact legacy values.
             if "session_id" not in columns:
                 self._database.execute("ALTER TABLE pi_semantic_state ADD COLUMN session_id TEXT")
+            if "parent_session_id" not in columns:
+                self._database.execute("ALTER TABLE pi_semantic_state ADD COLUMN parent_session_id TEXT")
             if "has_content" not in columns:
                 self._database.execute("ALTER TABLE pi_semantic_state ADD COLUMN has_content INTEGER")
         if path != ":memory:":
@@ -365,11 +388,14 @@ class PiSemanticJournal:
         with self._condition, self._database:
             self._ensure_state(storage_pane_id)
             previous = self._database.execute(
-                "SELECT instance_id, source_sequence, session_id FROM pi_semantic_state WHERE pane_id = ?",
+                "SELECT instance_id, source_sequence, session_id, parent_session_id FROM pi_semantic_state WHERE pane_id = ?",
                 (storage_pane_id,),
             ).fetchone()
             previous_instance = str(previous["instance_id"]) if previous and previous["instance_id"] else None
             previous_session = str(previous["session_id"]) if previous and previous["session_id"] else None
+            has_parent, parent_session_id = _record_parent_session_id(record, session_id or previous_session)
+            if not has_parent and (not session_id or session_id == previous_session):
+                parent_session_id = previous["parent_session_id"] if previous else None
 
             if instance_id and previous_instance and instance_id != previous_instance:
                 self._database.execute(
@@ -391,10 +417,10 @@ class PiSemanticJournal:
                     """
                     UPDATE pi_semantic_state
                     SET instance_id = ?, source_sequence = ?, session_id = COALESCE(?, session_id),
-                        connected = 1, updated_at = ?
+                        parent_session_id = ?, connected = 1, updated_at = ?
                     WHERE pane_id = ?
                     """,
-                    (instance_id, resume_sequence, session_id, utc_now(), storage_pane_id),
+                    (instance_id, resume_sequence, session_id, parent_session_id, utc_now(), storage_pane_id),
                 )
                 self._condition.notify_all()
                 return emitted
@@ -404,6 +430,7 @@ class PiSemanticJournal:
                 if not isinstance(payload, dict):
                     raise PiSemanticError("Pi snapshot was not an object", code="pi_protocol_error", status=502)
                 snapshot_session = _record_session_id(payload) or session_id
+                _, snapshot_parent = _record_parent_session_id(payload, snapshot_session)
                 if previous_session and snapshot_session and previous_session != snapshot_session:
                     reset = {
                         "type": "stream.reset",
@@ -430,7 +457,7 @@ class PiSemanticJournal:
                     UPDATE pi_semantic_state
                     SET instance_id = COALESCE(?, instance_id),
                         source_sequence = MAX(source_sequence, ?),
-                        session_id = COALESCE(?, session_id), snapshot_json = ?,
+                        session_id = COALESCE(?, session_id), parent_session_id = ?, snapshot_json = ?,
                         snapshot_cursor = ?, connected = 1, has_content = ?, updated_at = ?
                     WHERE pane_id = ?
                     """,
@@ -438,6 +465,7 @@ class PiSemanticJournal:
                         instance_id,
                         source_sequence or 0,
                         snapshot_session,
+                        snapshot_parent,
                         snapshot_json,
                         latest,
                         1 if snapshot_session or payload.get("entries") else 0,
@@ -485,25 +513,27 @@ class PiSemanticJournal:
                 UPDATE pi_semantic_state
                 SET instance_id = COALESCE(?, instance_id),
                     source_sequence = MAX(source_sequence, ?),
-                    session_id = COALESCE(?, session_id), connected = 1, updated_at = ?
+                    session_id = COALESCE(?, session_id), parent_session_id = ?, connected = 1, updated_at = ?
                 WHERE pane_id = ?
                 """,
-                (instance_id, source_sequence or 0, session_id, utc_now(), storage_pane_id),
+                (instance_id, source_sequence or 0, session_id, parent_session_id, utc_now(), storage_pane_id),
             )
             if isinstance(recovery_snapshot, dict):
                 snapshot_json = json.dumps(recovery_snapshot, separators=(",", ":"), ensure_ascii=False)
                 if len(snapshot_json.encode("utf-8")) > PI_SEMANTIC_MAX_LINE_BYTES:
                     raise PiSemanticError("Pi reset snapshot exceeded the size limit", code="pi_payload_too_large", status=502)
                 recovery_session = _record_session_id(recovery_snapshot) or session_id or previous_session
+                _, recovery_parent = _record_parent_session_id(recovery_snapshot, recovery_session)
                 self._database.execute(
                     """
                     UPDATE pi_semantic_state
-                    SET session_id = COALESCE(?, session_id), snapshot_json = ?,
+                    SET session_id = COALESCE(?, session_id), parent_session_id = ?, snapshot_json = ?,
                         snapshot_cursor = ?, has_content = ?, updated_at = ?
                     WHERE pane_id = ?
                     """,
                     (
                         recovery_session,
+                        recovery_parent,
                         snapshot_json,
                         self._latest_cursor_locked(storage_pane_id),
                         1 if recovery_session or recovery_snapshot.get("entries") else 0,
@@ -696,7 +726,7 @@ class PiSemanticJournal:
         storage_pane_id = self._storage_pane_id(pane_id, namespace)
         with self._lock, self._database:
             row = self._database.execute(
-                "SELECT connected, snapshot_cursor, session_id, has_content FROM pi_semantic_state WHERE pane_id = ?",
+                "SELECT connected, snapshot_cursor, session_id, parent_session_id, has_content FROM pi_semantic_state WHERE pane_id = ?",
                 (storage_pane_id,),
             ).fetchone()
             oldest, _latest = self.bounds(pane_id, namespace=namespace)
@@ -704,11 +734,13 @@ class PiSemanticJournal:
                 return {
                     "connected": False,
                     "session_id": None,
+                    "parent_session_id": None,
                     "cursor": 0,
                     "oldest_cursor": oldest,
                     "has_content": False,
                 }
             session_id = row["session_id"]
+            parent_session_id = row["parent_session_id"]
             has_content = row["has_content"]
             if has_content is None:
                 # One-time lazy migration keeps startup fast for journals
@@ -724,14 +756,16 @@ class PiSemanticJournal:
                     if isinstance(value, dict):
                         payload = value
                 session_id = _record_session_id(payload)
+                _, parent_session_id = _record_parent_session_id(payload, session_id)
                 has_content = bool(session_id or payload.get("entries"))
                 self._database.execute(
-                    "UPDATE pi_semantic_state SET session_id = COALESCE(?, session_id), has_content = ? WHERE pane_id = ?",
-                    (session_id, 1 if has_content else 0, storage_pane_id),
+                    "UPDATE pi_semantic_state SET session_id = COALESCE(?, session_id), parent_session_id = ?, has_content = ? WHERE pane_id = ?",
+                    (session_id, parent_session_id, 1 if has_content else 0, storage_pane_id),
                 )
             return {
                 "connected": bool(row["connected"]),
                 "session_id": str(session_id) if session_id else None,
+                "parent_session_id": parent_session_id,
                 "cursor": int(row["snapshot_cursor"] or 0),
                 "oldest_cursor": oldest,
                 "has_content": bool(has_content),
@@ -1127,6 +1161,7 @@ class PiSemanticManager:
             "connected": bool(state["connected"]),
             "protocol_version": PI_SEMANTIC_PROTOCOL["version"],
             "session_id": state["session_id"],
+            "parent_session_id": state["parent_session_id"],
             "cursor": state["cursor"],
             "oldest_cursor": state["oldest_cursor"],
             "capabilities": capabilities,

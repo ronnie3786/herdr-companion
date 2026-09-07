@@ -74,6 +74,37 @@ struct DemoScreenshotRenderTests {
 
     // MARK: - 02 · Sidebar
 
+    @Test("Pi families render across workspaces with collapsible children")
+    func rendersPiSessionFamilies() async throws {
+        let model = HerdrRenderFixtures.demoModel()
+        model.workspaces = try PiSessionTreeFixtures.workspaces()
+        model.machines = [HerdrMachine(id: "demo1", name: "desktop", urlString: "")]
+        model.machineScope = .all
+        model.sidebarRecency = .all
+        model.alerts = []
+        model.starredChatIDs = ["demo1|weather:p1"]
+        model.collapsedSidebarWorkspaceIDs = []
+        model.collapsedSidebarTabIDs = []
+        model.collapsedSidebarSessionIDs = []
+        model.selectedPaneID = "demo1|weather:p1"
+
+        let expanded = try await HerdrRenderHarness.render(
+            "02c-pi-session-families.png", size: CGSize(width: 380, height: 700)
+        ) {
+            HerdrSidebarView(model: model, openPane: { _ in }, openWorkspace: { _ in })
+        }
+        expanded.expectSubstantial()
+
+        model.toggleSidebarSession(try #require(model.pane(id: "demo1|garden:p1")))
+        let collapsed = try await HerdrRenderHarness.render(
+            "02d-pi-session-families-collapsed.png", size: CGSize(width: 380, height: 700)
+        ) {
+            HerdrSidebarView(model: model, openPane: { _ in }, openWorkspace: { _ in })
+        }
+        collapsed.expectSubstantial()
+        #expect(expanded.byteCount != collapsed.byteCount)
+    }
+
     @Test("Sidebar renders the workspace tree")
     func rendersSidebar() async throws {
         let model = HerdrRenderFixtures.demoModel()

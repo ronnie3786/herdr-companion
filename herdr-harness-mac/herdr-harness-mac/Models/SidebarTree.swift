@@ -6,6 +6,7 @@ enum SidebarTree {
         let isExpanded: Bool
         let sections: [SectionEntry]
         let looseChats: [HerdrPane]
+        var looseRows: [PiSessionTree.Row] = []
 
         var id: String { workspace.id }
     }
@@ -14,6 +15,7 @@ enum SidebarTree {
         let tab: HerdrTab
         let isExpanded: Bool
         let chats: [HerdrPane]
+        var rows: [PiSessionTree.Row] = []
 
         var id: String { tab.id }
     }
@@ -70,11 +72,12 @@ enum SidebarTree {
         starredIDs: Set<String> = [],
         recency: SidebarRecency = .all,
         excludedPaneIDs: Set<String> = [],
+        collapsedSessionIDs: Set<String> = [],
         now: Date = Date(),
         calendar: Calendar = .autoupdatingCurrent
     ) -> [ProjectEntry] {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return workspaces.sorted(by: Self.byWorkspaceName).compactMap { workspace in
+        let entries = workspaces.sorted(by: Self.byWorkspaceName).compactMap { workspace in
             buildEntry(
                 for: workspace,
                 query: trimmedQuery,
@@ -85,6 +88,54 @@ enum SidebarTree {
                 excludedPaneIDs: excludedPaneIDs,
                 now: now,
                 calendar: calendar
+            )
+        }
+        return attachingSessionFamilies(
+            entries: entries, workspaces: workspaces, query: trimmedQuery,
+            excludedIDs: starredIDs.union(excludedPaneIDs),
+            collapsedWorkspaceIDs: collapsedWorkspaceIDs,
+            collapsedTabIDs: collapsedTabIDs,
+            collapsedSessionIDs: trimmedQuery.isEmpty ? collapsedSessionIDs : []
+        )
+    }
+
+    private static func attachingSessionFamilies(
+        entries: [ProjectEntry], workspaces: [HerdrWorkspace], query: String,
+        excludedIDs: Set<String>, collapsedWorkspaceIDs: Set<String>,
+        collapsedTabIDs: Set<String>, collapsedSessionIDs: Set<String>
+    ) -> [ProjectEntry] {
+        let sessions = PiSessionTree(workspaces: workspaces)
+        let visibleIDs = Set(entries.flatMap { $0.looseChats + $0.sections.flatMap(\.chats) }.map(\.id))
+        let includedIDs = sessions.includingAncestors(of: visibleIDs, excluding: excludedIDs)
+        let roots = sessions.roots(in: includedIDs)
+        let originalEntries = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
+        return workspaces.sorted(by: byWorkspaceName).compactMap { workspace in
+            let original = originalEntries[workspace.id]
+            let workspaceRoots = roots.filter { $0.machineID == workspace.machineID && $0.workspaceID == workspace.workspaceID }
+            guard original != nil || !workspaceRoots.isEmpty else { return nil }
+            let tabIDs = Set(workspace.tabs.map(\.id))
+            let sections = workspace.tabs.sorted { $0.number < $1.number }.compactMap { tab -> SectionEntry? in
+                let tabRoots = workspaceRoots.filter { $0.scopedTabID == tab.id }
+                let originalSection = original?.sections.first { $0.id == tab.id }
+                // Preserve truly empty terminal tabs, but do not leave a blank
+                // copy where every chat has moved beneath its session parent.
+                guard !tabRoots.isEmpty || originalSection?.chats.isEmpty == true else { return nil }
+                let allRows = sessions.rows(roots: tabRoots, includedIDs: includedIDs, collapsedSessionIDs: [])
+                return SectionEntry(
+                    tab: tab, isExpanded: query.isEmpty ? !collapsedTabIDs.contains(tab.id) : true,
+                    chats: allRows.map(\.pane),
+                    rows: sessions.rows(roots: tabRoots, includedIDs: includedIDs, collapsedSessionIDs: collapsedSessionIDs)
+                )
+            }
+            let looseRoots = workspaceRoots.filter { !tabIDs.contains($0.scopedTabID) }
+            let allLooseRows = sessions.rows(roots: looseRoots, includedIDs: includedIDs, collapsedSessionIDs: [])
+            let hadChats = original.map { !$0.looseChats.isEmpty || $0.sections.contains { !$0.chats.isEmpty } } ?? false
+            guard !sections.isEmpty || !looseRoots.isEmpty || !hadChats else { return nil }
+            return ProjectEntry(
+                workspace: workspace,
+                isExpanded: query.isEmpty ? !collapsedWorkspaceIDs.contains(workspace.id) : true,
+                sections: sections, looseChats: allLooseRows.map(\.pane),
+                looseRows: sessions.rows(roots: looseRoots, includedIDs: includedIDs, collapsedSessionIDs: collapsedSessionIDs)
             )
         }
     }

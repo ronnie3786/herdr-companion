@@ -55,6 +55,7 @@ final class HerdrAppModel {
     var collapsedSidebarWorkspaceIDs: Set<String>
     var collapsedSidebarMachineIDs: Set<String>
     var collapsedSidebarTabIDs: Set<String>
+    var collapsedSidebarSessionIDs: Set<String>
     var starredChatIDs: Set<String>
     private(set) var mutedHudSessionIDs: Set<String>
     /// Scoped pane id -> the dismissal that silenced its chip. Persisted under
@@ -235,6 +236,7 @@ final class HerdrAppModel {
         if arguments.contains("-HerdrResetSidebarState") {
             defaults.removeObject(forKey: "herdr.sidebar.collapsedWorkspaces")
             defaults.removeObject(forKey: "herdr.sidebar.collapsedTabs")
+            defaults.removeObject(forKey: "herdr.sidebar.collapsedSessions")
             defaults.removeObject(forKey: "herdr.sidebar.starredChats")
         }
         #else
@@ -274,6 +276,7 @@ final class HerdrAppModel {
         collapsedSidebarTabIDs = Set(
             defaults.stringArray(forKey: "herdr.sidebar.collapsedTabs") ?? []
         )
+        collapsedSidebarSessionIDs = Set(defaults.stringArray(forKey: "herdr.sidebar.collapsedSessions") ?? [])
         starredChatIDs = Set(defaults.stringArray(forKey: "herdr.sidebar.starredChats") ?? [])
         mutedHudSessionIDs = Set(defaults.stringArray(forKey: "herdr.hud.mutedSessions") ?? [])
         dismissedHudChips = Self.loadDismissedHudChips(defaults: defaults)
@@ -2616,7 +2619,23 @@ final class HerdrAppModel {
         return true
     }
 
+    func toggleSidebarSession(_ pane: HerdrPane) {
+        guard let key = PiSessionTree.sessionKey(for: pane) else { return }
+        if collapsedSidebarSessionIDs.remove(key) == nil { collapsedSidebarSessionIDs.insert(key) }
+        userDefaults.set(Array(collapsedSidebarSessionIDs), forKey: "herdr.sidebar.collapsedSessions")
+    }
+
     private func expandSidebarAncestors(of pane: HerdrPane) {
+        let parents = PiSessionTree(workspaces: workspaces).ancestors(of: pane.id)
+        let sessionIDs = Set(parents.compactMap { PiSessionTree.sessionKey(for: $0) })
+        if !collapsedSidebarSessionIDs.isDisjoint(with: sessionIDs) {
+            collapsedSidebarSessionIDs.subtract(sessionIDs)
+            userDefaults.set(Array(collapsedSidebarSessionIDs), forKey: "herdr.sidebar.collapsedSessions")
+        }
+        for ancestor in [pane] + parents { expandSidebarContainers(of: ancestor) }
+    }
+
+    private func expandSidebarContainers(of pane: HerdrPane) {
         if collapsedSidebarMachineIDs.remove(pane.machineID) != nil {
             userDefaults.set(Array(collapsedSidebarMachineIDs), forKey: "herdr.sidebar.collapsedMachines")
         }
@@ -3769,6 +3788,7 @@ final class HerdrAppModel {
         }
         collapsedSidebarWorkspaceIDs = collapsedSidebarWorkspaceIDs.filter { MachineScopedID.split($0)?.machineID != id }
         collapsedSidebarTabIDs = collapsedSidebarTabIDs.filter { MachineScopedID.split($0)?.machineID != id }
+        collapsedSidebarSessionIDs = collapsedSidebarSessionIDs.filter { MachineScopedID.split($0)?.machineID != id }
         pendingRemoteReadAcknowledgements = pendingRemoteReadAcknowledgements.filter {
             MachineScopedID.split($0)?.machineID != id
         }
@@ -3778,6 +3798,7 @@ final class HerdrAppModel {
         userDefaults.set(Array(collapsedSidebarWorkspaceIDs), forKey: "herdr.sidebar.collapsedWorkspaces")
         userDefaults.set(Array(collapsedSidebarTabIDs), forKey: "herdr.sidebar.collapsedTabs")
         userDefaults.set(Array(collapsedSidebarMachineIDs), forKey: "herdr.sidebar.collapsedMachines")
+        userDefaults.set(Array(collapsedSidebarSessionIDs), forKey: "herdr.sidebar.collapsedSessions")
         if case let .machine(scopeID) = machineScope, scopeID == id {
             machineScope = .all
             machineScope.save(to: userDefaults)

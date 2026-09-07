@@ -942,6 +942,26 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(missing_file_body["error"]["code"], "invalid_request")
         self.assertEqual(len(self.service.calls), call_count)
 
+    def test_quick_pi_session_forwards_parent_identity_independently_of_workspace(self):
+        status, _, _ = self.request(
+            "/api/v1/quick-sessions/pi", method="POST",
+            payload={"label": "Child task", "parentSessionId": "parent-session", "workspaceId": "w-child"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(self.service.calls[-1][1]["parent_session_id"], "parent-session")
+        self.assertEqual(self.service.calls[-1][1]["workspace_id"], "w-child")
+        calls = len(self.service.calls)
+        for fields in (
+            *({"parentSessionId": value} for value in ("", "../parent", "--flag", "parent\n", 123, "x" * 257)),
+            {"parentSessionId": "parent-session", "sessionFile": "/synthetic/session.jsonl"},
+        ):
+            with self.subTest(fields=fields):
+                status, _, _ = self.request(
+                    "/api/v1/quick-sessions/pi", method="POST", payload={"label": "Child task", **fields},
+                )
+                self.assertEqual(status, 400)
+        self.assertEqual(len(self.service.calls), calls)
+
     def test_quick_pi_session_forwards_named_tab_options(self):
         status, _, _ = self.request(
             "/api/v1/quick-sessions/pi",

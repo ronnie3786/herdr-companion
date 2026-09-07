@@ -15,6 +15,7 @@ process.env.HERDR_PI_SEMANTIC_MAX_QUEUE_BYTES = String(64 * 1024);
 const jiti = createJiti(import.meta.url);
 const bridgeModule = await jiti.import("../extensions/pi-semantic-bridge.ts");
 const handlers = new Map();
+const commands = new Map();
 const sent = [];
 let aborted = false;
 let compactCalls = 0;
@@ -28,7 +29,17 @@ const availableModels = [
 	{ provider: "other", id: "other-model", name: "Other Model", reasoning: false, contextWindow: 32000 },
 ];
 const pi = {
-	on(type, handler) { handlers.set(type, handler); },
+	on(type, handler) {
+		const previous = handlers.get(type);
+		handlers.set(type, previous ? (...args) => {
+			const result = previous(...args);
+			return handler(...args) ?? result;
+		} : handler);
+	},
+	registerFlag() {},
+	getFlag() {},
+	registerCommand(name, command) { commands.set(name, command); },
+	appendEntry(customType, data) { costEntries.push({ type: "custom", customType, data }); },
 	sendUserMessage(text, options) { sent.push({ text, options }); },
 	async setModel(model) {
 		setModelCalls.push(model);
@@ -98,6 +109,7 @@ const costEntries = [
 	},
 ];
 const context = {
+	ui: { notify() {} },
 	mode: "tui",
 	model: { provider: "test", id: "model" },
 	thinkingLevel: "high",
@@ -201,6 +213,8 @@ try {
 	const snapshot = initial.find((item) => item.kind === "snapshot").snapshot;
 	assert.equal(snapshot.entries[0].id, "entry-1");
 	assert.equal(snapshot.entries[0].parentId, null);
+	assert.equal(snapshot.session.parent_session_id, null);
+	assert.equal(initial.find((item) => item.kind === "hello").parent_session_id, null);
 	assert.equal(snapshot.entries[0].future.kept, true);
 	assert.equal(snapshot.entries[0].future.thinkingSignature.reason, "provider_signature");
 	assert.equal(snapshot.entries[0].future.thought_signature.reason, "provider_signature");
@@ -237,6 +251,16 @@ try {
 	assert.equal(costFailureSnapshot.usage, undefined);
 	costFailure.destroy();
 	costEntriesShouldThrow = false;
+
+	for (const parent of ["parent-session", null]) {
+		const lineageChanged = readRecords(subscription, (records) => records.some(
+			(item) => item.kind === "reset" && item.event?.reason === "session_lineage_changed",
+		));
+		await commands.get("herdr-parent").handler(parent ?? "none", context);
+		const records = await lineageChanged;
+		const reset = records.find((item) => item.event?.reason === "session_lineage_changed");
+		assert.equal(reset.snapshot.session.parent_session_id, parent);
+	}
 
 	const deltas = [];
 	const privateSentinel = "PRIVATE-SYSTEM-PROMPT-MUST-NOT-CROSS-WIRE";

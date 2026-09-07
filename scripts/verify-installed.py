@@ -26,6 +26,8 @@ def main():
             return subprocess.check_output([python, "-I", "-c", code, *arguments], cwd=root, env=env, stderr=subprocess.STDOUT, timeout=30).decode()
         resources = json.loads(run("import json; import herdr_harness; from herdr_harness.resources import pi_extension_path, configuration_example; from pathlib import Path; p=Path(herdr_harness.__file__).parent; print(json.dumps({'installed': 'site-packages' in str(p), 'pi': (pi_extension_path({})/'extensions/send-to-herdr.ts').is_file(), 'sample': configuration_example().is_file(), 'web': (p/'static/herdr-web/index.html').is_file()}))"))
         assert all(resources.values()), resources
+        lineage = run("from herdr_harness.resources import pi_extension_path; p=pi_extension_path({}); assert (p/'lib/session-lineage.ts').is_file(); assert '../lib/session-lineage' in (p/'extensions/pi-semantic-bridge.ts').read_text(); print('ok')")
+        assert lineage.strip() == "ok"
         for module in ("herdr_harness.configuration_cli", "herdr_commands.setup_herdr_demo", "herdr_commands.herdr_active_work_sync", "herdr_commands.herdr_pr_review_watch"):
             run(f"from {module} import main; raise SystemExit(main())", "--help")
         with socket.socket() as probe:

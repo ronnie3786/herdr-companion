@@ -269,6 +269,9 @@ struct SidebarChatRow: View {
     let pane: HerdrPane
     let isSelected: Bool
     var isStarred: Bool = false
+    var isUnread: Bool = false
+    var hierarchy: PiSessionTree.Row?
+    var parentContext: String?
     /// The status age everywhere but Recents, which passes its own ranking key.
     var since: Date?
     var describesLastActivity = false
@@ -276,6 +279,7 @@ struct SidebarChatRow: View {
     /// Quick-star. Nil leaves the row read-only, which is what the render
     /// tests and any non-interactive host want.
     var toggleStar: (() -> Void)?
+    var toggleChildren: (() -> Void)?
     @State private var isHovering = false
 
     var body: some View {
@@ -283,15 +287,41 @@ struct SidebarChatRow: View {
             HStack(spacing: 8) {
                 SidebarStatusDot(status: pane.agentStatus)
 
-                Text(pane.displayTitle)
-                    .herdrFont(
-                        size: SidebarMetrics.chatLabelSize,
-                        relativeTo: .subheadline
-                    )
-                    .foregroundStyle(HerdrTheme.text)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(pane.displayTitle)
+                        .herdrFont(size: SidebarMetrics.chatLabelSize, relativeTo: .subheadline)
+                        .foregroundStyle(HerdrTheme.text)
+                        .lineLimit(1)
+                    if let workspaceLabel = hierarchy?.workspaceLabel {
+                        Label(workspaceLabel, systemImage: "folder")
+                            .herdrFont(.caption2)
+                            .foregroundStyle(HerdrTheme.mist)
+                            .lineLimit(1)
+                            .help("Workspace: \(workspaceLabel)\n\(pane.displayPath)")
+                    }
+                    if let parentContext {
+                        Text(parentContext)
+                            .herdrFont(.caption2)
+                            .foregroundStyle(HerdrTheme.muted)
+                            .lineLimit(1)
+                    }
+                }
 
                 Spacer()
+
+                if isUnread {
+                    Image(systemName: "circle.fill")
+                        .font(.system(size: 5))
+                        .foregroundStyle(HerdrTheme.accent)
+                        .accessibilityLabel("Unread")
+                }
+                if let hierarchy, hierarchy.childCount > 0 {
+                    Text("\(hierarchy.childCount)")
+                        .herdrFont(.caption2, monospacedDigit: true)
+                        .foregroundStyle(HerdrTheme.muted)
+                        .help("\(hierarchy.childCount) child sessions")
+                        .fixedSize()
+                }
 
                 starControl
 
@@ -304,8 +334,9 @@ struct SidebarChatRow: View {
                     .foregroundStyle(SidebarTone.statusColor(for: pane.agentStatus))
                     .fixedSize()
             }
-            .padding(.leading, SidebarMetrics.chatRowLeadingPadding)
+            .padding(.leading, leadingPadding)
             .padding(.trailing, SidebarMetrics.rowTrailingPadding)
+            .padding(.vertical, hierarchy?.workspaceLabel != nil || parentContext != nil ? 5 : 0)
             .frame(minHeight: SidebarMetrics.chatRowHeight)
             .contentShape(Rectangle())
             .background(rowBackground)
@@ -323,6 +354,32 @@ struct SidebarChatRow: View {
         // action; `.contain` keeps it separately reachable.
         .accessibilityElement(children: toggleStar == nil ? .combine : .contain)
         .accessibilityLabel(accessibilityLabel)
+        .overlay(alignment: .leading) {
+            if let toggleChildren, let hierarchy {
+                Button(
+                    hierarchy.isExpanded ? "Collapse child sessions" : "Expand child sessions",
+                    systemImage: hierarchy.isExpanded ? "chevron.down" : "chevron.right",
+                    action: toggleChildren
+                )
+                .labelStyle(.iconOnly)
+                .herdrFont(.caption2, weight: .semibold)
+                .foregroundStyle(HerdrTheme.mist)
+                .buttonStyle(.plain)
+                .frame(width: 20, height: SidebarMetrics.chatRowHeight)
+                .contentShape(Rectangle())
+                .padding(.leading, SidebarMetrics.chatRowLeadingPadding + hierarchyIndent)
+                .accessibilityIdentifier("sidebar-session-disclosure-\(pane.id)")
+                .accessibilityValue(hierarchy.isExpanded ? "expanded" : "collapsed")
+                .help("\(hierarchy.isExpanded ? "Collapse" : "Expand") \(hierarchy.childCount) child sessions")
+            }
+        }
+    }
+
+    private var hierarchyIndent: CGFloat { CGFloat(min(hierarchy?.depth ?? 0, 6)) * 16 }
+
+    private var leadingPadding: CGFloat {
+        let belongsToFamily = (hierarchy?.depth ?? 0) > 0 || (hierarchy?.childCount ?? 0) > 0
+        return SidebarMetrics.chatRowLeadingPadding + hierarchyIndent + (belongsToFamily ? 20 : 0)
     }
 
     /// A starred row always shows its star; an unstarred one only offers the
@@ -356,7 +413,14 @@ struct SidebarChatRow: View {
     }
 
     private var accessibilityLabel: String {
-        let identity = "\(pane.displayTitle), \(pane.displayAgentName), \(pane.agentStatus.title)"
+        var identity = "\(pane.displayTitle), \(pane.displayAgentName), \(pane.agentStatus.title)"
+        if let hierarchy {
+            if hierarchy.depth > 0 { identity += ", child session, level \(hierarchy.depth)" }
+            if let workspace = hierarchy.workspaceLabel { identity += ", workspace \(workspace)" }
+            if hierarchy.childCount > 0 { identity += ", \(hierarchy.childCount) child sessions" }
+        }
+        if let parentContext { identity += ", \(parentContext)" }
+        if isUnread { identity += ", unread" }
         guard let since else { return identity }
         let age = HerdrTimestamp.spokenAge(since: since)
         return describesLastActivity ? "\(identity), last active \(age)" : "\(identity), \(age)"

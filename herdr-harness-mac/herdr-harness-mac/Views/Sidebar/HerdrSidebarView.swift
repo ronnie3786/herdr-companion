@@ -54,8 +54,12 @@ struct HerdrSidebarView: View {
 
             recentChats = []
             let now = Date()
+            let familyPaneIDs = PiSessionTree(workspaces: scopedWorkspaces).familyPaneIDs
             let scopedPaneIDs = Set(scopedWorkspaces.flatMap(\.panes).map(\.id))
-            let unreadPaneIDs = model.unreadPaneIDs.intersection(scopedPaneIDs)
+            // A child's completion or star must not detach it from its parent.
+            // Families stay together; unrelated sessions retain priority sections.
+            let unreadPaneIDs = model.unreadPaneIDs.intersection(scopedPaneIDs).subtracting(familyPaneIDs)
+            let promotedStarredIDs = model.starredChatIDs.subtracting(familyPaneIDs)
             unreadGroups = SidebarTree.unreadGroups(
                 workspaces: scopedWorkspaces,
                 query: query,
@@ -69,7 +73,7 @@ struct HerdrSidebarView: View {
                     machines: model.machines,
                     workspaces: scopedWorkspaces,
                     query: query,
-                    excludedPaneIDs: unreadPaneIDs,
+                    excludedPaneIDs: unreadPaneIDs.union(familyPaneIDs),
                     now: now
                 )
                 : []
@@ -80,9 +84,10 @@ struct HerdrSidebarView: View {
                 query: query,
                 collapsedWorkspaceIDs: model.collapsedSidebarWorkspaceIDs,
                 collapsedTabIDs: model.collapsedSidebarTabIDs,
-                starredIDs: model.starredChatIDs,
+                starredIDs: promotedStarredIDs,
                 recency: model.sidebarRecency,
                 excludedPaneIDs: promotedPaneIDs,
+                collapsedSessionIDs: model.collapsedSidebarSessionIDs,
                 now: now
             )
             machineGroups = SidebarTree.machineGroups(
@@ -95,7 +100,7 @@ struct HerdrSidebarView: View {
             starredGroups = SidebarTree.starredGroups(
                 workspaces: scopedWorkspaces,
                 query: query,
-                starredIDs: model.starredChatIDs,
+                starredIDs: promotedStarredIDs,
                 machines: model.machines,
                 recency: model.sidebarRecency,
                 excludedPaneIDs: promotedPaneIDs,
@@ -141,6 +146,7 @@ struct HerdrSidebarView: View {
         let collapsedWorkspaceIDs: Set<String>
         let collapsedMachineIDs: Set<String>
         let collapsedTabIDs: Set<String>
+        let collapsedSessionIDs: Set<String>
         let starredChatIDs: Set<String>
         let unreadPaneIDs: Set<String>
         let machineStates: [String: ConnectionState]
@@ -165,6 +171,8 @@ struct HerdrSidebarView: View {
                 hasher.combine(pane.id)
                 hasher.combine(pane.agentStatus)
                 hasher.combine(pane.workingSince)
+                hasher.combine(pane.piSemantic?.sessionID)
+                hasher.combine(pane.piSemantic?.parentSessionID)
             }
         }
         return hasher.finalize()
@@ -193,6 +201,7 @@ struct HerdrSidebarView: View {
             collapsedWorkspaceIDs: model.collapsedSidebarWorkspaceIDs,
             collapsedMachineIDs: model.collapsedSidebarMachineIDs,
             collapsedTabIDs: model.collapsedSidebarTabIDs,
+            collapsedSessionIDs: model.collapsedSidebarSessionIDs,
             starredChatIDs: model.starredChatIDs,
             unreadPaneIDs: model.unreadPaneIDs,
             machineStates: model.machineStates,
@@ -696,11 +705,11 @@ struct HerdrSidebarView: View {
                     )
                         .contextMenu { tabMenu(section.tab, in: entry.workspace) }
                     if section.isExpanded {
-                        ForEach(section.chats) { chatRow($0) }
+                        ForEach(section.rows) { chatRow($0.pane, hierarchy: $0) }
                     }
                 }
 
-                ForEach(entry.looseChats) { chatRow($0) }
+                ForEach(entry.looseRows) { chatRow($0.pane, hierarchy: $0) }
 
                 if entry.sections.isEmpty && entry.looseChats.isEmpty {
                     Text("no panes yet")
@@ -936,11 +945,16 @@ struct HerdrSidebarView: View {
         }
     }
 
-    private func chatRow(_ pane: HerdrPane, showingLastActivity: Bool = false) -> some View {
+    private func chatRow(
+        _ pane: HerdrPane, showingLastActivity: Bool = false, hierarchy: PiSessionTree.Row? = nil
+    ) -> some View {
         SidebarChatRow(
             pane: pane,
             isSelected: pane.id == model.selectedPaneID,
             isStarred: model.starredChatIDs.contains(pane.id),
+            isUnread: model.unreadPaneIDs.contains(pane.id),
+            hierarchy: hierarchy,
+            parentContext: (hierarchy?.depth ?? 0) == 0 ? parentContext(for: pane) : nil,
             // Recents ages the very key it sorts on — including the
             // `firstSeenAt` fallback — so the number on a row explains why the
             // row sits where it does.
@@ -949,9 +963,17 @@ struct HerdrSidebarView: View {
                 : statusSince(for: pane),
             describesLastActivity: showingLastActivity,
             action: { open(pane) },
-            toggleStar: { model.toggleStarredChat(pane.id) }
+            toggleStar: { model.toggleStarredChat(pane.id) },
+            toggleChildren: (hierarchy?.childCount ?? 0) > 0 && query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? { model.toggleSidebarSession(pane) } : nil
         )
         .contextMenu {
+            if let workspace = model.workspace(containing: pane), hierarchy?.workspaceLabel != nil {
+                Button("Open \(workspace.label) workspace", systemImage: "folder") {
+                    openWorkspace(workspace)
+                }
+                Divider()
+            }
             Button(
                 model.starredChatIDs.contains(pane.id) ? "Unstar chat" : "Star chat",
                 systemImage: model.starredChatIDs.contains(pane.id) ? "star.slash" : "star"
@@ -1004,6 +1026,14 @@ struct HerdrSidebarView: View {
             .disabled(!model.canControl(machineID: pane.machineID))
         }
         .id(pane.id)
+    }
+
+    private func parentContext(for pane: HerdrPane) -> String? {
+        guard let parentID = pane.piSemantic?.parentSessionID, !parentID.isEmpty else { return nil }
+        let parent = model.workspaces.lazy.flatMap(\.panes).first {
+            $0.machineID == pane.machineID && $0.piSemantic?.sessionID == parentID
+        }
+        return parent.map { "Child of \($0.displayTitle)" } ?? "Parent session unavailable"
     }
 
     private func priorityGroupTitle(_ workspace: HerdrWorkspace, showsMachineChrome: Bool) -> String {

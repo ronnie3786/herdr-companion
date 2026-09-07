@@ -904,6 +904,47 @@ class HerdrServiceTests(unittest.TestCase):
                 service.quick_pi_session("Voice agent", **options)
         self.assertEqual(client.requests, [])
 
+    def test_quick_pi_session_passes_parent_across_workspaces_and_preserves_idempotency(self):
+        client = FakeQuickSessionClient(
+            {"workspaces": [], "tabs": [], "panes": []},
+            {"workspace.create": {
+                "workspace": {"workspace_id": "w-child", "active_tab_id": "w-child:t1"},
+                "pane": {"pane_id": "w-child:p1", "tab_id": "w-child:t1"},
+            }},
+        )
+        with tempfile.TemporaryDirectory() as extension_path:
+            (Path(extension_path) / "package.json").write_text('{}')
+            service = HerdrService(client, environ={"HERDR_HARNESS_PI_EXTENSION_PATH": extension_path}, pi_semantic=FakeReadyPiSemantic())
+            options = {"parent_session_id": "parent-in-another-workspace", "request_id": "child-request"}
+            result = service.quick_pi_session("Child task", **options)
+            self.assertEqual(service.quick_pi_session("Child task", **options), result)
+            starts = [payload for method, payload in client.requests if method == "agent.start"]
+            self.assertEqual(len(starts), 1)
+            self.assertEqual(starts[0]["args"], ["--extension", extension_path, "--herdr-parent-session-id", "parent-in-another-workspace"])
+            with self.assertRaises(HerdrClientError) as mismatch:
+                service.quick_pi_session("Child task", **{**options, "parent_session_id": "other-parent"})
+            self.assertEqual(mismatch.exception.code, "quick_session_request_conflict")
+
+    def test_quick_pi_session_rejects_invalid_parent_or_resume_reparenting_before_mutation(self):
+        client = FakeQuickSessionClient({"workspaces": [], "tabs": [], "panes": []}, {})
+        service = HerdrService(client, environ={})
+        for options in (
+            *({"parent_session_id": value} for value in ("", "x" * 257, "../parent", "--flag", "parent\n", 123)),
+            {"parent_session_id": "parent", "session_file": "/synthetic/session.jsonl"},
+        ):
+            with self.subTest(options=options), self.assertRaises(HerdrClientError) as invalid:
+                service.quick_pi_session("Child task", **options)
+            self.assertEqual(invalid.exception.code, "invalid_parent_session_id")
+        self.assertEqual(client.requests, [])
+
+    def test_quick_pi_session_requires_extension_for_parent_tracking_before_mutation(self):
+        client = FakeQuickSessionClient({"workspaces": [], "tabs": [], "panes": []}, {})
+        service = HerdrService(client, environ={})
+        with patch.object(service, "pi_extension_args", return_value=[]), self.assertRaises(HerdrClientError) as unavailable:
+            service.quick_pi_session("Child task", parent_session_id="parent")
+        self.assertEqual(unavailable.exception.code, "pi_bridge_unavailable")
+        self.assertEqual(client.requests, [])
+
     def test_quick_pi_session_keeps_new_pane_when_semantic_bridge_never_connects(self):
         client = FakeQuickSessionClient(
             {"workspaces": [], "tabs": [], "panes": []},

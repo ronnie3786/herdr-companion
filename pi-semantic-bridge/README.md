@@ -1,9 +1,11 @@
 # Herdr Pi integration
 
-This Pi package adds three integrations to the stock interactive TUI:
+This Pi package adds four integrations to the stock interactive TUI:
 
 - a local, pane-specific semantic side channel for Pi processes launched by
   Herdr, without replacing or parsing the terminal;
+- persisted parent session IDs, automatic child-process inheritance, and
+  agent instructions for tagging delegated Pi work across workspaces;
 - `/send-to-herdr`, which hands a persisted Pi session running outside Herdr to
   the local Herdr Harness and opens the resulting pane in the Mac app;
 - `present_result`, an agent tool that explicitly registers a finished file or
@@ -29,6 +31,61 @@ No global Pi settings are changed by either command. For durable installation,
 `pi install /absolute/path/to/herdr-companion/pi-semantic-bridge` is
 idempotent because Pi records the local package path rather than copying or
 modifying another extension.
+
+## Track parent and child sessions
+
+Lineage is active in every Pi session that loads this package, including
+sessions outside Herdr and headless Pi runs. Each session stores its own native
+Pi session ID and one optional `parent_session_id` in a `herdr.session-lineage`
+custom entry. Herdr derives children from those parent references, so there is
+no second child list to keep synchronized. Session IDs are independent of pane
+IDs, workspace paths, and Pi's conversation-tree entry `parentId` values.
+
+The extension injects the current session ID and spawning instructions into
+each agent turn. It sets `HERDR_PI_SESSION_ID` to the current ID, and sets
+`HERDR_PI_PARENT_SESSION_ID` to that same ID for child processes to inherit.
+Launching a new `pi` subprocess from Pi's bash tool therefore tags the child
+automatically, even after changing directories. Every child then exports its
+own ID for its children. Shells with a replaced environment, new terminals,
+SSH, and processes launched by a server need an explicit parent:
+
+```bash
+pi --herdr-parent-session-id <parent-pi-session-id>
+HERDR_PI_PARENT_SESSION_ID=<parent-pi-session-id> pi
+herdr agent start child --kind pi --pane <pane-id> -- --herdr-parent-session-id <parent-pi-session-id>
+```
+
+When creating a session through `POST /api/v1/quick-sessions/pi`, include
+`parentSessionId` in the JSON body. SSH does not normally forward environment
+variables; pass the Pi flag in the remote command instead. The remote machine
+must also have this package installed. Parent IDs can cross workspace and
+machine boundaries, but a client can associate them only while it has both
+sessions available; the Mac groups the sessions available on the selected
+machine across its workspaces.
+
+Existing saved ancestry wins on resume, reload, or handoff. Ambient environment
+variables apply only to fresh startup sessions, so resuming an unrelated
+conversation cannot accidentally attach it to the launching session. `/new`
+starts an independent root. Native Pi forks use the source session ID, including
+forks into another working directory; copied metadata from the original session
+is never mistaken for the fork's own metadata. Lineage survives compaction and
+conversation-tree navigation because it is restored from all saved entries.
+
+Use these commands in Pi to inspect or correct an association:
+
+```text
+/herdr-parent
+/herdr-parent <parent-pi-session-id>
+/herdr-parent none
+```
+
+Corrections immediately refresh a connected Herdr client. The startup flag can
+also tag an existing untagged session; it never overwrites saved lineage.
+`--herdr-parent-session-id none` explicitly starts a root, suppressing ambient
+inheritance. Invalid and self-referential IDs are rejected. Pi persists custom
+entries with the rest of its session: a fresh session is not written to disk
+until Pi saves its first assistant response, and `--no-session` stays ephemeral.
+Already running sessions need `/reload` to start tracking newly spawned work.
 
 ## Send an existing session to Herdr
 
@@ -138,6 +195,11 @@ empty environment stay in memory. Records are namespaced by the normalized
 Herdr socket path so identically named panes in different Herdr sessions cannot
 share history.
 
+`snapshot.session.parent_session_id` and the `hello` envelope's
+`parent_session_id` carry the parent native Pi session ID or `null` for a root.
+Older bridges may omit them. A parent correction sends a `stream.reset` event
+with reason `session_lineage_changed` and an authoritative snapshot.
+
 The snapshot's `state` object also carries `context: { tokens, contextWindow, percent }` (the
 active model's context usage, or nulls right after compaction before the next LLM
 response), and `turn_end` events carry the same `context` object so clients can update
@@ -169,3 +231,13 @@ configuration or the matching native terminal discovery record. Global Pi instru
 ## Development
 
 Use Node.js 22.19 or newer. Run `npm ci` and `npm test` in this directory. The extension is tested with Pi 0.84.2; the declared peer range records the supported release series. Test tooling is installed locally.
+
+With Pi installed, run `node test/smoke-lineage.mjs` for a provider-free RPC
+verification of extension registration, native persistence, resume, `/new`,
+cross-workspace fork, inherited parents, and detachment. It uses temporary Pi
+configuration and synthetic session files, then removes them. To verify a
+deployed copy, pass its extension path and optionally the Pi executable:
+
+```bash
+node test/smoke-lineage.mjs /installed/package/extensions/pi-semantic-bridge.ts /path/to/pi
+```

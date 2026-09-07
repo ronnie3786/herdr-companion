@@ -27,7 +27,7 @@ from .events import EventBroker
 from .network import network_payload
 from .normalization import composite_workspaces, pane_index
 from .notes import NotesStore
-from .pi_semantic import PiSemanticError, PiSemanticManager
+from .pi_semantic import PiSemanticError, PiSemanticManager, valid_pi_session_id
 from .panes_seen import PaneFirstSeenStore
 from .push_notifications import APNsManager
 from .quick_voice import QuickVoiceManager
@@ -2134,6 +2134,7 @@ class HerdrService:
         cwd: Optional[str] = None,
         session_file: Optional[str] = None,
         session_id: Optional[str] = None,
+        parent_session_id: Optional[str] = None,
         request_id: Optional[str] = None,
         workspace_label: Optional[str] = None,
         tab_label: Optional[str] = None,
@@ -2152,6 +2153,14 @@ class HerdrService:
                 raise HerdrClientError("model requires provider and id", code="invalid_agent_model")
             if thinking_level is not None and (not isinstance(thinking_level, str) or thinking_level not in THINKING_LEVELS):
                 raise HerdrClientError("thinkingLevel is invalid", code="invalid_agent_thinking_level")
+            if parent_session_id is not None:
+                if not valid_pi_session_id(parent_session_id):
+                    raise HerdrClientError("parentSessionId is invalid", code="invalid_parent_session_id")
+                if session_file is not None:
+                    raise HerdrClientError(
+                        "Resumed Pi sessions preserve their existing parent; parentSessionId requires a new session",
+                        code="invalid_parent_session_id",
+                    )
             if request_id is not None and (
                 not isinstance(request_id, str) or not request_id or len(request_id) > 128
             ):
@@ -2164,6 +2173,7 @@ class HerdrService:
                     "cwd": cwd,
                     "session_file": session_file,
                     "session_id": session_id,
+                    "parent_session_id": parent_session_id,
                     "workspace_label": workspace_label,
                     "tab_label": tab_label,
                     "reuse_named_tab": reuse_named_tab,
@@ -2201,6 +2211,11 @@ class HerdrService:
                 )
             extension_args = self.pi_extension_args()
             pi_extension_attached = bool(extension_args)
+            if parent_session_id is not None and not pi_extension_attached:
+                raise HerdrClientError(
+                    "The Pi semantic extension is required to track a parent session",
+                    code="pi_bridge_unavailable",
+                )
             agent_args = list(extension_args)
             expected_session_id: Optional[str] = None
             if session_file is not None:
@@ -2224,6 +2239,9 @@ class HerdrService:
                     )
                 session_id = expected_session_id
                 agent_args = ["--session", str(session_path), *extension_args]
+
+            if parent_session_id is not None:
+                agent_args.extend(["--herdr-parent-session-id", parent_session_id])
 
             # CLI overrides apply to this session without Pi's set_model RPC
             # changing the user's global default for unrelated future chats.

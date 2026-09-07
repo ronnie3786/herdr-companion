@@ -5,6 +5,7 @@ struct PiSemanticCapability: Codable, Equatable, Hashable, Sendable {
     let connected: Bool
     let protocolVersion: Int
     let sessionID: String?
+    let parentSessionID: String?
     let cursor: String?
     let oldestCursor: String?
     let capabilities: PiSemanticCapabilities
@@ -18,6 +19,9 @@ struct PiSemanticCapability: Codable, Equatable, Hashable, Sendable {
         case sessionID
         case sessionIDCamel = "sessionId"
         case sessionIDSnake = "session_id"
+        case parentSessionID
+        case parentSessionIDCamel = "parentSessionId"
+        case parentSessionIDSnake = "parent_session_id"
         case cursor
         case oldestCursor
         case oldestCursorSnake = "oldest_cursor"
@@ -36,6 +40,9 @@ struct PiSemanticCapability: Codable, Equatable, Hashable, Sendable {
         sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
             ?? container.decodeIfPresent(String.self, forKey: .sessionIDCamel)
             ?? container.decodeIfPresent(String.self, forKey: .sessionIDSnake)
+        parentSessionID = try container.decodeIfPresent(String.self, forKey: .parentSessionID)
+            ?? container.decodeIfPresent(String.self, forKey: .parentSessionIDCamel)
+            ?? container.decodeIfPresent(String.self, forKey: .parentSessionIDSnake)
         cursor = try Self.decodeCursor(container, keys: [.cursor])
         oldestCursor = try Self.decodeCursor(container, keys: [.oldestCursor, .oldestCursorSnake])
         capabilities = try container.decodeIfPresent(PiSemanticCapabilities.self, forKey: .capabilities)
@@ -50,6 +57,7 @@ struct PiSemanticCapability: Codable, Equatable, Hashable, Sendable {
         try container.encode(connected, forKey: .connected)
         try container.encode(protocolVersion, forKey: .protocolVersion)
         try container.encodeIfPresent(sessionID, forKey: .sessionIDCamel)
+        try container.encodeIfPresent(parentSessionID, forKey: .parentSessionIDSnake)
         try container.encodeIfPresent(cursor, forKey: .cursor)
         try container.encodeIfPresent(oldestCursor, forKey: .oldestCursor)
         try container.encode(capabilities, forKey: .capabilities)

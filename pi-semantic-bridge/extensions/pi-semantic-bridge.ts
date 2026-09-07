@@ -11,6 +11,7 @@ import { chmodSync, lstatSync, mkdirSync, unlinkSync, type Stats } from "node:fs
 import { createServer, Socket, type Server } from "node:net";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { registerSessionLineage, savedParentSessionId } from "../lib/session-lineage.ts";
 
 const PROTOCOL = { name: "herdr.pi.semantic", version: 1 } as const;
 // Mirrors @earendil-works/pi-agent-core's ThinkingLevel union exactly (not
@@ -237,6 +238,7 @@ function projectEvent(type: string, event: unknown, ctx: ExtensionContext): Json
 function session(ctx: ExtensionContext): JsonObject {
 	return {
 		id: ctx.sessionManager.getSessionId(),
+		parent_session_id: savedParentSessionId(ctx.sessionManager) ?? null,
 		file: ctx.sessionManager.getSessionFile(),
 		cwd: ctx.sessionManager.getCwd(),
 		leafId: ctx.sessionManager.getLeafId(),
@@ -557,6 +559,7 @@ class BridgeRuntime {
 			sequence: this.sequence,
 			kind: "hello",
 			session_id: ctx.sessionManager.getSessionId(),
+			parent_session_id: savedParentSessionId(ctx.sessionManager) ?? null,
 			capabilities: {
 				prompt: true,
 				steer: true,
@@ -923,10 +926,13 @@ function replaceKeyFor(type: string, event: unknown): string | undefined {
 }
 
 export default function piSemanticBridge(pi: ExtensionAPI): void {
+	// Lineage also belongs to ordinary Pi sessions outside Herdr-managed panes.
+	const lineage = registerSessionLineage(pi);
 	const herdrPath = process.env.HERDR_SOCKET_PATH;
 	const paneId = process.env.HERDR_PANE_ID;
 	if (!herdrPath || !isAbsolute(herdrPath) || !paneId) return;
 	const runtime = new BridgeRuntime(pi, herdrPath, paneId);
+	lineage.onChange = () => runtime.recover("session_lineage_changed");
 
 	const events = [
 		"session_info_changed", "session_before_switch", "session_before_fork", "session_before_compact",

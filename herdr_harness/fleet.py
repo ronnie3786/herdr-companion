@@ -352,6 +352,8 @@ def _tree_digest(path: Path) -> Optional[str]:
 # RENAME_SWAP, which would be a catastrophic mismatch for a no-clobber
 # promotion.
 _RENAME_EXCL = 0x00000004
+_LINUX_RENAME_NOREPLACE = 1
+_LINUX_AT_FDCWD = -100
 
 
 class _SnapshotDirectory:
@@ -440,11 +442,11 @@ def _lstat_identity(path: Path) -> Optional[tuple[int, int]]:
 def _exclusive_move(source: Path, destination: Path) -> None:
     """Move ``source`` to an absent destination without ever replacing it.
 
-    Darwin exposes the required atomic primitive as ``renamex_np`` with
-    ``RENAME_EXCL``.  Where that API is unavailable, regular files use an
-    exclusive hard-link on the same filesystem.  Directory promotion fails
-    closed without that native primitive because a recursive copy cannot
-    provide an atomic move and could expose a partial tree.
+    Darwin provides ``renamex_np(RENAME_EXCL)`` and Linux provides
+    ``renameat2(RENAME_NOREPLACE)``.  If the native API or filesystem lacks
+    support, regular files use an exclusive hard-link on the same filesystem.
+    Directory promotion fails closed because recursive copying cannot provide
+    an atomic move and could expose a partial tree.
     """
 
     if platform.system() == "Darwin":
@@ -457,6 +459,24 @@ def _exclusive_move(source: Path, destination: Path) -> None:
             renamex_np.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
             renamex_np.restype = ctypes.c_int
             result = renamex_np(os.fsencode(source), os.fsencode(destination), _RENAME_EXCL)
+            if result == 0:
+                return
+            error_number = ctypes.get_errno() or errno.EIO
+            if error_number not in {errno.ENOSYS, errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP}:
+                raise OSError(error_number, os.strerror(error_number), str(destination))
+    elif platform.system() == "Linux":
+        try:
+            libc = ctypes.CDLL(None, use_errno=True)
+            renameat2 = libc.renameat2
+        except (AttributeError, OSError):
+            renameat2 = None
+        if renameat2 is not None:
+            renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+            renameat2.restype = ctypes.c_int
+            result = renameat2(
+                _LINUX_AT_FDCWD, os.fsencode(source),
+                _LINUX_AT_FDCWD, os.fsencode(destination), _LINUX_RENAME_NOREPLACE,
+            )
             if result == 0:
                 return
             error_number = ctypes.get_errno() or errno.EIO
@@ -477,7 +497,7 @@ def _exclusive_move(source: Path, destination: Path) -> None:
         source.unlink()
         return
     if source.is_dir():
-        raise OSError(errno.ENOTSUP, "directory promotion requires renamex_np")
+        raise OSError(errno.ENOTSUP, "directory promotion requires native atomic no-replace rename support")
     raise OSError(errno.ENOENT, "source is unavailable")
 
 

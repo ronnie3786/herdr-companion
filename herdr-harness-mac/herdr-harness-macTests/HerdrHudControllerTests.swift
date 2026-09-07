@@ -110,13 +110,16 @@ struct HerdrHudControllerTests {
     /// The panel used to clamp its chip count at `maxChips`, which would have
     /// left revealed sessions drawn outside the window.
     @Test("The panel accepts more chips than the grouped limit, up to the expanded one")
-    func revealedChipsGrowThePanel() async throws {
-        let harness = makeHarness()
-        harness.controller.setCollapsedChipCount(HerdrHudPlacement.maxChips + 2)
-        #expect(harness.controller.collapsedChipCount == HerdrHudPlacement.maxChips + 2)
+    func revealedChipsGrowThePanel() {
+        // Test the controller's count contract without a hosted root. Its
+        // initial model projection would otherwise replace these explicit
+        // counts during panel layout. Placement tests cover the frame sizes.
+        let controller = HerdrHudController(userDefaults: makeDefaults())
+        controller.setCollapsedChipCount(HerdrHudPlacement.maxChips + 2)
+        #expect(controller.collapsedChipCount == HerdrHudPlacement.maxChips + 2)
 
-        harness.controller.setCollapsedChipCount(HerdrHudPlacement.maxCollapsedRows + 5)
-        #expect(harness.controller.collapsedChipCount == HerdrHudPlacement.maxCollapsedRows)
+        controller.setCollapsedChipCount(HerdrHudPlacement.maxCollapsedRows + 5)
+        #expect(controller.collapsedChipCount == HerdrHudPlacement.maxCollapsedRows)
     }
 
     @Test("Result nodes reserve their lane only while visible")

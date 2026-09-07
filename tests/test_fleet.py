@@ -1882,9 +1882,13 @@ class FleetBackendTests(unittest.TestCase):
         homebrew_bin = self.home / "homebrew" / "bin"
         self._write_executable_at(homebrew_bin / "gh")
         self._write_executable_at(self.home / ".local" / "bin" / "claude")
+        minimal_bin = self.home / "minimal-bin"
+        minimal_bin.mkdir()
         launchd_environment = {
             "HOME": str(self.home),
-            "PATH": "/usr/bin:/bin",
+            # Do not let a CI image's preinstalled gh/claude satisfy this
+            # fallback test before it reaches our standard/user locations.
+            "PATH": str(minimal_bin),
         }
 
         with mock.patch("herdr_harness.fleet._STANDARD_EXECUTABLE_DIRECTORIES", (homebrew_bin,)):
@@ -1907,8 +1911,10 @@ class FleetBackendTests(unittest.TestCase):
         )
         homebrew_bin.mkdir(parents=True, exist_ok=True)
         (homebrew_bin / "gh").symlink_to(actual)
+        minimal_bin = self.home / "minimal-bin"
+        minimal_bin.mkdir()
         launchd_environment = dict(self.environ)
-        launchd_environment.update({"HOME": str(self.home), "PATH": "/usr/bin:/bin"})
+        launchd_environment.update({"HOME": str(self.home), "PATH": str(minimal_bin)})
         manager = FleetManager(environ=launchd_environment)
         catalog = {
             "cliCatalog": [

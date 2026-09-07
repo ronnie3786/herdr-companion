@@ -5,86 +5,107 @@ import Testing
 @Suite("Pi conversation reload guard")
 @MainActor
 struct PiConversationStoreReloadGuardTests {
-    @Test("Repeated no-progress reloads back off before polling")
+    @Test("Repeated no-progress reloads back off before polling", .timeLimit(.minutes(1)))
     func repeatedReloadsFallBackToPolling() async throws {
         let store = PiConversationStore()
         let snapshot = try snapshot()
         let pane = testPane()
-        store.snapshotProvider = { _ in snapshot }
-        store.eventsProvider = { _, _ in
-            AsyncThrowingStream { continuation in
-                continuation.yield(.envelope(PiConversationEnvelope(
-                    paneID: "w1:p1",
-                    sessionID: "s1",
-                    cursor: "1",
-                    event: .object(["type": .string("session_compact")])
-                )))
-                continuation.finish()
+        let (polls, continuation) = AsyncStream<Int>.makeStream()
+        var streamRequests = 0
+        var pollSnapshots = 0
+        store.snapshotProvider = { [weak store] _ in
+            guard let store else { throw CancellationError() }
+            if store.transport == .polling {
+                pollSnapshots += 1
+                #expect(streamRequests == 3)
+                #expect(store.noProgressReloads >= 2)
+                continuation.yield(pollSnapshots)
             }
+            return snapshot
+        }
+        store.eventsProvider = { _, _ in
+            streamRequests += 1
+            return reloadStream()
         }
         store.reloadBackoffBase = .milliseconds(5)
 
         let model = HerdrAppModel(arguments: [])
-        let clock = ContinuousClock()
-        let task = Task { @MainActor in
-            await store.follow(model: model, pane: pane)
+        let task = Task { @MainActor in await store.follow(model: model, pane: pane) }
+        defer {
+            task.cancel()
+            continuation.finish()
         }
-        defer { task.cancel() }
 
-        let pollingDeadline = clock.now.advanced(by: .seconds(3))
-        while store.transport != .polling, clock.now < pollingDeadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        // Observe two completed polling intervals, rather than sampling a brief
+        // transition against a wall-clock deadline on a contended main actor.
+        var iterator = polls.makeAsyncIterator()
+        #expect(await iterator.next() == 1)
+        #expect(await iterator.next() == 2)
         #expect(store.transport == .polling)
         #expect(store.noProgressReloads >= 2)
-        try await Task.sleep(for: .seconds(2.1))
-        #expect(store.transport == .polling)
         task.cancel()
         await task.value
     }
 
-    @Test("Stuck cursor polling holds before returning to live stream")
+    @Test("Stuck cursor polling holds before returning to live stream", .timeLimit(.minutes(1)))
     func stuckCursorPollingHoldsBeforeReturningToLiveStream() async throws {
         let store = PiConversationStore()
         let snapshot = try snapshot()
         let pane = testPane()
-        store.snapshotProvider = { _ in snapshot }
-        store.eventsProvider = { _, _ in
-            AsyncThrowingStream { continuation in
-                continuation.yield(.envelope(PiConversationEnvelope(
-                    paneID: "w1:p1",
-                    sessionID: "s1",
-                    cursor: "1",
-                    event: .object(["type": .string("session_compact")])
-                )))
-                continuation.finish()
+        let (recovery, continuation) = AsyncStream<Int>.makeStream()
+        var streamRequests = 0
+        var pollSnapshots = 0
+        store.snapshotProvider = { [weak store] _ in
+            guard let store else { throw CancellationError() }
+            if store.transport == .polling, pollSnapshots < 2 {
+                pollSnapshots += 1
+                #expect(streamRequests == 3)
+                #expect(store.noProgressReloads >= 2)
+                if pollSnapshots == 2 {
+                    // The first unchanged poll must retain polling. Expire the
+                    // existing test seam only after observing that behavior.
+                    store.stuckCursorPollingHold = .zero
+                }
             }
+            return snapshot
+        }
+        store.eventsProvider = { _, _ in
+            streamRequests += 1
+            if streamRequests <= 3 { return reloadStream() }
+            // Recovery is a stable stream, not another reset that would race
+            // the assertion by immediately sending the store back to polling.
+            continuation.yield(streamRequests)
+            return AsyncThrowingStream { _ in }
         }
         store.reloadBackoffBase = .milliseconds(5)
-        store.stuckCursorPollingHold = .milliseconds(300)
+        store.stuckCursorPollingHold = .seconds(3_600)
 
         let model = HerdrAppModel(arguments: [])
         let task = Task { @MainActor in await store.follow(model: model, pane: pane) }
-        defer { task.cancel() }
-
-        let clock = ContinuousClock()
-        let pollingDeadline = clock.now.advanced(by: .seconds(3))
-        while store.transport != .polling, clock.now < pollingDeadline {
-            try await Task.sleep(for: .milliseconds(10))
+        defer {
+            task.cancel()
+            continuation.finish()
         }
-        #expect(store.transport == .polling)
 
-        let pollingEnteredAt = clock.now
-        try await Task.sleep(for: .milliseconds(150))
-        #expect(store.transport == .polling)
-
-        let liveStreamDeadline = pollingEnteredAt.advanced(by: .seconds(3))
-        while store.transport != .liveStream, clock.now < liveStreamDeadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        var iterator = recovery.makeAsyncIterator()
+        #expect(await iterator.next() == 4)
+        #expect(pollSnapshots == 2)
         #expect(store.transport == .liveStream)
+        #expect(store.noProgressReloads == 0)
         task.cancel()
         await task.value
+    }
+
+    private func reloadStream() -> AsyncThrowingStream<PiConversationStreamEvent, any Error> {
+        AsyncThrowingStream { continuation in
+            continuation.yield(.envelope(PiConversationEnvelope(
+                paneID: "w1:p1",
+                sessionID: "s1",
+                cursor: "1",
+                event: .object(["type": .string("session_compact")])
+            )))
+            continuation.finish()
+        }
     }
 
     @Test("Reload guard decays after an idle interval")

@@ -58,9 +58,9 @@ struct HerdrAlertTests {
         #expect(model.alerts.first(where: { $0.id == alert.id })?.isRead == true)
     }
 
-    @Test("Opening a pane without unread alerts still acknowledges it")
+    @Test("Opening a pane without unread alerts still acknowledges it", .timeLimit(.minutes(1)))
     func openingPaneWithoutUnreadAlertsAcknowledgesPane() async throws {
-        await AlertReadOnOpenRequestRecorder.shared.reset()
+        let requests = await AlertReadOnOpenRequestRecorder.shared.reset()
         let suiteName = "HerdrAlertTests.acknowledgesNoUnread.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
@@ -89,12 +89,13 @@ struct HerdrAlertTests {
         model.alerts = []
 
         model.openPane(id: "m1|w1:p1")
-        for _ in 0..<20 {
-            if !(await AlertReadOnOpenRequestRecorder.shared.requests()).isEmpty { break }
-            await Task.yield()
-        }
+        // URLSession and its protocol callback run outside the main actor;
+        // yielding a fixed number of times does not await their completion.
+        var iterator = requests.makeAsyncIterator()
+        _ = await iterator.next()
+        let recorded = await AlertReadOnOpenRequestRecorder.shared.finishObserving()
 
-        #expect(await AlertReadOnOpenRequestRecorder.shared.requests() == [
+        #expect(recorded == [
             .init(method: "POST", path: "/api/v1/panes/w1:p1/alerts/read"),
         ])
     }
@@ -108,12 +109,24 @@ private actor AlertReadOnOpenRequestRecorder {
 
     static let shared = AlertReadOnOpenRequestRecorder()
     private var recordedRequests: [Request] = []
+    private var observer: AsyncStream<[Request]>.Continuation?
 
-    func reset() { recordedRequests = [] }
+    func reset() -> AsyncStream<[Request]> {
+        _ = finishObserving()
+        recordedRequests = []
+        let (stream, continuation) = AsyncStream<[Request]>.makeStream()
+        observer = continuation
+        return stream
+    }
     func record(_ request: URLRequest) {
         recordedRequests.append(.init(method: request.httpMethod ?? "", path: request.url?.path ?? ""))
+        observer?.yield(recordedRequests)
     }
-    func requests() -> [Request] { recordedRequests }
+    func finishObserving() -> [Request] {
+        observer?.finish()
+        observer = nil
+        return recordedRequests
+    }
 }
 
 private final class AlertReadOnOpenURLProtocol: URLProtocol {

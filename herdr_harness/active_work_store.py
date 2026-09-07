@@ -2673,7 +2673,7 @@ class ActiveWorkRepository:
         if selector.get("buzz_channel_id"):
             external = external_id(selector["buzz_channel_id"], "buzz_channel_id")
             rows = conn.execute(
-                "SELECT work_item_id FROM buzz_channels WHERE external_id = ?",
+                "SELECT DISTINCT work_item_id FROM buzz_channels WHERE external_id = ?",
                 (external,),
             ).fetchall()
             if len(rows) > 1:

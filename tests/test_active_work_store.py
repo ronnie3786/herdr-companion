@@ -213,6 +213,77 @@ class ActiveWorkStoreTests(unittest.TestCase):
             self.repo.ingest(missing_jira)
         self.assertEqual(context.exception.code, "active_work_selector_conflict")
 
+    def test_channel_selector_accepts_multiple_sources_for_one_owner(self):
+        owner = self.repo.setup_jira(jira_ticket())["item"]
+        for source_name in ("observer-a", "observer-b"):
+            payload = base_ingestion(owner["id"], key=f"attach-{source_name}")
+            payload["source"] = source_name
+            payload["channel"] = {"external_id": "garden-channel"}
+            self.repo.ingest(payload)
+
+        selectors = [
+            {"buzz_channel_id": "garden-channel"},
+            {
+                "work_item_id": owner["id"],
+                "jira_key": "TASK-101",
+                "jira_site": "jira.example.test",
+                "buzz_channel_id": "garden-channel",
+            },
+        ]
+        for index, selector in enumerate(selectors):
+            with self.subTest(selector=selector):
+                payload = base_ingestion(owner["id"], key=f"channel-update-{index}")
+                payload["selector"] = selector
+                payload["item"] = {"summary": f"Garden observation {index}"}
+                result = self.repo.ingest(payload)
+                self.assertTrue(result["applied"])
+                self.assertEqual(result["item"]["id"], owner["id"])
+                self.assertEqual(result["item"]["summary"], f"Garden observation {index}")
+                self.assertEqual(
+                    {channel["source"] for channel in result["item"]["buzz_channels"]},
+                    {"observer-a", "observer-b"},
+                )
+
+        other = self.repo.setup_jira(jira_ticket("TASK-202"))["item"]
+        for index, selector in enumerate([
+            {"work_item_id": other["id"], "buzz_channel_id": "garden-channel"},
+            {
+                "jira_key": "TASK-202",
+                "jira_site": "jira.example.test",
+                "buzz_channel_id": "garden-channel",
+            },
+        ]):
+            with self.subTest(conflicting_selector=selector):
+                payload = base_ingestion(owner["id"], key=f"conflicting-channel-{index}")
+                payload["selector"] = selector
+                with self.assertRaises(ActiveWorkError) as context:
+                    self.repo.ingest(payload)
+                self.assertEqual(context.exception.status, 409)
+                self.assertEqual(context.exception.code, "active_work_selector_conflict")
+
+    def test_channel_selector_rejects_multiple_distinct_owners(self):
+        owners = [self.repo.create_item({"title": title}) for title in ("Garden plan", "Reading list")]
+        for owner, source_name in zip(owners, ("observer-a", "observer-b")):
+            payload = base_ingestion(owner["id"], key=f"attach-{source_name}")
+            payload["source"] = source_name
+            payload["channel"] = {"external_id": "shared-channel"}
+            self.repo.ingest(payload)
+
+        for index, selector in enumerate([
+            {"buzz_channel_id": "shared-channel"},
+            {"work_item_id": owners[0]["id"], "buzz_channel_id": "shared-channel"},
+        ]):
+            with self.subTest(selector=selector):
+                payload = base_ingestion(owners[0]["id"], key=f"ambiguous-channel-{index}")
+                payload["selector"] = selector
+                payload["item"] = {"summary": "Must not be applied"}
+                with self.assertRaises(ActiveWorkError) as context:
+                    self.repo.ingest(payload)
+                self.assertEqual(context.exception.status, 409)
+                self.assertEqual(context.exception.code, "active_work_selector_ambiguous")
+        for owner in owners:
+            self.assertEqual(self.repo.item_projection(owner["id"])["summary"], "")
+
     def test_ingestion_models_agents_sessions_and_threads_across_stages(self):
         item = self.repo.setup_jira(jira_ticket())["item"]
         payload = base_ingestion(item["id"])

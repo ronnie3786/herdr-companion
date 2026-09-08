@@ -135,15 +135,18 @@ struct ActiveWorkFocusRouteView: View {
     @ViewBuilder
     private func detail(horizontalPadding: CGFloat) -> some View {
         if let item = store.selectedItem {
+            let pipeline = store.pipeline(for: item)
+            let stages = ActiveWorkProjection.orderedStages(in: pipeline)
+            let nextStages = ActiveWorkProjection.nextStages(for: item, pipeline: pipeline)
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     ActiveWorkFocusHero(
                         item: item,
-                        pipeline: store.pipeline,
-                        stages: store.stages
+                        pipeline: pipeline,
+                        stages: stages
                     )
 
-                    let currentStage = store.pipeline.stages.first { $0.key == item.currentStageKey }
+                    let currentStage = pipeline.stages.first { $0.key == item.currentStageKey }
                     if item.lifecycle.lowercased() == "done" {
                         ActiveWorkLifecycleCard(
                             item: item,
@@ -152,16 +155,18 @@ struct ActiveWorkFocusRouteView: View {
                             setLifecycle: setLifecycle
                         )
                             .id("\(item.id)-archive-\(item.revision)")
-                    } else if let nextStage = ActiveWorkProjection.nextStage(for: item, pipeline: store.pipeline) {
-                        ActiveWorkTransitionCard(
-                            item: item,
-                            currentStage: currentStage,
-                            nextStage: nextStage,
-                            isControlEnabled: isControlEnabled,
-                            transition: transition
-                        )
-                        .id("\(item.id)-\(nextStage.key)")
-                    } else if currentStage?.key == "pr-triage" {
+                    } else if !nextStages.isEmpty {
+                        ForEach(nextStages) { nextStage in
+                            ActiveWorkTransitionCard(
+                                item: item,
+                                currentStage: currentStage,
+                                nextStage: nextStage,
+                                isControlEnabled: isControlEnabled,
+                                transition: transition
+                            )
+                            .id("\(item.id)-\(nextStage.key)")
+                        }
+                    } else if currentStage != nil {
                         ActiveWorkLifecycleCard(
                             item: item,
                             action: .complete,
@@ -269,14 +274,16 @@ struct ActiveWorkFocusRouteView: View {
         _ item: ActiveWorkItem,
         unscopedThreads: [ActiveWorkThread]
     ) -> some View {
-        DisclosureGroup(isExpanded: $isRouteDetailsExpanded) {
+        let pipeline = store.pipeline(for: item)
+        let stages = ActiveWorkProjection.orderedStages(in: pipeline)
+        return DisclosureGroup(isExpanded: $isRouteDetailsExpanded) {
             VStack(alignment: .leading, spacing: 14) {
-                ForEach(store.stages.enumerated(), id: \.element.id) { index, stage in
+                ForEach(stages.enumerated(), id: \.element.id) { index, stage in
                     ActiveWorkRouteStageView(
                         item: item,
-                        pipeline: store.pipeline,
+                        pipeline: pipeline,
                         stage: stage,
-                        isLast: index == store.stages.count - 1,
+                        isLast: index == stages.count - 1,
                         openSession: openSession,
                         openURL: openURL
                     )
@@ -294,7 +301,7 @@ struct ActiveWorkFocusRouteView: View {
                     .herdrFont(.subheadline, weight: .bold)
                     .foregroundStyle(HerdrTheme.text)
                 Spacer()
-                Text("\(store.stages.count) stages · sessions & discussions")
+                Text("\(stages.count) stages · sessions & discussions")
                     .herdrFont(.caption, monospaced: true)
                     .foregroundStyle(HerdrTheme.muted)
             }
@@ -911,7 +918,7 @@ private struct ActiveWorkLifecycleCard: View {
         var title: String { self == .complete ? "Complete this route" : "Archive completed work" }
         var detail: String {
             self == .complete
-                ? "Mark the final PR Triage stage complete. The item remains visible until you archive it."
+                ? "Approve any pending final checkpoint and mark this route complete. The item remains visible until you archive it."
                 : "Remove this completed item from Active Work. Its history stays in Herdr's durable store."
         }
         var buttonTitle: String { self == .complete ? "Mark complete" : "Archive" }

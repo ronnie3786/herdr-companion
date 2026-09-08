@@ -380,6 +380,7 @@ def api_description() -> dict:
             "activeWorkWorkflows": "/api/v1/active-work/workflows",
             "activeWorkWorkflow": "/api/v1/active-work/workflows/{slug}",
             "activeWorkItemStage": "/api/v1/active-work/items/{workItemId}/stages/{stageKey}",
+            "activeWorkItemPath": "/api/v1/active-work/items/{workItemId}/path",
             "activeWorkSyncTargets": "/api/v1/active-work/sync-targets",
             "board": "/board",
             "voiceTranscriptions": "/api/v1/voice/transcriptions",
@@ -446,6 +447,7 @@ def api_description() -> dict:
             "POST /api/v1/active-work/items",
             "PATCH /api/v1/active-work/items/{workItemId}",
             "POST /api/v1/active-work/items/{workItemId}/transitions",
+            "POST /api/v1/active-work/items/{workItemId}/path",
             "POST /api/v1/active-work/workflows",
             "PATCH /api/v1/active-work/items/{workItemId}/stages/{stageKey}",
             "POST /api/v1/active-work/jira/{issueKey}/setup",
@@ -1237,6 +1239,16 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         body,
                         actor=getattr(self, "_active_work_actor", "user"),
                     )
+            if (
+                method == "POST"
+                and len(tail) == 4
+                and tail[:2] == ["active-work", "items"]
+                and tail[3] == "path"
+            ):
+                item_id = _identifier(tail[2], "work item ID")
+                return service.update_active_work_path(
+                    item_id, body, actor=getattr(self, "_active_work_actor", "user")
+                )
             if (
                 method == "POST"
                 and len(tail) == 4

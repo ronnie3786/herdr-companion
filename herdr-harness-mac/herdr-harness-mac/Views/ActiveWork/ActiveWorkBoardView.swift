@@ -18,7 +18,7 @@ struct ActiveWorkBoardView: View {
                     ForEach(store.items) { item in
                         ActiveWorkBoardCard(
                             item: item,
-                            pipeline: store.pipeline,
+                            pipeline: store.pipeline(for: item),
                             isSelected: store.selectedItem?.id == item.id,
                             select: { store.select(item.id) },
                             openFocus: { store.select(item.id, revealFocus: true) },

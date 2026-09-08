@@ -369,6 +369,7 @@ class ActiveWorkRepository:
             self._seed_pipeline_locked()
             self._backfill_default_workflow_config_locked()
             self._load_workflow_configs_locked()
+            self._backfill_paths_locked()
             self._secure_database_files()
 
     @staticmethod
@@ -509,6 +510,41 @@ class ActiveWorkRepository:
                 except sqlite3.Error:
                     pass
                 raise
+            version = 3
+        if version == 3:
+            with self._database:
+                self._database.executescript("""
+                    BEGIN IMMEDIATE;
+                    CREATE TABLE work_item_paths (
+                        work_item_id TEXT PRIMARY KEY REFERENCES work_items(id) ON DELETE CASCADE,
+                        template_id TEXT NOT NULL REFERENCES pipeline_templates(id),
+                        internal_template_id TEXT REFERENCES pipeline_templates(id),
+                        config_json TEXT NOT NULL,
+                        customized INTEGER NOT NULL DEFAULT 0,
+                        loop_json TEXT NOT NULL DEFAULT '{}',
+                        updated_at TEXT NOT NULL
+                    );
+                    CREATE TABLE work_stage_visits (
+                        id TEXT PRIMARY KEY,
+                        work_item_id TEXT NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
+                        stage_key TEXT NOT NULL,
+                        entered_at TEXT NOT NULL,
+                        exited_at TEXT,
+                        outcome TEXT NOT NULL DEFAULT 'active',
+                        summary TEXT NOT NULL DEFAULT '',
+                        content_json TEXT NOT NULL DEFAULT '{}',
+                        checkpoint_state TEXT NOT NULL DEFAULT 'none',
+                        transition_note TEXT NOT NULL DEFAULT '',
+                        actor TEXT NOT NULL DEFAULT 'system'
+                    );
+                    CREATE INDEX work_stage_visits_item ON work_stage_visits(work_item_id, entered_at);
+                    PRAGMA user_version=4;
+                    COMMIT;
+                """)
+                self._database.execute(
+                    "INSERT INTO active_work_schema_migrations(version, applied_at) VALUES (4, ?)",
+                    (self._now(),),
+                )
 
     def _seed_pipeline_locked(self) -> None:
         created_at = self._now()
@@ -562,6 +598,187 @@ class ActiveWorkRepository:
                 (encoded, DEFAULT_PIPELINE_ID),
             )
 
+    def _backfill_paths_locked(self) -> None:
+        with self._database:
+            rows = self._database.execute(
+                "SELECT item.* FROM work_items item LEFT JOIN work_item_paths path "
+                "ON path.work_item_id = item.id WHERE path.work_item_id IS NULL"
+            ).fetchall()
+            for row in rows:
+                self._initialize_path_locked(self._database, row)
+
+    def _initialize_path_locked(self, conn: sqlite3.Connection, item: sqlite3.Row) -> None:
+        config = self._template_config_locked(str(item["template_id"]))
+        if config is None:
+            raise ActiveWorkError("Pipeline template has no workflow config", status=500)
+        conn.execute(
+            "INSERT INTO work_item_paths(work_item_id, template_id, config_json, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            (item["id"], item["template_id"], json_dump(config), item["updated_at"]),
+        )
+        for historical in conn.execute(
+            "SELECT definition.stage_key, state.* FROM work_stage_states state "
+            "JOIN pipeline_stage_definitions definition ON definition.id = state.stage_id "
+            "WHERE state.work_item_id = ? AND state.stage_id != COALESCE(?, '') "
+            "AND state.started_at IS NOT NULL AND state.state IN ('complete', 'skipped') "
+            "ORDER BY definition.sequence", (item["id"], item["current_stage_id"])
+        ).fetchall():
+            conn.execute(
+                "INSERT INTO work_stage_visits(id, work_item_id, stage_key, entered_at, exited_at, outcome, summary, content_json, checkpoint_state, actor) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'import')",
+                (safe_id("visit"), item["id"], historical["stage_key"], historical["started_at"],
+                 historical["completed_at"] or historical["updated_at"], historical["state"],
+                 historical["summary"], historical["content_json"], historical["checkpoint_state"]),
+            )
+        if item["current_stage_id"]:
+            stage = conn.execute(
+                "SELECT definition.stage_key, state.* FROM pipeline_stage_definitions definition "
+                "JOIN work_stage_states state ON state.stage_id = definition.id "
+                "WHERE state.work_item_id = ? AND definition.id = ?", (item["id"], item["current_stage_id"])
+            ).fetchone()
+            terminal = item["lifecycle"] in {"done", "archived"}
+            conn.execute(
+                "INSERT INTO work_stage_visits(id, work_item_id, stage_key, entered_at, exited_at, outcome, summary, content_json, checkpoint_state, actor) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (safe_id("visit"), item["id"], stage["stage_key"], stage["started_at"] or item["updated_at"],
+                 (stage["completed_at"] or item["updated_at"]) if terminal else None,
+                 "archived" if item["lifecycle"] == "archived" else "complete" if terminal else "active",
+                 stage["summary"], stage["content_json"], stage["checkpoint_state"], "system"),
+            )
+
+    def _path_record_locked(self, conn: sqlite3.Connection, item_id: str) -> sqlite3.Row:
+        row = conn.execute("SELECT * FROM work_item_paths WHERE work_item_id = ?", (item_id,)).fetchone()
+        if row is None:
+            raise ActiveWorkError("Work item path is unavailable", status=500)
+        return row
+
+    def _path_config_locked(self, conn: sqlite3.Connection, item_id: str) -> WorkflowConfig:
+        return parse_workflow_config(json_load(self._path_record_locked(conn, item_id)["config_json"], {}))
+
+    def _dynamic_path_locked(self, conn: sqlite3.Connection, item_id: str) -> bool:
+        path = self._path_record_locked(conn, item_id)
+        if path["customized"]:
+            return True
+        config = parse_workflow_config(json_load(path["config_json"], {}))
+        return any(
+            stage.next != (() if index == len(config.stages) - 1 else (config.stages[index + 1].key,))
+            for index, stage in enumerate(config.stages)
+        )
+
+    def _path_ancestry_locked(self, conn: sqlite3.Connection, item_id: str) -> list[str]:
+        """Replay the current traversal, discarding downstream steps after a return.
+
+        A step from an earlier attempt is not necessarily an ancestor now. Using
+        all historical visits would let a second pass bypass fresh review gates.
+        """
+
+        ancestry: list[str] = []
+        for visit in conn.execute("SELECT stage_key FROM work_stage_visits WHERE work_item_id = ? ORDER BY rowid", (item_id,)).fetchall():
+            key = str(visit["stage_key"])
+            if key in ancestry:
+                ancestry = ancestry[:ancestry.index(key) + 1]
+            else:
+                ancestry.append(key)
+        return ancestry
+
+    @staticmethod
+    def _validated_loop(payload: Any, existing: Any = None) -> dict:
+        body = require_mapping(payload, "loop")
+        reject_unknown(body, {"owner", "status", "reason", "context"}, "loop")
+        result = dict(existing or {})
+        for key, limit in {"owner": 500, "reason": 8192, "context": 32768}.items():
+            if key in body:
+                result[key] = text(body[key], f"loop.{key}", maximum=limit)
+        if "status" in body:
+            result["status"] = choice(body["status"], "loop.status", {"idle", "working", "waiting", "blocked", "done"})
+        if result.get("status") in {"waiting", "blocked"} and not result.get("reason"):
+            raise ActiveWorkError("Waiting or blocked loops need a reason")
+        return result
+
+    def update_path(self, item_id: str, payload: dict, *, actor: str = "user") -> dict:
+        """Replace this ticket's route without changing its template or losing its history."""
+
+        normalized_id = internal_id(item_id, "work item ID")
+        body = require_mapping(payload, "path")
+        reject_unknown(body, {"expected_revision", "note", "stages", "phases"}, "path")
+        revision = self._expected_revision(body, None)
+        note = text(body.get("note"), "note", maximum=32768, required=True)
+        with self._transaction() as conn:
+            item = self._require_item_locked(conn, normalized_id)
+            if item["revision"] != revision:
+                raise ActiveWorkError("Work item was changed by another client", code="active_work_revision_conflict", status=409)
+            path = self._path_record_locked(conn, normalized_id)
+            raw = json_load(path["config_json"], {})
+            raw["stages"] = body.get("stages")
+            if "phases" in body:
+                raw["phases"] = body["phases"]
+            parsed = parse_workflow_config(raw, require_connected=True)
+            old_stages = conn.execute(
+                "SELECT definition.*, state.state, state.summary, state.content_json, state.started_at "
+                "FROM pipeline_stage_definitions definition JOIN work_stage_states state ON state.stage_id = definition.id "
+                "WHERE state.work_item_id = ? ORDER BY definition.sequence", (normalized_id,)
+            ).fetchall()
+            new_by_key = {stage.key: stage for stage in parsed.stages}
+            for stage in old_stages:
+                if stage["stage_key"] in new_by_key:
+                    if stage["checkpoint_kind"] == "human" and new_by_key[stage["stage_key"]].checkpoint != "human" and (
+                        actor != "user" or stage["state"] != "pending" or stage["started_at"] or stage["id"] == item["current_stage_id"]
+                    ):
+                        raise ActiveWorkError("Keep existing human checkpoints in the ticket path", code="active_work_checkpoint_required", status=409)
+                    continue
+                linked = any(conn.execute(f"SELECT 1 FROM {table} WHERE work_item_id = ? AND stage_id = ? LIMIT 1", (normalized_id, stage["id"])).fetchone()
+                             for table in ("stage_agent_links", "stage_session_links", "buzz_threads", "work_activity_events"))
+                visited = conn.execute("SELECT 1 FROM work_stage_visits WHERE work_item_id = ? AND stage_key = ? LIMIT 1", (normalized_id, stage["stage_key"])).fetchone()
+                if (stage["id"] == item["current_stage_id"] or stage["state"] != "pending" or stage["started_at"]
+                        or stage["summary"] or json_load(stage["content_json"], {}) or linked or visited
+                        or (stage["checkpoint_kind"] == "human" and actor != "user")):
+                    raise ActiveWorkError(f"Keep {stage['title']}: it has a checkpoint, progress, or linked history", code="active_work_path_stage_in_use", status=409)
+            current_key = next((stage["stage_key"] for stage in old_stages if stage["id"] == item["current_stage_id"]), None)
+            if item["lifecycle"] == "done" and current_key and new_by_key[current_key].next:
+                raise ActiveWorkError("Reopen the item before extending its completed path", code="active_work_invalid_terminal_state", status=409)
+            now = self._now()
+            internal_template = path["internal_template_id"]
+            if internal_template is None:
+                # Existing identifiers remain valid until customization. Clone only the
+                # definitions and remap every association in the same deferred-FK transaction.
+                conn.execute("PRAGMA defer_foreign_keys=ON")
+                internal_template = safe_id("route")
+                conn.execute("INSERT INTO pipeline_templates(id, slug, version, title, config_json, created_at) VALUES (?, ?, 1, ?, ?, ?)",
+                             (internal_template, internal_template, parsed.title, json_dump(raw), now))
+                for stage in old_stages:
+                    stage_id = safe_id("step")
+                    conn.execute("INSERT INTO pipeline_stage_definitions(id, template_id, stage_key, sequence, phase_key, title, skill_name, checkpoint_kind, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                 (stage_id, internal_template, stage["stage_key"], stage["sequence"], stage["phase_key"], stage["title"], stage["skill_name"], stage["checkpoint_kind"], now))
+                    for table in ("work_stage_states", "stage_agent_links", "stage_session_links", "buzz_threads", "work_activity_events"):
+                        conn.execute(f"UPDATE {table} SET stage_id = ? WHERE work_item_id = ? AND stage_id = ?", (stage_id, normalized_id, stage["id"]))
+                    conn.execute("UPDATE work_items SET current_stage_id = ? WHERE id = ? AND current_stage_id = ?", (stage_id, normalized_id, stage["id"]))
+                conn.execute("UPDATE work_items SET template_id = ? WHERE id = ?", (internal_template, normalized_id))
+            conn.execute("UPDATE pipeline_stage_definitions SET sequence = sequence + 1000 WHERE template_id = ?", (internal_template,))
+            for stage in parsed.stages:
+                existing = conn.execute("SELECT id, checkpoint_kind FROM pipeline_stage_definitions WHERE template_id = ? AND stage_key = ?", (internal_template, stage.key)).fetchone()
+                if existing:
+                    conn.execute("UPDATE pipeline_stage_definitions SET sequence = ?, phase_key = ?, title = ?, skill_name = ?, checkpoint_kind = ? WHERE id = ?",
+                                 (stage.sequence, stage.phase, stage.title, stage.skill, stage.checkpoint, existing["id"]))
+                    if existing["checkpoint_kind"] != stage.checkpoint and stage.key == current_key:
+                        conn.execute("UPDATE work_stage_states SET checkpoint_state = 'pending', attention = 'human', updated_at = ? WHERE work_item_id = ? AND stage_id = ?", (now, normalized_id, existing["id"]))
+                else:
+                    stage_id = safe_id("step")
+                    conn.execute("INSERT INTO pipeline_stage_definitions(id, template_id, stage_key, sequence, phase_key, title, skill_name, checkpoint_kind, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                 (stage_id, internal_template, stage.key, stage.sequence, stage.phase, stage.title, stage.skill, stage.checkpoint, now))
+                    conn.execute("INSERT INTO work_stage_states(work_item_id, stage_id, state, updated_at) VALUES (?, ?, 'pending', ?)", (normalized_id, stage_id, now))
+            for removed in conn.execute("SELECT id FROM pipeline_stage_definitions WHERE template_id = ? AND sequence > 1000", (internal_template,)).fetchall():
+                conn.execute("DELETE FROM work_stage_states WHERE work_item_id = ? AND stage_id = ?", (normalized_id, removed["id"]))
+                conn.execute("DELETE FROM pipeline_stage_definitions WHERE id = ?", (removed["id"],))
+            conn.execute("UPDATE pipeline_templates SET config_json = ? WHERE id = ?", (json_dump(raw), internal_template))
+            conn.execute("UPDATE work_item_paths SET internal_template_id = ?, config_json = ?, customized = 1, updated_at = ? WHERE work_item_id = ?", (internal_template, json_dump(raw), now, normalized_id))
+            conn.execute("UPDATE work_items SET revision = revision + 1, updated_at = ? WHERE id = ?", (now, normalized_id))
+            self._activity_locked(conn, normalized_id, kind="path_updated", message=note or "Updated this ticket's path.", actor_kind="user" if actor == "user" else "agent", actor_id=actor,
+                                  details={"stages": [stage.key for stage in parsed.stages], "previous_revision": revision})
+            self._audit_locked(conn, actor, "update_path", "work_item", normalized_id, body)
+        result = self.item_projection(normalized_id)
+        assert result is not None
+        return result
+
     def _load_workflow_configs_locked(self) -> None:
         shipped_dir = Path(__file__).resolve().parent / "workflows"
         self._apply_workflow_directory_locked(shipped_dir, create_if_missing=False)
@@ -608,7 +825,8 @@ class ActiveWorkRepository:
             candidates = [self._candidate_projection_locked(item) for item in (jira_candidates or [])]
             template_ids = {DEFAULT_PIPELINE_ID}
             for row in self._database.execute(
-                "SELECT DISTINCT template_id FROM work_items WHERE lifecycle != 'archived'"
+                "SELECT DISTINCT path.template_id FROM work_items item JOIN work_item_paths path "
+                "ON path.work_item_id = item.id WHERE lifecycle != 'archived'"
             ).fetchall():
                 template_ids.add(str(row["template_id"]))
             placeholders = ",".join("?" * len(template_ids))
@@ -720,7 +938,8 @@ class ActiveWorkRepository:
 
         with self._lock:
             rows = self._database.execute(
-                "SELECT id, slug, version, title FROM pipeline_templates ORDER BY slug, version"
+                "SELECT id, slug, version, title FROM pipeline_templates "
+                "WHERE id NOT IN (SELECT internal_template_id FROM work_item_paths WHERE internal_template_id IS NOT NULL) ORDER BY slug, version"
             ).fetchall()
             result = []
             for row in rows:
@@ -730,7 +949,7 @@ class ActiveWorkRepository:
                     (template_id,),
                 ).fetchone()[0]
                 in_use_count = self._database.execute(
-                    "SELECT COUNT(*) FROM work_items WHERE template_id = ?", (template_id,)
+                    "SELECT COUNT(*) FROM work_item_paths WHERE template_id = ?", (template_id,)
                 ).fetchone()[0]
                 raw_config = self._template_config_locked(template_id)
                 description = raw_config.get("description", "") if isinstance(raw_config, dict) else ""
@@ -807,7 +1026,8 @@ class ActiveWorkRepository:
                         "summary": "",
                         "lifecycle": "active",
                         "current_stage_key": "start-ticket",
-                        "next_action": "Set up the Buzz channel and confirm the current pipeline stage.",
+                        "workflow": "ticket-journey",
+                        "next_action": "Confirm the ticket scope, then tailor its path and assign the next action.",
                         "metadata": {"created_from": "jira"},
                     },
                     actor=actor,
@@ -874,7 +1094,7 @@ class ActiveWorkRepository:
         body = require_mapping(payload, "work item patch")
         reject_unknown(
             body,
-            {"title", "summary", "kind", "lifecycle", "next_action", "metadata", "expected_revision"},
+            {"title", "summary", "kind", "lifecycle", "next_action", "metadata", "expected_revision", "loop"},
             "work item patch",
         )
         revision = self._expected_revision(body, expected_revision)
@@ -907,13 +1127,17 @@ class ActiveWorkRepository:
                     "SELECT stage_key FROM pipeline_stage_definitions WHERE id = ?",
                     (row["current_stage_id"],),
                 ).fetchone()
-                terminal_key = self._terminal_stage_key_locked(conn, str(row["template_id"]))
-                if current_stage is None or current_stage["stage_key"] != terminal_key:
+                path_config = self._path_config_locked(conn, normalized_id)
+                terminal_keys = {stage.key for stage in path_config.stages if not stage.next}
+                if current_stage is None or current_stage["stage_key"] not in terminal_keys:
                     raise ActiveWorkError(
                         "Work can only be marked done at the final pipeline stage",
                         code="active_work_invalid_terminal_state",
                         status=409,
                     )
+                checkpoint = conn.execute("SELECT checkpoint_state FROM work_stage_states WHERE work_item_id = ? AND stage_id = ?", (normalized_id, row["current_stage_id"])).fetchone()
+                if self._dynamic_path_locked(conn, normalized_id) and checkpoint["checkpoint_state"] in {"pending", "changes_requested"}:
+                    raise ActiveWorkError("Approve the current checkpoint before completing this ticket", code="active_work_checkpoint_required", status=409)
             updates = {
                 column: value
                 for column, value in requested.items()
@@ -928,19 +1152,30 @@ class ActiveWorkRepository:
                 encoded_metadata = json_dump(merged_metadata)
                 if encoded_metadata != row["metadata_json"]:
                     updates["metadata_json"] = encoded_metadata
-            if not updates:
+            path = self._path_record_locked(conn, normalized_id)
+            loop = self._validated_loop(body["loop"], json_load(path["loop_json"], {})) if "loop" in body else None
+            loop_changed = loop is not None and json_dump(loop) != path["loop_json"]
+            if not updates and not loop_changed:
                 return self._item_projection_locked(normalized_id) or {}
             now = self._now()
+            if loop_changed:
+                conn.execute("UPDATE work_item_paths SET loop_json = ?, updated_at = ? WHERE work_item_id = ?", (json_dump(loop), now, normalized_id))
             if updates.get("lifecycle") == "archived":
                 updates["archived_at"] = now
             elif "lifecycle" in updates:
                 updates["archived_at"] = None
-            assignments = ", ".join(f"{column} = ?" for column in updates)
+            assignments = "".join(f"{column} = ?, " for column in updates)
             conn.execute(
-                f"UPDATE work_items SET {assignments}, revision = revision + 1, updated_at = ? WHERE id = ?",
+                f"UPDATE work_items SET {assignments}revision = revision + 1, updated_at = ? WHERE id = ?",
                 [*updates.values(), now, normalized_id],
             )
             if updates.get("lifecycle") == "done" and row["current_stage_id"]:
+                completed_stage = conn.execute("SELECT summary, content_json, checkpoint_state FROM work_stage_states WHERE work_item_id = ? AND stage_id = ?", (normalized_id, row["current_stage_id"])).fetchone()
+                conn.execute("UPDATE work_stage_visits SET exited_at = ?, outcome = 'complete', summary = ?, content_json = ?, checkpoint_state = ? WHERE work_item_id = ? AND exited_at IS NULL",
+                             (now, completed_stage["summary"], completed_stage["content_json"], completed_stage["checkpoint_state"], normalized_id))
+                final_loop = loop if loop is not None else json_load(path["loop_json"], {})
+                final_loop.update(status="done", reason="")
+                conn.execute("UPDATE work_item_paths SET loop_json = ?, updated_at = ? WHERE work_item_id = ?", (json_dump(final_loop), now, normalized_id))
                 conn.execute(
                     """
                     UPDATE work_stage_states SET state = 'complete', attention = 'none',
@@ -963,6 +1198,36 @@ class ActiveWorkRepository:
                         row["current_stage_id"],
                     ),
                 )
+                reopened = row["lifecycle"] in {"done", "archived"}
+                current = conn.execute("SELECT definition.stage_key, definition.checkpoint_kind, state.checkpoint_state "
+                                       "FROM pipeline_stage_definitions definition JOIN work_stage_states state ON state.stage_id = definition.id "
+                                       "WHERE state.work_item_id = ? AND definition.id = ?", (normalized_id, row["current_stage_id"])).fetchone()
+                if reopened:
+                    checkpoint = "pending" if current["checkpoint_kind"] == "human" else "none"
+                    conn.execute("UPDATE work_stage_states SET started_at = ?, checkpoint_state = ?, attention = ? WHERE work_item_id = ? AND stage_id = ?",
+                                 (now, checkpoint, "human" if checkpoint == "pending" else "none", normalized_id, row["current_stage_id"]))
+                    # Archiving an earlier server version may have left an open
+                    # visit. Close it before recording this explicit reopening.
+                    conn.execute("UPDATE work_stage_visits SET exited_at = ?, outcome = 'archived' WHERE work_item_id = ? AND exited_at IS NULL", (now, normalized_id))
+                    conn.execute("INSERT INTO work_stage_visits(id, work_item_id, stage_key, entered_at, actor) VALUES (?, ?, ?, ?, ?)",
+                                 (safe_id("visit"), normalized_id, current["stage_key"], now, actor))
+                else:
+                    checkpoint = current["checkpoint_state"]
+                resumed_loop = loop if loop is not None else json_load(path["loop_json"], {})
+                if "status" not in body.get("loop", {}):
+                    resumed_loop["status"] = "blocked" if updates["lifecycle"] == "blocked" else "waiting" if checkpoint in {"pending", "changes_requested"} else "working"
+                    resumed_loop["reason"] = "Work item is blocked" if updates["lifecycle"] == "blocked" else "Human checkpoint" if checkpoint in {"pending", "changes_requested"} else ""
+                conn.execute("UPDATE work_item_paths SET loop_json = ?, updated_at = ? WHERE work_item_id = ?", (json_dump(resumed_loop), now, normalized_id))
+            elif updates.get("lifecycle") == "archived":
+                current = conn.execute("SELECT summary, content_json, checkpoint_state FROM work_stage_states WHERE work_item_id = ? AND stage_id = ?", (normalized_id, row["current_stage_id"])).fetchone()
+                if current:
+                    conn.execute("UPDATE work_stage_visits SET exited_at = ?, outcome = 'archived', summary = ?, content_json = ?, checkpoint_state = ? WHERE work_item_id = ? AND exited_at IS NULL",
+                                 (now, current["summary"], current["content_json"], current["checkpoint_state"], normalized_id))
+                archived_loop = loop if loop is not None else json_load(path["loop_json"], {})
+                archived_loop.update(status="idle", reason="Archived")
+                conn.execute("UPDATE work_item_paths SET loop_json = ?, updated_at = ? WHERE work_item_id = ?", (json_dump(archived_loop), now, normalized_id))
+            if "next_action" in updates:
+                conn.execute("UPDATE work_item_paths SET updated_at = ? WHERE work_item_id = ?", (now, normalized_id))
             self._audit_locked(conn, actor, "patch_item", "work_item", normalized_id, body)
             self._activity_locked(
                 conn,
@@ -977,13 +1242,13 @@ class ActiveWorkRepository:
         return result
 
     def transition(self, item_id: str, payload: dict, *, actor: str = "user") -> dict:
-        """Move an item forward through its pipeline, or update its current stage."""
+        """Follow an allowed ticket edge, including rework, or update its current stage."""
 
         normalized_id = internal_id(item_id, "work item ID")
         body = require_mapping(payload, "transition")
         reject_unknown(
             body,
-            {"to_stage_key", "expected_revision", "note", "attention", "checkpoint_state", "state"},
+            {"to_stage_key", "expected_revision", "note", "attention", "checkpoint_state", "state", "next_action", "loop"},
             "transition",
         )
         revision = self._expected_revision(body, None)
@@ -1011,17 +1276,44 @@ class ActiveWorkRepository:
                     "SELECT * FROM pipeline_stage_definitions WHERE id = ?",
                     (item["current_stage_id"],),
                 ).fetchone()
-            if current is not None and int(target["sequence"]) < int(current["sequence"]):
+            dynamic = self._dynamic_path_locked(conn, normalized_id)
+            config = self._path_config_locked(conn, normalized_id)
+            path_stages = {stage.key: stage for stage in config.stages}
+            moving = current is None or current["id"] != target["id"]
+            returning = moving and target_key in self._path_ancestry_locked(conn, normalized_id)
+            current_state = conn.execute("SELECT * FROM work_stage_states WHERE work_item_id = ? AND stage_id = ?", (normalized_id, current["id"])).fetchone() if current else None
+            if dynamic and moving and current is not None and target_key not in path_stages[current["stage_key"]].next:
+                raise ActiveWorkError("This step is not connected to the current step; update the ticket path first", code="active_work_invalid_transition", status=409)
+            if dynamic and moving and current is None and target_key != config.stages[0].key:
+                raise ActiveWorkError("Start at the first step in this ticket's path", code="active_work_invalid_transition", status=409)
+            if not dynamic and current is not None and int(target["sequence"]) < int(current["sequence"]):
                 raise ActiveWorkError(
                     "Pipeline transitions cannot move backward",
                     code="active_work_invalid_transition",
                     status=409,
                 )
+            if dynamic and returning and not note:
+                raise ActiveWorkError("A return for rework needs a note", code="active_work_transition_note_required", status=400)
+            if dynamic and moving and not returning and current_state and current_state["checkpoint_state"] in {"pending", "changes_requested"}:
+                raise ActiveWorkError("Approve the current checkpoint before continuing", code="active_work_checkpoint_required", status=409)
             checkpoint = body.get("checkpoint_state")
             if checkpoint is None:
-                checkpoint = "pending" if target["checkpoint_kind"] == "human" else "none"
+                checkpoint = current_state["checkpoint_state"] if not moving and current_state else "pending" if target["checkpoint_kind"] == "human" else "none"
             checkpoint_state = choice(checkpoint, "checkpoint_state", CHECKPOINT_STATES)
-            self._set_current_stage_locked(
+            if dynamic and target["checkpoint_kind"] == "human" and (checkpoint_state == "none" or (moving and checkpoint_state == "approved")):
+                raise ActiveWorkError("A human checkpoint must be entered pending and approved separately", code="active_work_checkpoint_required", status=409)
+            if dynamic and checkpoint_state == "approved" and body.get("checkpoint_state") == "approved" and actor != "user":
+                raise ActiveWorkError("A human must approve this checkpoint", code="active_work_checkpoint_required", status=409)
+            if dynamic:
+                now = self._now()
+                if moving and current:
+                    conn.execute("UPDATE work_stage_states SET state = ?, attention = 'none', completed_at = ?, updated_at = ? WHERE work_item_id = ? AND stage_id = ?",
+                                 ("pending" if returning else "complete", None if returning else now, now, normalized_id, current["id"]))
+                conn.execute("UPDATE work_stage_states SET state = ?, attention = ?, checkpoint_state = ?, summary = COALESCE(?, summary), started_at = ?, completed_at = NULL, updated_at = ? WHERE work_item_id = ? AND stage_id = ?",
+                             (target_state, attention, checkpoint_state, note or None, now if moving else current_state["started_at"] or now, now, normalized_id, target["id"]))
+                conn.execute("UPDATE work_items SET current_stage_id = ? WHERE id = ?", (target["id"], normalized_id))
+            else:
+                self._set_current_stage_locked(
                 conn,
                 normalized_id,
                 target,
@@ -1031,10 +1323,22 @@ class ActiveWorkRepository:
                 summary=note or None,
                 observed_at=None,
                 reset_future=False,
-            )
+                )
             now = self._now()
+            if moving:
+                conn.execute("UPDATE work_stage_visits SET exited_at = ?, outcome = ?, summary = ?, content_json = ?, checkpoint_state = ?, transition_note = ? WHERE work_item_id = ? AND exited_at IS NULL",
+                             (now, "rework" if returning else "complete", current_state["summary"] if current_state else "", current_state["content_json"] if current_state else "{}", current_state["checkpoint_state"] if current_state else "none", note, normalized_id))
+                conn.execute("INSERT INTO work_stage_visits(id, work_item_id, stage_key, entered_at, actor) VALUES (?, ?, ?, ?, ?)", (safe_id("visit"), normalized_id, target_key, now, actor))
+            path = self._path_record_locked(conn, normalized_id)
+            loop = self._validated_loop(body.get("loop", {}), json_load(path["loop_json"], {}))
+            if "status" not in body.get("loop", {}):
+                loop["status"] = "blocked" if target_state == "blocked" else "waiting" if checkpoint_state in {"pending", "changes_requested"} else "working"
+                loop["reason"] = (note or f"Blocked at {target['title']}") if target_state == "blocked" else "Human checkpoint" if checkpoint_state in {"pending", "changes_requested"} else ""
+            conn.execute("UPDATE work_item_paths SET loop_json = ?, updated_at = ? WHERE work_item_id = ?", (json_dump(loop), now, normalized_id))
+            if "next_action" in body:
+                conn.execute("UPDATE work_items SET next_action = ? WHERE id = ?", (text(body["next_action"], "next_action", maximum=8192), normalized_id))
             conn.execute(
-                "UPDATE work_items SET lifecycle = ?, revision = revision + 1, updated_at = ? WHERE id = ?",
+                "UPDATE work_items SET lifecycle = ?, archived_at = NULL, revision = revision + 1, updated_at = ? WHERE id = ?",
                 ("blocked" if target_state == "blocked" else "active", now, normalized_id),
             )
             self._activity_locked(
@@ -1045,6 +1349,7 @@ class ActiveWorkRepository:
                 message=note or f"Moved to {target['title']}.",
                 actor_kind="user" if actor == "user" else "agent",
                 actor_id=actor,
+                details={"from_stage_key": current["stage_key"] if current else None, "to_stage_key": target_key, "returning": returning, "checkpoint_state": checkpoint_state},
             )
             self._audit_locked(conn, actor, "transition", "work_item", normalized_id, body)
         result = self.item_projection(normalized_id)
@@ -1246,6 +1551,13 @@ class ActiveWorkRepository:
                     status=404,
                 )
             item = self._require_item_locked(conn, item_id)
+            dynamic_path = self._dynamic_path_locked(conn, item_id)
+            current_stage_keys = self._template_stage_keys_locked(conn, str(item["template_id"]))
+            retired_source_stage_keys: frozenset[str] = frozenset()
+            if dynamic_path:
+                original_template = self._path_record_locked(conn, item_id)["template_id"]
+                retired_source_stage_keys = self._template_stage_keys_locked(conn, str(original_template)) - current_stage_keys
+            source_stage_keys = current_stage_keys | retired_source_stage_keys
             pipeline_terminal_stage_key = self._terminal_stage_key_locked(
                 conn, str(item["template_id"])
             )
@@ -1285,11 +1597,8 @@ class ActiveWorkRepository:
             target = None
             target_key = body.get("current_stage_key")
             if target_key is not None:
-                normalized_target = choice(
-                    target_key,
-                    "current_stage_key",
-                    self._template_stage_keys_locked(conn, str(item["template_id"])),
-                )
+                normalized_target = choice(target_key, "current_stage_key", source_stage_keys)
+            if target_key is not None and not dynamic_path:
                 candidate_target = self._require_stage_locked(
                     conn, str(item["template_id"]), normalized_target
                 )
@@ -1309,10 +1618,15 @@ class ActiveWorkRepository:
             changed = False
             item_patch = body.get("item")
             if item_patch is not None:
+                item_patch = require_mapping(item_patch, "item")
+                if dynamic_path:
+                    # Observers attach evidence. Only revisioned owner/agent commands
+                    # steer a ticket route or replace its durable handoff.
+                    item_patch = {key: value for key, value in item_patch.items() if key not in {"lifecycle", "next_action"}}
                 changed |= self._merge_item_fields_locked(
                     conn,
                     item_id,
-                    require_mapping(item_patch, "item"),
+                    item_patch,
                     terminal_stage_key=terminal_stage_key,
                     pipeline_terminal_stage_key=pipeline_terminal_stage_key,
                 )
@@ -1384,6 +1698,11 @@ class ActiveWorkRepository:
 
             for raw_stage in require_list(body.get("stages"), "stages", maximum=64):
                 stage_payload = require_mapping(raw_stage, "stage")
+                observed_stage_key = choice(stage_payload.get("stage_key"), "stage_key", source_stage_keys)
+                if observed_stage_key in retired_source_stage_keys:
+                    # The source still uses its template. A deliberately removed
+                    # step cannot be resurrected or block the remaining evidence.
+                    continue
                 stage_changed = self._ingest_stage_locked(
                     conn,
                     item_id,
@@ -1399,7 +1718,7 @@ class ActiveWorkRepository:
                 "SELECT lifecycle, current_stage_id FROM work_items WHERE id = ?",
                 (item_id,),
             ).fetchone()
-            if terminal_item["lifecycle"] == "done":
+            if terminal_item["lifecycle"] == "done" and not dynamic_path:
                 final_stage = self._require_stage_locked(
                     conn, str(item["template_id"]), pipeline_terminal_stage_key
                 )
@@ -1434,13 +1753,18 @@ class ActiveWorkRepository:
                 changed |= thread_changed
 
             for raw_event in require_list(body.get("activity"), "activity", maximum=500):
+                event_payload = require_mapping(raw_event, "activity event")
+                if event_payload.get("stage_key"):
+                    observed_stage_key = choice(event_payload["stage_key"], "activity stage_key", source_stage_keys)
+                    if observed_stage_key in retired_source_stage_keys:
+                        continue
                 changed |= self._ingest_activity_locked(
                     conn,
                     item_id,
                     str(item["template_id"]),
                     source_name,
                     observed_at,
-                    require_mapping(raw_event, "activity event"),
+                    event_payload,
                 )
 
             now = self._now()
@@ -1557,7 +1881,13 @@ class ActiveWorkRepository:
             raise ActiveWorkError("Pipeline template has no stages", status=500)
         stage_keys = frozenset(str(stage["stage_key"]) for stage in stages)
         first_stage_key = str(stages[0]["stage_key"])
-        terminal_stage_key = str(stages[-1]["stage_key"])
+        config = parse_workflow_config(self._template_config_locked(template_id))
+        terminal_stage_keys = {stage.key for stage in config.stages if not stage.next}
+        terminal_stage_key = next(stage.key for stage in config.stages if not stage.next)
+        dynamic_template = any(
+            stage.next != (() if index == len(config.stages) - 1 else (config.stages[index + 1].key,))
+            for index, stage in enumerate(config.stages)
+        )
         current_raw = body.get("current_stage_key", "__missing__")
         current_key: Optional[str]
         if current_raw == "__missing__":
@@ -1569,7 +1899,7 @@ class ActiveWorkRepository:
             current_key = None
         else:
             current_key = choice(current_raw, "current_stage_key", stage_keys)
-        if lifecycle == "done" and current_key != terminal_stage_key:
+        if lifecycle == "done" and current_key not in terminal_stage_keys:
             raise ActiveWorkError(
                 "Work can only be marked done at the final pipeline stage",
                 code="active_work_invalid_terminal_state",
@@ -1607,7 +1937,7 @@ class ActiveWorkRepository:
                 checkpoint_state = "none"
                 started_at = None
                 completed_at = None
-            elif sequence < current_sequence:
+            elif sequence < current_sequence and not dynamic_template:
                 state = "complete"
                 checkpoint_state = "approved" if stage["checkpoint_kind"] == "human" else "none"
                 started_at = now
@@ -1636,6 +1966,7 @@ class ActiveWorkRepository:
                 """,
                 (item_id, stage["id"], state, checkpoint_state, started_at, completed_at, now),
             )
+        self._initialize_path_locked(conn, self._require_item_locked(conn, item_id))
         if record_created_activity:
             self._activity_locked(
                 conn,
@@ -2036,6 +2367,8 @@ class ActiveWorkRepository:
             },
             "stage",
         )
+        if self._dynamic_path_locked(conn, item_id):
+            body = {key: value for key, value in body.items() if key not in {"state", "attention", "checkpoint_state"}}
         stage_key = choice(
             body.get("stage_key"),
             "stage_key",
@@ -2843,6 +3176,15 @@ class ActiveWorkRepository:
         if row is None:
             return None
         template_id = str(row["template_id"])
+        path_record = self._path_record_locked(self._database, item_id)
+        template_projection = self._pipeline_projection_locked(str(path_record["template_id"]))
+        dynamic_path = self._dynamic_path_locked(self._database, item_id)
+        visits = [{**dict(visit), "content": json_load(visit["content_json"], {})} for visit in self._database.execute(
+            "SELECT id, stage_key, entered_at, exited_at, outcome, summary, content_json, checkpoint_state, transition_note, actor FROM work_stage_visits "
+            "WHERE work_item_id = ? ORDER BY rowid", (item_id,)
+        ).fetchall()]
+        for visit in visits:
+            visit.pop("content_json", None)
         stage_rows = self._database.execute(
             """
             SELECT definition.*, state.state, state.attention, state.checkpoint_state,
@@ -2879,6 +3221,7 @@ class ActiveWorkRepository:
         extras = self._template_projection_extras_locked(template_id, stage_rows)
         for projected in stages:
             projected["next"] = extras["next_by_stage"].get(str(projected["stage_key"]), [])
+            projected["visit_count"] = sum(visit["stage_key"] == projected["stage_key"] for visit in visits)
         jira_links = [
             self._jira_from_row(link)
             for link in self._database.execute(
@@ -2968,8 +3311,18 @@ class ActiveWorkRepository:
                 current_stage = stage
                 break
         completed = sum(stage["state"] in {"complete", "skipped"} for stage in stages)
+        default_loop_status = (
+            "done" if row["lifecycle"] == "done" else "blocked" if row["lifecycle"] == "blocked"
+            else "waiting" if current_stage and current_stage["checkpoint_state"] in {"pending", "changes_requested"}
+            else "working" if current_stage and row["lifecycle"] == "active" else "idle"
+        )
+        default_loop_reason = "Human checkpoint" if default_loop_status == "waiting" else "Work item is blocked" if default_loop_status == "blocked" else ""
+        loop = {"owner": "", "status": default_loop_status, "reason": default_loop_reason, "context": "",
+                **json_load(path_record["loop_json"], {}), "current_stage_key": current_stage_key,
+                "next_action": row["next_action"], "updated_at": path_record["updated_at"]}
         needs_attention = bool(
             row["lifecycle"] == "blocked"
+            or loop["status"] in {"waiting", "blocked"}
             or (
                 current_stage
                 and (
@@ -2990,6 +3343,18 @@ class ActiveWorkRepository:
             attention_reason = f"Changes requested at {current_stage['title']}"
         elif current_stage and current_stage["checkpoint_state"] == "pending":
             attention_reason = f"Checkpoint pending at {current_stage['title']}"
+        if loop["status"] in {"waiting", "blocked"} and loop["reason"]:
+            attention_reason = loop["reason"]
+        ancestry = self._path_ancestry_locked(self._database, item_id)
+        onward_keys = list(current_stage["next"]) if current_stage else [stages[0]["stage_key"]]
+        return_targets = [key for key in onward_keys if key in ancestry] if dynamic_path else []
+        checkpoint_pending = bool(current_stage and current_stage["checkpoint_state"] in {"pending", "changes_requested"})
+        next_options = [
+            {"stage_key": key, "returning": key in return_targets,
+             "allowed": not (dynamic_path and checkpoint_pending and key not in return_targets),
+             "reason": "Approve the current checkpoint before continuing" if dynamic_path and checkpoint_pending and key not in return_targets else ""}
+            for key in onward_keys
+        ]
         return {
             "id": row["id"],
             "kind": row["kind"],
@@ -2999,6 +3364,20 @@ class ActiveWorkRepository:
             "current_stage_key": current_stage_key,
             "next_action": row["next_action"],
             "revision": int(row["revision"]),
+            "loop": loop,
+            "path": {
+                "template": {key: template_projection[key] for key in ("id", "slug", "version", "title")},
+                "customized": bool(path_record["customized"]),
+                "mode": "dynamic" if dynamic_path else "legacy",
+                "revision": int(row["revision"]),
+                "phases": extras["phases"],
+                "stages": stages,
+                "visits": visits,
+                "ancestry": ancestry,
+                "return_targets": return_targets,
+                "next_options": next_options,
+                "available_next": [option["stage_key"] for option in next_options if option["allowed"]],
+            },
             "metadata": json_load(row["metadata_json"], {}),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
@@ -3012,7 +3391,8 @@ class ActiveWorkRepository:
                 "current_sequence": current_stage["sequence"] if current_stage else None,
             },
             "pipeline": {
-                **self._pipeline_projection_locked(template_id),
+                **template_projection,
+                "phases": extras["phases"],
                 "stages": stages,
             },
             "stages": stages,

@@ -120,6 +120,7 @@ struct ActiveWorkPipelineStage: Decodable, Equatable, Hashable, Identifiable, Se
     var shortTitle: String
     var skillName: String?
     var checkpoint: String?
+    var next: [String]?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -133,6 +134,7 @@ struct ActiveWorkPipelineStage: Decodable, Equatable, Hashable, Identifiable, Se
         case skillName = "skill_name"
         case checkpoint
         case checkpointKind = "checkpoint_kind"
+        case next
     }
 
     init(from decoder: Decoder) throws {
@@ -151,6 +153,7 @@ struct ActiveWorkPipelineStage: Decodable, Equatable, Hashable, Identifiable, Se
         skillName = container.flexibleString(forKey: .skillName)
         checkpoint = container.flexibleString(forKey: .checkpoint)
             ?? container.flexibleString(forKey: .checkpointKind)
+        next = try? container.decode([String].self, forKey: .next)
     }
 }
 
@@ -177,6 +180,7 @@ struct ActiveWorkItem: Decodable, Equatable, Identifiable, Sendable {
     var piSessions: [ActiveWorkPiSession]
     var threads: [ActiveWorkThread]
     var activity: [ActiveWorkActivity]
+    var pipeline: ActiveWorkPipeline?
 
     var jira: ActiveWorkJiraLink? { jiraLinks.first }
     var buzzChannel: ActiveWorkBuzzChannel? { buzzChannels.first }
@@ -217,6 +221,7 @@ struct ActiveWorkItem: Decodable, Equatable, Identifiable, Sendable {
         case threads
         case unscopedThreads = "unscoped_threads"
         case activity
+        case pipeline
     }
 
     init(from decoder: Decoder) throws {
@@ -257,6 +262,7 @@ struct ActiveWorkItem: Decodable, Equatable, Identifiable, Sendable {
         var seenThreadIDs = Set<String>()
         threads = (directThreads + unscopedThreads).filter { seenThreadIDs.insert($0.id).inserted }
         activity = (try? container.decode([ActiveWorkActivity].self, forKey: .activity)) ?? []
+        pipeline = try? container.decode(ActiveWorkPipeline.self, forKey: .pipeline)
     }
 }
 

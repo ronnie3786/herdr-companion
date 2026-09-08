@@ -673,7 +673,7 @@ class HerdrHTTPTests(unittest.TestCase):
 
         self.assertEqual(status, 200)
         self.assertIn("text/html", content_type)
-        self.assertIn("Herdr Buzz Trail", body)
+        self.assertIn("Herdr Ticket Paths", body)
 
         connection = http.client.HTTPConnection(
             "127.0.0.1",

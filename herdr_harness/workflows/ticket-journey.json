@@ -1,0 +1,35 @@
+{
+  "workflow": "ticket-journey",
+  "version": 1,
+  "title": "Ticket Journey",
+  "description": "A starting path for a ticket, with explicit decisions, verification, and review return routes. Tailor the steps for each ticket and record the next action at every handoff.",
+  "phases": [
+    {"key": "open", "title": "Understand"},
+    {"key": "build", "title": "Build"},
+    {"key": "prove", "title": "Verify"},
+    {"key": "ship", "title": "Ship"},
+    {"key": "follow-up", "title": "Review follow-up"},
+    {"key": "finish", "title": "Finish"}
+  ],
+  "stages": [
+    {"key": "start-ticket", "title": "Understand the ticket", "phase": "open", "skill": "buzz-start-ticket", "next": ["plan"]},
+    {"key": "plan", "title": "Plan and human decision", "phase": "open", "skill": "buzz-plan", "checkpoint": "human", "next": ["start-ticket", "implement"]},
+    {"key": "implement", "title": "Implement the next chunk", "phase": "build", "skill": "buzz-implement", "next": ["architect-code-review"]},
+    {"key": "architect-code-review", "title": "Review the chunk", "phase": "build", "skill": "buzz-architect-code-review", "next": ["implement", "integration"]},
+    {"key": "integration", "title": "Integrate and run verification", "phase": "prove", "skill": "", "next": ["implement", "independent-review"]},
+    {"key": "independent-review", "title": "Independent review and follow-up", "phase": "prove", "skill": "", "next": ["implement", "proof"]},
+    {"key": "proof", "title": "QA proof and human decision", "phase": "prove", "skill": "buzz-proof", "checkpoint": "human", "next": ["implement", "code-review-pre-pr"]},
+    {"key": "code-review-pre-pr", "title": "Human review before the PR", "phase": "prove", "skill": "buzz-code-review-pre-pr", "checkpoint": "human", "next": ["implement", "pr"]},
+    {"key": "pr", "title": "Draft PR and publish decision", "phase": "ship", "skill": "buzz-pr", "checkpoint": "human", "next": ["implement", "pr-triage"]},
+    {"key": "pr-triage", "title": "Monitor checks and review", "phase": "ship", "skill": "buzz-pr-triage", "next": ["review-assessment", "merge"]},
+    {"key": "review-assessment", "title": "Decide which feedback to address", "phase": "follow-up", "skill": "", "checkpoint": "human", "next": ["pr-triage", "review-fixes"]},
+    {"key": "review-fixes", "title": "Apply review fixes and tests", "phase": "follow-up", "skill": "", "next": ["fix-review"]},
+    {"key": "fix-review", "title": "Review the changes", "phase": "follow-up", "skill": "", "next": ["review-fixes", "fix-approval"]},
+    {"key": "fix-approval", "title": "Human review of the diff", "phase": "follow-up", "skill": "", "checkpoint": "human", "next": ["review-fixes", "commit-preview"]},
+    {"key": "commit-preview", "title": "Confirm the commit", "phase": "follow-up", "skill": "", "checkpoint": "human", "next": ["review-fixes", "regression-check", "push-update"]},
+    {"key": "regression-check", "title": "Retest affected behavior", "phase": "follow-up", "skill": "", "next": ["review-fixes", "push-update"]},
+    {"key": "push-update", "title": "Confirm publishing the update", "phase": "follow-up", "skill": "", "checkpoint": "human", "next": ["review-fixes", "pr-triage"]},
+    {"key": "merge", "title": "Confirm merge and cleanup", "phase": "finish", "skill": "", "checkpoint": "human", "next": ["pr-triage", "done"]},
+    {"key": "done", "title": "Record the delivered result", "phase": "finish", "skill": "", "next": []}
+  ]
+}

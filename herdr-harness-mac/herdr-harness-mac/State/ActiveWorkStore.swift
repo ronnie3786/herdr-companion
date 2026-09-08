@@ -37,6 +37,7 @@ final class ActiveWorkStore {
     var selectedItemID: String?
 
     var pipeline: ActiveWorkPipeline { response.pipeline }
+    func pipeline(for item: ActiveWorkItem) -> ActiveWorkPipeline { item.pipeline ?? response.pipeline }
     var stages: [ActiveWorkPipelineStage] { ActiveWorkProjection.orderedStages(in: pipeline) }
     var items: [ActiveWorkItem] { ActiveWorkProjection.orderedItems(response.items, pipeline: pipeline) }
     var jiraCandidates: [ActiveWorkJiraCandidate] {
@@ -127,7 +128,7 @@ final class ActiveWorkStore {
             "What needs my attention on this board, and what should move next?"
         }
         var itemRecords: [[String: Any]] = items.prefix(25).map { item in
-            let stage = pipeline.stages.first(where: { $0.key == item.currentStageKey })?.title
+            let stage = pipeline(for: item).stages.first(where: { $0.key == item.currentStageKey })?.title
                 ?? item.currentStageKey
                 ?? "intake"
             return [
@@ -248,7 +249,6 @@ enum ActiveWorkProjection {
         _ items: [ActiveWorkItem],
         pipeline: ActiveWorkPipeline
     ) -> [ActiveWorkItem] {
-        let stageSequence = Dictionary(uniqueKeysWithValues: pipeline.stages.map { ($0.key, $0.sequence) })
         return items.sorted { left, right in
             if left.needsAttention != right.needsAttention { return left.needsAttention }
 
@@ -256,8 +256,8 @@ enum ActiveWorkProjection {
             let rightLifecycle = lifecycleRank(right.lifecycle)
             if leftLifecycle != rightLifecycle { return leftLifecycle < rightLifecycle }
 
-            let leftStage = left.currentStageKey.flatMap { stageSequence[$0] } ?? Int.max
-            let rightStage = right.currentStageKey.flatMap { stageSequence[$0] } ?? Int.max
+            let leftStage = (left.pipeline ?? pipeline).stages.first { $0.key == left.currentStageKey }?.sequence ?? Int.max
+            let rightStage = (right.pipeline ?? pipeline).stages.first { $0.key == right.currentStageKey }?.sequence ?? Int.max
             if leftStage != rightStage { return leftStage > rightStage }
 
             let leftDate = left.updatedDate ?? .distantPast
@@ -301,11 +301,13 @@ enum ActiveWorkProjection {
         if let state = stageState(for: stage, item: item), state.state != .unknown {
             return state.attention == .human ? .blocked : state.state
         }
+        let effectivePipeline = item.pipeline ?? pipeline
         guard let currentKey = item.currentStageKey,
-              let current = pipeline.stages.first(where: { $0.key == currentKey }) else {
+              let current = effectivePipeline.stages.first(where: { $0.key == currentKey }) else {
             return .pending
         }
         if stage.key == current.key { return item.needsAttention ? .blocked : .active }
+        if current.next != nil { return .pending }
         return stage.sequence < current.sequence ? .complete : .pending
     }
 
@@ -313,11 +315,20 @@ enum ActiveWorkProjection {
         for item: ActiveWorkItem,
         pipeline: ActiveWorkPipeline
     ) -> ActiveWorkPipelineStage? {
-        let ordered = orderedStages(in: pipeline)
-        guard let currentKey = item.currentStageKey,
-              let index = ordered.firstIndex(where: { $0.key == currentKey }),
-              ordered.indices.contains(index + 1) else { return nil }
-        return ordered[index + 1]
+        nextStages(for: item, pipeline: pipeline).first
+    }
+
+    static func nextStages(
+        for item: ActiveWorkItem,
+        pipeline: ActiveWorkPipeline
+    ) -> [ActiveWorkPipelineStage] {
+        let ordered = orderedStages(in: item.pipeline ?? pipeline)
+        guard let currentKey = item.currentStageKey else { return Array(ordered.prefix(1)) }
+        guard let index = ordered.firstIndex(where: { $0.key == currentKey }) else { return [] }
+        if let next = ordered[index].next {
+            return next.compactMap { key in ordered.first { $0.key == key } }
+        }
+        return ordered.indices.contains(index + 1) ? [ordered[index + 1]] : []
     }
 
     static func allAgents(for item: ActiveWorkItem) -> [ActiveWorkAgent] {

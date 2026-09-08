@@ -528,7 +528,7 @@ def _parser(environ: Mapping[str, str]) -> JSONArgumentParser:
     parser = JSONArgumentParser(
         description=(
             "Manage Herdr Active Work with a machine-readable CLI. "
-            "Use workflow-show SLUG to discover a workflow's valid stage keys."
+            "Use path-show REF for a ticket's current route, loop, and editable path."
         )
     )
     parser.add_argument("--config", help="Private cluster TOML file")
@@ -590,14 +590,33 @@ def _parser(environ: Mapping[str, str]) -> JSONArgumentParser:
     update.add_argument("--metadata-json")
     update.add_argument("--expected-revision", type=positive_revision)
 
-    move = commands.add_parser("move", help="Move an item forward in its pipeline")
+    move = commands.add_parser("move", help="Move an item along its ticket path")
     move.add_argument("reference")
     move.add_argument("--to", required=True, dest="to_stage")
     move.add_argument("--state", choices=STAGE_STATES)
     move.add_argument("--attention", choices=ATTENTION_STATES)
     move.add_argument("--checkpoint", choices=CHECKPOINT_STATES)
     move.add_argument("--note")
+    move.add_argument("--next-action", help="Save the next action together with the move")
     move.add_argument("--expected-revision", type=positive_revision)
+
+    path_show = commands.add_parser("path-show", help="Read a ticket's path, visits, and agent handoff")
+    path_show.add_argument("reference")
+
+    path_set = commands.add_parser("path-set", help="Revise one ticket's path without changing its template")
+    path_set.add_argument("reference")
+    path_set.add_argument("--file", required=True, help="Path JSON with stages and optional phases, or - for stdin")
+    path_set.add_argument("--expected-revision", type=positive_revision, required=True)
+    path_set.add_argument("--note", required=True, help="Why this ticket's route changed")
+
+    track = commands.add_parser("track", help="Save an agent's durable next action and handoff")
+    track.add_argument("reference")
+    track.add_argument("--expected-revision", type=positive_revision, required=True)
+    track.add_argument("--owner", required=True, help="Role or agent responsible for the next action")
+    track.add_argument("--status", required=True, choices=("idle", "working", "waiting", "blocked", "done"))
+    track.add_argument("--next-action", required=True)
+    track.add_argument("--reason", default="", help="What is needed to unblock or resume")
+    track.add_argument("--context", default="", help="Durable handoff summary, decisions, and evidence references")
 
     observe = commands.add_parser("observe", help="Merge an idempotent observation into existing work")
     observe.add_argument("--file", required=True, help="Ingestion JSON path, or - for stdin")
@@ -853,34 +872,13 @@ def _read_json_file(path_value: str, stdin: TextIO) -> Any:
 
 
 def _validate_workflow_config_minimal(payload: Any) -> None:
-    if not isinstance(payload, dict):
-        raise CLIError("workflow config must be a JSON object", code="workflow_config_invalid")
-    for field in ("workflow", "version", "title", "phases", "stages"):
-        if field not in payload:
-            raise CLIError(f"workflow config is missing {field}", code="workflow_config_invalid")
-    slug = payload.get("workflow")
-    if not isinstance(slug, str) or not _WORKFLOW_SLUG_RE.fullmatch(slug):
-        raise CLIError("workflow slug is invalid", code="workflow_config_invalid")
-    stages = payload.get("stages")
-    if not isinstance(stages, list) or len(stages) < 2:
-        raise CLIError("workflow config needs at least 2 stages", code="workflow_config_invalid")
-    keys: list[str] = []
-    for stage in stages:
-        if not isinstance(stage, dict) or not isinstance(stage.get("key"), str):
-            raise CLIError("each stage needs a string key", code="workflow_config_invalid")
-        keys.append(stage["key"])
-    index_by_key = {key: index for index, key in enumerate(keys)}
-    for index, stage in enumerate(stages):
-        next_values = stage.get("next")
-        if next_values is None:
-            continue
-        if not isinstance(next_values, list):
-            raise CLIError("stage next must be an array", code="workflow_config_invalid")
-        for next_key in next_values:
-            if not isinstance(next_key, str) or index_by_key.get(next_key, -1) <= index:
-                raise CLIError(
-                    "stage next must reference a later stage", code="workflow_config_invalid"
-                )
+    # The installed CLI and server share graph validation, including rework edges.
+    from herdr_harness.active_work import ActiveWorkError
+    from herdr_harness.workflows import parse_workflow_config
+    try:
+        parse_workflow_config(payload)
+    except ActiveWorkError as exc:
+        raise CLIError(str(exc), code="workflow_config_invalid") from exc
 
 
 def execute(args: argparse.Namespace, client: ActiveWorkClient, *, stdin: TextIO) -> dict[str, Any]:
@@ -921,6 +919,43 @@ def execute(args: argparse.Namespace, client: ActiveWorkClient, *, stdin: TextIO
     if args.command == "show":
         item_id = resolve_reference(client, args.reference)
         return {"item": _detail(client, item_id)}
+
+    if args.command == "path-show":
+        item_id = resolve_reference(client, args.reference)
+        item = _detail(client, item_id)
+        path = item.get("path")
+        if not isinstance(path, dict):
+            raise CLIError("This server does not support ticket paths; update the companion server", code="path_unavailable", exit_code=3)
+        stages = path.get("stages", [])
+        editable = {
+            "phases": path.get("phases", []),
+            "stages": [{
+                "key": stage["stage_key"], "title": stage["title"],
+                "phase": stage["phase_key"], "skill": stage["skill_name"],
+                "checkpoint": stage["checkpoint_kind"], "next": stage.get("next", []),
+            } for stage in stages],
+        }
+        return {"id": item_id, "revision": item.get("revision"),
+                "current_stage_key": item.get("current_stage_key"), "next_action": item.get("next_action"),
+                "path": path, "loop": item.get("loop"), "editable_path": editable}
+
+    if args.command == "path-set":
+        payload = _read_json_file(args.file, stdin)
+        if not isinstance(payload, dict) or set(payload) - {"stages", "phases"} or not isinstance(payload.get("stages"), list):
+            raise CLIError("Path JSON must contain stages and optional phases; use path-show's editable_path", code="invalid_payload")
+        if not args.note.strip():
+            raise CLIError("A path change needs a reason", code="invalid_arguments")
+        item_id = resolve_reference(client, args.reference)
+        payload.update(expected_revision=args.expected_revision, note=args.note)
+        safe_id = urllib.parse.quote(item_id, safe="")
+        return {"item": _response_item(client.request("POST", f"/api/v1/active-work/items/{safe_id}/path", payload))}
+
+    if args.command == "track":
+        item_id = resolve_reference(client, args.reference)
+        payload = {"expected_revision": args.expected_revision, "next_action": args.next_action,
+                   "loop": {"owner": args.owner, "status": args.status, "reason": args.reason, "context": args.context}}
+        safe_id = urllib.parse.quote(item_id, safe="")
+        return {"item": _response_item(client.request("PATCH", f"/api/v1/active-work/items/{safe_id}", payload))}
 
     if args.command == "workflow-list":
         response = client.request("GET", "/api/v1/active-work/workflows")
@@ -1041,6 +1076,7 @@ def execute(args: argparse.Namespace, client: ActiveWorkClient, *, stdin: TextIO
             (args.attention, "attention"),
             (args.checkpoint, "checkpoint_state"),
             (args.note, "note"),
+            (args.next_action, "next_action"),
         ):
             if option is not None:
                 payload[field] = option

@@ -1027,14 +1027,15 @@ final class HerdrAppModel {
     ) async throws -> ActiveWorkItem {
         if isDemoMode { return item }
         guard canControlPrimary, let client = primaryClient else { throw APIError.invalidResponse }
+        let currentItem = try await approveActiveWorkCheckpoint(item, client: client)
         let checkpoint = stage.checkpoint?.lowercased() ?? "none"
         let isHumanCheckpoint = checkpoint.contains("human") || checkpoint.contains("owner")
         let response = try await client.transitionActiveWorkItem(
             id: item.id,
             requestBody: ActiveWorkTransitionRequest(
                 toStageKey: stage.key,
-                expectedRevision: item.revision,
-                note: nil,
+                expectedRevision: currentItem.revision,
+                note: "User selected \(stage.title) as the next step.",
                 attention: isHumanCheckpoint ? "human" : "none",
                 checkpointState: isHumanCheckpoint ? "pending" : nil
             )
@@ -1048,11 +1049,33 @@ final class HerdrAppModel {
     ) async throws -> ActiveWorkItem {
         if isDemoMode { return item }
         guard canControlPrimary, let client = primaryClient else { throw APIError.invalidResponse }
+        let currentItem = lifecycle == "done" ? try await approveActiveWorkCheckpoint(item, client: client) : item
         return try await client.patchActiveWorkItem(
             id: item.id,
             requestBody: ActiveWorkPatchItemRequest(
                 lifecycle: lifecycle,
-                expectedRevision: item.revision
+                expectedRevision: currentItem.revision
+            )
+        ).item
+    }
+
+    private func approveActiveWorkCheckpoint(
+        _ item: ActiveWorkItem,
+        client: HerdrAPIClient
+    ) async throws -> ActiveWorkItem {
+        guard let stageKey = item.currentStageKey,
+              let state = item.stages.first(where: { $0.stageKey == stageKey }),
+              state.attention == .human || ["pending", "changes_requested"].contains(state.checkpointState ?? "")
+        else { return item }
+        // Called after the legacy view's explicit approval confirmation.
+        return try await client.transitionActiveWorkItem(
+            id: item.id,
+            requestBody: ActiveWorkTransitionRequest(
+                toStageKey: stageKey,
+                expectedRevision: item.revision,
+                note: "User approved the current checkpoint.",
+                attention: "none",
+                checkpointState: "approved"
             )
         ).item
     }

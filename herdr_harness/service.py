@@ -1489,6 +1489,13 @@ class HerdrService:
         self._publish_active_work_updated(item, change="transitioned")
         return {"ok": True, "item": item, "generated_at": utc_now()}
 
+    def update_active_work_path(
+        self, item_id: str, payload: dict, *, actor: str = "user"
+    ) -> dict:
+        item = self.active_work.update_path(item_id, payload, actor=actor)
+        self._publish_active_work_updated(item, change="path_updated")
+        return {"ok": True, "item": item, "generated_at": utc_now()}
+
     def patch_active_work_stage(
         self, item_id: str, stage_key: str, payload: dict, *, actor: str = "user"
     ) -> dict:

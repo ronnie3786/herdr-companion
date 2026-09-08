@@ -25,7 +25,7 @@ every client supports every feature or that all integrations work without setup.
 | Contextual questions | Ask about selected Git code, the current Herdr pane from the Mac HUD, or a note. Inspect and add context, resume questions, and explicitly continue in an agent for actions. Requires a companion with `contextual-question-v1`; the initial question profile uses supplied context with all tools disabled. |
 | Floating Mac assistant | Use a compact floating panel to send prompts and follow agent progress and results without keeping the main window in front. |
 | Notes | Capture ideas in resizable Mac HUD notes, edit their title and text on iPhone, and use them as context for agents. iPhone saves sync through the companion and detect conflicting edits. |
-| Active Work board | Organize work items, follow their status, and return to the sessions doing the work. Optional automation can connect this board to other tools. |
+| Active Work board | Start from a template, then edit each ticket's path with review loops and extra steps. See the current action, owner, checkpoints, visit history, and agent handoff. Return to linked sessions. See [ticket paths](docs/ticket-paths.md) for board and agent controls. |
 | Activity and attention | See recent activity and identify sessions that need attention, so you can decide where to return next. |
 | Git changes | Inspect repository changes and diffs from a workspace. Requires Git and the built web assets for the Mac Git view. |
 | Files and skills | Search workspace files, attach context, and browse available agent skills. |

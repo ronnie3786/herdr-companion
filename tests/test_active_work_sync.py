@@ -725,7 +725,10 @@ class ActiveWorkSyncTests(unittest.TestCase):
         self.assertEqual(first["receipt_id"], replay["receipt_id"])
         projected = first["item"]
         self.assertEqual(projected["setup_state"], "ready")
-        self.assertEqual(projected["current_stage_key"], "implement")
+        # A connected ticket now owns its dynamic route. Passive Buzz observations
+        # enrich it, but the driver must explicitly choose when to move it.
+        self.assertEqual(projected["current_stage_key"], "start-ticket")
+        self.assertEqual(projected["pipeline"]["slug"], "ticket-journey")
         self.assertEqual(projected["agents"][0]["stage_links"][0]["link_role"], "driver")
         thread = projected["unscoped_threads"][0]
         self.assertEqual(thread["metadata"]["channel_uuid"], CHANNEL_ID)

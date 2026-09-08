@@ -6,9 +6,9 @@
     <meta name="theme-color" content="#000000" />
     <meta
       name="description"
-      content="agenttrail, pointed at the Buzz ticket pipeline — a live map of work items riding the eight stages."
+      content="Herdr ticket paths: adapt each workflow, record decisions, and keep the next action clear."
     />
-    <title>Herdr Buzz Trail</title>
+    <title>Herdr Ticket Paths</title>
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23181818'/%3E%3Crect x='6' y='8' width='20' height='4' rx='2' fill='%23e9a23b'/%3E%3Crect x='6' y='14' width='14' height='4' rx='2' fill='%23d1d1d1'/%3E%3Crect x='6' y='20' width='17' height='4' rx='2' fill='%239b9b9b'/%3E%3C/svg%3E"
@@ -2305,6 +2305,79 @@
           transition-duration: 1ms !important;
         }
       }
+      /* Ticket paths keep decisions, alternate routes, and loop ownership readable. */
+      .primary.path-view { overflow: auto; }
+      .workspace:has(.path-view) > .runs, .workspace:has(.path-view) > .minimap { display: none; }
+      .path-shell { max-width: 1400px; margin: 0 auto; padding: 28px 36px 64px; }
+      .path-toolbar, .path-title-line, .path-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .path-toolbar { justify-content: space-between; padding-bottom: 24px; }
+      .path-toolbar h1 { font-size: 24px; line-height: 32px; letter-spacing: -.04em; font-weight: 600; }
+      .path-muted { color: var(--dim); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+      .path-toolbar .path-muted { margin-top: 5px; }
+      .path-button { cursor: pointer; border: 1px solid var(--line); border-radius: 7px; padding: 7px 11px; background: transparent; color: var(--soft); font-size: 13px; line-height: 19px; text-align: left; }
+      .path-button:hover { background: var(--hover); color: var(--text); }
+      .path-button.primary { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+      .path-button:disabled { cursor: default; opacity: .45; }
+      .path-button.small { padding: 3px 7px; font-size: 12px; }
+      .path-list { display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+      .path-ticket { display: grid; grid-template-columns: minmax(220px, 1.1fr) minmax(150px, .7fr) minmax(160px, 1fr); gap: 20px; width: 100%; padding: 22px 0; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--text); cursor: pointer; text-align: left; }
+      .path-ticket:hover { background: var(--surface); }
+      .path-ticket-name { display: flex; gap: 12px; align-items: baseline; }
+      .path-ticket-name .sel-swatch { flex-shrink: 0; }
+      .path-ticket strong { display: block; font-size: 15px; line-height: 22px; font-weight: 550; }
+      .path-ticket-key { color: var(--dim); font-size: 12px; margin-bottom: 4px; }
+      .path-state { display: inline-flex; align-items: center; gap: 6px; color: var(--soft); font-size: 12px; }
+      .path-state.waiting, .path-state.blocked { color: var(--accent); }
+      .path-state.done { color: var(--complete-text); }
+      .path-state::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+      .path-now { border-left: 3px solid var(--accent); padding: 20px 24px; background: var(--surface); margin-bottom: 30px; }
+      .path-now h2 { font-size: 23px; line-height: 31px; margin: 7px 0 12px; font-weight: 550; letter-spacing: -.03em; }
+      .path-now .path-next-action { font-size: 15px; line-height: 24px; max-width: 75ch; margin-bottom: 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
+      .path-context { display: flex; gap: 24px; flex-wrap: wrap; margin: 14px 0 18px; }
+      .path-context dt { color: var(--dim); font-size: 12px; }
+      .path-context dd { margin: 3px 0 0; max-width: 68ch; overflow-wrap: anywhere; }
+      .path-columns { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(240px, .8fr); gap: 40px; align-items: start; }
+      .path-section-title { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 14px; }
+      .path-section-title h2 { font-size: 16px; font-weight: 550; }
+      .path-route { list-style: none; padding: 0; }
+      .path-step { position: relative; padding: 0 0 24px 28px; border-left: 1px solid var(--line); margin-left: 6px; }
+      .path-step:last-child { border-left-color: transparent; }
+      .path-step::before { position: absolute; content: ''; width: 11px; height: 11px; left: -6px; top: 5px; border-radius: 50%; background: var(--bg); border: 1px solid var(--dim); }
+      .path-step.current::before { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-bg); }
+      .path-step.complete::before, .path-step.skipped::before { background: var(--complete-text); border-color: var(--complete-text); }
+      .path-step h3 { font-size: 14px; line-height: 22px; font-weight: 550; }
+      .path-step.current h3 { color: var(--accent); }
+      .path-step-meta { font-size: 12px; line-height: 19px; color: var(--dim); display: flex; gap: 10px; flex-wrap: wrap; margin-top: 2px; }
+      .path-route-links { display: flex; flex-wrap: wrap; gap: 5px 12px; font-size: 12px; color: var(--dim); margin-top: 7px; }
+      .path-route-links .return { color: var(--gate-pink); }
+      .path-step details { margin-top: 8px; }
+      .path-step summary { color: var(--soft); cursor: pointer; font-size: 12px; }
+      .path-step .task-capsule-detail-row { flex-wrap: wrap; overflow-wrap: anywhere; height: auto; min-height: 24px; animation: none; }
+      .path-history { list-style: none; padding: 0; }
+      .path-history li { padding: 11px 0; border-bottom: 1px solid var(--line); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+      .path-history time { color: var(--dim); display: block; font-size: 11px; }
+      .path-empty { padding: 38px 0; max-width: 65ch; color: var(--dim); }
+      .path-map-return { position: absolute; top: 16px; left: 18px; z-index: 10; background: var(--surface); }
+      .path-modal { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(900px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); overflow: auto; padding: 24px; border-radius: 12px; }
+      .path-modal.narrow { width: min(560px, calc(100vw - 32px)); }
+      .path-modal h2 { font-size: 20px; line-height: 28px; margin-bottom: 8px; }
+      .path-modal form { margin-top: 16px; }
+      .path-field { display: flex; flex-direction: column; gap: 5px; margin: 12px 0; color: var(--soft); font-size: 13px; }
+      .path-field input, .path-field select, .path-field textarea { width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+      .path-field textarea { resize: vertical; }
+      .path-field input:focus-visible, .path-field select:focus-visible, .path-field textarea:focus-visible, .path-step summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      .path-editor-step { padding: 14px 0; border-bottom: 1px solid var(--line); }
+      .path-editor-fields { display: grid; grid-template-columns: minmax(120px, 2fr) minmax(85px, 1fr) minmax(95px, 1fr); gap: 12px; }
+      .path-editor-fields .path-field { margin-top: 8px; margin-bottom: 8px; }
+      .path-successors { border: 0; padding: 0; margin-top: 6px; }
+      .path-successors legend { font-size: 12px; color: var(--dim); margin-bottom: 6px; }
+      .path-successors label { display: inline-flex; align-items: center; gap: 5px; margin: 3px 12px 3px 0; color: var(--soft); font-size: 12px; }
+      .path-successors input { accent-color: var(--accent); }
+      .path-modal-footer { position: sticky; bottom: -24px; background: var(--overlay); padding: 14px 0 4px; margin-top: 10px; }
+      .path-error { margin: 12px 0; color: var(--danger); line-height: 21px; font-size: 13px; }
+      .path-error:empty { display: none; }
+      @media (max-width: 1100px) { .path-shell { padding: 22px 24px 48px; } .path-columns { grid-template-columns: minmax(0, 1fr); gap: 24px; } .path-ticket { grid-template-columns: minmax(180px, 1fr) minmax(150px, 1fr); } .path-ticket-context { grid-column: 1 / -1; } }
+      @media (max-width: 680px) { .workspace:has(.path-view) { grid-template-columns: 1fr; grid-template-rows: 150px minmax(0, 1fr); } .workspace:has(.path-view) .sidebar { border-bottom: 1px solid var(--line); padding-top: 0; } .path-shell { padding: 20px 18px 36px; } .path-toolbar { padding-bottom: 18px; } .path-toolbar h1 { font-size: 21px; } .path-ticket { grid-template-columns: 1fr; gap: 10px; } .path-now { padding: 16px; } .path-editor-fields { grid-template-columns: 1fr; gap: 0; } .path-modal { padding: 18px; } .path-modal-footer { bottom: -18px; } }
     </style>
   </head>
   <body>
@@ -4051,6 +4124,7 @@
         startEvents();
       }
       function fullRender() {
+        configureGraphStages();
         renderTree(); renderRuns(); renderGraph(); renderTimes();
       }
       function setWorkflow(slug, draw = true) {
@@ -4110,16 +4184,16 @@
           const session = sessions[0];
           if (session?.machine_id) MACHINES[session.machine_id] ||= { name: session.machine_id, label: session.machine_id === "desktop" ? "local" : session.machine_id };
           const jira = item.jira_links?.[0];
-          const wf = WORKFLOWS_BY_ID[item.pipeline?.id] || WORKFLOWS[item.pipeline?.slug] || { stages: item.pipeline?.stages || [] };
+          const wf = item.pipeline || WORKFLOWS_BY_ID[item.pipeline?.id] || WORKFLOWS[item.pipeline?.slug] || { stages: [] };
           const current = stageMap[item.current_stage_key];
-          const currentDef = (wf.stages || []).find((stage) => stage.stage_key === item.current_stage_key) || current;
+          const currentDef = current || (wf.stages || []).find((stage) => stage.stage_key === item.current_stage_key);
           let gate_action = null;
           if (currentDef?.checkpoint_kind === "human" && ["pending", "changes_requested"].includes(current?.checkpoint_state)) gate_action = { label: "Review checkpoint", kind: "approve", to_stage_key: currentDef.next?.[0] || null };
           if (!currentDef?.next?.length && item.needs_attention && item.current_stage_key) gate_action = { label: item.metadata?.pr?.number ? `Merge PR #${item.metadata.pr.number}` : "Complete", kind: "complete", to_stage_key: null };
           if ((item.pipeline?.slug || "") === "pr-review-watch" && item.current_stage_key === "queued") {
             gate_action = { label: gate_action ? "Pick review paths" : "Add paths / finish", kind: "chooser", to_stage_key: null };
           }
-          return { id: item.id, key: jira?.issue_key || item.metadata?.key || item.id.slice(-6).toUpperCase(), title: item.title, kind: item.kind, lifecycle: item.lifecycle, needs_attention: item.needs_attention, attention_reason: item.attention_reason, current_stage_key: item.current_stage_key, next_action: item.next_action, revision: item.revision, setup_state: item.setup_state, note: item.next_action, next_setup: item.setup_state === "board_created" ? "Link a Buzz channel" : "Attach driver", updated_label: "", _updatedAt: epoch(item.updated_at), progress: item.progress, pipeline_slug: item.pipeline?.slug, pipeline_id: item.pipeline?.id, summary: item.summary || "", metadata: item.metadata && typeof item.metadata === "object" ? item.metadata : {}, trail_color: LIVE_PALETTE[stableHash(item.id) % LIVE_PALETTE.length], jira: jira && { issue_key: jira.issue_key, issue_type: jira.issue_type, priority: jira.priority, url: jira.url }, pr: item.metadata?.pr && typeof item.metadata.pr === "object" ? item.metadata.pr : null, channel: item.buzz_channels?.[0] ? { name: item.buzz_channels[0].name, url: item.buzz_channels[0].url } : null, unscoped_threads: item.unscoped_threads || [], stages: stageMap, machine_id: session?.machine_id || null, pane: session?.pane_id || null, floor: session?.machine_id ? (MACHINES[session.machine_id]?.label || session.machine_id) : "—", handoff_cmd: session?.pane_id ? sessionHandoff(session) : null, done_label: item.metadata?.done_label || "merged · monitoring", gate_action };
+          return { path: item.path || null, loop: item.loop || null, activity: item.activity || [], id: item.id, key: jira?.issue_key || item.metadata?.key || item.id.slice(-6).toUpperCase(), title: item.title, kind: item.kind, lifecycle: item.lifecycle, needs_attention: item.needs_attention, attention_reason: item.attention_reason, current_stage_key: item.current_stage_key, next_action: item.next_action, revision: item.revision, setup_state: item.setup_state, note: item.next_action, next_setup: item.setup_state === "board_created" ? "Link a Buzz channel" : "Attach driver", updated_label: "", _updatedAt: epoch(item.updated_at), progress: item.progress, pipeline_slug: item.pipeline?.slug, pipeline_id: item.pipeline?.id, summary: item.summary || "", metadata: item.metadata && typeof item.metadata === "object" ? item.metadata : {}, trail_color: LIVE_PALETTE[stableHash(item.id) % LIVE_PALETTE.length], jira: jira && { issue_key: jira.issue_key, issue_type: jira.issue_type, priority: jira.priority, url: jira.url }, pr: item.metadata?.pr && typeof item.metadata.pr === "object" ? item.metadata.pr : null, channel: item.buzz_channels?.[0] ? { name: item.buzz_channels[0].name, url: item.buzz_channels[0].url } : null, unscoped_threads: item.unscoped_threads || [], stages: stageMap, machine_id: session?.machine_id || null, pane: session?.pane_id || null, floor: session?.machine_id ? (MACHINES[session.machine_id]?.label || session.machine_id) : "—", handoff_cmd: session?.pane_id ? sessionHandoff(session) : null, done_label: item.metadata?.done_label || "merged · monitoring", gate_action };
         });
         WORK_ITEMS = mapped;
         const allActivity = (json.items || []).flatMap((item) => (item.activity || []).map((entry) => ({ at: epoch(entry.occurred_at || entry.created_at), actor: entry.actor_kind === "user" ? "user" : (entry.actor_id || "unknown"), item: (item.jira_links?.[0]?.issue_key || item.metadata?.key || item.id.slice(-6).toUpperCase()), message: entry.message || "", stage_id: entry.stage_id, work_id: item.id }))).sort((a, b) => b.at - a.at).slice(0, 200);
@@ -4142,7 +4216,7 @@
         const preferred = (() => { try { return localStorage.getItem("herdr.board.workflow"); } catch { return null; } })();
         const selected = WORKFLOWS[preferred] ? preferred : Object.values(WORKFLOWS).sort((a, b) => mapped.filter((item) => item.pipeline_slug === b.slug && item.lifecycle !== "done").length - mapped.filter((item) => item.pipeline_slug === a.slug && item.lifecycle !== "done").length)[0]?.slug;
         if (selected) setWorkflow(selected, false);
-        SEL.clear();
+        for (const key of SEL) if (!mapped.some((item) => item.key === key && item.pipeline_slug === activeWorkflow)) SEL.delete(key);
         fullRender();
       }
       async function apiFetch(path, options = {}) {
@@ -4277,6 +4351,7 @@
         }
       }
       function refreshBoardFilter() {
+        configureGraphStages();
         applyAutoExpand();
         renderTree();
         renderGraph();
@@ -4677,6 +4752,7 @@
       // (stage cards, capsules, trails, badges, tree, runs, buzz.log, Ask).
       // ---------------------------------------------------------------------
       function rederive() {
+        configureGraphStages();
         renderTree();
         renderRuns();
         renderGraph();
@@ -4686,6 +4762,7 @@
         const item = itemByKey(itemKey);
         const ga = item && item.gate_action;
         if (!ga) return;
+        if (item.path?.mode === "dynamic" && ga.kind !== "chooser") { openPathDecision(item, ga.kind === "complete" ? "complete" : "approve", null, opener); return; }
         if (ga.kind === "toast") {
           toast(
             `${ga.label} — the driver is still revising; it pings you when the plan is back`,
@@ -4824,8 +4901,9 @@
       }
       async function mutateLive(item, path, body, method) {
         try {
-          await apiFetch(path, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+          const response = await apiFetch(path, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
           await loadBoard();
+          return response?.item;
         } catch (error) {
           if (error.status === 409 && error.body?.error?.code === "active_work_revision_conflict") {
             toast("Board moved underneath you — refreshed");
@@ -4878,13 +4956,13 @@
           return `<span class="sel-state done">done</span>`;
         if (w.needs_attention)
           return `<span class="sel-state gate"><span class="needs-dot"></span>gate</span>`;
-        const st = STAGE[w.current_stage_key];
+        const st = ticketStages(w).find((stage) => stage.stage_key === w.current_stage_key);
         return `<span class="sel-state">${st ? esc(st.title.toLowerCase()) : ""}</span>`;
       }
       function renderTree() {
         const rows = [];
         rows.push(
-          `<button class="tree-row ticket overview${SEL.size ? "" : " on"}" type="button" aria-pressed="${!SEL.size}" onclick="clearSelection()"><span class="sel-swatch overview"></span><span class="tree-name">Overview — everything</span><span class="sel-state">${REAL_ITEMS.length}</span></button>`,
+          `<button class="tree-row ticket overview${SEL.size ? "" : " on"}" type="button" aria-pressed="${!SEL.size}" onclick="clearSelection()"><span class="sel-swatch overview"></span><span class="tree-name">All tickets</span><span class="sel-state">${REAL_ITEMS.length}</span></button>`,
         );
         for (const w of REAL_ITEMS) {
           const on = SEL.has(w.key);
@@ -5560,10 +5638,13 @@
         return REAL_ITEMS.map((item, i) => {
           if (!inFilter(item)) return ""; // dy keeps its overview lane — geography stays stable
           const dy = (i - (n - 1) / 2) * 8;
-          const stops = ORDER.filter((s) => {
+          const definitions = ticketStages(item);
+          const history = item.path?.visits || [];
+          const visited = history.length ? history.map((visit) => definitions.find((stage) => stage.stage_key === visit.stage_key)).filter(Boolean) : definitions.filter((s) => {
             const st = capState(recOf(item, s.stage_key));
             return st === "cleared" || st === "riding" || st === "gate";
-          }).map((s) => ({ s, q: pos[s.stage_key] }));
+          });
+          const stops = visited.filter((s) => pos[s.stage_key]).map((s) => ({ s, q: pos[s.stage_key] }));
           const dc = (doneCards || []).find((d) => d.item === item);
           if (stops.length < 2 && !dc) return "";
           let g = `<g class="trailflow${item.lifecycle === "done" ? " ended" : ""}" style="color:${item.trail_color}"><title>${esc(item.key)} — ${esc(item.title)} · the flow it has taken</title>`;
@@ -5721,6 +5802,9 @@
       }
       let htmlOut = "";
       function renderGraph() {
+        configureGraphStages();
+        $("graph").classList.toggle("path-view", boardView === "path");
+        if (boardView === "path") { renderTicketPaths(); return; }
         const L = layout();
         worldSize = { w: L.width, h: L.height };
         lastPos = L.pos;
@@ -5734,6 +5818,7 @@
           `<div class="graph-stage" id="graph-stage" onpointerdown="startPan(event)" onpointermove="movePan(event)" onpointerup="endPan(event)" onpointercancel="endPan(event)"><svg class="graph-svg"><title>Buzz pipeline board</title><g class="world" id="world" transform="translate(${pan.x} ${pan.y}) scale(${zoom})">${graphContent(L)}</g></svg><div class="html-world" id="html-world" style="transform:translate(${pan.x}px, ${pan.y}px) scale(${zoom})">${htmlOut}</div></div>` +
           `<div class="canvas-tools"><button class="icon" aria-label="Zoom out" onclick="zoomBy(.85)"><svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg></button><span class="zoom" id="zoom">${Math.round(zoom * 100)}%</span><button class="icon" aria-label="Zoom in" onclick="zoomBy(1.18)"><svg viewBox="0 0 24 24"><path d="M12 6v12M6 12h12"/></svg></button><span class="divider"></span><button class="icon" aria-label="Fit board" title="Fit the board (F)" onclick="fitBoard()"><svg viewBox="0 0 24 24"><path d="M9 4H4v5M15 4h5v5M20 15v5h-5M4 15v5h5"/></svg></button><button class="icon" aria-label="Open in its own window" title="Open in its own window" onclick="popoutBoard()">⤢</button></div>` +
           `<div class="canvas-hint"><span class="hint"><span class="key">drag</span>pan</span><span class="hint"><span class="key">⌘</span>scroll to zoom</span><span class="hint"><span class="key">F</span>fit board</span></div>`;
+        $("graph").insertAdjacentHTML("beforeend", `<div class="path-map-return">${pathButton("Ticket paths", "path")}</div>`);
         $("graph-stage").addEventListener("wheel", onWheel, {
           passive: false,
         });
@@ -5922,6 +6007,7 @@
       function flyToItemGate(itemKey) {
         const item = itemByKey(itemKey);
         if (!item || !item.current_stage_key) return;
+        if (boardView === "path") { SEL.clear(); SEL.add(item.key); refreshBoardFilter(); return; }
         flyToStage(item.current_stage_key, true);
       }
       function toggleStage(key, event) {
@@ -6115,8 +6201,7 @@
       }
       // --- a2. pr-review-watch chooser (multi-select + custom text) ------
       function openReviewChooser(item, opener) {
-        const wf = WORKFLOWS_BY_ID[item.pipeline_id] || WORKFLOWS[item.pipeline_slug] || { stages: [] };
-        const stages = (wf?.stages || []).filter((s) => s.phase_key === "review");
+        const stages = ticketStages(item).filter((stage) => stage.phase_key === "review");
         const rows = stages
           .map(
             (s) =>
@@ -6129,77 +6214,84 @@
           opener,
         );
       }
+      function reviewStageRecord(item, key) {
+        return Array.isArray(item.stages) ? item.stages.find((stage) => stage.stage_key === key) : item.stages?.[key];
+      }
+      async function approveReviewChoice(item, note) {
+        const current = reviewStageRecord(item, item.current_stage_key);
+        const definition = ticketStages(item).find((stage) => stage.stage_key === item.current_stage_key);
+        if (definition?.checkpoint_kind !== "human" || current?.checkpoint_state === "approved") return item;
+        return mutateLive(item, `/api/v1/active-work/items/${encodeURIComponent(item.id)}/transitions`, {
+          to_stage_key: item.current_stage_key,
+          expected_revision: item.revision,
+          checkpoint_state: "approved",
+          attention: "none",
+          note,
+        }, "POST");
+      }
       async function startChosenReviews(itemKey) {
         const item = itemByKey(itemKey);
         if (!item) return closeOverlay();
         const checked = [...document.querySelectorAll("#overlay-root .choice-check:checked")].map((el) => ({ stage: el.dataset.stage, skill: el.dataset.skill }));
         const customText = ($("custom-review-text")?.value || "").trim();
         if (!checked.length) {
-          toast("Pick at least one review path — or Mark handled");
+          toast("Pick at least one review path, or mark the PR handled");
           return;
         }
         if (DEMO) {
           closeOverlay();
-          toast("Demo board — spawns live in the Herdr app");
+          toast("Demo board: review sessions start in the Herdr app");
           return;
         }
         closeOverlay(false);
-        await mutateLive(item, `/api/v1/active-work/items/${encodeURIComponent(item.id)}/transitions`, {
-          to_stage_key: item.current_stage_key,
-          expected_revision: item.revision,
-          checkpoint_state: "approved",
-          attention: "none",
-          note: `Chose: ${checked.map((c) => c.stage).join(", ")}`,
-        }, "POST");
-        const fresh = WORK_ITEMS.find((w) => w.id === item.id) || item;
-        const prior = Array.isArray(fresh.metadata?.chosen_paths) ? fresh.metadata.chosen_paths : [];
-        const paths = [...new Set([...prior, ...checked.map((c) => c.stage)])];
-        const metadata = { ...(fresh.metadata || {}), chosen_paths: paths, chosen_at: new Date().toISOString() };
-        await mutateLive(fresh, `/api/v1/active-work/items/${encodeURIComponent(fresh.id)}`, {
+        const approved = await approveReviewChoice(item, `Chose: ${checked.map((choice) => choice.stage).join(", ")}`);
+        if (!approved) return;
+        const prior = Array.isArray(approved.metadata?.chosen_paths) ? approved.metadata.chosen_paths : [];
+        const paths = [...new Set([...prior, ...checked.map((choice) => choice.stage)])];
+        const metadata = { ...(approved.metadata || {}), chosen_paths: paths, chosen_at: new Date().toISOString() };
+        const recorded = await mutateLive(approved, `/api/v1/active-work/items/${encodeURIComponent(approved.id)}`, {
           metadata,
-          expected_revision: fresh.revision,
+          expected_revision: approved.revision,
         }, "PATCH");
-        const pr = metadata.pr || item.pr || {};
+        if (!recorded) return;
+        const pr = recorded.metadata?.pr || recorded.pr || {};
         let spawned = 0;
-        for (const c of checked) {
-          if (c.stage === "manual-review") continue;
-          const stageRec = (fresh.stages || {})[c.stage];
-          if ((stageRec?.pi_sessions || []).some((s) => s.status === "running" || s.status === "queued")) continue;
-          if (
-            HerdrBridge.send("spawnReview", {
-              workId: fresh.id,
-              stageKey: c.stage,
-              skill: c.skill,
-              prUrl: String(pr.url || ""),
-              prNumber: typeof pr.number === "number" ? pr.number : null,
-              title: fresh.title,
-              customText: c.stage === "custom-review" ? customText : "",
-            })
-          )
-            spawned++;
+        for (const choice of checked) {
+          if (choice.stage === "manual-review") continue;
+          const stageRec = reviewStageRecord(recorded, choice.stage);
+          if (!stageRec || (stageRec.pi_sessions || []).some((session) => session.status === "running" || session.status === "queued")) continue;
+          if (HerdrBridge.send("spawnReview", {
+            workId: recorded.id,
+            stageKey: choice.stage,
+            skill: stageRec.skill_name || choice.skill,
+            prUrl: String(pr.url || ""),
+            prNumber: typeof pr.number === "number" ? pr.number : null,
+            title: recorded.title,
+            customText: choice.stage === "custom-review" ? customText : "",
+          })) spawned++;
         }
-        toast(
-          spawned
-            ? `Starting ${spawned} review session${spawned === 1 ? "" : "s"} in PR Reviews — jump in from the Review region`
-            : checked.some((c) => (fresh.stages || {})[c.stage]?.pi_sessions?.some((s) => s.status === "running" || s.status === "queued"))
-              ? "Paths recorded — those sessions are already running"
-              : "Paths recorded — open the board in the Herdr app to spawn sessions",
-        );
+        toast(spawned
+          ? `Starting ${spawned} review session${spawned === 1 ? "" : "s"} in PR Reviews`
+          : checked.some((choice) => reviewStageRecord(recorded, choice.stage)?.pi_sessions?.some((session) => session.status === "running" || session.status === "queued"))
+            ? "Paths recorded. Those sessions are already running."
+            : "Paths recorded. Open the board in the Herdr app to start review sessions.");
       }
       async function markPrHandled(itemKey) {
         const item = itemByKey(itemKey);
         closeOverlay(false);
         if (!item) return;
         if (DEMO) {
-          toast("Demo board — spawns live in the Herdr app");
+          toast("Demo board: review sessions start in the Herdr app");
           return;
         }
-        await mutateLive(item, `/api/v1/active-work/items/${encodeURIComponent(item.id)}/transitions`, {
+        const approved = await approveReviewChoice(item, "Approved handling this PR without agent review");
+        if (!approved) return;
+        const moved = await mutateLive(approved, `/api/v1/active-work/items/${encodeURIComponent(approved.id)}/transitions`, {
           to_stage_key: "complete",
-          expected_revision: item.revision,
+          expected_revision: approved.revision,
           note: "Handled without agent review",
         }, "POST");
-        toast("Moved to Outputs");
+        if (moved) toast("Moved to Outputs");
       }
       // --- d. buzz.log console ---------------------------------------------
       let logFilter = "all";
@@ -6507,6 +6599,261 @@
         renderTimes();
       }
 
+      // Ticket path model helpers. Stage order is presentation; edges define movement.
+      function ticketStages(item) {
+        const template = WORKFLOWS_BY_ID[item.pipeline_id] || WORKFLOWS[item.pipeline_slug] || PIPELINE;
+        const fallback = template?.stages || [];
+        const supplied = item.path?.stages || Object.values(item.stages || {});
+        const stages = [...(supplied.length && supplied.every((stage) => stage.stage_key) ? supplied : fallback)].sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
+        return stages.map((stage, index) => ({ ...stage, sequence: stage.sequence ?? index,
+          next: [...(stage.next === undefined ? (stages[index + 1] ? [stages[index + 1].stage_key] : []) : stage.next)], title: stage.title || titleCase(stage.stage_key),
+          phase_key: stage.phase_key || 'work', checkpoint_kind: stage.checkpoint_kind || 'none',
+        })).sort((a, b) => a.sequence - b.sequence);
+      }
+      function ticketLoop(item) {
+        const current = item.stages?.[item.current_stage_key];
+        const driver = (current?.agents || []).find((agent) => ['driver', 'owner'].includes(agent.link_role) && agent.link_state !== 'done');
+        const inferredOwner = driver ? (AGENTS[driver.id]?.display_name || driver.id) : '';
+        return { owner: inferredOwner, status: item.lifecycle === 'done' ? 'done' : item.needs_attention ? 'waiting' : item.current_stage_key ? 'working' : 'idle', reason: item.attention_reason || '', context: '', ...(item.loop || {}) };
+      }
+      function routeIsReturn(stages, from, to) {
+        return stages.findIndex((stage) => stage.stage_key === to) <= stages.findIndex((stage) => stage.stage_key === from);
+      }
+      function ticketRouteIsReturn(item, target) {
+        const option = item.path?.next_options?.find((candidate) => candidate.stage_key === target);
+        if (option) return option.returning === true;
+        if (Array.isArray(item.path?.return_targets)) return item.path.return_targets.includes(target);
+        if (Array.isArray(item.path?.ancestry)) return target !== item.current_stage_key && item.path.ancestry.includes(target);
+        if (Array.isArray(item.path?.visits)) {
+          const ancestry = [];
+          // A return replaces the active route after its destination. Older visits
+          // remain evidence, but do not turn the next pass through a gate into rework.
+          for (const key of [...item.path.visits.map((visit) => visit.stage_key), item.current_stage_key].filter(Boolean)) {
+            const index = ancestry.indexOf(key);
+            if (index >= 0) ancestry.splice(index + 1);
+            else ancestry.push(key);
+          }
+          return target !== item.current_stage_key && ancestry.includes(target);
+        }
+        return routeIsReturn(ticketStages(item), item.current_stage_key, target);
+      }
+      function ticketNextOptions(item) {
+        if (Array.isArray(item.path?.next_options)) return item.path.next_options;
+        const stages = ticketStages(item), current = stages.find((stage) => stage.stage_key === item.current_stage_key);
+        const checkpointPending = current?.checkpoint_kind === 'human' && item.stages?.[item.current_stage_key]?.checkpoint_state !== 'approved';
+        const edges = current ? current.next : stages[0] ? [stages[0].stage_key] : [];
+        return edges.map((stage_key) => {
+          const returning = !!current && ticketRouteIsReturn(item, stage_key), allowed = !checkpointPending || returning;
+          return { stage_key, returning, allowed, reason: allowed ? '' : 'Approve the current checkpoint before continuing' };
+        });
+      }
+      function draftStages(item) {
+        return ticketStages(item).map((stage) => ({ key: stage.stage_key, title: stage.title, phase: stage.phase_key,
+          skill: stage.skill_name || stage.stage_key, checkpoint: stage.checkpoint_kind, next: [...stage.next] }));
+      }
+      function insertPathStep(stages, afterIndex) {
+        const keys = new Set(stages.map((stage) => stage.key));
+        let serial = 1;
+        while (keys.has(`step-${serial}`)) serial++;
+        const previous = stages[afterIndex];
+        const step = { key: `step-${serial}`, title: 'New step', phase: previous?.phase || 'work', skill: 'manual', checkpoint: 'none', next: [...(previous?.next || [])] };
+        if (previous) previous.next = [step.key];
+        stages.splice(afterIndex + 1, 0, step);
+        return step;
+      }
+      function removePathStep(stages, key) {
+        const removed = stages.find((stage) => stage.key === key);
+        if (!removed) return;
+        for (const stage of stages) stage.next = [...new Set(stage.next.flatMap((next) => next === key ? removed.next.filter((target) => target !== key && target !== stage.key) : [next]))];
+        stages.splice(stages.indexOf(removed), 1);
+      }
+      // End ticket path model helpers.
+      let boardView = 'path', pathDraft = null, pathDecision = null;
+      function pathButton(label, action, item, extra = '', primary = false) {
+        return `<button type="button" class="path-button${primary ? ' primary' : ''}" data-path-action="${action}"${item ? ` data-ticket="${esc(item.key)}"` : ''} ${extra}>${esc(label)}</button>`;
+      }
+      function setBoardView(view) { boardView = view; renderGraph(); renderTimes(); }
+      function pathTime(value) {
+        const at = typeof value === 'number' ? value : epoch(value);
+        return at ? new Date(at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+      }
+      function pathOverviewHtml() {
+        const items = [...REAL_ITEMS, ...INTAKE].filter(inFilter).sort((a, b) => Number(b.needs_attention) - Number(a.needs_attention) || Number(a.lifecycle === 'done') - Number(b.lifecycle === 'done') || b._updatedAt - a._updatedAt);
+        return `<div class="path-toolbar"><div><h1>Ticket paths</h1><p class="path-muted">Start with a template. Shape each ticket as the work unfolds.</p></div>${pathButton('Open workflow map', 'map')}</div>
+          <div class="path-list">${items.map((item) => {
+            const stages = ticketStages(item), current = stages.find((stage) => stage.stage_key === item.current_stage_key), loop = ticketLoop(item);
+            return `<button type="button" class="path-ticket" data-path-action="select" data-ticket="${esc(item.key)}"><div class="path-ticket-name"><span class="sel-swatch" style="background:${esc(item.trail_color)}"></span><div><div class="path-ticket-key">${esc(item.key)}</div><strong>${esc(item.title)}</strong></div></div><div><span class="path-state ${esc(loop.status)}">${esc(titleCase(loop.status))}</span><p>${esc(current?.title || (item.lifecycle === 'done' ? 'Completed' : 'Ready to start'))}</p><p class="path-muted">${item.path?.customized ? 'Adapted path' : 'Template path'} • ${stages.length} steps</p></div><div class="path-ticket-context"><p>${esc(item.next_action || 'Set the next action for this ticket.')}</p><p class="path-muted">${esc(loop.owner || 'No owner assigned')}${loop.reason ? `: ${esc(loop.reason)}` : ''}</p></div></button>`;
+          }).join('') || '<p class="path-empty">No tickets in this view. Set up a Jira candidate from the sidebar to start tracking its path.</p>'}</div>`;
+      }
+      function pathTicketHtml(item) {
+        const stages = ticketStages(item), current = stages.find((stage) => stage.stage_key === item.current_stage_key);
+        const record = item.stages?.[item.current_stage_key], loop = ticketLoop(item);
+        const done = item.lifecycle === 'done', humanGate = current?.checkpoint_kind === 'human', approved = record?.checkpoint_state === 'approved';
+        const nextOptions = ticketNextOptions(item);
+        const actions = done ? pathButton('Archive ticket', 'archive', item) : [
+          ...(humanGate && !approved ? [pathButton('Approve checkpoint', 'approve', item, '', true), pathButton('Request changes', 'changes', item)] : []),
+          ...nextOptions.filter((option) => stages.some((stage) => stage.stage_key === option.stage_key)).map((option) => {
+            const key = option.stage_key, target = stages.find((stage) => stage.stage_key === key), returning = option.returning;
+            const blocked = option.allowed === false;
+            return pathButton(`${returning ? 'Return to' : current ? 'Move to' : 'Start at'} ${target.title}`, 'move', item, `data-stage="${esc(key)}"${blocked ? ` disabled title="${esc(option.reason || 'This route is not available yet')}"` : ''}`, !returning && !blocked);
+          }),
+          ...(!current?.next.length && current ? [pathButton('Complete ticket', 'complete', item, humanGate && !approved ? 'disabled' : '', true)] : []),
+          ...(item.gate_action?.kind === 'chooser' ? [pathButton('Pick review paths', 'reviews', item)] : []),
+          pathButton('Update next action', 'context', item),
+        ].join('');
+        const visits = [...(item.path?.visits || [])].reverse();
+        const activity = [...(item.activity || [])].sort((a, b) => epoch(b.occurred_at || b.created_at) - epoch(a.occurred_at || a.created_at));
+        const history = visits.length ? visits.map((visit) => `<li><time>${esc(pathTime(visit.entered_at))}</time><strong>${esc(stages.find((stage) => stage.stage_key === visit.stage_key)?.title || visit.stage_key)}</strong><span class="path-muted"> • ${esc(visit.outcome || 'In progress')}</span>${visit.summary ? `<p>${esc(visit.summary)}</p>` : ''}${visit.transition_note ? `<p class="path-muted">Decision: ${esc(visit.transition_note)}</p>` : ''}</li>`).join('') : '';
+        const activityRows = activity.slice(0, 30).map((entry) => `<li><time>${esc(pathTime(entry.occurred_at || entry.created_at))}</time>${esc(entry.message)}</li>`).join('');
+        return `<div class="path-toolbar"><div><div class="path-title-line"><span class="path-muted">${esc(item.key)}</span><span class="path-state ${esc(loop.status)}">${esc(titleCase(loop.status))}</span></div><h1>${esc(item.title)}</h1><p class="path-muted">From ${esc(item.path?.template?.title || WORKFLOWS[item.pipeline_slug]?.title || PIPELINE.title || 'workflow template')}${item.path?.customized ? ', adapted for this ticket' : ''}</p></div><div class="path-actions">${pathButton('All tickets', 'overview')}${pathButton('Open map', 'map')}</div></div>
+          <section class="path-now" aria-label="Current step and next action"><span class="path-muted">${done ? 'Outcome' : 'Current step'}</span><h2>${esc(done ? 'Ticket completed' : current?.title || 'Ready to start')}</h2><p class="path-next-action">${esc(item.next_action || 'Record the next action so the next person or agent can pick up the work.')}</p><dl class="path-context"><div><dt>Owner</dt><dd>${esc(loop.owner || 'Unassigned')}</dd></div>${loop.reason ? `<div><dt>${loop.status === 'blocked' ? 'Blocked by' : 'Waiting or decision'}</dt><dd>${esc(loop.reason)}</dd></div>` : ''}${humanGate ? `<div><dt>Human checkpoint</dt><dd>${esc(titleCase(record?.checkpoint_state || 'pending'))}</dd></div>` : ''}</dl>${loop.context ? `<p class="path-muted" style="margin-bottom:16px;white-space:pre-wrap">${esc(loop.context)}</p>` : ''}<div class="path-actions">${actions}</div></section>
+          <div class="path-columns"><section aria-label="Ticket path"><div class="path-section-title"><h2>This ticket's path</h2>${pathButton('Edit path', 'edit', item)}</div><p class="path-muted" style="margin-bottom:20px">Routes define what can happen next. Return routes keep review and rework in the same history.</p><ol class="path-route">${stages.map((stage) => {
+            const rec = item.stages?.[stage.stage_key] || {}, isCurrent = stage.stage_key === item.current_stage_key;
+            const visitCount = visits.filter((visit) => visit.stage_key === stage.stage_key).length;
+            const details = (rec.documents?.length || rec.pi_sessions?.length || rec.buzz_threads?.length) ? capDetail(stage.stage_key, { item, rec }).html : '';
+            return `<li class="path-step ${isCurrent ? 'current' : esc(rec.state || 'pending')}"><h3>${esc(stage.title)}</h3><div class="path-step-meta"><span>${isCurrent ? 'Current' : esc(titleCase(rec.state || 'pending'))}</span>${stage.checkpoint_kind === 'human' ? `<span>Human checkpoint${rec.checkpoint_state === 'approved' ? ': approved' : ''}</span>` : ''}${visitCount > 1 ? `<span>Visit ${visitCount}</span>` : ''}</div><div class="path-route-links">${stage.next.length ? stage.next.map((key) => `<span${(isCurrent ? ticketRouteIsReturn(item, key) : routeIsReturn(stages, stage.stage_key, key)) ? ' class="return"' : ''}>${(isCurrent ? ticketRouteIsReturn(item, key) : routeIsReturn(stages, stage.stage_key, key)) ? '↩ Return to' : 'Next:'} ${esc(stages.find((nextStage) => nextStage.stage_key === key)?.title || key)}</span>`).join('') : '<span>End of this path</span>'}</div>${rec.summary ? `<p class="path-muted">${esc(rec.summary)}</p>` : ''}${details ? `<details data-path-details="${esc(stage.stage_key)}"><summary>Evidence, sessions and discussion</summary>${details}</details>` : ''}</li>`;
+          }).join('')}</ol></section><aside><div class="path-section-title"><h2>Journey</h2></div><ol class="path-history">${history || '<li class="path-muted">Stage visits will appear as this ticket moves.</li>'}</ol>${activityRows ? `<details data-path-details="activity-log" style="margin-top:22px"><summary>Decision and activity log</summary><ol class="path-history">${activityRows}</ol></details>` : ''}</aside></div>`;
+      }
+      function renderTicketPaths() {
+        const selected = SEL.size === 1 ? itemByKey([...SEL][0]) : null;
+        const previous = $('graph').querySelector('.path-shell');
+        const opened = new Set(previous && previous.dataset.ticket === selected?.key ? [...previous.querySelectorAll('details[data-path-details][open]')].map((details) => details.dataset.pathDetails) : []);
+        $('graph').innerHTML = `<main class="path-shell" data-ticket="${esc(selected?.key || '')}">${selected ? pathTicketHtml(selected) : pathOverviewHtml()}</main>`;
+        for (const details of $('graph').querySelectorAll('details[data-path-details]')) details.open = opened.has(details.dataset.pathDetails);
+      }
+      function configureGraphStages() {
+        const items = SEL.size ? WORK_ITEMS.filter(inFilter) : REAL_ITEMS;
+        const selected = items.length === 1 ? ticketStages(items[0]) : null;
+        const base = selected || (WORKFLOWS[activeWorkflow]?.stages || PIPELINE.stages || []);
+        const stageMap = new Map(base.map((stage) => [stage.stage_key, stage]));
+        if (!selected) for (const item of items) for (const stage of ticketStages(item)) if (!stageMap.has(stage.stage_key)) stageMap.set(stage.stage_key, stage);
+        ORDER = [...stageMap.values()]; STAGE = Object.fromEntries(ORDER.map((stage) => [stage.stage_key, stage]));
+        PHASES = [...new Set(ORDER.map((stage) => stage.phase_key))].map((key) => ({ key, name: titleCase(key) }));
+      }
+      function openPathEditor(item, opener) {
+        pathDraft = { itemKey: item.key, revision: item.revision, stages: draftStages(item), note: '', conflict: false };
+        openOverlay('path-editor', `<div class="overlay-card path-modal" role="dialog" aria-modal="true" aria-label="Edit ticket path" tabindex="-1"><h2>Edit ${esc(item.key)}'s path</h2><p class="path-muted">Add a step, change its routes, or require a human decision. Checked routes are the choices available when a step finishes.</p><form id="path-editor-form"><div id="path-editor-steps"></div><label class="path-field">Why is the path changing?<textarea id="path-editor-note" rows="2" required maxlength="8192" placeholder="For example, add a regression check after the review fixes."></textarea></label><div class="path-error" id="path-editor-error" role="alert"></div><div class="path-modal-footer path-actions"><button type="submit" class="path-button primary" id="path-editor-save">Save ticket path</button>${pathButton('Cancel', 'close')}<button type="button" class="path-button" id="path-editor-reload" data-path-action="reload-editor" hidden>Load latest path</button></div></form></div>`, opener);
+        renderPathEditorSteps();
+        $('path-editor-form').addEventListener('submit', saveTicketPath);
+        $('path-editor-note').addEventListener('input', (event) => { pathDraft.note = event.target.value; });
+      }
+      function pathStepCanRemove(item, key) {
+        const rec = item.stages?.[key];
+        return key !== item.current_stage_key && !item.path?.visits?.some((visit) => visit.stage_key === key) && (!rec || ((rec.state || 'pending') === 'pending' && !rec.started_at && !rec.started && !rec.summary && !rec.documents?.length && !rec.activity?.length && !rec.pi_sessions?.length && !rec.buzz_threads?.length && !rec.agents?.length));
+      }
+      function renderPathEditorSteps() {
+        const item = itemByKey(pathDraft.itemKey);
+        $('path-editor-steps').innerHTML = pathDraft.stages.map((stage, index) => `<section class="path-editor-step" data-step="${esc(stage.key)}"><div class="path-title-line"><strong>${index + 1}. ${esc(stage.title)}</strong><span class="path-muted">${esc(stage.key)}</span><span style="flex:1"></span><button type="button" class="path-button small" data-path-action="insert" data-index="${index}">Insert after</button><button type="button" class="path-button small" data-path-action="step-up" data-index="${index}" ${index === 0 ? 'disabled' : ''} aria-label="Move ${esc(stage.title)} earlier in the display order">↑</button><button type="button" class="path-button small" data-path-action="step-down" data-index="${index}" ${index === pathDraft.stages.length - 1 ? 'disabled' : ''} aria-label="Move ${esc(stage.title)} later in the display order">↓</button>${pathStepCanRemove(item, stage.key) && pathDraft.stages.length > 1 ? `<button type="button" class="path-button small" data-path-action="remove-step" data-stage="${esc(stage.key)}">Remove</button>` : ''}</div><div class="path-editor-fields"><label class="path-field">Step name<input data-field="title" value="${esc(stage.title)}" required maxlength="200"></label><label class="path-field">Phase<input data-field="phase" value="${esc(stage.phase)}" required pattern="[a-z0-9][a-z0-9_-]*" maxlength="80"></label><label class="path-field">Checkpoint<select data-field="checkpoint"><option value="none"${stage.checkpoint === 'none' ? ' selected' : ''}>Agent / no gate</option><option value="human"${stage.checkpoint === 'human' ? ' selected' : ''}>Human decision</option></select></label></div><details><summary class="path-muted">Agent skill</summary><label class="path-field">Skill or handler name<input data-field="skill" value="${esc(stage.skill)}" required maxlength="200"></label></details><fieldset class="path-successors"><legend>Allow next steps, including returns</legend>${pathDraft.stages.filter((target) => target.key !== stage.key).map((target) => `<label><input type="checkbox" data-next="${esc(target.key)}" ${stage.next.includes(target.key) ? 'checked' : ''}>${pathDraft.stages.indexOf(target) < index ? '↩ ' : ''}${esc(target.title)}</label>`).join('')}</fieldset></section>`).join('');
+        $('path-editor-steps').oninput = (event) => {
+          const row = event.target.closest('[data-step]'), stage = pathDraft.stages.find((candidate) => candidate.key === row?.dataset.step);
+          if (!stage) return;
+          if (event.target.dataset.field) stage[event.target.dataset.field] = event.target.value;
+          if (event.target.dataset.next) stage.next = [...row.querySelectorAll('[data-next]:checked')].map((input) => input.dataset.next);
+        };
+      }
+      async function saveTicketPath(event) {
+        event.preventDefault();
+        if (!pathDraft || pathDraft.conflict) return;
+        const item = itemByKey(pathDraft.itemKey), button = $('path-editor-save');
+        button.disabled = true; $('path-editor-error').textContent = '';
+        const body = { expected_revision: pathDraft.revision, note: pathDraft.note.trim(), phases: [...new Set(pathDraft.stages.map((stage) => stage.phase.trim()))].map((key) => ({ key, title: item.path?.phases?.find((phase) => phase.key === key)?.title || titleCase(key) })), stages: pathDraft.stages.map((stage) => ({ ...stage, title: stage.title.trim(), phase: stage.phase.trim(), skill: stage.skill.trim() })) };
+        if (!body.note) { $('path-editor-error').textContent = 'Record why the path is changing.'; button.disabled = false; return; }
+        if (DEMO) {
+          const stages = body.stages.map((stage, sequence) => ({ stage_key: stage.key, sequence, title: stage.title, phase_key: stage.phase, skill_name: stage.skill, checkpoint_kind: stage.checkpoint, next: stage.next }));
+          item.stages = Object.fromEntries(stages.map((stage) => [stage.stage_key, { ...(item.stages[stage.stage_key] || { state: 'pending' }), ...stage }]));
+          item.path = { ...(item.path || {}), customized: true, stages, visits: item.path?.visits || [] };
+          item.revision = (item.revision || 0) + 1; closeOverlay(); fullRender(); toast('Ticket path saved in this demo'); return;
+        }
+        try {
+          await apiFetch(`/api/v1/active-work/items/${encodeURIComponent(item.id)}/path`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+          closeOverlay(); await loadBoard(); toast('Ticket path saved');
+        } catch (error) {
+          if (!$('path-editor-error')) return;
+          if (error.status === 409 && error.body?.error?.code === 'active_work_revision_conflict') {
+            pathDraft.conflict = true; $('path-editor-error').textContent = 'This ticket changed while you were editing. Your draft is still here. Load the latest path and reapply your changes before saving.';
+            $('path-editor-reload').hidden = false; await loadBoard();
+          } else { $('path-editor-error').textContent = error.message || 'Could not save the path. Your changes are still here.'; button.disabled = false; }
+        }
+      }
+      function openPathDecision(item, action, target, opener) {
+        const stages = ticketStages(item), stage = stages.find((candidate) => candidate.stage_key === target);
+        const label = action === 'move' ? `${ticketRouteIsReturn(item, target) ? 'Return to' : 'Move to'} ${stage?.title || target}` : ({ approve: 'Approve checkpoint', changes: 'Request changes', complete: 'Complete ticket' })[action];
+        pathDecision = { key: item.key, revision: item.revision, action, target };
+        openOverlay('path-decision', `<div class="overlay-card path-modal narrow" role="dialog" aria-modal="true" aria-label="${esc(label)}" tabindex="-1"><h2>${esc(label)}</h2><p class="path-muted">${esc(item.key)}: ${esc(item.title)}</p><form id="path-decision-form"><label class="path-field">Decision and handoff note<textarea id="path-decision-note" required rows="3" maxlength="8192" placeholder="Record the outcome, evidence, and what happens next."></textarea></label><div class="path-error" id="path-decision-error" role="alert"></div><div class="path-actions"><button type="submit" class="path-button primary">${esc(label)}</button>${pathButton('Cancel', 'close')}</div></form></div>`, opener);
+        $('path-decision-form').addEventListener('submit', savePathDecision); $('path-decision-note').focus();
+      }
+      async function savePathDecision(event) {
+        event.preventDefault();
+        const decision = pathDecision, item = itemByKey(decision.key), note = $('path-decision-note').value.trim();
+        if (!note) return;
+        const button = event.target.querySelector('[type="submit"]'); button.disabled = true;
+        const body = { expected_revision: decision.revision, note, next_action: note, to_stage_key: decision.action === 'move' ? decision.target : item.current_stage_key };
+        if (decision.action === 'approve') body.checkpoint_state = 'approved';
+        if (decision.action === 'changes') { body.checkpoint_state = 'changes_requested'; body.attention = 'human'; }
+        if (DEMO) {
+          if (decision.action === 'complete') { item.lifecycle = 'done'; item.current_stage_key = null; }
+          else if (decision.action === 'move') {
+            const previous = item.stages[item.current_stage_key]; if (previous) previous.state = 'complete';
+            item.current_stage_key = decision.target;
+            const definition = ticketStages(item).find((stage) => stage.stage_key === decision.target);
+            item.stages[decision.target] = { ...(item.stages[decision.target] || {}), state: 'active', checkpoint_state: definition?.checkpoint_kind === 'human' ? 'pending' : 'none' };
+            if (item.path) item.path.stages = item.path.stages.map((stage) => ({ ...stage, ...(item.stages[stage.stage_key] || {}) }));
+          } else item.stages[item.current_stage_key].checkpoint_state = body.checkpoint_state;
+          item.next_action = note; item.revision = (item.revision || 0) + 1; closeOverlay(); fullRender(); toast('Decision recorded in this demo'); return;
+        }
+        try {
+          const suffix = decision.action === 'complete' ? '' : '/transitions';
+          const payload = decision.action === 'complete' ? { expected_revision: decision.revision, lifecycle: 'done', next_action: note } : body;
+          await apiFetch(`/api/v1/active-work/items/${encodeURIComponent(item.id)}${suffix}`, { method: suffix ? 'POST' : 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+          closeOverlay(); await loadBoard(); toast('Decision recorded');
+        } catch (error) {
+          if ($('path-decision-error')) $('path-decision-error').textContent = error.status === 409 && error.body?.error?.code === 'active_work_revision_conflict' ? 'This ticket changed. Close this dialog, review its latest path, and choose again. Your decision was not applied.' : error.message;
+          if (error.status === 409 && error.body?.error?.code === 'active_work_revision_conflict') await loadBoard(); else button.disabled = false;
+        }
+      }
+      function openPathContext(item, opener) {
+        const loop = ticketLoop(item), revision = item.revision;
+        openOverlay('path-context', `<div class="overlay-card path-modal narrow" role="dialog" aria-modal="true" aria-label="Update next action" tabindex="-1"><h2>Keep ${esc(item.key)} moving</h2><p class="path-muted">Leave enough context for the next person or agent to continue.</p><form id="path-context-form"><label class="path-field">Owner<input id="path-owner" value="${esc(loop.owner)}" maxlength="200" placeholder="Person or agent responsible"></label><label class="path-field">Loop status<select id="path-status">${['idle', 'working', 'waiting', 'blocked'].map((status) => `<option value="${status}"${status === loop.status ? ' selected' : ''}>${titleCase(status)}</option>`).join('')}</select></label><label class="path-field">Next action<textarea id="path-next-action" rows="2" required maxlength="8192">${esc(item.next_action)}</textarea></label><label class="path-field">Waiting on / blocked by<input id="path-reason" value="${esc(loop.reason)}" maxlength="8192"></label><label class="path-field">Agent handoff context<textarea id="path-context" rows="3" maxlength="8192">${esc(loop.context)}</textarea></label><div class="path-error" id="path-context-error" role="alert"></div><div class="path-actions"><button type="submit" class="path-button primary">Save next action</button>${pathButton('Cancel', 'close')}</div></form></div>`, opener);
+        $('path-context-form').addEventListener('submit', async (event) => {
+          event.preventDefault(); const button = event.target.querySelector('[type="submit"]'); button.disabled = true;
+          const body = { expected_revision: revision, next_action: $('path-next-action').value.trim(), loop: { owner: $('path-owner').value.trim(), status: $('path-status').value, reason: $('path-reason').value.trim(), context: $('path-context').value.trim() } };
+          if (DEMO) { item.next_action = body.next_action; item.loop = body.loop; closeOverlay(); fullRender(); return; }
+          try {
+            await apiFetch(`/api/v1/active-work/items/${encodeURIComponent(item.id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            closeOverlay(); await loadBoard(); toast('Next action saved');
+          } catch (error) {
+            if ($('path-context-error')) $('path-context-error').textContent = error.status === 409 && error.body?.error?.code === 'active_work_revision_conflict' ? 'This ticket changed. Close this dialog and review the latest owner and next action before saving again.' : error.message;
+            if (error.status === 409 && error.body?.error?.code === 'active_work_revision_conflict') await loadBoard(); else button.disabled = false;
+          }
+        });
+      }
+      document.addEventListener('click', async (event) => {
+        const button = event.target.closest('[data-path-action]'); if (!button) return;
+        const action = button.dataset.pathAction, item = itemByKey(button.dataset.ticket);
+        if (action === 'select' && item) { SEL.clear(); SEL.add(item.key); refreshBoardFilter(); }
+        else if (action === 'map') setBoardView('map');
+        else if (action === 'path') setBoardView('path');
+        else if (action === 'overview') { SEL.clear(); setBoardView('path'); renderTree(); }
+        else if (action === 'close') closeOverlay();
+        else if (action === 'edit' && item) openPathEditor(item, button);
+        else if (action === 'context' && item) openPathContext(item, button);
+        else if (['move', 'approve', 'changes', 'complete'].includes(action) && item) openPathDecision(item, action, button.dataset.stage, button);
+        else if (action === 'archive' && item) archiveAct(item.key);
+        else if (action === 'reviews' && item) openReviewChooser(item, button);
+        else if (action === 'insert' && pathDraft) { insertPathStep(pathDraft.stages, Number(button.dataset.index)); renderPathEditorSteps(); }
+        else if (action === 'remove-step' && pathDraft) { removePathStep(pathDraft.stages, button.dataset.stage); renderPathEditorSteps(); }
+        else if (['step-up', 'step-down'].includes(action) && pathDraft) { const index = Number(button.dataset.index), target = index + (action === 'step-up' ? -1 : 1); if (target >= 0 && target < pathDraft.stages.length) { [pathDraft.stages[index], pathDraft.stages[target]] = [pathDraft.stages[target], pathDraft.stages[index]]; renderPathEditorSteps(); } }
+        else if (action === 'reload-editor' && pathDraft) { const key = pathDraft.itemKey; closeOverlay(false); await loadBoard(); const latest = itemByKey(key); if (latest) openPathEditor(latest); }
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Tab') return;
+        const dialog = document.querySelector('#overlay-root .path-modal'); if (!dialog) return;
+        const focusable = [...dialog.querySelectorAll('button:not(:disabled), input, textarea, select, summary, [tabindex="0"]')].filter((element) => !element.hidden && element.getClientRects().length);
+        if (!focusable.length) return;
+        if (event.shiftKey && (document.activeElement === focusable[0] || document.activeElement === dialog)) { event.preventDefault(); focusable.at(-1).focus(); }
+        else if (!event.shiftKey && document.activeElement === focusable.at(-1)) { event.preventDefault(); focusable[0].focus(); }
+      });
+
       // ---------------------------------------------------------------------
       // Boot
       // ---------------------------------------------------------------------
@@ -6537,7 +6884,7 @@
           askRun(ASK_QUESTIONS[+e.key - 1].id);
           return;
         }
-        if (e.target.closest?.("input,textarea,[contenteditable]")) return;
+        if (e.target.closest?.("input,textarea,select,[contenteditable]")) return;
         if (
           (e.key === "f" || e.key === "F") &&
           !e.metaKey &&

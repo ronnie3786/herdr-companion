@@ -1,7 +1,7 @@
 """Pure parsing and validation for Herdr Active Work workflow configs.
 
 A workflow config is the JSON document that defines one pipeline template: its phases (board
-regions) and its ordered stages (skills, checkpoints, and forward-only transitions). This module
+regions) and its ordered stages (skills, checkpoints, and explicit transitions). This module
 has no IO and no database access; herdr_harness.active_work_store applies parsed configs.
 """
 
@@ -92,7 +92,7 @@ def _require_slug(value: Any, path: str) -> str:
     return candidate
 
 
-def parse_workflow_config(payload: Any) -> WorkflowConfig:
+def parse_workflow_config(payload: Any, *, require_connected: bool = False) -> WorkflowConfig:
     """Validate a submitted workflow config JSON document."""
 
     bounded = bounded_json(payload, "workflow config", maximum_bytes=64 * 1024)
@@ -148,7 +148,7 @@ def parse_workflow_config(payload: Any) -> WorkflowConfig:
         if stage_phase not in seen_phase_keys:
             raise WorkflowConfigError("references an undeclared phase", path=f"{stage_path}.phase")
         used_phase_keys.add(stage_phase)
-        stage_skill = _require_text(stage_body.get("skill"), f"{stage_path}.skill", maximum=120)
+        stage_skill = _require_text(stage_body.get("skill"), f"{stage_path}.skill", maximum=120, required=False)
         stage_checkpoint = stage_body.get("checkpoint", "none")
         if stage_checkpoint not in {"none", "human"}:
             raise WorkflowConfigError("must be 'none' or 'human'", path=f"{stage_path}.checkpoint")
@@ -175,7 +175,6 @@ def parse_workflow_config(payload: Any) -> WorkflowConfig:
             f"unused phases: {', '.join(sorted(unused_phases))}", path="phases"
         )
     sequence_by_key = {key: index + 1 for index, key in enumerate(stage_keys_in_order)}
-    last_key = stage_keys_in_order[-1]
     stages: list[StageConfig] = []
     for index, partial in enumerate(partials):
         stage_path = f"stages[{index}]"
@@ -191,16 +190,12 @@ def parse_workflow_config(payload: Any) -> WorkflowConfig:
                 next_path = f"{stage_path}.next[{next_index}]"
                 if next_key not in sequence_by_key:
                     raise WorkflowConfigError("references an undeclared stage", path=next_path)
-                if sequence_by_key[next_key] <= sequence:
+                if next_key == partial["key"] or next_key in resolved:
                     raise WorkflowConfigError(
-                        "must reference a stage later in the sequence", path=next_path
+                        "must reference a different stage without duplicates", path=next_path
                     )
                 resolved.append(next_key)
             resolved_next = tuple(resolved)
-            if partial["key"] == last_key and resolved_next:
-                raise WorkflowConfigError(
-                    "the final stage must be terminal", path=f"{stage_path}.next"
-                )
         stages.append(
             StageConfig(
                 key=partial["key"],
@@ -212,6 +207,25 @@ def parse_workflow_config(payload: Any) -> WorkflowConfig:
                 next=resolved_next,
             )
         )
+    # Loops are useful, but every step needs a route out to a terminal step.
+    # Sequence controls display only. It is not a progress or dependency rule.
+    exits = {stage.key for stage in stages if not stage.next}
+    can_finish = set(exits)
+    while True:
+        expanded = can_finish | {stage.key for stage in stages if can_finish.intersection(stage.next)}
+        if expanded == can_finish:
+            break
+        can_finish = expanded
+    if can_finish != seen_stage_keys:
+        raise WorkflowConfigError("every stage must have a route to a terminal stage", path="stages")
+    reachable = {stages[0].key}
+    while True:
+        expanded = reachable | {key for stage in stages if stage.key in reachable for key in stage.next}
+        if expanded == reachable:
+            break
+        reachable = expanded
+    if require_connected and reachable != seen_stage_keys:
+        raise WorkflowConfigError("every stage must be reachable from the first stage", path="stages")
     return WorkflowConfig(
         slug=slug,
         version=version,

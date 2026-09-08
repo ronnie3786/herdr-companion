@@ -358,6 +358,44 @@ class ActiveWorkHTTPIntegrationTests(ActiveWorkIntegrationFixture, unittest.Test
         response.read()
         self.assertEqual(response.status, 401)
 
+    def test_ticket_path_api_is_isolated_audited_and_conflict_safe(self):
+        item = self.repository.create_item({"title": "Reading list export", "kind": "task", "current_stage_key": "implement"})
+        sibling = self.repository.create_item({"title": "Reading list import", "kind": "task"})
+        stages = [{"key": stage["stage_key"], "title": stage["title"], "phase": stage["phase_key"],
+                   "skill": stage["skill_name"], "checkpoint": stage["checkpoint_kind"], "next": stage["next"]}
+                  for stage in item["stages"]]
+        review = next(stage for stage in stages if stage["key"] == "architect-code-review")
+        review["next"] = ["implement", "proof"]
+        payload = {"expected_revision": item["revision"], "note": "Review may request a focused fix", "stages": stages}
+        route = f"/api/v1/active-work/items/{item['id']}/path"
+        status, response = self.request(route, method="POST", payload=payload, token=INGEST_TOKEN)
+        self.assertEqual(status, 401)
+        status, response = self.request(route, method="POST", payload=payload, token=MANAGE_TOKEN, actor="agent:driver")
+        self.assertEqual(status, 200, response)
+        changed = response["item"]
+        self.assertTrue(changed["path"]["customized"])
+        self.assertEqual(changed["revision"], item["revision"] + 1)
+        self.assertEqual(self.repository.item_projection(sibling["id"])["stages"], sibling["stages"])
+        status, conflict = self.request(route, method="POST", payload=payload, token=MANAGE_TOKEN)
+        self.assertEqual(status, 409, conflict)
+        self.assertEqual(conflict["error"]["code"], "active_work_revision_conflict")
+        self.assertTrue(any(event["actor_id"] == "agent:driver" for event in changed["activity"]))
+        self.assertTrue(any(event["event"] == "active_work.updated" and event["data"]["change"] == "path_updated"
+                            for event in self.broker.after(0)))
+
+    def test_tracker_handoff_is_durable_and_visible_to_another_client(self):
+        item = self.repository.create_item({"title": "Reading tracker", "kind": "task"})
+        route = f"/api/v1/active-work/items/{item['id']}"
+        handoff = {"owner": "reviewer", "status": "waiting", "reason": "Need proof decision", "context": "See proof artifact on the QA step"}
+        status, response = self.request(route, method="PATCH", token=MANAGE_TOKEN, actor="agent:driver",
+            payload={"expected_revision": item["revision"], "next_action": "Review proof", "loop": handoff})
+        self.assertEqual(status, 200, response)
+        status, fetched = self.request(route)
+        self.assertEqual(status, 200)
+        for key, value in handoff.items():
+            self.assertEqual(fetched["item"]["loop"][key], value)
+        self.assertEqual(fetched["item"]["next_action"], "Review proof")
+
     def test_workflow_apply_route_creates_template_no_ops_on_replay_and_conflicts_on_changed_content(
         self,
     ):

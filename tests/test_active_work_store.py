@@ -65,7 +65,7 @@ class ActiveWorkStoreTests(unittest.TestCase):
         self.addCleanup(self.repo.close)
 
     def test_schema_is_versioned_private_and_seeds_exact_buzz_pipeline(self):
-        self.assertEqual(self.repo.schema_version(), 3)
+        self.assertEqual(self.repo.schema_version(), 4)
         self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o600)
 
         board = self.repo.board_projection()
@@ -394,7 +394,8 @@ class ActiveWorkStoreTests(unittest.TestCase):
         by_key = {stage["stage_key"]: stage for stage in projected["pipeline"]["stages"]}
 
         self.assertTrue(result["applied"])
-        self.assertEqual(projected["current_stage_key"], "implement")
+        self.assertEqual(projected["current_stage_key"], "start-ticket")
+        self.assertEqual(projected["path"]["mode"], "dynamic")
         self.assertEqual(projected["setup_state"], "ready")
         self.assertEqual(len(projected["agents"]), 2)
         self.assertEqual(len(projected["pi_sessions"]), 1)
@@ -1108,7 +1109,7 @@ class ActiveWorkStoreTests(unittest.TestCase):
 
         migrated = ActiveWorkRepository(legacy_path)
         self.addCleanup(migrated.close)
-        self.assertEqual(migrated.schema_version(), 3)
+        self.assertEqual(migrated.schema_version(), 4)
         self.assertEqual(migrated.item_projection("work_legacy")["title"], "Legacy item")
         self.assertIsInstance(migrated.get_workflow("buzz-feature-work")["config"], dict)
 
@@ -1185,7 +1186,7 @@ class ActiveWorkStoreTests(unittest.TestCase):
 
         migrated = ActiveWorkRepository(legacy_path)
         self.addCleanup(migrated.close)
-        self.assertEqual(migrated.schema_version(), 3)
+        self.assertEqual(migrated.schema_version(), 4)
         columns = {
             row[1]
             for row in sqlite3.connect(legacy_path)

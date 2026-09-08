@@ -159,6 +159,49 @@ class ActiveWorkCLITests(unittest.TestCase):
         self.assertEqual(opener.requests[0]["headers"]["authorization"], "Bearer manage-token-123")
         self.assertEqual(opener.requests[0]["headers"]["x-herdr-actor"], "agent:test-runner")
 
+    def test_ticket_path_read_can_be_edited_and_saved_at_the_observed_revision(self):
+        tracked = item(key=None)
+        tracked["path"] = {"phases": [{"key": "build", "title": "Build"}], "stages": [
+            {"stage_key": "code", "title": "Code", "phase_key": "build", "skill_name": "implement", "checkpoint_kind": "none", "next": ["review"]},
+            {"stage_key": "review", "title": "Review", "phase_key": "build", "skill_name": "review", "checkpoint_kind": "human", "next": ["code"]},
+        ]}
+        status, output, error, opener = self.run_cli(["path-show", tracked["id"]], FakeResponse({"ok": True, "item": tracked}))
+        self.assertEqual(status, 0, error)
+        editable = output["data"]["editable_path"]
+        self.assertEqual(editable["stages"][1]["next"], ["code"])
+        status, output, error, opener = self.run_cli(
+            ["path-set", tracked["id"], "--file", "-", "--expected-revision", "3", "--note", "Add a review loop"],
+            FakeResponse({"ok": True, "item": tracked}), stdin=json.dumps(editable))
+        self.assertEqual(status, 0, error)
+        self.assertEqual(len(opener.requests), 1)
+        request = opener.requests[0]
+        self.assertTrue(request["url"].endswith("/path"))
+        self.assertEqual(json.loads(request["body"]), {**editable, "expected_revision": 3, "note": "Add a review loop"})
+
+    def test_ticket_path_requires_revision_and_never_retries_a_conflict(self):
+        status, _, error, opener = self.run_cli(["path-set", "work_ticket_1", "--file", "-", "--note", "Change route"], stdin='{"stages":[]}')
+        self.assertEqual(status, 2)
+        self.assertEqual(opener.requests, [])
+        conflict = urllib.error.HTTPError("http://127.0.0.1/path", 409, "Conflict", {}, io.BytesIO(b'{"ok":false,"error":{"code":"active_work_revision_conflict","message":"Reload and reconcile"}}'))
+        status, _, error, opener = self.run_cli(
+            ["path-set", "work_ticket_1", "--file", "-", "--expected-revision", "3", "--note", "Change route"],
+            conflict, stdin='{"stages":[]}')
+        self.assertEqual(status, 5)
+        self.assertEqual(len(opener.requests), 1)
+        self.assertEqual(error["error"]["code"], "active_work_revision_conflict")
+
+    def test_track_saves_handoff_with_revision_in_one_request(self):
+        tracked = item()
+        status, _, error, opener = self.run_cli(
+            ["track", tracked["id"], "--expected-revision", "3", "--owner", "reviewer", "--status", "waiting", "--next-action", "Review proof", "--reason", "QA decision", "--context", "Proof attached to the review step"],
+            FakeResponse({"ok": True, "item": tracked}))
+        self.assertEqual(status, 0, error)
+        self.assertEqual(len(opener.requests), 1)
+        payload = json.loads(opener.requests[0]["body"])
+        self.assertEqual(payload["expected_revision"], 3)
+        self.assertEqual(payload["next_action"], "Review proof")
+        self.assertEqual(payload["loop"], {"owner": "reviewer", "status": "waiting", "reason": "QA decision", "context": "Proof attached to the review step"})
+
     def test_candidates_all_preserves_connected_candidates(self):
         candidates = [
             {"key": "APP-103", "setup_state": "available"},

@@ -149,6 +149,54 @@ struct ActiveWorkTests {
         #expect(prompt.utf8.count < 100_000)
     }
 
+    @Test("Uses each ticket's route and explicit next edges, including rework and terminal steps")
+    @MainActor
+    func ticketPathProjection() throws {
+        var response = try decodeFixture()
+        let ticket = try JSONDecoder().decode(ActiveWorkItem.self, from: Data("""
+        {
+          "id": "work-route", "title": "Review a garden plan", "current_stage_key": "review",
+          "pipeline": {
+            "id": "template-garden", "slug": "garden", "version": 2,
+            "title": "Garden work", "stages": [
+              {"stage_key": "investigate", "sequence": 1, "title": "Investigate", "next": ["review"]},
+              {"stage_key": "finish", "sequence": 2, "title": "Finish", "next": []},
+              {"stage_key": "review", "sequence": 3, "title": "Review evidence", "next": ["investigate", "finish"]}
+            ]
+          },
+          "path": {"customized": true}, "loop": {"owner": "reviewer", "status": "working"},
+          "stages": [{"stage_key": "review", "state": "active"}]
+        }
+        """.utf8))
+        response.items = [ticket]
+        let store = ActiveWorkStore()
+        store.receive(response)
+
+        #expect(store.pipeline(for: ticket).id == "template-garden")
+        #expect(store.pipeline(for: ticket).version == 2)
+        #expect(ActiveWorkProjection.nextStages(for: ticket, pipeline: response.pipeline).map(\.key) == ["investigate", "finish"])
+        #expect(store.agentPrompt(question: nil).contains("Review evidence"))
+        let investigate = try #require(ticket.pipeline?.stages.first)
+        #expect(ActiveWorkProjection.progress(for: investigate, item: ticket, pipeline: response.pipeline) == .pending)
+
+        var finished = ticket
+        finished.currentStageKey = "finish"
+        #expect(ActiveWorkProjection.nextStages(for: finished, pipeline: response.pipeline).isEmpty)
+        #expect(ActiveWorkProjection.nextStage(for: finished, pipeline: response.pipeline) == nil)
+
+        var intake = ticket
+        intake.currentStageKey = nil
+        #expect(ActiveWorkProjection.nextStages(for: intake, pipeline: response.pipeline).map(\.key) == ["investigate"])
+    }
+
+    @Test("Keeps ordinal movement for older servers that omit ticket routes and edges")
+    func legacyRouteProjection() throws {
+        let response = try decodeFixture()
+        let ticket = try #require(response.items.first(where: { $0.id == "work-1" }))
+        #expect(ticket.pipeline == nil)
+        #expect(ActiveWorkProjection.nextStages(for: ticket, pipeline: response.pipeline).map(\.key) == ["ship"])
+    }
+
     private func decodeFixture() throws -> ActiveWorkResponse {
         try JSONDecoder().decode(ActiveWorkResponse.self, from: Self.fixture)
     }

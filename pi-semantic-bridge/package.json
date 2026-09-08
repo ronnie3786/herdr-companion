@@ -11,6 +11,7 @@
     "extensions": [
       "./extensions/pi-semantic-bridge.ts",
       "./extensions/notes-discovery.ts",
+      "./extensions/active-work-discovery.ts",
       "./extensions/send-to-herdr.ts",
       "./extensions/present-result.ts"
     ]

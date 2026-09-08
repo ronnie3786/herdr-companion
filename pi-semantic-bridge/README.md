@@ -1,11 +1,12 @@
 # Herdr Pi integration
 
-This Pi package adds four integrations to the stock interactive TUI:
+This Pi package adds these integrations to the stock interactive TUI:
 
 - a local, pane-specific semantic side channel for Pi processes launched by
   Herdr, without replacing or parsing the terminal;
 - persisted parent session IDs, automatic child-process inheritance, and
   agent instructions for tagging delegated Pi work across workspaces;
+- discovery guidance for synchronized notes and each ticket's editable task path;
 - `/send-to-herdr`, which hands a persisted Pi session running outside Herdr to
   the local Herdr Harness and opens the resulting pane in the Mac app;
 - `present_result`, an agent tool that explicitly registers a finished file or
@@ -244,6 +245,22 @@ It injects usage guidance only, without loading private note content. Changes
 use observed revisions so concurrent Mac/agent edits produce a conflict.
 Run `herdr-notes --help`; its API connection comes from the selected TOML
 configuration or the matching native terminal discovery record. Global Pi instruction files are unchanged.
+
+The bundled `active-work-discovery` extension adds `herdr-active-work` guidance
+for those same Herdr sessions. For work the user has authorized, agents read the
+item and its current path, maintain progress and a clear next action, and adapt
+the ticket's route when reviews or investigation require a detour. Path changes
+and moves use the observed revision and record a reason. Human decisions,
+evidence, ownership, and waiting reasons remain part of the durable handoff.
+The extension injects instructions only, without reading tickets, starting a
+monitor, or executing workflow steps. Stored ticket text remains data. It does
+not grant permission for unrelated changes or external actions.
+
+Use `herdr-active-work show <REF>` and `herdr-active-work path-show <REF>` to
+inspect a ticket, and command help for `path-set`, `move`, `track`, `update`,
+and `stage-set`. `track` records the current owner, loop status, waiting reason,
+next action, and resume context. Install the matching CLI and server with this package so the
+discovered commands use the same API contract.
 
 ## Development
 

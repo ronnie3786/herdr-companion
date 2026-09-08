@@ -1731,9 +1731,54 @@ final class HerdrAppModel {
         }
     }
 
+    private(set) var smartRenamingPaneIDs: Set<String> = []
+    private var paneRenameRevisions: [String: UUID] = [:]
+
+    func smartRename(_ pane: HerdrPane, runner: any HerdrNoteAIRunner = HerdrLiveNoteAIRunner()) async {
+        guard canControl(machineID: pane.machineID), pane.piSemantic?.sessionID != nil,
+              smartRenamingPaneIDs.insert(pane.id).inserted else { return }
+        defer { smartRenamingPaneIDs.remove(pane.id) }
+        let revision = paneRenameRevisions[pane.id]
+        toastMessage = "Finding a smart title…"
+        do {
+            let snapshot = try await fetchPiConversationSnapshot(for: pane)
+            let context = SmartPaneTitle.context(from: snapshot)
+            guard snapshot.available, !context.isEmpty else {
+                toastMessage = "This Pi session has no conversation to name yet."
+                return
+            }
+            let settings = AgentModelSettings.load(from: userDefaults)
+            let charter = await supportsPromptOverrides(machineID: pane.machineID)
+                ? "You name conversations. Use only supplied text. Never call tools. Return only the requested JSON object."
+                : nil
+            let response = try await runner.run(
+                prompt: SmartPaneTitle.prompt(context: context), machineID: pane.machineID,
+                mode: .ask, model: settings.quickChatModel.isEmpty ? nil : settings.quickChatModel,
+                thinkingLevel: "low", systemPrompt: charter, deadline: .seconds(60),
+                appModel: self, onProgress: { _ in }
+            )
+            try Task.checkCancellation()
+            guard let current = self.pane(id: pane.id),
+                  current.piSemantic?.sessionID == pane.piSemantic?.sessionID,
+                  current.displayTitle == pane.displayTitle,
+                  paneRenameRevisions[pane.id] == revision else {
+                toastMessage = "Chat changed while naming it. Try Smart Rename again."
+                return
+            }
+            guard let title = SmartPaneTitle.parse(response) else {
+                toastMessage = "AI did not return a valid short title. Try Smart Rename again."
+                return
+            }
+            await rename(current, label: title)
+        } catch {
+            toastMessage = "Smart Rename failed: \(error.localizedDescription)"
+        }
+    }
+
     func rename(_ pane: HerdrPane, label: String) async {
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        paneRenameRevisions[pane.id] = UUID()
         await perform("Pane renamed", machineID: pane.machineID) { client in
             try await client.renamePane(id: pane.paneID, label: trimmed)
         }

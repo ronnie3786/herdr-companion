@@ -34,6 +34,41 @@ final class HerdrDemoNavigationUITests: HerdrUITestCase {
     }
 
     @MainActor
+    func testInlineChatTitleEditing() throws {
+        let app = launchDemoApp()
+        let pane = app.buttons["sidebar-pane-demo1|w1:p2"]
+        XCTAssertTrue(pane.waitForExistence(timeout: 10))
+        pane.click()
+        XCTAssertTrue(app.control(identifier: "pane-session-machine").waitForExistence(timeout: 5))
+        let title = app.buttons["pane-session-title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        title.click()
+        let input = app.textFields["pane-session-title-input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 3))
+        input.typeText("Cancelled title")
+        input.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(title.waitForExistence(timeout: 3))
+        XCTAssertFalse(input.exists)
+        XCTAssertEqual(app.alerts.count, 0)
+
+        title.click()
+        XCTAssertTrue(input.waitForExistence(timeout: 3))
+        input.typeKey("a", modifierFlags: .command)
+        input.typeText("Garden watering plan")
+        input.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(title.waitForExistence(timeout: 3))
+        XCTAssertFalse(input.exists)
+        XCTAssertTrue(app.staticTexts["Pane renamed"].waitForExistence(timeout: 3))
+
+        title.click()
+        XCTAssertTrue(input.waitForExistence(timeout: 3))
+        input.typeText("New name")
+        app.control(identifier: "pane-session-machine").click()
+        XCTAssertTrue(title.waitForExistence(timeout: 3))
+        XCTAssertFalse(input.exists)
+    }
+
+    @MainActor
     func testPaneModesAndExpandableControls() throws {
         let app = launchDemoApp()
 

@@ -14,7 +14,9 @@ struct PaneSessionHeader: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var isRenaming = false
+    @State private var editingPane: HerdrPane?
     @State private var renameText = ""
+    @FocusState private var titleIsFocused: Bool
 
     var body: some View {
         HStack(spacing: 11) {
@@ -30,23 +32,36 @@ struct PaneSessionHeader: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {
-                    // The chat's own name leads: the agent and status that used
-                    // to start this line say what kind of session it is, not
-                    // which one you are looking at.
-                    Button {
-                        renameText = pane.displayTitle
-                        isRenaming = true
-                    } label: {
-                        Text(pane.displayTitle)
+                    if isRenaming {
+                        TextField("Chat title", text: $renameText)
+                            .textFieldStyle(.plain)
                             .herdrFont(.subheadline, weight: .bold)
-                            .foregroundStyle(HerdrTheme.text)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                            .focused($titleIsFocused)
+                            .background(InlineTitleClickAway { finishRename() })
+                            .onSubmit { finishRename() }
+                            .onExitCommand { finishRename(cancel: true) }
+                            .onChange(of: titleIsFocused) { _, focused in
+                                if !focused { finishRename() }
+                            }
+                            .onAppear { titleIsFocused = true }
+                            .accessibilityIdentifier("pane-session-title-input")
+                    } else {
+                        Button {
+                            renameText = pane.displayTitle
+                            editingPane = pane
+                            isRenaming = true
+                        } label: {
+                            Text(pane.displayTitle)
+                                .herdrFont(.subheadline, weight: .bold)
+                                .foregroundStyle(HerdrTheme.text)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!model.canControl(machineID: pane.machineID))
+                        .help("Edit chat title")
+                        .accessibilityIdentifier("pane-session-title")
                     }
-                    .buttonStyle(.plain)
-                    .disabled(!model.canControl(machineID: pane.machineID))
-                    .help("Edit chat title")
-                    .accessibilityIdentifier("pane-session-title")
 
                     if showsAgentName {
                         Text(pane.displayAgentName.lowercased())
@@ -79,6 +94,15 @@ struct PaneSessionHeader: View {
                 }
 
                 HStack(spacing: 3) {
+                    Label(model.machines.first(where: { $0.id == pane.machineID })?.name ?? pane.machineID,
+                          systemImage: "desktopcomputer")
+                        .herdrFont(.caption, monospaced: true)
+                        .foregroundStyle(HerdrTheme.mist)
+                        .lineLimit(1)
+                        .accessibilityIdentifier("pane-session-machine")
+                    Text("·")
+                        .foregroundStyle(HerdrTheme.mist)
+                        .accessibilityHidden(true)
                     Text(locationName)
                         .herdrFont(.caption, monospaced: true)
                         .foregroundStyle(HerdrTheme.mist)
@@ -137,16 +161,24 @@ struct PaneSessionHeader: View {
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: store.compactionActivity)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: store.connection)
-        .contextMenu { CopyPaneIDButton(pane: pane) }
-        .alert("Edit chat title", isPresented: $isRenaming) {
-            TextField("Chat title", text: $renameText)
-            Button("Cancel", role: .cancel) { }
-            Button("Save") {
-                Task { await model.rename(pane, label: renameText) }
-            }
-            .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .contextMenu {
+            SmartRenamePaneButton(model: model, pane: pane)
+            CopyPaneIDButton(pane: pane)
         }
+        .onChange(of: pane.id) { _, _ in finishRename() }
+        .onDisappear { finishRename() }
         .accessibilityElement(children: .contain)
+    }
+
+    private func finishRename(cancel: Bool = false) {
+        guard isRenaming else { return }
+        isRenaming = false
+        titleIsFocused = false
+        let title = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let target = editingPane
+        editingPane = nil
+        guard !cancel, let target, !title.isEmpty, title != target.displayTitle else { return }
+        Task { await model.rename(target, label: title) }
     }
 
     /// How stale the chat is, as a clock time for today and a date beyond it.

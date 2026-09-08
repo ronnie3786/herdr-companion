@@ -998,6 +998,7 @@ struct HerdrSidebarView: View {
             }
             .disabled(!model.canControl(machineID: pane.machineID))
             CopyPaneIDButton(pane: pane)
+            SmartRenamePaneButton(model: model, pane: pane)
             Button("Rename pane", systemImage: "pencil") {
                 paneName = pane.displayTitle
                 renamingPane = pane

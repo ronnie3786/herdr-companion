@@ -139,6 +139,7 @@ struct HerdrHudControllerTests {
     @Test("Result nodes reserve their lane only while visible")
     func resultRailResizesTheCollapsedPanel() async throws {
         let harness = makeHarness()
+        harness.controller.setNotesVisible(false)
         // Let the hosted root publish its initial, artifact-free projection
         // before this test drives the controller directly. Otherwise that
         // initial `onChange` can race the explicit `true` below.
@@ -356,6 +357,25 @@ struct HerdrHudControllerTests {
         #expect(harness.controller.areNotesVisible)
         #expect(harness.notes.layout == .card)
         #expect(harness.notes.openNoteID == id)
+    }
+
+    @Test("New note opens an editor with the HUD and notes hidden")
+    func newNoteRestoresVisibility() async throws {
+        let harness = makeHarness()
+        await harness.notes.waitForPersistenceRestoreForTesting()
+        harness.controller.setNotesVisible(false)
+        harness.controller.setEnabled(false)
+        harness.controller.createNote()
+        #expect(harness.controller.isEnabled)
+        #expect(harness.controller.areNotesVisible)
+        #expect(harness.notes.notes.count == 1)
+        #expect(harness.notes.layout == .card)
+        #expect(harness.notes.openNoteID == harness.notes.notes.first?.id)
+        let firstID = harness.notes.openNoteID
+        harness.controller.createNote()
+        #expect(harness.notes.notes.count == 2)
+        #expect(harness.notes.openNoteID != firstID)
+        #expect(harness.notes.layout == .card)
     }
 
     @Test("Orb renders separate quick-hide and microphone controls")

@@ -15,7 +15,7 @@ struct HerdrHudNotesStripView: View {
             case let .compact(count):
                 HerdrNoteCompactStackView(
                     notes: notes, count: count, maximumHeight: controller.compactNotesHeight,
-                    openNote: controller.openNote
+                    createNote: controller.createNote, openNote: controller.openNote
                 )
                     .transition(fadeTransition)
             case .rows:
@@ -27,6 +27,9 @@ struct HerdrHudNotesStripView: View {
                         .transition(cardTransition)
                 }
             }
+        }
+        .contextMenu {
+            Button("New note", systemImage: "note.text.badge.plus", action: controller.createNote)
         }
     }
 

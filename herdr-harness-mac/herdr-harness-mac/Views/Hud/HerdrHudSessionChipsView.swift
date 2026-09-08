@@ -218,6 +218,7 @@ struct HerdrHudSessionChipsView: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
+            if let pane = model.pane(id: chip.id) { CopyPaneIDButton(pane: pane) }
             if let noteID = chip.voiceNoteID {
                 Button("Show voice request", systemImage: "waveform") { openVoiceRequest?(noteID) }
             }

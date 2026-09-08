@@ -51,7 +51,7 @@ struct HerdrHudNotesStateTests {
     @Test("Creating and closing notes derives the expected layouts")
     func createsAndClosesNotes() async throws {
         let harness = await makeHarness()
-        #expect(harness.state.layout == .hidden)
+        #expect(harness.state.layout == .compact(count: 0))
         let id = harness.state.createNote()
         #expect(harness.state.openNoteID == id)
         #expect(harness.state.notes.first?.id == id)
@@ -80,7 +80,7 @@ struct HerdrHudNotesStateTests {
         harness.state.closeNote()
         #expect(harness.state.layout == .compact(count: 1))
         harness.state.deleteNote(id)
-        #expect(harness.state.layout == .hidden)
+        #expect(harness.state.layout == .compact(count: 0))
     }
 
     @Test("Edits, undo, and deletion preserve note invariants")
@@ -229,7 +229,7 @@ struct HerdrHudNotesStateTests {
         #expect(!harness.state.isBusy(id))
         #expect(harness.state.noteErrors[id] == nil)
         #expect(harness.state.celebratingNoteID == nil)
-        #expect(harness.state.layout == .hidden)
+        #expect(harness.state.layout == .compact(count: 0))
     }
 
     @Test("Only ready or failed actions run; failed actions are reset")

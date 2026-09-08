@@ -5,6 +5,7 @@ struct HerdrNoteCompactStackView: View {
     let notes: HerdrHudNotesState
     let count: Int
     var maximumHeight: CGFloat?
+    var createNote: () -> Void = { }
     var openNote: (UUID) -> Void = { _ in }
 
     private var naturalHeight: CGFloat {
@@ -14,7 +15,17 @@ struct HerdrNoteCompactStackView: View {
     private var viewportHeight: CGFloat { min(naturalHeight, max(0, maximumHeight ?? naturalHeight)) }
 
     var body: some View {
-        Group {
+        VStack(spacing: HerdrHudPlacement.noteCompactBarSpacing) {
+            Button(action: createNote) {
+                Label("New note", systemImage: "plus")
+                    .herdrFont(.caption2, weight: .semibold)
+                    .frame(width: HerdrHudPlacement.noteCompactWidth, height: HerdrHudPlacement.noteCompactBarHeight)
+                    .background(HerdrNoteColor.yellow.fill, in: .capsule)
+                    .foregroundStyle(HerdrNoteColor.yellow.ink)
+                    .contentShape(.capsule)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("hud-note-new")
             if viewportHeight < naturalHeight {
                 VStack(spacing: 4) {
                     ScrollView(.vertical) { noteRows.padding(.trailing, 12) }
@@ -25,7 +36,7 @@ struct HerdrNoteCompactStackView: View {
                         .lineLimit(1)
                         .frame(height: 20)
                 }
-            } else {
+            } else if count > 0 {
                 noteRows
             }
         }

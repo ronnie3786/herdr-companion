@@ -13,6 +13,9 @@ struct PaneSessionHeader: View {
     var summarizePiSession: () -> Void = { }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    @State private var isRenaming = false
+    @State private var renameText = ""
+
     var body: some View {
         HStack(spacing: 11) {
             if showsCompaction {
@@ -30,12 +33,20 @@ struct PaneSessionHeader: View {
                     // The chat's own name leads: the agent and status that used
                     // to start this line say what kind of session it is, not
                     // which one you are looking at.
-                    Text(pane.displayTitle)
-                        .herdrFont(.subheadline, weight: .bold)
-                        .foregroundStyle(HerdrTheme.text)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .accessibilityIdentifier("pane-session-title")
+                    Button {
+                        renameText = pane.displayTitle
+                        isRenaming = true
+                    } label: {
+                        Text(pane.displayTitle)
+                            .herdrFont(.subheadline, weight: .bold)
+                            .foregroundStyle(HerdrTheme.text)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!model.canControl(machineID: pane.machineID))
+                    .help("Edit chat title")
+                    .accessibilityIdentifier("pane-session-title")
 
                     if showsAgentName {
                         Text(pane.displayAgentName.lowercased())
@@ -126,6 +137,15 @@ struct PaneSessionHeader: View {
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: store.compactionActivity)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: store.connection)
+        .contextMenu { CopyPaneIDButton(pane: pane) }
+        .alert("Edit chat title", isPresented: $isRenaming) {
+            TextField("Chat title", text: $renameText)
+            Button("Cancel", role: .cancel) { }
+            Button("Save") {
+                Task { await model.rename(pane, label: renameText) }
+            }
+            .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
         .accessibilityElement(children: .contain)
     }
 

@@ -119,6 +119,12 @@ struct HerdrNoteCardView: View {
                 .herdrFont(.subheadline, weight: .bold)
                 .foregroundStyle(note.color.ink)
             Spacer(minLength: 0)
+            Button("New note", systemImage: "note.text.badge.plus", action: controller.createNote)
+                .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
+                .frame(width: HerdrTheme.minHitTarget, height: HerdrTheme.minHitTarget)
+                .help("Create a note")
+                .accessibilityIdentifier("hud-note-new")
             headerButton(symbol: "bubble.left", help: "Ask about this note", identifier: "hud-note-ask", note: note) {
                 model.presentContextualAssistant(note: note)
             }

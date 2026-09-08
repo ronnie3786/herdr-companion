@@ -72,8 +72,7 @@ struct HerdrHudPlacement: Equatable, Sendable {
         case .hidden:
             return .zero
         case let .compact(count):
-            let k = max(count, 0)
-            guard k > 0 else { return .zero }
+            let k = max(count, 0) + 1 // Include the always-visible New note row.
             return CGSize(width: noteCompactWidth, height: CGFloat(k) * noteCompactBarHeight + CGFloat(k - 1) * noteCompactBarSpacing)
         case let .rows(count):
             let k = min(max(count, 0), maxNoteRows(isExpanded: isExpanded))

@@ -167,6 +167,10 @@ struct HerdrMacCommands: Commands {
             .keyboardShortcut("n", modifiers: .command)
             .disabled(!model.canControl)
 
+            Button("New Note", systemImage: "note.text.badge.plus", action: hudController.createNote)
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+                .accessibilityIdentifier("menu-new-note")
+
             Button("Ask Agent…") {
                 shell.isAgentPresented = true
             }

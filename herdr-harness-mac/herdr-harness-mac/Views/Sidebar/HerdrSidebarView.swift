@@ -997,6 +997,7 @@ struct HerdrSidebarView: View {
                 Task { await model.sendKeys(["ctrl+c"], to: pane) }
             }
             .disabled(!model.canControl(machineID: pane.machineID))
+            CopyPaneIDButton(pane: pane)
             Button("Rename pane", systemImage: "pencil") {
                 paneName = pane.displayTitle
                 renamingPane = pane

@@ -662,8 +662,6 @@ final class HerdrHudNotesState {
             next = .hidden
         } else if let openNoteID, notes.contains(where: { $0.id == openNoteID }) {
             next = .card
-        } else if notes.isEmpty {
-            next = .hidden
         } else {
             next = .compact(count: notes.count)
         }

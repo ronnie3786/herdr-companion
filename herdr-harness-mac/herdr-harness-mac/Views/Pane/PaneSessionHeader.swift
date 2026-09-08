@@ -63,6 +63,21 @@ struct PaneSessionHeader: View {
                         .accessibilityIdentifier("pane-session-title")
                     }
 
+                    Button(isStarred ? "Unstar chat" : "Star chat",
+                           systemImage: isStarred ? "star.fill" : "star") {
+                        model.toggleStarredChat(pane.id)
+                    }
+                    .labelStyle(.iconOnly)
+                    .herdrFont(.subheadline)
+                    .foregroundStyle(isStarred ? HerdrTheme.accent : HerdrTheme.mist)
+                    .frame(width: 24, height: 24)
+                    .contentShape(.rect)
+                    .buttonStyle(.plain)
+                    .fixedSize()
+                    .help(isStarred ? "Remove from starred chats" : "Add to starred chats")
+                    .accessibilityValue(isStarred ? "Starred" : "Not starred")
+                    .accessibilityIdentifier("pane-session-star")
+
                     if showsAgentName {
                         Text(pane.displayAgentName.lowercased())
                             .herdrFont(.caption, monospaced: true, weight: .bold)
@@ -168,6 +183,10 @@ struct PaneSessionHeader: View {
         .onChange(of: pane.id) { _, _ in finishRename() }
         .onDisappear { finishRename() }
         .accessibilityElement(children: .contain)
+    }
+
+    private var isStarred: Bool {
+        model.starredChatIDs.contains(pane.id)
     }
 
     private func finishRename(cancel: Bool = false) {

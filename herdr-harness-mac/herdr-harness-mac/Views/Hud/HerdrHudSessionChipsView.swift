@@ -79,15 +79,15 @@ struct HerdrHudSessionChipsView: View {
             }
 
             chipButton(chip)
-                .overlay(alignment: .bottomTrailing) {
+                .overlay(alignment: .topTrailing) {
                     if session.voiceReplyTarget == chip.id || voiceReply?.paneID == chip.id {
                         replyButton(chip)
                             .padding(.trailing, 6)
-                            .padding(.bottom, 4)
+                            .padding(.top, 3)
                     } else if chip.status == .done {
                         speakButton(chip)
                             .padding(.trailing, 6)
-                            .padding(.bottom, 4)
+                            .padding(.top, 3)
                             .opacity(showsSpeakButton(chip) ? 1 : 0)
                             .allowsHitTesting(showsSpeakButton(chip))
                     }
@@ -214,11 +214,14 @@ struct HerdrHudSessionChipsView: View {
                 HerdrMacAppDelegate.openPaneURLWithFallback(chip.id)
             }
         } label: {
-            HerdrHudSessionBubbleLabel(chip: chip)
+            HerdrHudSessionBubbleLabel(chip: chip, model: model)
         }
         .buttonStyle(.plain)
         .contextMenu {
-            if let pane = model.pane(id: chip.id) { CopyPaneIDButton(pane: pane) }
+            if let pane = model.pane(id: chip.id) {
+                SmartRenamePaneButton(model: model, pane: pane)
+                CopyPaneIDButton(pane: pane)
+            }
             if let noteID = chip.voiceNoteID {
                 Button("Show voice request", systemImage: "waveform") { openVoiceRequest?(noteID) }
             }
@@ -230,7 +233,6 @@ struct HerdrHudSessionChipsView: View {
             }
         }
         .accessibilityIdentifier("hud-session-chip-\(chip.id)")
-        .accessibilityLabel("Open \(chip.title), \(chip.activity), \(chip.statusLabel)")
         .help("\(chip.title): \(chip.activity). \(chip.statusLabel)")
     }
 }

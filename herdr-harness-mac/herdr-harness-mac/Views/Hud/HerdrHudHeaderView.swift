@@ -27,20 +27,6 @@ struct HerdrHudHeaderView: View {
 
             Spacer()
 
-            Button("New note", systemImage: "note.text.badge.plus", action: controller.createNote)
-                .labelStyle(.iconOnly)
-                .buttonStyle(.plain)
-                .foregroundStyle(HerdrTheme.mist)
-                .help("Create a note")
-                .accessibilityIdentifier("hud-note-new")
-
-            Button("Ask", systemImage: "bubble.left.and.text.bubble.right") {
-                model.presentContextualAssistant(machineID: session.selectedMachineID)
-            }
-            .buttonStyle(.plain)
-            .help("Ask a question with the current Herdr context")
-            .accessibilityIdentifier("hud-contextual-ask")
-
             if !session.exchanges.isEmpty {
                 // Reads as "start a new chat" rather than "destroy something":
                 // ending the thread is how you begin the next one, and a trash

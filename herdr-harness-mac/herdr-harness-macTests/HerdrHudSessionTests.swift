@@ -534,6 +534,33 @@ struct HerdrHudSessionTests {
         #expect(session.lastHeadlessRunForTesting?.thinkingLevel == "low")
     }
 
+    @Test("HUD thinking selection persists, follows Settings, and applies to thread replies")
+    func thinkingSelectionAppliesToThreadReplies() async {
+        let defaults = makeDefaults(prefix: "hud-thinking-selection")
+        let store = AgentModelSettingsStore(defaults: defaults)
+        let session = HerdrHudSession(
+            userDefaults: defaults,
+            agentSettings: store,
+            persistenceURL: temporaryURL(named: "hud-thread.json")
+        )
+        let model = makeDemoModel()
+        store.hudThinkingLevel = .medium
+        #expect(session.selectedThinkingLevel == .medium)
+
+        session.selectedThinkingLevel = .high
+        #expect(store.hudThinkingLevel == .high)
+        #expect(AgentModelSettingsStore(defaults: defaults).hudThinkingLevel == .high)
+        session.draft = "Summarize the sample project"
+        await session.submit(model: model)
+        #expect(session.lastHeadlessRunForTesting?.thinkingLevel == "high")
+        #expect(session.thread != nil)
+
+        session.selectedThinkingLevel = .low
+        session.draft = "What should I do next?"
+        await session.submit(model: model)
+        #expect(session.lastHeadlessRunForTesting?.thinkingLevel == "low")
+    }
+
     @Test("An unavailable authoritative HUD preference falls back to the machine default")
     func unavailableAuthoritativePreferenceFallsBackToMachineDefault() async {
         let model = makeDemoModel()

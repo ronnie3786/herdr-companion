@@ -32,11 +32,22 @@ struct HerdrHudComposerView: View {
                     selectModel: { session.setSelectedModel($0) },
                     retry: { Task { await session.loadModels(model: model) } }
                 )
+                PiThinkingLevelChip(
+                    currentLevel: session.selectedThinkingLevel.rawValue,
+                    isSetting: false,
+                    isEnabled: true,
+                    isInteractive: true,
+                    selectLevel: { session.selectedThinkingLevel = $0 }
+                )
+                .accessibilityIdentifier("hud-thinking")
+                .help("Thinking level for the next HUD prompt")
+                .layoutPriority(1)
                 Spacer(minLength: 4)
                 if let thread = session.thread {
                     Text("Thread · \(thread.turnCount) turns")
                         .herdrFont(.caption2)
                         .foregroundStyle(HerdrTheme.muted)
+                        .lineLimit(1)
                 }
             }
             if !session.pendingAttachments.isEmpty {

@@ -75,6 +75,11 @@ final class HerdrHudSession {
     }
     /// The HUD chip and Settings edit the same preference; @Observable
     /// propagation through the store keeps both surfaces honest.
+    var selectedThinkingLevel: PiThinkingLevel {
+        get { agentSettings.hudThinkingLevel }
+        set { agentSettings.hudThinkingLevel = newValue }
+    }
+
     var selectedModel: String? {
         get { agentSettings.hudModel.isEmpty ? nil : agentSettings.hudModel }
         set { agentSettings.hudModel = newValue ?? "" }

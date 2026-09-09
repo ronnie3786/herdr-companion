@@ -24,6 +24,26 @@ struct PiToolInvocationTests {
         #expect((invocation.resultDisplayString?.utf8.count ?? .max) <= 65_536 + suffix.utf8.count)
     }
 
+    @Test("Running commands expose multiline input and structured partial output")
+    func runningCommandDetails() {
+        let command = "printf 'hello'\nprintf 'world'"
+        let arguments: PiJSONValue = .object([
+            "command": .string(command), "timeout": .number(30)
+        ])
+        let result: PiJSONValue = .object(["content": .array([
+            .object(["type": .string("text"), "text": .string("hello")])
+        ])])
+        let invocation = PiToolInvocation(
+            id: "tool:running", callID: "running", name: "bash",
+            arguments: arguments, result: result, status: .running,
+            startedAt: nil, finishedAt: nil
+        )
+        #expect(invocation.argumentsDisplayString == arguments.displayString)
+        #expect(invocation.resultDisplayString == result.displayString)
+        #expect(PiToolPresentation(tool: invocation).command == command)
+        #expect(PiToolPresentation(tool: invocation).subtitle == command)
+    }
+
     @Test("Small tool payloads retain their display strings")
     func retainsSmallPayloads() {
         let arguments: PiJSONValue = .object(["path": .string("Sources/App.swift")])

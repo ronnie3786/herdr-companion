@@ -48,7 +48,7 @@ struct HerdrHudPlacement: Equatable, Sendable {
     /// `maxExpandedChips` sessions exist.
     static let maxCollapsedRows = maxExpandedChips + 1
     enum NotesLayout: Equatable, Sendable { case hidden, icon, compact(count: Int), rows(count: Int), card }
-    static let notesToggleSize: CGFloat = 44
+    static let notesToggleSize: CGFloat = 32
     static let notesGap: CGFloat = 10
     static let notesWidth: CGFloat = 236
     static let noteRowHeight: CGFloat = 40

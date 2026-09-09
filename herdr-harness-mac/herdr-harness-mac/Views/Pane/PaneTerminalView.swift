@@ -140,7 +140,9 @@ private struct TerminalOutputView: View {
             .scrollIndicators(.visible)
             .defaultScrollAnchor(.bottomLeading)
             .scrollPosition($scrollPosition)
-            .task(id: "follow:\(revision):\(isFollowing)") {
+            // Mode transitions and composer growth can resize the viewport
+            // without a new terminal frame. Re-anchor after layout settles.
+            .task(id: "follow:\(revision):\(isFollowing):\(geometry.size.width):\(geometry.size.height)") {
                 guard isFollowing else { return }
                 try? await Task.sleep(for: .milliseconds(150))
                 guard !Task.isCancelled else { return }

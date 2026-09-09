@@ -45,7 +45,7 @@ struct PiToolCardView: View {
                     Text(subtitle)
                         .herdrFont(.caption, monospaced: true)
                         .foregroundStyle(HerdrProse.dimmed(HerdrTheme.mist))
-                        .lineLimit(1)
+                        .lineLimit(presentation.command == nil ? 1 : 3)
                 }
             }
 
@@ -69,6 +69,9 @@ struct PiToolCardView: View {
     @ViewBuilder
     private var detail: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let command = PiToolPresentation(tool: tool).command {
+                toolSection("Command", text: command)
+            }
             if let argumentsDisplayString = tool.argumentsDisplayString {
                 toolSection("Input", text: argumentsDisplayString)
                     .transition(PiChatMotion.itemTransition(reduceMotion: reduceMotion))

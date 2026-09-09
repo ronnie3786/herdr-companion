@@ -22,12 +22,12 @@ enum HerdrProse {
         /// Base point size at 100% font scale (before `HerdrFontScale`).
         var baseSize: CGFloat {
             switch self {
-            case .body, .quote, .listItem: 17
-            case .heading1: 23
-            case .heading2: 20
-            case .heading3: 18
-            case .heading4, .heading5, .heading6: 17
-            case .tableHeader, .tableCell: 15
+            case .body, .quote, .listItem: 15
+            case .heading1: 21
+            case .heading2: 18
+            case .heading3: 16
+            case .heading4, .heading5, .heading6: 15
+            case .tableHeader, .tableCell: 14
             }
         }
 

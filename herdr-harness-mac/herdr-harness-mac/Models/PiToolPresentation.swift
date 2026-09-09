@@ -3,6 +3,7 @@ import SwiftUI
 struct PiToolPresentation: Equatable, Sendable {
     let title: String
     let subtitle: String?
+    let command: String?
     let symbol: String
     let tint: Color
 
@@ -10,7 +11,10 @@ struct PiToolPresentation: Equatable, Sendable {
         let details = Self.details(forToolName: tool.name)
         let argument = tool.arguments
         title = details.title
-        subtitle = details.argumentKeys.flatMap { Self.firstString(in: argument, keys: $0) }
+        command = details.title == "Command"
+            ? Self.firstString(in: argument, keys: details.argumentKeys ?? [], firstLineOnly: false)
+            : nil
+        subtitle = command ?? details.argumentKeys.flatMap { Self.firstString(in: argument, keys: $0) }
         symbol = details.symbol
         tint = details.tint
     }
@@ -43,11 +47,11 @@ struct PiToolPresentation: Equatable, Sendable {
         fragments.contains { name == $0 || name.contains("_\($0)") || name.contains("\($0)_") }
     }
 
-    private static func firstString(in value: PiJSONValue?, keys: [String]) -> String? {
+    private static func firstString(in value: PiJSONValue?, keys: [String], firstLineOnly: Bool = true) -> String? {
         guard let value else { return nil }
         for key in keys {
             if let string = value[key]?.stringValue, !string.isEmpty {
-                return string.split(separator: "\n", maxSplits: 1).first.map(String.init)
+                return firstLineOnly ? string.split(separator: "\n", maxSplits: 1).first.map(String.init) : string
             }
         }
         return nil

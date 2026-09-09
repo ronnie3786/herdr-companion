@@ -97,12 +97,17 @@ enum ComposerReturnKeyRouter {
 enum ComposerNewlineInserter {
     /// Returns `true` when the break landed at the caret.
     @discardableResult
-    static func insertNewline(appendingTo draft: inout String) -> Bool {
-        if let editor = NSApp.keyWindow?.firstResponder as? NSTextView, editor.isEditable {
+    static func insertNewline(
+        in draft: Binding<String>,
+        editor: NSTextView? = NSApp.keyWindow?.firstResponder as? NSTextView
+    ) -> Bool {
+        // Do not hold an inout copy of a binding across AppKit's delegate
+        // callback: its writeback would restore the pre-insertion draft.
+        if let editor, editor.isEditable {
             editor.insertNewlineIgnoringFieldEditor(nil)
             return true
         }
-        draft.append("\n")
+        draft.wrappedValue.append("\n")
         return false
     }
 }

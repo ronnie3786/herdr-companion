@@ -69,6 +69,41 @@ struct ComposerReturnKeyRouterTests {
             isSkillsPaletteVisible: false, flags: .shift) == .insertNewline)
     }
 
+    @MainActor
+    @Test("Newline at the caret survives synchronous draft-binding updates")
+    func newlineBindingWriteback() {
+        var draft = "first second"
+        let binding = Binding(get: { draft }, set: { draft = $0 })
+        let editor = NSTextView()
+        editor.string = draft
+        editor.setSelectedRange(NSRange(location: 5, length: 1))
+        let delegate = DraftDelegate { draft = $0 }
+        editor.delegate = delegate
+
+        #expect(ComposerNewlineInserter.insertNewline(in: binding, editor: editor))
+        #expect(editor.string == "first\nsecond")
+        #expect(draft == editor.string)
+        #expect(editor.selectedRange().location == 6)
+    }
+
+    @MainActor
+    @Test("Newline is retained when no editor has focus")
+    func newlineFallback() {
+        var draft = "first"
+        let binding = Binding(get: { draft }, set: { draft = $0 })
+        #expect(!ComposerNewlineInserter.insertNewline(in: binding, editor: nil))
+        #expect(draft == "first\n")
+    }
+
+    @MainActor
+    private final class DraftDelegate: NSObject, NSTextViewDelegate {
+        let changed: (String) -> Void
+        init(changed: @escaping (String) -> Void) { self.changed = changed }
+        func textDidChange(_ notification: Notification) {
+            if let editor = notification.object as? NSTextView { changed(editor.string) }
+        }
+    }
+
     private func outcome(
         _ modifiers: EventModifiers,
         paletteVisible: Bool = false

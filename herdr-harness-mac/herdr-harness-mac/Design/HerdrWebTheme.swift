@@ -88,6 +88,20 @@ enum HerdrWebTheme {
         :root .act-bubble, :root .act-bubble::after, :root .act-chip {
           background: var(--raised); color: var(--text); border-color: var(--line);
         }
+        /* Keep older companions' file rows readable without a server update. */
+        .hz-git-file { gap: 0; }
+        .hz-git-file-name {
+          flex: 0 0 auto; max-width: 100%; white-space: normal;
+          overflow-wrap: anywhere; overflow: visible; text-overflow: clip;
+        }
+        .hz-git-file-directory {
+          order: -1; flex: 0 1 auto; max-width: 35%; font-size: inherit;
+          position: relative; padding-right: 0.6em;
+        }
+        .hz-git-file-directory::after {
+          content: "/"; position: absolute; right: 0; bottom: 0; direction: ltr;
+        }
+        .hz-diff-title { direction: rtl; text-align: left; }
         /* These public host variables cross the diff renderer's shadow boundary. */
         diffs-container {
           --diffs-bg: \(hex(HerdrTheme.graphite));
@@ -96,12 +110,12 @@ enum HerdrWebTheme {
           --diffs-fg: \(hex(HerdrTheme.text));
           --diffs-fg-number: \(hex(HerdrTheme.muted));
           --diffs-bg-separator: \(hex(HerdrTheme.selection));
-          --diffs-bg-addition-override: rgb(131 188 145 / 0.16);
-          --diffs-bg-addition-number-override: rgb(131 188 145 / 0.22);
-          --diffs-bg-addition-emphasis-override: rgb(131 188 145 / 0.32);
-          --diffs-bg-deletion-override: rgb(217 151 162 / 0.16);
-          --diffs-bg-deletion-number-override: rgb(217 151 162 / 0.22);
-          --diffs-bg-deletion-emphasis-override: rgb(217 151 162 / 0.32);
+          --diffs-bg-addition-override: rgb(46 160 67 / 0.30);
+          --diffs-bg-addition-number-override: rgb(46 160 67 / 0.42);
+          --diffs-bg-addition-emphasis-override: rgb(46 160 67 / 0.55);
+          --diffs-bg-deletion-override: rgb(248 81 73 / 0.30);
+          --diffs-bg-deletion-number-override: rgb(248 81 73 / 0.42);
+          --diffs-bg-deletion-emphasis-override: rgb(248 81 73 / 0.55);
           --diffs-bg-hover-override: \(hex(HerdrTheme.elevated));
           --diffs-bg-selection-override: \(hex(HerdrTheme.selection));
           --diffs-bg-selection-number-override: \(hex(HerdrTheme.selection));

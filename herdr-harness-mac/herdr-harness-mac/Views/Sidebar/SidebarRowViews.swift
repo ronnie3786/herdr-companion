@@ -285,7 +285,7 @@ struct SidebarChatRow: View {
             }
             .padding(.leading, recentContext == nil ? leadingPadding : SidebarMetrics.containerLeadingPadding)
             .padding(.trailing, SidebarMetrics.rowTrailingPadding)
-            .padding(.vertical, recentContext == nil ? (hierarchy?.workspaceLabel != nil || parentContext != nil ? 5 : 0) : 7)
+            .padding(.vertical, recentContext == nil ? (hierarchy?.workspaceLabel != nil || parentContext != nil ? 5 : 0) : 12)
             .frame(minHeight: SidebarMetrics.chatRowHeight)
             .contentShape(Rectangle())
             .background(rowBackground, in: .rect(cornerRadius: 6))

@@ -444,27 +444,41 @@
   min-width: 0;
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: 0;
   overflow: hidden;
   font-size: 11.5px;
   white-space: nowrap;
 }
 
 .hz-git-file-name {
-  min-width: 0;
-  overflow: hidden;
+  flex: 0 0 auto;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
   color: var(--text);
-  text-overflow: ellipsis;
 }
 
 .hz-git-file-directory {
+  order: -1;
+  flex: 0 1 auto;
+  max-width: 35%;
+  position: relative;
+  padding-right: 0.6em;
   min-width: 0;
   overflow: hidden;
   color: var(--muted-dim);
-  font-size: 10px;
+  font-size: inherit;
   text-overflow: ellipsis;
   direction: rtl;
   text-align: left;
+}
+
+.hz-git-file-directory::after {
+  content: "/";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  direction: ltr;
 }
 
 .hz-git-row-action {
@@ -699,6 +713,8 @@
 }
 
 .hz-diff-title {
+  direction: rtl;
+  text-align: left;
   overflow: hidden;
   color: var(--text);
   font-size: 11.5px;

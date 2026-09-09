@@ -10,8 +10,16 @@ struct PiToolInvocation: Identifiable, Equatable, Sendable {
 
     let id: String
     let callID: String
-    let argumentsDisplayString: String?
-    let resultDisplayString: String?
+    private let cachedArgumentsDisplayString: String?
+    private let cachedResultDisplayString: String?
+    // Running structured payloads are formatted only when a card is opened,
+    // not on every streaming update of a collapsed tool group.
+    var argumentsDisplayString: String? {
+        cachedArgumentsDisplayString ?? Self.displayString(for: arguments)
+    }
+    var resultDisplayString: String? {
+        cachedResultDisplayString ?? Self.displayString(for: result)
+    }
     var name: String
     var arguments: PiJSONValue?
     var result: PiJSONValue?
@@ -34,8 +42,8 @@ struct PiToolInvocation: Identifiable, Equatable, Sendable {
         self.id = id
         self.callID = callID
         let isTerminal = status == .succeeded || status == .failed
-        self.argumentsDisplayString = isTerminal ? Self.displayString(for: arguments) : arguments?.stringValue
-        self.resultDisplayString = isTerminal ? Self.displayString(for: result) : result?.stringValue
+        self.cachedArgumentsDisplayString = isTerminal ? Self.displayString(for: arguments) : nil
+        self.cachedResultDisplayString = isTerminal ? Self.displayString(for: result) : nil
         self.name = name
         self.arguments = arguments
         self.result = result

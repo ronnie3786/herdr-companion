@@ -529,7 +529,7 @@ struct PromptComposerView: View {
                     .frame(maxWidth: .infinity, minHeight: 48)
             } else {
                 ComposerDraftEditor(placeholder: placeholder, text: $draft)
-                    .herdrFont(size: 14)
+                    .herdrFont(size: 13)
                     .foregroundStyle(HerdrTheme.text)
                     .focused($isFocused)
                     .onSubmit(handleSubmit)
@@ -730,7 +730,7 @@ struct PromptComposerView: View {
             acceptSkill()
             return .handled
         case .insertNewline:
-            ComposerNewlineInserter.insertNewline(appendingTo: &draft)
+            ComposerNewlineInserter.insertNewline(in: $draft)
             return .handled
         case .send:
             send()
@@ -747,7 +747,7 @@ struct PromptComposerView: View {
             isSkillsPaletteVisible: skillsPalette.isVisible
         ) {
         case .insertNewline:
-            ComposerNewlineInserter.insertNewline(appendingTo: &draft)
+            ComposerNewlineInserter.insertNewline(in: $draft)
         case .acceptSkill:
             acceptSkill()
         case .send:

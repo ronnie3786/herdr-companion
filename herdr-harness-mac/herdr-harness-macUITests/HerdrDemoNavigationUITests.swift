@@ -34,6 +34,36 @@ final class HerdrDemoNavigationUITests: HerdrUITestCase {
     }
 
     @MainActor
+    func testModifiedReturnAndTerminalModeLayout() throws {
+        let app = launchDemoApp()
+        let pane = app.buttons["sidebar-pane-demo1|w1:p2"]
+        XCTAssertTrue(pane.waitForExistence(timeout: 10))
+        pane.click()
+        try selectPaneMode(.chat, in: app)
+        let editor = app.textViews["composer-draft-editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.click()
+        editor.typeText("first")
+        editor.typeKey(.return, modifierFlags: .shift)
+        editor.typeText("second")
+        editor.typeKey(.return, modifierFlags: .command)
+        editor.typeText("third")
+        editor.typeKey(.return, modifierFlags: .option)
+        editor.typeText("fourth")
+        XCTAssertEqual(editor.value as? String, "first\nsecond\nthird\nfourth")
+
+        try selectPaneMode(.terminal, in: app)
+        let terminal = app.control(identifier: "terminal-demo1|w1:p2")
+        XCTAssertTrue(terminal.waitForExistence(timeout: 5))
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        XCTAssertEqual(editor.value as? String, "first\nsecond\nthird\nfourth")
+        let composer = app.control(identifier: "prompt-composer")
+        XCTAssertTrue(composer.isHittable)
+        XCTAssertLessThanOrEqual(terminal.frame.maxY, composer.frame.minY + 1)
+        XCTAssertLessThanOrEqual(composer.frame.maxY, app.windows.firstMatch.frame.maxY)
+    }
+
+    @MainActor
     func testInlineChatTitleEditing() throws {
         let app = launchDemoApp()
         let pane = app.buttons["sidebar-pane-demo1|w1:p2"]
@@ -287,12 +317,14 @@ final class HerdrDemoNavigationUITests: HerdrUITestCase {
     /// Mirrors the app's `PaneDetailMode` without importing the app module —
     /// UI tests only ever see it through identifiers and titles.
     private enum PaneMode: String {
+        case chat
         case terminal
         case git
         case skills
 
         var label: String {
             switch self {
+            case .chat: "Chat"
             case .terminal: "Terminal"
             case .git: "Git"
             case .skills: "Skills"

@@ -46,7 +46,7 @@ Hovering visible HUD controls expands result icons into document-title pills. Th
   arrows/tab/esc/ctrl-C go straight through. The compact key deck stays for parity.
 - **Comfortable reading**: charcoal surfaces, lavender actions, readable secondary text,
   and a consistent style across the sidebar, settings, HUD, menu bar, Git, and Active Work.
-  Conversations use 17-point system text at the default scale, generous spacing, and a
+  Conversations in Chat and the HUD use 15-point system text at the default scale, generous spacing, and a
   bounded reading width. The app's text-size preference continues to apply.
 - **Prompt composer**: model, effort, and Terminal keys controls sit above a unified
   input. Labeled Attach, Paste code, and Voice actions are in its footer. More contains

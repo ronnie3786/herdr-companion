@@ -43,5 +43,31 @@ struct HerdrWebThemeTests {
             })();
             """) as? [String]
         #expect(values == ["rgb(32, 33, 44)", "rgb(228, 229, 237)", "rgb(32, 33, 44)"])
+
+        let highlights = try await view.evaluateJavaScript("""
+            (() => {
+              const style = getComputedStyle(document.querySelector('diffs-container'));
+              return ['addition', 'deletion'].flatMap(kind =>
+                ['', '-number', '-emphasis'].map(part =>
+                  style.getPropertyValue(`--diffs-bg-${kind}${part}-override`).trim()));
+            })();
+            """) as? [String]
+        #expect(highlights == [
+            "rgb(46 160 67 / 0.30)", "rgb(46 160 67 / 0.42)", "rgb(46 160 67 / 0.55)",
+            "rgb(248 81 73 / 0.30)", "rgb(248 81 73 / 0.42)", "rgb(248 81 73 / 0.55)"
+        ])
+
+        let fileStyles = try await view.evaluateJavaScript("""
+            (() => {
+              const row = document.createElement('div');
+              row.innerHTML = '<span class="hz-git-file" title="Sources/Garden/WateringSchedule.swift"><span class="hz-git-file-name">WateringSchedule.swift</span><span class="hz-git-file-directory">Sources/Garden</span></span>';
+              document.body.appendChild(row);
+              const name = getComputedStyle(row.querySelector('.hz-git-file-name'));
+              const directory = getComputedStyle(row.querySelector('.hz-git-file-directory'));
+              return [name.flexShrink, name.textOverflow, name.overflowWrap, directory.order,
+                      row.querySelector('.hz-git-file').title];
+            })();
+            """) as? [String]
+        #expect(fileStyles == ["0", "clip", "anywhere", "-1", "Sources/Garden/WateringSchedule.swift"])
     }
 }

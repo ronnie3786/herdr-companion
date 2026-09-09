@@ -206,7 +206,7 @@ struct HerdrHudComposerView: View {
                 )
                     .lineLimit(1...4)
                     .textFieldStyle(.plain)
-                    .herdrFont(size: 14)
+                    .herdrFont(size: 13)
                     .foregroundStyle(HerdrTheme.text)
                     .focused($isComposerFocused)
                     .onSubmit(handleSubmit)
@@ -240,7 +240,7 @@ struct HerdrHudComposerView: View {
     private func handleReturnKey(_ press: KeyPress) -> KeyPress.Result {
         switch ComposerReturnKeyRouter.outcome(for: press, isSkillsPaletteVisible: false) {
         case .insertNewline:
-            ComposerNewlineInserter.insertNewline(appendingTo: &session.draft)
+            ComposerNewlineInserter.insertNewline(in: $session.draft)
             return .handled
         case .acceptSkill, .send:
             submit()
@@ -250,7 +250,7 @@ struct HerdrHudComposerView: View {
 
     private func handleSubmit() {
         if ComposerReturnKeyRouter.submitOutcome(isSkillsPaletteVisible: false) == .insertNewline {
-            ComposerNewlineInserter.insertNewline(appendingTo: &session.draft)
+            ComposerNewlineInserter.insertNewline(in: $session.draft)
             return
         }
         submit()

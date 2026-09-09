@@ -34,7 +34,7 @@ Hovering visible HUD controls expands result icons into document-title pills. Th
 
 - **Sidebar navigator** — workspaces at the top level, panes grouped by tab beneath them, click a
   chat row to make it the main view. Collapse state persists across launches. Rows are styled in
-  a single calm tone (no per-status hues) — the status word and unread count carry the signal.
+  a single calm tone (no per-status hues) — active status words and unread counts carry the signal.
 - **My Work watchlist** — the top of the sidebar tracks GitHub pull requests requesting your
   review and every non-Done Jira ticket assigned to you. Each provider has an independent count,
   error state, and collapsible list; data refreshes on launch, manually, and every five minutes.
@@ -44,10 +44,15 @@ Hovering visible HUD controls expands result icons into document-title pills. Th
 - **Live terminal** — the same bounded ANSI grid engine as iOS (full + delta frames over SSE,
   snapshot fallback), plus real Mac keyboard routing: click the terminal to focus it and type;
   arrows/tab/esc/ctrl-C go straight through. The compact key deck stays for parity.
-- **Prompt composer** — Mac has the room, so nothing hides: the tool row (attach / voice /
-  @file / Jira) and the terminal key deck share one always-visible row directly above the input.
-  Status-aware placeholder text, shared drafts between chat and terminal modes. Enter sends,
-  Shift+Enter inserts a newline, Cmd+Enter always sends.
+- **Comfortable reading**: charcoal surfaces, lavender actions, readable secondary text,
+  and a consistent style across the sidebar, settings, HUD, menu bar, Git, and Active Work.
+  Conversations use 17-point system text at the default scale, generous spacing, and a
+  bounded reading width. The app's text-size preference continues to apply.
+- **Prompt composer**: model and effort controls sit above a unified input. Attach and
+  More are in its footer. More contains voice and context tools; Terminal keys expands
+  the key deck when needed. Active voice and playback states remain visible. Drafts
+  remain shared between chat and terminal modes. Return sends; Shift, Option, or
+  Command-Return inserts a newline.
 - **`$` skills palette** — type `$` at a word boundary to raise a filtering HUD of the
   workspace's skills. Arrow keys move the highlight, Enter/Tab (or click) inserts the skill,
   Esc dismisses, and space dismisses while typing normally — so a stray `$` never gets in your

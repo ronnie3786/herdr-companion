@@ -16,6 +16,7 @@ This preview makes the Mac sidebar, navigation, composer, and HUD easier to use.
 - Long prompt drafts scroll after five visible lines while retaining the existing Return and modified-Return behavior.
 - Grouped tool calls are labeled Clanking. Failures remain visible in the collapsed header and no longer expand the group automatically.
 - The HUD notes list starts as one Notes icon. Click to expand or minimize it; creating or opening a note still opens its editable card.
+- HUD session bubbles show a cumulative session cost only after Pi reports one. Unavailable values no longer show a placeholder or retain a stale total, and the cost label is quieter while remaining accessible.
 
 ## Compatibility and verification
 

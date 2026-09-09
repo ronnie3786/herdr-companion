@@ -44,16 +44,14 @@ struct HerdrHudSessionBubbleLabel: View {
                     .foregroundStyle(chip.status.color)
                     .lineLimit(1)
                 Spacer(minLength: 0)
-                if showsSessionCost {
-                    Text(costSummary ?? "Cost …")
+                if showsSessionCost, let costSummary {
+                    Text(costSummary)
                         .herdrFont(.caption2, monospaced: true)
                         .foregroundStyle(HerdrTheme.mist)
                         .fixedSize()
-                        .padding(.horizontal, 4)
-                        .background(HerdrTheme.graphite.opacity(0.8), in: .capsule)
                         .layoutPriority(1)
-                        .help(costSummary.map { "Cumulative session cost: \($0)" } ?? "Session cost has not been reported by Pi yet")
-                        .accessibilityLabel(costSummary.map { "Session cost \($0)" } ?? "Session cost unavailable")
+                        .help("Cumulative session cost: \(costSummary)")
+                        .accessibilityLabel("Session cost \(costSummary)")
                         .accessibilityIdentifier("hud-session-cost-\(chip.id)")
                 }
             }
@@ -95,7 +93,7 @@ struct HerdrHudSessionBubbleLabel: View {
                     return
                 }
                 if snapshot.available {
-                    costSummary = PiSessionCost(from: snapshot.state?["cost"])?.summary ?? costSummary
+                    costSummary = PiSessionCost(from: snapshot.state?["cost"])?.summary
                 }
             } catch {
                 guard !Task.isCancelled else { return }

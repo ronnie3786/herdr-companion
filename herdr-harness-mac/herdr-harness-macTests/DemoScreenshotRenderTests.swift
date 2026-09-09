@@ -126,6 +126,29 @@ struct DemoScreenshotRenderTests {
         result.expectSubstantial()
     }
 
+    @Test("Recents show machine, workspace and tab at regular and large text sizes")
+    func rendersDetailedRecents() async throws {
+        let model = HerdrRenderFixtures.demoModel()
+        model.sidebarRecency = .recents
+        model.machineScope = .all
+        model.selectedPaneID = "demo1|w1:p2"
+        model.starredChatIDs = ["demo1|w1:p1"]
+
+        let regular = try await HerdrRenderHarness.render(
+            "02e-recents-detail.png", size: CGSize(width: 280, height: 820)
+        ) {
+            HerdrSidebarView(model: model, openPane: { _ in }, openWorkspace: { _ in })
+        }
+        regular.expectSubstantial()
+        let large = try await HerdrRenderHarness.render(
+            "02f-recents-detail-large.png", size: CGSize(width: 240, height: 1000)
+        ) {
+            HerdrSidebarView(model: model, openPane: { _ in }, openWorkspace: { _ in })
+                .environment(\.herdrFontScale, .xxLarge)
+        }
+        large.expectSubstantial()
+    }
+
     @Test("Sidebar changes at XX-Large text scale")
     func rendersSidebarAtXXLargeTextScale() async throws {
         let model = HerdrRenderFixtures.demoModel()

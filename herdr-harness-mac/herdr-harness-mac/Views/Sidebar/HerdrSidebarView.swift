@@ -993,11 +993,22 @@ struct HerdrSidebarView: View {
         }
     }
 
+    private func recentContext(for pane: HerdrPane) -> SidebarChatRow.RecentContext {
+        let workspace = model.workspace(containing: pane)
+        let tab = workspace?.tabs.first { $0.tabID == pane.tabID }
+        return .init(
+            machine: model.machines.first { $0.id == pane.machineID }?.name ?? "Unknown machine",
+            workspace: workspace?.label ?? "Unknown workspace",
+            tab: tab?.label ?? "Untitled tab"
+        )
+    }
+
     private func chatRow(
         _ pane: HerdrPane, showingLastActivity: Bool = false, hierarchy: PiSessionTree.Row? = nil
     ) -> some View {
         SidebarChatRow(
             pane: pane,
+            recentContext: showingLastActivity ? recentContext(for: pane) : nil,
             isSelected: pane.id == model.selectedPaneID,
             isStarred: model.starredChatIDs.contains(pane.id),
             isUnread: model.unreadPaneIDs.contains(pane.id),
@@ -1016,7 +1027,7 @@ struct HerdrSidebarView: View {
                 ? { model.toggleSidebarSession(pane) } : nil
         )
         .contextMenu {
-            if let workspace = model.workspace(containing: pane), hierarchy?.workspaceLabel != nil {
+            if let workspace = model.workspace(containing: pane), showingLastActivity || hierarchy?.workspaceLabel != nil {
                 Button("Open \(workspace.label) workspace", systemImage: "folder") {
                     openWorkspace(workspace)
                 }

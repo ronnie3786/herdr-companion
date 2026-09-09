@@ -39,6 +39,11 @@ for creating sessions and workspaces. Only machine groups receive separators;
 projects are distinguished by indentation, labels, and spacing. The toolbar uses
 a compact segment strip with a restrained selected state.
 
+Recents uses regular-weight chat titles aligned to the leading edge. A single
+small, muted subtitle shows the computer icon, machine, workspace, and tab.
+Long titles wrap to two lines; full context and last activity remain available
+in hover text and accessibility labels. The subtitle follows the app text scale.
+
 Streaming prose must not reserve empty rows or boundary blank lines that disappear
 when the response finishes. Whitespace inside code fences remains intact. The
 composer and navigation continue to adapt to the app's text-size preference.

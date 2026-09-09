@@ -229,7 +229,18 @@ struct SidebarSectionRow: View {
 }
 
 struct SidebarChatRow: View {
+    struct RecentContext {
+        let machine: String
+        let workspace: String
+        let tab: String
+
+        var accessibilityLabel: String {
+            "Machine: \(machine), workspace: \(workspace), tab: \(tab)"
+        }
+    }
+
     let pane: HerdrPane
+    var recentContext: RecentContext?
     let isSelected: Bool
     var isStarred: Bool = false
     var isUnread: Bool = false
@@ -247,61 +258,16 @@ struct SidebarChatRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 7) {
-                SidebarStatusDot(status: pane.agentStatus)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(pane.displayTitle)
-                        .herdrFont(size: SidebarMetrics.chatLabelSize, relativeTo: .subheadline)
-                        .foregroundStyle(isSelected ? HerdrTheme.text : HerdrTheme.mist)
-                        .lineLimit(1)
-                    if let workspaceLabel = hierarchy?.workspaceLabel {
-                        Label(workspaceLabel, systemImage: "folder")
-                            .herdrFont(.caption2)
-                            .foregroundStyle(HerdrTheme.mist)
-                            .lineLimit(1)
-                            .help("Workspace: \(workspaceLabel)\n\(pane.displayPath)")
-                    }
-                    if let parentContext {
-                        Text(parentContext)
-                            .herdrFont(.caption2)
-                            .foregroundStyle(HerdrTheme.muted)
-                            .lineLimit(1)
-                    }
-                }
-
-                Spacer()
-
-                if isUnread {
-                    Image(systemName: "circle.fill")
-                        .font(.system(size: 5))
-                        .foregroundStyle(HerdrTheme.accent)
-                        .accessibilityLabel("Unread")
-                }
-                if let hierarchy, hierarchy.childCount > 0 {
-                    Text("\(hierarchy.childCount)")
-                        .herdrFont(.caption2, monospacedDigit: true)
-                        .foregroundStyle(HerdrTheme.muted)
-                        .help("\(hierarchy.childCount) child sessions")
-                        .fixedSize()
-                }
-
-                starControl
-
-                if describesLastActivity || pane.agentStatus.needsAttention || pane.agentStatus == .working {
-                    SidebarStatusAgeLabel(
-                        status: pane.agentStatus,
-                        since: since,
-                        describesLastActivity: describesLastActivity
-                    )
-                    .herdrFont(.caption2, monospacedDigit: true)
-                    .foregroundStyle(SidebarTone.statusColor(for: pane.agentStatus))
-                    .fixedSize()
+            Group {
+                if let recentContext {
+                    recentContent(recentContext)
+                } else {
+                    compactContent
                 }
             }
-            .padding(.leading, leadingPadding)
+            .padding(.leading, recentContext == nil ? leadingPadding : SidebarMetrics.containerLeadingPadding)
             .padding(.trailing, SidebarMetrics.rowTrailingPadding)
-            .padding(.vertical, hierarchy?.workspaceLabel != nil || parentContext != nil ? 5 : 0)
+            .padding(.vertical, recentContext == nil ? (hierarchy?.workspaceLabel != nil || parentContext != nil ? 5 : 0) : 7)
             .frame(minHeight: SidebarMetrics.chatRowHeight)
             .contentShape(Rectangle())
             .background(rowBackground, in: .rect(cornerRadius: 6))
@@ -316,28 +282,114 @@ struct SidebarChatRow: View {
         .onHover { isHovering = $0 }
         .help(accessibilityLabel)
         .accessibilityIdentifier("sidebar-pane-\(pane.id)")
-        // `.combine` would fold the star button into the row and lose its own
-        // action; `.contain` keeps it separately reachable.
         .accessibilityElement(children: toggleStar == nil ? .combine : .contain)
         .accessibilityLabel(accessibilityLabel)
-        .overlay(alignment: .leading) {
-            if let toggleChildren, let hierarchy {
-                Button(
-                    hierarchy.isExpanded ? "Collapse child sessions" : "Expand child sessions",
-                    systemImage: hierarchy.isExpanded ? "chevron.down" : "chevron.right",
-                    action: toggleChildren
-                )
-                .labelStyle(.iconOnly)
-                .herdrFont(.caption2, weight: .semibold)
-                .foregroundStyle(HerdrTheme.mist)
-                .buttonStyle(.plain)
-                .frame(width: 20, height: SidebarMetrics.chatRowHeight)
-                .contentShape(Rectangle())
-                .padding(.leading, SidebarMetrics.chatRowLeadingPadding + hierarchyIndent)
-                .accessibilityIdentifier("sidebar-session-disclosure-\(pane.id)")
-                .accessibilityValue(hierarchy.isExpanded ? "expanded" : "collapsed")
-                .help("\(hierarchy.isExpanded ? "Collapse" : "Expand") \(hierarchy.childCount) child sessions")
+        .overlay(alignment: .leading) { disclosureControl }
+    }
+
+    private var compactContent: some View {
+        HStack(spacing: 7) {
+            SidebarStatusDot(status: pane.agentStatus)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(pane.displayTitle)
+                    .herdrFont(size: SidebarMetrics.chatLabelSize, relativeTo: .subheadline)
+                    .foregroundStyle(isSelected ? HerdrTheme.text : HerdrTheme.mist)
+                    .lineLimit(1)
+                if let workspaceLabel = hierarchy?.workspaceLabel {
+                    Label(workspaceLabel, systemImage: "folder")
+                        .herdrFont(.caption2)
+                        .foregroundStyle(HerdrTheme.mist)
+                        .lineLimit(1)
+                        .help("Workspace: \(workspaceLabel)\n\(pane.displayPath)")
+                }
+                if let parentContext {
+                    Text(parentContext)
+                        .herdrFont(.caption2)
+                        .foregroundStyle(HerdrTheme.muted)
+                        .lineLimit(1)
+                }
             }
+
+            Spacer()
+
+            if isUnread {
+                Image(systemName: "circle.fill")
+                    .font(.system(size: 5))
+                    .foregroundStyle(HerdrTheme.accent)
+                    .accessibilityLabel("Unread")
+            }
+            if let hierarchy, hierarchy.childCount > 0 {
+                Text("\(hierarchy.childCount)")
+                    .herdrFont(.caption2, monospacedDigit: true)
+                    .foregroundStyle(HerdrTheme.muted)
+                    .help("\(hierarchy.childCount) child sessions")
+                    .fixedSize()
+            }
+
+            starControl
+
+            if describesLastActivity || pane.agentStatus.needsAttention || pane.agentStatus == .working {
+                SidebarStatusAgeLabel(
+                    status: pane.agentStatus,
+                    since: since,
+                    describesLastActivity: describesLastActivity
+                )
+                .herdrFont(.caption2, monospacedDigit: true)
+                .foregroundStyle(SidebarTone.statusColor(for: pane.agentStatus))
+                .fixedSize()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var disclosureControl: some View {
+        if let toggleChildren, let hierarchy {
+            Button(
+                hierarchy.isExpanded ? "Collapse child sessions" : "Expand child sessions",
+                systemImage: hierarchy.isExpanded ? "chevron.down" : "chevron.right",
+                action: toggleChildren
+            )
+            .labelStyle(.iconOnly)
+            .herdrFont(.caption2, weight: .semibold)
+            .foregroundStyle(HerdrTheme.mist)
+            .buttonStyle(.plain)
+            .frame(width: 20, height: SidebarMetrics.chatRowHeight)
+            .contentShape(Rectangle())
+            .padding(.leading, SidebarMetrics.chatRowLeadingPadding + hierarchyIndent)
+            .accessibilityIdentifier("sidebar-session-disclosure-\(pane.id)")
+            .accessibilityValue(hierarchy.isExpanded ? "expanded" : "collapsed")
+            .help("\(hierarchy.isExpanded ? "Collapse" : "Expand") \(hierarchy.childCount) child sessions")
+        }
+    }
+
+    private func recentContent(_ context: RecentContext) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .top, spacing: 7) {
+                Text(pane.displayTitle)
+                    .herdrFont(size: 13, weight: .regular, relativeTo: .subheadline)
+                    .foregroundStyle(HerdrTheme.text)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if isUnread {
+                    Image(systemName: "circle.fill")
+                        .font(.system(size: 5))
+                        .foregroundStyle(HerdrTheme.accent)
+                        .accessibilityLabel("Unread")
+                        .padding(.top, 6)
+                }
+                starControl
+            }
+            HStack(spacing: 4) {
+                Image(systemName: "desktopcomputer")
+                Text("\(context.machine) · \(context.workspace) › \(context.tab)")
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .herdrFont(size: 9, relativeTo: .caption2)
+            .foregroundStyle(HerdrTheme.muted)
+            .accessibilityLabel(context.accessibilityLabel)
         }
     }
 
@@ -359,7 +411,7 @@ struct SidebarChatRow: View {
                 Image(systemName: isStarred ? "star.fill" : "star")
                     .herdrFont(size: SidebarMetrics.hierarchyIconSize, relativeTo: .caption2)
                     .foregroundStyle(isStarred ? SidebarTone.status : HerdrTheme.muted)
-                    .frame(width: SidebarMetrics.starSlotWidth, height: SidebarMetrics.chatRowHeight)
+                    .frame(width: SidebarMetrics.starSlotWidth, height: recentContext == nil ? SidebarMetrics.chatRowHeight : 18)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -380,6 +432,7 @@ struct SidebarChatRow: View {
 
     private var accessibilityLabel: String {
         var identity = "\(pane.displayTitle), \(pane.displayAgentName), \(pane.agentStatus.title)"
+        if let recentContext { identity += ", \(recentContext.accessibilityLabel)" }
         if let hierarchy {
             if hierarchy.depth > 0 { identity += ", child session, level \(hierarchy.depth)" }
             if let workspace = hierarchy.workspaceLabel { identity += ", workspace \(workspace)" }

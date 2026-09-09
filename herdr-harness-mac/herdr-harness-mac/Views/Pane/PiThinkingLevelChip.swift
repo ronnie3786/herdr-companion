@@ -37,7 +37,7 @@ struct PiThinkingLevelChip: View {
 
     @ViewBuilder
     private var chipLabel: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             if isSetting {
                 ProgressView()
                     .controlSize(.small)
@@ -53,7 +53,7 @@ struct PiThinkingLevelChip: View {
         .herdrFont(.caption, weight: .medium)
         .foregroundStyle(isInteractive ? HerdrTheme.mist : HerdrTheme.muted)
         .padding(.horizontal, 4)
-        .frame(minHeight: 30)
+        .frame(minHeight: HerdrTheme.minHitTarget)
         .contentShape(.rect(cornerRadius: HerdrTheme.compactRadius))
         .opacity(isInteractive && !isEnabled ? 0.45 : 1)
     }

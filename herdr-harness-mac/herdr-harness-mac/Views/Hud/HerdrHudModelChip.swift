@@ -52,9 +52,12 @@ struct HerdrHudModelChip: View {
     }
 
     private var chipLabel: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             if isLoading {
                 ProgressView().controlSize(.small)
+            } else {
+                Image(systemName: "bolt")
+                    .accessibilityHidden(true)
             }
             Text(selectedDisplayName)
                 .lineLimit(1)
@@ -63,10 +66,15 @@ struct HerdrHudModelChip: View {
                 .herdrFont(.caption2)
         }
         .herdrFont(.caption, weight: .medium)
-        .foregroundStyle(HerdrTheme.mist)
-        .padding(.horizontal, 4)
-        .frame(minHeight: 30)
-        .contentShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+        .foregroundStyle(HerdrTheme.accent)
+        .padding(.horizontal, 8)
+        .frame(minHeight: HerdrTheme.minHitTarget)
+        .background(HerdrTheme.elevated, in: .rect(cornerRadius: 6))
+        .overlay {
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(HerdrTheme.separator, lineWidth: 1)
+        }
+        .contentShape(.rect(cornerRadius: 6))
     }
 
 }

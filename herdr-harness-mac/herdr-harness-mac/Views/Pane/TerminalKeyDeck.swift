@@ -3,8 +3,8 @@ import SwiftUI
 /// Shared metrics for the composer's tool row, so the auxiliary controls and
 /// the key deck sitting next to them line up to the pixel.
 enum ComposerDeckMetrics {
-    static let controlHeight: CGFloat = 30
-    static let spacing: CGFloat = 7
+    static let controlHeight: CGFloat = 28
+    static let spacing: CGFloat = 5
 }
 
 /// The on-screen key strip.
@@ -42,6 +42,7 @@ struct TerminalKeyDeck: View {
                 overflowMenu
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
         .herdrHaptic(trigger: hapticPulse)
     }
@@ -60,8 +61,8 @@ struct TerminalKeyDeck: View {
             .herdrFont(.caption, weight: .medium)
             .lineLimit(1)
             .minimumScaleFactor(0.72)
-            .frame(maxWidth: .infinity, minHeight: ComposerDeckMetrics.controlHeight)
-            .padding(.horizontal, showsLabels ? 6 : 10)
+            .frame(minHeight: ComposerDeckMetrics.controlHeight)
+            .padding(.horizontal, showsLabels ? 8 : 10)
             .contentShape(.rect)
         }
         .foregroundStyle(HerdrTheme.mist)

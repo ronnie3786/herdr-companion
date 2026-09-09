@@ -23,6 +23,9 @@ struct ComposerAuxiliaryBar: View {
     /// included — not for these four buttons in isolation.
     var showsTitles: Bool?
     var showsAttach = true
+    var showsCode = true
+    var showsVoice = true
+    var showsContextTools = true
     var isVertical = false
     var canPasteCode = true
 
@@ -60,7 +63,7 @@ struct ComposerAuxiliaryBar: View {
     private func controls(showsTitles: Bool) -> some View {
         let layout = isVertical
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
-            : AnyLayout(HStackLayout(spacing: ComposerDeckMetrics.spacing))
+            : AnyLayout(HStackLayout(spacing: 2))
         return layout {
             if showsAttach {
                 auxiliaryButton(
@@ -72,37 +75,44 @@ struct ComposerAuxiliaryBar: View {
                     showsTitle: showsTitles,
                     action: attach
                 )
+                .accessibilityIdentifier("composer-attach-file")
             }
-            auxiliaryButton(
-                identity: "code-block-paste",
-                title: "Paste code block",
-                systemImage: "chevron.left.forwardslash.chevron.right",
-                accessibilityLabel: "Paste Code Block",
-                help: "Paste clipboard text inside a Markdown code block",
-                showsTitle: showsTitles,
-                action: pasteCodeBlock
-            )
-            .disabled(!canPasteCode)
-            .accessibilityIdentifier("composer-code-block-paste")
-            voiceButton(showsTitle: showsTitles)
-            auxiliaryButton(
-                identity: "file",
-                title: "Workspace file",
-                systemImage: "at",
-                accessibilityLabel: "Insert a workspace file path",
-                help: "Search this workspace and insert a file path",
-                showsTitle: showsTitles,
-                action: searchFiles
-            )
-            auxiliaryButton(
-                identity: "jira",
-                title: "Jira context",
-                systemImage: "ticket",
-                accessibilityLabel: "Insert Jira ticket context",
-                help: "Insert Jira ticket context",
-                showsTitle: showsTitles,
-                action: chooseJira
-            )
+            if showsCode {
+                auxiliaryButton(
+                    identity: "code-block-paste",
+                    title: isVertical ? "Paste code block" : "Paste code",
+                    systemImage: "chevron.left.forwardslash.chevron.right",
+                    accessibilityLabel: "Paste Code Block",
+                    help: "Paste clipboard text inside a Markdown code block",
+                    showsTitle: showsTitles,
+                    action: pasteCodeBlock
+                )
+                .disabled(!canPasteCode)
+                .accessibilityIdentifier("composer-code-block-paste")
+            }
+            if showsVoice {
+                voiceButton(showsTitle: showsTitles)
+            }
+            if showsContextTools {
+                auxiliaryButton(
+                    identity: "file",
+                    title: "Workspace file",
+                    systemImage: "at",
+                    accessibilityLabel: "Insert a workspace file path",
+                    help: "Search this workspace and insert a file path",
+                    showsTitle: showsTitles,
+                    action: searchFiles
+                )
+                auxiliaryButton(
+                    identity: "jira",
+                    title: "Jira context",
+                    systemImage: "ticket",
+                    accessibilityLabel: "Insert Jira ticket context",
+                    help: "Insert Jira ticket context",
+                    showsTitle: showsTitles,
+                    action: chooseJira
+                )
+            }
         }
     }
 
@@ -121,22 +131,22 @@ struct ComposerAuxiliaryBar: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: systemImage)
-                    .herdrFont(.caption, weight: .semibold)
+                    .herdrFont(.caption)
 
                 if showsTitle {
                     Text(title)
-                        .herdrFont(.caption, weight: .medium)
+                        .herdrFont(.caption)
                         .lineLimit(1)
                 }
             }
             .foregroundStyle(hoveredControl == identity ? HerdrTheme.text : HerdrTheme.mist)
-            .frame(maxWidth: isVertical ? .infinity : nil, minHeight: ComposerDeckMetrics.controlHeight, alignment: .leading)
-            .padding(.horizontal, 10)
-            .background(HerdrTheme.elevated)
+            .frame(maxWidth: isVertical ? .infinity : nil, minHeight: HerdrTheme.minHitTarget, alignment: .leading)
+            .padding(.horizontal, isVertical ? 10 : 6)
+            .background(isVertical || hoveredControl == identity ? HerdrTheme.elevated : .clear)
             .overlay {
                 RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
                     .strokeBorder(
-                        hoveredControl == identity ? HerdrTheme.accent.opacity(0.45) : HerdrTheme.subtleSeparator,
+                        isVertical ? HerdrTheme.subtleSeparator : .clear,
                         lineWidth: 1
                     )
             }
@@ -159,19 +169,19 @@ struct ComposerAuxiliaryBar: View {
                     .tint(HerdrTheme.mist)
                     .frame(width: 14, height: 14)
             } else {
-                Image(systemName: voicePhase == .locked ? "lock.fill" : "mic.fill")
-                    .herdrFont(.caption, weight: .semibold)
+                Image(systemName: voicePhase == .locked ? "lock.fill" : "mic")
+                    .herdrFont(.caption)
             }
 
             if showsTitle {
                 Text("Voice")
-                    .herdrFont(.caption, weight: .medium)
+                    .herdrFont(.caption)
                     .lineLimit(1)
             }
         }
         .foregroundStyle(voiceForeground)
-        .frame(maxWidth: isVertical ? .infinity : nil, minHeight: ComposerDeckMetrics.controlHeight, alignment: .leading)
-        .padding(.horizontal, 10)
+        .frame(maxWidth: isVertical ? .infinity : nil, minHeight: HerdrTheme.minHitTarget, alignment: .leading)
+        .padding(.horizontal, isVertical ? 10 : 6)
         .background(voiceBackground)
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
@@ -232,12 +242,12 @@ struct ComposerAuxiliaryBar: View {
     }
 
     private var voiceBackground: Color {
-        isRecordingOrLocked ? HerdrTheme.alert : HerdrTheme.elevated
+        isRecordingOrLocked ? HerdrTheme.alert : (isVertical || hoveredControl == Self.voiceControl ? HerdrTheme.elevated : .clear)
     }
 
     private var voiceBorder: Color {
         if isRecordingOrLocked { return HerdrTheme.alert }
-        return hoveredControl == Self.voiceControl ? HerdrTheme.accent.opacity(0.45) : HerdrTheme.subtleSeparator
+        return isVertical ? HerdrTheme.subtleSeparator : .clear
     }
 
     /// The one place the hold-to-dictate gesture is spelled out for a pointer.
@@ -246,9 +256,9 @@ struct ComposerAuxiliaryBar: View {
         case .idle:
             "Click to record a voice note · press and hold to dictate into the prompt"
         case .recording:
-            "Dictating — release to transcribe, keep holding to lock"
+            "Dictating, release to transcribe, keep holding to lock"
         case .locked:
-            "Recording locked — click to finish and transcribe"
+            "Recording locked, click to finish and transcribe"
         case .transcribing:
             "Transcribing this dictation"
         }

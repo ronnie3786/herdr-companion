@@ -207,50 +207,42 @@ struct WorkspaceNavigationView: View {
             }
             .accessibilityIdentifier("nav-history-controls")
         }
+        .sharedBackgroundVisibility(.hidden)
 
         ToolbarItem(placement: .principal) {
-            ZStack(alignment: .topTrailing) {
-                Picker("Detail", selection: scopeSelection) {
-                    ForEach(HerdrDetailScope.pickerCases(includingGit: model.currentPaneGitIsAvailable)) { scope in
-                        Label(scope.label, systemImage: scope.symbol)
-                            .tag(scope as HerdrDetailScope?)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .tint(HerdrTheme.controlAccent)
-                .labelStyle(.iconOnly)
-                .accessibilityIdentifier("detail-scope-picker")
-
-                if model.unreadAlertCount > 0 {
-                    Text("\(model.unreadAlertCount)")
-                        .herdrFont(.caption2, weight: .bold)
-                        .foregroundStyle(HerdrTheme.ink)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(HerdrTheme.alert, in: Capsule())
-                        .offset(x: 7, y: -7)
-                        .allowsHitTesting(false)
-                }
-            }
+            WorkspaceScopePicker(
+                selection: scopeSelection,
+                includesGit: model.currentPaneGitIsAvailable,
+                unreadAlertCount: model.unreadAlertCount
+            )
         }
+        .sharedBackgroundVisibility(.hidden)
 
         ToolbarItem(placement: .primaryAction) {
             Button("Agent", systemImage: "sparkles") {
                 shell.isAgentPresented = true
             }
-            .herdrProminentButton()
+            .labelStyle(.iconOnly)
+            .buttonStyle(.plain)
+            .foregroundStyle(HerdrTheme.mist)
+            .herdrHitTarget()
             .disabled(!model.canControl)
             .help("Ask a one-off question without creating a chat")
             .accessibilityIdentifier("open-headless-agent")
         }
+        .sharedBackgroundVisibility(.hidden)
 
         ToolbarItem(placement: .primaryAction) {
             HerdPulseButton()
+                .buttonStyle(.plain)
+                .herdrHitTarget()
         }
+        .sharedBackgroundVisibility(.hidden)
 
         ToolbarItem(placement: .primaryAction) {
             ConnectionPill(state: model.connectionState)
         }
+        .sharedBackgroundVisibility(.hidden)
     }
 
     /// Reads the resolved scope when the picker has a matching segment, and

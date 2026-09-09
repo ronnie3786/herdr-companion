@@ -1,35 +1,11 @@
 import SwiftUI
 
-/// Mac-only divergence from iOS: the navigator reserves status hues for
-/// sessions that need attention.
-///
-/// On the phone the sidebar was a drawer you glanced at; on the Mac it is on
-/// screen for the whole session, and five status hues repeated down every row
-/// turned the column into a rainbow that fought the detail pane for attention.
-/// Calm states spend exactly one tone on status-derived dots and words, while
-/// blocked and completed sessions light up in their real status color. That
-/// keeps the column quiet while still making the items that need attention
-/// easy to scan without opening the Attention deck. Differentiation for calm
-/// states comes from the terminal glyph (`●` / `○` / `·`) and status word.
-///
-/// `working` now keeps its own hue and a collapsed workspace row carries a
-/// low-opacity amber halo, because the workspace row is the only row that
-/// cannot spell its status out in words and is the row most often collapsed
-/// over its working children. `SidebarTone.statusColor` — not
-/// `AgentStatus.needsAttention` — is the seam that was widened.
-///
-/// `mist` is the shared secondary-information tone. Accent stays reserved for
-/// interactive controls and selection. Resting status words are omitted from
-/// normal rows; the dot, tooltip, and accessibility label retain that context.
-///
-/// Deliberately scoped to the sidebar: this selective override belongs here,
-/// not on the shared `AgentStatus` type.
+/// Persistent navigation uses quiet status marks, reserving color for work
+/// in progress and sessions needing attention. Resting status words stay in
+/// tooltips and accessibility labels, so titles have room to breathe.
 enum SidebarTone {
     /// The single hue for calm status-derived elements in these rows.
     static let status = HerdrTheme.mist
-
-    static let badgeFill = HerdrTheme.alert
-    static let badgeLabel = HerdrTheme.ink
 
     static func statusColor(for status: AgentStatus) -> Color {
         if status.needsAttention || status == .working { return status.color }
@@ -37,23 +13,19 @@ enum SidebarTone {
     }
 }
 
-/// Sidebar-local twin of `HerdrStatusDot`: same glyph and accessibility label,
-/// calm states use one tone while attention states use `status.color`.
+/// Fixed-size status marks keep the title column aligned independently of
+/// the font's terminal glyph metrics. Shape still distinguishes resting work.
 private struct SidebarStatusDot: View {
     let status: AgentStatus
-    /// Amber breath for rows whose descendants are working. The dot itself keeps
-    /// `SidebarTone`'s hue — the glow adds reach without spending a second color.
-    var isWorking = false
 
     var body: some View {
-        Text(status.terminalGlyph)
-            .herdrFont(.body, monospaced: true, weight: .semibold)
-            .foregroundStyle(SidebarTone.statusColor(for: status))
-            .herdrPulseGlow(
-                HerdrTheme.working,
-                isActive: isWorking,
-                diameter: SidebarMetrics.statusGlowDiameter
-            )
+        Circle()
+            .fill(status == .idle ? .clear : SidebarTone.statusColor(for: status))
+            .overlay {
+                Circle().strokeBorder(SidebarTone.statusColor(for: status), lineWidth: 1)
+            }
+            .frame(width: status == .unknown ? 3 : 6, height: status == .unknown ? 3 : 6)
+            .frame(width: 6, height: 6)
             .accessibilityLabel(status.title)
     }
 }
@@ -67,10 +39,10 @@ struct SidebarProjectRow: View {
     var body: some View {
         let workingCount = workspace.workingCount
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: 7) {
                 Image(systemName: "chevron.right")
                     .herdrFont(
-                        size: SidebarMetrics.hierarchyIconSize,
+                        size: 8,
                         weight: .semibold,
                         relativeTo: .caption2
                     )
@@ -78,7 +50,10 @@ struct SidebarProjectRow: View {
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     .animation(.snappy, value: isExpanded)
 
-                SidebarStatusDot(status: workspace.agentStatus, isWorking: workingCount > 0)
+                Image(systemName: "folder")
+                    .herdrFont(size: SidebarMetrics.hierarchyIconSize, relativeTo: .caption)
+                    .foregroundStyle(HerdrTheme.muted)
+                    .accessibilityHidden(true)
 
                 Text(workspace.label)
                     .herdrFont(
@@ -86,26 +61,26 @@ struct SidebarProjectRow: View {
                         weight: .semibold,
                         relativeTo: .subheadline
                     )
-                    .foregroundStyle(HerdrTheme.text)
+                    .foregroundStyle(HerdrTheme.mist)
                     .lineLimit(1)
 
-                if workspace.focused {
-                    Text("active")
-                        .herdrFont(.caption, weight: .semibold)
-                        .foregroundStyle(HerdrTheme.accent)
-                        .fixedSize()
-                }
-
-                Spacer()
+                Spacer(minLength: 4)
 
                 if workspace.attentionCount > 0 {
                     Text("\(workspace.attentionCount)")
-                        .herdrFont(.caption2, weight: .semibold, monospacedDigit: true)
-                        .foregroundStyle(SidebarTone.badgeLabel)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(SidebarTone.badgeFill, in: Capsule())
+                        .herdrFont(.caption2, monospacedDigit: true)
+                        .foregroundStyle(HerdrTheme.alert)
                         .accessibilityLabel("\(workspace.attentionCount) needing attention")
+                } else if !isExpanded, workingCount > 0 {
+                    Text("\(workingCount) working")
+                        .herdrFont(.caption2, monospacedDigit: true)
+                        .foregroundStyle(HerdrTheme.working)
+                        .fixedSize()
+                } else {
+                    Text("\(workspace.paneCount)")
+                        .herdrFont(.caption2, monospacedDigit: true)
+                        .foregroundStyle(HerdrTheme.muted)
+                        .fixedSize()
                 }
             }
             .padding(.leading, SidebarMetrics.workspaceRowLeadingPadding)
@@ -123,9 +98,7 @@ struct SidebarProjectRow: View {
         .accessibilityHint("Collapses or expands this workspace's chats")
     }
 
-    /// The chat rows below spell their status out in words; a workspace row only
-    /// ever carried it as a hue. With one tone the hover tooltip is where that
-    /// detail goes — the mac-native place for it, and no extra chrome in the row.
+    /// The tooltip retains the full status without repeating it beside every title.
     private func tooltip(workingCount: Int) -> String {
         let location = workspace.displayPath.isEmpty ? workspace.label : workspace.displayPath
         guard workingCount > 0 else { return "\(location) — \(workspace.agentStatus.title)" }
@@ -133,7 +106,7 @@ struct SidebarProjectRow: View {
     }
 
     private func accessibilityValue(workingCount: Int) -> String {
-        let expansion = isExpanded ? "expanded" : "collapsed"
+        let expansion = (isExpanded ? "expanded" : "collapsed") + (workspace.focused ? ", active workspace" : "")
         guard workingCount > 0 else { return expansion }
         return "\(expansion), \(workingCount) working"
     }
@@ -149,55 +122,49 @@ struct SidebarMachineRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: 7) {
                 Image(systemName: "chevron.right")
-                    .herdrFont(.caption2, weight: .semibold)
+                    .herdrFont(size: 8, weight: .semibold, relativeTo: .caption2)
                     .foregroundStyle(HerdrTheme.mist)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     .animation(.snappy, value: isExpanded)
 
                 Image(systemName: "desktopcomputer")
-                    .herdrFont(.caption, weight: .semibold)
-                    .foregroundStyle(SidebarTone.status.opacity(statusOpacity))
+                    .herdrFont(size: 12, relativeTo: .caption)
+                    .foregroundStyle(HerdrTheme.muted)
 
                 Text(machine.name)
-                    .herdrFont(.subheadline, weight: .semibold)
+                    .herdrFont(size: SidebarMetrics.projectLabelSize, weight: .semibold, relativeTo: .subheadline)
                     .foregroundStyle(HerdrTheme.text)
                     .lineLimit(1)
 
                 Spacer()
 
-                Text("\(paneCount) panes")
-                    .herdrFont(.caption, monospacedDigit: true)
-                    .foregroundStyle(HerdrTheme.muted)
-                    .fixedSize()
+                if state == .live || state == .demo {
+                    Text("\(paneCount)")
+                        .herdrFont(.caption2, monospacedDigit: true)
+                        .foregroundStyle(HerdrTheme.muted)
+                        .fixedSize()
+                } else {
+                    Text(state.title)
+                        .herdrFont(.caption2)
+                        .foregroundStyle(state.color)
+                        .fixedSize()
+                }
             }
             .padding(.leading, SidebarMetrics.workspaceRowLeadingPadding)
             .padding(.trailing, SidebarMetrics.rowTrailingPadding)
-            .frame(minHeight: 38)
+            .frame(minHeight: SidebarMetrics.projectRowHeight)
             .contentShape(Rectangle())
             .background(isHovering ? HerdrTheme.elevated : .clear, in: .rect(cornerRadius: 6))
-            .overlay(alignment: .leading) {
-                Rectangle()
-                    .fill(SidebarTone.status.opacity(statusOpacity))
-                    .frame(width: 3)
-            }
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
         .help("\(machine.name) — \(machine.urlString) — \(state.title)")
         .accessibilityIdentifier("sidebar-machine-\(machine.id)")
         .accessibilityElement(children: .combine)
-        .accessibilityValue(isExpanded ? "expanded" : "collapsed")
+        .accessibilityValue("\(isExpanded ? "expanded" : "collapsed"), \(state.title), \(paneCount) panes")
         .accessibilityHint("Collapses or expands this machine's chats")
-    }
-
-    private var statusOpacity: Double {
-        switch state {
-        case .live, .demo: 1
-        case .connecting: 0.7
-        case .disconnected, .failed: 0.45
-        }
     }
 }
 
@@ -211,18 +178,17 @@ struct SidebarSectionRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: attentionStatus != nil ? "folder.fill" : (isExpanded ? "folder" : "folder.fill"))
-                    .herdrFont(
-                        size: SidebarMetrics.hierarchyIconSize,
-                        relativeTo: .caption2
-                    )
+            HStack(spacing: 7) {
+                Image(systemName: "chevron.right")
+                    .herdrFont(size: 8, weight: .semibold, relativeTo: .caption2)
                     .foregroundStyle(folderColor)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .animation(.snappy, value: isExpanded)
 
                 Text(tab.label)
                     .herdrFont(
                         size: SidebarMetrics.tabLabelSize,
-                        weight: .semibold,
+                        weight: .medium,
                         relativeTo: .caption
                     )
                     .foregroundStyle(attentionStatus != nil ? HerdrTheme.text : HerdrTheme.mist)
@@ -281,13 +247,13 @@ struct SidebarChatRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: 7) {
                 SidebarStatusDot(status: pane.agentStatus)
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(pane.displayTitle)
                         .herdrFont(size: SidebarMetrics.chatLabelSize, relativeTo: .subheadline)
-                        .foregroundStyle(HerdrTheme.text)
+                        .foregroundStyle(isSelected ? HerdrTheme.text : HerdrTheme.mist)
                         .lineLimit(1)
                     if let workspaceLabel = hierarchy?.workspaceLabel {
                         Label(workspaceLabel, systemImage: "folder")
@@ -328,7 +294,7 @@ struct SidebarChatRow: View {
                         since: since,
                         describesLastActivity: describesLastActivity
                     )
-                    .herdrFont(.caption, monospacedDigit: true)
+                    .herdrFont(.caption2, monospacedDigit: true)
                     .foregroundStyle(SidebarTone.statusColor(for: pane.agentStatus))
                     .fixedSize()
                 }
@@ -343,7 +309,7 @@ struct SidebarChatRow: View {
                 RoundedRectangle(cornerRadius: 1)
                     .fill(isSelected ? HerdrTheme.accent : .clear)
                     .frame(width: 2)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 6)
             }
         }
         .buttonStyle(.plain)

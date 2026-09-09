@@ -16,9 +16,9 @@ enum ComposerToolRowFit: Equatable, Sendable {
 /// The shared prompt composer, hosted by both the terminal pane and Pi chat.
 ///
 /// Mac notes:
-/// - The prompt and its primary actions share one quiet input surface. More
-///   opens the secondary tools; terminal keys remain available behind their
-///   own toggle without competing with the conversation at rest.
+/// - The prompt and labeled Attach, Paste code and Voice actions share one
+///   quiet input surface. More opens secondary tools. Model, reasoning and
+///   terminal keys sit above the input, with adaptive rows for larger text.
 /// - Return sends. Shift/Option/Command+Return all break the line, so a
 ///   multi-line prompt never depends on remembering which one this app chose.
 ///   `ComposerReturnKeyRouter` owns that table; `onKeyPress` and `onSubmit`
@@ -47,13 +47,14 @@ struct PromptComposerView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.herdrFontScale) private var fontScale
+    @State private var composerWidth: CGFloat = .infinity
     @FocusState private var isFocused: Bool
     @State private var isShowingFileImporter = false
     @State private var isShowingVoiceRecorder = false
     @State private var isShowingFileSearch = false
     @State private var isShowingJira = false
     @State private var isShowingMoreTools = false
-    @State private var moreToolsSelection: ComposerCodeBlockPaste.EditorSelection?
     @State private var showsTerminalKeys = false
     @State private var isDropTargeted = false
     @State private var disposition: PiPromptDisposition = .prompt
@@ -108,25 +109,6 @@ struct PromptComposerView: View {
             if let activity = piConfiguration?.compactionActivity {
                 PiCompactionStatusBar(activity: activity)
                     .transition(semanticControlTransition)
-            } else if let piConfiguration, piConfiguration.phase == .working {
-                PiPromptComposerStatusBar(
-                    disposition: effectiveDisposition,
-                    availableDispositions: piConfiguration.availableDispositions,
-                    canSelectDisposition: piConfiguration.isConnected,
-                    canAbort: piConfiguration.canAbort,
-                    selectDisposition: selectDisposition,
-                    stop: stopPi
-                )
-                    .transition(semanticControlTransition)
-            }
-
-            if let piConfiguration, showsPiOptionsBar {
-                PiComposerOptionsBar(
-                    configuration: piConfiguration,
-                    responseAudioPlayer: responseAudioPlayer,
-                    activateResponseAudio: activateResponseAudio,
-                    modelFavorites: modelFavorites
-                )
             }
 
             voiceCaptureStatus
@@ -136,7 +118,14 @@ struct PromptComposerView: View {
                     .transition(semanticControlTransition)
             }
 
+            composerToolbar
+
             composerRow
+        }
+        .onGeometryChange(for: CGFloat.self) { geometry in
+            geometry.size.width
+        } action: { width in
+            composerWidth = width
         }
         .animation(
             reduceMotion ? nil : .snappy(duration: 0.24),
@@ -308,68 +297,112 @@ struct PromptComposerView: View {
         return .move(edge: .bottom).combined(with: .opacity)
     }
 
+    private var composerToolbar: some View {
+        let stacksControls = composerWidth < 480 * fontScale.rawValue
+        let layout = stacksControls
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(spacing: 12))
+        return layout {
+            if let piConfiguration, showsPiOptionsBar {
+                PiComposerOptionsBar(
+                    configuration: piConfiguration,
+                    responseAudioPlayer: responseAudioPlayer,
+                    activateResponseAudio: activateResponseAudio,
+                    modelFavorites: modelFavorites
+                )
+            }
+            HStack(spacing: 12) {
+                if let piConfiguration, piConfiguration.phase == .working,
+                   piConfiguration.compactionActivity == nil {
+                    PiPromptComposerStatusBar(
+                        disposition: effectiveDisposition,
+                        availableDispositions: piConfiguration.availableDispositions,
+                        canSelectDisposition: piConfiguration.isConnected,
+                        canAbort: piConfiguration.canAbort,
+                        selectDisposition: selectDisposition,
+                        stop: stopPi,
+                        showsStatusLabel: false
+                    )
+                }
+                terminalKeysToggle
+            }
+            .fixedSize(horizontal: true, vertical: false)
+            .frame(maxWidth: stacksControls || !showsPiOptionsBar ? .infinity : nil, alignment: .trailing)
+        }
+    }
+
     private var composerRow: some View {
         VStack(spacing: 0) {
             composerInput
-            HStack(spacing: 8) {
-                Button {
-                    isShowingFileImporter = true
-                } label: {
-                    Image(systemName: "paperclip")
-                        .frame(width: 32, height: 32)
+            composerActionsLayout {
+                ComposerAuxiliaryBar(
+                    attach: { isShowingFileImporter = true },
+                    recordVoice: { isShowingVoiceRecorder = true },
+                    searchFiles: { isShowingFileSearch = true },
+                    chooseJira: { isShowingJira = true },
+                    voicePhase: quickVoiceCapture.phase,
+                    beginVoiceHold: beginQuickVoiceCapture,
+                    endVoiceHold: finishQuickVoiceCapture,
+                    finishLockedVoiceCapture: finishLockedQuickVoiceCapture,
+                    pasteCodeBlock: pasteCodeBlock,
+                    showsTitles: true,
+                    showsContextTools: false,
+                    canPasteCode: !isSubmitting && canControl && !isPiCompacting
+                )
+                .fixedSize(horizontal: true, vertical: false)
+                HStack(spacing: 4) {
+                    moreToolsButton
+                    Spacer(minLength: 4)
+                    trailingComposerButton
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(HerdrTheme.mist)
-                .help("Attach files to this prompt")
-                .accessibilityLabel("Attach a file")
-                .accessibilityIdentifier("composer-attach-file")
-
-                moreToolsButton
-
-                Spacer(minLength: 4)
-
-                Button {
-                    showsTerminalKeys.toggle()
-                } label: {
-                    Label("Terminal keys", systemImage: "keyboard")
-                        .herdrFont(.caption)
-                        .frame(minHeight: 32)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(showsTerminalKeys ? HerdrTheme.accent : HerdrTheme.muted)
-                .help(showsTerminalKeys ? "Hide terminal keys" : "Show keys to control the terminal while typing")
-                .accessibilityLabel("Terminal keys")
-                .accessibilityValue(showsTerminalKeys ? "Expanded" : "Collapsed")
-                .accessibilityIdentifier("composer-terminal-keys-toggle")
-
-                trailingComposerButton
             }
-            .padding(.horizontal, 10)
-            .padding(.bottom, 9)
+            .padding(.horizontal, 8)
+            .padding(.bottom, 7)
         }
         .background(HerdrTheme.input)
         .overlay {
-            RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
+            RoundedRectangle(cornerRadius: 9)
                 .strokeBorder(composerInputBorder, lineWidth: 1)
         }
-        .clipShape(.rect(cornerRadius: HerdrTheme.cardRadius))
+        .clipShape(.rect(cornerRadius: 9))
+    }
+
+    private var composerActionsLayout: AnyLayout {
+        composerWidth < 390 * fontScale.rawValue
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
+            : AnyLayout(HStackLayout(spacing: 4))
+    }
+
+    private var terminalKeysToggle: some View {
+        Button {
+            showsTerminalKeys.toggle()
+        } label: {
+            Label("Terminal keys", systemImage: "keyboard")
+                .herdrFont(.caption)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(minHeight: HerdrTheme.minHitTarget)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(showsTerminalKeys ? HerdrTheme.accent : HerdrTheme.muted)
+        .help(showsTerminalKeys ? "Hide terminal keys" : "Show keys to control the terminal while typing")
+        .accessibilityLabel("Terminal keys")
+        .accessibilityValue(showsTerminalKeys ? "Expanded" : "Collapsed")
+        .accessibilityIdentifier("composer-terminal-keys-toggle")
     }
 
     private var moreToolsButton: some View {
         Button {
-            if !isShowingMoreTools {
-                moreToolsSelection = ComposerCodeBlockPaste.captureSelection(for: draft)
-            }
             isShowingMoreTools.toggle()
         } label: {
             Label("More", systemImage: "ellipsis")
                 .herdrFont(.caption)
-                .frame(minHeight: 32)
+                .frame(minHeight: HerdrTheme.minHitTarget)
                 .padding(.horizontal, 6)
         }
         .buttonStyle(.plain)
         .foregroundStyle(isShowingMoreTools ? HerdrTheme.text : HerdrTheme.mist)
-        .help("Voice, code, workspace files and Jira context")
+        .help("Workspace files, Jira context and voice dictation")
         .accessibilityLabel("More prompt tools")
         .accessibilityValue(isShowingMoreTools ? "Expanded" : "Collapsed")
         .accessibilityIdentifier("composer-more-tools")
@@ -396,15 +429,18 @@ struct PromptComposerView: View {
                     beginVoiceHold: beginQuickVoiceCapture,
                     endVoiceHold: finishQuickVoiceCapture,
                     finishLockedVoiceCapture: finishLockedQuickVoiceCapture,
-                    pasteCodeBlock: {
-                        isShowingMoreTools = false
-                        pasteCodeBlock()
-                    },
                     showsTitles: true,
                     showsAttach: false,
-                    isVertical: true,
-                    canPasteCode: !isSubmitting && canControl && !isPiCompacting
+                    showsCode: false,
+                    showsVoice: false,
+                    isVertical: true
                 )
+                Button("Start voice dictation", systemImage: "mic", action: startLockedVoiceCapture)
+                    .buttonStyle(.plain)
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.mist)
+                    .frame(minHeight: HerdrTheme.minHitTarget)
+                    .disabled(quickVoiceCapture.phase != .idle || !canControl || isPiCompacting)
                 Text("Click Voice for a note. Hold to dictate, and keep holding to lock recording.")
                     .herdrFont(.caption)
                     .foregroundStyle(HerdrTheme.muted)
@@ -494,7 +530,7 @@ struct PromptComposerView: View {
             } else {
                 TextField(placeholder, text: $draft, axis: .vertical)
                     .lineLimit(1...5)
-                    .herdrFont(size: 15)
+                    .herdrFont(size: 14)
                     .foregroundStyle(HerdrTheme.text)
                     .textFieldStyle(.plain)
                     .focused($isFocused)
@@ -527,14 +563,14 @@ struct PromptComposerView: View {
                         skillsPalette.dismiss()
                         return .ignored
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 14)
-                    .padding(.bottom, 8)
-                    .frame(minHeight: 60)
+                    .padding(.horizontal, 13)
+                    .padding(.top, 11)
+                    .padding(.bottom, 4)
+                    .frame(minHeight: 50, alignment: .topLeading)
                     .disabled(isSubmitting || !canControl || isPiCompacting)
             }
         }
-        .frame(minHeight: 60)
+        .frame(minHeight: 50)
         .frame(maxWidth: .infinity)
         .shadow(
             color: quickVoiceCapture.phase == .locked
@@ -557,16 +593,14 @@ struct PromptComposerView: View {
             Group {
                 if isCTACaptureInProgress {
                     Image(systemName: "stop.fill")
-                } else if isCTAMicAvailable {
-                    Image(systemName: "mic.fill")
                 } else if isSubmitting {
                     ProgressView()
                         .tint(HerdrTheme.ink)
                 } else {
-                    Image(systemName: effectiveDisposition.symbol)
+                    Image(systemName: "arrow.up")
                 }
             }
-            .frame(width: 34, height: 34)
+            .frame(width: 30, height: 30)
             .background(isCTALockedCapture ? HerdrTheme.alert : HerdrTheme.primaryAction)
             .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
             .contentShape(.rect(cornerRadius: HerdrTheme.compactRadius))
@@ -585,7 +619,7 @@ struct PromptComposerView: View {
         .disabled(
             (isPiCompacting && !isCTALockedCapture)
                 || isCTATranscribing
-                || (!isCTAMicAvailable && !isCTALockedCapture && !canSend)
+                || (!isCTALockedCapture && !canSend)
         )
         .help(trailingComposerAccessibilityHint)
         .accessibilityLabel(trailingComposerAccessibilityLabel)
@@ -650,10 +684,6 @@ struct PromptComposerView: View {
         }
     }
 
-    private var isEmptyInput: Bool {
-        !hasDraftText && attachments.isEmpty
-    }
-
     private var isCTALockedCapture: Bool {
         isCTACapture && quickVoiceCapture.phase == .locked
     }
@@ -666,10 +696,6 @@ struct PromptComposerView: View {
         isCTALockedCapture || isCTATranscribing
     }
 
-    private var isCTAMicAvailable: Bool {
-        isEmptyInput && quickVoiceCapture.phase == .idle && !isCTACapture && !isPiCompacting
-    }
-
     private var composerInputBorder: Color {
         quickVoiceCapture.phase == .locked
             ? HerdrTheme.alert
@@ -677,7 +703,7 @@ struct PromptComposerView: View {
     }
 
     private var trailingComposerOpacity: Double {
-        if isCTAMicAvailable || isCTALockedCapture { return 1 }
+        if isCTALockedCapture { return 1 }
         if isCTATranscribing { return 0.45 }
         return canSend ? 1 : 0.45
     }
@@ -685,14 +711,12 @@ struct PromptComposerView: View {
     private var trailingComposerAccessibilityLabel: String {
         if isCTALockedCapture { return "Stop voice dictation" }
         if isCTATranscribing { return "Transcribing voice dictation" }
-        if isCTAMicAvailable { return "Start voice dictation" }
         return effectiveDisposition.label
     }
 
     private var trailingComposerAccessibilityHint: String {
         if isCTALockedCapture { return "Stops recording and transcribes the dictation" }
         if isCTATranscribing { return "Voice dictation is being transcribed" }
-        if isCTAMicAvailable { return "Starts a locked voice dictation" }
         return sendAccessibilityHint
     }
 
@@ -794,8 +818,7 @@ struct PromptComposerView: View {
 
     private func pasteCodeBlock() {
         guard !isSubmitting, canControl, !isPiCompacting else { return }
-        if ComposerCodeBlockPaste.paste(into: &draft, selection: moreToolsSelection) {
-            moreToolsSelection = nil
+        if ComposerCodeBlockPaste.paste(into: &draft) {
             isFocused = true
         } else {
             model.toastMessage = "Copy some text before pasting a code block"
@@ -852,12 +875,16 @@ struct PromptComposerView: View {
         }
     }
 
+    private func startLockedVoiceCapture() {
+        guard quickVoiceCapture.phase == .idle, canControl, !isPiCompacting else { return }
+        isShowingMoreTools = false
+        isCTACapture = true
+        quickVoiceCapture.beginLocked()
+    }
+
     private func handleTrailingComposerAction() {
         if isCTALockedCapture {
             finishLockedQuickVoiceCapture()
-        } else if isCTAMicAvailable {
-            isCTACapture = true
-            quickVoiceCapture.beginLocked()
         } else {
             send()
         }

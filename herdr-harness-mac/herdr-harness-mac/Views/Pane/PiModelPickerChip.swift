@@ -47,10 +47,13 @@ struct PiModelPickerChip: View {
 
     @ViewBuilder
     private var chipLabel: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             if isSetting {
                 ProgressView()
                     .controlSize(.small)
+            } else {
+                Image(systemName: "bolt")
+                    .accessibilityHidden(true)
             }
             Text(currentModel?.displayName ?? "model")
                 .lineLimit(1)
@@ -61,10 +64,15 @@ struct PiModelPickerChip: View {
             }
         }
         .herdrFont(.caption, weight: .medium)
-        .foregroundStyle(isInteractive ? HerdrTheme.mist : HerdrTheme.muted)
-        .padding(.horizontal, 4)
-        .frame(minHeight: 30)
-        .contentShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+        .foregroundStyle(isInteractive ? HerdrTheme.accent : HerdrTheme.muted)
+        .padding(.horizontal, 8)
+        .frame(minHeight: HerdrTheme.minHitTarget)
+        .background(HerdrTheme.elevated, in: .rect(cornerRadius: 6))
+        .overlay {
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(HerdrTheme.separator, lineWidth: 1)
+        }
+        .contentShape(.rect(cornerRadius: 6))
         .opacity(isInteractive && !isEnabled ? 0.45 : 1)
     }
 

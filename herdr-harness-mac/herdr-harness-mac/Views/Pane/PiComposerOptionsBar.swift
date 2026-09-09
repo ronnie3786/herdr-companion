@@ -7,7 +7,7 @@ struct PiComposerOptionsBar: View {
     let modelFavorites: ModelFavoritesStore
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 9) {
             PiModelPickerChip(
                 currentModel: configuration.currentModel,
                 availableModels: configuration.availableModels,

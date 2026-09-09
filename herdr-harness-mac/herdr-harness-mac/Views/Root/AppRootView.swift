@@ -62,12 +62,12 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
 
     var symbol: String {
         switch self {
-        case .session: "bubble.left.and.bubble.right"
+        case .session: "bubble.left"
         case .git: "arrow.triangle.branch"
         case .workspace: "rectangle.3.group"
-        case .activeWork: "point.topleft.down.to.point.bottomright.curvepath"
+        case .activeWork: "square.grid.2x2"
         case .fleet: "desktopcomputer"
-        case .attention: "bell.badge"
+        case .attention: "bell"
         case .activity: "clock.arrow.circlepath"
         }
     }

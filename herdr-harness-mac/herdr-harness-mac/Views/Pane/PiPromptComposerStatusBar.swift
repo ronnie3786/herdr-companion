@@ -8,14 +8,16 @@ struct PiPromptComposerStatusBar: View {
     let canAbort: Bool
     let selectDisposition: (PiPromptDisposition) -> Void
     let stop: () -> Void
+    var showsStatusLabel = true
 
     var body: some View {
         HStack(spacing: 8) {
-            Label("Pi is working", systemImage: "sparkles")
-                .herdrFont(.caption, weight: .medium)
-                .foregroundStyle(HerdrTheme.working)
-
-            Spacer(minLength: 4)
+            if showsStatusLabel {
+                Label("Pi is working", systemImage: "sparkles")
+                    .herdrFont(.caption, weight: .medium)
+                    .foregroundStyle(HerdrTheme.working)
+                Spacer(minLength: 4)
+            }
 
             Menu {
                 ForEach(availableDispositions) { option in
@@ -35,7 +37,7 @@ struct PiPromptComposerStatusBar: View {
                     .herdrFont(.caption, weight: .semibold)
                     .foregroundStyle(HerdrTheme.mist)
                     .padding(.horizontal, 4)
-                    .frame(minHeight: 30)
+                    .frame(minHeight: HerdrTheme.minHitTarget)
                     .contentShape(.rect(cornerRadius: HerdrTheme.compactRadius))
             }
             .piChipMenu()
@@ -50,7 +52,7 @@ struct PiPromptComposerStatusBar: View {
                 .disabled(!canAbort)
                 .accessibilityIdentifier("pi-chat-stop")
         }
-        .padding(.horizontal, 4)
+        .padding(.horizontal, showsStatusLabel ? 4 : 0)
         .accessibilityElement(children: .contain)
     }
 }

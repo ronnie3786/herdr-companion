@@ -3,10 +3,10 @@
 ## Sidebar and navigation
 
 - Recents uses compact single-line titles, quieter machine/workspace context, and visible Working, Done, and attention states. Full tab context stays available on hover.
-- Leaving Recents restores the ordinary grouped-row styling.
+- Leaving Recents restores the ordinary grouped-row styling. Selected chats keep their background highlight without a leading vertical stripe.
 - Sidebar titles and status read live pane data so Smart Rename and agent completion stay aligned with the chat header and HUD.
 - Back and Forward remember Chat/Git segment switches on the same pane, including returning to Git after visiting another pane or screen.
-- New workspace is a labeled sidebar action. Workspace headings in Unread and Starred expose the same right-click menu as the workspace tree, including New tab.
+- New workspace is a labeled sidebar action. Hover a machine row for a folder-plus button that opens creation directly on that machine, without another machine selection. Workspace headings in Unread and Starred expose the same right-click menu as the workspace tree, including New tab.
 
 ## Chat and HUD
 

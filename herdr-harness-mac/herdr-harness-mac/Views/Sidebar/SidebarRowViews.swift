@@ -118,53 +118,71 @@ struct SidebarMachineRow: View {
     let paneCount: Int
     let isExpanded: Bool
     let action: () -> Void
+    var createWorkspace: (() -> Void)?
+    var canCreateWorkspace = false
     @State private var isHovering = false
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 7) {
-                Image(systemName: "chevron.right")
-                    .herdrFont(size: 8, weight: .semibold, relativeTo: .caption2)
-                    .foregroundStyle(HerdrTheme.mist)
-                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    .animation(.snappy, value: isExpanded)
+        HStack(spacing: 7) {
+            Button(action: action) {
+                HStack(spacing: 7) {
+                    Image(systemName: "chevron.right")
+                        .herdrFont(size: 8, weight: .semibold, relativeTo: .caption2)
+                        .foregroundStyle(HerdrTheme.mist)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .animation(.snappy, value: isExpanded)
 
-                Image(systemName: "desktopcomputer")
-                    .herdrFont(size: 12, relativeTo: .caption)
-                    .foregroundStyle(HerdrTheme.muted)
-
-                Text(machine.name)
-                    .herdrFont(size: SidebarMetrics.projectLabelSize, weight: .semibold, relativeTo: .subheadline)
-                    .foregroundStyle(HerdrTheme.text)
-                    .lineLimit(1)
-
-                Spacer()
-
-                if state == .live || state == .demo {
-                    Text("\(paneCount)")
-                        .herdrFont(.caption2, monospacedDigit: true)
+                    Image(systemName: "desktopcomputer")
+                        .herdrFont(size: 12, relativeTo: .caption)
                         .foregroundStyle(HerdrTheme.muted)
-                        .fixedSize()
-                } else {
-                    Text(state.title)
-                        .herdrFont(.caption2)
-                        .foregroundStyle(state.color)
-                        .fixedSize()
+
+                    Text(machine.name)
+                        .herdrFont(size: SidebarMetrics.projectLabelSize, weight: .semibold, relativeTo: .subheadline)
+                        .foregroundStyle(HerdrTheme.text)
+                        .lineLimit(1)
+
+                    Spacer()
+
+                    if state == .live || state == .demo {
+                        Text("\(paneCount)")
+                            .herdrFont(.caption2, monospacedDigit: true)
+                            .foregroundStyle(HerdrTheme.muted)
+                            .fixedSize()
+                    } else {
+                        Text(state.title)
+                            .herdrFont(.caption2)
+                            .foregroundStyle(state.color)
+                            .fixedSize()
+                    }
                 }
+                .frame(minHeight: SidebarMetrics.projectRowHeight)
+                .contentShape(Rectangle())
             }
-            .padding(.leading, SidebarMetrics.workspaceRowLeadingPadding)
-            .padding(.trailing, SidebarMetrics.rowTrailingPadding)
-            .frame(minHeight: SidebarMetrics.projectRowHeight)
-            .contentShape(Rectangle())
-            .background(isHovering ? HerdrTheme.elevated : .clear, in: .rect(cornerRadius: 6))
+            .help("\(machine.name) — \(machine.urlString) — \(state.title)")
+            .accessibilityIdentifier("sidebar-machine-\(machine.id)")
+            .accessibilityElement(children: .combine)
+            .accessibilityValue("\(isExpanded ? "expanded" : "collapsed"), \(state.title), \(paneCount) panes")
+            .accessibilityHint("Collapses or expands this machine's chats")
+
+            if let createWorkspace {
+                Button("New workspace on \(machine.name)", systemImage: "folder.badge.plus", action: createWorkspace)
+                    .labelStyle(.iconOnly)
+                    .herdrFont(.subheadline)
+                    .foregroundStyle(HerdrTheme.mist)
+                    .frame(width: 28, height: SidebarMetrics.projectRowHeight)
+                    .contentShape(.rect)
+                    .disabled(!canCreateWorkspace)
+                    .opacity(isHovering ? 1 : 0)
+                    .allowsHitTesting(isHovering)
+                    .help("New workspace on \(machine.name)")
+                    .accessibilityIdentifier("sidebar-machine-new-workspace-\(machine.id)")
+            }
         }
+        .padding(.leading, SidebarMetrics.workspaceRowLeadingPadding)
+        .padding(.trailing, SidebarMetrics.rowTrailingPadding)
+        .background(isHovering ? HerdrTheme.elevated : .clear, in: .rect(cornerRadius: 6))
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
-        .help("\(machine.name) — \(machine.urlString) — \(state.title)")
-        .accessibilityIdentifier("sidebar-machine-\(machine.id)")
-        .accessibilityElement(children: .combine)
-        .accessibilityValue("\(isExpanded ? "expanded" : "collapsed"), \(state.title), \(paneCount) panes")
-        .accessibilityHint("Collapses or expands this machine's chats")
     }
 }
 
@@ -271,12 +289,6 @@ struct SidebarChatRow: View {
             .frame(minHeight: SidebarMetrics.chatRowHeight)
             .contentShape(Rectangle())
             .background(rowBackground, in: .rect(cornerRadius: 6))
-            .overlay(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(isSelected ? HerdrTheme.accent : .clear)
-                    .frame(width: 2)
-                    .padding(.vertical, 6)
-            }
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }

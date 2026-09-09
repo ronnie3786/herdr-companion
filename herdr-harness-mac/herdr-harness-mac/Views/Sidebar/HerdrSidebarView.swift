@@ -656,7 +656,9 @@ struct HerdrSidebarView: View {
                     state: group.state,
                     paneCount: machinePaneCount(for: group.machine.id),
                     isExpanded: group.isExpanded,
-                    action: { toggle(group.machine) }
+                    action: { toggle(group.machine) },
+                    createWorkspace: { presentCreateWorkspace(for: group.machine.id) },
+                    canCreateWorkspace: model.canControl(machineID: group.machine.id)
                 )
                 .contextMenu { machineMenu(group.machine) }
                 if group.isExpanded {

@@ -7,7 +7,7 @@ struct ComposerAttachmentTray: View {
 
     var body: some View {
         ScrollView(.horizontal) {
-            LazyHStack(spacing: 8) {
+            HStack(spacing: 8) {
                 ForEach(attachments) { attachment in
                     ComposerAttachmentChip(
                         attachment: attachment,
@@ -19,6 +19,9 @@ struct ComposerAttachmentTray: View {
             .padding(.horizontal, 1)
         }
         .scrollIndicators(.hidden)
+        // Measure the chips instead of accepting the composer's spare height.
+        // Keep horizontal scrolling available when the attachments overflow.
+        .fixedSize(horizontal: false, vertical: true)
         .accessibilityLabel("Attachments")
     }
 }

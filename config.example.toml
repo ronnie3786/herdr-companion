@@ -172,6 +172,8 @@ apns_environment = "development"
 
 [environment]
 # Escape hatch for any documented environment setting. Values are data, not shell.
+# Headless agent runs (including HUD chat) default to one hour; range 1–86400 seconds.
+# HERDR_HARNESS_AGENT_TIMEOUT_SECONDS = "7200"
 # HERDR_HARNESS_ACTIVE_WORK_STORE_PATH = "~/.local/share/herdr-companion/active-work.sqlite3"
 # GH_HOST = "github.com"
 # PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"

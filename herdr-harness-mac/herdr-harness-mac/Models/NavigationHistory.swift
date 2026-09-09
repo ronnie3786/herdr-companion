@@ -7,12 +7,10 @@ import Foundation
 /// degrades that to the workspace overview or the attention deck, so it is
 /// not a place the user was ever standing and must never enter the history.
 ///
-/// Note: the pane's sub-mode (chat/terminal/git/skills) is NOT captured —
-/// going Back to a pane lands on whatever mode that pane's session view
-/// auto-selects, not the one you left. See PaneDetailMode; this is a
-/// deliberate scope cut, not an oversight.
+/// Git is remembered separately from the pane's primary Chat/Terminal segment.
 enum HerdrDestination: Hashable, Sendable {
     case pane(String)        // scoped pane id — MachineScopedID.compose
+    case git(String)
     case workspace(String)   // scoped workspace id
     case activeWork
     case fleet
@@ -114,6 +112,10 @@ extension HerdrDestinationRecord {
             guard !id.isEmpty else { return nil }
             kind = "pane"
             self.id = id
+        case let .git(id):
+            guard !id.isEmpty else { return nil }
+            kind = "git"
+            self.id = id
         case let .workspace(id):
             guard !id.isEmpty else { return nil }
             kind = "workspace"
@@ -138,6 +140,9 @@ extension HerdrDestinationRecord {
         case "pane":
             guard let id, !id.isEmpty else { return nil }
             return .pane(id)
+        case "git":
+            guard let id, !id.isEmpty else { return nil }
+            return .git(id)
         case "workspace":
             guard let id, !id.isEmpty else { return nil }
             return .workspace(id)

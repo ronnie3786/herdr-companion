@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import SwiftUI
 import Testing
 @testable import herdr_harness_mac
 
@@ -22,6 +24,47 @@ struct SidebarStatusFreshnessTests {
         mutated[workspaceIndex].panes[0] = Self.restatused(pane, as: .done)
 
         #expect(HerdrSidebarView.statusDigest(mutated) != before)
+    }
+
+    @Test("Mounted sidebar rows receive rename and completion without replacing the tree")
+    func liveRowUpdatesIndependentlyOfTree() async throws {
+        let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"])
+        let pane = try #require(model.workspaces.first?.panes.first)
+        var observedTitle = ""
+        var observedStatus: AgentStatus = .unknown
+        let hosting = NSHostingView(rootView:
+            SidebarLiveChatRow(model: model, paneID: pane.id) { livePane in
+                Text(livePane.displayTitle)
+                    .onChange(of: livePane.displayTitle, initial: true) { _, title in observedTitle = title }
+                    .onChange(of: livePane.agentStatus, initial: true) { _, status in observedStatus = status }
+            }
+        )
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 280, height: 60),
+            styleMask: [.borderless], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        defer { window.close() }
+        hosting.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        let revision = model.fleetRevision
+        model.workspaces[0].panes[0] = Self.restatused(pane, as: .done, label: "Renamed sample chat")
+        try await Task.sleep(for: .milliseconds(100))
+        hosting.layoutSubtreeIfNeeded()
+        #expect(model.fleetRevision == revision)
+        #expect(observedTitle == "Renamed sample chat")
+        #expect(observedStatus == .done)
+    }
+
+    @Test("Smart Rename invalidates sidebar titles without a fleet revision")
+    func renamedPaneChangesDigest() throws {
+        let workspaces = DemoData.workspaces.map { $0.stamped(machineID: "m1") }
+        var renamed = workspaces
+        let pane = renamed[0].panes[0]
+        renamed[0].panes[0] = Self.restatused(pane, as: pane.agentStatus, label: "Renamed sample chat")
+        #expect(renamed[0].panes[0].displayTitle == "Renamed sample chat")
+        #expect(HerdrSidebarView.statusDigest(renamed) != HerdrSidebarView.statusDigest(workspaces))
     }
 
     @Test("A workspace's rolled-up status change moves the cache key")
@@ -69,7 +112,8 @@ struct SidebarStatusFreshnessTests {
     private static func restatused(
         _ pane: HerdrPane,
         as status: AgentStatus,
-        revision: Int? = nil
+        revision: Int? = nil,
+        label: String? = nil
     ) -> HerdrPane {
         HerdrPane(
             paneID: pane.paneID,
@@ -81,7 +125,7 @@ struct SidebarStatusFreshnessTests {
             revision: revision ?? pane.revision,
             cwd: pane.cwd,
             foregroundCWD: pane.foregroundCWD,
-            label: pane.label,
+            label: label ?? pane.label,
             title: pane.title,
             agent: pane.agent,
             displayAgent: pane.displayAgent,

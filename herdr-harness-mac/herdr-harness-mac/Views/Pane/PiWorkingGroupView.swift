@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Collapses a contiguous run of Pi's sub-process activity, thinking and
-/// tool/command invocations, behind one "Working…" row, so consecutive
+/// tool/command invocations, behind one "Clanking" row, so consecutive
 /// assistant messages read as a conversation instead of a machine log.
 /// Collapsed by default; the individual `PiThinkingDisclosureView` /
 /// `PiToolCardView` cards inside keep their own per-card disclosure.
@@ -39,12 +39,9 @@ struct PiWorkingGroupView: View {
         .onChange(of: isExpanded) { _, expanded in
             hapticPulse.fire(expanded ? .controlsExpanded : .controlsCollapsed)
         }
-        // A failed tool is never hidden behind a collapsed row.
-        .onChange(of: group.hasFailure, initial: true) { _, failed in
-            if failed { isExpanded = true }
-        }
         .herdrHaptic(trigger: hapticPulse)
         .accessibilityIdentifier("pi-working-\(group.id)")
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
     }
 
     private var label: some View {
@@ -64,7 +61,7 @@ struct PiWorkingGroupView: View {
             .frame(width: 18, height: 18)
             .accessibilityHidden(true)
 
-            Text(group.isLive ? "Working…" : "Activity")
+            Text(group.isLive ? "Clanking…" : "Clanking")
                 .herdrFont(.caption, weight: .medium)
                 .foregroundStyle(HerdrProse.dimmed(HerdrTheme.mist))
                 .contentTransition(.opacity)
@@ -91,6 +88,6 @@ struct PiWorkingGroupView: View {
     }
 
     private var accessibilityLabel: String {
-        (group.isLive ? "Working, " : "Activity, ") + summary
+        (group.isLive ? "Clanking, working, " : "Clanking, ") + summary
     }
 }

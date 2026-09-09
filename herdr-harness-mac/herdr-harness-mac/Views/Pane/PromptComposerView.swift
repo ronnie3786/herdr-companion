@@ -528,11 +528,9 @@ struct PromptComposerView: View {
                     .tint(HerdrTheme.alert)
                     .frame(maxWidth: .infinity, minHeight: 48)
             } else {
-                TextField(placeholder, text: $draft, axis: .vertical)
-                    .lineLimit(1...5)
+                ComposerDraftEditor(placeholder: placeholder, text: $draft)
                     .herdrFont(size: 14)
                     .foregroundStyle(HerdrTheme.text)
-                    .textFieldStyle(.plain)
                     .focused($isFocused)
                     .onSubmit(handleSubmit)
                     .onKeyPress(.return, phases: .down, action: handleReturnKey)

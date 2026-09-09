@@ -167,9 +167,16 @@ struct HerdrSidebarView: View {
         for workspace in workspaces {
             hasher.combine(workspace.id)
             hasher.combine(workspace.agentStatus)
+            hasher.combine(workspace.label)
+            for tab in workspace.tabs {
+                hasher.combine(tab.tabID)
+                hasher.combine(tab.label)
+            }
             for pane in workspace.panes {
                 hasher.combine(pane.id)
                 hasher.combine(pane.agentStatus)
+                // Renames update the model before the next fleet revision.
+                hasher.combine(pane.displayTitle)
                 hasher.combine(pane.workingSince)
                 hasher.combine(pane.piSemantic?.sessionID)
                 hasher.combine(pane.piSemantic?.parentSessionID)
@@ -229,6 +236,10 @@ struct HerdrSidebarView: View {
                         staleSection(snapshot)
                         workspaceContent(snapshot)
                     }
+                    // The same pane IDs appear in both layouts. Rebuild the lazy
+                    // rows when switching modes so Recents content isn't reused
+                    // inside the grouped workspace tree (or vice versa).
+                    .id(snapshot.isRecentsMode)
                 }
                 .scrollIndicators(.hidden)
                 // Navigate ▸ Reveal in Sidebar (⇧⌘K). The model has already
@@ -416,7 +427,7 @@ struct HerdrSidebarView: View {
     }
 
     private var creationControls: some View {
-        HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 2) {
             if showsMachineChrome {
                 Menu {
                     ForEach(model.machines) { machine in
@@ -444,16 +455,14 @@ struct HerdrSidebarView: View {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("sidebar-new-pi-session")
 
-                Spacer(minLength: 0)
-
                 Menu {
                     ForEach(model.machines) { machine in
                         Button(machine.name) { presentCreateWorkspace(for: machine.id) }
+                            .disabled(!model.canControl(machineID: machine.id))
                     }
                 } label: {
-                    Label("New workspace", systemImage: "folder")
-                        .labelStyle(.iconOnly)
-                        .frame(width: 28, height: 28)
+                    Label("New workspace", systemImage: "folder.badge.plus")
+                        .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
                         .contentShape(.rect)
                 }
                 .menuIndicator(.hidden)
@@ -474,14 +483,12 @@ struct HerdrSidebarView: View {
                 )
                 .accessibilityIdentifier("sidebar-new-pi-session")
 
-                Spacer(minLength: 0)
-
-                Button("New workspace", systemImage: "folder") {
+                Button("New workspace", systemImage: "folder.badge.plus") {
                     presentCreateWorkspace(for: scopedMachineID)
                 }
-                .labelStyle(.iconOnly)
                 .buttonStyle(.plain)
-                .frame(width: 28, height: 28)
+                .disabled(!(scopedMachineID.map { model.canControl(machineID: $0) } ?? false))
+                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
                 .contentShape(.rect)
                 .help("New workspace")
                 .accessibilityIdentifier("sidebar-new-workspace")
@@ -521,6 +528,7 @@ struct HerdrSidebarView: View {
                 .accessibilityValue("\(snapshot.unreadCount)")
             ForEach(snapshot.unreadGroups) { group in
                 Text(priorityGroupTitle(group.workspace, showsMachineChrome: snapshot.showsMachineChrome))
+                    .contextMenu { workspaceMenu(group.workspace) }
                     .herdrFont(
                         size: SidebarMetrics.projectLabelSize,
                         weight: .semibold,
@@ -546,6 +554,7 @@ struct HerdrSidebarView: View {
                 .accessibilityValue("\(snapshot.starredCount)")
             ForEach(snapshot.starredGroups) { group in
                 Text(priorityGroupTitle(group.workspace, showsMachineChrome: snapshot.showsMachineChrome))
+                    .contextMenu { workspaceMenu(group.workspace) }
                     .herdrFont(
                         size: SidebarMetrics.projectLabelSize,
                         weight: .semibold,
@@ -750,6 +759,7 @@ struct HerdrSidebarView: View {
             Task { await model.createTab(in: workspace) }
         }
         .disabled(!model.canControl(machineID: workspace.machineID))
+        .accessibilityIdentifier("sidebar-workspace-new-tab-\(workspace.id)")
         Button("Smart Cleanup This Workspace…", systemImage: "sparkles") {
             model.cleanupPresenter.present(CleanupSheetTarget(
                 id: "\(workspace.machineID)|cleanup|\(workspace.workspaceID)",
@@ -1006,26 +1016,25 @@ struct HerdrSidebarView: View {
     private func chatRow(
         _ pane: HerdrPane, showingLastActivity: Bool = false, hierarchy: PiSessionTree.Row? = nil
     ) -> some View {
-        SidebarChatRow(
-            pane: pane,
-            recentContext: showingLastActivity ? recentContext(for: pane) : nil,
-            isSelected: pane.id == model.selectedPaneID,
-            isStarred: model.starredChatIDs.contains(pane.id),
-            isUnread: model.unreadPaneIDs.contains(pane.id),
-            hierarchy: hierarchy,
-            parentContext: (hierarchy?.depth ?? 0) == 0 ? parentContext(for: pane) : nil,
-            // Recents ages the very key it sorts on — including the
-            // `firstSeenAt` fallback — so the number on a row explains why the
-            // row sits where it does.
-            since: showingLastActivity
-                ? (pane.lastActivityAt ?? pane.firstSeenAt)
-                : statusSince(for: pane),
-            describesLastActivity: showingLastActivity,
-            action: { open(pane) },
-            toggleStar: { model.toggleStarredChat(pane.id) },
-            toggleChildren: (hierarchy?.childCount ?? 0) > 0 && query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? { model.toggleSidebarSession(pane) } : nil
-        )
+        SidebarLiveChatRow(model: model, paneID: pane.id) { pane in
+            SidebarChatRow(
+                pane: pane,
+                recentContext: showingLastActivity ? recentContext(for: pane) : nil,
+                isSelected: pane.id == model.selectedPaneID,
+                isStarred: model.starredChatIDs.contains(pane.id),
+                isUnread: model.unreadPaneIDs.contains(pane.id),
+                hierarchy: hierarchy,
+                parentContext: (hierarchy?.depth ?? 0) == 0 ? parentContext(for: pane) : nil,
+                since: showingLastActivity
+                    ? (pane.lastActivityAt ?? pane.firstSeenAt)
+                    : statusSince(for: pane),
+                describesLastActivity: showingLastActivity,
+                action: { open(pane) },
+                toggleStar: { model.toggleStarredChat(pane.id) },
+                toggleChildren: (hierarchy?.childCount ?? 0) > 0 && query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? { model.toggleSidebarSession(pane) } : nil
+            )
+        }
         .contextMenu {
             if let workspace = model.workspace(containing: pane), showingLastActivity || hierarchy?.workspaceLabel != nil {
                 Button("Open \(workspace.label) workspace", systemImage: "folder") {

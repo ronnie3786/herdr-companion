@@ -46,6 +46,8 @@ struct PaneSessionView: View {
     /// iOS hid the app tab bar on this screen. The Mac has no tab bar; the flag
     /// survives only so existing call sites keep compiling.
     var hidesAppTabBar = true
+    var preferredMode: PaneDetailMode?
+    var modeFocusRequest = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.herdrFontScale) private var fontScale
     @FocusState private var isTerminalFocused: Bool
@@ -152,6 +154,9 @@ struct PaneSessionView: View {
         .onAppear {
             autoSelectChatIfNeeded()
         }
+        .onChange(of: modeFocusRequest, initial: true) { _, _ in
+            if let preferredMode { focus(mode: preferredMode) }
+        }
         .onChange(of: currentPane.supportsPiSemanticChat) { _, supportsChat in
             if supportsChat {
                 autoSelectChatIfNeeded()
@@ -160,6 +165,9 @@ struct PaneSessionView: View {
             }
         }
         .onChange(of: gitAvailability) { _, availability in
+            if gitIsAvailable, preferredMode == .git {
+                focus(mode: .git)
+            }
             if availability == .unavailable, selectedMode == .git {
                 selectedMode = .terminal
             }

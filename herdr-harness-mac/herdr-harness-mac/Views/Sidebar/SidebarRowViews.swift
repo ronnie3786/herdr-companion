@@ -367,10 +367,9 @@ struct SidebarChatRow: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .top, spacing: 7) {
                 Text(pane.displayTitle)
-                    .herdrFont(size: 13, weight: .regular, relativeTo: .subheadline)
+                    .herdrFont(size: SidebarMetrics.chatLabelSize, relativeTo: .subheadline)
                     .foregroundStyle(HerdrTheme.text)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if isUnread {
                     Image(systemName: "circle.fill")
@@ -382,14 +381,17 @@ struct SidebarChatRow: View {
                 starControl
             }
             HStack(spacing: 4) {
-                Image(systemName: "desktopcomputer")
-                Text("\(context.machine) · \(context.workspace) › \(context.tab)")
+                Text("\(context.machine) · \(context.workspace)")
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .accessibilityLabel(context.accessibilityLabel)
+                Spacer(minLength: 4)
+                Label(pane.agentStatus.compactTitle, systemImage: pane.agentStatus.symbol)
+                    .foregroundStyle(SidebarTone.statusColor(for: pane.agentStatus))
+                    .fixedSize()
             }
             .herdrFont(size: 9, relativeTo: .caption2)
             .foregroundStyle(HerdrTheme.muted)
-            .accessibilityLabel(context.accessibilityLabel)
         }
     }
 

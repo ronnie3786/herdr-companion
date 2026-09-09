@@ -12,6 +12,9 @@ struct HerdrHudNotesStripView: View {
             switch notes.layout {
             case .hidden:
                 EmptyView()
+            case .icon:
+                HerdrNotesToggleButton(notes: notes)
+                    .transition(fadeTransition)
             case let .compact(count):
                 HerdrNoteCompactStackView(
                     notes: notes, count: count, maximumHeight: controller.compactNotesHeight,

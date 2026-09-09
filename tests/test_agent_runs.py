@@ -249,6 +249,16 @@ class AgentRunManagerTests(unittest.TestCase):
             clock=clock,
         )
 
+    def test_long_run_timeout_default_and_overrides(self):
+        for configured, expected in [(None, 3600), ("7200", 7200), ("600", 600), ("86400", 86400), ("999999", 3600)]:
+            with self.subTest(configured=configured), tempfile.TemporaryDirectory() as directory:
+                overrides = {} if configured is None else {"HERDR_HARNESS_AGENT_TIMEOUT_SECONDS": configured}
+                manager = self.manager(Path(directory), **overrides)
+                try:
+                    self.assertEqual(manager.timeout_seconds, expected)
+                finally:
+                    manager.stop()
+
     def test_list_models_parses_catalog_default_and_cache(self):
         with tempfile.TemporaryDirectory() as raw_directory:
             directory = Path(raw_directory)

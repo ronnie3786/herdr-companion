@@ -15,7 +15,8 @@ struct HerdrNoteCompactStackView: View {
     private var viewportHeight: CGFloat { min(naturalHeight, max(0, maximumHeight ?? naturalHeight)) }
 
     var body: some View {
-        VStack(spacing: HerdrHudPlacement.noteCompactBarSpacing) {
+        VStack(alignment: .trailing, spacing: HerdrHudPlacement.noteCompactBarSpacing) {
+            HerdrNotesToggleButton(notes: notes)
             Button(action: createNote) {
                 Label("New note", systemImage: "plus")
                     .herdrFont(.caption2, weight: .semibold)

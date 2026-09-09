@@ -47,7 +47,8 @@ struct HerdrHudPlacement: Equatable, Sendable {
     /// A fully revealed stack may still need one final `+N` row when more than
     /// `maxExpandedChips` sessions exist.
     static let maxCollapsedRows = maxExpandedChips + 1
-    enum NotesLayout: Equatable, Sendable { case hidden, compact(count: Int), rows(count: Int), card }
+    enum NotesLayout: Equatable, Sendable { case hidden, icon, compact(count: Int), rows(count: Int), card }
+    static let notesToggleSize: CGFloat = 44
     static let notesGap: CGFloat = 10
     static let notesWidth: CGFloat = 236
     static let noteRowHeight: CGFloat = 40
@@ -71,9 +72,11 @@ struct HerdrHudPlacement: Equatable, Sendable {
         switch layout {
         case .hidden:
             return .zero
+        case .icon:
+            return CGSize(width: notesToggleSize, height: notesToggleSize)
         case let .compact(count):
-            let k = max(count, 0) + 1 // Include the always-visible New note row.
-            return CGSize(width: noteCompactWidth, height: CGFloat(k) * noteCompactBarHeight + CGFloat(k - 1) * noteCompactBarSpacing)
+            let k = max(count, 0) + 1 // Include the New note row below the toggle.
+            return CGSize(width: noteCompactWidth, height: notesToggleSize + CGFloat(k) * (noteCompactBarHeight + noteCompactBarSpacing))
         case let .rows(count):
             let k = min(max(count, 0), maxNoteRows(isExpanded: isExpanded))
             return CGSize(width: notesWidth, height: noteCtaHeight + CGFloat(k) * (noteRowHeight + noteRowSpacing))

@@ -60,7 +60,12 @@ struct WorkspaceNavigationView: View {
         // picker translates — but the switch still has to name it.
         case .session, .git:
             if let pane = model.pane(id: model.selectedPaneID) {
-                PaneSessionView(model: model, pane: pane, modelFavorites: modelFavorites)
+                PaneSessionView(
+                    model: model, pane: pane, modelFavorites: modelFavorites,
+                    preferredMode: shell.detailScope == .git ? .git
+                        : (pane.supportsPiSemanticChat ? .chat : .terminal),
+                    modeFocusRequest: shell.paneModeFocusRequest
+                )
                     .id(pane.id)
             } else {
                 placeholder(
@@ -262,25 +267,6 @@ struct WorkspaceNavigationView: View {
             set: { scope in
                 guard let scope = scope,
                       HerdrDetailScope.pickerSelection(for: scope) != nil else { return }
-                if scope == .git {
-                    // `selectedMode` belongs to whichever session is mounted, so
-                    // the picker posts the same command the View menu does.
-                    shell.show(.session, model: model)
-                    NotificationCenter.default.post(
-                        name: .herdrFocusPaneMode,
-                        object: PaneDetailMode.git
-                    )
-                    return
-                }
-                // Leaving Git returns the pane to its primary surface, which is
-                // what the old header toggle's "Back to chat" did.
-                if model.currentPaneDetailMode == .git, scope == .session {
-                    let supportsChat = model.pane(id: model.selectedPaneID)?.supportsPiSemanticChat == true
-                    NotificationCenter.default.post(
-                        name: .herdrFocusPaneMode,
-                        object: supportsChat ? PaneDetailMode.chat : PaneDetailMode.terminal
-                    )
-                }
                 shell.show(scope, model: model)
             }
         )

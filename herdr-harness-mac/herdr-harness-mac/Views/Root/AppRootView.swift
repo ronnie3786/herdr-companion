@@ -6,9 +6,7 @@ import SwiftUI
 /// the workspace overview that only iPad ever showed as a middle column.
 enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
     case session
-    /// Picker-only. Git is a *pane* sub-mode, not a window destination, so this
-    /// case never lands in `detailScope` — the picker translates it into a
-    /// `.herdrFocusPaneMode` post and reads it back off the mounted session.
+    /// Git shares the mounted pane with Chat, but is a distinct history stop.
     case git
     case workspace
     case activeWork
@@ -80,6 +78,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
 @Observable
 final class HerdrShellState {
     var detailScope: HerdrDetailScope = .session
+    private(set) var paneModeFocusRequest = 0
     var isCreatingWorkspace = false
     var isAgentPresented = false
     /// Navigate ▸ Jump to Pane…. A pasted reference, not a picker: the ids
@@ -131,6 +130,15 @@ final class HerdrShellState {
     /// dead.
     func showSession() {
         detailScope = .session
+        paneModeFocusRequest &+= 1
+    }
+
+    func selectedPaneDidChange(model: HerdrAppModel) {
+        guard let paneID = model.selectedPaneID else { return }
+        // Preserve an explicit history replay to Git. External pane routes
+        // from every other screen still bring the primary session forward.
+        guard detailScope != .git || history.current != .git(paneID) else { return }
+        showSession()
     }
 
     func showActiveWork() {
@@ -157,6 +165,7 @@ final class HerdrShellState {
     /// Scope-only destinations (Active Work, Fleet, Attention, and Activity).
     func show(_ scope: HerdrDetailScope, model: HerdrAppModel) {
         detailScope = scope
+        paneModeFocusRequest &+= 1
         recordVisit(for: model)
     }
 
@@ -189,7 +198,8 @@ final class HerdrShellState {
     /// (`WorkspaceNavigationView.scopeSelection`).
     func currentDestination(for model: HerdrAppModel) -> HerdrDestination? {
         switch resolvedScope(for: model) {
-        case .session, .git: model.selectedPaneID.map(HerdrDestination.pane)
+        case .session, .git:
+            model.selectedPaneID.map { detailScope == .git ? .git($0) : .pane($0) }
         case .workspace: model.selectedWorkspaceID.map(HerdrDestination.workspace)
         case .activeWork: .activeWork
         case .fleet: .fleet
@@ -262,10 +272,14 @@ final class HerdrShellState {
     /// Applies a remembered destination WITHOUT recording it — otherwise every
     /// Back would push a new entry and Forward could never be reached.
     private func apply(_ destination: HerdrDestination, model: HerdrAppModel) {
+        paneModeFocusRequest &+= 1
         switch destination {
         case let .pane(id):
             detailScope = .session
             model.openPane(id: id)          // clears alerts + repairs selectedWorkspaceID
+        case let .git(id):
+            model.openPane(id: id)
+            detailScope = .git
         case let .workspace(id):
             model.selectedWorkspaceID = id
             model.selectedPaneID = nil      // mirrors showWorkspace(id:model:)
@@ -280,7 +294,7 @@ final class HerdrShellState {
 
     private func isAlive(_ destination: HerdrDestination, model: HerdrAppModel) -> Bool {
         switch destination {
-        case let .pane(id): model.pane(id: id) != nil
+        case let .pane(id), let .git(id): model.pane(id: id) != nil
         case let .workspace(id): model.workspace(id: id) != nil
         case .activeWork, .fleet, .attention, .activity: true
         }
@@ -418,10 +432,8 @@ struct AppRootView: View {
                 openURL(url)
             }
         }
-        .onChange(of: model.selectedPaneID) { _, newValue in
-            // Opening a pane — from the sidebar, a deep link, or a notification
-            // tap — always brings the session back to the front.
-            if newValue != nil { shell.detailScope = .session }
+        .onChange(of: model.selectedPaneID) { _, _ in
+            shell.selectedPaneDidChange(model: model)
         }
         // Panes close and machines drop; a Back button that offers a dead id and
         // then no-ops is worse than one that is greyed out. `repairNavigation`

@@ -188,6 +188,7 @@ final class HerdrHudNotesState {
     private(set) var notes: [HerdrNote] = []
     private(set) var openNoteID: UUID?
     private(set) var isVisible = true
+    private(set) var isListExpanded = false
     private(set) var isHovering = false
     var isHudExpanded = false {
         didSet {
@@ -471,11 +472,20 @@ final class HerdrHudNotesState {
         flushPersistence()
     }
 
+    func toggleList() {
+        isListExpanded.toggle()
+        if !isListExpanded { closeNote() }
+        refreshLayout()
+    }
+
     /// Visibility is presentation only. Stored notes and sync keep running.
     func setVisible(_ visible: Bool) {
         guard isVisible != visible else { return }
         isVisible = visible
-        if !visible { closeNote() }
+        if !visible {
+            isListExpanded = false
+            closeNote()
+        }
         refreshLayout()
     }
 
@@ -663,7 +673,7 @@ final class HerdrHudNotesState {
         } else if let openNoteID, notes.contains(where: { $0.id == openNoteID }) {
             next = .card
         } else {
-            next = .compact(count: notes.count)
+            next = isListExpanded ? .compact(count: notes.count) : .icon
         }
         if next != layout { layout = next }
     }

@@ -341,7 +341,7 @@ struct HerdrHudControllerTests {
         harness.controller.setEnabled(true)
         #expect(harness.notes.layout == .hidden)
         harness.controller.setNotesVisible(true)
-        #expect(harness.notes.layout == .compact(count: 1))
+        #expect(harness.notes.layout == .icon)
         #expect(HerdrHudController(userDefaults: harness.defaults).areNotesVisible)
     }
 

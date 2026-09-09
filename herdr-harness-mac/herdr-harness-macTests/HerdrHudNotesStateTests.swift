@@ -48,38 +48,42 @@ struct FakeNoteError: LocalizedError { let message: String; var errorDescription
 @Suite("Herdr HUD notes")
 @MainActor
 struct HerdrHudNotesStateTests {
-    @Test("Creating and closing notes derives the expected layouts")
+    @Test("Creating and closing notes returns to the single icon")
     func createsAndClosesNotes() async throws {
         let harness = await makeHarness()
-        #expect(harness.state.layout == .compact(count: 0))
+        #expect(harness.state.layout == .icon)
         let id = harness.state.createNote()
         #expect(harness.state.openNoteID == id)
         #expect(harness.state.notes.first?.id == id)
         #expect(harness.state.layout == .card)
         harness.state.isHudExpanded = true
         harness.state.closeNote()
-        #expect(harness.state.layout == .compact(count: 1))
+        #expect(harness.state.layout == .icon)
     }
 
-    @Test("Hover and HUD expansion keep unopened notes compact")
+    @Test("Only the Notes toggle expands the list; hover and HUD expansion do not")
     func hoverAndExpansionLayouts() async throws {
         let harness = await makeHarness()
         let id = harness.state.createNote()
         harness.state.closeNote()
-        #expect(harness.state.layout == .compact(count: 1))
         harness.state.setHovering(true)
         try await Task.sleep(for: .milliseconds(20))
-        #expect(harness.state.layout == .compact(count: 1))
+        #expect(harness.state.layout == .icon)
         harness.state.setHovering(false)
-        try await Task.sleep(for: .milliseconds(20))
-        #expect(harness.state.layout == .compact(count: 1))
         harness.state.isHudExpanded = true
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(harness.state.layout == .icon)
+        harness.state.toggleList()
         #expect(harness.state.layout == .compact(count: 1))
         harness.state.openNote(id)
         #expect(harness.state.layout == .card)
         harness.state.closeNote()
         #expect(harness.state.layout == .compact(count: 1))
+        harness.state.toggleList()
+        #expect(harness.state.layout == .icon)
+        #expect(harness.state.notes.count == 1)
         harness.state.deleteNote(id)
+        harness.state.toggleList()
         #expect(harness.state.layout == .compact(count: 0))
     }
 
@@ -229,7 +233,7 @@ struct HerdrHudNotesStateTests {
         #expect(!harness.state.isBusy(id))
         #expect(harness.state.noteErrors[id] == nil)
         #expect(harness.state.celebratingNoteID == nil)
-        #expect(harness.state.layout == .compact(count: 0))
+        #expect(harness.state.layout == .icon)
     }
 
     @Test("Only ready or failed actions run; failed actions are reset")

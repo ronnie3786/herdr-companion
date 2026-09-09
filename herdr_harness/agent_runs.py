@@ -416,7 +416,7 @@ class AgentRunManager:
             _bounded_int(self.environ, "HERDR_HARNESS_AGENT_MAX_CONCURRENT", 2, 1, 8)
         )
         self.timeout_seconds = _bounded_int(
-            self.environ, "HERDR_HARNESS_AGENT_TIMEOUT_SECONDS", 600, 1, 3600
+            self.environ, "HERDR_HARNESS_AGENT_TIMEOUT_SECONDS", 3600, 1, 86400
         )
         self.ttl_seconds = _bounded_int(
             self.environ, "HERDR_HARNESS_AGENT_TTL_SECONDS", 86400, 60, 30 * 86400

@@ -62,6 +62,40 @@ struct ShellNavigationHistoryTests {
         }
     }
 
+    @Test("Chat and Git on the same pane are separate Back and Forward stops")
+    func segmentSwitchesRecordHistory() throws {
+        try withModel { model, shell, firstPane, secondPane, _, _ in
+            shell.openPane(id: firstPane.id, model: model)
+            shell.show(.git, model: model)
+            #expect(shell.history.current == .git(firstPane.id))
+            #expect(shell.goBack(model: model))
+            #expect(shell.detailScope == .session)
+            #expect(model.selectedPaneID == firstPane.id)
+            #expect(shell.goForward(model: model))
+            #expect(shell.detailScope == .git)
+            shell.openPane(id: secondPane.id, model: model)
+            #expect(shell.goBack(model: model))
+            #expect(shell.detailScope == .git)
+            #expect(model.selectedPaneID == firstPane.id)
+            shell.selectedPaneDidChange(model: model)
+            #expect(shell.detailScope == .git)
+            #expect(NavigationHistory(snapshot: shell.history.snapshot) == shell.history)
+            shell.show(.activity, model: model)
+            #expect(!shell.canGoForward)
+        }
+    }
+
+    @Test("External pane selection still leaves scope-only destinations")
+    func externalPaneSelectionShowsSession() throws {
+        try withModel { model, shell, firstPane, secondPane, _, _ in
+            shell.openPane(id: firstPane.id, model: model)
+            shell.show(.fleet, model: model)
+            model.openPane(id: secondPane.id)
+            shell.selectedPaneDidChange(model: model)
+            #expect(shell.detailScope == .session)
+        }
+    }
+
     @Test("Re-opening the pane already on screen records nothing")
     func reopeningCurrentPaneIsDeduplicated() throws {
         try withModel { model, shell, firstPane, _, _, _ in

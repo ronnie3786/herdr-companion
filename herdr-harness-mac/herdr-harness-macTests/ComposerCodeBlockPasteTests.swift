@@ -29,4 +29,33 @@ struct ComposerCodeBlockPasteTests {
         #expect(ComposerCodeBlockPaste.paste(into: &draft, pasteboard: board))
         #expect(draft == "Review this:\n```\nlet safe = true\n```")
     }
+
+    @MainActor
+    @Test("More popover paste preserves the originating editor selection")
+    func retainedSelection() throws {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        board.setString("code", forType: .string)
+        let editor = NSTextView()
+        editor.string = "before old after"
+        editor.setSelectedRange(NSRange(location: 7, length: 3))
+        var draft = editor.string
+        let selection = try #require(ComposerCodeBlockPaste.EditorSelection(editor: editor, draft: draft))
+        // Closing a field editor or opening a popover can move its selection.
+        editor.setSelectedRange(NSRange(location: 0, length: 0))
+        #expect(ComposerCodeBlockPaste.paste(into: &draft, pasteboard: board, selection: selection))
+        #expect(draft == "before \n```\ncode\n```\n after")
+        #expect(editor.string == draft)
+    }
+
+    @MainActor
+    @Test("Retained paste destination cannot overwrite a changed draft")
+    func staleSelection() throws {
+        let editor = NSTextView()
+        editor.string = "original"
+        let selection = try #require(ComposerCodeBlockPaste.EditorSelection(editor: editor, draft: editor.string))
+        #expect(selection.destination(for: "new draft") == nil)
+        editor.string = "another field"
+        #expect(selection.destination(for: "original") == nil)
+    }
 }

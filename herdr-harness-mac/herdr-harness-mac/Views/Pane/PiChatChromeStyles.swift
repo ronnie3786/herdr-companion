@@ -2,7 +2,7 @@ import SwiftUI
 
 /// macOS chrome for the Pi chat surface.
 ///
-/// AppKit's stock controls would punch straight through the flat Catppuccin
+/// AppKit's stock controls would punch straight through the quiet, flat
 /// cards these views draw for themselves: `DisclosureGroup` puts a triangle on
 /// the leading edge and indents the label away from the card's icon column,
 /// `Menu` wraps the capsule chip in a bordered pull-down, and a plain `Button`
@@ -57,7 +57,7 @@ struct PiDisclosureCard<Label: View, Content: View>: View {
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                         .accessibilityHidden(true)
                 }
-                .frame(minHeight: HerdrTheme.minHitTarget)
+                .frame(minHeight: PiChatChrome.controlHeight)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -124,7 +124,7 @@ private struct PiChatButtonBody: View {
 
     private var fill: Color {
         switch emphasis {
-        case .soft: tint.opacity(isHovering && isEnabled ? 0.24 : 0.16)
+        case .soft: tint.opacity(isHovering && isEnabled ? 0.16 : 0.08)
         case .prominent: tint.opacity(isHovering && isEnabled ? 1 : 0.9)
         case .text: .clear
         }
@@ -132,7 +132,7 @@ private struct PiChatButtonBody: View {
 
     private var stroke: Color {
         switch emphasis {
-        case .soft: tint.opacity(0.34)
+        case .soft: HerdrTheme.separator
         case .prominent, .text: .clear
         }
     }

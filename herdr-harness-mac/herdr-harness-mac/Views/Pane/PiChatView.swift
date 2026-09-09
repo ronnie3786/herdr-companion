@@ -71,16 +71,17 @@ struct PiChatView: View {
             )
             .equatable()
             .id(paneID)
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
-            .padding(.bottom, 10)
-            .background(.ultraThinMaterial)
+            .padding(.horizontal, HerdrTheme.pagePadding)
+            .padding(.top, 10)
+            .padding(.bottom, 14)
+            .background(HerdrTheme.graphite)
             .overlay(alignment: .top) {
                 Rectangle()
-                    .fill(HerdrTheme.surface.opacity(0.55))
+                    .fill(HerdrTheme.separator)
                     .frame(height: 1)
             }
         }
+        .background(HerdrTheme.graphite)
         // Read acknowledgement belongs to explicit session navigation and
         // interaction in PaneSessionView. A mounted chat, incoming document,
         // or completed response alone does not mean the user has read it.

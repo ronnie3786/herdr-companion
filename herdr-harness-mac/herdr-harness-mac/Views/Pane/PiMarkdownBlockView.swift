@@ -44,15 +44,15 @@ struct PiMarkdownBlockView: View {
                 .padding(.leading, 14)
                 .overlay(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(HerdrTheme.mauve.opacity(0.72))
-                    .frame(width: 3)
+                    .fill(HerdrTheme.accent.opacity(0.5))
+                    .frame(width: 2)
                     .accessibilityHidden(true)
                 }
         case let .table(_, table):
             PiMarkdownTableView(table: table)
         case .thematicBreak:
             Rectangle()
-                .fill(HerdrTheme.surface.opacity(0.82))
+                .fill(HerdrTheme.separator)
                 .frame(height: 1)
                 .padding(.vertical, 10)
                 .accessibilityHidden(true)

@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Collapses a contiguous run of Pi's sub-process activity, thinking and
-/// tool/command invocations, behind one "Clanking…" row, so consecutive
+/// tool/command invocations, behind one "Working…" row, so consecutive
 /// assistant messages read as a conversation instead of a machine log.
 /// Collapsed by default; the individual `PiThinkingDisclosureView` /
 /// `PiToolCardView` cards inside keep their own per-card disclosure.
@@ -28,8 +28,8 @@ struct PiWorkingGroupView: View {
             label
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
+        .padding(.vertical, 4)
+        .background(HerdrTheme.elevated.opacity(0.35), in: RoundedRectangle(cornerRadius: HerdrTheme.compactRadius))
         .animation(PiChatMotion.disclosureAnimation(reduceMotion: reduceMotion), value: isExpanded)
         .animation(PiChatMotion.stateAnimation(reduceMotion: reduceMotion), value: group.isLive)
         .onChange(of: isExpanded) { _, expanded in
@@ -61,7 +61,7 @@ struct PiWorkingGroupView: View {
             .frame(width: 18, height: 18)
             .accessibilityHidden(true)
 
-            Text(group.isLive ? "Clanking…" : "Clanking")
+            Text(group.isLive ? "Working…" : "Activity")
                 .herdrFont(.caption, weight: .semibold)
                 .foregroundStyle(HerdrProse.dimmed(HerdrTheme.mist))
                 .contentTransition(.opacity)
@@ -88,6 +88,6 @@ struct PiWorkingGroupView: View {
     }
 
     private var accessibilityLabel: String {
-        (group.isLive ? "Clanking, " : "Clanked, ") + summary
+        (group.isLive ? "Activity, " : "Activity, ") + summary
     }
 }

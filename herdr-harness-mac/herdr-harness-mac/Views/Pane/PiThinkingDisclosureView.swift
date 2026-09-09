@@ -44,8 +44,8 @@ struct PiThinkingDisclosureView: View {
         }
         // This padding sits outside the header button, so that band is deliberately not clickable.
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(HerdrTheme.elevated.opacity(0.46), in: RoundedRectangle(cornerRadius: 11))
+        .padding(.vertical, 4)
+        .background(HerdrTheme.elevated.opacity(0.35), in: RoundedRectangle(cornerRadius: HerdrTheme.compactRadius))
         .animation(PiChatMotion.disclosureAnimation(reduceMotion: reduceMotion), value: isExpanded)
         .animation(PiChatMotion.stateAnimation(reduceMotion: reduceMotion), value: block.isStreaming)
         .onChange(of: isExpanded) { _, expanded in

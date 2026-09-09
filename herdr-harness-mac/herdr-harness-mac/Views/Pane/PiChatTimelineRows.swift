@@ -168,7 +168,7 @@ enum PiTimelineMetrics {
     static let railWidth: CGFloat = 10
     static let railSpacing: CGFloat = 12
     static let itemSpacing: CGFloat = 13
-    static let dotSize: CGFloat = 7
+    static let dotSize: CGFloat = 5
 }
 
 /// A single timeline row: its content, offset past the rail, with the rail
@@ -249,7 +249,7 @@ struct PiTimelineRailSegment: View {
             }
 
             Rectangle()
-                .fill(lineGradient)
+                .fill(HerdrTheme.separator)
                 .frame(width: 1)
                 .frame(maxHeight: .infinity)
 
@@ -260,16 +260,6 @@ struct PiTimelineRailSegment: View {
             }
         }
         .accessibilityHidden(true)
-    }
-
-    private var lineGradient: LinearGradient {
-        let colors: [Color]
-        if rail.hasTool {
-            colors = [HerdrTheme.accent.opacity(0.55), HerdrTheme.mauve.opacity(0.7), HerdrTheme.signal.opacity(0.62)]
-        } else {
-            colors = [HerdrTheme.accent.opacity(0.48), HerdrTheme.mauve.opacity(0.4), HerdrTheme.success.opacity(0.52)]
-        }
-        return LinearGradient(colors: colors, startPoint: .top, endPoint: .bottom)
     }
 
     private var terminalColor: Color {

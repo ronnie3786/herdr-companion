@@ -20,6 +20,8 @@ struct PiAssistantMessageView: View {
             block.text,
             label: "Copy response",
             identifier: "pi-assistant-copy-\(block.id)",
+            inset: 0,
+            offset: CGSize(width: 24, height: 0),
             isEnabled: block.status != .streaming
         )
     }

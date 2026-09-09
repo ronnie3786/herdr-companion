@@ -12,7 +12,7 @@ struct PiCopyButton: View {
     let text: String
     var label: String
     var accessibilityIdentifier: String?
-    var restingOpacity: Double = 0.35
+    var restingOpacity: Double = 0.75
 
     @State private var copied = false
 

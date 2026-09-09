@@ -53,19 +53,20 @@ struct HerdrHudModelChip: View {
 
     private var chipLabel: some View {
         HStack(spacing: 4) {
-            Image(systemName: isLoading ? "hourglass" : "cpu")
+            if isLoading {
+                ProgressView().controlSize(.small)
+            }
             Text(selectedDisplayName)
                 .lineLimit(1)
                 .truncationMode(.middle)
-            Image(systemName: "chevron.up.chevron.down")
+            Image(systemName: "chevron.down")
                 .herdrFont(.caption2)
         }
-        .herdrFont(.caption, weight: .semibold)
-        .foregroundStyle(HerdrTheme.accent)
-        .padding(.horizontal, 10)
-        .frame(minHeight: 36)
-        .background(HerdrTheme.elevated)
-        .clipShape(.capsule)
+        .herdrFont(.caption, weight: .medium)
+        .foregroundStyle(HerdrTheme.mist)
+        .padding(.horizontal, 4)
+        .frame(minHeight: 30)
+        .contentShape(.rect(cornerRadius: HerdrTheme.compactRadius))
     }
 
 }

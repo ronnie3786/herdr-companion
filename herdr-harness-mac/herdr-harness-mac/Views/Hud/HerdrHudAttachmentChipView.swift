@@ -13,16 +13,16 @@ struct HerdrHudAttachmentChipView: View {
             thumbnail
             VStack(alignment: .leading, spacing: 0) {
                 Text(attachment.filename)
-                    .herdrFont(.caption2, monospaced: true)
+                    .herdrFont(.caption2)
                     .foregroundStyle(HerdrTheme.mist)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(Int64(attachment.byteCount).formatted(.byteCount(style: .file)))
-                    .herdrFont(.caption2, monospaced: true)
+                    .herdrFont(.caption2)
                     .foregroundStyle(HerdrTheme.muted)
             }
             Button(action: remove) {
-                Image(systemName: "xmark.circle.fill")
+                Image(systemName: "xmark")
                     .foregroundStyle(HerdrTheme.muted)
                     .herdrHitTarget()
             }

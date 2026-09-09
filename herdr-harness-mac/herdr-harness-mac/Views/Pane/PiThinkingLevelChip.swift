@@ -41,23 +41,20 @@ struct PiThinkingLevelChip: View {
             if isSetting {
                 ProgressView()
                     .controlSize(.small)
-            } else {
-                Image(systemName: "brain")
             }
             Text(displayText)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
             if isInteractive {
-                Image(systemName: "chevron.up.chevron.down")
+                Image(systemName: "chevron.down")
                     .herdrFont(.caption2)
             }
         }
-        .herdrFont(.caption, weight: .semibold)
-        .foregroundStyle(isInteractive ? HerdrTheme.accent : HerdrTheme.mist)
-        .padding(.horizontal, 10)
-        .frame(minHeight: 36)
-        .background(HerdrTheme.elevated)
-        .clipShape(.capsule)
+        .herdrFont(.caption, weight: .medium)
+        .foregroundStyle(isInteractive ? HerdrTheme.mist : HerdrTheme.muted)
+        .padding(.horizontal, 4)
+        .frame(minHeight: 30)
+        .contentShape(.rect(cornerRadius: HerdrTheme.compactRadius))
         .opacity(isInteractive && !isEnabled ? 0.45 : 1)
     }
 

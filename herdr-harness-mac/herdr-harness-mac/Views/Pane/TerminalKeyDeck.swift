@@ -15,9 +15,8 @@ enum ComposerDeckMetrics {
 /// composer, which is exactly when you cannot reach the terminal's own key
 /// routing.
 ///
-/// Mac layout: one row, not two. The composer no longer hides half these keys
-/// behind a latch, so the caller passes whichever keys fit and pushes the rest
-/// into `overflow`, where they become a compact menu.
+/// Mounted by the composer's Terminal keys toggle. The caller picks the fit
+/// and keeps every key reachable through an overflow menu at narrow widths.
 struct TerminalKeyDeck: View {
     @Bindable var model: HerdrAppModel
     let pane: HerdrPane
@@ -58,19 +57,19 @@ struct TerminalKeyDeck: View {
                     Image(systemName: key.systemImage)
                 }
             }
-            .herdrFont(.caption, monospaced: true, weight: .bold)
+            .herdrFont(.caption, weight: .medium)
             .lineLimit(1)
             .minimumScaleFactor(0.72)
             .frame(maxWidth: .infinity, minHeight: ComposerDeckMetrics.controlHeight)
             .padding(.horizontal, showsLabels ? 6 : 10)
             .contentShape(.rect)
         }
-        .foregroundStyle(HerdrTheme.text)
+        .foregroundStyle(HerdrTheme.mist)
         .background(HerdrTheme.elevated)
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
                 .strokeBorder(
-                    hoveredKey == key ? HerdrTheme.accent.opacity(0.5) : HerdrTheme.surface,
+                    hoveredKey == key ? HerdrTheme.accent.opacity(0.5) : HerdrTheme.separator,
                     lineWidth: 1
                 )
         }
@@ -102,18 +101,18 @@ struct TerminalKeyDeck: View {
             }
         } label: {
             Image(systemName: "ellipsis")
-                .herdrFont(.caption, monospaced: true, weight: .bold)
+                .herdrFont(.caption, weight: .medium)
                 .frame(minWidth: 26, minHeight: ComposerDeckMetrics.controlHeight)
                 .contentShape(.rect)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .buttonStyle(.plain)
-        .foregroundStyle(HerdrTheme.text)
+        .foregroundStyle(HerdrTheme.mist)
         .background(HerdrTheme.elevated)
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                .strokeBorder(HerdrTheme.surface, lineWidth: 1)
+                .strokeBorder(HerdrTheme.separator, lineWidth: 1)
         }
         .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
         .disabled(!model.canControl)

@@ -16,12 +16,9 @@ enum ComposerToolRowFit: Equatable, Sendable {
 /// The shared prompt composer, hosted by both the terminal pane and Pi chat.
 ///
 /// Mac notes:
-/// - The chevron latch is gone. It existed on iOS to trade the software
-///   keyboard for the tool deck; a Mac has neither the keyboard to hide nor the
-///   width problem that justified hiding anything. The auxiliary tools and the
-///   terminal keys now share one always-visible row *above* the input, so the
-///   thing you type into is the bottom-most, closest-to-hand element and the
-///   tools never move.
+/// - The prompt and its primary actions share one quiet input surface. More
+///   opens the secondary tools; terminal keys remain available behind their
+///   own toggle without competing with the conversation at rest.
 /// - Return sends. Shift/Option/Command+Return all break the line, so a
 ///   multi-line prompt never depends on remembering which one this app chose.
 ///   `ComposerReturnKeyRouter` owns that table; `onKeyPress` and `onSubmit`
@@ -55,6 +52,9 @@ struct PromptComposerView: View {
     @State private var isShowingVoiceRecorder = false
     @State private var isShowingFileSearch = false
     @State private var isShowingJira = false
+    @State private var isShowingMoreTools = false
+    @State private var moreToolsSelection: ComposerCodeBlockPaste.EditorSelection?
+    @State private var showsTerminalKeys = false
     @State private var isDropTargeted = false
     @State private var disposition: PiPromptDisposition = .prompt
     @State private var hapticPulse = HerdrHapticPulse()
@@ -129,18 +129,12 @@ struct PromptComposerView: View {
                 )
             }
 
-            if quickVoiceCapture.phase == .locked {
-                Text("recording locked · tap mic to finish")
-                    .herdrFont(.caption, monospaced: true, weight: .semibold)
-                    .foregroundStyle(HerdrTheme.alert)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(HerdrTheme.alert.opacity(0.16))
-                    .clipShape(.capsule)
+            voiceCaptureStatus
+
+            if showsTerminalKeys {
+                composerToolRow
                     .transition(semanticControlTransition)
             }
-
-            composerToolRow
 
             composerRow
         }
@@ -154,6 +148,7 @@ struct PromptComposerView: View {
         )
         .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: quickVoiceCapture.phase)
         .animation(reduceMotion ? nil : .snappy(duration: 0.16), value: skillsPalette.isVisible)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: showsTerminalKeys)
         .overlay(alignment: .topLeading) {
             if skillsPalette.isVisible {
                 // Floats above the whole composer instead of pushing it down:
@@ -190,6 +185,11 @@ struct PromptComposerView: View {
         }
         .onChange(of: quickVoiceCapture.phase) { _, phase in
             isLockPulsing = phase == .locked
+            if phase == .transcribing {
+                // Keep the hold gesture mounted until release, then return the
+                // key window to the prompt before inserting the transcription.
+                isShowingMoreTools = false
+            }
             if phase == .idle {
                 isCTACapture = false
             }
@@ -309,77 +309,173 @@ struct PromptComposerView: View {
     }
 
     private var composerRow: some View {
-        HStack(alignment: .bottom, spacing: 8) {
+        VStack(spacing: 0) {
             composerInput
+            HStack(spacing: 8) {
+                Button {
+                    isShowingFileImporter = true
+                } label: {
+                    Image(systemName: "paperclip")
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(HerdrTheme.mist)
+                .help("Attach files to this prompt")
+                .accessibilityLabel("Attach a file")
+                .accessibilityIdentifier("composer-attach-file")
 
-            trailingComposerButton
+                moreToolsButton
+
+                Spacer(minLength: 4)
+
+                Button {
+                    showsTerminalKeys.toggle()
+                } label: {
+                    Label("Terminal keys", systemImage: "keyboard")
+                        .herdrFont(.caption)
+                        .frame(minHeight: 32)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(showsTerminalKeys ? HerdrTheme.accent : HerdrTheme.muted)
+                .help(showsTerminalKeys ? "Hide terminal keys" : "Show keys to control the terminal while typing")
+                .accessibilityLabel("Terminal keys")
+                .accessibilityValue(showsTerminalKeys ? "Expanded" : "Collapsed")
+                .accessibilityIdentifier("composer-terminal-keys-toggle")
+
+                trailingComposerButton
+            }
+            .padding(.horizontal, 10)
+            .padding(.bottom, 9)
+        }
+        .background(HerdrTheme.input)
+        .overlay {
+            RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
+                .strokeBorder(composerInputBorder, lineWidth: 1)
+        }
+        .clipShape(.rect(cornerRadius: HerdrTheme.cardRadius))
+    }
+
+    private var moreToolsButton: some View {
+        Button {
+            if !isShowingMoreTools {
+                moreToolsSelection = ComposerCodeBlockPaste.captureSelection(for: draft)
+            }
+            isShowingMoreTools.toggle()
+        } label: {
+            Label("More", systemImage: "ellipsis")
+                .herdrFont(.caption)
+                .frame(minHeight: 32)
+                .padding(.horizontal, 6)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isShowingMoreTools ? HerdrTheme.text : HerdrTheme.mist)
+        .help("Voice, code, workspace files and Jira context")
+        .accessibilityLabel("More prompt tools")
+        .accessibilityValue(isShowingMoreTools ? "Expanded" : "Collapsed")
+        .accessibilityIdentifier("composer-more-tools")
+        .popover(isPresented: $isShowingMoreTools, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Prompt tools")
+                    .herdrFont(.headline, weight: .semibold)
+                    .foregroundStyle(HerdrTheme.text)
+                ComposerAuxiliaryBar(
+                    attach: { isShowingFileImporter = true },
+                    recordVoice: {
+                        isShowingMoreTools = false
+                        isShowingVoiceRecorder = true
+                    },
+                    searchFiles: {
+                        isShowingMoreTools = false
+                        isShowingFileSearch = true
+                    },
+                    chooseJira: {
+                        isShowingMoreTools = false
+                        isShowingJira = true
+                    },
+                    voicePhase: quickVoiceCapture.phase,
+                    beginVoiceHold: beginQuickVoiceCapture,
+                    endVoiceHold: finishQuickVoiceCapture,
+                    finishLockedVoiceCapture: finishLockedQuickVoiceCapture,
+                    pasteCodeBlock: {
+                        isShowingMoreTools = false
+                        pasteCodeBlock()
+                    },
+                    showsTitles: true,
+                    showsAttach: false,
+                    isVertical: true,
+                    canPasteCode: !isSubmitting && canControl && !isPiCompacting
+                )
+                Text("Click Voice for a note. Hold to dictate, and keep holding to lock recording.")
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(16)
+            .frame(width: 270)
+            .background(HerdrTheme.elevated)
         }
     }
 
-    /// Tools left, terminal keys right, one hairline between them — always
-    /// visible, in both chat and terminal modes, because the keys route through
-    /// send-keys either way.
-    ///
-    /// The fit is decided for the row as a whole and degrades in that order:
-    /// drop the tool titles, then the key labels, then fold the four
-    /// second-tier keys into an overflow menu. Only the narrowest windows ever
-    /// see the last step.
+    @ViewBuilder
+    private var voiceCaptureStatus: some View {
+        if quickVoiceCapture.phase == .locked {
+            HStack(spacing: 8) {
+                Label("Recording locked", systemImage: "mic.fill")
+                    .foregroundStyle(HerdrTheme.alert)
+                Spacer()
+                Button("Finish dictation", action: finishLockedQuickVoiceCapture)
+                    .buttonStyle(PiChatButtonStyle(tint: HerdrTheme.alert, emphasis: .text))
+                    .accessibilityIdentifier("composer-finish-dictation")
+            }
+            .herdrFont(.caption)
+            .transition(semanticControlTransition)
+        } else if quickVoiceCapture.phase == .transcribing {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Transcribing dictation…")
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.mist)
+                Spacer()
+            }
+            .accessibilityElement(children: .combine)
+            .transition(semanticControlTransition)
+        }
+    }
+
+    /// Mounted only on request. Narrow windows retain every key in the
+    /// existing overflow menu, and keyboard routing itself is unchanged.
     private var composerToolRow: some View {
         Group {
             switch toolRowFit {
             case .automatic:
                 ViewThatFits(in: .horizontal) {
-                    toolRow(showsToolTitles: true, showsKeyLabels: true)
-                    toolRow(showsToolTitles: false, showsKeyLabels: true)
-                    toolRow(showsToolTitles: false, showsKeyLabels: false)
-                    toolRow(
-                        showsToolTitles: false,
-                        showsKeyLabels: false,
+                    keyRow(showsLabels: true)
+                    keyRow(showsLabels: false)
+                    keyRow(
+                        showsLabels: false,
                         keys: TerminalPresetKey.primaryRow,
                         overflow: TerminalPresetKey.secondaryRow
                     )
                 }
             case .pinnedWidest:
-                toolRow(showsToolTitles: true, showsKeyLabels: true)
+                keyRow(showsLabels: true)
             }
         }
         .accessibilityIdentifier("composer-tool-row")
     }
 
-    private func toolRow(
-        showsToolTitles: Bool,
-        showsKeyLabels: Bool,
+    private func keyRow(
+        showsLabels: Bool,
         keys: [TerminalPresetKey] = TerminalPresetKey.deckRow,
         overflow: [TerminalPresetKey] = []
     ) -> some View {
-        HStack(spacing: 10) {
-            ComposerAuxiliaryBar(
-                attach: { isShowingFileImporter = true },
-                recordVoice: { isShowingVoiceRecorder = true },
-                searchFiles: { isShowingFileSearch = true },
-                chooseJira: { isShowingJira = true },
-                voicePhase: quickVoiceCapture.phase,
-                beginVoiceHold: beginQuickVoiceCapture,
-                endVoiceHold: finishQuickVoiceCapture,
-                finishLockedVoiceCapture: finishLockedQuickVoiceCapture,
-                pasteCodeBlock: pasteCodeBlock,
-                showsTitles: showsToolTitles
-            )
-            .fixedSize(horizontal: true, vertical: false)
-
-            Rectangle()
-                .fill(HerdrTheme.surface)
-                .frame(width: 1, height: ComposerDeckMetrics.controlHeight - 8)
-                .accessibilityHidden(true)
-
-            TerminalKeyDeck(
-                model: model,
-                pane: pane,
-                keys: keys,
-                overflow: overflow,
-                showsLabels: showsKeyLabels
-            )
-        }
+        TerminalKeyDeck(
+            model: model,
+            pane: pane,
+            keys: keys,
+            overflow: overflow,
+            showsLabels: showsLabels
+        )
     }
 
     private var composerInput: some View {
@@ -398,7 +494,7 @@ struct PromptComposerView: View {
             } else {
                 TextField(placeholder, text: $draft, axis: .vertical)
                     .lineLimit(1...5)
-                    .herdrFont(.body, monospaced: true)
+                    .herdrFont(size: 15)
                     .foregroundStyle(HerdrTheme.text)
                     .textFieldStyle(.plain)
                     .focused($isFocused)
@@ -431,19 +527,15 @@ struct PromptComposerView: View {
                         skillsPalette.dismiss()
                         return .ignored
                     }
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 12)
-                    .frame(minHeight: 48)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+                    .padding(.bottom, 8)
+                    .frame(minHeight: 60)
                     .disabled(isSubmitting || !canControl || isPiCompacting)
             }
         }
-        .frame(minHeight: 48)
-        .background(HerdrTheme.elevated)
-        .overlay {
-            RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                .strokeBorder(composerInputBorder, lineWidth: 1)
-        }
-        .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+        .frame(minHeight: 60)
+        .frame(maxWidth: .infinity)
         .shadow(
             color: quickVoiceCapture.phase == .locked
                 ? HerdrTheme.alert.opacity(isLockPulsing && !reduceMotion ? 0.62 : 0.28)
@@ -474,8 +566,8 @@ struct PromptComposerView: View {
                     Image(systemName: effectiveDisposition.symbol)
                 }
             }
-            .frame(width: 48, height: 48)
-            .background(isCTALockedCapture ? HerdrTheme.alert : HerdrTheme.accent)
+            .frame(width: 34, height: 34)
+            .background(isCTALockedCapture ? HerdrTheme.alert : HerdrTheme.primaryAction)
             .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
             .contentShape(.rect(cornerRadius: HerdrTheme.compactRadius))
         }
@@ -581,7 +673,7 @@ struct PromptComposerView: View {
     private var composerInputBorder: Color {
         quickVoiceCapture.phase == .locked
             ? HerdrTheme.alert
-            : isFocused ? HerdrTheme.accent : HerdrTheme.surface
+            : isFocused ? HerdrTheme.accent : HerdrTheme.separator
     }
 
     private var trailingComposerOpacity: Double {
@@ -702,7 +794,8 @@ struct PromptComposerView: View {
 
     private func pasteCodeBlock() {
         guard !isSubmitting, canControl, !isPiCompacting else { return }
-        if ComposerCodeBlockPaste.paste(into: &draft) {
+        if ComposerCodeBlockPaste.paste(into: &draft, selection: moreToolsSelection) {
+            moreToolsSelection = nil
             isFocused = true
         } else {
             model.toastMessage = "Copy some text before pasting a code block"

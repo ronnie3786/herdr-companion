@@ -5,16 +5,8 @@ import SwiftUI
 /// The view is intentionally closure-driven so the composer owns presentation
 /// and networking state while this control stays reusable and previewable.
 ///
-/// Mac notes: there is no latch any more. These four tools sit on the row above
-/// the input, permanently visible, next to the terminal keys — a Mac window has
-/// the width for them and hiding them behind a chevron only cost a click. The
-/// buttons hug their content so the keys get the leftover width, and they are
-/// compact (`ComposerDeckMetrics.controlHeight`) rather than touch-sized.
-///
-/// The gestures are the iOS ones verbatim — a click opens the voice note sheet,
-/// a press-and-hold dictates — because that muscle memory is the point of this
-/// bar. What the Mac adds is discoverability the phone did not need: hover
-/// lifts each control and `.help` spells out what a hold does.
+/// The same controls can appear horizontally or in the More popover. Voice
+/// retains click-to-record, hold-to-dictate and hold-to-lock gestures in both.
 struct ComposerAuxiliaryBar: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let attach: () -> Void
@@ -30,6 +22,9 @@ struct ComposerAuxiliaryBar: View {
     /// explicitly, because the fit has to be decided for the whole row — keys
     /// included — not for these four buttons in isolation.
     var showsTitles: Bool?
+    var showsAttach = true
+    var isVertical = false
+    var canPasteCode = true
 
     @State private var hapticPulse = HerdrHapticPulse()
     @State private var isLockPulsing = false
@@ -63,30 +58,36 @@ struct ComposerAuxiliaryBar: View {
     }
 
     private func controls(showsTitles: Bool) -> some View {
-        HStack(spacing: ComposerDeckMetrics.spacing) {
-            auxiliaryButton(
-                identity: "attach",
-                title: "attach",
-                systemImage: "paperclip",
-                accessibilityLabel: "Attach a file",
-                help: "Attach files to this prompt",
-                showsTitle: showsTitles,
-                action: attach
-            )
+        let layout = isVertical
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+            : AnyLayout(HStackLayout(spacing: ComposerDeckMetrics.spacing))
+        return layout {
+            if showsAttach {
+                auxiliaryButton(
+                    identity: "attach",
+                    title: "Attach",
+                    systemImage: "paperclip",
+                    accessibilityLabel: "Attach a file",
+                    help: "Attach files to this prompt",
+                    showsTitle: showsTitles,
+                    action: attach
+                )
+            }
             auxiliaryButton(
                 identity: "code-block-paste",
-                title: "paste code",
+                title: "Paste code block",
                 systemImage: "chevron.left.forwardslash.chevron.right",
                 accessibilityLabel: "Paste Code Block",
                 help: "Paste clipboard text inside a Markdown code block",
                 showsTitle: showsTitles,
                 action: pasteCodeBlock
             )
+            .disabled(!canPasteCode)
             .accessibilityIdentifier("composer-code-block-paste")
             voiceButton(showsTitle: showsTitles)
             auxiliaryButton(
                 identity: "file",
-                title: "@ file",
+                title: "Workspace file",
                 systemImage: "at",
                 accessibilityLabel: "Insert a workspace file path",
                 help: "Search this workspace and insert a file path",
@@ -95,7 +96,7 @@ struct ComposerAuxiliaryBar: View {
             )
             auxiliaryButton(
                 identity: "jira",
-                title: "jira",
+                title: "Jira context",
                 systemImage: "ticket",
                 accessibilityLabel: "Insert Jira ticket context",
                 help: "Insert Jira ticket context",
@@ -124,18 +125,18 @@ struct ComposerAuxiliaryBar: View {
 
                 if showsTitle {
                     Text(title)
-                        .herdrFont(.caption, monospaced: true, weight: .semibold)
+                        .herdrFont(.caption, weight: .medium)
                         .lineLimit(1)
                 }
             }
             .foregroundStyle(hoveredControl == identity ? HerdrTheme.text : HerdrTheme.mist)
-            .frame(minHeight: ComposerDeckMetrics.controlHeight)
+            .frame(maxWidth: isVertical ? .infinity : nil, minHeight: ComposerDeckMetrics.controlHeight, alignment: .leading)
             .padding(.horizontal, 10)
             .background(HerdrTheme.elevated)
             .overlay {
                 RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
                     .strokeBorder(
-                        hoveredControl == identity ? HerdrTheme.accent.opacity(0.45) : HerdrTheme.surface,
+                        hoveredControl == identity ? HerdrTheme.accent.opacity(0.45) : HerdrTheme.subtleSeparator,
                         lineWidth: 1
                     )
             }
@@ -163,13 +164,13 @@ struct ComposerAuxiliaryBar: View {
             }
 
             if showsTitle {
-                Text("voice")
-                    .herdrFont(.caption, monospaced: true, weight: .semibold)
+                Text("Voice")
+                    .herdrFont(.caption, weight: .medium)
                     .lineLimit(1)
             }
         }
         .foregroundStyle(voiceForeground)
-        .frame(minHeight: ComposerDeckMetrics.controlHeight)
+        .frame(maxWidth: isVertical ? .infinity : nil, minHeight: ComposerDeckMetrics.controlHeight, alignment: .leading)
         .padding(.horizontal, 10)
         .background(voiceBackground)
         .overlay {
@@ -192,13 +193,22 @@ struct ComposerAuxiliaryBar: View {
                 .onEnded { _ in endVoiceHold() }
         )
         .allowsHitTesting(voicePhase != .transcribing)
+        .focusable(voicePhase != .transcribing)
+        .onKeyPress(.return, phases: .down) { _ in
+            activateVoice()
+            return .handled
+        }
+        .onKeyPress(.space, phases: .down) { _ in
+            activateVoice()
+            return .handled
+        }
         .onHover { isHovering in
             hoveredControl = isHovering ? Self.voiceControl : (hoveredControl == Self.voiceControl ? nil : hoveredControl)
         }
         .help(voiceHelp)
         .accessibilityElement(children: .ignore)
         .accessibilityIdentifier("composer-record-voice")
-        .accessibilityLabel("Record a voice note")
+        .accessibilityLabel(voicePhase == .locked ? "Finish voice dictation" : "Record a voice note")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { activateVoice() }
         .accessibilityHint("Opens the voice recorder. Press and hold to dictate into the prompt.")
@@ -227,7 +237,7 @@ struct ComposerAuxiliaryBar: View {
 
     private var voiceBorder: Color {
         if isRecordingOrLocked { return HerdrTheme.alert }
-        return hoveredControl == Self.voiceControl ? HerdrTheme.accent.opacity(0.45) : HerdrTheme.surface
+        return hoveredControl == Self.voiceControl ? HerdrTheme.accent.opacity(0.45) : HerdrTheme.subtleSeparator
     }
 
     /// The one place the hold-to-dictate gesture is spelled out for a pointer.

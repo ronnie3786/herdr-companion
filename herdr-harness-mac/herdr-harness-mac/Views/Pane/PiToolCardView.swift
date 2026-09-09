@@ -15,11 +15,11 @@ struct PiToolCardView: View {
         }
         // This padding sits outside the header button, so that band is deliberately not clickable.
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(HerdrTheme.graphite.opacity(0.76), in: RoundedRectangle(cornerRadius: 11))
+        .padding(.vertical, 5)
+        .background(HerdrTheme.elevated.opacity(0.35), in: RoundedRectangle(cornerRadius: HerdrTheme.compactRadius))
         .overlay {
-            RoundedRectangle(cornerRadius: 11)
-                .stroke(presentation.tint.opacity(0.15), lineWidth: 1)
+            RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+                .stroke(tool.status == .failed ? HerdrTheme.alert.opacity(0.45) : HerdrTheme.subtleSeparator, lineWidth: 1)
         }
         .animation(PiChatMotion.disclosureAnimation(reduceMotion: reduceMotion), value: isExpanded)
         .animation(PiChatMotion.stateAnimation(reduceMotion: reduceMotion), value: tool.status)
@@ -94,7 +94,7 @@ struct PiToolCardView: View {
 
     private func toolSection(_ label: String, text: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(label.uppercased())
+            Text(label)
                 .herdrFont(.caption, weight: .bold)
                 .foregroundStyle(HerdrTheme.muted)
             Text(text)
@@ -109,19 +109,19 @@ struct PiToolCardView: View {
     private var statusLabel: some View {
         switch tool.status {
         case .waiting:
-            Text("QUEUED")
+            Text("Queued")
                 .foregroundStyle(HerdrProse.dimmed(HerdrTheme.muted))
         case .running:
             HStack(spacing: 5) {
                 ProgressView().controlSize(.mini)
-                Text("RUNNING")
+                Text("Running")
             }
             .foregroundStyle(HerdrProse.dimmed(HerdrTheme.working))
         case .succeeded:
-            Label("DONE", systemImage: "checkmark")
+            Label("Done", systemImage: "checkmark")
                 .foregroundStyle(HerdrProse.dimmed(HerdrTheme.success))
         case .failed:
-            Label("FAILED", systemImage: "exclamationmark")
+            Label("Failed", systemImage: "exclamationmark")
                 .foregroundStyle(HerdrProse.dimmed(HerdrTheme.alert))
         }
     }

@@ -493,9 +493,9 @@ struct DemoScreenshotRenderTests {
         denseResult.expectSubstantial()
     }
 
-    // MARK: - 07 · Composer with its tool row
+    // MARK: - 07 · Comfortable composer
 
-    @Test("Composer renders the tool row above the input")
+    @Test("Composer renders primary actions with secondary tools collapsed")
     func rendersComposerWithAuxiliaryBar() async throws {
         let model = HerdrRenderFixtures.demoModel()
         let modelFavorites = ModelFavoritesStore()
@@ -514,12 +514,8 @@ struct DemoScreenshotRenderTests {
             "07-composer.png",
             size: CGSize(width: 900, height: 300)
         ) {
-            // Composer owns one always-visible row, tools left and terminal keys right.
-            // Pin its widest form: ViewThatFits lays out candidates to measure them, and a
-            // losing candidate's tools can linger in an offscreen NSHostingView snapshot.
-            // Without that pin, this test may document a second row the app never draws.
-            // At 900pt, .automatic would choose this widest form anyway, so this PNG is
-            // still the real on-screen layout. Runtime .automatic behavior stays untouched.
+            // The resting composer keeps focus on writing. More and Terminal
+            // keys reveal their tools only when requested.
             PromptComposerView(
                 model: model,
                 pane: pane,
@@ -530,12 +526,36 @@ struct DemoScreenshotRenderTests {
                 piConfiguration: HerdrRenderFixtures.composerConfiguration(),
                 responseAudioPlayer: responseAudioPlayer,
                 activateResponseAudio: { _ in },
-                toolRowFit: .pinnedWidest,
                 modelFavorites: modelFavorites
             )
             .padding(12)
         }
 
+        result.expectSubstantial()
+    }
+
+    @Test("Comfortable composer remains readable in a narrow pane at 160 percent")
+    func rendersCompactComfortableComposer() async throws {
+        let model = HerdrRenderFixtures.demoModel()
+        let pane = try HerdrRenderFixtures.piCapablePane()
+        let workspace = try #require(model.workspace(id: "demo1|w1"))
+        let audio = ResponseAudioPlayer.preview(
+            capabilities: ResponseAudioCapabilities(ok: true, available: true, listen: true, tldr: true)
+        )
+        let result = try await HerdrRenderHarness.render(
+            "07b-composer-large-text.png", size: CGSize(width: 500, height: 330)
+        ) {
+            PromptComposerView(
+                model: model, pane: pane, workspace: workspace,
+                draft: .constant("Keep the existing navigation behavior and verify the result."),
+                attachments: .constant([]), focusRequest: 0,
+                piConfiguration: HerdrRenderFixtures.composerConfiguration(),
+                responseAudioPlayer: audio, activateResponseAudio: { _ in },
+                modelFavorites: ModelFavoritesStore()
+            )
+            .environment(\.herdrFontScale, .xxxLarge)
+            .padding(16)
+        }
         result.expectSubstantial()
     }
 

@@ -33,11 +33,10 @@ struct PiPromptComposerStatusBar: View {
             } label: {
                 Label(disposition.shortLabel, systemImage: disposition.symbol)
                     .herdrFont(.caption, weight: .semibold)
-                    .foregroundStyle(HerdrTheme.accent)
-                    .padding(.horizontal, 10)
-                    .frame(minHeight: 36)
-                    .background(HerdrTheme.elevated)
-                    .clipShape(.capsule)
+                    .foregroundStyle(HerdrTheme.mist)
+                    .padding(.horizontal, 4)
+                    .frame(minHeight: 30)
+                    .contentShape(.rect(cornerRadius: HerdrTheme.compactRadius))
             }
             .piChipMenu()
             .disabled(!canSelectDisposition || availableDispositions.isEmpty)

@@ -106,8 +106,10 @@ struct PiChatTimelineView: View {
                     }
 
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
+                .frame(maxWidth: HerdrTheme.readingWidth, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.horizontal, HerdrTheme.transcriptGutter)
+                .padding(.top, 24)
                 .padding(.bottom, 24)
                 .animation(
                     revealState.phase == .revealed

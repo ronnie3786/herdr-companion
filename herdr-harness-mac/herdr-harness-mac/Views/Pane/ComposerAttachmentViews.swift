@@ -37,14 +37,14 @@ private struct ComposerAttachmentChip: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(attachment.displayName)
-                    .herdrFont(.caption, monospaced: true, weight: .semibold)
+                    .herdrFont(.caption, weight: .medium)
                     .foregroundStyle(HerdrTheme.text)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: 180, alignment: .leading)
 
                 Text(statusText)
-                    .herdrFont(.caption2, monospaced: true)
+                    .herdrFont(.caption2)
                     .foregroundStyle(statusColor)
                     .lineLimit(1)
             }
@@ -54,7 +54,7 @@ private struct ComposerAttachmentChip: View {
             Button(action: remove) {
                 Image(systemName: "xmark")
                     .herdrFont(.caption, weight: .bold)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 30, height: 30)
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)
@@ -64,7 +64,7 @@ private struct ComposerAttachmentChip: View {
         .padding(.leading, 11)
         .padding(.trailing, 2)
         .padding(.vertical, 4)
-        .frame(minHeight: 52)
+        .frame(minHeight: 44)
         .background(HerdrTheme.elevated)
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
@@ -92,7 +92,7 @@ private struct ComposerAttachmentChip: View {
             Button(action: retry) {
                 Image(systemName: "arrow.clockwise")
                     .herdrFont(.caption, weight: .bold)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 30, height: 30)
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)
@@ -129,7 +129,7 @@ private struct ComposerAttachmentChip: View {
         case .uploading:
             HerdrTheme.accent.opacity(0.5)
         case .uploaded:
-            HerdrTheme.success.opacity(0.45)
+            HerdrTheme.separator
         case .failed:
             HerdrTheme.alert.opacity(0.55)
         }

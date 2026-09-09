@@ -9,13 +9,14 @@ struct PiUserMessageView: View {
         let accessibilityLabel = labelCache.accessibilityLabel(for: message)
         // A trailing-aligned frame instead of `HStack { Spacer; bubble }`: the
         // stack would size-probe the bubble at several widths per layout pass.
-        PiMarkdownText(message.text, font: HerdrTheme.scaled(.body, scale: fontScale))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
-            .background(HerdrTheme.surface.opacity(0.82), in: RoundedRectangle(cornerRadius: 16))
+        PiMarkdownText(message.text, font: HerdrProse.font(.body, scale: fontScale))
+            .lineSpacing(HerdrProse.lineSpacing(.body, scale: fontScale))
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
+            .background(HerdrTheme.elevated, in: RoundedRectangle(cornerRadius: HerdrTheme.cardRadius))
             .overlay {
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(HerdrTheme.accent.opacity(0.16), lineWidth: 1)
+                RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
+                    .stroke(HerdrTheme.separator, lineWidth: 1)
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel(accessibilityLabel)

@@ -33,11 +33,11 @@ struct PiMarkdownTableView: View {
         }
         .scrollIndicators(.visible)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(HerdrTheme.graphite.opacity(0.62), in: Rectangle())
+        .background(HerdrTheme.graphite, in: Rectangle())
         .clipShape(Rectangle())
         .overlay {
             Rectangle()
-                .strokeBorder(HerdrTheme.surface.opacity(0.78), lineWidth: 1)
+                .strokeBorder(HerdrTheme.separator, lineWidth: 1)
         }
         .onGeometryChange(for: CGFloat.self) { geometry in
             geometry.size.width
@@ -72,7 +72,7 @@ struct PiMarkdownTableView: View {
                 .overlay(alignment: .trailing) {
                     if columnIndex < cells.count - 1 {
                         Rectangle()
-                            .fill(HerdrTheme.surface.opacity(0.34))
+                            .fill(HerdrTheme.subtleSeparator)
                             .frame(width: 1)
                     }
                 }
@@ -96,16 +96,16 @@ struct PiMarkdownTableView: View {
     }
 
     private func rowBackground(rowIndex: Int?) -> Color {
-        guard let rowIndex else { return HerdrTheme.elevated.opacity(0.88) }
+        guard let rowIndex else { return HerdrTheme.elevated }
         return rowIndex.isMultiple(of: 2)
-            ? HerdrTheme.graphite.opacity(0.78)
-            : HerdrTheme.ink.opacity(0.52)
+            ? HerdrTheme.graphite
+            : HerdrTheme.elevated.opacity(0.35)
     }
 
     private func rowDivider(rowIndex: Int?) -> Color {
         rowIndex == nil
-            ? HerdrTheme.accent.opacity(0.44)
-            : HerdrTheme.surface.opacity(0.56)
+            ? HerdrTheme.separator
+            : HerdrTheme.subtleSeparator
     }
 
     private func frameAlignment(for column: Int) -> Alignment {

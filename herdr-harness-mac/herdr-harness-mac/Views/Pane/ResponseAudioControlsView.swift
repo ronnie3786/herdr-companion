@@ -46,19 +46,20 @@ private struct ResponseAudioButton: View {
 
                 if showsTitle {
                     Text(title)
-                        .herdrFont(.caption, monospaced: true, weight: .bold)
+                        .herdrFont(.caption, weight: .medium)
                         .lineLimit(1)
                 }
             }
             .foregroundStyle(tint)
             .padding(.horizontal, showsTitle ? 10 : 9)
             .frame(minWidth: PiChatChrome.controlHeight, minHeight: PiChatChrome.controlHeight)
-            .background(tint.opacity(isActive ? 0.2 : isHovering ? 0.16 : 0.1))
+            .background(tint.opacity(isActive ? 0.16 : isHovering ? 0.08 : 0))
             .overlay {
-                Capsule().strokeBorder(tint.opacity(isActive ? 0.62 : 0.3), lineWidth: 1)
+                RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+                    .strokeBorder(tint.opacity(isActive ? 0.45 : 0), lineWidth: 1)
             }
-            .clipShape(.capsule)
-            .contentShape(.capsule)
+            .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+            .contentShape(.rect(cornerRadius: HerdrTheme.compactRadius))
         }
         .buttonStyle(.plain)
         .disabled(activeAction != nil && activeAction != action)
@@ -98,7 +99,7 @@ private struct ResponseAudioButton: View {
 
     private var tint: Color {
         if isActive { return phase == .paused(action) ? HerdrTheme.signal : HerdrTheme.working }
-        return action == .listen ? HerdrTheme.accent : HerdrTheme.mauve
+        return HerdrTheme.mist
     }
 
     private var accessibilityLabel: String {

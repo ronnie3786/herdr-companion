@@ -15,8 +15,8 @@ struct PiCodeBlockView: View {
         VStack(spacing: 0) {
             HStack {
                 Text((language ?? "code").lowercased())
-                    .herdrFont(.caption, weight: .bold)
-                    .foregroundStyle(HerdrTheme.code.opacity(0.75))
+                    .herdrFont(.caption, weight: .medium)
+                    .foregroundStyle(HerdrTheme.mist)
                 Spacer()
                 Button {
                     copyCode()
@@ -30,27 +30,27 @@ struct PiCodeBlockView: View {
                         .herdrHitTarget(minWidth: 0)
                 }
                 .herdrFont(.caption)
-                .foregroundStyle(copied ? HerdrTheme.success : HerdrTheme.accent)
+                .foregroundStyle(copied ? HerdrTheme.success : HerdrTheme.mist)
                 .buttonStyle(.plain)
                 // Was hidden until hover, which made it read as missing. It now
                 // rests at a low opacity — which also drops one tracking area
                 // per code block from the timeline.
-                .opacity(copied ? 1 : 0.55)
+                .opacity(copied ? 1 : 0.8)
                 .animation(PiChatChrome.hoverAnimation, value: copied)
                 .accessibilityLabel(copied ? "Code copied" : "Copy code")
                 .accessibilityIdentifier("pi-code-copy-\(ownerID)-\(blockID)")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(HerdrTheme.ink.opacity(0.85))
+            .background(HerdrTheme.elevated)
 
             Rectangle()
-                .fill(HerdrTheme.surface.opacity(0.5))
+                .fill(HerdrTheme.separator)
                 .frame(height: 1)
 
             ScrollView(.horizontal) {
                 Text(code)
-                    .herdrFont(size: 13, monospaced: true)
+                    .herdrFont(size: 14, monospaced: true)
                     .foregroundStyle(HerdrTheme.text)
                     .textSelection(.enabled)
                     .lineSpacing(4)
@@ -58,11 +58,11 @@ struct PiCodeBlockView: View {
             }
             .scrollIndicators(.visible)
         }
-        .background(HerdrTheme.crust, in: RoundedRectangle(cornerRadius: 10))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .background(HerdrTheme.ink, in: RoundedRectangle(cornerRadius: HerdrTheme.compactRadius))
+        .clipShape(RoundedRectangle(cornerRadius: HerdrTheme.compactRadius))
         .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(HerdrTheme.surface.opacity(0.5), lineWidth: 1)
+            RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+                .stroke(HerdrTheme.separator, lineWidth: 1)
         }
     }
 

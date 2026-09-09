@@ -5,7 +5,7 @@ struct PiMarkdownListView: View {
     @Environment(\.herdrFontScale) private var fontScale
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 HStack(alignment: .top, spacing: 8) {
                     marker(for: item.marker)

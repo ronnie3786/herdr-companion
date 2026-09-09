@@ -11,30 +11,21 @@ struct PiContextMeterView: View {
     var body: some View {
         if usage?.fraction != nil || cost?.summary != nil {
             HStack(spacing: 10) {
-                Image(systemName: "memorychip")
-                    .herdrFont(.caption2, weight: .semibold)
-                    .foregroundStyle(barColor)
-                    .accessibilityHidden(true)
-
                 if let usage, let fraction = usage.fraction {
                     GeometryReader { proxy in
                         ZStack(alignment: .leading) {
                             Capsule()
-                                .fill(HerdrTheme.surface.opacity(0.45))
+                                .fill(HerdrTheme.subtleSeparator)
                             Capsule()
-                                .fill(barColor)
+                                .fill(barColor.opacity(0.7))
                                 .frame(width: max(6, proxy.size.width * fraction))
                         }
                     }
-                    .frame(height: 4)
-
-                    Text(usage.summary ?? "…")
-                        .herdrFont(.caption2, monospaced: true)
-                        .foregroundStyle(HerdrTheme.mist)
-                        .lineLimit(1)
+                    .frame(height: 2)
+                    .help(usage.summary ?? "Context usage")
 
                     Text(usage.percentText ?? "…")
-                        .herdrFont(.caption2, monospaced: true, weight: .bold)
+                        .herdrFont(.caption2, weight: .medium, monospacedDigit: true)
                         .foregroundStyle(barColor)
                         .lineLimit(1)
 
@@ -43,7 +34,7 @@ struct PiContextMeterView: View {
                             .herdrFont(.caption2)
                             .foregroundStyle(HerdrTheme.muted)
                         Text(costText)
-                            .herdrFont(.caption2, monospaced: true)
+                            .herdrFont(.caption2, monospacedDigit: true)
                             .foregroundStyle(HerdrTheme.mist)
                             .lineLimit(1)
                             .accessibilityIdentifier("pi-session-cost")
@@ -51,15 +42,16 @@ struct PiContextMeterView: View {
                 } else if let costText = cost?.summary {
                     Spacer()
                     Text(costText)
-                        .herdrFont(.caption2, monospaced: true)
+                        .herdrFont(.caption2, monospacedDigit: true)
                         .foregroundStyle(HerdrTheme.mist)
                         .lineLimit(1)
                         .accessibilityIdentifier("pi-session-cost")
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 7)
-            .background(HerdrTheme.graphite.opacity(0.5))
+            .padding(.horizontal, HerdrTheme.pagePadding)
+            .padding(.vertical, 5)
+            .background(HerdrTheme.graphite)
+            .help(accessibilityLabel)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: usage?.fraction)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityLabel)

@@ -1,15 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// Typography for Pi's rendered assistant OUTPUT prose: the markdown message
-/// body (paragraphs, headings, lists, quotes, tables). This is the seam that
-/// makes Pi's actual output visually unmistakable versus the surrounding
-/// chrome — output renders in Inter at full contrast, while thinking
-/// disclosures and tool cards (`PiThinkingDisclosureView`, `PiToolCardView`,
-/// `PiWorkingGroupView`)
-/// keep their existing system/mono fonts and instead turn visually recessive
-/// via `subOutputOpacity`. Code blocks stay monospaced everywhere; they're
-/// code, not prose.
+/// Comfortable reading typography for rendered chat output. Prose uses the
+/// native system face at full contrast; activity and code remain distinct
+/// through their smaller size and restrained foreground colors.
 enum HerdrProse {
     /// A semantic role within Pi's rendered markdown output.
     enum Role: CaseIterable, Sendable {
@@ -28,14 +22,12 @@ enum HerdrProse {
         /// Base point size at 100% font scale (before `HerdrFontScale`).
         var baseSize: CGFloat {
             switch self {
-            case .body, .quote, .listItem: 15
-            case .heading1: 20
-            case .heading2: 17
-            case .heading3: 15
-            case .heading4: 13
-            case .heading5: 12
-            case .heading6: 11
-            case .tableHeader, .tableCell: 14
+            case .body, .quote, .listItem: 17
+            case .heading1: 23
+            case .heading2: 20
+            case .heading3: 18
+            case .heading4, .heading5, .heading6: 17
+            case .tableHeader, .tableCell: 15
             }
         }
 
@@ -49,42 +41,39 @@ enum HerdrProse {
             }
         }
 
-        /// Block quotes render in Inter's real italic face rather than a
-        /// synthetic slant.
+        /// Quotes retain their typographic distinction within the system face.
         var isItalic: Bool { self == .quote }
     }
 
     /// Spacing between adjacent markdown blocks (paragraph, heading, list,
     /// quote, table, code) inside a single rendered message.
-    static let blockSpacing: CGFloat = 12
+    static let blockSpacing: CGFloat = 18
 
     /// Spacing between conversation turns in `PiChatTimelineView`.
-    static let turnSpacing: CGFloat = 28
+    static let turnSpacing: CGFloat = 32
 
     /// How far "sub-output" cards — thinking disclosures, tool cards, and
     /// working groups — are dimmed so they read as visually recessive relative
     /// to Pi's actual output prose. Applied to the cards' foreground colours
     /// (`dimmed(_:)`), never as `.opacity` on the whole card: a group-opacity
     /// on each of a hundred cards cost ~170 ms per card per layout pass.
-    static let subOutputOpacity: Double = 0.78
+    static let subOutputOpacity: Double = 0.9
 
     /// A card foreground colour at `subOutputOpacity`.
     static func dimmed(_ color: Color) -> Color {
         color.opacity(subOutputOpacity)
     }
 
-    /// Inter font for a role, scaled by the user's global font-scale
-    /// preference (`HerdrFontScale`), mirroring `HerdrTheme.scaled` /
-    /// `.herdrFont`. `Font.custom` falls back to the system font at the same
-    /// size if Inter isn't resolvable, so this degrades gracefully.
+    /// Keep the existing global font-scale preference effective for every role.
     static func font(_ role: Role, scale: HerdrFontScale) -> Font {
-        .custom(postScriptName(for: role), size: role.baseSize * scale.rawValue)
+        let font = Font.system(size: role.baseSize * scale.rawValue, weight: role.weight)
+        return role.isItalic ? font.italic() : font
     }
 
     /// Monospaced chip font for inline `code` spans within prose, sized
     /// relative to the surrounding role and the user's font-scale preference.
     static func inlineCodeFont(_ role: Role, scale: HerdrFontScale) -> Font {
-        .system(size: (role.baseSize * 0.9 * scale.rawValue).rounded(), weight: .medium, design: .monospaced)
+        .system(size: (role.baseSize * 0.9 * scale.rawValue).rounded(), weight: .regular, design: .monospaced)
     }
 
     /// Foreground color for inline `code` spans within prose.
@@ -94,7 +83,7 @@ enum HerdrProse {
     /// at the given scale. Call sites for headings and tables keep their own
     /// existing tight spacing instead of calling this.
     static func lineSpacing(_ role: Role, scale: HerdrFontScale) -> CGFloat {
-        (role.baseSize * scale.rawValue * 0.35).rounded()
+        (8 * scale.rawValue).rounded()
     }
 
     /// Extra space ABOVE a heading, added on top of `blockSpacing`, so
@@ -104,16 +93,6 @@ enum HerdrProse {
         case ...2: 12
         case 3: 6
         default: 2
-        }
-    }
-
-    private static func postScriptName(for role: Role) -> String {
-        if role.isItalic { return "Inter-Italic" }
-        switch role.weight {
-        case .bold, .heavy, .black: return "Inter-Bold"
-        case .semibold: return "Inter-SemiBold"
-        case .medium: return "Inter-Medium"
-        default: return "Inter-Regular"
         }
     }
 

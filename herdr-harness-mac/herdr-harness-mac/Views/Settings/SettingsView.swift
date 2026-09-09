@@ -40,6 +40,7 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .scrollContentBackground(.hidden)
         .background(HerdrBackground())
+        .foregroundStyle(HerdrTheme.text)
         .sheet(isPresented: $isPresentingMachines) {
             MachinesView(model: model)
                 .frame(minWidth: 460, minHeight: 420)
@@ -132,6 +133,7 @@ struct SettingsView: View {
     private var alertSection: some View {
         Section {
             Toggle("Smart agent alerts", systemImage: "bell.badge", isOn: $model.smartAlertsEnabled)
+                .tint(HerdrTheme.controlAccent)
                 .onChange(of: model.smartAlertsEnabled) { oldValue, newValue in
                     guard oldValue != newValue else { return }
                     Task { await model.setSmartAlerts(newValue) }
@@ -139,7 +141,7 @@ struct SettingsView: View {
 
             LabeledContent("Delivery") {
                 Text(model.remotePushStatusText)
-                    .foregroundStyle(model.remotePushDeliveryVerified ? HerdrTheme.signal : .secondary)
+                    .foregroundStyle(model.remotePushDeliveryVerified ? HerdrTheme.signal : HerdrTheme.mist)
                     .multilineTextAlignment(.trailing)
             }
 
@@ -161,6 +163,7 @@ struct SettingsView: View {
                 systemImage: "waveform.badge.magnifyingglass",
                 isOn: $model.preferPrivateTranscription
             )
+            .tint(HerdrTheme.controlAccent)
             .onChange(of: model.preferPrivateTranscription) { oldValue, newValue in
                 guard oldValue != newValue else { return }
                 model.setPreferPrivateTranscription(newValue)
@@ -184,6 +187,7 @@ struct SettingsView: View {
                     set: { hudController.setEnabled($0) }
                 )
             )
+            .tint(HerdrTheme.controlAccent)
 
             LabeledContent("Summon", value: "⌃⌥Space")
         } header: {
@@ -201,6 +205,7 @@ struct SettingsView: View {
                 }
             }
             .pickerStyle(.segmented)
+            .tint(HerdrTheme.controlAccent)
             .accessibilityIdentifier("settings-text-size-picker")
 
             Text("the quick agent jumps over the lazy herd")
@@ -477,6 +482,7 @@ struct SettingsView: View {
                 systemImage: "eye",
                 isOn: $model.showSessionTitles
             )
+            .tint(HerdrTheme.controlAccent)
             .onChange(of: model.showSessionTitles) { oldValue, newValue in
                 guard oldValue != newValue else { return }
                 model.setShowSessionTitles(newValue)
@@ -492,10 +498,12 @@ struct SettingsView: View {
     private var updatesSection: some View {
         Section {
             Toggle("Automatically check for updates", isOn: $updates.automaticallyChecksForUpdates)
+                .tint(HerdrTheme.controlAccent)
                 .disabled(!updates.isConfigured)
                 .accessibilityIdentifier("settings-updates-automatic-checks")
 
             Toggle("Include preview builds", isOn: $updates.includesPreviewUpdates)
+                .tint(HerdrTheme.controlAccent)
                 .disabled(!updates.isConfigured || updates.isUpdateSessionInProgress)
                 .accessibilityIdentifier("settings-updates-preview-builds")
 
@@ -540,7 +548,7 @@ struct SettingsView: View {
                         .herdrFont(.headline, weight: .bold)
                     Text("Remote command deck · \(version)")
                         .herdrFont(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(HerdrTheme.mist)
                 }
             }
         }

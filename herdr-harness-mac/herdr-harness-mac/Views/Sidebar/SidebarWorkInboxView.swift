@@ -11,9 +11,7 @@ struct SidebarWorkInboxView: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text("my work")
-                    .bold()
-                    .underline()
-                    .herdrFont(.subheadline)
+                    .herdrFont(.subheadline, weight: .semibold)
                     .foregroundStyle(HerdrTheme.mist)
 
                 Spacer(minLength: 4)
@@ -79,14 +77,10 @@ struct SidebarWorkInboxView: View {
         }
         .padding(.vertical, 8)
         .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.compactRadius))
-        .overlay(alignment: .leading) {
-            VStack(spacing: 0) {
-                Rectangle().fill(HerdrTheme.mauve)
-                Rectangle().fill(HerdrTheme.accent)
-            }
-            .frame(width: 3)
-            .clipShape(.rect(cornerRadius: 2))
-            .accessibilityHidden(true)
+        .overlay {
+            RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+                .strokeBorder(HerdrTheme.subtleSeparator, lineWidth: 1)
+                .accessibilityHidden(true)
         }
         .accessibilityIdentifier("sidebar-my-work")
         .task(id: refreshID) {

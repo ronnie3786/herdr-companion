@@ -12,11 +12,11 @@ struct SidebarMetricsTests {
         #expect(SidebarMetrics.hierarchyIconSize == 11.5)
     }
 
-    @Test("Row heights use the old-to-enlarged midpoint")
-    func rowHeightMidpoints() {
+    @Test("Comfortable rows share a 34-point minimum throughout the hierarchy")
+    func comfortableRowHeights() {
         #expect(SidebarMetrics.projectRowHeight == 34)
-        #expect(SidebarMetrics.tabRowHeight == 30)
-        #expect(SidebarMetrics.chatRowHeight == 30)
+        #expect(SidebarMetrics.tabRowHeight == 34)
+        #expect(SidebarMetrics.chatRowHeight == 34)
     }
 
     @Test("Navigator indentation uses a strictly increasing hierarchy ladder")

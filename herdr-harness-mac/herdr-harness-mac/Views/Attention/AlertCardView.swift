@@ -5,7 +5,7 @@ struct AlertCardView: View {
     let pane: HerdrPane?
 
     var body: some View {
-        GlassCard(radius: 18) {
+        GlassCard {
             HStack(alignment: .top, spacing: 13) {
                 StatusRail(status: alert.status)
 
@@ -34,23 +34,23 @@ struct AlertCardView: View {
                     }
                     .padding(.trailing, pane == nil ? 24 : 0)
                     Text(alert.title)
-                        .herdrFont(.headline, weight: .bold)
-                        .foregroundStyle(.primary)
+                        .herdrFont(.headline, weight: .semibold)
+                        .foregroundStyle(HerdrTheme.text)
                     if !alert.message.isEmpty {
                         Text(alert.message)
                             .herdrFont(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(HerdrTheme.mist)
                             .lineLimit(3)
                     }
                     Label(agentLabel, systemImage: pane == nil ? "archivebox" : "cpu")
                         .herdrFont(.caption)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(HerdrTheme.muted)
                 }
 
                 if pane != nil {
                     Image(systemName: "chevron.right")
                         .herdrFont(.caption, weight: .bold)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(HerdrTheme.muted)
                         .padding(.top, 4)
                 }
             }

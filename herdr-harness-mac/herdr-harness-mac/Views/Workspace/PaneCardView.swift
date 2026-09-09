@@ -11,8 +11,8 @@ struct PaneCardView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     Text(pane.displayTitle)
-                        .herdrFont(.headline, weight: .bold)
-                        .foregroundStyle(.primary)
+                        .herdrFont(.headline, weight: .semibold)
+                        .foregroundStyle(HerdrTheme.text)
                         .lineLimit(1)
                     Spacer()
                     AgentStatusBadge(status: pane.agentStatus, compact: true)
@@ -28,7 +28,7 @@ struct PaneCardView: View {
                     }
                 }
                 .herdrFont(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(HerdrTheme.mist)
 
                 HStack {
                     Text(pane.id)
@@ -37,20 +37,19 @@ struct PaneCardView: View {
                 }
                 .herdrFont(.caption)
                 .fontDesign(.monospaced)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(HerdrTheme.muted)
             }
 
             Image(systemName: "chevron.right")
                 .herdrFont(.caption, weight: .bold)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(HerdrTheme.muted)
         }
         .padding(15)
-        .background(isSelected ? HerdrTheme.accent.opacity(0.10) : HerdrTheme.graphite.opacity(0.72))
-        .background(.ultraThinMaterial)
-        .clipShape(.rect(cornerRadius: 18))
+        .background(isSelected ? HerdrTheme.selection : HerdrTheme.elevated)
+        .clipShape(.rect(cornerRadius: HerdrTheme.cardRadius))
         .overlay {
-            RoundedRectangle(cornerRadius: 18)
-                .strokeBorder(isSelected ? HerdrTheme.accent.opacity(0.50) : .white.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
+                .strokeBorder(isSelected ? HerdrTheme.accent.opacity(0.5) : HerdrTheme.separator, lineWidth: 1)
         }
         .contentShape(.rect)
         .accessibilityElement(children: .combine)

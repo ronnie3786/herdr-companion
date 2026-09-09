@@ -18,12 +18,9 @@ import SwiftUI
 /// over its working children. `SidebarTone.statusColor` — not
 /// `AgentStatus.needsAttention` — is the seam that was widened.
 ///
-/// `mist` (Catppuccin Subtext0) is the tone: it is the theme's designated
-/// secondary-information color, already used by the tab rows here, and reads at
-/// ~7.9:1 against `ink`. `accent` was the other candidate and was rejected on
-/// purpose — it means "interactive / selected" everywhere else in this column
-/// (the new-workspace buttons, the selection rail, the focused-workspace
-/// marker), and spending it on status would erase that meaning.
+/// `mist` is the shared secondary-information tone. Accent stays reserved for
+/// interactive controls and selection. Resting status words are omitted from
+/// normal rows; the dot, tooltip, and accessibility label retain that context.
 ///
 /// Deliberately scoped to the sidebar: this selective override belongs here,
 /// not on the shared `AgentStatus` type.
@@ -50,7 +47,7 @@ private struct SidebarStatusDot: View {
 
     var body: some View {
         Text(status.terminalGlyph)
-            .herdrFont(.body, monospaced: true, weight: .bold)
+            .herdrFont(.body, monospaced: true, weight: .semibold)
             .foregroundStyle(SidebarTone.statusColor(for: status))
             .herdrPulseGlow(
                 HerdrTheme.working,
@@ -74,7 +71,7 @@ struct SidebarProjectRow: View {
                 Image(systemName: "chevron.right")
                     .herdrFont(
                         size: SidebarMetrics.hierarchyIconSize,
-                        weight: .bold,
+                        weight: .semibold,
                         relativeTo: .caption2
                     )
                     .foregroundStyle(HerdrTheme.mist)
@@ -86,7 +83,7 @@ struct SidebarProjectRow: View {
                 Text(workspace.label)
                     .herdrFont(
                         size: SidebarMetrics.projectLabelSize,
-                        weight: .bold,
+                        weight: .semibold,
                         relativeTo: .subheadline
                     )
                     .foregroundStyle(HerdrTheme.text)
@@ -94,7 +91,7 @@ struct SidebarProjectRow: View {
 
                 if workspace.focused {
                     Text("active")
-                        .herdrFont(.caption, weight: .bold)
+                        .herdrFont(.caption, weight: .semibold)
                         .foregroundStyle(HerdrTheme.accent)
                         .fixedSize()
                 }
@@ -103,7 +100,7 @@ struct SidebarProjectRow: View {
 
                 if workspace.attentionCount > 0 {
                     Text("\(workspace.attentionCount)")
-                        .herdrFont(.caption2, weight: .bold, monospacedDigit: true)
+                        .herdrFont(.caption2, weight: .semibold, monospacedDigit: true)
                         .foregroundStyle(SidebarTone.badgeLabel)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -115,7 +112,7 @@ struct SidebarProjectRow: View {
             .padding(.trailing, SidebarMetrics.rowTrailingPadding)
             .frame(minHeight: SidebarMetrics.projectRowHeight)
             .contentShape(Rectangle())
-            .background(isHovering ? HerdrTheme.elevated.opacity(0.6) : .clear)
+            .background(isHovering ? HerdrTheme.elevated.opacity(0.6) : .clear, in: .rect(cornerRadius: 6))
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
@@ -154,7 +151,7 @@ struct SidebarMachineRow: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: "chevron.right")
-                    .herdrFont(.caption2, weight: .bold)
+                    .herdrFont(.caption2, weight: .semibold)
                     .foregroundStyle(HerdrTheme.mist)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     .animation(.snappy, value: isExpanded)
@@ -163,8 +160,8 @@ struct SidebarMachineRow: View {
                     .herdrFont(.caption, weight: .semibold)
                     .foregroundStyle(SidebarTone.status.opacity(statusOpacity))
 
-                Text(machine.name.uppercased())
-                    .herdrFont(.subheadline, weight: .bold)
+                Text(machine.name)
+                    .herdrFont(.subheadline, weight: .semibold)
                     .foregroundStyle(HerdrTheme.text)
                     .lineLimit(1)
 
@@ -179,7 +176,7 @@ struct SidebarMachineRow: View {
             .padding(.trailing, SidebarMetrics.rowTrailingPadding)
             .frame(minHeight: 38)
             .contentShape(Rectangle())
-            .background(isHovering ? HerdrTheme.elevated : HerdrTheme.graphite)
+            .background(isHovering ? HerdrTheme.elevated : .clear, in: .rect(cornerRadius: 6))
             .overlay(alignment: .leading) {
                 Rectangle()
                     .fill(SidebarTone.status.opacity(statusOpacity))
@@ -225,7 +222,7 @@ struct SidebarSectionRow: View {
                 Text(tab.label)
                     .herdrFont(
                         size: SidebarMetrics.tabLabelSize,
-                        weight: .bold,
+                        weight: .semibold,
                         relativeTo: .caption
                     )
                     .foregroundStyle(attentionStatus != nil ? HerdrTheme.text : HerdrTheme.mist)
@@ -242,7 +239,7 @@ struct SidebarSectionRow: View {
             .padding(.trailing, SidebarMetrics.rowTrailingPadding)
             .frame(minHeight: SidebarMetrics.tabRowHeight)
             .contentShape(Rectangle())
-            .background(isHovering ? HerdrTheme.elevated.opacity(0.6) : .clear)
+            .background(isHovering ? HerdrTheme.elevated.opacity(0.6) : .clear, in: .rect(cornerRadius: 6))
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
@@ -325,30 +322,33 @@ struct SidebarChatRow: View {
 
                 starControl
 
-                SidebarStatusAgeLabel(
-                    status: pane.agentStatus,
-                    since: since,
-                    describesLastActivity: describesLastActivity
-                )
-                    .herdrFont(.caption, monospaced: true)
+                if describesLastActivity || pane.agentStatus.needsAttention || pane.agentStatus == .working {
+                    SidebarStatusAgeLabel(
+                        status: pane.agentStatus,
+                        since: since,
+                        describesLastActivity: describesLastActivity
+                    )
+                    .herdrFont(.caption, monospacedDigit: true)
                     .foregroundStyle(SidebarTone.statusColor(for: pane.agentStatus))
                     .fixedSize()
+                }
             }
             .padding(.leading, leadingPadding)
             .padding(.trailing, SidebarMetrics.rowTrailingPadding)
             .padding(.vertical, hierarchy?.workspaceLabel != nil || parentContext != nil ? 5 : 0)
             .frame(minHeight: SidebarMetrics.chatRowHeight)
             .contentShape(Rectangle())
-            .background(rowBackground)
+            .background(rowBackground, in: .rect(cornerRadius: 6))
             .overlay(alignment: .leading) {
-                Rectangle()
+                RoundedRectangle(cornerRadius: 1)
                     .fill(isSelected ? HerdrTheme.accent : .clear)
                     .frame(width: 2)
+                    .padding(.vertical, 8)
             }
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
-        .help(pane.displayTitle)
+        .help(accessibilityLabel)
         .accessibilityIdentifier("sidebar-pane-\(pane.id)")
         // `.combine` would fold the star button into the row and lose its own
         // action; `.contain` keeps it separately reachable.
@@ -427,7 +427,7 @@ struct SidebarChatRow: View {
     }
 
     private var rowBackground: Color {
-        if isSelected { return HerdrTheme.elevated }
+        if isSelected { return HerdrTheme.selection }
         return isHovering ? HerdrTheme.elevated.opacity(0.6) : .clear
     }
 }

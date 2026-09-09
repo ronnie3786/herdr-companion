@@ -41,15 +41,15 @@ struct WorkspaceSkillsView: View {
                 Image(systemName: "wand.and.stars")
                     .foregroundStyle(HerdrTheme.mauve)
 
-                Text("workspace skills")
-                    .herdrFont(.headline, monospaced: true, weight: .bold)
+                Text("Workspace skills")
+                    .herdrFont(.headline, weight: .semibold)
                     .foregroundStyle(HerdrTheme.text)
 
                 Spacer(minLength: 8)
 
                 if let response {
                     Text("\(response.resolvedProjectSkills.count + response.resolvedUserSkills.count) found")
-                        .herdrFont(.caption, monospaced: true, weight: .bold)
+                        .herdrFont(.caption, weight: .semibold, monospacedDigit: true)
                         .foregroundStyle(HerdrTheme.signal)
                 }
 
@@ -75,10 +75,10 @@ struct WorkspaceSkillsView: View {
         .padding(.leading, 14)
         .padding(.trailing, 6)
         .padding(.vertical, 8)
-        .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.compactRadius))
+        .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.compactRadius))
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                .strokeBorder(HerdrTheme.surface, lineWidth: 1)
+                .strokeBorder(HerdrTheme.separator, lineWidth: 1)
         }
         .accessibilityElement(children: .combine)
     }
@@ -95,7 +95,7 @@ struct WorkspaceSkillsView: View {
 
         if !skills.resolvedProjectSkills.isEmpty {
             SkillScopeSection(
-                title: "project skills",
+                title: "Project skills",
                 detail: skills.skillsDirectory,
                 skills: skills.resolvedProjectSkills,
                 select: insert
@@ -104,7 +104,7 @@ struct WorkspaceSkillsView: View {
 
         if !skills.resolvedUserSkills.isEmpty {
             SkillScopeSection(
-                title: "user skills",
+                title: "User skills",
                 detail: skills.userSkillsDirectory,
                 skills: skills.resolvedUserSkills,
                 select: insert
@@ -113,10 +113,10 @@ struct WorkspaceSkillsView: View {
 
         VStack(alignment: .leading, spacing: 8) {
             Label("Add to terminal", systemImage: "arrow.turn.down.left")
-                .herdrFont(.caption, monospaced: true, weight: .bold)
+                .herdrFont(.caption, weight: .semibold)
                 .foregroundStyle(HerdrTheme.accent)
             Text("Choose a skill, then insert it as a Claude command, Codex invocation, or file reference.")
-                .herdrFont(.caption, monospaced: true)
+                .herdrFont(.caption)
                 .foregroundStyle(HerdrTheme.mist)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -130,35 +130,35 @@ struct WorkspaceSkillsView: View {
             ProgressView()
                 .tint(HerdrTheme.accent)
             Text("Indexing project and user skills…")
-                .herdrFont(.subheadline, monospaced: true)
+                .herdrFont(.subheadline)
                 .foregroundStyle(HerdrTheme.mist)
         }
         .frame(maxWidth: .infinity, minHeight: 92)
-        .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.compactRadius))
+        .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.compactRadius))
     }
 
     private func errorCard(_ message: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Skills unavailable", systemImage: "exclamationmark.triangle.fill")
-                .herdrFont(.subheadline, monospaced: true, weight: .bold)
+                .herdrFont(.subheadline, weight: .semibold)
                 .foregroundStyle(HerdrTheme.alert)
             Text(message)
-                .herdrFont(.caption, monospaced: true)
+                .herdrFont(.caption)
                 .foregroundStyle(HerdrTheme.mist)
             Button("Try again", systemImage: "arrow.clockwise") {
                 Task { await refresh() }
             }
             .buttonStyle(.plain)
-            .herdrFont(.subheadline, monospaced: true, weight: .bold)
+            .herdrFont(.subheadline, weight: .semibold)
             .foregroundStyle(HerdrTheme.accent)
             .frame(minHeight: 44)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.compactRadius))
+        .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.compactRadius))
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                .strokeBorder(HerdrTheme.alert.opacity(0.7), lineWidth: 1)
+                .strokeBorder(HerdrTheme.alert.opacity(0.35), lineWidth: 1)
         }
     }
 
@@ -168,20 +168,20 @@ struct WorkspaceSkillsView: View {
                 .herdrFont(.title2)
                 .foregroundStyle(HerdrTheme.mist)
             Text("No skills found")
-                .herdrFont(.subheadline, monospaced: true, weight: .bold)
+                .herdrFont(.subheadline, weight: .semibold)
                 .foregroundStyle(HerdrTheme.text)
             Text("Add project skills under .claude/skills or user skills under your configured skills directory.")
-                .herdrFont(.caption, monospaced: true)
+                .herdrFont(.caption)
                 .foregroundStyle(HerdrTheme.mist)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(18)
         .frame(maxWidth: .infinity, minHeight: 140)
-        .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.compactRadius))
+        .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.compactRadius))
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                .strokeBorder(HerdrTheme.surface, lineWidth: 1)
+                .strokeBorder(HerdrTheme.separator, lineWidth: 1)
         }
     }
 
@@ -217,18 +217,18 @@ private struct SkillScopeSection: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack {
                     Text(title)
-                        .bold()
-                        .underline()
+                        .fontWeight(.semibold)
                     Spacer()
                     Text("\(skills.count)")
                 }
                 if let detail = detail?.nonEmpty {
                     Text(detail)
+                        .herdrFont(.caption, monospaced: true)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
             }
-            .herdrFont(.caption, monospaced: true)
+            .herdrFont(.caption)
             .foregroundStyle(HerdrTheme.mist)
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -238,16 +238,16 @@ private struct SkillScopeSection: View {
                 SkillMenuRow(skill: skill, select: select)
                 if index < skills.count - 1 {
                     Rectangle()
-                        .fill(HerdrTheme.surface)
+                        .fill(HerdrTheme.subtleSeparator)
                         .frame(height: 1)
                         .padding(.leading, 14)
                 }
             }
         }
-        .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.compactRadius))
+        .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.compactRadius))
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                .strokeBorder(HerdrTheme.surface, lineWidth: 1)
+                .strokeBorder(HerdrTheme.separator, lineWidth: 1)
         }
     }
 }

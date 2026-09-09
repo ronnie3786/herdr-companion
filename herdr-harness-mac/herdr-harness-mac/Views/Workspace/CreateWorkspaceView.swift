@@ -28,10 +28,13 @@ struct CreateWorkspaceView: View {
                 Section {
                     Label("Herdr opens one shell pane in this folder. Split panes or start an agent after it appears.", systemImage: "info.circle")
                         .herdrFont(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(HerdrTheme.mist)
                 }
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .background(HerdrTheme.graphite)
+            .foregroundStyle(HerdrTheme.text)
             .navigationTitle("New workspace")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

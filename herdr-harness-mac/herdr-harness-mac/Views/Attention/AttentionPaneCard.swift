@@ -6,7 +6,7 @@ struct AttentionPaneCard: View {
     let since: Date?
 
     var body: some View {
-        GlassCard(radius: 18) {
+        GlassCard {
             HStack(spacing: 13) {
                 Image(systemName: pane.agentStatus.symbol)
                     .herdrFont(.title2)
@@ -16,11 +16,11 @@ struct AttentionPaneCard: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(pane.displayTitle)
-                        .herdrFont(.headline, weight: .bold)
-                        .foregroundStyle(.primary)
+                        .herdrFont(.headline, weight: .semibold)
+                        .foregroundStyle(HerdrTheme.text)
                     Text("\(model.workspace(containing: pane)?.label ?? pane.workspaceID) · \(pane.displayAgentName)")
                         .herdrFont(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(HerdrTheme.mist)
                         .lineLimit(1)
                 }
 

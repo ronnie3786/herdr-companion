@@ -34,7 +34,7 @@ struct HerdrUpdateBanner: View {
             Button("Review update…") {
                 updates.checkForUpdates()
             }
-            .buttonStyle(.borderedProminent)
+            .herdrProminentButton()
             .disabled(!updates.canCheckForUpdates)
             .accessibilityIdentifier("update-banner-review")
         }

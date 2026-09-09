@@ -57,7 +57,7 @@ struct HerdrNoteCardView: View {
         .background(note.color.fill, in: .rect(cornerRadius: 12))
         .overlay {
             RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(.white.opacity(0.35), lineWidth: 1)
+                .strokeBorder(note.color.ink.opacity(0.14), lineWidth: 1)
         }
         .overlay(alignment: .bottomLeading) {
             Image(systemName: "arrow.up.right.and.arrow.down.left")
@@ -279,7 +279,7 @@ struct HerdrNoteCardView: View {
         HStack(spacing: 5) {
             Text(status.text)
                 .herdrFont(.caption)
-                .foregroundStyle(status.isError ? Color(red: 0.6, green: 0.1, blue: 0.15) : note.color.ink.opacity(0.7))
+                .foregroundStyle(status.isError ? HerdrNoteColor.errorInk : note.color.ink.opacity(0.7))
             if notes.isBusy(note.id) {
                 Button { notes.cancelActivity(note.id) } label: {
                     Image(systemName: "xmark.circle.fill")
@@ -428,8 +428,8 @@ struct HerdrNoteCardView: View {
                     Text("Delete?")
                         .herdrFont(.caption2, monospaced: true, weight: .bold)
                         .padding(.horizontal, 7)
-                        .foregroundStyle(Color(red: 0.6, green: 0.1, blue: 0.15))
-                        .background(Color(red: 0.6, green: 0.1, blue: 0.15).opacity(0.12), in: .capsule)
+                        .foregroundStyle(HerdrNoteColor.errorInk)
+                        .background(HerdrNoteColor.errorInk.opacity(0.12), in: .capsule)
                 } else {
                     Image(systemName: "trash")
                         .herdrFont(.caption, weight: .bold)
@@ -533,7 +533,7 @@ private struct HerdrNoteActionRow: View {
             if let error = action.error, !error.isEmpty {
                 Text(error)
                     .herdrFont(.caption2)
-                    .foregroundStyle(Color(red: 0.6, green: 0.1, blue: 0.15))
+                    .foregroundStyle(HerdrNoteColor.errorInk)
             }
         }
     }

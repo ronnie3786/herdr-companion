@@ -40,7 +40,7 @@ struct CommandPaletteView: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 10) {
                     Label("Open chat", systemImage: "sparkle.magnifyingglass")
-                        .herdrFont(.headline, monospaced: true, weight: .bold)
+                        .herdrFont(.headline, weight: .semibold)
                         .foregroundStyle(HerdrTheme.text)
 
                     Spacer(minLength: 12)
@@ -65,7 +65,7 @@ struct CommandPaletteView: View {
 
                     TextField("Search by chat, agent, workspace, tab, or machine", text: $state.query)
                         .textFieldStyle(.plain)
-                        .herdrFont(.body, monospaced: true)
+                        .herdrFont(.body)
                         .foregroundStyle(HerdrTheme.text)
                         .autocorrectionDisabled()
                         .focused($isSearchFocused)
@@ -103,7 +103,7 @@ struct CommandPaletteView: View {
                 }
                 .padding(.horizontal, 14)
                 .frame(minHeight: 50)
-                .background(HerdrTheme.elevated)
+                .background(HerdrTheme.input)
                 .overlay {
                     RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
                         .strokeBorder(isSearchFocused ? HerdrTheme.accent : HerdrTheme.surface, lineWidth: 1)
@@ -113,7 +113,7 @@ struct CommandPaletteView: View {
                 .padding(.bottom, 12)
 
                 Rectangle()
-                    .fill(HerdrTheme.surface)
+                    .fill(HerdrTheme.separator)
                     .frame(height: 1)
                     .accessibilityHidden(true)
 
@@ -154,7 +154,7 @@ struct CommandPaletteView: View {
                 }
 
                 Rectangle()
-                    .fill(HerdrTheme.surface)
+                    .fill(HerdrTheme.separator)
                     .frame(height: 1)
                     .accessibilityHidden(true)
 
@@ -174,7 +174,7 @@ struct CommandPaletteView: View {
             .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.cardRadius))
             .overlay {
                 RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
-                    .strokeBorder(HerdrTheme.surface, lineWidth: 1)
+                    .strokeBorder(HerdrTheme.separator, lineWidth: 1)
             }
             .shadow(color: HerdrTheme.ink.opacity(0.7), radius: 28, y: 12)
             .padding(.top, 72)

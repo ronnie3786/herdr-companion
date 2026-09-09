@@ -69,11 +69,11 @@ struct ActiveWorkBoardView: View {
             metric(title: "need you", value: store.attentionCount, color: HerdrTheme.alert)
         }
         .frame(minHeight: 72)
-        .background(HerdrTheme.graphite)
+        .background(HerdrTheme.elevated)
         .clipShape(.rect(cornerRadius: HerdrTheme.cardRadius))
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
-                .strokeBorder(HerdrTheme.mist.opacity(0.2), lineWidth: 1)
+                .strokeBorder(HerdrTheme.separator, lineWidth: 1)
         }
     }
 
@@ -95,7 +95,7 @@ struct ActiveWorkBoardView: View {
 
     private var divider: some View {
         Rectangle()
-            .fill(Color.white.opacity(0.08))
+            .fill(HerdrTheme.separator)
             .frame(width: 1, height: 34)
     }
 
@@ -161,7 +161,7 @@ private struct ActiveWorkBoardCard: View {
         .buttonStyle(.plain)
         .background {
             ZStack {
-                HerdrTheme.graphite.opacity(isSelected ? 1 : 0.78)
+                isSelected ? HerdrTheme.selection : HerdrTheme.elevated
                 if isSelected {
                     LinearGradient(
                         stops: [
@@ -381,7 +381,7 @@ private struct ActiveWorkJourneyPill: View {
             .padding(.vertical, 4)
             .background(HerdrTheme.elevated.opacity(0.52), in: Capsule())
             .overlay {
-                Capsule().strokeBorder(HerdrTheme.mist.opacity(0.2), lineWidth: 1)
+                Capsule().strokeBorder(HerdrTheme.separator, lineWidth: 1)
             }
     }
 }
@@ -541,8 +541,7 @@ private struct ActiveWorkJiraCandidateCard: View {
             }
             .frame(minWidth: 72, minHeight: 30)
         }
-        .buttonStyle(.borderedProminent)
-        .tint(isOnBoard ? HerdrTheme.signal : HerdrTheme.accent)
+        .herdrProminentButton()
         .disabled(isSettingUp || isOnBoard || candidate.setupState == .unavailable || !isControlEnabled)
         .help(
             !isControlEnabled

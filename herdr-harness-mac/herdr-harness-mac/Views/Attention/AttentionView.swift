@@ -14,7 +14,7 @@ struct AttentionView: View {
 
                     if model.unreadAlertCount > 0 {
                         HStack {
-                            Text("Recent signals").herdrFont(.headline, weight: .bold)
+                            Text("Recent signals").herdrFont(.headline, weight: .semibold)
                             Spacer()
                             if model.unreadAlertCount > 0 {
                                 Button("Mark all read") {
@@ -26,7 +26,7 @@ struct AttentionView: View {
                             }
                             Text("\(model.unreadAlertCount)")
                                 .herdrFont(.caption, weight: .bold)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(HerdrTheme.mist)
                         }
                         ForEach(model.alerts.filter { !$0.isRead }) { alert in
                             AttentionAlertRow(
@@ -81,14 +81,13 @@ struct AttentionView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
                 Label("Attention deck", systemImage: "sparkle.magnifyingglass")
-                    .herdrFont(.largeTitle, weight: .bold)
-                    .fontDesign(.rounded)
+                    .herdrFont(.largeTitle, weight: .semibold)
                 Spacer(minLength: 12)
                 refreshButton
             }
             Text("Blocked first, then unseen completions. The queue stays quiet until there’s a decision worth making.")
                 .herdrFont(.body)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(HerdrTheme.mist)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -100,7 +99,7 @@ struct AttentionView: View {
             Task { await model.refresh() }
         }
         .labelStyle(.iconOnly)
-        .herdrFont(.headline, weight: .bold)
+        .herdrFont(.headline, weight: .semibold)
         .foregroundStyle(HerdrTheme.accent)
         .frame(width: 44, height: 44)
         .background(HerdrTheme.elevated)
@@ -117,11 +116,11 @@ struct AttentionView: View {
 
     private func sectionTitle(_ title: String, count: Int) -> some View {
         HStack {
-            Text(title).herdrFont(.headline, weight: .bold)
+            Text(title).herdrFont(.headline, weight: .semibold)
             Spacer()
             Text("\(count)")
                 .herdrFont(.caption, weight: .bold)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(HerdrTheme.mist)
         }
     }
 

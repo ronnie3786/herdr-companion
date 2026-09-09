@@ -11,21 +11,21 @@ struct HerdrHudCardView: View {
     var body: some View {
         VStack(spacing: 0) {
             HerdrHudHeaderView(model: model, controller: controller, session: session)
-            Divider().overlay { HerdrTheme.surface }
+            Divider().overlay { HerdrTheme.separator }
             HerdrHudTranscriptView(
                 model: model,
                 session: session,
                 openPaneInMainWindow: openPaneInMainWindow,
                 collapse: controller.collapse
             )
-            Divider().overlay { HerdrTheme.surface }
+            Divider().overlay { HerdrTheme.separator }
             HerdrHudComposerView(model: model, controller: controller, session: session)
         }
         .frame(width: HerdrHudPlacement.expandedSize.width, height: HerdrHudPlacement.expandedSize.height)
         .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.cardRadius))
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
-                .strokeBorder(HerdrTheme.surface, lineWidth: 1)
+                .strokeBorder(HerdrTheme.separator, lineWidth: 1)
         }
         .overlay {
             if isDropTargeted {

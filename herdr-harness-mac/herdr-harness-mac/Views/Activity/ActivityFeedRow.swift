@@ -35,7 +35,7 @@ struct ActivityFeedRow: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 7) {
                     Text(alert.title)
-                        .herdrFont(.headline, weight: .bold)
+                        .herdrFont(.headline, weight: .semibold)
                         .foregroundStyle(HerdrTheme.text)
                         .lineLimit(1)
                     if !alert.isRead {

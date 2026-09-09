@@ -40,8 +40,7 @@ struct ActivityFeedView: View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Activity feed", systemImage: "clock.arrow.circlepath")
-                    .herdrFont(.largeTitle, weight: .bold)
-                    .fontDesign(.rounded)
+                    .herdrFont(.largeTitle, weight: .semibold)
                 Text("Done and blocked transitions across your machines, including signals you have already cleared.")
                     .herdrFont(.body)
                     .foregroundStyle(HerdrTheme.mist)
@@ -69,6 +68,7 @@ struct ActivityFeedView: View {
                 }
             }
             .pickerStyle(.segmented)
+            .tint(HerdrTheme.controlAccent)
             .frame(maxWidth: 360)
             .accessibilityIdentifier("activity-filter")
 

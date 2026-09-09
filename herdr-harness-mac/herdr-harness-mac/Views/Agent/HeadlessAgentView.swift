@@ -54,7 +54,7 @@ struct HeadlessAgentView: View {
             .navigationTitle("Agent")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(controller.isRunning ? "Stop and Close" : "Close") {
+                    Button(controller.isRunning ? "Stop and close" : "Close") {
                         Task {
                             await controller.close(model: model)
                             dismiss()
@@ -85,7 +85,7 @@ struct HeadlessAgentView: View {
     private var intro: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Ask once, keep your sidebar quiet", systemImage: "sparkles")
-                .herdrFont(.title2, weight: .bold)
+                .herdrFont(.title2, weight: .semibold)
                 .foregroundStyle(HerdrTheme.text)
             Text("Agent runs a private Pi question from your home folder. It only becomes a Herdr chat when you choose Continue as chat.")
                 .herdrFont(.body)
@@ -114,12 +114,12 @@ struct HeadlessAgentView: View {
             .lineLimit(5...10)
             .focused($isPromptFocused)
             .textFieldStyle(.plain)
-            .herdrFont(.body)
+            .herdrFont(size: 15, relativeTo: .body)
             .padding(14)
-            .background(HerdrTheme.graphite)
+            .background(HerdrTheme.input)
             .overlay {
                 RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                    .strokeBorder(isPromptFocused ? HerdrTheme.accent : HerdrTheme.surface, lineWidth: 1)
+                    .strokeBorder(isPromptFocused ? HerdrTheme.accent : HerdrTheme.separator, lineWidth: 1)
             }
             .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
             .accessibilityIdentifier("agent-prompt")
@@ -131,7 +131,7 @@ struct HeadlessAgentView: View {
                     .foregroundStyle(HerdrTheme.muted)
                 Spacer()
                 Button("Ask Agent", systemImage: "arrow.up.circle.fill", action: submit)
-                    .buttonStyle(.borderedProminent)
+                    .herdrProminentButton()
                     .disabled(!canSubmit)
                     .accessibilityIdentifier("agent-submit")
             }
@@ -148,12 +148,12 @@ struct HeadlessAgentView: View {
         if let run = controller.run {
             VStack(alignment: .leading, spacing: 14) {
                 Label(run.status.label, systemImage: statusSymbol(for: run.status))
-                    .herdrFont(.headline, monospaced: true, weight: .bold)
+                    .herdrFont(.headline, weight: .semibold)
                     .foregroundStyle(statusColor(for: run.status))
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("YOU ASKED")
-                        .herdrFont(.caption, monospaced: true, weight: .bold)
+                    Text("You asked")
+                        .herdrFont(.caption, weight: .semibold)
                         .foregroundStyle(HerdrTheme.muted)
                     Text(run.prompt)
                         .herdrFont(.body)
@@ -162,7 +162,7 @@ struct HeadlessAgentView: View {
                 }
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(HerdrTheme.elevated.opacity(0.55))
+                .background(HerdrTheme.elevated)
                 .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
 
                 if controller.isRunning {
@@ -183,13 +183,13 @@ struct HeadlessAgentView: View {
                 if let response = run.response, !response.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
-                            Text("ANSWER")
-                                .herdrFont(.caption, monospaced: true, weight: .bold)
+                            Text("Answer")
+                                .herdrFont(.caption, weight: .semibold)
                                 .foregroundStyle(HerdrTheme.muted)
                             Spacer()
                             if let cost = run.costUSD {
                                 Text(cost, format: .currency(code: "USD"))
-                                    .herdrFont(.caption, monospaced: true)
+                                    .herdrFont(.caption, monospacedDigit: true)
                                     .foregroundStyle(HerdrTheme.mist)
                             }
                         }
@@ -198,10 +198,10 @@ struct HeadlessAgentView: View {
                     }
                     .padding(16)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(HerdrTheme.graphite)
+                    .background(HerdrTheme.elevated)
                     .overlay {
                         RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
-                            .strokeBorder(HerdrTheme.surface, lineWidth: 1)
+                            .strokeBorder(HerdrTheme.separator, lineWidth: 1)
                     }
                     .clipShape(.rect(cornerRadius: HerdrTheme.cardRadius))
                     .accessibilityIdentifier("agent-response")
@@ -255,7 +255,7 @@ struct HeadlessAgentView: View {
                             }
                         }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .herdrProminentButton()
                     .disabled(controller.isPromoting)
                     .accessibilityIdentifier("agent-promote")
                 }

@@ -80,10 +80,10 @@ struct PiSessionSummaryView: View {
                 }
                 .scrollIndicators(.hidden)
             }
-            .navigationTitle("Pi Session Summary")
+            .navigationTitle("Pi session summary")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(controller.isRunning ? "Stop and Close" : "Close") {
+                    Button(controller.isRunning ? "Stop and close" : "Close") {
                         Task {
                             await controller.close(model: model)
                             dismiss()
@@ -109,7 +109,7 @@ struct PiSessionSummaryView: View {
     private var sessionHeader: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Where you left off", systemImage: "list.bullet.clipboard.fill")
-                .herdrFont(.title2, weight: .bold)
+                .herdrFont(.title2, weight: .semibold)
                 .foregroundStyle(HerdrTheme.text)
 
             Text(request.paneTitle)
@@ -139,7 +139,7 @@ struct PiSessionSummaryView: View {
             }
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(HerdrTheme.elevated.opacity(0.42))
+            .background(HerdrTheme.elevated)
             .clipShape(.rect(cornerRadius: HerdrTheme.cardRadius))
         } else if let response = controller.run?.response, !response.isEmpty {
             PiMarkdownMessageView(
@@ -150,10 +150,10 @@ struct PiSessionSummaryView: View {
             .textSelection(.enabled)
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(HerdrTheme.graphite)
+            .background(HerdrTheme.elevated)
             .overlay {
                 RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
-                    .strokeBorder(HerdrTheme.surface, lineWidth: 1)
+                    .strokeBorder(HerdrTheme.separator, lineWidth: 1)
             }
             .clipShape(.rect(cornerRadius: HerdrTheme.cardRadius))
             .accessibilityIdentifier("pi-session-summary-response")
@@ -164,10 +164,10 @@ struct PiSessionSummaryView: View {
                     .foregroundStyle(HerdrTheme.alert)
                     .textSelection(.enabled)
 
-                Button("Try Again", systemImage: "arrow.clockwise") {
+                Button("Try again", systemImage: "arrow.clockwise") {
                     Task { await retry() }
                 }
-                .buttonStyle(.borderedProminent)
+                .herdrProminentButton()
                 .accessibilityIdentifier("pi-session-summary-retry")
             }
             .padding(18)

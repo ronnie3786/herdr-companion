@@ -106,13 +106,13 @@ struct HerdrHudResultArtifactNodeView: View {
             if isExpanded {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(presentedTitle)
-                        .font(.custom("Inter-SemiBold", size: 10 * fontScale.rawValue))
+                        .herdrFont(size: 10, weight: .semibold, relativeTo: .caption)
                         .foregroundStyle(isConfirmationVisible ? HerdrTheme.success : HerdrTheme.text)
                         .lineLimit(1)
                         .truncationMode(.middle)
 
                     Text(secondaryLabel)
-                        .font(.system(size: 7 * fontScale.rawValue, weight: .bold, design: .monospaced))
+                        .herdrFont(size: 8, relativeTo: .caption2)
                         .foregroundStyle(secondaryColor)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -150,17 +150,8 @@ struct HerdrHudResultArtifactNodeView: View {
 
     private var nodeBackground: some View {
         Capsule()
-            .fill(
-                LinearGradient(
-                    colors: [
-                        HerdrTheme.graphite.opacity(0.98),
-                        HerdrTheme.ink.opacity(0.96),
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .shadow(color: activeTint.opacity(isExpanded || isConfirmationVisible ? 0.62 : 0.34), radius: 7)
+            .fill(HerdrTheme.elevated)
+            .shadow(color: activeTint.opacity(isConfirmationVisible ? 0.2 : 0.06), radius: 5)
             .shadow(color: HerdrTheme.ink.opacity(0.7), radius: 5, y: 3)
     }
 
@@ -180,7 +171,7 @@ struct HerdrHudResultArtifactNodeView: View {
             )
             .overlay {
                 Capsule()
-                    .strokeBorder(.white.opacity(0.07), lineWidth: 1)
+                    .strokeBorder(HerdrTheme.subtleSeparator, lineWidth: 1)
                     .padding(2)
             }
     }

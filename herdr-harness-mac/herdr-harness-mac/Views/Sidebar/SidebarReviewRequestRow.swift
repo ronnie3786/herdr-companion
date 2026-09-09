@@ -10,14 +10,14 @@ struct SidebarReviewRequestRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 7) {
                     Text(request.repository)
-                        .herdrFont(.caption, weight: .bold)
+                        .herdrFont(.caption, weight: .semibold)
                         .foregroundStyle(HerdrTheme.mauve)
                         .lineLimit(1)
 
                     Spacer(minLength: 4)
 
                     Text("#\(request.number)")
-                        .herdrFont(.caption, weight: .bold, monospacedDigit: true)
+                        .herdrFont(.caption, weight: .semibold, monospacedDigit: true)
                         .foregroundStyle(HerdrTheme.mist)
                 }
 
@@ -43,7 +43,7 @@ struct SidebarReviewRequestRow: View {
             }
             .padding(.vertical, 7)
             .padding(.horizontal, 9)
-            .background(isHovering ? HerdrTheme.elevated.opacity(0.68) : .clear)
+            .background(isHovering ? HerdrTheme.elevated.opacity(0.68) : .clear, in: .rect(cornerRadius: 6))
             .overlay(alignment: .leading) {
                 Rectangle()
                     .fill(HerdrTheme.mauve)

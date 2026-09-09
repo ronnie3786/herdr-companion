@@ -66,6 +66,9 @@ struct MachineEditorView: View {
                 }
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .background(HerdrTheme.graphite)
+            .foregroundStyle(HerdrTheme.text)
             .navigationTitle(machine == nil ? "Add machine" : "Edit machine")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

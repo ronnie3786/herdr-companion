@@ -40,7 +40,7 @@ struct HerdrVoiceNoteRecorderSheet: View {
                             .foregroundStyle(HerdrTheme.text)
 
                         Text(statusText)
-                            .herdrFont(.footnote, monospaced: true, weight: .semibold)
+                            .herdrFont(.footnote, weight: .semibold)
                             .foregroundStyle(statusColor)
                             .multilineTextAlignment(.center)
                     }
@@ -51,14 +51,14 @@ struct HerdrVoiceNoteRecorderSheet: View {
 
                     if let errorMessage = recorder.errorMessage {
                         Label(errorMessage, systemImage: "exclamationmark.triangle")
-                            .herdrFont(.footnote, monospaced: true)
+                            .herdrFont(.footnote)
                             .foregroundStyle(HerdrTheme.alert)
                             .multilineTextAlignment(.center)
                     }
 
                     if let transcriptionError {
                         Label(transcriptionError, systemImage: "waveform.badge.exclamationmark")
-                            .herdrFont(.footnote, monospaced: true)
+                            .herdrFont(.footnote)
                             .foregroundStyle(HerdrTheme.alert)
                             .multilineTextAlignment(.center)
                     }
@@ -79,7 +79,7 @@ struct HerdrVoiceNoteRecorderSheet: View {
                 .background(HerdrTheme.graphite.opacity(0.98))
                 .overlay(alignment: .top) {
                     Rectangle()
-                        .fill(HerdrTheme.surface)
+                        .fill(HerdrTheme.separator)
                         .frame(height: 1)
                 }
         }
@@ -89,10 +89,10 @@ struct HerdrVoiceNoteRecorderSheet: View {
             isPresented: $isConfirmingDiscard,
             titleVisibility: .visible
         ) {
-            Button("Discard Recording", role: .destructive) {
+            Button("Discard recording", role: .destructive) {
                 discardAndClose()
             }
-            Button("Keep Recording", role: .cancel) {}
+            Button("Keep recording", role: .cancel) {}
         } message: {
             Text("The temporary recording will be deleted.")
         }
@@ -128,13 +128,13 @@ struct HerdrVoiceNoteRecorderSheet: View {
 
     /// Stands in for the iOS navigation bar, which a Mac sheet does not have.
     private var titleBar: some View {
-        HerdrSectionLabel(title: "VOICE NOTE")
+        HerdrSectionLabel(title: "Voice note")
             .padding(.horizontal, 22)
             .padding(.vertical, 12)
             .background(HerdrTheme.graphite.opacity(0.98))
             .overlay(alignment: .bottom) {
                 Rectangle()
-                    .fill(HerdrTheme.surface)
+                    .fill(HerdrTheme.separator)
                     .frame(height: 1)
             }
     }
@@ -146,12 +146,12 @@ struct HerdrVoiceNoteRecorderSheet: View {
             VStack(spacing: 9) {
                 Image(systemName: recorder.isRecording ? "stop.fill" : "mic.fill")
                     .herdrFont(.title, weight: .bold)
-                Text(recorder.isRecording ? "STOP" : "RECORD")
-                    .herdrFont(.caption, monospaced: true, weight: .bold)
+                Text(recorder.isRecording ? "Stop" : "Record")
+                    .herdrFont(.caption, weight: .semibold)
             }
             .foregroundStyle(recorder.isRecording ? HerdrTheme.ink : HerdrTheme.graphite)
             .frame(width: 108, height: 92)
-            .background(recorder.isRecording ? HerdrTheme.alert : HerdrTheme.signal)
+            .background(recorder.isRecording ? HerdrTheme.alert : HerdrTheme.primaryAction)
             .overlay {
                 RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
                     .strokeBorder(HerdrTheme.text.opacity(0.18), lineWidth: 1)
@@ -184,8 +184,8 @@ struct HerdrVoiceNoteRecorderSheet: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text("PREVIEW")
-                        .herdrFont(.caption2, monospaced: true, weight: .bold)
+                    Text("Preview")
+                        .herdrFont(.caption, weight: .semibold)
                     Spacer()
                     Text("\(formattedDuration(recorder.playbackTime)) / \(formattedDuration(recorder.elapsedTime))")
                         .herdrFont(.caption2, monospaced: true, weight: .semibold)
@@ -201,7 +201,7 @@ struct HerdrVoiceNoteRecorderSheet: View {
         .background(HerdrTheme.elevated)
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                .strokeBorder(HerdrTheme.surface, lineWidth: 1)
+                .strokeBorder(HerdrTheme.separator, lineWidth: 1)
         }
         .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
     }
@@ -258,8 +258,7 @@ struct HerdrVoiceNoteRecorderSheet: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: 46)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(HerdrTheme.accent)
+            .herdrProminentButton()
             .disabled(!recorder.canSave || isTranscribing)
             .keyboardShortcut(.defaultAction)
             .help("Transcribe the recording into the prompt")
@@ -271,16 +270,16 @@ struct HerdrVoiceNoteRecorderSheet: View {
     private var statusText: String {
         switch recorder.status {
         case .idle:
-            "tap record · max \(formattedDuration(HerdrVoiceRecorder.maxDuration))"
+            "Click Record · max \(formattedDuration(HerdrVoiceRecorder.maxDuration))"
         case .recording:
-            "recording · tap stop when finished"
+            "Recording · click Stop when finished"
         case .finished:
             if isTranscribing {
-                "transcribing · this may take a moment"
+                "Transcribing · this may take a moment"
             } else if allowsRawSave {
-                "ready to transcribe or attach"
+                "Ready to transcribe or attach"
             } else {
-                "ready to transcribe"
+                "Ready to transcribe"
             }
         }
     }

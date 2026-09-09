@@ -11,7 +11,7 @@ struct SidebarWorkProviderHeader: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: "chevron.right")
-                    .herdrFont(.caption, weight: .bold)
+                    .herdrFont(.caption, weight: .semibold)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     .foregroundStyle(HerdrTheme.mist)
                     .accessibilityHidden(true)
@@ -21,7 +21,7 @@ struct SidebarWorkProviderHeader: View {
                     .accessibilityHidden(true)
 
                 Text(title)
-                    .herdrFont(.subheadline, weight: .bold)
+                    .herdrFont(.subheadline, weight: .semibold)
                     .foregroundStyle(HerdrTheme.text)
 
                 Spacer(minLength: 8)
@@ -33,14 +33,13 @@ struct SidebarWorkProviderHeader: View {
                 }
 
                 Text("\(count)")
-                    .herdrFont(.caption, weight: .bold, monospacedDigit: true)
-                    .foregroundStyle(HerdrTheme.ink)
-                    .padding(.horizontal, 7)
+                    .herdrFont(.caption, weight: .semibold, monospacedDigit: true)
+                    .foregroundStyle(HerdrTheme.muted)
+                    .padding(.horizontal, 4)
                     .padding(.vertical, 2)
-                    .background(tone, in: .capsule)
             }
             .padding(.horizontal, 9)
-            .frame(minHeight: 32)
+            .frame(minHeight: SidebarMetrics.projectRowHeight)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)

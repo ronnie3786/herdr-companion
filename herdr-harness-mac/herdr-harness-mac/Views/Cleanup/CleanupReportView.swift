@@ -99,7 +99,7 @@ struct CleanupReportView: View {
                 Button("Clear", action: { selection.clear() })
             }
             Button("Review closures…", systemImage: "checkmark.shield", action: { isConfirmingClose = true })
-                .buttonStyle(.borderedProminent)
+                .herdrProminentButton()
                 .disabled(selection.isEmpty)
                 .accessibilityIdentifier("cleanup-close-selected")
                 .confirmationDialog(confirmationTitle, isPresented: $isConfirmingClose, titleVisibility: .visible) {

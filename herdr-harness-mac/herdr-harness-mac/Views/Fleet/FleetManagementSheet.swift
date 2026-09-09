@@ -24,7 +24,7 @@ struct FleetManagementSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(HerdrTheme.surface.opacity(0.7))
+            Divider().overlay(HerdrTheme.separator)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
@@ -44,8 +44,8 @@ struct FleetManagementSheet: View {
             idealHeight: isEmbedded ? nil : 820,
             maxHeight: isEmbedded ? .infinity : nil
         )
-        .background(HerdrTheme.ink)
-        .tint(HerdrTheme.signal)
+        .background(HerdrTheme.graphite)
+        .tint(HerdrTheme.accent)
         .accessibilityIdentifier("fleet-management-sheet")
         .task {
             await store.refresh()
@@ -89,7 +89,7 @@ struct FleetManagementSheet: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Fleet")
-                    .herdrFont(.title3, weight: .bold)
+                    .herdrFont(.title3, weight: .semibold)
                     .foregroundStyle(HerdrTheme.text)
                 Text(fleetSummary)
                     .herdrFont(.caption, monospaced: true)
@@ -180,7 +180,7 @@ struct FleetManagementSheet: View {
                     } label: {
                         Label("Sync All", systemImage: "arrow.triangle.2.circlepath")
                     }
-                    .buttonStyle(.borderedProminent)
+                    .herdrProminentButton()
                     .disabled(store.isLoading || store.isSyncing || store.machines.isEmpty)
                     .accessibilityIdentifier("fleet-sync-all-button")
 
@@ -500,11 +500,13 @@ private struct FleetInventoryControls: View {
                 }
             }
             .pickerStyle(.segmented)
+            .tint(HerdrTheme.controlAccent)
             .frame(maxWidth: 430)
             .accessibilityIdentifier("fleet-inventory-filter")
 
             Toggle("Differences only", isOn: $store.differencesOnly)
                 .toggleStyle(.checkbox)
+                .tint(HerdrTheme.controlAccent)
                 .foregroundStyle(HerdrTheme.mist)
                 .accessibilityIdentifier("fleet-differences-toggle")
 
@@ -731,7 +733,7 @@ private struct FleetMachineInventoryCell: View {
             if active, let progress = store.progress(for: item.id, machineID: machine.id) {
                 ProgressView(value: progress)
                     .progressViewStyle(.linear)
-                    .tint(HerdrTheme.signal)
+                    .tint(HerdrTheme.accent)
                     .accessibilityValue("\(Int(progress * 100)) percent")
             }
 

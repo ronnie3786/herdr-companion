@@ -385,8 +385,7 @@ private struct ActiveWorkFocusHero: View {
                     }
 
                 Text(focusTitle)
-                    .herdrFont(.title2, weight: .bold)
-                    .fontDesign(.rounded)
+                    .herdrFont(.title2, weight: .semibold)
                     .foregroundStyle(HerdrTheme.text)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -866,8 +865,7 @@ private struct ActiveWorkTransitionCard: View {
                 }
                 .frame(minWidth: 132, minHeight: 30)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(accentColor)
+            .herdrProminentButton()
             .disabled(isMoving || didMove || !isControlEnabled)
             .help(isControlEnabled ? actionTitle : "Control access is required to advance work")
             .accessibilityIdentifier("active-work-transition-\(item.id)")
@@ -958,8 +956,7 @@ private struct ActiveWorkLifecycleCard: View {
             Button(didApply ? (action == .complete ? "Completed" : "Archived") : action.buttonTitle, systemImage: didApply ? "checkmark" : action.symbol) {
                 isShowingConfirmation = true
             }
-            .buttonStyle(.borderedProminent)
-            .tint(action.color)
+            .herdrProminentButton()
             .disabled(isWorking || didApply || !isControlEnabled)
             .help(isControlEnabled ? action.buttonTitle : "Control access is required to update work")
             .accessibilityIdentifier("active-work-\(action.lifecycle)-\(item.id)")

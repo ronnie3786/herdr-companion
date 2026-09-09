@@ -24,12 +24,12 @@ struct WorkspaceFileSearchSheet: View {
                         .padding(.bottom, 10)
 
                     Divider()
-                        .overlay(HerdrTheme.surface)
+                        .overlay(HerdrTheme.separator)
 
                     resultsContent
                 }
             }
-            .navigationTitle("WORKSPACE FILES")
+            .navigationTitle("Workspace files")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button("Done") { dismiss() }
@@ -63,7 +63,7 @@ struct WorkspaceFileSearchSheet: View {
 
             TextField("Search project files", text: $query)
                 .textFieldStyle(.plain)
-                .herdrFont(.body, monospaced: true)
+                .herdrFont(.body)
                 .foregroundStyle(HerdrTheme.text)
                 .autocorrectionDisabled()
                 .submitLabel(.search)
@@ -90,10 +90,10 @@ struct WorkspaceFileSearchSheet: View {
         .padding(.leading, 13)
         .padding(.trailing, 2)
         .frame(minHeight: 48)
-        .background(HerdrTheme.elevated)
+        .background(HerdrTheme.input)
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                .strokeBorder(isSearchFocused ? HerdrTheme.accent : HerdrTheme.surface, lineWidth: 1)
+                .strokeBorder(isSearchFocused ? HerdrTheme.accent : HerdrTheme.separator, lineWidth: 1)
         }
         .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
     }
@@ -102,26 +102,26 @@ struct WorkspaceFileSearchSheet: View {
     private var resultsContent: some View {
         if normalizedQuery.count < 3 {
             statePanel(
-                title: "type 3+ characters",
+                title: "Type 3+ characters",
                 detail: "Paths are searched inside this pane's workspace.",
                 systemImage: "doc.text.magnifyingglass"
             )
         } else if isLoading && results.isEmpty {
-            statePanel(title: "searching workspace", detail: normalizedQuery, systemImage: "ellipsis")
+            statePanel(title: "Searching workspace", detail: normalizedQuery, systemImage: "ellipsis")
         } else if let errorMessage {
             errorPanel(errorMessage)
         } else if results.isEmpty {
-            statePanel(title: "no matching files", detail: normalizedQuery, systemImage: "doc.text")
+            statePanel(title: "No matching files", detail: normalizedQuery, systemImage: "doc.text")
         } else {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     HStack {
-                        Text("MATCHES")
-                            .herdrFont(.caption2, monospaced: true, weight: .bold)
+                        Text("Matches")
+                            .herdrFont(.caption, weight: .semibold)
                             .foregroundStyle(HerdrTheme.mist)
                         Spacer()
                         Text("\(results.count)")
-                            .herdrFont(.caption2, monospaced: true)
+                            .herdrFont(.caption, monospacedDigit: true)
                             .foregroundStyle(HerdrTheme.mist)
                     }
                     .padding(.horizontal, HerdrTheme.pagePadding)
@@ -160,7 +160,7 @@ struct WorkspaceFileSearchSheet: View {
                         .accessibilityLabel("Insert \(file.path)")
 
                         Divider()
-                            .overlay(HerdrTheme.surface.opacity(0.75))
+                            .overlay(HerdrTheme.subtleSeparator)
                             .padding(.leading, 54)
                     }
                 }
@@ -171,11 +171,11 @@ struct WorkspaceFileSearchSheet: View {
     private func statePanel(title: String, detail: String, systemImage: String) -> some View {
         ContentUnavailableView {
             Label(title, systemImage: systemImage)
-                .herdrFont(.headline, monospaced: true)
+                .herdrFont(.headline)
                 .foregroundStyle(HerdrTheme.text)
         } description: {
             Text(detail)
-                .herdrFont(.footnote, monospaced: true)
+                .herdrFont(.footnote)
                 .foregroundStyle(HerdrTheme.mist)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -187,14 +187,13 @@ struct WorkspaceFileSearchSheet: View {
                 .herdrFont(.title2)
                 .foregroundStyle(HerdrTheme.warning)
             Text(message)
-                .herdrFont(.footnote, monospaced: true)
+                .herdrFont(.footnote)
                 .foregroundStyle(HerdrTheme.text)
                 .multilineTextAlignment(.center)
             Button("Retry") {
                 Task { await performSearch(normalizedQuery) }
             }
-            .buttonStyle(.borderedProminent)
-            .tint(HerdrTheme.accent)
+            .herdrProminentButton()
         }
         .padding(HerdrTheme.pagePadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

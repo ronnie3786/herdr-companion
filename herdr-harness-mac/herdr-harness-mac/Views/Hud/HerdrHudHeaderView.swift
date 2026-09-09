@@ -11,7 +11,7 @@ struct HerdrHudHeaderView: View {
                 .foregroundStyle(HerdrTheme.accent)
                 .accessibilityHidden(true)
             Text("HUD")
-                .herdrFont(.caption, monospaced: true, weight: .bold)
+                .herdrFont(.caption, weight: .semibold)
                 .foregroundStyle(HerdrTheme.text)
 
             if model.machines.count > 1, let selectedMachine {
@@ -97,7 +97,7 @@ struct HerdrHudHeaderView: View {
                 Image(systemName: "chevron.down")
                     .herdrFont(.caption2, weight: .bold)
             }
-            .herdrFont(.caption, monospaced: true)
+            .herdrFont(.caption)
             .foregroundStyle(HerdrTheme.mist)
             .frame(minHeight: HerdrTheme.minHitTarget)
             .contentShape(Rectangle())

@@ -22,6 +22,7 @@ struct OnboardingView: View {
             }
             .scrollIndicators(.hidden)
         }
+        .foregroundStyle(HerdrTheme.text)
     }
 
     private var brand: some View {
@@ -30,8 +31,7 @@ struct OnboardingView: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text("herdr")
-                    .herdrFont(.largeTitle, weight: .bold)
-                    .fontDesign(.rounded)
+                    .herdrFont(.largeTitle, weight: .semibold)
                 Text("Your agents, within reach")
                     .herdrFont(.subheadline)
                     .foregroundStyle(HerdrTheme.mist)
@@ -42,11 +42,10 @@ struct OnboardingView: View {
     private var promise: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Know where to look.")
-                .herdrFont(.largeTitle, weight: .bold)
-                .fontDesign(.rounded)
+                .herdrFont(.largeTitle, weight: .semibold)
             Text("Move from workspace to pane to live agent in seconds. Herdr keeps the terminals real; this app keeps the decisions close.")
                 .herdrFont(.title3)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(HerdrTheme.mist)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -55,7 +54,7 @@ struct OnboardingView: View {
         GlassCard {
             VStack(alignment: .leading, spacing: 18) {
                 Label("Connect to your Mac", systemImage: "macbook.and.iphone")
-                    .herdrFont(.headline, weight: .bold)
+                    .herdrFont(.headline, weight: .semibold)
 
                 TextField("https://your-mac.example.test", text: $model.serverURLString)
                     .textContentType(.URL)
@@ -63,30 +62,40 @@ struct OnboardingView: View {
                     .focused($focusedField, equals: .url)
                     .submitLabel(.next)
                     .onSubmit { focusedField = .token }
+                    .textFieldStyle(.plain)
                     .padding(14)
-                    .background(.black.opacity(0.24), in: .rect(cornerRadius: 12))
+                    .background(HerdrTheme.input, in: .rect(cornerRadius: HerdrTheme.compactRadius))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+                            .strokeBorder(HerdrTheme.surface, lineWidth: 1)
+                    }
 
                 SecureField("Pairing token", text: $model.apiToken)
                     .textContentType(.password)
                     .focused($focusedField, equals: .token)
                     .submitLabel(.go)
                     .onSubmit(model.connect)
+                    .textFieldStyle(.plain)
                     .padding(14)
-                    .background(.black.opacity(0.24), in: .rect(cornerRadius: 12))
+                    .background(HerdrTheme.input, in: .rect(cornerRadius: HerdrTheme.compactRadius))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+                            .strokeBorder(HerdrTheme.surface, lineWidth: 1)
+                    }
 
                 Button("Connect", systemImage: "bolt.horizontal.circle.fill", action: model.connect)
-                    .buttonStyle(.borderedProminent)
+                    .herdrProminentButton()
                     .controlSize(.large)
                     .frame(maxWidth: .infinity, alignment: .trailing)
 
                 Label("Use localhost when Herdr runs on this Mac, or the private HTTPS URL from tailscale serve status for another Mac. The token stays in Keychain.", systemImage: "lock.shield")
                     .herdrFont(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(HerdrTheme.mist)
                     .fixedSize(horizontal: false, vertical: true)
 
                 Text("You can add more machines later in Settings.")
                     .herdrFont(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(HerdrTheme.mist)
             }
             .padding(22)
         }

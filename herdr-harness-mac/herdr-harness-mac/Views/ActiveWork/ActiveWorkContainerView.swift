@@ -53,7 +53,7 @@ struct ActiveWorkContainerView: View {
                 header
 
                 Rectangle()
-                    .fill(HerdrTheme.surface.opacity(0.72))
+                    .fill(HerdrTheme.separator)
                     .frame(height: 1)
 
                 if let errorMessage {
@@ -137,7 +137,7 @@ struct ActiveWorkContainerView: View {
             .padding(.vertical, 9)
 
             Rectangle()
-                .fill(HerdrTheme.surface.opacity(0.42))
+                .fill(HerdrTheme.subtleSeparator)
                 .frame(height: 1)
 
             ViewThatFits(in: .horizontal) {
@@ -160,14 +160,13 @@ struct ActiveWorkContainerView: View {
             .padding(.bottom, 14)
             .frame(maxWidth: .infinity)
         }
-        .background(HerdrTheme.ink.opacity(0.94))
+        .background(HerdrTheme.graphite)
     }
 
     private var headerTitle: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(store.viewMode == .board ? "Active work" : "Focus route")
-                .herdrFont(size: 30, weight: .bold, relativeTo: .largeTitle)
-                .fontDesign(.rounded)
+                .herdrFont(size: 30, weight: .semibold, relativeTo: .largeTitle)
                 .foregroundStyle(HerdrTheme.text)
             Text(
                 store.viewMode == .board
@@ -186,6 +185,7 @@ struct ActiveWorkContainerView: View {
             }
         }
         .pickerStyle(.segmented)
+        .tint(HerdrTheme.controlAccent)
         .frame(width: 272)
         .accessibilityIdentifier("active-work-mode-picker")
     }
@@ -208,9 +208,8 @@ struct ActiveWorkContainerView: View {
             Button("Ask board", systemImage: "sparkles") {
                 askBoard(nil)
             }
-            .buttonStyle(.borderedProminent)
+            .herdrProminentButton()
             .controlSize(.small)
-            .tint(HerdrTheme.accent)
             .disabled(!isControlEnabled)
             .help(isControlEnabled ? "Open an agent grounded in this board" : "Control access is required to launch an agent")
             .accessibilityIdentifier("active-work-ask-board")
@@ -243,9 +242,8 @@ struct ActiveWorkContainerView: View {
             Image(systemName: "mic.fill")
                 .frame(width: 30, height: 30)
         }
-        .buttonStyle(.borderedProminent)
+        .herdrProminentButton()
         .controlSize(.small)
-        .tint(HerdrTheme.accent)
         .disabled(!isControlEnabled)
         .help(isControlEnabled ? "Ask this board by voice" : "Control access is required for board voice prompts")
         .accessibilityLabel("Ask this board by voice")

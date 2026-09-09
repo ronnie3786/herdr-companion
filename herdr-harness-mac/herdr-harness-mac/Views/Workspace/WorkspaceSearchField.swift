@@ -13,7 +13,7 @@ struct WorkspaceSearchField: View {
             TextField(placeholder, text: $text)
                 // Plain style, or AppKit draws its own bezel inside our chrome.
                 .textFieldStyle(.plain)
-                .herdrFont(.body)
+                .herdrFont(.subheadline)
                 .foregroundStyle(HerdrTheme.text)
                 .autocorrectionDisabled()
                 .focused($isFocused)
@@ -25,7 +25,7 @@ struct WorkspaceSearchField: View {
                     text = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .herdrHitTarget(minWidth: 44, minHeight: 44)
+                        .herdrHitTarget(minWidth: 32, minHeight: 32)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(HerdrTheme.mist)
@@ -35,8 +35,8 @@ struct WorkspaceSearchField: View {
         }
         .padding(.leading, 13)
         .padding(.trailing, text.isEmpty ? 13 : 3)
-        .frame(minHeight: 48)
-        .background(HerdrTheme.graphite)
+        .frame(minHeight: 38)
+        .background(HerdrTheme.elevated)
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
                 .strokeBorder(isFocused ? HerdrTheme.accent : HerdrTheme.surface, lineWidth: 1)

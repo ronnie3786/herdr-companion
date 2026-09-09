@@ -129,8 +129,7 @@ struct HerdrHudTranscriptRowView: View {
                         .herdrFont(.caption, weight: .bold)
                 }
             }
-            .buttonStyle(.borderedProminent)
-            .tint(HerdrTheme.accent)
+            .herdrProminentButton()
             .controlSize(.small)
             .disabled(isPromoting)
             .accessibilityIdentifier("hud-promote-\(exchange.id)")

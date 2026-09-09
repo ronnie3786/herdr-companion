@@ -8,13 +8,12 @@ struct WorkspaceHeroView: View {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(workspace.label)
-                        .herdrFont(.title, weight: .bold)
-                        .fontDesign(.rounded)
+                        .herdrFont(.title, weight: .semibold)
                     if !workspace.displayPath.isEmpty {
                         Text(workspace.displayPath)
                             .herdrFont(.footnote)
                             .fontDesign(.monospaced)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(HerdrTheme.mist)
                             .lineLimit(2)
                             .truncationMode(.middle)
                     }
@@ -26,7 +25,7 @@ struct WorkspaceHeroView: View {
             PaneTopologyView(layout: workspace.layouts.first)
                 .frame(height: 94)
                 .padding(10)
-                .background(.black.opacity(0.18), in: .rect(cornerRadius: 14))
+                .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.compactRadius))
 
             HStack(spacing: 14) {
                 Label("^[\(workspace.tabCount) tab](inflect: true)", systemImage: "folder")
@@ -40,12 +39,11 @@ struct WorkspaceHeroView: View {
             .foregroundStyle(HerdrTheme.mist)
         }
         .padding(HerdrTheme.cardPadding)
-        .background(.ultraThinMaterial)
-        .background(HerdrTheme.graphite.opacity(0.62))
+        .background(HerdrTheme.elevated)
         .clipShape(.rect(cornerRadius: HerdrTheme.cardRadius))
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
-                .strokeBorder(.white.opacity(0.09), lineWidth: 1)
+                .strokeBorder(HerdrTheme.separator, lineWidth: 1)
         }
     }
 }

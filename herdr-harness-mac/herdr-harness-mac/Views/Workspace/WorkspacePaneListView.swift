@@ -112,11 +112,11 @@ struct WorkspacePaneListView: View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label(tab.label, systemImage: "folder")
-                    .herdrFont(.headline, weight: .bold)
+                    .herdrFont(.headline, weight: .semibold)
                 Spacer()
                 Text("^[\(panes.count) pane](inflect: true)")
                     .herdrFont(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(HerdrTheme.mist)
             }
             paneRows(panes)
         }

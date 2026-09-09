@@ -17,12 +17,12 @@ struct CommandPaletteRow: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(entry.title)
-                        .herdrFont(.body, monospaced: true, weight: .bold)
+                        .herdrFont(.body, weight: .semibold)
                         .foregroundStyle(HerdrTheme.text)
                         .lineLimit(1)
 
                     Text(entry.contextLine)
-                        .herdrFont(.caption, monospaced: true)
+                        .herdrFont(.caption)
                         .foregroundStyle(HerdrTheme.mist)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -32,12 +32,12 @@ struct CommandPaletteRow: View {
 
                 VStack(alignment: .trailing, spacing: 3) {
                     Text(entry.machineName)
-                        .herdrFont(.caption, monospaced: true, weight: .bold)
+                        .herdrFont(.caption, weight: .medium)
                         .foregroundStyle(HerdrTheme.mist)
                         .lineLimit(1)
 
                     Text(entry.status.compactTitle.lowercased())
-                        .herdrFont(.caption, monospaced: true)
+                        .herdrFont(.caption)
                         .foregroundStyle(entry.status.labelColor)
                         .lineLimit(1)
                 }
@@ -51,11 +51,12 @@ struct CommandPaletteRow: View {
             .padding(.vertical, 9)
             .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
             .contentShape(.rect)
-            .background(isHighlighted ? HerdrTheme.accent.opacity(0.14) : .clear)
+            .background(isHighlighted ? HerdrTheme.selection : .clear, in: .rect(cornerRadius: 6))
             .overlay(alignment: .leading) {
-                Rectangle()
+                RoundedRectangle(cornerRadius: 1)
                     .fill(isHighlighted ? HerdrTheme.accent : .clear)
-                    .frame(width: 3)
+                    .frame(width: 2)
+                    .padding(.vertical, 10)
             }
         }
         .buttonStyle(.plain)

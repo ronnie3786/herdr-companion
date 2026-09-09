@@ -23,12 +23,12 @@ struct WorkspaceNavigationView: View {
             )
                 // AppKit remembers a column the user has dragged, so ideal only
                 // affects a fresh profile. Sidebar padding moves existing content.
-                .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 480)
+                .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 480)
                 .background(HerdrTheme.ink)
         } detail: {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(HerdrTheme.ink)
+                .background(HerdrTheme.graphite)
                 .toolbar { detailToolbar }
         }
         .navigationSplitViewStyle(.balanced)
@@ -217,6 +217,7 @@ struct WorkspaceNavigationView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                .tint(HerdrTheme.controlAccent)
                 .labelStyle(.iconOnly)
                 .accessibilityIdentifier("detail-scope-picker")
 
@@ -237,7 +238,7 @@ struct WorkspaceNavigationView: View {
             Button("Agent", systemImage: "sparkles") {
                 shell.isAgentPresented = true
             }
-            .buttonStyle(.borderedProminent)
+            .herdrProminentButton()
             .disabled(!model.canControl)
             .help("Ask a one-off question without creating a chat")
             .accessibilityIdentifier("open-headless-agent")

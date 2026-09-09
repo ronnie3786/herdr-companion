@@ -15,12 +15,12 @@ struct HerdrHudExpandedResultStripView: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 1) {
-                Text("AGENT OUTPUT")
-                    .font(.system(size: 8, weight: .black, design: .monospaced))
+                Text("Agent outputs")
+                    .herdrFont(size: 10, weight: .semibold, relativeTo: .caption)
                     .foregroundStyle(HerdrTheme.accent)
-                Text("\(artifacts.count) UNVIEWED")
-                    .font(.system(size: 7, weight: .bold, design: .monospaced))
-                    .foregroundStyle(HerdrTheme.mist.opacity(0.72))
+                Text("\(artifacts.count) unviewed")
+                    .herdrFont(size: 9, relativeTo: .caption2)
+                    .foregroundStyle(HerdrTheme.mist)
             }
 
             Spacer(minLength: 8)
@@ -30,26 +30,10 @@ struct HerdrHudExpandedResultStripView: View {
         }
         .padding(.horizontal, HerdrTheme.cardPadding)
         .frame(height: 46)
-        .background {
-            LinearGradient(
-                colors: [
-                    HerdrTheme.ink.opacity(0.76),
-                    HerdrTheme.graphite.opacity(0.96),
-                    HerdrTheme.mauve.opacity(0.055),
-                ],
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-        }
+        .background(HerdrTheme.graphite)
         .overlay(alignment: .top) {
             Rectangle()
-                .fill(
-                    LinearGradient(
-                        colors: [.clear, HerdrTheme.accent.opacity(0.22), .clear],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                )
+                .fill(HerdrTheme.separator)
                 .frame(height: 1)
         }
         .transition(

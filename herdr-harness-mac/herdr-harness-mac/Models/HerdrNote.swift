@@ -8,16 +8,19 @@ enum HerdrNoteColor: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var fill: Color {
         switch self {
-        case .yellow: Color(red: 0.9765, green: 0.8863, blue: 0.6863)
-        case .peach: Color(red: 0.9804, green: 0.7020, blue: 0.5294)
-        case .pink: Color(red: 0.9608, green: 0.7608, blue: 0.9059)
-        case .green: Color(red: 0.6510, green: 0.8902, blue: 0.6314)
-        case .blue: Color(red: 0.5373, green: 0.7059, blue: 0.9804)
-        case .lavender: Color(red: 0.7059, green: 0.7451, blue: 0.9961)
+        case .yellow: HerdrTheme.working
+        case .peach: Color(red: 0.8745, green: 0.7020, blue: 0.6078)
+        case .pink: Color(red: 0.8471, green: 0.6980, blue: 0.7922)
+        case .green: HerdrTheme.signal
+        case .blue: HerdrTheme.primaryAction
+        case .lavender: Color(red: 0.7333, green: 0.7059, blue: 0.8941)
         }
     }
 
     var ink: Color { HerdrTheme.crust }
+
+    /// Error ink stays dark and readable on every colored note surface.
+    static let errorInk = Color(red: 0.5059, green: 0.1765, blue: 0.2471)
 
     var label: String {
         switch self {

@@ -39,7 +39,7 @@ struct MachinesView: View {
                         isPresentingMachineEditor = true
                     } label: {
                         Label("add machine", systemImage: "plus")
-                            .herdrFont(.subheadline, monospaced: true, weight: .bold)
+                            .herdrFont(.subheadline, weight: .semibold)
                             .foregroundStyle(HerdrTheme.text)
                             .frame(maxWidth: .infinity, minHeight: 30)
                             .background(HerdrTheme.elevated)
@@ -54,6 +54,9 @@ struct MachinesView: View {
                 }
                 .listRowBackground(Color.clear)
             }
+            .scrollContentBackground(.hidden)
+            .background(HerdrTheme.graphite)
+            .foregroundStyle(HerdrTheme.text)
             .navigationTitle("Machines")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

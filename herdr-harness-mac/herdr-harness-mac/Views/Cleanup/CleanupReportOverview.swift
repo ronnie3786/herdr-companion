@@ -32,6 +32,7 @@ struct CleanupReportOverview: View {
                 }
             }
             .pickerStyle(.segmented)
+            .tint(HerdrTheme.controlAccent)
             .accessibilityIdentifier("cleanup-report-filter")
         }
         .padding(16)

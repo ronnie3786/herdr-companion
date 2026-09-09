@@ -25,7 +25,7 @@ struct PromptSettingsSectionView: View {
                     .frame(minHeight: 150)
                     .scrollContentBackground(.hidden)
                     .background(
-                        HerdrTheme.elevated,
+                        HerdrTheme.input,
                         in: .rect(cornerRadius: HerdrTheme.compactRadius)
                     )
 

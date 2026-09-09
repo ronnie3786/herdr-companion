@@ -357,7 +357,7 @@ struct HerdrSidebarView: View {
         HStack(spacing: 10) {
             HerdrBrandMark(size: 28)
             Text("herdr")
-                .herdrFont(.headline, monospaced: true, weight: .bold)
+                .herdrFont(.headline, weight: .semibold)
                 .foregroundStyle(HerdrTheme.text)
             Spacer()
             Menu {
@@ -409,9 +409,9 @@ struct HerdrSidebarView: View {
                 Text(scopeTitle)
                 Spacer()
                 Image(systemName: "chevron.up.chevron.down")
-                    .herdrFont(.caption, weight: .bold)
+                    .herdrFont(.caption, weight: .semibold)
             }
-            .herdrFont(.caption, weight: .bold)
+            .herdrFont(.caption, weight: .semibold)
             .foregroundStyle(HerdrTheme.mist)
             .frame(minHeight: HerdrTheme.minHitTarget)
             .contentShape(.rect)
@@ -509,7 +509,7 @@ struct HerdrSidebarView: View {
                 Text(priorityGroupTitle(group.workspace, showsMachineChrome: snapshot.showsMachineChrome))
                     .herdrFont(
                         size: SidebarMetrics.projectLabelSize,
-                        weight: .bold,
+                        weight: .semibold,
                         relativeTo: .caption
                     )
                     .foregroundStyle(HerdrTheme.muted)
@@ -534,7 +534,7 @@ struct HerdrSidebarView: View {
                 Text(priorityGroupTitle(group.workspace, showsMachineChrome: snapshot.showsMachineChrome))
                     .herdrFont(
                         size: SidebarMetrics.projectLabelSize,
-                        weight: .bold,
+                        weight: .semibold,
                         relativeTo: .caption
                     )
                     .foregroundStyle(HerdrTheme.muted)
@@ -558,11 +558,11 @@ struct HerdrSidebarView: View {
                             : "stale chats",
                         systemImage: "archivebox"
                     )
-                    .herdrFont(.caption, weight: .bold)
+                    .herdrFont(.caption, weight: .semibold)
                     .foregroundStyle(HerdrTheme.mist)
 
                     Text("\(group.chats.count)")
-                        .herdrFont(.caption2, weight: .bold, monospacedDigit: true)
+                        .herdrFont(.caption2, weight: .semibold, monospacedDigit: true)
                         .foregroundStyle(HerdrTheme.ink)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -575,7 +575,7 @@ struct HerdrSidebarView: View {
                         presentStaleCleanup(group)
                     }
                     .buttonStyle(.plain)
-                    .herdrFont(.caption, weight: .bold)
+                    .herdrFont(.caption, weight: .semibold)
                     .foregroundStyle(HerdrTheme.accent)
                     .disabled(!model.canControl(machineID: group.machine.id))
                     .accessibilityIdentifier("sidebar-review-stale-\(group.machine.id)")
@@ -597,11 +597,11 @@ struct HerdrSidebarView: View {
         if !snapshot.recentChats.isEmpty {
             HStack(spacing: 7) {
                 Label("recents", systemImage: "clock.arrow.circlepath")
-                    .herdrFont(.caption, weight: .bold)
+                    .herdrFont(.caption, weight: .semibold)
                     .foregroundStyle(HerdrTheme.mist)
 
                 Text("\(snapshot.recentChats.count)")
-                    .herdrFont(.caption2, weight: .bold, monospacedDigit: true)
+                    .herdrFont(.caption2, weight: .semibold, monospacedDigit: true)
                     .foregroundStyle(HerdrTheme.ink)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -1126,7 +1126,7 @@ struct HerdrSidebarView: View {
 
 private extension View {
     func sidebarActionStyle() -> some View {
-        herdrFont(.subheadline, weight: .bold)
+        herdrFont(.subheadline, weight: .semibold)
             .foregroundStyle(HerdrTheme.accent)
             .frame(maxWidth: .infinity, minHeight: HerdrTheme.minHitTarget, alignment: .leading)
             .contentShape(Rectangle())

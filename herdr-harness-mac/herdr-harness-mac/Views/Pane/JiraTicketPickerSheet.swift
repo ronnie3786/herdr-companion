@@ -26,7 +26,7 @@ struct JiraTicketPickerSheet: View {
                         lookupCard
 
                         if let lookupResult {
-                            ticketSection(title: "LOOKUP RESULT", tickets: [lookupResult])
+                            ticketSection(title: "Lookup result", tickets: [lookupResult])
                         }
 
                         assignedContent
@@ -35,7 +35,7 @@ struct JiraTicketPickerSheet: View {
                     .padding(.vertical, 16)
                 }
             }
-            .navigationTitle("JIRA CONTEXT")
+            .navigationTitle("Jira context")
             .toolbar {
                 ToolbarItem(placement: .navigation) {
                     Button {
@@ -63,14 +63,14 @@ struct JiraTicketPickerSheet: View {
 
     private var lookupCard: some View {
         VStack(alignment: .leading, spacing: 11) {
-            Text("EXACT LOOKUP")
-                .herdrFont(.caption2, monospaced: true, weight: .bold)
+            Text("Exact lookup")
+                .herdrFont(.caption, weight: .semibold)
                 .foregroundStyle(HerdrTheme.mist)
 
             HStack(spacing: 8) {
                 TextField("HERD-123 or Jira URL", text: $lookupQuery)
                     .textFieldStyle(.plain)
-                    .herdrFont(.body, monospaced: true)
+                    .herdrFont(.body)
                     .foregroundStyle(HerdrTheme.text)
                     .autocorrectionDisabled()
                     .submitLabel(.search)
@@ -79,10 +79,10 @@ struct JiraTicketPickerSheet: View {
                     }
                     .padding(.horizontal, 12)
                     .frame(minHeight: 46)
-                    .background(HerdrTheme.graphite)
+                    .background(HerdrTheme.input)
                     .overlay {
                         RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                            .strokeBorder(HerdrTheme.surface, lineWidth: 1)
+                            .strokeBorder(HerdrTheme.separator, lineWidth: 1)
                     }
                     .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
 
@@ -111,11 +111,11 @@ struct JiraTicketPickerSheet: View {
 
             if let lookupError {
                 Label(lookupError, systemImage: "exclamationmark.triangle")
-                    .herdrFont(.caption, monospaced: true)
+                    .herdrFont(.caption)
                     .foregroundStyle(HerdrTheme.alert)
             } else {
                 Text("Paste a ticket key or browse URL from any project.")
-                    .herdrFont(.caption, monospaced: true)
+                    .herdrFont(.caption)
                     .foregroundStyle(HerdrTheme.mist)
             }
         }
@@ -123,7 +123,7 @@ struct JiraTicketPickerSheet: View {
         .background(HerdrTheme.elevated)
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
-                .strokeBorder(HerdrTheme.surface, lineWidth: 1)
+                .strokeBorder(HerdrTheme.separator, lineWidth: 1)
         }
         .clipShape(.rect(cornerRadius: HerdrTheme.cardRadius))
     }
@@ -134,35 +134,34 @@ struct JiraTicketPickerSheet: View {
             HStack(spacing: 10) {
                 ProgressView()
                     .tint(HerdrTheme.accent)
-                Text("loading assigned tickets")
-                    .herdrFont(.footnote, monospaced: true)
+                Text("Loading assigned tickets")
+                    .herdrFont(.footnote)
                     .foregroundStyle(HerdrTheme.mist)
             }
             .frame(maxWidth: .infinity, minHeight: 88)
         } else if let assignedError {
             VStack(spacing: 10) {
                 Label("Jira unavailable", systemImage: "exclamationmark.triangle")
-                    .herdrFont(.headline, monospaced: true)
+                    .herdrFont(.headline)
                     .foregroundStyle(HerdrTheme.warning)
                 Text(assignedError)
-                    .herdrFont(.footnote, monospaced: true)
+                    .herdrFont(.footnote)
                     .foregroundStyle(HerdrTheme.mist)
                     .multilineTextAlignment(.center)
                 Button("Retry") {
                     Task { await refreshAssigned() }
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(HerdrTheme.accent)
+                .herdrProminentButton()
             }
             .frame(maxWidth: .infinity, minHeight: 130)
         } else if assignedTickets.isEmpty {
             ContentUnavailableView {
-                Label("no assigned tickets", systemImage: "ticket")
-                    .herdrFont(.headline, monospaced: true)
+                Label("No assigned tickets", systemImage: "ticket")
+                    .herdrFont(.headline)
                     .foregroundStyle(HerdrTheme.text)
             } description: {
                 Text("Use exact lookup for another ticket.")
-                    .herdrFont(.footnote, monospaced: true)
+                    .herdrFont(.footnote)
                     .foregroundStyle(HerdrTheme.mist)
             }
             .frame(maxWidth: .infinity, minHeight: 180)
@@ -176,12 +175,12 @@ struct JiraTicketPickerSheet: View {
     private func ticketSection(title: String, tickets: [JiraTicket]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(title.uppercased())
-                    .herdrFont(.caption2, monospaced: true, weight: .bold)
+                Text(title)
+                    .herdrFont(.caption, weight: .semibold)
                     .foregroundStyle(HerdrTheme.mist)
                 Spacer()
                 Text("\(tickets.count)")
-                    .herdrFont(.caption2, monospaced: true)
+                    .herdrFont(.caption, monospacedDigit: true)
                     .foregroundStyle(HerdrTheme.mist)
             }
 
@@ -195,7 +194,7 @@ struct JiraTicketPickerSheet: View {
 
                     if index < tickets.count - 1 {
                         Divider()
-                            .overlay(HerdrTheme.surface)
+                            .overlay(HerdrTheme.subtleSeparator)
                             .padding(.leading, 14)
                     }
                 }
@@ -203,7 +202,7 @@ struct JiraTicketPickerSheet: View {
             .background(HerdrTheme.elevated)
             .overlay {
                 RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
-                    .strokeBorder(HerdrTheme.surface, lineWidth: 1)
+                    .strokeBorder(HerdrTheme.separator, lineWidth: 1)
             }
             .clipShape(.rect(cornerRadius: HerdrTheme.cardRadius))
         }
@@ -330,7 +329,7 @@ private struct JiraTicketContextRow: View {
 
     private func statusPill(_ value: String, color: Color) -> some View {
         Text(value.isEmpty ? "unknown" : value.lowercased())
-            .herdrFont(.caption2, monospaced: true, weight: .semibold)
+            .herdrFont(.caption2, weight: .semibold)
             .foregroundStyle(color)
             .lineLimit(1)
             .padding(.horizontal, 6)

@@ -42,7 +42,7 @@ struct CleanupSheet: View {
     var body: some View {
         content
             .frame(minWidth: 760, minHeight: 600)
-            .background(HerdrTheme.ink)
+            .background(HerdrTheme.graphite)
             .task { controller.resumeIfNeeded() }
             .interactiveDismissDisabled(isBusy)
             .toolbar {
@@ -58,7 +58,7 @@ struct CleanupSheet: View {
                                     .padding(20)
                             }
                             .frame(width: 440, height: 360)
-                            .background(HerdrTheme.ink)
+                            .background(HerdrTheme.graphite)
                         }
                     }
                 }
@@ -108,7 +108,7 @@ struct CleanupSheet: View {
                 Button("Run Smart Cleanup", systemImage: "sparkles") {
                     Task { await controller.start() }
                 }
-                .buttonStyle(.borderedProminent)
+                .herdrProminentButton()
                 .accessibilityIdentifier("cleanup-run")
             }
             .padding(24)
@@ -244,7 +244,7 @@ struct CleanupSheet: View {
                 Button("Retry Status", systemImage: "arrow.clockwise") {
                     Task { await controller.retryApplyStatus() }
                 }
-                .buttonStyle(.borderedProminent)
+                .herdrProminentButton()
                 .accessibilityIdentifier("cleanup-retry-apply-status")
 
                 Text("Retry Status safely reuses the same run and selections. It will not create duplicate cleanup work.")

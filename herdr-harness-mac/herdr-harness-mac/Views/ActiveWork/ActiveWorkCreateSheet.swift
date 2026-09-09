@@ -23,8 +23,7 @@ struct ActiveWorkCreateSheet: View {
                 VStack(alignment: .leading, spacing: 18) {
                     VStack(alignment: .leading, spacing: 6) {
                         Label("Start something worth tracking", systemImage: "sparkles.rectangle.stack")
-                            .herdrFont(.title2, weight: .bold)
-                            .fontDesign(.rounded)
+                            .herdrFont(.title2, weight: .semibold)
                             .foregroundStyle(HerdrTheme.text)
                         Text("Create the durable board record first. Agents, Pi sessions, and Buzz discussions can join it as the route develops.")
                             .herdrFont(.body)
@@ -38,37 +37,38 @@ struct ActiveWorkCreateSheet: View {
                         Text("Idea").tag("idea")
                     }
                     .pickerStyle(.segmented)
+                    .tint(HerdrTheme.controlAccent)
                     .accessibilityIdentifier("active-work-new-kind")
 
                     VStack(alignment: .leading, spacing: 7) {
-                        Text("TITLE")
-                            .herdrFont(.caption, monospaced: true, weight: .bold)
+                        Text("Title")
+                            .herdrFont(.caption, weight: .semibold)
                             .foregroundStyle(HerdrTheme.muted)
                         TextField("What are we moving forward?", text: $title)
                             .textFieldStyle(.plain)
                             .herdrFont(.body)
                             .padding(11)
-                            .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.compactRadius))
+                            .background(HerdrTheme.input, in: .rect(cornerRadius: HerdrTheme.compactRadius))
                             .focused($isTitleFocused)
                             .accessibilityIdentifier("active-work-new-title")
                     }
 
                     VStack(alignment: .leading, spacing: 7) {
-                        Text("CONTEXT")
-                            .herdrFont(.caption, monospaced: true, weight: .bold)
+                        Text("Context")
+                            .herdrFont(.caption, weight: .semibold)
                             .foregroundStyle(HerdrTheme.muted)
                         TextField("A short brief for the agents that will join later", text: $summary, axis: .vertical)
                             .textFieldStyle(.plain)
                             .lineLimit(3...6)
                             .herdrFont(.body)
                             .padding(11)
-                            .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.compactRadius))
+                            .background(HerdrTheme.input, in: .rect(cornerRadius: HerdrTheme.compactRadius))
                             .accessibilityIdentifier("active-work-new-summary")
                     }
 
                     if let errorMessage {
                         Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                            .herdrFont(.caption, monospaced: true)
+                            .herdrFont(.caption)
                             .foregroundStyle(HerdrTheme.alert)
                     }
 
@@ -86,7 +86,7 @@ struct ActiveWorkCreateSheet: View {
                     Button("Create", systemImage: "arrow.right") {
                         Task { await submit() }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .herdrProminentButton()
                     .disabled(!canCreate)
                     .accessibilityIdentifier("active-work-new-submit")
                 }

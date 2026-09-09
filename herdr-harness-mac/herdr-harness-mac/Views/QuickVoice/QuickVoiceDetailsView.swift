@@ -72,7 +72,7 @@ struct QuickVoiceDetailsView: View {
             }
             if session.phase == .recording {
                 Button("Stop and send", systemImage: "arrow.up", action: controller.capture)
-                    .buttonStyle(.borderedProminent).frame(maxWidth: .infinity)
+                    .herdrProminentButton().frame(maxWidth: .infinity)
             } else if session.phase == .idle, !session.hasPendingSubmission, !session.recorder.canSave {
                 Button(session.selectedNote == nil ? "Start recording" : "Record another request", systemImage: "mic.fill", action: controller.capture)
                     .buttonStyle(.bordered).frame(maxWidth: .infinity)
@@ -84,7 +84,7 @@ struct QuickVoiceDetailsView: View {
         .padding(HerdrTheme.cardPadding)
         .frame(width: HerdrHudPlacement.quickVoiceCardSize.width, height: HerdrHudPlacement.quickVoiceCardSize.height)
         .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.cardRadius))
-        .overlay { RoundedRectangle(cornerRadius: HerdrTheme.cardRadius).strokeBorder(HerdrTheme.surface) }
+        .overlay { RoundedRectangle(cornerRadius: HerdrTheme.cardRadius).strokeBorder(HerdrTheme.separator) }
         .accessibilityIdentifier("quick-voice-request-card")
         .onChange(of: session.machineID) { _, _ in
             Task { await session.refresh() }

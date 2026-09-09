@@ -71,9 +71,9 @@ struct PiChatView: View {
             )
             .equatable()
             .id(paneID)
-            .padding(.horizontal, HerdrTheme.pagePadding)
-            .padding(.top, 10)
-            .padding(.bottom, 14)
+            .padding(.horizontal, 17)
+            .padding(.top, 8)
+            .padding(.bottom, 10)
             .background(HerdrTheme.graphite)
             .overlay(alignment: .top) {
                 Rectangle()

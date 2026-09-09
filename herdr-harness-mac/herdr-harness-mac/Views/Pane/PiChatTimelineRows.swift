@@ -1,14 +1,7 @@
 import SwiftUI
 
-/// One lazily laid-out row of the Pi chat timeline.
-///
-/// The timeline used to mount one `LazyVStack` row per *turn*. An orchestrator
-/// turn carries a hundred-plus tool calls, so every streamed token re-laid-out
-/// the whole turn (seconds per pass on the main thread), a turn settling
-/// re-rendered every turn at once, and the app fell behind the Pi stream until
-/// the main thread never returned to the run loop. Rows are now one per
-/// segment: a streamed token invalidates exactly one row, and the lazy stack
-/// only lays out the rows that are on screen.
+/// A segment in the bounded, eagerly laid-out Pi chat timeline. Each segment
+/// retains its identity so streamed tokens invalidate only the owning row.
 struct PiTimelineRow: Identifiable, Equatable {
     enum Content: Equatable {
         case user(PiUserMessage)
@@ -19,23 +12,9 @@ struct PiTimelineRow: Identifiable, Equatable {
         case starting
     }
 
-    /// What the row's slice of the turn rail draws. Turn-level facts are
-    /// duplicated into every row so a row can render without its siblings.
-    struct Rail: Equatable {
-        let hasUser: Bool
-        let hasTool: Bool
-        let hasFailure: Bool
-        let isActive: Bool
-        /// First row of the turn: draws the turn's top dot.
-        let isFirst: Bool
-        /// Last row of the turn: draws the turn's terminal dot.
-        let isLast: Bool
-    }
-
     let id: String
     let turnID: String
     let content: Content
-    let rail: Rail
     /// First row of a turn that is not the first turn in the timeline: gets
     /// `HerdrProse.turnSpacing` above it instead of the in-turn item spacing.
     let startsTurn: Bool
@@ -52,7 +31,6 @@ struct PiTimelineRow: Identifiable, Equatable {
             id: id,
             turnID: turnID,
             content: content,
-            rail: rail,
             startsTurn: startsTurn,
             isFirstInTimeline: true
         )
@@ -90,22 +68,12 @@ struct PiTimelineRow: Identifiable, Equatable {
             }
             guard !contents.isEmpty else { continue }
 
-            let hasTool = turn.items.contains(where: Self.isTool)
-            let hasFailure = turn.items.contains(where: Self.isFailed)
             for (index, entry) in contents.enumerated() {
                 rows.append(
                     PiTimelineRow(
                         id: entry.id,
                         turnID: turn.id,
                         content: entry.content,
-                        rail: Rail(
-                            hasUser: turn.user != nil,
-                            hasTool: hasTool,
-                            hasFailure: hasFailure,
-                            isActive: turn.isActive,
-                            isFirst: index == 0,
-                            isLast: index == contents.count - 1
-                        ),
                         startsTurn: index == 0,
                         isFirstInTimeline: isFirstTurn && index == 0
                     )
@@ -114,25 +82,6 @@ struct PiTimelineRow: Identifiable, Equatable {
             isFirstTurn = false
         }
         return rows
-    }
-
-    private static func isTool(_ item: PiConversationItem) -> Bool {
-        if case .tool = item { return true }
-        return false
-    }
-
-    private static func isFailed(_ item: PiConversationItem) -> Bool {
-        switch item {
-        case let .assistant(block):
-            if case .failed = block.status { return true }
-            return false
-        case let .tool(tool):
-            return tool.status == .failed
-        case let .notice(notice):
-            return notice.tone == .error
-        case .thinking:
-            return false
-        }
     }
 }
 
@@ -165,14 +114,11 @@ struct PiTimelineWindow: Equatable {
 }
 
 enum PiTimelineMetrics {
-    static let railWidth: CGFloat = 10
-    static let railSpacing: CGFloat = 12
     static let itemSpacing: CGFloat = 13
-    static let dotSize: CGFloat = 5
 }
 
-/// A single timeline row: its content, offset past the rail, with the rail
-/// slice drawn in an overlay so no stack has to negotiate the rail's width.
+/// A single timeline row. Content uses the full reading width; spacing alone
+/// separates turns without a decorative rail or a reserved leading gutter.
 ///
 /// `Equatable` on the row model is the whole point: SwiftUI skips the body
 /// (and therefore the layout) of every row whose content did not change.
@@ -187,12 +133,7 @@ struct PiTimelineRowView: View, Equatable {
     var body: some View {
         content
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.leading, PiTimelineMetrics.railWidth + PiTimelineMetrics.railSpacing)
             .padding(.top, row.topSpacing)
-            .overlay(alignment: .topLeading) {
-                PiTimelineRailSegment(rail: row.rail, topInset: row.topSpacing)
-                    .frame(width: PiTimelineMetrics.railWidth)
-            }
             .accessibilityIdentifier(accessibilityIdentifier)
     }
 
@@ -227,43 +168,5 @@ struct PiTimelineRowView: View, Equatable {
         case .user: "pi-turn-\(row.turnID)"
         case .output, .working, .artifacts: "pi-row-\(row.id)"
         }
-    }
-}
-
-/// The per-row slice of the turn's activity rail: a hairline that runs the
-/// full row height (through the spacing above the row, so consecutive rows
-/// read as one continuous rail), a top dot on the turn's first row and a
-/// terminal dot on its last. Colors mirror the old whole-turn rail.
-struct PiTimelineRailSegment: View {
-    let rail: PiTimelineRow.Rail
-    let topInset: CGFloat
-
-    var body: some View {
-        VStack(spacing: 0) {
-            if rail.isFirst {
-                Color.clear
-                    .frame(height: topInset)
-                Circle()
-                    .fill(rail.hasUser ? HerdrTheme.accent : HerdrTheme.muted)
-                    .frame(width: PiTimelineMetrics.dotSize, height: PiTimelineMetrics.dotSize)
-            }
-
-            Rectangle()
-                .fill(HerdrTheme.separator)
-                .frame(width: 1)
-                .frame(maxHeight: .infinity)
-
-            if rail.isLast {
-                Circle()
-                    .fill(terminalColor)
-                    .frame(width: PiTimelineMetrics.dotSize, height: PiTimelineMetrics.dotSize)
-            }
-        }
-        .accessibilityHidden(true)
-    }
-
-    private var terminalColor: Color {
-        if rail.hasFailure { return HerdrTheme.alert }
-        return rail.isActive ? HerdrTheme.working : HerdrTheme.success
     }
 }

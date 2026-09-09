@@ -28,8 +28,12 @@ struct PiWorkingGroupView: View {
             label
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 4)
-        .background(HerdrTheme.elevated.opacity(0.35), in: RoundedRectangle(cornerRadius: HerdrTheme.compactRadius))
+        .padding(.vertical, 2)
+        .background(HerdrTheme.elevated.opacity(0.2), in: RoundedRectangle(cornerRadius: HerdrTheme.compactRadius))
+        .overlay {
+            RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+                .strokeBorder(group.hasFailure ? HerdrTheme.alert.opacity(0.45) : HerdrTheme.subtleSeparator, lineWidth: 1)
+        }
         .animation(PiChatMotion.disclosureAnimation(reduceMotion: reduceMotion), value: isExpanded)
         .animation(PiChatMotion.stateAnimation(reduceMotion: reduceMotion), value: group.isLive)
         .onChange(of: isExpanded) { _, expanded in
@@ -40,7 +44,6 @@ struct PiWorkingGroupView: View {
             if failed { isExpanded = true }
         }
         .herdrHaptic(trigger: hapticPulse)
-        .frame(minHeight: 44)
         .accessibilityIdentifier("pi-working-\(group.id)")
     }
 
@@ -53,7 +56,7 @@ struct PiWorkingGroupView: View {
                         .tint(HerdrTheme.working)
                         .transition(PiChatMotion.stateTransition(reduceMotion: reduceMotion))
                 } else {
-                    Image(systemName: group.hasFailure ? "exclamationmark.triangle" : "gearshape.2")
+                    Image(systemName: group.hasFailure ? "exclamationmark.triangle" : "terminal")
                         .foregroundStyle(HerdrProse.dimmed(group.hasFailure ? HerdrTheme.alert : HerdrTheme.muted))
                         .transition(PiChatMotion.stateTransition(reduceMotion: reduceMotion))
                 }
@@ -62,7 +65,7 @@ struct PiWorkingGroupView: View {
             .accessibilityHidden(true)
 
             Text(group.isLive ? "Working…" : "Activity")
-                .herdrFont(.caption, weight: .semibold)
+                .herdrFont(.caption, weight: .medium)
                 .foregroundStyle(HerdrProse.dimmed(HerdrTheme.mist))
                 .contentTransition(.opacity)
 
@@ -88,6 +91,6 @@ struct PiWorkingGroupView: View {
     }
 
     private var accessibilityLabel: String {
-        (group.isLive ? "Activity, " : "Activity, ") + summary
+        (group.isLive ? "Working, " : "Activity, ") + summary
     }
 }

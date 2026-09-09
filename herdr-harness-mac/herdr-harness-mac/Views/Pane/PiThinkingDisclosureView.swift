@@ -44,7 +44,7 @@ struct PiThinkingDisclosureView: View {
         }
         // This padding sits outside the header button, so that band is deliberately not clickable.
         .padding(.horizontal, 12)
-        .padding(.vertical, 4)
+        .padding(.vertical, 2)
         .background(HerdrTheme.elevated.opacity(0.35), in: RoundedRectangle(cornerRadius: HerdrTheme.compactRadius))
         .animation(PiChatMotion.disclosureAnimation(reduceMotion: reduceMotion), value: isExpanded)
         .animation(PiChatMotion.stateAnimation(reduceMotion: reduceMotion), value: block.isStreaming)
@@ -56,7 +56,6 @@ struct PiThinkingDisclosureView: View {
             PiMarkdownInlineCache.shared.evictStreaming(id: block.id)
         }
         .herdrHaptic(trigger: hapticPulse)
-        .frame(minHeight: 44)
         .accessibilityIdentifier("pi-thinking-\(block.id)")
     }
 

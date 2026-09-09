@@ -13,11 +13,6 @@ struct PromptHistoryButton: View {
         .labelStyle(.iconOnly)
         .foregroundStyle(HerdrTheme.mist)
         .frame(width: 30, height: 28)
-        .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.compactRadius))
-        .overlay {
-            RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                .strokeBorder(HerdrTheme.surface, lineWidth: 1)
-        }
         .buttonStyle(.plain)
         .help("Browse, search, copy, or reuse your submitted prompts")
         .accessibilityIdentifier("pane-prompt-history")

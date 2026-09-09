@@ -59,6 +59,39 @@ struct PiMarkdownStreamingSplitTests {
         #expect(nonWhitespaceCharacters(in: reassembled) == nonWhitespaceCharacters(in: source))
     }
 
+    @Test("Short streaming responses discard boundary blank lines just like finalized Markdown")
+    func streamingAndFinalizedProseHaveMatchingWhitespace() {
+        let source = "\n\n \nNow the scenes: Title, Problem, Space.\n\n\n"
+        let split = PiMarkdownParser.splitStreamingTail(source)
+
+        #expect(split == .init(prefix: "", tail: "Now the scenes: Title, Problem, Space."))
+        #expect(PiMarkdownParser.parse(split.tail) == PiMarkdownParser.parse(source))
+    }
+
+    @Test("The last growing paragraph has no trailing blank rows")
+    func trimsTrailingBlankLinesAfterCompletedParagraph() {
+        let source = "\nFirst paragraph\n\nSecond paragraph\n\n \n"
+        let split = PiMarkdownParser.splitStreamingTail(source)
+
+        #expect(split == .init(prefix: "First paragraph", tail: "Second paragraph"))
+        #expect(PiMarkdownParser.parse(split.prefix + "\n\n" + split.tail) == PiMarkdownParser.parse(source))
+    }
+
+    @Test("Whitespace-only streaming text has no visible tail")
+    func whitespaceOnlyTailIsEmpty() {
+        #expect(PiMarkdownParser.splitStreamingTail("\n \n\t\n") == .init(prefix: "", tail: ""))
+    }
+
+    @Test("Whitespace in an unfinished streaming code fence stays exact")
+    func preservesCodeWhitespace() {
+        let code = "```swift\n  let value = 42\n\n    \n"
+        let split = PiMarkdownParser.splitStreamingTail("\nIntro\n\n" + code)
+
+        #expect(split.prefix == "Intro")
+        #expect(split.tail == code)
+        #expect(PiMarkdownParser.splitStreamingTail("\n\n" + code) == .init(prefix: "", tail: code))
+    }
+
     private func nonWhitespaceCharacters(in source: String) -> String {
         var result = ""
         for character in source where !character.isWhitespace {

@@ -55,8 +55,8 @@ struct PiChatTimelineView: View {
                 // pass; unchanged rows stay cached through `.equatable()`, and
                 // `PiTimelineWindow` bounds how many rows are mounted.
                 //
-                // Spacing lives on the rows (`PiTimelineRow.topSpacing`) so the
-                // rail can run through it; the stack itself adds none.
+                // Spacing lives on the rows (`PiTimelineRow.topSpacing`) so turn
+                // boundaries stay distinct while the stack itself adds none.
                 VStack(alignment: .leading, spacing: 0) {
                     transcriptHeader
                         .padding(.bottom, HerdrProse.turnSpacing)
@@ -107,10 +107,10 @@ struct PiChatTimelineView: View {
 
                 }
                 .frame(maxWidth: HerdrTheme.readingWidth, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.horizontal, HerdrTheme.transcriptGutter)
-                .padding(.top, 24)
-                .padding(.bottom, 24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 28)
+                .padding(.top, 20)
+                .padding(.bottom, 20)
                 .animation(
                     revealState.phase == .revealed
                         ? PiChatMotion.structuralAnimation(reduceMotion: reduceMotion)

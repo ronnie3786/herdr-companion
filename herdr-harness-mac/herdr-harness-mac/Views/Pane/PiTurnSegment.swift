@@ -1,7 +1,7 @@
 /// Presentation-only partition of a turn's items into visible output and
 /// collapsed runs of sub-process activity. Purely derived from `turn.items`,
-/// the reducer's item order and indices are untouched, so this can never drop
-/// or reorder content.
+/// the reducer's item order and indices are untouched. Empty assistant text
+/// has no visual row; all visible content and failures stay in order.
 struct PiWorkingGroup: Identifiable, Equatable {
     let id: String
     let items: [PiConversationItem]
@@ -45,6 +45,17 @@ enum PiTurnSegmentation {
         }
 
         for item in items {
+            // A text_start event can arrive before any visible token, and some
+            // providers emit whitespace between tools. Those items must not
+            // split activity groups or reserve empty transcript rows.
+            if case let .assistant(block) = item,
+               block.text.allSatisfy(\.isWhitespace) {
+                if case .failed = block.status {
+                    // Keep the error label even when the response text is empty.
+                } else {
+                    continue
+                }
+            }
             if item.isWorking {
                 pending.append(item)
             } else {

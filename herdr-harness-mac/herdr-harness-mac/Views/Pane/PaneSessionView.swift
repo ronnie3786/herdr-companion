@@ -85,12 +85,8 @@ struct PaneSessionView: View {
                     showsPiSessionSummary: summaryRequest != nil,
                     summarizePiSession: presentPiSessionSummary
                 )
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-
-                Rectangle()
-                    .fill(HerdrTheme.surface)
-                    .frame(height: 1)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 10)
 
                 modeContent
             }

@@ -52,15 +52,17 @@ struct PiMarkdownMessageView: View {
             ForEach(blocks) { block in
                 PiMarkdownBlockView(block: block, isFirst: block.id == blocks.first?.id, ownerID: id ?? "")
             }
-            PiMarkdownText(
-                split.tail,
-                font: HerdrProse.font(.body, scale: fontScale),
-                inlineCodeFont: HerdrProse.inlineCodeFont(.body, scale: fontScale),
-                inlineCodeColor: HerdrProse.inlineCodeColor,
-                id: id,
-                cacheKeyLength: fullSourceLength
-            )
-                .lineSpacing(HerdrProse.lineSpacing(.body, scale: fontScale))
+            if !split.tail.isEmpty {
+                PiMarkdownText(
+                    split.tail,
+                    font: HerdrProse.font(.body, scale: fontScale),
+                    inlineCodeFont: HerdrProse.inlineCodeFont(.body, scale: fontScale),
+                    inlineCodeColor: HerdrProse.inlineCodeColor,
+                    id: id,
+                    cacheKeyLength: fullSourceLength
+                )
+                    .lineSpacing(HerdrProse.lineSpacing(.body, scale: fontScale))
+            }
         }
     }
 

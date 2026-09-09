@@ -11,7 +11,7 @@ import SwiftUI
 /// accessibility identifiers are untouched — only the chrome is redrawn.
 enum PiChatChrome {
     /// Mac replacement for the iOS 44pt touch target on Pi *controls*.
-    /// Cards keep their iOS min-heights; only controls shrink.
+    /// Activity cards use a compact header on the Mac.
     static let controlHeight = 30.0
 
     /// Hover cross-fade. Deliberately faster than `PiChatMotion.stateAnimation`
@@ -20,7 +20,7 @@ enum PiChatChrome {
 }
 
 /// The collapsible card every Pi sub-output uses (thinking, tool calls,
-/// working groups): a full-width header button with a trailing chevron, and
+/// working groups): a full-width header button with a leading chevron, and
 /// the content below it only while expanded.
 ///
 /// This is deliberately NOT a `DisclosureGroup`. Measured on macOS 26 with the
@@ -48,14 +48,14 @@ struct PiDisclosureCard<Label: View, Content: View>: View {
                 isExpanded.toggle()
             } label: {
                 HStack(spacing: 8) {
-                    label()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
                     Image(systemName: "chevron.right")
                         .herdrFont(.caption2, weight: .semibold)
                         .foregroundStyle(chevronColor.opacity(0.8))
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                         .accessibilityHidden(true)
+
+                    label()
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(minHeight: PiChatChrome.controlHeight)
                 .contentShape(Rectangle())

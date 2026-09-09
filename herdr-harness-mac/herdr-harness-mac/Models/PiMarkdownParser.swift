@@ -97,7 +97,15 @@ enum PiMarkdownParser {
     }
 
     static func splitStreamingTail(_ source: String) -> StreamingSplit {
-        let lines = source.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let sourceLines = source.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard let firstContentIndex = sourceLines.firstIndex(where: { !isBlank($0) }) else {
+            return StreamingSplit(prefix: "", tail: "")
+        }
+        // Finalized Markdown discards blank lines around a message. Match that
+        // while streaming so a short response does not grow blank rows above
+        // and below its text between adjacent activity cards. Keep indentation
+        // on content lines and all whitespace inside an unfinished code fence.
+        let lines = Array(sourceLines[firstContentIndex...])
         var openFence: Fence?
         var hasContentBeforeBlankRun = false
         var lastBoundary: (start: Int, end: Int)?
@@ -134,13 +142,16 @@ enum PiMarkdownParser {
             index += 1
         }
 
+        let contentEnd = openFence == nil
+            ? (lines.lastIndex(where: { !isBlank($0) }) ?? lines.startIndex) + 1
+            : lines.endIndex
         guard let lastBoundary else {
-            return StreamingSplit(prefix: "", tail: source)
+            return StreamingSplit(prefix: "", tail: lines[..<contentEnd].joined(separator: "\n"))
         }
 
         return StreamingSplit(
             prefix: lines[..<lastBoundary.start].joined(separator: "\n"),
-            tail: lines[lastBoundary.end...].joined(separator: "\n")
+            tail: lines[lastBoundary.end..<contentEnd].joined(separator: "\n")
         )
     }
 

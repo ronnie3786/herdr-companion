@@ -16,7 +16,7 @@ struct PiResponseArtifactsTests {
         let artifactIndex = rows.firstIndex { if case .artifacts = $0.content { return true }; return false }
         let secondIndex = rows.firstIndex { $0.turnID == "second" }
         #expect(artifactIndex != nil && secondIndex != nil && artifactIndex! < secondIndex!)
-        #expect(rows[artifactIndex!].rail.isLast)
+        #expect(artifactIndex! + 1 == secondIndex!)
     }
 
     @Test("Saved tool details restore cards when an old file is absent from the server list")

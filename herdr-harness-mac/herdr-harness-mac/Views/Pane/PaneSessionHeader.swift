@@ -19,7 +19,7 @@ struct PaneSessionHeader: View {
     @FocusState private var titleIsFocused: Bool
 
     var body: some View {
-        HStack(spacing: 11) {
+        HStack(spacing: 8) {
             if showsCompaction {
                 ProgressView()
                     .controlSize(.small)
@@ -35,7 +35,7 @@ struct PaneSessionHeader: View {
                     if isRenaming {
                         TextField("Chat title", text: $renameText)
                             .textFieldStyle(.plain)
-                            .herdrFont(.subheadline, weight: .bold)
+                            .herdrFont(.subheadline, weight: .semibold)
                             .focused($titleIsFocused)
                             .background(InlineTitleClickAway { finishRename() })
                             .onSubmit { finishRename() }
@@ -52,7 +52,7 @@ struct PaneSessionHeader: View {
                             isRenaming = true
                         } label: {
                             Text(pane.displayTitle)
-                                .herdrFont(.subheadline, weight: .bold)
+                                .herdrFont(.subheadline, weight: .semibold)
                                 .foregroundStyle(HerdrTheme.text)
                                 .lineLimit(1)
                                 .truncationMode(.tail)
@@ -80,13 +80,13 @@ struct PaneSessionHeader: View {
 
                     if showsAgentName {
                         Text(pane.displayAgentName.lowercased())
-                            .herdrFont(.caption, monospaced: true, weight: .bold)
+                            .herdrFont(.caption, weight: .medium)
                             .foregroundStyle(HerdrTheme.mist)
                             .fixedSize()
                     }
 
-                    Text(sessionStatusTitle.lowercased())
-                        .herdrFont(.caption, monospaced: true)
+                    Text(sessionStatusTitle)
+                        .herdrFont(.caption)
                         .foregroundStyle(sessionStatusColor)
                         .fixedSize()
                         .accessibilityIdentifier("pane-session-status")
@@ -96,7 +96,7 @@ struct PaneSessionHeader: View {
                         // not freeze at whatever it read when the view mounted.
                         TimelineView(.periodic(from: .now, by: 60)) { context in
                             Text(Self.stalenessLabel(since: lastActivityAt, now: context.date))
-                                .herdrFont(.caption, monospaced: true)
+                                .herdrFont(.caption)
                                 .foregroundStyle(Self.stalenessColor(since: lastActivityAt, now: context.date))
                                 .accessibilityLabel(
                                     "Last activity \(HerdrTimestamp.spokenAge(since: lastActivityAt, now: context.date))"
@@ -108,10 +108,10 @@ struct PaneSessionHeader: View {
                     }
                 }
 
-                HStack(spacing: 3) {
+                HStack(spacing: 7) {
                     Label(model.machines.first(where: { $0.id == pane.machineID })?.name ?? pane.machineID,
                           systemImage: "desktopcomputer")
-                        .herdrFont(.caption, monospaced: true)
+                        .herdrFont(.caption)
                         .foregroundStyle(HerdrTheme.mist)
                         .lineLimit(1)
                         .accessibilityIdentifier("pane-session-machine")
@@ -119,13 +119,13 @@ struct PaneSessionHeader: View {
                         .foregroundStyle(HerdrTheme.mist)
                         .accessibilityHidden(true)
                     Text(locationName)
-                        .herdrFont(.caption, monospaced: true)
+                        .herdrFont(.caption)
                         .foregroundStyle(HerdrTheme.mist)
                         .lineLimit(1)
 
                     if !pane.displayPath.isEmpty {
                         Text("·")
-                            .herdrFont(.caption, monospaced: true)
+                            .herdrFont(.caption)
                             .foregroundStyle(HerdrTheme.mist)
                             .accessibilityHidden(true)
 
@@ -148,8 +148,16 @@ struct PaneSessionHeader: View {
 
             if showsPiSessionSummary {
                 Button("Summarize", systemImage: "list.bullet.clipboard", action: summarizePiSession)
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.mist)
+                    .padding(.horizontal, 9)
+                    .frame(height: 28)
+                    .background(HerdrTheme.elevated.opacity(0.35), in: .rect(cornerRadius: HerdrTheme.compactRadius))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+                            .strokeBorder(HerdrTheme.separator, lineWidth: 1)
+                    }
+                    .buttonStyle(.plain)
                     .disabled(!model.canControl(machineID: pane.machineID))
                     .help("Summarize this Pi session and where you left off")
                     .accessibilityIdentifier("pane-summarize-pi-session")
@@ -163,12 +171,6 @@ struct PaneSessionHeader: View {
             .foregroundStyle(pane.focused ? HerdrTheme.accent : HerdrTheme.mist)
             .frame(width: 30, height: 28)
             .contentShape(.rect)
-            .background(HerdrTheme.graphite)
-            .overlay {
-                RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                    .strokeBorder(pane.focused ? HerdrTheme.accent : HerdrTheme.surface, lineWidth: 1)
-            }
-            .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
             .buttonStyle(.plain)
             .disabled(!model.canControl(machineID: pane.machineID))
             .help(pane.focused ? "This pane is focused in terminal" : "Focus this pane in terminal")

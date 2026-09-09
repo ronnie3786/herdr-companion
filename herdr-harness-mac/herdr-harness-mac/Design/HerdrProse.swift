@@ -50,7 +50,7 @@ enum HerdrProse {
     static let blockSpacing: CGFloat = 18
 
     /// Spacing between conversation turns in `PiChatTimelineView`.
-    static let turnSpacing: CGFloat = 32
+    static let turnSpacing: CGFloat = 24
 
     /// How far "sub-output" cards — thinking disclosures, tool cards, and
     /// working groups — are dimmed so they read as visually recessive relative

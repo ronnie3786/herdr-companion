@@ -49,7 +49,7 @@ struct PiContextMeterView: View {
                 }
             }
             .padding(.horizontal, HerdrTheme.pagePadding)
-            .padding(.vertical, 5)
+            .padding(.vertical, 3)
             .background(HerdrTheme.graphite)
             .help(accessibilityLabel)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: usage?.fraction)

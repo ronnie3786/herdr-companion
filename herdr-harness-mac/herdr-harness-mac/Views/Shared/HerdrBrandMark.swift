@@ -6,7 +6,7 @@ struct HerdrBrandMark: View {
     var body: some View {
         HStack(spacing: size * 0.09) {
             paneShape
-                .foregroundStyle(HerdrTheme.accent)
+                .foregroundStyle(HerdrTheme.primaryAction)
             paneShape
                 .foregroundStyle(HerdrTheme.mist)
                 .scaleEffect(y: 0.78)

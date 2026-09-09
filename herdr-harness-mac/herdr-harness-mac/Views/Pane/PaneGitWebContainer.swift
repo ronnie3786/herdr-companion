@@ -14,12 +14,13 @@ struct PaneGitWebContainer: NSViewRepresentable {
         webConfiguration.websiteDataStore = .nonPersistent()
         webConfiguration.defaultWebpagePreferences.allowsContentJavaScript = true
         webConfiguration.userContentController.addUserScript(Self.userScript(for: document))
+        webConfiguration.userContentController.addUserScript(HerdrWebTheme.userScript())
 
         let webView = WKWebView(frame: .zero, configuration: webConfiguration)
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = false
         webView.allowsLinkPreview = false
-        webView.underPageBackgroundColor = NSColor(HerdrTheme.ink)
+        webView.underPageBackgroundColor = NSColor(HerdrTheme.graphite)
         context.coordinator.load(document, in: webView)
         return webView
     }
@@ -28,6 +29,7 @@ struct PaneGitWebContainer: NSViewRepresentable {
         if context.coordinator.loadedDocument != document {
             webView.configuration.userContentController.removeAllUserScripts()
             webView.configuration.userContentController.addUserScript(Self.userScript(for: document))
+            webView.configuration.userContentController.addUserScript(HerdrWebTheme.userScript())
         }
         context.coordinator.load(document, in: webView)
     }

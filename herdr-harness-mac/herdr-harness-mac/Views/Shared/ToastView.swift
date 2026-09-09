@@ -7,13 +7,13 @@ struct ToastView: View {
     var body: some View {
         Button(action: dismiss) {
             Label(message, systemImage: "checkmark.circle.fill")
-                .herdrFont(.subheadline, weight: .bold)
-                .foregroundStyle(.white)
+                .herdrFont(.subheadline, weight: .medium)
+                .foregroundStyle(HerdrTheme.text)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
-                .background(.regularMaterial, in: Capsule())
+                .background(HerdrTheme.elevated, in: Capsule())
                 .overlay {
-                    Capsule().strokeBorder(.white.opacity(0.14), lineWidth: 1)
+                    Capsule().strokeBorder(HerdrTheme.separator, lineWidth: 1)
                 }
                 .shadow(color: .black.opacity(0.26), radius: 16, y: 8)
         }

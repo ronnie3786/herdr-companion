@@ -78,6 +78,7 @@ struct HerdrHarnessMacApp: App {
                 .environment(\.herdrFontScale, fontScale.scale)
                 .frame(minWidth: 1000, minHeight: 680)
                 .background(HerdrTheme.ink)
+                .foregroundStyle(HerdrTheme.text)
                 .preferredColorScheme(.dark)
                 .tint(HerdrTheme.accent)
         }
@@ -105,6 +106,7 @@ struct HerdrHarnessMacApp: App {
                 .environment(\.herdrFontScale, fontScale.scale)
                 .frame(minWidth: 900, minHeight: 640)
                 .background(HerdrTheme.ink)
+                .foregroundStyle(HerdrTheme.text)
                 .preferredColorScheme(.dark)
                 .tint(HerdrTheme.accent)
         }
@@ -125,6 +127,7 @@ struct HerdrHarnessMacApp: App {
                 .environment(\.herdrFontScale, fontScale.scale)
                 .frame(width: 560, height: 640)
                 .background(HerdrTheme.ink)
+                .foregroundStyle(HerdrTheme.text)
                 .preferredColorScheme(.dark)
                 .tint(HerdrTheme.accent)
         }

@@ -45,7 +45,7 @@ struct ActiveWorkBoardWebView: View {
             }
         }
         .animation(.snappy, value: localToastMessage)
-        .background(Color.black)
+        .background(HerdrTheme.graphite)
         .accessibilityIdentifier("active-work-board-web")
     }
 
@@ -54,11 +54,11 @@ struct ActiveWorkBoardWebView: View {
             ProgressView()
                 .controlSize(.small)
             Text("Loading Active Work board…")
-                .herdrFont(.caption, monospaced: true, weight: .medium)
+                .herdrFont(.caption, weight: .medium)
                 .foregroundStyle(HerdrTheme.mist)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(HerdrTheme.ink.opacity(0.94))
+        .background(HerdrTheme.graphite.opacity(0.94))
         .accessibilityElement(children: .combine)
     }
 
@@ -72,11 +72,11 @@ struct ActiveWorkBoardWebView: View {
                 phase = .loading
                 reloadID &+= 1
             }
-            .buttonStyle(.borderedProminent)
+            .herdrProminentButton()
         }
         .foregroundStyle(HerdrTheme.text)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(HerdrTheme.ink)
+        .background(HerdrTheme.graphite)
     }
 }
 

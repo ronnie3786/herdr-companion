@@ -3,13 +3,12 @@ import SwiftUI
 struct HerdrSectionLabel: View {
     let title: String
     var detail: String?
-    var monospaced = true
+    var monospaced = false
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(title.lowercased())
-                .bold()
-                .underline()
+            Text(title)
+                .fontWeight(.medium)
             Spacer(minLength: 12)
             if let detail {
                 Text(detail)

@@ -29,7 +29,7 @@ struct PaneGitWebView: View {
                 failureView(message: message)
             }
         }
-        .background(HerdrTheme.ink)
+        .background(HerdrTheme.graphite)
         .accessibilityIdentifier("pane-git-web")
     }
 
@@ -42,7 +42,7 @@ struct PaneGitWebView: View {
                 .foregroundStyle(HerdrTheme.mist)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(HerdrTheme.ink.opacity(0.94))
+        .background(HerdrTheme.graphite.opacity(0.94))
         .accessibilityElement(children: .combine)
     }
 
@@ -56,10 +56,10 @@ struct PaneGitWebView: View {
                 phase = .loading
                 reloadID &+= 1
             }
-            .buttonStyle(.borderedProminent)
+            .herdrProminentButton()
         }
         .foregroundStyle(HerdrTheme.text)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(HerdrTheme.ink)
+        .background(HerdrTheme.graphite)
     }
 }

@@ -49,7 +49,7 @@ struct DemoScreenshotRenderTests {
             // white slab because the split view's backdrop is drawn outside
             // the hierarchy `cacheDisplay` walks (the detail column is fine).
             // So the shell is composed the way `WorkspaceNavigationView`
-            // composes it — `HerdrSidebarView` at its ideal 360pt width, the
+            // composes it, with `HerdrSidebarView` at its ideal 280pt width, the
             // hairline, and the resolved detail scope — minus system chrome.
             HStack(spacing: 0) {
                 HerdrSidebarView(
@@ -57,7 +57,7 @@ struct DemoScreenshotRenderTests {
                     openPane: { _ in },
                     openWorkspace: { _ in }
                 )
-                    .frame(width: 360)
+                    .frame(width: 280)
 
                 Rectangle()
                     .fill(HerdrTheme.surface)
@@ -89,7 +89,7 @@ struct DemoScreenshotRenderTests {
         model.selectedPaneID = "demo1|weather:p1"
 
         let expanded = try await HerdrRenderHarness.render(
-            "02c-pi-session-families.png", size: CGSize(width: 380, height: 700)
+            "02c-pi-session-families.png", size: CGSize(width: 280, height: 700)
         ) {
             HerdrSidebarView(model: model, openPane: { _ in }, openWorkspace: { _ in })
         }
@@ -97,7 +97,7 @@ struct DemoScreenshotRenderTests {
 
         model.toggleSidebarSession(try #require(model.pane(id: "demo1|garden:p1")))
         let collapsed = try await HerdrRenderHarness.render(
-            "02d-pi-session-families-collapsed.png", size: CGSize(width: 380, height: 700)
+            "02d-pi-session-families-collapsed.png", size: CGSize(width: 280, height: 700)
         ) {
             HerdrSidebarView(model: model, openPane: { _ in }, openWorkspace: { _ in })
         }
@@ -114,7 +114,7 @@ struct DemoScreenshotRenderTests {
 
         let result = try await HerdrRenderHarness.render(
             "02-sidebar.png",
-            size: CGSize(width: 360, height: 760)
+            size: CGSize(width: 280, height: 760)
         ) {
             HerdrSidebarView(
                 model: model,
@@ -134,7 +134,7 @@ struct DemoScreenshotRenderTests {
 
         let defaultResult = try await HerdrRenderHarness.render(
             "02-sidebar.png",
-            size: CGSize(width: 360, height: 760)
+            size: CGSize(width: 280, height: 760)
         ) {
             HerdrSidebarView(
                 model: model,
@@ -145,7 +145,7 @@ struct DemoScreenshotRenderTests {
 
         let xxLargeResult = try await HerdrRenderHarness.render(
             "02b-sidebar-xxlarge.png",
-            size: CGSize(width: 360, height: 760)
+            size: CGSize(width: 280, height: 760)
         ) {
             HerdrSidebarView(
                 model: model,
@@ -493,9 +493,9 @@ struct DemoScreenshotRenderTests {
         denseResult.expectSubstantial()
     }
 
-    // MARK: - 07 · Comfortable composer
+    // MARK: - 07 · Quiet composer
 
-    @Test("Composer renders primary actions with secondary tools collapsed")
+    @Test("Composer renders labeled actions with terminal keys above the input")
     func rendersComposerWithAuxiliaryBar() async throws {
         let model = HerdrRenderFixtures.demoModel()
         let modelFavorites = ModelFavoritesStore()
@@ -514,8 +514,8 @@ struct DemoScreenshotRenderTests {
             "07-composer.png",
             size: CGSize(width: 900, height: 300)
         ) {
-            // The resting composer keeps focus on writing. More and Terminal
-            // keys reveal their tools only when requested.
+            // Attach, Paste code, and Voice stay visible. More and Terminal
+            // keys reveal additional tools only when requested.
             PromptComposerView(
                 model: model,
                 pane: pane,

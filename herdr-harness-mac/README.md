@@ -48,9 +48,9 @@ Hovering visible HUD controls expands result icons into document-title pills. Th
   and a consistent style across the sidebar, settings, HUD, menu bar, Git, and Active Work.
   Conversations use 17-point system text at the default scale, generous spacing, and a
   bounded reading width. The app's text-size preference continues to apply.
-- **Prompt composer**: model and effort controls sit above a unified input. Attach and
-  More are in its footer. More contains voice and context tools; Terminal keys expands
-  the key deck when needed. Active voice and playback states remain visible. Drafts
+- **Prompt composer**: model, effort, and Terminal keys controls sit above a unified
+  input. Labeled Attach, Paste code, and Voice actions are in its footer. More contains
+  additional context tools. Active voice and playback states remain visible. Drafts
   remain shared between chat and terminal modes. Return sends; Shift, Option, or
   Command-Return inserts a newline.
 - **`$` skills palette** — type `$` at a word boundary to raise a filtering HUD of the

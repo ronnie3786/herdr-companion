@@ -1,7 +1,7 @@
 # Comfortable reading on Mac
 
-The Mac interface uses the Comfortable reading design throughout its existing
-sidebar, session header, transcript, and anchored composer layout.
+The Mac interface combines the Comfortable reading palette and prose with the
+compact controls and navigation from Quiet chrome.
 
 ## Implementation passes
 
@@ -10,7 +10,8 @@ sidebar, session header, transcript, and anchored composer layout.
    Menu bar and embedded web surfaces use the same palette.
 2. **Conversation and composer:** a bounded reading width, larger prose and more
    space between blocks, quieter activity cards, and a unified prompt input with
-   attachment and More controls. Terminal keys are available on demand. Model,
+   labeled Attach, Paste code, and Voice actions. More contains the remaining
+   context tools. Terminal keys sit above the input and expand on demand. Model,
    effort, voice, playback, draft, and keyboard behavior remain available.
 3. **Remaining native surfaces:** sidebar, workspace and fleet summaries,
    attention, activity, settings, onboarding, command palette, Ask Herdr, HUD,
@@ -32,6 +33,16 @@ The transcript has a 980-point maximum measure. Content can scroll horizontally
 where code or tables need more space. The composer keeps its editor identity and
 session-owned draft through changes in its utility controls.
 
+Quiet chrome removes the transcript's decorative turn rails and dots, including
+their reserved left gutter. The sidebar uses compact outline icons and one row
+for creating sessions and workspaces. Only machine groups receive separators;
+projects are distinguished by indentation, labels, and spacing. The toolbar uses
+a compact segment strip with a restrained selected state.
+
+Streaming prose must not reserve empty rows or boundary blank lines that disappear
+when the response finishes. Whitespace inside code fences remains intact. The
+composer and navigation continue to adapt to the app's text-size preference.
+
 Embedded Git and Active Work content receives presentation-only CSS from the Mac
 host. Bootstrap authentication, navigation restrictions, native message handling,
 and the shared server/web/iOS API contract are unchanged.
@@ -41,7 +52,8 @@ and the shared server/web/iOS API contract are unchanged.
 - Sending, modified Return/newlines, code paste, draft restoration, attachments,
   skills, file search, Jira, model and effort selection, abort, and compaction.
 - Dictation press and hold, recording lock, transcription, and audio playback.
-- Long and streaming transcripts, collapsed activity, failures, tables, and code.
+- Long and streaming transcripts, including short updates between activity groups,
+  collapsed activity, failures, tables, and code.
 - Sidebar selection, unread and starred sessions, keyboard navigation, large text,
   and narrow windows.
 - Settings validation, machine configuration, and embedded Git/board navigation.

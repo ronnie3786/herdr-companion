@@ -98,6 +98,13 @@ struct HerdrHudPlacementTests {
         #expect(expanded.size == paddedSize(for: HerdrHudPlacement.expandedSize))
     }
 
+    @Test("Orb satellites mirror the left and right corners without moving the orb's right anchor")
+    func orbCornersAreSymmetric() {
+        let satelliteHalfWidth: CGFloat = 16
+        #expect(HerdrHudPlacement.orbLeadingInset == satelliteHalfWidth)
+        #expect(HerdrHudPlacement.collapsedSize.width - satelliteHalfWidth == HerdrHudPlacement.orbLeadingInset + 56)
+    }
+
     @Test("Collapsed content keeps its original size with no session chips")
     func collapsedContentSizeWithoutChipsMatchesOriginal() {
         #expect(HerdrHudPlacement.collapsedContentSize(chipCount: 0) == HerdrHudPlacement.collapsedSize)
@@ -105,7 +112,7 @@ struct HerdrHudPlacementTests {
 
     @Test("Collapsed HUD height grows by one fixed slot per visible row")
     func collapsedContentSizeGrowsByVisibleRows() {
-        for count in 1...HerdrHudPlacement.maxCollapsedRows {
+        for count in 1...30 {
             let size = HerdrHudPlacement.collapsedContentSize(chipCount: count)
             #expect(
                 size.width == max(HerdrHudPlacement.collapsedSize.width, HerdrHudPlacement.chipWidth)
@@ -156,7 +163,7 @@ struct HerdrHudPlacementTests {
     @Test("Revealed sessions share one bounded height with panel placement")
     func revealedSessionStackFitsLaptopDisplay() {
         let visibleFrame = CGRect(x: 0, y: 0, width: 1_512, height: 887)
-        let count = HerdrHudPlacement.maxCollapsedRows
+        let count = 30
         let height = HerdrHudPlacement.sessionStackHeight(chipCount: count, visibleFrameHeight: visibleFrame.height)
         #expect(height < HerdrHudPlacement.sessionStackContentHeight(chipCount: count))
         #expect(height >= HerdrHudPlacement.chipHeight)
@@ -178,7 +185,7 @@ struct HerdrHudPlacementTests {
         let reply = HerdrHudPlacement.voiceReplyCardSize
         let voice = HerdrHudPlacement.quickVoiceCardSize
         let height = HerdrHudPlacement.sessionStackHeight(
-            chipCount: HerdrHudPlacement.maxCollapsedRows,
+            chipCount: 30,
             visibleFrameHeight: visibleFrame.height,
             notesSize: notes,
             voiceReplySize: reply,
@@ -193,7 +200,7 @@ struct HerdrHudPlacementTests {
             isExpanded: false,
             visibleFrame: visibleFrame,
             topRightOffset: HerdrHudPlacement.defaultOffset(),
-            chipCount: HerdrHudPlacement.maxCollapsedRows,
+            chipCount: 30,
             notesSize: notes,
             voiceReplySize: reply,
             quickVoiceSize: voice
@@ -227,23 +234,18 @@ struct HerdrHudPlacementTests {
         )
     }
 
-    /// The `+N` control reveals the grouped sessions, so the panel has to grow
-    /// past `maxChips`. Even a fully revealed stack can have one final overflow
-    /// control, so geometry reserves one row beyond `maxExpandedChips`.
-    @Test("Collapsed row count includes and clamps after the overflow control")
-    func collapsedContentSizeClampsChipCount() {
-        #expect(
-            HerdrHudPlacement.collapsedContentSize(chipCount: HerdrHudPlacement.maxChips + 1)
-                != HerdrHudPlacement.collapsedContentSize(chipCount: HerdrHudPlacement.maxChips)
-        )
-        #expect(
-            HerdrHudPlacement.collapsedContentSize(chipCount: HerdrHudPlacement.maxExpandedChips + 1)
-                != HerdrHudPlacement.collapsedContentSize(chipCount: HerdrHudPlacement.maxExpandedChips)
-        )
-        #expect(
-            HerdrHudPlacement.collapsedContentSize(chipCount: HerdrHudPlacement.maxCollapsedRows + 1)
-                == HerdrHudPlacement.collapsedContentSize(chipCount: HerdrHudPlacement.maxCollapsedRows)
-        )
+    @Test("Show all has no row cap and overflow reserves only its circular badge")
+    func unlimitedRowsAndCompactOverflow() {
+        #expect(HerdrHudPlacement.sessionStackContentHeight(chipCount: 20) == CGFloat(20 * 60 + 19 * 6))
+        for scale in [1.0, 1.6] {
+            let rows = HerdrHudPlacement.sessionStackContentHeight(chipCount: 4, fontScale: scale)
+            let diameter = HerdrHudPlacement.overflowDiameter(count: 1, fontScale: scale)
+            let grouped = HerdrHudPlacement.sessionStackContentHeight(chipCount: 4, overflow: 1, fontScale: scale)
+            #expect(grouped == rows + 6 + diameter)
+            #expect(diameter < HerdrHudPlacement.chipHeight(fontScale: scale))
+            #expect(HerdrHudPlacement.collapsedContentSize(chipCount: 4, overflow: 1, fontScale: scale).height == 72 + 6 + grouped)
+        }
+        #expect(HerdrHudPlacement.overflowDiameter(count: 100) > HerdrHudPlacement.overflowDiameter(count: 1))
     }
 
     @Test("Session chips keep the collapsed top-right anchor fixed")

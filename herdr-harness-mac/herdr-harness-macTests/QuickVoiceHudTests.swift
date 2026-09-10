@@ -17,6 +17,28 @@ struct QuickVoiceHudTests {
         #expect(result.chips.allSatisfy { $0.activity == "Activity details unavailable" })
     }
 
+    @Test("Visible agent preferences group at the chosen limit and Show all includes over twenty")
+    func configurableAgentLimit() {
+        let note = makeNote(statuses: Array(repeating: "running", count: 24))
+        func projection(limit: Int = 4, showAll: Bool = false) -> QuickVoiceHudProjection.Projection {
+            QuickVoiceHudProjection.chips(
+                panes: [], notes: [note], mutedPaneIDs: [], dismissed: [:],
+                revealTitles: true, artifacts: [], showAll: showAll, visibleAgentLimit: limit
+            )
+        }
+        #expect(projection().chips.count == 4)
+        #expect(projection().overflow == 20)
+        #expect(projection(limit: 5).chips.count == 5)
+        #expect(projection(limit: 5).overflow == 19)
+        #expect(projection(limit: 0).chips.count == 24)
+        #expect(projection(limit: 0).overflow == 0)
+        #expect(projection(showAll: true).chips.count == 24)
+        #expect(projection(showAll: true).overflow == 0)
+        let fifth = makeNote(statuses: Array(repeating: "running", count: 5))
+        #expect(project(notes: [fifth]).chips.count == 4)
+        #expect(project(notes: [fifth]).overflow == 1)
+    }
+
     @Test("Live panes merge into voice notifications without duplicates or title loss")
     func joinsLivePane() throws {
         let pane = try makePane(status: "working")
@@ -175,7 +197,7 @@ struct QuickVoiceHudTests {
             id: "voice-demo", text: "Check my unread Slack notifications, count my draft PRs, and tell me how many unread emails I have.", cwd: nil,
             title: "Slack, PRs and email", status: jobStatus, createdAt: Date().timeIntervalSince1970,
             tasks: statuses.enumerated().map { index, status in
-                .init(title: titles[index], status: status, paneID: status == "pending" ? nil : "w1:p\(index + 1)", result: nil)
+                .init(title: index < titles.count ? titles[index] : "Sample agent \(index + 1)", status: status, paneID: status == "pending" ? nil : "w1:p\(index + 1)", result: nil)
             }, messages: [], error: nil
         )
         return .init(machineID: "demo1", job: job)

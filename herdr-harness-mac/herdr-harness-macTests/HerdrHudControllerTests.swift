@@ -123,7 +123,7 @@ struct HerdrHudControllerTests {
 
     /// The panel used to clamp its chip count at `maxChips`, which would have
     /// left revealed sessions drawn outside the window.
-    @Test("The panel accepts more chips than the grouped limit, up to the expanded one")
+    @Test("The panel accepts every revealed chip and tracks overflow separately")
     func revealedChipsGrowThePanel() {
         // Test the controller's count contract without a hosted root. Its
         // initial model projection would otherwise replace these explicit
@@ -132,8 +132,28 @@ struct HerdrHudControllerTests {
         controller.setCollapsedChipCount(HerdrHudPlacement.maxChips + 2)
         #expect(controller.collapsedChipCount == HerdrHudPlacement.maxChips + 2)
 
-        controller.setCollapsedChipCount(HerdrHudPlacement.maxCollapsedRows + 5)
-        #expect(controller.collapsedChipCount == HerdrHudPlacement.maxCollapsedRows)
+        controller.setCollapsedChipCount(30)
+        #expect(controller.collapsedChipCount == 30)
+        controller.setCollapsedChipCount(4, overflow: 1)
+        #expect(controller.collapsedChipCount == 4)
+        #expect(controller.collapsedOverflowCount == 1)
+        controller.setCollapsedChipCount(4, overflow: 2)
+        #expect(controller.collapsedOverflowCount == 2)
+    }
+
+    @Test("Visible agent settings default to four and persist finite and Show all choices")
+    func visibleAgentPreference() {
+        let defaults = makeDefaults()
+        let controller = HerdrHudController(userDefaults: defaults)
+        #expect(controller.visibleAgentLimit == 4)
+        controller.visibleAgentLimit = 5
+        #expect(HerdrHudController(userDefaults: defaults).visibleAgentLimit == 5)
+        controller.showAllChips()
+        controller.visibleAgentLimit = 0
+        #expect(!controller.isShowingAllChips)
+        #expect(HerdrHudController(userDefaults: defaults).visibleAgentLimit == 0)
+        defaults.set(-1, forKey: "herdr.hud.visibleAgentLimit")
+        #expect(HerdrHudController(userDefaults: defaults).visibleAgentLimit == 4)
     }
 
     @Test("Result nodes reserve their lane only while visible")

@@ -22,7 +22,8 @@ struct HerdrHudRootView: View {
             dismissed: model.dismissedHudChips,
             revealTitles: model.showSessionTitles,
             artifacts: model.unopenedResultArtifacts,
-            showAll: controller.isShowingAllChips
+            showAll: controller.isShowingAllChips,
+            visibleAgentLimit: controller.visibleAgentLimit
         )
     }
 
@@ -48,7 +49,7 @@ struct HerdrHudRootView: View {
 
     var body: some View {
         let chipState = sessionChips
-        let collapsedRowCount = chipState.chips.count + (chipState.overflow > 0 ? 1 : 0)
+        let collapsedCounts = [chipState.chips.count, chipState.overflow]
         VStack(alignment: .trailing, spacing: HerdrHudPlacement.notesGap) {
             Group {
                 if controller.isExpanded {
@@ -95,8 +96,8 @@ struct HerdrHudRootView: View {
                             .onHover { controller.setHoveringChips($0) }
                         }
                     }
-                    .onChange(of: collapsedRowCount, initial: true) { _, count in
-                        controller.setCollapsedChipCount(count)
+                    .onChange(of: collapsedCounts, initial: true) { _, counts in
+                        controller.setCollapsedChipCount(counts[0], overflow: counts[1])
                     }
                     .onChange(of: maximumResultCount(chipState), initial: true) { _, count in
                         controller.setCollapsedResultArtifactCount(count)

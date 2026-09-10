@@ -32,6 +32,7 @@ final class HerdrHudController {
         static let enabled = "herdr.hud.enabled"
         static let notesVisible = "herdr.hud.notesVisible"
         static let offset = "herdr.hud.offset.v2"
+        static let visibleAgentLimit = "herdr.hud.visibleAgentLimit"
     }
 
     private let userDefaults: UserDefaults
@@ -65,7 +66,17 @@ final class HerdrHudController {
     private(set) var isAwaitingRunAutoOpen = false
     private(set) var focusRequest = 0
     private(set) var noteFocusRequest = 0
+    /// Zero means Show all; finite limits apply equally to voice and pane agents.
+    var visibleAgentLimit: Int {
+        didSet {
+            guard oldValue != visibleAgentLimit else { return }
+            userDefaults.set(visibleAgentLimit, forKey: DefaultsKey.visibleAgentLimit)
+            chipRegroupTask?.cancel()
+            isShowingAllChips = false
+        }
+    }
     private(set) var collapsedChipCount = 0
+    private(set) var collapsedOverflowCount = 0
     private(set) var collapsedSessionStackHeight: CGFloat = 0
     private(set) var compactNotesHeight: CGFloat = 0
     private(set) var isVoiceReplyCardVisible = false
@@ -97,6 +108,8 @@ final class HerdrHudController {
         attachmentHoverGrace: Duration = .milliseconds(180)
     ) {
         self.userDefaults = userDefaults
+        let savedLimit = userDefaults.object(forKey: DefaultsKey.visibleAgentLimit) as? Int
+        visibleAgentLimit = savedLimit.flatMap { (0...20).contains($0) ? $0 : nil } ?? HerdrHudPlacement.maxChips
         let width = userDefaults.double(forKey: "herdr.hud.noteWidth")
         let height = userDefaults.double(forKey: "herdr.hud.noteHeight")
         if width.isFinite, height.isFinite, width >= 320, height >= 360 {
@@ -296,10 +309,12 @@ final class HerdrHudController {
 
     func fontScaleDidChange() { applyFrame(animated: false) }
 
-    func setCollapsedChipCount(_ count: Int) {
-        let clampedCount = min(max(0, count), HerdrHudPlacement.maxCollapsedRows)
-        guard collapsedChipCount != clampedCount else { return }
+    func setCollapsedChipCount(_ count: Int, overflow: Int = 0) {
+        let clampedCount = max(0, count)
+        let clampedOverflow = max(0, overflow)
+        guard collapsedChipCount != clampedCount || collapsedOverflowCount != clampedOverflow else { return }
         collapsedChipCount = clampedCount
+        collapsedOverflowCount = clampedOverflow
         if !isExpanded {
             applyFrame(animated: true)
         }
@@ -627,6 +642,7 @@ final class HerdrHudController {
         }
         collapsedSessionStackHeight = HerdrHudPlacement.sessionStackHeight(
             chipCount: collapsedChipCount,
+            overflow: collapsedOverflowCount,
             visibleFrameHeight: visibleFrame.height,
             notesSize: notesSize,
             voiceReplySize: voiceReplySize,
@@ -638,6 +654,7 @@ final class HerdrHudController {
             visibleFrame: visibleFrame,
             topRightOffset: placementOffset,
             chipCount: isExpanded ? 0 : collapsedChipCount,
+            overflow: isExpanded ? 0 : collapsedOverflowCount,
             hasResultRail: !isExpanded && isCollapsedResultRailVisible,
             resultArtifactCount: collapsedResultArtifactCount,
             expandsResultTitles: areAttachmentTitlesExpanded,

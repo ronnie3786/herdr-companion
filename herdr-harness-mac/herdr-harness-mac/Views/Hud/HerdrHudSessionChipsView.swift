@@ -43,7 +43,8 @@ struct HerdrHudSessionChipsView: View {
 
     private var contentHeight: CGFloat {
         HerdrHudPlacement.sessionStackContentHeight(
-            chipCount: chips.count + (overflow > 0 ? 1 : 0),
+            chipCount: chips.count,
+            overflow: overflow,
             fontScale: fontScale.rawValue
         )
     }
@@ -111,16 +112,15 @@ struct HerdrHudSessionChipsView: View {
             Text("+\(overflow)")
                 .herdrFont(.caption2, monospaced: true, weight: .bold)
                 .foregroundStyle(HerdrTheme.mist)
-                .padding(.horizontal, 9)
-                // Matches the chips it stands in for — and the height the
-                // collapsed panel reserves for this row.
-                .frame(minHeight: HerdrHudPlacement.chipHeight(fontScale: fontScale.rawValue))
-                .herdrHitTarget(minHeight: HerdrHudPlacement.chipHeight(fontScale: fontScale.rawValue))
-                .background(HerdrTheme.graphite.opacity(0.94), in: .capsule)
+                .frame(
+                    width: HerdrHudPlacement.overflowDiameter(count: overflow, fontScale: fontScale.rawValue),
+                    height: HerdrHudPlacement.overflowDiameter(count: overflow, fontScale: fontScale.rawValue)
+                )
+                .background(HerdrTheme.graphite.opacity(0.94), in: .circle)
                 .overlay {
-                    Capsule().strokeBorder(HerdrTheme.surface, lineWidth: 1)
+                    Circle().strokeBorder(HerdrTheme.surface, lineWidth: 1)
                 }
-                .contentShape(.capsule)
+                .contentShape(.circle)
         }
         .buttonStyle(.plain)
         .help("Show \(overflow) more session\(overflow == 1 ? "" : "s")")

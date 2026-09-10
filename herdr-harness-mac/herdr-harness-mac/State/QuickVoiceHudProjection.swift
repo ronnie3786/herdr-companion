@@ -14,7 +14,8 @@ enum QuickVoiceHudProjection {
         dismissed: [String: HudChipDismissal],
         revealTitles: Bool,
         artifacts: [AgentResultArtifact],
-        showAll: Bool
+        showAll: Bool,
+        visibleAgentLimit: Int = HerdrHudPlacement.maxChips
     ) -> Projection {
         let base = HerdrHudSessionChips.chips(
             panes: panes, mutedPaneIDs: mutedPaneIDs, dismissed: dismissed,
@@ -57,9 +58,7 @@ enum QuickVoiceHudProjection {
             }
         }
         let all = voiceChips + base.chips.filter { remaining[$0.id] != nil }
-        // A single request may start four agents. Show all four without an
-        // extra click, while keeping the ordinary HUD's three-row default.
-        let limit = showAll ? HerdrHudPlacement.maxExpandedChips : max(HerdrHudPlacement.maxChips, min(4, voiceChips.count))
+        let limit = showAll || visibleAgentLimit == 0 ? all.count : max(1, visibleAgentLimit)
         let visible = Array(all.prefix(limit))
         return (visible, max(0, all.count - limit), base.detachedArtifacts)
     }

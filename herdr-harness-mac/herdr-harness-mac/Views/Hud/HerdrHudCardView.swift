@@ -33,7 +33,10 @@ struct HerdrHudCardView: View {
                     .strokeBorder(HerdrTheme.accent, lineWidth: 2)
             }
         }
-        .shadow(color: HerdrTheme.ink.opacity(0.7), radius: 28, y: 12)
+        // A light ambient shadow plus a close contact shadow gives separation
+        // without the dense, wide halo of a single high-opacity shadow.
+        .shadow(color: HerdrTheme.ink.opacity(0.16), radius: 18, y: 6)
+        .shadow(color: HerdrTheme.ink.opacity(0.10), radius: 3, y: 2)
         .onDrop(of: [.fileURL, .image], isTargeted: $isDropTargeted) { providers in
             session.acceptAttachmentDrop(providers)
         }

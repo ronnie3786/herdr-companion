@@ -191,7 +191,7 @@ struct HerdrHudSessionChipsTests {
             mutedPaneIDs: [],
             dismissed: [:],
             revealTitles: true,
-            limit: HerdrHudPlacement.maxExpandedChips
+            limit: Int.max
         )
 
         #expect(grouped.chips.count == HerdrHudPlacement.maxChips)

@@ -6,7 +6,9 @@ struct HerdrHudPlacement: Equatable, Sendable {
     var topRightOffset: CGSize
 
     static let defaultInset: CGFloat = 8
-    static let collapsedSize = CGSize(width: 72, height: 72)
+    static let collapsedSize = CGSize(width: 88, height: 72)
+    /// Reserves the left satellite's half-width, mirroring the right edge.
+    static let orbLeadingInset: CGFloat = 16
     static let orbControlScale: CGFloat = 0.8
     static let expandedSize = CGSize(width: 420, height: 580)
     static let shadowMargin: CGFloat = 40
@@ -40,14 +42,12 @@ struct HerdrHudPlacement: Equatable, Sendable {
             CGFloat(count) * (resultNodeExpandedWidth + resultNodeSpacing) + resultConnectorWidth
         )
     }
-    /// How many session chips the collapsed HUD groups down to. The rest are
-    /// summarised by the `+N` control, which reveals them up to
-    /// `maxExpandedChips`.
-    static let maxChips = 3
-    static let maxExpandedChips = 12
-    /// A fully revealed stack may still need one final `+N` row when more than
-    /// `maxExpandedChips` sessions exist.
-    static let maxCollapsedRows = maxExpandedChips + 1
+    /// Default visible-agent preference; Show all has no projection cap.
+    static let maxChips = 4
+
+    static func overflowDiameter(count: Int, fontScale: Double = 1) -> CGFloat {
+        max(28, CGFloat(String(max(0, count)).count + 1) * 7 + 12) * CGFloat(fontScale)
+    }
     enum NotesLayout: Equatable, Sendable { case hidden, icon, compact(count: Int), rows(count: Int), card }
     static let notesToggleSize: CGFloat = 32
     static let notesGap: CGFloat = 10
@@ -115,16 +115,17 @@ struct HerdrHudPlacement: Equatable, Sendable {
         return CGSize(width: natural.width + (height < natural.height ? 12 : 0), height: height)
     }
 
-    static func sessionStackContentHeight(chipCount: Int, fontScale: Double = 1) -> CGFloat {
-        let count = min(max(0, chipCount), maxCollapsedRows)
-        guard count > 0 else { return 0 }
-        return CGFloat(count) * chipHeight(fontScale: fontScale) + CGFloat(count - 1) * chipSpacing
+    static func sessionStackContentHeight(chipCount: Int, overflow: Int = 0, fontScale: Double = 1) -> CGFloat {
+        let count = max(0, chipCount)
+        let rowsHeight = CGFloat(count) * chipHeight(fontScale: fontScale) + CGFloat(max(0, count - 1)) * chipSpacing
+        return rowsHeight + (overflow > 0 ? (count > 0 ? chipSpacing : 0) + overflowDiameter(count: overflow, fontScale: fontScale) : 0)
     }
 
     /// The panel and scroll view share this budget. Clamping the panel alone
     /// leaves fixed-height session rows drawn below its visible bounds.
     static func sessionStackHeight(
         chipCount: Int,
+        overflow: Int = 0,
         visibleFrameHeight: CGFloat,
         notesSize: CGSize = .zero,
         voiceReplySize: CGSize = .zero,
@@ -135,23 +136,24 @@ struct HerdrHudPlacement: Equatable, Sendable {
             + (notesSize.height > 0 ? notesGap + notesSize.height : 0)
             + (voiceReplySize.height > 0 ? notesGap + voiceReplySize.height : 0)
             + (quickVoiceSize.height > 0 ? chipSpacing + quickVoiceSize.height : 0)
-        return min(sessionStackContentHeight(chipCount: chipCount, fontScale: fontScale), max(0, visibleFrameHeight - reservedHeight))
+        return min(sessionStackContentHeight(chipCount: chipCount, overflow: overflow, fontScale: fontScale), max(0, visibleFrameHeight - reservedHeight))
     }
 
     static func collapsedContentSize(
         chipCount: Int,
+        overflow: Int = 0,
         hasResultRail: Bool = false,
         resultArtifactCount: Int = 1,
         expandsResultTitles: Bool = false,
         sessionStackHeight: CGFloat? = nil,
         fontScale: Double = 1
     ) -> CGSize {
-        let count = min(max(0, chipCount), maxCollapsedRows)
-        let baseSize = if count > 0 {
+        let count = max(0, chipCount)
+        let baseSize = if count > 0 || overflow > 0 {
             CGSize(
                 width: max(collapsedSize.width, chipWidth),
                 height: collapsedSize.height + chipSpacing
-                    + min(Self.sessionStackContentHeight(chipCount: count, fontScale: fontScale), max(0, sessionStackHeight ?? .greatestFiniteMagnitude))
+                    + min(Self.sessionStackContentHeight(chipCount: count, overflow: overflow, fontScale: fontScale), max(0, sessionStackHeight ?? .greatestFiniteMagnitude))
             )
         } else {
             collapsedSize
@@ -169,6 +171,7 @@ struct HerdrHudPlacement: Equatable, Sendable {
         visibleFrame: CGRect,
         topRightOffset: CGSize,
         chipCount: Int = 0,
+        overflow: Int = 0,
         hasResultRail: Bool = false,
         resultArtifactCount: Int = 1,
         expandsResultTitles: Bool = false,
@@ -181,11 +184,13 @@ struct HerdrHudPlacement: Equatable, Sendable {
             ? expandedSize
             : collapsedContentSize(
                 chipCount: chipCount,
+                overflow: overflow,
                 hasResultRail: hasResultRail,
                 resultArtifactCount: resultArtifactCount,
                 expandsResultTitles: expandsResultTitles,
                 sessionStackHeight: sessionStackHeight(
                     chipCount: chipCount,
+                    overflow: overflow,
                     visibleFrameHeight: visibleFrame.height,
                     notesSize: notesSize,
                     voiceReplySize: voiceReplySize,

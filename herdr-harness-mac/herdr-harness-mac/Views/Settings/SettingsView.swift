@@ -178,7 +178,8 @@ struct SettingsView: View {
     }
 
     private var hudSection: some View {
-        Section {
+        @Bindable var hudController = hudController
+        return Section {
             Toggle(
                 "Enable HUD",
                 systemImage: "sparkles",
@@ -189,11 +190,19 @@ struct SettingsView: View {
             )
             .tint(HerdrTheme.controlAccent)
 
+            Picker("Visible agents", selection: $hudController.visibleAgentLimit) {
+                Text("Show all").tag(0)
+                ForEach(1...20, id: \.self) { count in
+                    Text("\(count)").tag(count)
+                }
+            }
+            .accessibilityIdentifier("settings-hud-visible-agents")
+
             LabeledContent("Summon", value: "⌃⌥Space")
         } header: {
             Text("HUD")
         } footer: {
-            Text("The HUD can run real commands on the selected machine.")
+            Text("Show 4 agents by default; additional agents are grouped under +N. Choose Show all to keep every agent in the scrollable list. The HUD can run real commands on the selected machine.")
         }
     }
 

@@ -31,6 +31,7 @@ struct HerdrHudOrbResultRow: View {
                     attentionChipCount: attentionChipCount
                 )
                 .frame(width: 56, height: 56)
+                .padding(.leading, HerdrHudPlacement.orbLeadingInset)
                 orbControls
                 .opacity(controller.areOrbControlsVisible ? 1 : 0)
                 .allowsHitTesting(controller.areOrbControlsVisible)

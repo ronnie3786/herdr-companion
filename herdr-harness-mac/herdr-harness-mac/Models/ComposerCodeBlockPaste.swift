@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 /// Pastes literal Markdown fences without trimming or executing clipboard text.
 enum ComposerCodeBlockPaste {
@@ -26,12 +27,6 @@ enum ComposerCodeBlockPaste {
         }
     }
 
-    @MainActor
-    static func captureSelection(for draft: String) -> EditorSelection? {
-        guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView else { return nil }
-        return EditorSelection(editor: editor, draft: draft)
-    }
-
     static func fenced(_ text: String) -> String {
         // A longer fence keeps a pasted snippet containing its own fences intact.
         let longestRun = text.split(whereSeparator: { $0 != "`" }).map(\.count).max() ?? 0
@@ -53,28 +48,32 @@ enum ComposerCodeBlockPaste {
     @MainActor
     @discardableResult
     static func paste(
-        into draft: inout String,
+        into binding: Binding<String>,
         pasteboard: NSPasteboard = .general,
         selection: EditorSelection? = nil
-    ) -> Bool {
-        guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return false }
-        // Check the editor belongs to this draft. A click can leave another field
-        // focused, and it must never receive the clipboard content by accident.
-        let currentEditor = NSApp.keyWindow?.firstResponder as? NSTextView
+    ) async -> Bool {
+        // Leave the SwiftUI button transaction before native text editing. Its
+        // deferred delegate write can otherwise restore the old draft and
+        // invalidate native undo. Keyboard and CTA calls use this same path.
+        await Task.yield()
+        guard !Task.isCancelled,
+              let text = pasteboard.string(forType: .string), !text.isEmpty else { return false }
+        // NSTextView insertion synchronously calls SwiftUI's binding setter.
+        // Never hold an inout borrow of an observable draft across that call.
+        let draft = binding.wrappedValue
+        // Only use the owning composer's editor, never a different key field
+        // whose text happens to match (especially when both drafts are empty).
         let destination = selection?.destination(for: draft)
-            ?? currentEditor.flatMap { editor -> (NSTextView, NSRange)? in
-                guard editor.isEditable, editor.string == draft else { return nil }
-                return (editor, editor.selectedRange())
-            }
         if let (editor, _) = destination {
             let end = (draft as NSString).length
             let result = inserting(text, into: draft)
             let insertion = (result as NSString).substring(from: end)
             editor.insertText(insertion, replacementRange: NSRange(location: end, length: 0))
+            binding.wrappedValue = editor.string
+            editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
             editor.scrollRangeToVisible(editor.selectedRange())
-            draft = editor.string
         } else {
-            draft = inserting(text, into: draft)
+            binding.wrappedValue = inserting(text, into: draft)
         }
         return true
     }

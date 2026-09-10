@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -45,11 +46,13 @@ struct PromptComposerView: View {
     let activateResponseAudio: ((ResponseAudioAction) -> Void)?
     let toolRowFit: ComposerToolRowFit
     let modelFavorites: ModelFavoritesStore
+    let codePasteboard: NSPasteboard
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.herdrFontScale) private var fontScale
     @State private var composerWidth: CGFloat = .infinity
+    @State private var editorTarget = ComposerEditorTarget()
     @FocusState private var isFocused: Bool
     @State private var isShowingFileImporter = false
     @State private var isShowingVoiceRecorder = false
@@ -81,7 +84,8 @@ struct PromptComposerView: View {
         activateResponseAudio: ((ResponseAudioAction) -> Void)? = nil,
         toolRowFit: ComposerToolRowFit = .automatic,
         modelFavorites: ModelFavoritesStore,
-        quotes: Binding<[ChatQuote]> = .constant([])
+        quotes: Binding<[ChatQuote]> = .constant([]),
+        codePasteboard: NSPasteboard = .general
     ) {
         self.model = model
         self.pane = pane
@@ -96,6 +100,7 @@ struct PromptComposerView: View {
         self.activateResponseAudio = activateResponseAudio
         self.toolRowFit = toolRowFit
         self.modelFavorites = modelFavorites
+        self.codePasteboard = codePasteboard
         _disposition = State(initialValue: piConfiguration?.preferredDisposition ?? .prompt)
     }
 
@@ -547,7 +552,7 @@ struct PromptComposerView: View {
                     .tint(HerdrTheme.alert)
                     .frame(maxWidth: .infinity, minHeight: 48)
             } else {
-                ComposerDraftEditor(placeholder: placeholder, text: $draft, pasteCode: pasteCodeBlock)
+                ComposerDraftEditor(placeholder: placeholder, text: $draft, pasteCode: pasteCodeBlock, editorTarget: editorTarget)
                     .herdrFont(size: 13)
                     .foregroundStyle(HerdrTheme.text)
                     .focused($isFocused)
@@ -835,10 +840,14 @@ struct PromptComposerView: View {
 
     private func pasteCodeBlock() {
         guard !isSubmitting, canControl, !isPiCompacting else { return }
-        if ComposerCodeBlockPaste.paste(into: &draft) {
-            isFocused = true
-        } else {
-            model.toastMessage = "Copy some text before pasting a code block"
+        let selection = editorTarget.captureSelection(for: draft)
+        Task {
+            guard !isSubmitting, canControl, !isPiCompacting else { return }
+            if await ComposerCodeBlockPaste.paste(into: $draft, pasteboard: codePasteboard, selection: selection) {
+                isFocused = true
+            } else {
+                model.toastMessage = "Copy some text before pasting a code block"
+            }
         }
     }
 

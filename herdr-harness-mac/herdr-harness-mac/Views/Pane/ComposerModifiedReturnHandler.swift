@@ -8,12 +8,14 @@ import SwiftUI
 struct ComposerModifiedReturnHandler: NSViewRepresentable {
     @Binding var text: String
     var pasteCode: (() -> Void)? = nil
+    var editorTarget: ComposerEditorTarget? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(text: $text, pasteCode: pasteCode) }
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         context.coordinator.view = view
+        editorTarget?.marker = view
         context.coordinator.monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak coordinator = context.coordinator] event in
             guard let coordinator else { return event }
             return coordinator.handle(event)
@@ -25,6 +27,7 @@ struct ComposerModifiedReturnHandler: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {
         context.coordinator.text = $text
         context.coordinator.pasteCode = pasteCode
+        editorTarget?.marker = nsView
     }
 
     static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {

@@ -80,6 +80,13 @@ their normal shortcut behavior. Clipboard whitespace is preserved. Ordinary cont
 uses triple backticks; content containing backticks gets a longer enclosing fence
 so the snippet remains intact. Pasting does not send or execute the content.
 
+As of 0.8.1, both routes edit through a binding after the SwiftUI button transaction
+ends, rather than holding exclusive access to an observable draft during native
+insertion. This fixes the HUD crash and the CTA's lost insertion. Each composer
+resolves its own native editor instead of guessing from the key window; changing
+focus cannot redirect the paste into an unrelated matching field. The caret moves
+to the appended block, and native undo/redo remains available.
+
 ## Verification and compatibility
 
 No server, iOS, or Pi protocol update is required. Quotes use the ordinary text
@@ -87,8 +94,8 @@ prompt contract. Native text measurement stays isolated from the displayed TextK
 stack, preserving the 0.7.1 overlap fix across resizing and streaming.
 
 Tests cover latest-response eligibility, visible glyph anchoring, inline prompt
-serialization and quote-only HUD submission, focused keyboard routing, append-only
-code paste, new-session confirmation without SSE, early empty checkpoints, failures,
+serialization and quote-only HUD submission, focused keyboard routing, real CTA mouse clicks and shortcut events in both
+composers (including focus changes, caret placement, and native undo/redo), new-session confirmation without SSE, early empty checkpoints, failures,
 timeouts and late confirmation. The full new-session render is checked with local
 text recognition for the divider, previous-session label, and preserved message
 content—not just the existence or size of a screenshot.

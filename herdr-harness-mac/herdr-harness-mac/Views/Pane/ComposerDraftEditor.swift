@@ -8,6 +8,7 @@ struct ComposerDraftEditor: View {
     @Binding var text: String
     var maximumVisibleLines = 5
     var pasteCode: (() -> Void)? = nil
+    var editorTarget: ComposerEditorTarget? = nil
 
     var body: some View {
         Text(text.isEmpty ? " " : text + " ")
@@ -23,7 +24,7 @@ struct ComposerDraftEditor: View {
                     .scrollIndicators(.visible)
                     .accessibilityLabel(placeholder)
                     .accessibilityIdentifier("composer-draft-editor")
-                    .background(ComposerModifiedReturnHandler(text: $text, pasteCode: pasteCode))
+                    .background(ComposerModifiedReturnHandler(text: $text, pasteCode: pasteCode, editorTarget: editorTarget))
                     .overlay(alignment: .topLeading) {
                         if text.isEmpty {
                             Text(placeholder)

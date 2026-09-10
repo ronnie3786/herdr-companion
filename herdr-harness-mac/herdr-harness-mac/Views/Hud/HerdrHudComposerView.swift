@@ -6,6 +6,7 @@ struct HerdrHudComposerView: View {
     @Bindable var model: HerdrAppModel
     let controller: HerdrHudController
     @Bindable var session: HerdrHudSession
+    var codePasteboard: NSPasteboard = .general
 
     @FocusState private var isComposerFocused: Bool
     @State private var quickVoiceCapture = HerdrQuickVoiceCapture()
@@ -13,6 +14,7 @@ struct HerdrHudComposerView: View {
     @State private var isShowingFilePicker = false
     @Environment(\.herdrFontScale) private var fontScale
     @State private var composerWidth: CGFloat = .infinity
+    @State private var editorTarget = ComposerEditorTarget()
 
     /// A submission clears validation within a turn or two; the ceiling only
     /// exists so a failed submit cannot leave this polling forever.
@@ -168,10 +170,13 @@ struct HerdrHudComposerView: View {
     }
 
     private func pasteCodeBlock() {
-        if !ComposerCodeBlockPaste.paste(into: &session.draft) {
-            session.reportAttachmentError("Copy some text before pasting a code block.")
+        let selection = editorTarget.captureSelection(for: session.draft)
+        Task {
+            if !(await ComposerCodeBlockPaste.paste(into: $session.draft, pasteboard: codePasteboard, selection: selection)) {
+                session.reportAttachmentError("Copy some text before pasting a code block.")
+            }
+            isComposerFocused = true
         }
-        isComposerFocused = true
     }
 
     private var attachmentChips: some View {
@@ -218,7 +223,8 @@ struct HerdrHudComposerView: View {
                     placeholder: session.thread == nil ? "Ask anything, or tell it what to do…" : "Reply to this thread…",
                     text: $session.draft,
                     maximumVisibleLines: 4,
-                    pasteCode: pasteCodeBlock
+                    pasteCode: pasteCodeBlock,
+                    editorTarget: editorTarget
                 )
                     .herdrFont(size: 13)
                     .foregroundStyle(HerdrTheme.text)

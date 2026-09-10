@@ -30,17 +30,20 @@ struct HerdrHudSessionChipsView: View {
     @State private var hoveredChipID: String?
 
     var body: some View {
-        if let maximumHeight, contentHeight > maximumHeight {
-            ScrollView(.vertical) {
+        Group {
+            if let maximumHeight, contentHeight > maximumHeight {
+                ScrollView(.vertical) {
+                    chipRows
+                }
+                .scrollIndicators(.hidden)
+                .frame(width: contentWidth, height: max(0, maximumHeight))
+                .accessibilityLabel("Agent sessions")
+                .accessibilityHint("Scroll to reach more sessions")
+            } else {
                 chipRows
             }
-            .scrollIndicators(.hidden)
-            .frame(width: contentWidth, height: max(0, maximumHeight))
-            .accessibilityLabel("Agent sessions")
-            .accessibilityHint("Scroll to reach more sessions")
-        } else {
-            chipRows
         }
+        .modifier(HerdrHudSessionMetadataClock())
     }
 
     private var contentHeight: CGFloat {

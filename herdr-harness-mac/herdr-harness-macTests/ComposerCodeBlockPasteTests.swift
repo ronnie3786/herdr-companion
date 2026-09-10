@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Testing
 @testable import herdr_harness_mac
 
@@ -20,19 +21,20 @@ struct ComposerCodeBlockPasteTests {
 
     @MainActor
     @Test("Reads only clipboard text and reports an empty clipboard")
-    func clipboard() {
+    func clipboard() async {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
         var draft = "Review this:"
-        #expect(!ComposerCodeBlockPaste.paste(into: &draft, pasteboard: board))
+        let binding = Binding(get: { draft }, set: { draft = $0 })
+        #expect(await !ComposerCodeBlockPaste.paste(into: binding, pasteboard: board))
         board.setString("let safe = true", forType: .string)
-        #expect(ComposerCodeBlockPaste.paste(into: &draft, pasteboard: board))
+        #expect(await ComposerCodeBlockPaste.paste(into: binding, pasteboard: board))
         #expect(draft == "Review this:\n```\nlet safe = true\n```")
     }
 
     @MainActor
     @Test("Paste code appends after the draft, never replacing the originating selection")
-    func retainedSelection() throws {
+    func retainedSelection() async throws {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
         board.setString("code", forType: .string)
@@ -40,10 +42,11 @@ struct ComposerCodeBlockPasteTests {
         editor.string = "before old after"
         editor.setSelectedRange(NSRange(location: 7, length: 3))
         var draft = editor.string
+        let binding = Binding(get: { draft }, set: { draft = $0 })
         let selection = try #require(ComposerCodeBlockPaste.EditorSelection(editor: editor, draft: draft))
         // Closing a field editor or opening a popover can move its selection.
         editor.setSelectedRange(NSRange(location: 0, length: 0))
-        #expect(ComposerCodeBlockPaste.paste(into: &draft, pasteboard: board, selection: selection))
+        #expect(await ComposerCodeBlockPaste.paste(into: binding, pasteboard: board, selection: selection))
         #expect(draft == "before old after\n```\ncode\n```")
         #expect(editor.string == draft)
     }

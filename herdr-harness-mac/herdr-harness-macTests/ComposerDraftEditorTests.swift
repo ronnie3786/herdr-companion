@@ -138,6 +138,37 @@ struct ComposerDraftEditorTests {
         #expect(composer.string == "sample\n")
     }
 
+    @Test("Command-Shift-V routes Paste code only from the focused prompt editor")
+    func pasteCodeShortcutScope() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 240), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let root = NSView(frame: window.contentLayoutRect)
+        window.contentView = root
+        let marker = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 100))
+        let composer = NSTextView(frame: marker.frame)
+        let note = NSTextView(frame: NSRect(x: 0, y: 130, width: 400, height: 100))
+        root.addSubview(composer); root.addSubview(note); root.addSubview(marker)
+        var pasteCount = 0
+        let coordinator = ComposerModifiedReturnHandler.Coordinator(text: .constant(""), pasteCode: { pasteCount += 1 })
+        coordinator.view = marker
+        func event(_ flags: NSEvent.ModifierFlags) throws -> NSEvent {
+            try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
+                                         windowNumber: window.windowNumber, context: nil, characters: "V", charactersIgnoringModifiers: "V", isARepeat: false, keyCode: 9))
+        }
+        let shortcut = try event([.command, .shift])
+        window.makeFirstResponder(note)
+        #expect(coordinator.handle(shortcut) === shortcut)
+        window.makeFirstResponder(composer)
+        let normalPaste = try event(.command)
+        #expect(coordinator.handle(normalPaste) === normalPaste)
+        #expect(coordinator.handle(shortcut) == nil)
+        #expect(pasteCount == 1)
+        composer.setMarkedText("sample", selectedRange: NSRange(location: 0, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        #expect(coordinator.handle(shortcut) === shortcut)
+        #expect(pasteCount == 1)
+    }
+
     @MainActor @Observable
     final class EditorState {
         var draft = "hello world"

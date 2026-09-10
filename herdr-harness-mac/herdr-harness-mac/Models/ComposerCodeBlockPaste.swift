@@ -4,7 +4,8 @@ import AppKit
 enum ComposerCodeBlockPaste {
     /// A popover may become the key window before its Paste action runs. Keep
     /// the originating editor weakly and only reuse it while the draft still
-    /// matches, so paste retains selection and undo without touching a new field.
+    /// matches, so paste retains undo without touching a new field. The pasted
+    /// block is appended regardless of the originating selection.
     @MainActor
     final class EditorSelection {
         weak var editor: NSTextView?
@@ -65,16 +66,12 @@ enum ComposerCodeBlockPaste {
                 guard editor.isEditable, editor.string == draft else { return nil }
                 return (editor, editor.selectedRange())
             }
-        if let (editor, range) = destination {
-            let draftLength = (draft as NSString).length
-            guard range.location != NSNotFound, range.location <= draftLength,
-                  range.length <= draftLength - range.location else { return false }
-            let result = inserting(text, into: draft, selection: range)
-            let unchangedLength = (draft as NSString).length - range.length
-            let insertedLength = (result as NSString).length - unchangedLength
-            guard insertedLength >= 0 else { return false }
-            let insertion = (result as NSString).substring(with: NSRange(location: range.location, length: insertedLength))
-            editor.insertText(insertion, replacementRange: range)
+        if let (editor, _) = destination {
+            let end = (draft as NSString).length
+            let result = inserting(text, into: draft)
+            let insertion = (result as NSString).substring(from: end)
+            editor.insertText(insertion, replacementRange: NSRange(location: end, length: 0))
+            editor.scrollRangeToVisible(editor.selectedRange())
             draft = editor.string
         } else {
             draft = inserting(text, into: draft)

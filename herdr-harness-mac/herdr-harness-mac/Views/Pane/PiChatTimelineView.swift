@@ -8,6 +8,7 @@ struct PiChatTimelineView: View {
     let artifactMachineID: String
     let respond: (PiPendingInteraction, PiInteractionResponseBody) async -> Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.saveChatQuote) private var saveQuote
     @State private var scrollPosition = ScrollPosition(edge: .bottom)
     @State private var isNearBottom = true
     @State private var lastStructureRevision: Int?
@@ -37,6 +38,7 @@ struct PiChatTimelineView: View {
     }
 
     var body: some View {
+        let latestAssistantID = ChatQuoteEligibility.latestAssistantID(in: store.turns)
         let responseArtifacts = PiResponseArtifacts(
             artifacts: resultArtifacts, turns: store.turns,
             machineID: artifactMachineID, sessionID: store.sessionID
@@ -60,25 +62,11 @@ struct PiChatTimelineView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(store.closedSessions.filter { $0.id != store.sessionID }) { session in
                         PiClosedSessionView(session: session, initiallyExpanded: session.id == store.closedSessions.last?.id)
+                            .environment(\.saveChatQuote, nil)
                     }
-                    if !store.closedSessions.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(spacing: 12) {
-                                Rectangle().fill(HerdrTheme.separator).frame(height: 1)
-                                Label("New conversation", systemImage: "sparkle")
-                                    .herdrFont(.caption, weight: .semibold).fixedSize()
-                                    .foregroundStyle(HerdrTheme.accent)
-                                Rectangle().fill(HerdrTheme.separator).frame(height: 1)
-                            }
-                            Text("Fresh context for Pi. Previous chats stay here for reference.")
-                                .herdrFont(.caption).foregroundStyle(HerdrTheme.muted)
-                            if let id = store.sessionID {
-                                Text(id).herdrFont(.caption2, monospaced: true)
-                                    .foregroundStyle(HerdrTheme.muted).textSelection(.enabled)
-                            }
-                        }
-                        .padding(.vertical, 24)
-                        .accessibilityIdentifier("pi-new-session-divider")
+                    if let previous = store.closedSessions.last(where: { $0.id != store.sessionID }) {
+                        PiSessionBoundaryView(previousSessionID: previous.id, currentSessionID: store.sessionID)
+                            .id("pi-session-boundary")
                     }
                     if let error = store.historyError {
                         Text(error).herdrFont(.caption).foregroundStyle(HerdrTheme.alert)
@@ -102,6 +90,7 @@ struct PiChatTimelineView: View {
                         ForEach(window.rows) { row in
                             PiTimelineRowView(row: row, artifactModel: artifactModel)
                                 .equatable()
+                                .environment(\.saveChatQuote, quoteAction(for: row, latestAssistantID: latestAssistantID))
                                 .transition(
                                     row.startsTurn
                                         ? PiChatMotion.turnTransition(reduceMotion: reduceMotion)
@@ -131,6 +120,7 @@ struct PiChatTimelineView: View {
                     }
 
                 }
+                .scrollTargetLayout()
                 .frame(maxWidth: HerdrTheme.readingWidth, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 28)
@@ -144,6 +134,11 @@ struct PiChatTimelineView: View {
                 )
             }
             .scrollPosition($scrollPosition)
+            .task(id: store.sessionBoundaryRevision) {
+                guard store.sessionBoundaryRevision > 0 else { return }
+                do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
+                scrollPosition.scrollTo(id: "pi-session-boundary", anchor: .center)
+            }
             .defaultScrollAnchor(.bottom)
             .onScrollGeometryChange(
                 for: PiChatScrollMetrics.self,
@@ -172,12 +167,12 @@ struct PiChatTimelineView: View {
                 lastStructureRevision = store.structureRevision
                 revealState.structureDidChange(
                     hadContent: false,
-                    hasContent: store.hasContent,
+                    hasContent: hasTimelineContent,
                     structureChanged: true,
                     isNearBottom: true,
                     reduceMotion: reduceMotion
                 )
-                trackedHasContent = store.hasContent
+                trackedHasContent = hasTimelineContent
             }
             .onChange(of: store.turns.first?.id) { _, _ in
                 // A different transcript (pane switch, session change): start
@@ -198,7 +193,7 @@ struct PiChatTimelineView: View {
                 let structureChanged = lastStructureRevision != store.structureRevision
                 lastStructureRevision = store.structureRevision
                 let hadContent = trackedHasContent
-                let hasContentNow = store.hasContent
+                let hasContentNow = hasTimelineContent
                 trackedHasContent = hasContentNow
 
                 revealState.structureDidChange(
@@ -208,6 +203,11 @@ struct PiChatTimelineView: View {
                     isNearBottom: isNearBottom,
                     reduceMotion: reduceMotion
                 )
+            }
+            .onChange(of: hasTimelineContent) { _, hasContent in
+                revealState.structureDidChange(hadContent: trackedHasContent, hasContent: hasContent,
+                                              structureChanged: true, isNearBottom: isNearBottom, reduceMotion: reduceMotion)
+                trackedHasContent = hasContent
             }
             .onChange(of: resultArtifacts.map(\.id)) { _, _ in
                 if isNearBottom { scrollPosition.scrollTo(edge: .bottom) }
@@ -232,6 +232,27 @@ struct PiChatTimelineView: View {
                 }
             }
             .animation(PiChatMotion.stateAnimation(reduceMotion: reduceMotion), value: isNearBottom)
+        }
+    }
+
+    /// An empty new session still has visible history and an empty-state CTA.
+    /// Hiding solely because the *active* transcript is empty hid the entire
+    /// previous chapter and divider after /new.
+    private var hasTimelineContent: Bool {
+        store.hasContent || !store.closedSessions.isEmpty || store.connection == .connected
+    }
+
+    private func quoteAction(for row: PiTimelineRow, latestAssistantID: String?) -> (@MainActor (ChatQuote) async throws -> Void)? {
+        guard case let .output(.assistant(block)) = row.content,
+              block.id == latestAssistantID,
+              let saveQuote else { return nil }
+        let sessionID = store.sessionID
+        return { quote in
+            guard store.sessionID == sessionID,
+                  block.id == ChatQuoteEligibility.latestAssistantID(in: store.turns) else {
+                throw NSError(domain: "ChatQuote", code: 1, userInfo: [NSLocalizedDescriptionKey: "A newer response arrived. Select text in the latest agent response instead."])
+            }
+            try await saveQuote(quote)
         }
     }
 

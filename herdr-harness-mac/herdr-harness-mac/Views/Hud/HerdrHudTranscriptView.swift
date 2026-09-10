@@ -33,7 +33,8 @@ struct HerdrHudTranscriptView: View {
                                 showsAudioControls: exchange.id == latestCompletedExchangeID,
                                 allowsPromote: session.thread == nil || exchange.id == latestPromotableExchangeID,
                                 openPaneInMainWindow: openPaneInMainWindow,
-                                collapse: collapse
+                                collapse: collapse,
+                                allowsQuote: exchange.id == ChatQuoteEligibility.latestHUDExchangeID(in: session.exchanges)
                             )
                             .id(exchange.id)
                         }

@@ -40,6 +40,7 @@ struct PiClosedSessionView: View {
             }
         }
         .environment(\.chatQuoteSource, "Pi session \(session.id)")
+        .environment(\.saveChatQuote, nil)
         .padding(.vertical, 18)
         .onAppear { isExpanded = initiallyExpanded }
         .accessibilityIdentifier("pi-closed-session-\(session.id)")

@@ -91,7 +91,8 @@ struct HerdrHudRootView: View {
                                 openVoiceRequest: { controller.quickVoice?.showDetails(noteID: $0) },
                                 expandsAttachmentTitles: controller.areAttachmentTitlesExpanded,
                                 onHoverHud: controller.setHoveringHud,
-                                maximumHeight: controller.collapsedSessionStackHeight
+                                maximumHeight: controller.collapsedSessionStackHeight,
+                                measureContent: controller.measureSessionStack
                             )
                             .onHover { controller.setHoveringChips($0) }
                         }

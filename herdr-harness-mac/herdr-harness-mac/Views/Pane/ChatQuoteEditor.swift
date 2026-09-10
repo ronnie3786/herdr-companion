@@ -36,7 +36,7 @@ struct ChatQuoteEditor: View {
                 .accessibilityIdentifier("chat-quote-comment")
             if let error { Text(error).herdrFont(.caption).foregroundStyle(HerdrTheme.alert) }
             HStack {
-                Text("Attaches to your next message. Not sent yet.")
+                Text("Adds to your next message. Not sent yet.")
                     .herdrFont(.caption2).foregroundStyle(HerdrTheme.muted)
                 Spacer()
                 Button("Cancel", action: dismiss).keyboardShortcut(.cancelAction).disabled(isSaving)

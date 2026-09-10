@@ -117,15 +117,9 @@ struct HerdrNoteCardView: View {
         HStack(spacing: 6) {
             TextField("Title", text: titleBinding(for: note), prompt: Text("Title").foregroundStyle(note.color.ink.opacity(0.5)))
                 .textFieldStyle(.plain)
-                .herdrFont(size: NSFont.preferredFont(forTextStyle: .subheadline).pointSize + 1, weight: .bold)
+                .herdrFont(size: NSFont.preferredFont(forTextStyle: .subheadline).pointSize + 2, weight: .bold)
                 .foregroundStyle(note.color.ink)
             Spacer(minLength: 0)
-            Button("New note", systemImage: "note.text.badge.plus", action: controller.createNote)
-                .labelStyle(.iconOnly)
-                .buttonStyle(.plain)
-                .frame(width: HerdrTheme.minHitTarget, height: HerdrTheme.minHitTarget)
-                .herdrDelayedTooltip("Create a note")
-                .accessibilityIdentifier("hud-note-new")
             headerButton(symbol: "bubble.left", help: "Ask about this note", identifier: "hud-note-ask", note: note) {
                 model.presentContextualAssistant(note: note)
             }
@@ -182,7 +176,7 @@ struct HerdrNoteCardView: View {
         ZStack(alignment: .topLeading) {
             if note.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text("Jot anything — the AI can tidy it later.")
-                    .herdrFont(size: NSFont.preferredFont(forTextStyle: .callout).pointSize + 1)
+                    .herdrFont(size: NSFont.preferredFont(forTextStyle: .callout).pointSize + 2)
                     .foregroundStyle(note.color.ink.opacity(0.45))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 8)
@@ -190,7 +184,7 @@ struct HerdrNoteCardView: View {
             }
             TextEditor(text: bodyBinding(for: note), selection: $bodySelection)
                 .scrollContentBackground(.hidden)
-                .herdrFont(size: NSFont.preferredFont(forTextStyle: .callout).pointSize + 1)
+                .herdrFont(size: NSFont.preferredFont(forTextStyle: .callout).pointSize + 2)
                 .foregroundStyle(note.color.ink)
                 .background(HerdrNoteEditorInk(color: note.color.ink))
                 .focused($isBodyFocused)

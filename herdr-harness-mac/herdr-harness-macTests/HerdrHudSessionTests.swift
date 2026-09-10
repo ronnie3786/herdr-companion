@@ -24,6 +24,25 @@ struct HerdrHudSessionTests {
         #expect(session.validationError == nil)
     }
 
+    @Test("Quote-only submissions send inline segments without file attachments")
+    func quoteOnlySubmission() async throws {
+        let model = makeDemoModel()
+        let session = makeSession()
+        let quotes = [ChatQuote(text: "First selected detail", comment: "Keep this.", source: "synthetic"),
+                      ChatQuote(text: "Second selected detail", comment: "Revise this.", source: "synthetic")]
+        quotes.forEach(session.addQuote)
+        await session.submit(model: model)
+        let run = try #require(session.lastHeadlessRunForTesting)
+        #expect(run.prompt == ChatQuote.prompt("", quotes: quotes))
+        #expect(!run.prompt.contains("Attachment:"))
+        let exchange = try #require(session.exchanges.last)
+        #expect(exchange.sentPrompt == run.prompt)
+        #expect(exchange.localAttachments.isEmpty)
+        #expect(exchange.attachmentFilenames.isEmpty)
+        #expect(session.pendingQuotes.isEmpty)
+        #expect(session.pendingAttachments.isEmpty)
+    }
+
     @Test("First HUD submit starts a new thread")
     func firstSubmitStartsNewThread() async throws {
         let model = makeDemoModel()

@@ -83,7 +83,7 @@ struct ComposerAuxiliaryBar: View {
                     title: isVertical ? "Paste code block" : "Paste code",
                     systemImage: "chevron.left.forwardslash.chevron.right",
                     accessibilityLabel: "Paste Code Block",
-                    help: "Paste clipboard text inside a Markdown code block",
+                    help: "Append clipboard as a code block (⌘⇧V in the prompt)",
                     showsTitle: showsTitles,
                     action: pasteCodeBlock
                 )

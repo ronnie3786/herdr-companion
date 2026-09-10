@@ -13,11 +13,8 @@ struct HerdrHudPlacement: Equatable, Sendable {
     static let expandedSize = CGSize(width: 420, height: 580)
     static let shadowMargin: CGFloat = 40
     static let chipWidth: CGFloat = 200
-    /// The chip's rendered height AND the height the panel frame reserves for
-    /// it — `HerdrHudSessionChipsView` must read this, not `HerdrTheme`, or the
-    /// two disagree and the collapsed panel mis-sizes. Deliberately larger than
-    /// `HerdrTheme.minHitTarget`; a literal because this type is pure
-    /// CoreGraphics math with no SwiftUI dependency.
+    /// Conservative first-layout estimate. Once rows render, their measured
+    /// natural height replaces this budget in both the panel and scroll view.
     static let chipHeight: CGFloat = 74
     /// Reserve two title lines plus activity and status, retaining compact padding.
     /// Font reduction keeps the existing minimum control size.
@@ -101,11 +98,13 @@ struct HerdrHudPlacement: Equatable, Sendable {
         chipCount: Int,
         voiceReplySize: CGSize = .zero,
         quickVoiceSize: CGSize = .zero,
-        fontScale: Double = 1
+        fontScale: Double = 1,
+        measuredContentHeight: CGFloat? = nil
     ) -> CGSize {
         let natural = notesContentSize(.compact(count: count), isExpanded: isExpanded)
         guard natural.height > 0 else { return .zero }
-        let sessionHeight = sessionStackContentHeight(chipCount: min(chipCount, maxChips), fontScale: fontScale)
+        let sessionHeight = sessionStackContentHeight(chipCount: min(chipCount, maxChips), fontScale: fontScale,
+                                                     measuredContentHeight: chipCount <= maxChips ? measuredContentHeight : nil)
         let mainHeight = isExpanded ? expandedSize.height
             : collapsedSize.height + (sessionHeight > 0 ? chipSpacing + sessionHeight : 0)
         let reserved = mainHeight + shadowMargin * 2 + notesGap
@@ -115,7 +114,10 @@ struct HerdrHudPlacement: Equatable, Sendable {
         return CGSize(width: natural.width + (height < natural.height ? 12 : 0), height: height)
     }
 
-    static func sessionStackContentHeight(chipCount: Int, overflow: Int = 0, fontScale: Double = 1) -> CGFloat {
+    static func sessionStackContentHeight(chipCount: Int, overflow: Int = 0, fontScale: Double = 1, measuredContentHeight: CGFloat? = nil) -> CGFloat {
+        if let measuredContentHeight, measuredContentHeight.isFinite, chipCount > 0 || overflow > 0 {
+            return max(0, measuredContentHeight)
+        }
         let count = max(0, chipCount)
         let rowsHeight = CGFloat(count) * chipHeight(fontScale: fontScale) + CGFloat(max(0, count - 1)) * chipSpacing
         return rowsHeight + (overflow > 0 ? (count > 0 ? chipSpacing : 0) + overflowDiameter(count: overflow, fontScale: fontScale) : 0)
@@ -130,13 +132,14 @@ struct HerdrHudPlacement: Equatable, Sendable {
         notesSize: CGSize = .zero,
         voiceReplySize: CGSize = .zero,
         quickVoiceSize: CGSize = .zero,
-        fontScale: Double = 1
+        fontScale: Double = 1,
+        measuredContentHeight: CGFloat? = nil
     ) -> CGFloat {
         let reservedHeight = collapsedSize.height + shadowMargin * 2 + chipSpacing
             + (notesSize.height > 0 ? notesGap + notesSize.height : 0)
             + (voiceReplySize.height > 0 ? notesGap + voiceReplySize.height : 0)
             + (quickVoiceSize.height > 0 ? chipSpacing + quickVoiceSize.height : 0)
-        return min(sessionStackContentHeight(chipCount: chipCount, overflow: overflow, fontScale: fontScale), max(0, visibleFrameHeight - reservedHeight))
+        return min(sessionStackContentHeight(chipCount: chipCount, overflow: overflow, fontScale: fontScale, measuredContentHeight: measuredContentHeight), max(0, visibleFrameHeight - reservedHeight))
     }
 
     static func collapsedContentSize(
@@ -146,14 +149,15 @@ struct HerdrHudPlacement: Equatable, Sendable {
         resultArtifactCount: Int = 1,
         expandsResultTitles: Bool = false,
         sessionStackHeight: CGFloat? = nil,
-        fontScale: Double = 1
+        fontScale: Double = 1,
+        measuredContentHeight: CGFloat? = nil
     ) -> CGSize {
         let count = max(0, chipCount)
         let baseSize = if count > 0 || overflow > 0 {
             CGSize(
                 width: max(collapsedSize.width, chipWidth),
                 height: collapsedSize.height + chipSpacing
-                    + min(Self.sessionStackContentHeight(chipCount: count, overflow: overflow, fontScale: fontScale), max(0, sessionStackHeight ?? .greatestFiniteMagnitude))
+                    + min(Self.sessionStackContentHeight(chipCount: count, overflow: overflow, fontScale: fontScale, measuredContentHeight: measuredContentHeight), max(0, sessionStackHeight ?? .greatestFiniteMagnitude))
             )
         } else {
             collapsedSize
@@ -178,7 +182,8 @@ struct HerdrHudPlacement: Equatable, Sendable {
         notesSize: CGSize = .zero,
         voiceReplySize: CGSize = .zero,
         quickVoiceSize: CGSize = .zero,
-        fontScale: Double = 1
+        fontScale: Double = 1,
+        measuredContentHeight: CGFloat? = nil
     ) -> CGRect {
         var contentSize = isExpanded
             ? expandedSize
@@ -195,9 +200,11 @@ struct HerdrHudPlacement: Equatable, Sendable {
                     notesSize: notesSize,
                     voiceReplySize: voiceReplySize,
                     quickVoiceSize: quickVoiceSize,
-                    fontScale: fontScale
+                    fontScale: fontScale,
+                    measuredContentHeight: measuredContentHeight
                 ),
-                fontScale: fontScale
+                fontScale: fontScale,
+                measuredContentHeight: measuredContentHeight
             )
         if quickVoiceSize.height > 0 {
             contentSize.width = max(contentSize.width, quickVoiceSize.width)

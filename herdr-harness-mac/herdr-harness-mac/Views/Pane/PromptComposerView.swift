@@ -37,6 +37,7 @@ struct PromptComposerView: View {
     let workspace: HerdrWorkspace
     @Binding var draft: String
     @Binding var attachments: [TerminalAttachment]
+    @Binding var quotes: [ChatQuote]
     let focusRequest: Int
     let dismissFocusRequest: Int
     let piConfiguration: PiPromptComposerConfiguration?
@@ -79,13 +80,15 @@ struct PromptComposerView: View {
         responseAudioPlayer: ResponseAudioPlayer? = nil,
         activateResponseAudio: ((ResponseAudioAction) -> Void)? = nil,
         toolRowFit: ComposerToolRowFit = .automatic,
-        modelFavorites: ModelFavoritesStore
+        modelFavorites: ModelFavoritesStore,
+        quotes: Binding<[ChatQuote]> = .constant([])
     ) {
         self.model = model
         self.pane = pane
         self.workspace = workspace
         _draft = draft
         _attachments = attachments
+        _quotes = quotes
         self.focusRequest = focusRequest
         self.dismissFocusRequest = dismissFocusRequest
         self.piConfiguration = piConfiguration
@@ -98,11 +101,13 @@ struct PromptComposerView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            if !attachments.isEmpty {
+            if !attachments.isEmpty || !quotes.isEmpty {
                 ComposerAttachmentTray(
                     attachments: attachments,
                     retry: retryAttachment,
-                    remove: removeAttachment
+                    remove: removeAttachment,
+                    quotes: quotes,
+                    removeQuote: { id in quotes.removeAll { $0.id == id } }
                 )
             }
 
@@ -402,7 +407,7 @@ struct PromptComposerView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(isShowingMoreTools ? HerdrTheme.text : HerdrTheme.mist)
-        .help("Workspace files, Jira context and voice dictation")
+        .help("Chat maintenance, workspace files, Jira context and voice dictation")
         .accessibilityLabel("More prompt tools")
         .accessibilityValue(isShowingMoreTools ? "Expanded" : "Collapsed")
         .accessibilityIdentifier("composer-more-tools")
@@ -411,6 +416,20 @@ struct PromptComposerView: View {
                 Text("Prompt tools")
                     .herdrFont(.headline, weight: .semibold)
                     .foregroundStyle(HerdrTheme.text)
+                if pane.supportsPiSemanticChat {
+                    ComposerPiMaintenanceActions(
+                        isEnabled: canControl && piConfiguration?.isConnected == true && !isPiCompacting && !isSubmitting,
+                        compact: {
+                            isShowingMoreTools = false
+                            Task { await model.compactPiChat(in: pane) }
+                        },
+                        reload: {
+                            isShowingMoreTools = false
+                            Task { await model.reloadPiSession(in: pane) }
+                        }
+                    )
+                    Divider()
+                }
                 ComposerAuxiliaryBar(
                     attach: { isShowingFileImporter = true },
                     recordVoice: {
@@ -528,7 +547,7 @@ struct PromptComposerView: View {
                     .tint(HerdrTheme.alert)
                     .frame(maxWidth: .infinity, minHeight: 48)
             } else {
-                ComposerDraftEditor(placeholder: placeholder, text: $draft)
+                ComposerDraftEditor(placeholder: placeholder, text: $draft, pasteCode: pasteCodeBlock)
                     .herdrFont(size: 13)
                     .foregroundStyle(HerdrTheme.text)
                     .focused($isFocused)
@@ -665,7 +684,7 @@ struct PromptComposerView: View {
             item.status == .uploading
         }
         let dispositionIsAvailable = piConfiguration?.availableDispositions.contains(effectiveDisposition) ?? true
-        return (hasText || hasAttachment)
+        return (hasText || hasAttachment || !quotes.isEmpty)
             && !isUploading
             && !isSubmitting
             && canControl
@@ -995,7 +1014,8 @@ struct PromptComposerView: View {
 
     private func send() {
         guard canSend else { return }
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let quotesToSend = quotes
+        let text = ChatQuote.prompt(draft.trimmingCharacters(in: .whitespacesAndNewlines), quotes: quotesToSend)
         let paths = attachments.compactMap(\.uploadedPath)
         let attachmentBlock = paths.isEmpty
             ? ""
@@ -1022,6 +1042,8 @@ struct PromptComposerView: View {
                 draftContainsDictation = false
                 attachments.forEach { $0.removeSourceFileIfOwned() }
                 attachments = []
+                let sentQuoteIDs = Set(quotesToSend.map(\.id))
+                quotes.removeAll { sentQuoteIDs.contains($0.id) }
                 hapticPulse.fire(.promptSent)
             } else if piConfiguration != nil {
                 hapticPulse.fire(.failed)

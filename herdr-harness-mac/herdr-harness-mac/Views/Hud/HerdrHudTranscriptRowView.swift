@@ -8,6 +8,7 @@ struct HerdrHudTranscriptRowView: View {
     let allowsPromote: Bool
     let openPaneInMainWindow: (String) -> Void
     let collapse: () -> Void
+    var allowsQuote = false
     @Environment(\.herdrFontScale) private var fontScale
 
     var body: some View {
@@ -17,6 +18,7 @@ struct HerdrHudTranscriptRowView: View {
                 HerdrHudWorkingGroupView(exchange: exchange)
             }
             answer
+                .environment(\.saveChatQuote, quoteAction)
             HerdrHudInlineResultArtifactsView(model: model, exchange: exchange)
             if isCompletedResponse {
                 footer
@@ -25,6 +27,16 @@ struct HerdrHudTranscriptRowView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityIdentifier("hud-transcript-row-\(exchange.id)")
         .environment(\.chatQuoteSource, "HUD exchange \(exchange.id)")
+    }
+
+    private var quoteAction: (@MainActor (ChatQuote) async throws -> Void)? {
+        guard allowsQuote else { return nil }
+        return { quote in
+            guard ChatQuoteEligibility.latestHUDExchangeID(in: session.exchanges) == exchange.id else {
+                throw NSError(domain: "ChatQuote", code: 1, userInfo: [NSLocalizedDescriptionKey: "A newer response arrived. Select text in the latest agent response instead."])
+            }
+            session.addQuote(quote)
+        }
     }
 
     private var promptBubble: some View {

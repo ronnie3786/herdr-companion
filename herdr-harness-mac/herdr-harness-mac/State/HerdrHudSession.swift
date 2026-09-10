@@ -71,6 +71,7 @@ final class HerdrHudSession {
     private(set) var thread: HerdrHudThread?
     var draft = ""
     var pendingAttachments: [HerdrHudAttachment] = []
+    var pendingQuotes: [ChatQuote] = []
     var selectedMachineID: String? {
         didSet { userDefaults.set(selectedMachineID, forKey: Self.machineIDDefaultsKey) }
     }
@@ -221,15 +222,8 @@ final class HerdrHudSession {
         }
     }
 
-    func addQuote(_ quote: ChatQuote) throws {
-        let url = try quote.writeAttachment()
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-        let previousIDs = Set(pendingAttachments.map(\.id))
-        addAttachments([url])
-        guard let index = pendingAttachments.firstIndex(where: { !previousIDs.contains($0.id) }) else {
-            throw NSError(domain: "ChatQuote", code: 1, userInfo: [NSLocalizedDescriptionKey: validationError ?? "Couldn't attach the quote."])
-        }
-        pendingAttachments[index].quote = quote
+    func addQuote(_ quote: ChatQuote) {
+        pendingQuotes.append(quote)
     }
 
     func removeAttachment(_ id: UUID) {
@@ -272,8 +266,10 @@ final class HerdrHudSession {
         audioErrorMessage = nil
 
         let enteredPrompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !enteredPrompt.isEmpty || !pendingAttachments.isEmpty, !controller.isRunning else { return }
-        let prompt = enteredPrompt.isEmpty ? "Please review the attached files." : enteredPrompt
+        guard !enteredPrompt.isEmpty || !pendingAttachments.isEmpty || !pendingQuotes.isEmpty, !controller.isRunning else { return }
+        let quotesToSend = pendingQuotes
+        let basePrompt = enteredPrompt.isEmpty && quotesToSend.isEmpty ? "Please review the attached files." : enteredPrompt
+        let prompt = ChatQuote.prompt(basePrompt, quotes: quotesToSend)
         guard let machineID = resolvedMachineID(in: model) else {
             validationError = "No machine is available for the HUD."
             return
@@ -330,6 +326,7 @@ final class HerdrHudSession {
         )
         draft = ""
         pendingAttachments = []
+        pendingQuotes = []
         // Past every validation guard, so a run is genuinely in flight. The
         // composer waits for this before auto-collapsing the HUD — collapsing
         // on a validation failure would hide the error it needs to show.
@@ -356,8 +353,7 @@ final class HerdrHudSession {
             exchanges[index].status = .failed
             exchanges[index].error = "Couldn't read \(attachmentsToSend.first?.filename ?? "attachment"): \(error.localizedDescription)"
             markExchangesChanged()
-            if draft.isEmpty { draft = prompt }
-            if pendingAttachments.isEmpty { pendingAttachments = attachmentsToSend }
+            restoreDraftAfterFailedStart(enteredPrompt, quotes: quotesToSend, attachments: attachmentsToSend)
             controller.reset()
             await schedulePersistenceSave()
             return
@@ -394,8 +390,7 @@ final class HerdrHudSession {
                 modelLabel: label
             )
             markExchangesChanged()
-            if draft.isEmpty { draft = prompt }
-            if pendingAttachments.isEmpty { pendingAttachments = attachmentsToSend }
+            restoreDraftAfterFailedStart(enteredPrompt, quotes: quotesToSend, attachments: attachmentsToSend)
             controller.reset()
             await schedulePersistenceSave()
             return
@@ -754,6 +749,13 @@ final class HerdrHudSession {
         }
         controller.reset()
         await schedulePersistenceSave()
+    }
+
+    private func restoreDraftAfterFailedStart(_ enteredPrompt: String, quotes: [ChatQuote], attachments: [HerdrHudAttachment]) {
+        if draft.isEmpty { draft = enteredPrompt }
+        if pendingAttachments.isEmpty { pendingAttachments = attachments }
+        let existingIDs = Set(pendingQuotes.map(\.id))
+        pendingQuotes.insert(contentsOf: quotes.filter { !existingIDs.contains($0.id) }, at: 0)
     }
 
     func clear(model: HerdrAppModel) async {

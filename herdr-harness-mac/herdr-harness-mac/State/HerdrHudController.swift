@@ -78,6 +78,7 @@ final class HerdrHudController {
     private(set) var collapsedChipCount = 0
     private(set) var collapsedOverflowCount = 0
     private(set) var collapsedSessionStackHeight: CGFloat = 0
+    @ObservationIgnored private var sessionStackMeasurement: HerdrHudSessionStackMeasurement?
     private(set) var compactNotesHeight: CGFloat = 0
     private(set) var isVoiceReplyCardVisible = false
     private(set) var collapsedResultArtifactCount = 0
@@ -308,6 +309,13 @@ final class HerdrHudController {
     func quickVoiceLayoutDidChange() { applyFrame(animated: false) }
 
     func fontScaleDidChange() { applyFrame(animated: false) }
+
+    func measureSessionStack(_ measurement: HerdrHudSessionStackMeasurement) {
+        guard measurement.height.isFinite, measurement.height >= 0,
+              sessionStackMeasurement != measurement else { return }
+        sessionStackMeasurement = measurement
+        if !isExpanded { applyFrame(animated: false) }
+    }
 
     func setCollapsedChipCount(_ count: Int, overflow: Int = 0) {
         let clampedCount = max(0, count)
@@ -625,6 +633,9 @@ final class HerdrHudController {
     private func frame(for isExpanded: Bool) -> CGRect {
         let visibleFrame = visibleFrame(for: panel)
         let fontScale = fontScaleStore?.scale.rawValue ?? 1
+        let measuredHeight = sessionStackMeasurement.flatMap {
+            $0.matches(chipCount: collapsedChipCount, overflow: collapsedOverflowCount, fontScale: fontScale) ? $0.height : nil
+        }
         var notesSize = HerdrHudPlacement.notesContentSize(notes?.layout ?? .hidden, isExpanded: isExpanded)
         if case .card = notes?.layout {
             noteCardSize = constrainedNoteSize(noteCardSize)
@@ -636,7 +647,8 @@ final class HerdrHudController {
             notesSize = HerdrHudPlacement.compactNotesViewportSize(
                 count: count, isExpanded: isExpanded, visibleFrameHeight: visibleFrame.height,
                 chipCount: collapsedChipCount, voiceReplySize: voiceReplySize,
-                quickVoiceSize: quickVoiceSize, fontScale: fontScale
+                quickVoiceSize: quickVoiceSize, fontScale: fontScale,
+                measuredContentHeight: measuredHeight
             )
             compactNotesHeight = notesSize.height
         }
@@ -647,7 +659,8 @@ final class HerdrHudController {
             notesSize: notesSize,
             voiceReplySize: voiceReplySize,
             quickVoiceSize: quickVoiceSize,
-            fontScale: fontScale
+            fontScale: fontScale,
+            measuredContentHeight: measuredHeight
         )
         return HerdrHudPlacement.frame(
             isExpanded: isExpanded,
@@ -661,7 +674,8 @@ final class HerdrHudController {
             notesSize: notesSize,
             voiceReplySize: voiceReplySize,
             quickVoiceSize: quickVoiceSize,
-            fontScale: fontScale
+            fontScale: fontScale,
+            measuredContentHeight: isExpanded ? nil : measuredHeight
         )
     }
 

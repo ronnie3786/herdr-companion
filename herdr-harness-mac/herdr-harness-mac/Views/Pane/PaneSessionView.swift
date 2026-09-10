@@ -71,6 +71,7 @@ struct PaneSessionView: View {
     @State private var piInteractionResponder = PiInteractionResponder()
     @State private var didAutoSelectChat = false
     @State private var composerAttachments: [TerminalAttachment] = []
+    @State private var composerQuotes: [ChatQuote] = []
     @State private var composerFocusRequest = 0
     @State private var gitAvailability: PaneGitAvailability = .checking
     @State private var piSessionSummaryRequest: PiSessionSummaryRequest?
@@ -114,7 +115,11 @@ struct PaneSessionView: View {
                     pane: currentPane,
                     selectedMode: modeSelection,
                     gitIsAvailable: gitIsAvailable,
-                    isPiCompacting: piConversationStore.isCompacting
+                    isPiCompacting: piConversationStore.isCompacting,
+                    isStartingNewPiChat: piConversationStore.isStartingNewSession || piConversationStore.hasUnconfirmedNewSession,
+                    startNewPiChat: {
+                        Task { await piConversationStore.startNewSession(model: model, pane: currentPane) }
+                    }
                 )
             }
         }
@@ -254,7 +259,8 @@ struct PaneSessionView: View {
                     attachments: $composerAttachments,
                     focusRequest: composerFocusRequest,
                     interactionResponder: piInteractionResponder,
-                    modelFavorites: modelFavorites
+                    modelFavorites: modelFavorites,
+                    quotes: $composerQuotes
                 )
                     .equatable()
                     .transition(.opacity)
@@ -347,7 +353,8 @@ struct PaneSessionView: View {
                     draft: composerDraft,
                     attachments: $composerAttachments,
                     focusRequest: composerFocusRequest,
-                    modelFavorites: modelFavorites
+                    modelFavorites: modelFavorites,
+                    quotes: $composerQuotes
                 )
                 .equatable()
                 .id(currentPane.id)
@@ -426,6 +433,7 @@ struct PaneSessionView: View {
     private func discardComposerState() {
         composerAttachments.forEach { $0.removeSourceFileIfOwned() }
         composerAttachments = []
+        composerQuotes = []
     }
 
     private func autoSelectChatIfNeeded() {

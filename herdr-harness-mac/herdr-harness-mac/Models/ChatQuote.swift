@@ -1,24 +1,35 @@
 import Foundation
 
-/// A user-approved excerpt, not an instruction until explicitly sent with a prompt.
-struct ChatQuote: Codable, Equatable, Sendable {
+/// User-approved text context. Kept as a previewable chip until explicitly sent.
+struct ChatQuote: Codable, Equatable, Identifiable, Sendable {
+    let id: UUID
     let text: String
     let comment: String
     let source: String
 
-    var markdown: String {
-        "# Quoted chat context\n\nSource: \(source)\n\n"
-            + text.components(separatedBy: .newlines).map { "> \($0)" }.joined(separator: "\n")
-            + "\n\n## Comment\n\n\(comment)\n"
+    init(id: UUID = UUID(), text: String, comment: String, source: String) {
+        self.id = id
+        self.text = text
+        self.comment = comment
+        self.source = source
     }
 
-    func writeAttachment() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("herdr-quote-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
-                                             attributes: [.posixPermissions: 0o700])
-        let url = directory.appendingPathComponent("Quoted chat.md")
-        try Data(markdown.utf8).write(to: url, options: .atomic)
-        return url
+    private enum CodingKeys: String, CodingKey { case id, text, comment, source }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        text = try values.decode(String.self, forKey: .text)
+        comment = try values.decode(String.self, forKey: .comment)
+        source = try values.decode(String.self, forKey: .source)
+    }
+
+    static func prompt(_ draft: String, quotes: [ChatQuote]) -> String {
+        guard !quotes.isEmpty else { return draft }
+        let segments = quotes.map { quote in
+            quote.text.components(separatedBy: .newlines).map { "> \($0)" }.joined(separator: "\n")
+                + "\n\nUser’s message: \(quote.comment)"
+        }.joined(separator: "\n\n")
+        return [draft, "Quoted response segments:\n\n" + segments]
+            .filter { !$0.isEmpty }.joined(separator: "\n\n")
     }
 }

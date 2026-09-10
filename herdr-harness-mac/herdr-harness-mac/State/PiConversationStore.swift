@@ -17,6 +17,15 @@ final class PiConversationStore {
     private(set) var sessionID: String?
     private(set) var closedSessions: [PiClosedSession] = []
     private(set) var historyError: String?
+    private(set) var isStartingNewSession = false
+    private(set) var newSessionError: String?
+    private(set) var sessionBoundaryRevision = 0
+    @ObservationIgnored private var requestedSessionPredecessor: PiClosedSession?
+    @ObservationIgnored private var snapshotGeneration = 0
+    @ObservationIgnored private var newSessionRequestID: UUID?
+    @ObservationIgnored var newSessionCommand: (@MainActor (HerdrPane) async throws -> Void)?
+    @ObservationIgnored var newSessionPollInterval: Duration = .milliseconds(500)
+    @ObservationIgnored var newSessionPollAttempts = 24
     @ObservationIgnored var sessionArchive = PiClosedSessionArchive()
     @ObservationIgnored private var archiveScope: String?
     @ObservationIgnored private var archiveIsReadable = true
@@ -74,8 +83,12 @@ final class PiConversationStore {
         turns.latestCompletedAssistantText
     }
 
+    var hasUnconfirmedNewSession: Bool {
+        newSessionError != nil && requestedSessionPredecessor != nil
+    }
+
     var canSendCommands: Bool {
-        bridgeConnected && connection.isConnected
+        bridgeConnected && connection.isConnected && !isStartingNewSession && !hasUnconfirmedNewSession
     }
 
     func follow(model: HerdrAppModel, pane: HerdrPane) async {
@@ -98,8 +111,10 @@ final class PiConversationStore {
 
         followLoop: while !Task.isCancelled {
             do {
+                let generation = snapshotGeneration
                 let snapshot = try await fetchSnapshot(model: model, pane: pane)
                 try Task.checkCancellation()
+                guard generation == snapshotGeneration else { continue followLoop }
                 guard snapshot.protocolInfo.name == "herdr.pi.semantic",
                       snapshot.protocolInfo.version == 1,
                       snapshot.available
@@ -409,7 +424,74 @@ final class PiConversationStore {
         throw CancellationError()
     }
 
+    /// The menu action must capture the outgoing transcript *before* /new can
+    /// clear it, and must not rely on an SSE notification arriving to refresh.
+    func startNewSession(model: HerdrAppModel, pane: HerdrPane) async {
+        guard !isStartingNewSession, !hasUnconfirmedNewSession, !isCompacting else { return }
+        guard let previousID = sessionID, archiveScope == pane.id else {
+            newSessionError = "Wait for the current Pi chat to connect before starting a new one."
+            return
+        }
+        let requestID = UUID()
+        newSessionRequestID = requestID
+        requestedSessionPredecessor = PiClosedSession(id: previousID, turns: turns, wasTruncated: isTruncated)
+        isStartingNewSession = true
+        newSessionError = nil
+        defer {
+            if newSessionRequestID == requestID {
+                newSessionRequestID = nil
+                isStartingNewSession = false
+                if requestedSessionPredecessor != nil, newSessionError == nil {
+                    newSessionError = "Pi hasn't confirmed the new session yet. Check Terminal; chat will unlock once it is confirmed."
+                }
+            }
+        }
+        do {
+            if let newSessionCommand { try await newSessionCommand(pane) }
+            else { try await model.requestNewPiChat(in: pane) }
+        } catch {
+            guard newSessionRequestID == requestID else { return }
+            requestedSessionPredecessor = nil
+            newSessionError = "Couldn't start a new Pi chat: \(error.localizedDescription)"
+            return
+        }
+        for _ in 0..<newSessionPollAttempts {
+            guard !Task.isCancelled, newSessionRequestID == requestID else { return }
+            if let sessionID, sessionID != previousID { return } // SSE already confirmed it.
+            do {
+                let snapshot = try await fetchSnapshot(model: model, pane: pane)
+                guard !Task.isCancelled, newSessionRequestID == requestID else { return }
+                if let sessionID, sessionID != previousID { return }
+                let nextID = snapshot.session?.string(for: "id", "sessionId", "session_id") ?? snapshot.session?.stringValue
+                if snapshot.available, snapshot.protocolInfo.name == "herdr.pi.semantic", snapshot.protocolInfo.version == 1,
+                   let nextID, !nextID.isEmpty, nextID != previousID {
+                    snapshotGeneration &+= 1
+                    flushTask?.cancel()
+                    flushTask = nil
+                    coalescer = PiStreamCoalescer()
+                    reducer.replace(with: snapshot)
+                    publishReducerState()
+                    connection = snapshot.connected ? .connected : .bridgeOffline
+                    lastError = snapshot.connected ? nil : "Pi is offline. The saved transcript is still available."
+                    return
+                }
+            } catch {
+                // Pi may briefly disconnect during /new. Keep the old chapter
+                // intact and let the bounded poll or live stream confirm it.
+            }
+            do { try await Task.sleep(for: newSessionPollInterval) } catch { break }
+        }
+        guard newSessionRequestID == requestID else { return }
+        newSessionError = "Pi hasn't confirmed the new session yet. Check Terminal; chat will unlock once it is confirmed."
+    }
+
     func reset() {
+        snapshotGeneration &+= 1
+        newSessionRequestID = nil
+        isStartingNewSession = false
+        newSessionError = nil
+        requestedSessionPredecessor = nil
+        sessionBoundaryRevision = 0
         flushTask?.cancel()
         flushTask = nil
         for id in streamingBlockIDs {
@@ -473,8 +555,10 @@ final class PiConversationStore {
         while !Task.isCancelled {
             do {
                 try await Task.sleep(for: .seconds(previousSnapshot.connected ? 2 : 5))
+                let generation = snapshotGeneration
                 let snapshot = try await fetchSnapshot(model: model, pane: pane)
                 try Task.checkCancellation()
+                guard generation == snapshotGeneration else { continue }
                 guard snapshot.protocolInfo.name == "herdr.pi.semantic",
                       snapshot.protocolInfo.version == 1,
                       snapshot.available
@@ -596,7 +680,8 @@ final class PiConversationStore {
             unidentifiedSessionPredecessor = nil
             return
         }
-        let previous = sessionID == nil ? unidentifiedSessionPredecessor
+        let previous = requestedSessionPredecessor?.id == previousID ? requestedSessionPredecessor
+            : sessionID == nil ? unidentifiedSessionPredecessor
             : PiClosedSession(id: previousID, turns: turns, wasTruncated: isTruncated)
         unidentifiedSessionPredecessor = nil
         guard let previous else { return }
@@ -604,6 +689,9 @@ final class PiConversationStore {
         // chapter instead of duplicating its identity or keeping stale text.
         closedSessions.removeAll { $0.id == previous.id }
         closedSessions.append(previous)
+        requestedSessionPredecessor = nil
+        newSessionError = nil
+        sessionBoundaryRevision &+= 1
         guard let archiveScope, archiveIsReadable else { return }
         do {
             try sessionArchive.save(closedSessions, scope: archiveScope)

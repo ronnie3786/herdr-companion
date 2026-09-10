@@ -6,6 +6,8 @@ struct PaneActionsMenu: View {
     @Binding var selectedMode: PaneDetailMode
     var gitIsAvailable = false
     var isPiCompacting = false
+    var isStartingNewPiChat = false
+    var startNewPiChat: (() -> Void)? = nil
     @State private var isConfirmingClose = false
     @State private var isConfirmingEndPiAndClose = false
     @State private var isRenaming = false
@@ -98,20 +100,9 @@ struct PaneActionsMenu: View {
     @ViewBuilder
     private var piSessionActions: some View {
         if pane.supportsPiSemanticChat || isPiPane {
-            Button("Reload Pi extensions", systemImage: "arrow.clockwise") {
-                Task { await model.reloadPiSession(in: pane) }
-            }
-            .accessibilityIdentifier("pane-action-reload-pi-session")
-            .disabled(piSessionMutationIsDisabled)
-
-            Button("Compact Pi chat", systemImage: "arrow.down.right.and.arrow.up.left") {
-                Task { await model.compactPiChat(in: pane) }
-            }
-            .accessibilityIdentifier("pane-action-compact-pi-chat")
-            .disabled(piSessionMutationIsDisabled)
-
-            Button("New Pi chat", systemImage: "plus.bubble") {
-                Task { await model.startNewPiChat(in: pane) }
+            Button(isStartingNewPiChat ? "Starting new Pi chat…" : "New Pi chat", systemImage: "plus.bubble") {
+                if let startNewPiChat { startNewPiChat() }
+                else { Task { await model.startNewPiChat(in: pane) } }
             }
             .accessibilityIdentifier("pane-action-new-pi-chat")
             .disabled(piSessionMutationIsDisabled)
@@ -131,7 +122,7 @@ struct PaneActionsMenu: View {
     }
 
     private var piSessionMutationIsDisabled: Bool {
-        !Self.piSessionMutationsEnabled(
+        isStartingNewPiChat || !Self.piSessionMutationsEnabled(
             canControl: model.canControl(machineID: pane.machineID),
             isCompacting: isPiCompacting
         )

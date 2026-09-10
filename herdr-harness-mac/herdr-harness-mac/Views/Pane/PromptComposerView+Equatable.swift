@@ -7,6 +7,7 @@ extension PromptComposerView: Equatable {
             && lhs.workspace.isEqualIgnoringPaneRevisions(to: rhs.workspace)
             && lhs.draft == rhs.draft
             && lhs.attachments == rhs.attachments
+            && lhs.quotes == rhs.quotes
             && lhs.focusRequest == rhs.focusRequest
             && lhs.dismissFocusRequest == rhs.dismissFocusRequest
             && lhs.piConfiguration == rhs.piConfiguration

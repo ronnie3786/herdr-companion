@@ -1,73 +1,97 @@
 # Mac chat quotes and session chapters
 
-## Interaction design
+## Quote the latest response
 
-Selecting text should still behave like a Mac: native drag selection, keyboard
-selection, and Copy. In Chat and the HUD, a small **Quote & comment…** action
-appears beside the selection. The selection's context menu offers the same action.
-It opens a compact editor with the exact selected text highlighted in the original
-message and repeated above the comment field.
+**Quote & comment…** is available only on text or code from the latest completed
+agent response in the current Chat or HUD conversation. User messages, earlier
+agent replies, thinking, tools, and previous-session chapters remain readable and
+copyable but do not offer quoting. A new in-progress response supersedes the old
+quote target. An open quote action is removed when its response is no longer
+eligible.
 
-**Save** stages a quoted Markdown attachment in the current composer. It does not
-send a prompt, launch an agent, or create a standalone Notes card. A nonempty
-comment is required. **Cancel** discards the unsaved comment. The editor stays open
-if saving fails. Selecting text again never replaces an already saved attachment.
+Select text to reveal a small action beside the visible selection endpoint, or
+choose the same action in the selection's context menu. Multiline selections anchor
+near the selected line at the end of the drag, rather than an offscreen first line.
+The editor repeats the exact excerpt above the comment field. **Save** stages a
+previewable quote chip; it does not send, create a file, upload an attachment, or
+create a standalone Notes card. A nonempty comment is required. **Cancel** discards
+the unsaved comment.
 
-Attachment chips use a quotation icon and the comment as their label. Hover briefly
-for the excerpt, comment, and source-session preview; **Preview quote** in the
-context menu also works without hover. Remove an attachment with its X. Quotes
-obey the existing attachment count and size limits. The main chat uploads the
-Markdown through the existing authenticated attachment API; the HUD retains its
-copy for history and retries. An agent receives it only when the user sends.
-HUD sent-attachment previews survive relaunch. Main-chat sent attachments retain
-the existing transcript attachment-path presentation.
+Hover a saved chip to preview its text and comment, or use **Preview quote** in its
+context menu. Remove it with X. When sending, both Mac composers put the segments
+directly into the prompt, after any ordinary draft text:
 
-Quote capture includes the visible selected text, not hidden Markdown syntax,
-with its session/exchange identity and, in the main timeline, message identity.
-Multiline excerpts and Unicode are preserved. Copy and code-block Copy remain
-independent of quote creation. Pending main-window attachments retain the existing
-composer lifecycle: switching panes discards them. This feature does not add
-cross-device quote annotations or persistent marks on the original messages.
+```text
+Quoted response segments:
+
+> First selected excerpt
+> Another line of the same excerpt
+
+User’s message: Comment about that excerpt.
+
+> Second selected excerpt
+
+User’s message: Comment about this one.
+```
+
+Sources remain visible in previews, but no `Quoted_chat.md` file paths are sent.
+Normal file attachments still use their existing upload flow and limits. Quote-only
+prompts are supported. Failed HUD submissions restore the draft and quote chips
+without duplicating the quoted text. Existing file-based quotes from older releases
+remain readable in saved HUD history.
+
+Unsent quote chips use the existing pane-composer lifecycle: switching Chat/Terminal
+on the same pane retains them; leaving that pane discards them. Sent quotes are plain
+text in the saved conversation. This is not a cross-device annotation system and
+does not add persistent marks to the original response.
 
 ## Session chapters
 
-A confirmed Pi session identity change closes the previous conversation into a
-read-only local chapter. It stays above the current conversation in the same
-scroll view. The latest previous chapter opens automatically; older chapters can
-be expanded. Messages are mounted in bounded batches, with **Show earlier
-messages** for the rest. Each chapter shows the full, selectable and copyable
-closed session ID and the time the Mac observed its closure.
+The main window's **Pane actions → New Pi chat** captures the outgoing transcript
+before dispatching `/new`. Progress is visible immediately. The app confirms the new
+session ID by snapshot polling as well as the live stream, so it does not depend on
+an SSE reset notification. An early empty checkpoint cannot erase the captured
+history. Failures are shown without inventing a new session or a closed chapter.
+If confirmation is delayed, check Terminal; the composer unlocks when confirmed.
 
-Chapter contents include the transcript available on this Mac: user messages,
-responses, and read-only thinking/tool/notice details. Historical permission and
-tool controls cannot execute. The divider makes clear that readable local history
-is not automatically included in the active agent's context. Quotes can explicitly
-bring an excerpt into the new conversation.
+The previous chat stays above a quiet **New conversation** divider. The full,
+selectable and copyable **Previous session** ID is beside the divider, with the new
+ID underneath. The timeline scrolls to this boundary, and remains visible even
+when the new session has no messages. Older chapters can be expanded and messages
+are mounted in bounded batches. Closed chapters contain read-only messages,
+thinking, tool details, and notices; historical controls cannot execute.
 
-Reconnects, compaction, and unsuccessful `/new` commands do not create chapters.
-Confirmed identity changes made from the terminal are handled too. Local archives
-are scoped to the machine and pane and survive relaunch. Existing Pi truncation is
-reported; the app cannot restore content the server had already omitted or chats
-that changed while the Mac was not following them. Unreadable archives are kept
-rather than overwritten, and save failures are shown without hiding the in-memory
-chapter.
+Archives are local, scoped to machine and pane, and survive relaunch. They are not
+automatically included in the new agent's context. They preserve only the transcript
+available while the Mac was following it, not context Pi already omitted or sessions
+that changed while the app was away. Unreadable archives are preserved and save
+failures are shown without hiding the in-memory history.
 
-## Compatibility and verification
+**Compact Chat** and **Reload Pi extensions** now live in the prompt's **… More**
+popover. New Pi chat remains in Pane actions. Existing connection, submission, and
+compaction guards stay in effect.
 
-No server, iOS, or Pi protocol update is required. Markdown file attachments use
-the existing contract. Notes keep their existing persistence and sync format.
-The name **Herdr Companion** changes presentation and the release bundle filename,
-not bundle ID, URL schemes, preferences, credentials, or the signed update feed.
-Sparkle may retain an existing installation's bundle filename during an update.
+## Paste code
 
-Text measurement uses an isolated TextKit stack; the displayed text view cannot
-resize itself or adopt speculative layout widths. Regression tests check glyph
-bounds and nonoverlapping rows across wide/narrow windows, large text sizes, and
-streaming/finalized updates. This fixes the overlapping chat rows introduced in
-0.7.0-beta.1.
+**Paste code** appends clipboard text to the end of the draft in a fenced code
+block, regardless of the caret or selection. **Command-Shift-V** invokes the same
+action only while a Chat or HUD prompt editor is focused; other text fields keep
+their normal shortcut behavior. Clipboard whitespace is preserved. Ordinary content
+uses triple backticks; content containing backticks gets a longer enclosing fence
+so the snippet remains intact. Pasting does not send or execute the content.
 
-Regression coverage also includes native selection/layout, Unicode excerpts, quote
-attachment round trips, legacy HUD records, Save-without-send, native note cursor
-color, confirmed session boundaries, reconnect deduplication, per-pane isolation,
-archive restoration and corrupt-file preservation. Synthetic render tests cover
-the HUD, notes, quote editor/preview, and archived session chapter.
+## Verification and compatibility
+
+No server, iOS, or Pi protocol update is required. Quotes use the ordinary text
+prompt contract. Native text measurement stays isolated from the displayed TextKit
+stack, preserving the 0.7.1 overlap fix across resizing and streaming.
+
+Tests cover latest-response eligibility, visible glyph anchoring, inline prompt
+serialization and quote-only HUD submission, focused keyboard routing, append-only
+code paste, new-session confirmation without SSE, early empty checkpoints, failures,
+timeouts and late confirmation. The full new-session render is checked with local
+text recognition for the divider, previous-session label, and preserved message
+content—not just the existence or size of a screenshot.
+
+The [new-session screenshot](screenshots/macos-0.8.0/new-pi-chat.png) uses entirely
+synthetic data and the production command/store/view path with a simulated companion.

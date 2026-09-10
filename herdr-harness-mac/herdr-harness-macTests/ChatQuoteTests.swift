@@ -6,17 +6,17 @@ import Testing
 @Suite("Chat quotes", .serialized)
 @MainActor
 struct ChatQuoteTests {
-    @Test("Quote attachments preserve Unicode, multiline excerpts, provenance and comments")
-    func markdownAttachment() throws {
-        let quote = ChatQuote(text: "Hello 👋🏽\nlet café = 1", comment: "Explain this example.", source: "Pi session synthetic-session")
-        let url = try quote.writeAttachment()
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-        let text = try String(contentsOf: url, encoding: .utf8)
-        #expect(text.contains("> Hello 👋🏽\n> let café = 1"))
-        #expect(text.contains("Explain this example."))
-        #expect(text.contains("synthetic-session"))
-        #expect(try JSONDecoder().decode(ChatQuote.self, from: JSONEncoder().encode(quote)) == quote)
-        #expect(try AttachmentPolicy.candidate(for: url, ownership: .appTemporary).byteCount > 0)
+    @Test("Quoted segments are sent inline, with each comment and no file paths")
+    func inlineQuotedSegments() throws {
+        let first = ChatQuote(text: "Hello 👋🏽\nlet café = 1", comment: "Explain this example.", source: "Pi session synthetic-session")
+        let second = ChatQuote(text: "A second detail", comment: "Change this too.", source: "Pi session synthetic-session")
+        let prompt = ChatQuote.prompt("Please proceed.", quotes: [first, second])
+        #expect(prompt == "Please proceed.\n\nQuoted response segments:\n\n> Hello 👋🏽\n> let café = 1\n\nUser’s message: Explain this example.\n\n> A second detail\n\nUser’s message: Change this too.")
+        #expect(!prompt.contains("Attachment:"))
+        #expect(!prompt.contains("synthetic-session"))
+        #expect(ChatQuote.prompt("Unchanged", quotes: []) == "Unchanged")
+        #expect(ChatQuote.prompt("", quotes: [first]).hasPrefix("Quoted response segments:"))
+        #expect(try JSONDecoder().decode(ChatQuote.self, from: JSONEncoder().encode(first)) == first)
     }
 
     @Test("HUD quote Save stages context without sending or modifying the draft")
@@ -27,16 +27,15 @@ struct ChatQuoteTests {
         let session = HerdrHudSession(userDefaults: defaults, persistenceURL: root.appendingPathComponent("hud.json"))
         session.draft = "My next question"
         let quote = ChatQuote(text: "An earlier response", comment: "Check this detail", source: "HUD exchange example")
-        try session.addQuote(quote)
+        session.addQuote(quote)
         #expect(session.draft == "My next question")
         #expect(session.exchanges.isEmpty)
         #expect(!session.isRunning)
-        let attachment = try #require(session.pendingAttachments.first)
-        #expect(attachment.quote == quote)
-        #expect(FileManager.default.fileExists(atPath: attachment.url.path))
-        #expect(try JSONDecoder().decode(HerdrHudAttachment.self, from: JSONEncoder().encode(attachment)).quote == quote)
-        session.removeAttachment(attachment.id)
+        #expect(session.pendingQuotes == [quote])
         #expect(session.pendingAttachments.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: root.path))
+        session.pendingQuotes.removeAll { $0.id == quote.id }
+        #expect(session.pendingQuotes.isEmpty)
     }
 
     @Test("Older HUD attachment records decode without quote metadata")

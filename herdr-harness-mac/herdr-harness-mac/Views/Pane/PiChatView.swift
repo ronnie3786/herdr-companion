@@ -12,6 +12,7 @@ struct PiChatView: View {
     let focusRequest: Int
     let interactionResponder: PiInteractionResponder
     let modelFavorites: ModelFavoritesStore
+    var quotes: Binding<[ChatQuote]> = .constant([])
     @State private var hapticPulse = HerdrHapticPulse()
     @State private var responseAudioPlayer = ResponseAudioPlayer()
 
@@ -22,6 +23,20 @@ struct PiChatView: View {
                 message: store.lastError,
                 transport: store.transport
             )
+
+            if store.isStartingNewSession {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Starting a new Pi chat — keeping this conversation in history…")
+                        .herdrFont(.caption)
+                }
+                .foregroundStyle(HerdrTheme.mist).padding(10)
+                .accessibilityIdentifier("pi-new-session-progress")
+            }
+            if let error = store.newSessionError {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .herdrFont(.caption).foregroundStyle(HerdrTheme.alert).padding(10)
+            }
 
             PiContextMeterView(usage: store.contextUsage, cost: store.sessionCost)
 
@@ -69,7 +84,8 @@ struct PiChatView: View {
                 piConfiguration: composerConfiguration,
                 responseAudioPlayer: responseAudioPlayer,
                 activateResponseAudio: activateResponseAudio,
-                modelFavorites: modelFavorites
+                modelFavorites: modelFavorites,
+                quotes: quotes
             )
             .equatable()
             .id(paneID)
@@ -120,23 +136,7 @@ struct PiChatView: View {
     }
 
     private func attachQuote(_ quote: ChatQuote) async throws {
-        let url = try quote.writeAttachment()
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-        let candidate = try AttachmentPolicy.candidate(for: url, ownership: .appTemporary)
-        try AttachmentPolicy.validate(existingAttachments: attachments, incomingCandidates: [candidate])
-        let id = UUID()
-        attachments.append(TerminalAttachment(quote: quote, id: id, filename: candidate.filename,
-            sourceURL: url, byteCount: candidate.byteCount, sourceOwnership: .appTemporary,
-            status: .uploading, uploaded: nil, error: nil))
-        do {
-            let uploaded = try await model.uploadAttachment(from: url, contentType: "text/markdown", to: workspace)
-            guard let index = attachments.firstIndex(where: { $0.id == id }) else { return }
-            attachments[index].uploaded = uploaded
-            attachments[index].status = .uploaded
-        } catch {
-            attachments.removeAll { $0.id == id }
-            throw error
-        }
+        quotes.wrappedValue.append(quote)
     }
 
     private var paneArtifacts: [AgentResultArtifact] {
@@ -218,6 +218,7 @@ extension PiChatView: Equatable {
             && lhs.workspace.isEqualIgnoringPaneRevisions(to: rhs.workspace)
             && lhs.draft == rhs.draft
             && lhs.attachments == rhs.attachments
+            && lhs.quotes.wrappedValue == rhs.quotes.wrappedValue
             && lhs.focusRequest == rhs.focusRequest
             && lhs.interactionResponder === rhs.interactionResponder
             && lhs.modelFavorites === rhs.modelFavorites

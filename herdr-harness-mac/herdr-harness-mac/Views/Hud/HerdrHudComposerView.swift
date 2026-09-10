@@ -50,7 +50,7 @@ struct HerdrHudComposerView: View {
                         .lineLimit(1)
                 }
             }
-            if !session.pendingAttachments.isEmpty {
+            if !session.pendingAttachments.isEmpty || !session.pendingQuotes.isEmpty {
                 attachmentChips
             }
             if let voiceErrorMessage, !voiceErrorMessage.isEmpty {
@@ -79,7 +79,7 @@ struct HerdrHudComposerView: View {
                                 .frame(minHeight: HerdrTheme.minHitTarget)
                                 .padding(.horizontal, 6)
                         }
-                        .help("Paste clipboard as a fenced code block")
+                        .help("Append clipboard as a fenced code block (⌘⇧V in the prompt)")
                         .accessibilityLabel("Paste code block")
                         .accessibilityIdentifier("hud-code-block-paste")
 
@@ -177,6 +177,9 @@ struct HerdrHudComposerView: View {
     private var attachmentChips: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 6) {
+                ForEach(session.pendingQuotes) { quote in
+                    ChatQuoteChip(quote: quote, remove: { session.pendingQuotes.removeAll { $0.id == quote.id } })
+                }
                 ForEach(session.pendingAttachments) { attachment in
                     HerdrHudAttachmentChipView(
                         attachment: attachment,
@@ -186,6 +189,7 @@ struct HerdrHudComposerView: View {
             }
         }
         .scrollIndicators(.hidden)
+        .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -213,7 +217,8 @@ struct HerdrHudComposerView: View {
                 ComposerDraftEditor(
                     placeholder: session.thread == nil ? "Ask anything, or tell it what to do…" : "Reply to this thread…",
                     text: $session.draft,
-                    maximumVisibleLines: 4
+                    maximumVisibleLines: 4,
+                    pasteCode: pasteCodeBlock
                 )
                     .herdrFont(size: 13)
                     .foregroundStyle(HerdrTheme.text)
@@ -229,7 +234,7 @@ struct HerdrHudComposerView: View {
     }
 
     private var canSubmit: Bool {
-        (!session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !session.pendingAttachments.isEmpty) && !session.isRunning
+        (!session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !session.pendingAttachments.isEmpty || !session.pendingQuotes.isEmpty) && !session.isRunning
     }
 
     private var isVoiceCaptureActive: Bool {

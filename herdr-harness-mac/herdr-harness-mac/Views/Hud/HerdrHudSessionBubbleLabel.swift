@@ -5,12 +5,11 @@ struct HerdrHudSessionBubbleLabel: View {
     @Environment(\.herdrFontScale) private var fontScale
     let chip: HerdrHudSessionChips.Chip
     var model: HerdrAppModel? = nil
-    @State private var costSummary: String?
+    var metadata: HerdrHudSessionMetadata? = nil
+    @State private var fetchedMetadata = HerdrHudSessionMetadata()
     @State private var costSessionKey = ""
 
-    private var showsSessionCost: Bool {
-        model?.pane(id: chip.id)?.supportsPiSemanticChat == true
-    }
+    private var displayedMetadata: HerdrHudSessionMetadata { metadata ?? fetchedMetadata }
 
     private var costRefreshKey: String {
         let pane = model?.pane(id: chip.id)
@@ -22,7 +21,7 @@ struct HerdrHudSessionBubbleLabel: View {
             Text(chip.title)
                 .herdrFont(.caption, weight: .bold)
                 .foregroundStyle(HerdrTheme.text)
-                .lineLimit(2, reservesSpace: true)
+                .lineLimit(2)
                 .truncationMode(.tail)
                 .padding(.trailing, 20)
 
@@ -43,26 +42,16 @@ struct HerdrHudSessionBubbleLabel: View {
                     .herdrFont(.caption2)
                     .foregroundStyle(chip.status.color)
                     .lineLimit(1)
-                Spacer(minLength: 0)
-                if showsSessionCost, let costSummary {
-                    Text(costSummary)
-                        .herdrFont(.caption2, monospaced: true)
-                        .foregroundStyle(HerdrTheme.mist)
-                        .fixedSize()
-                        .layoutPriority(1)
-                        .help("Cumulative session cost: \(costSummary)")
-                        .accessibilityLabel("Session cost \(costSummary)")
-                        .accessibilityIdentifier("hud-session-cost-\(chip.id)")
-                }
+                    .fixedSize(horizontal: true, vertical: false)
+                HerdrHudSessionMetadataView(metadata: displayedMetadata)
+                    .accessibilityIdentifier("hud-session-metadata-\(chip.id)")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
-        .frame(
-            width: HerdrHudPlacement.chipWidth,
-            height: HerdrHudPlacement.chipHeight(fontScale: fontScale.rawValue)
-        )
+        .frame(width: HerdrHudPlacement.chipWidth)
+        .fixedSize(horizontal: false, vertical: true)
         .background(HerdrTheme.elevated, in: .rect(cornerRadius: 10))
         .overlay {
             RoundedRectangle(cornerRadius: 10)
@@ -72,14 +61,14 @@ struct HerdrHudSessionBubbleLabel: View {
         .contentShape(.rect(cornerRadius: 10))
         .task(id: costRefreshKey) { await refreshCost() }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Open \(chip.title), \(chip.activity), \(chip.statusLabel)\(costSummary.map { ", session cost \($0)" } ?? "")")
+        .accessibilityLabel("Open \(chip.title), \(chip.activity), \(chip.statusLabel), \(displayedMetadata.accessibilitySummary)")
     }
 
     private func refreshCost() async {
         guard let model, let pane = model.pane(id: chip.id), pane.supportsPiSemanticChat else { return }
         let identity = "\(pane.id)|\(pane.piSemantic?.sessionID ?? "")"
         if costSessionKey != identity {
-            costSummary = nil
+            fetchedMetadata = HerdrHudSessionMetadata()
             costSessionKey = identity
         }
         while !Task.isCancelled {
@@ -89,11 +78,11 @@ struct HerdrHudSessionBubbleLabel: View {
                 let sessionID = snapshot.session?.string(for: "id", "sessionId", "session_id")
                     ?? snapshot.session?.stringValue
                 guard pane.piSemantic?.sessionID == nil || pane.piSemantic?.sessionID == sessionID else {
-                    costSummary = nil
+                    fetchedMetadata = HerdrHudSessionMetadata()
                     return
                 }
                 if snapshot.available {
-                    costSummary = PiSessionCost(from: snapshot.state?["cost"])?.summary
+                    fetchedMetadata = HerdrHudSessionMetadata(state: snapshot.state)
                 }
             } catch {
                 guard !Task.isCancelled else { return }

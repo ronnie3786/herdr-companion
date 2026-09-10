@@ -31,7 +31,7 @@ struct ComposerCodeBlockPasteTests {
     }
 
     @MainActor
-    @Test("More popover paste preserves the originating editor selection")
+    @Test("Paste code appends after the draft, never replacing the originating selection")
     func retainedSelection() throws {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
@@ -44,7 +44,7 @@ struct ComposerCodeBlockPasteTests {
         // Closing a field editor or opening a popover can move its selection.
         editor.setSelectedRange(NSRange(location: 0, length: 0))
         #expect(ComposerCodeBlockPaste.paste(into: &draft, pasteboard: board, selection: selection))
-        #expect(draft == "before \n```\ncode\n```\n after")
+        #expect(draft == "before old after\n```\ncode\n```")
         #expect(editor.string == draft)
     }
 

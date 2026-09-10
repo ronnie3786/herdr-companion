@@ -40,7 +40,6 @@ struct HerdrHudCardView: View {
         .onDrop(of: [.fileURL, .image], isTargeted: $isDropTargeted) { providers in
             session.acceptAttachmentDrop(providers)
         }
-        .environment(\.saveChatQuote, { quote in try session.addQuote(quote) })
         .task(id: session.selectedMachineID) {
             updateResponseAudioAvailability()
             session.responseAudioPlayer.stop()

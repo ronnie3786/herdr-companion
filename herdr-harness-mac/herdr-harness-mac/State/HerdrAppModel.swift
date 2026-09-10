@@ -1576,15 +1576,22 @@ final class HerdrAppModel {
             toastMessage = "started a new pi chat"
             return
         }
-        guard canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
-              let client = client(forMachine: pane.machineID) else { return }
         do {
-            try await client.sendText(toPane: pane.paneID, text: "/new", submit: false)
-            try await client.sendKeys(toPane: pane.paneID, keys: ["enter"])
-            toastMessage = "started a new pi chat"
+            try await requestNewPiChat(in: pane)
+            toastMessage = "New Pi chat requested"
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// Dispatch only. The conversation store confirms the changed session ID
+    /// before presenting a completed transition or releasing the new composer.
+    func requestNewPiChat(in pane: HerdrPane) async throws {
+        noteUserInteraction(machineID: pane.machineID)
+        guard canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else { throw APIError.invalidResponse }
+        try await client.sendText(toPane: pane.paneID, text: "/new", submit: false)
+        try await client.sendKeys(toPane: pane.paneID, keys: ["enter"])
     }
 
     func compactPiChat(in pane: HerdrPane) async {

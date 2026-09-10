@@ -24,7 +24,9 @@ struct HerdrHudSessionChipsView: View {
     var expandsAttachmentTitles = false
     var onHoverHud: (Bool, String) -> Void = { _, _ in }
     var maximumHeight: CGFloat?
+    var measureContent: (HerdrHudSessionStackMeasurement) -> Void = { _ in }
 
+    @State private var measurement: HerdrHudSessionStackMeasurement?
     @State private var hoveredChipID: String?
 
     var body: some View {
@@ -42,7 +44,10 @@ struct HerdrHudSessionChipsView: View {
     }
 
     private var contentHeight: CGFloat {
-        HerdrHudPlacement.sessionStackContentHeight(
+        if let measurement, measurement.matches(chipCount: chips.count, overflow: overflow, fontScale: fontScale.rawValue) {
+            return measurement.height
+        }
+        return HerdrHudPlacement.sessionStackContentHeight(
             chipCount: chips.count,
             overflow: overflow,
             fontScale: fontScale.rawValue
@@ -64,6 +69,14 @@ struct HerdrHudSessionChipsView: View {
             if overflow > 0 {
                 overflowButton
             }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .onGeometryChange(for: HerdrHudSessionStackMeasurement.self) { geometry in
+            HerdrHudSessionStackMeasurement(height: ceil(geometry.size.height), chipCount: chips.count,
+                                           overflow: overflow, fontScale: fontScale.rawValue)
+        } action: { measured in
+            measurement = measured
+            measureContent(measured)
         }
     }
 

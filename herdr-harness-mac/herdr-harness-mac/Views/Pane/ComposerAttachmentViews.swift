@@ -4,10 +4,15 @@ struct ComposerAttachmentTray: View {
     let attachments: [TerminalAttachment]
     let retry: (TerminalAttachment) -> Void
     let remove: (TerminalAttachment) -> Void
+    var quotes: [ChatQuote] = []
+    var removeQuote: (UUID) -> Void = { _ in }
 
     var body: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
+                ForEach(quotes) { quote in
+                    ChatQuoteChip(quote: quote, remove: { removeQuote(quote.id) })
+                }
                 ForEach(attachments) { attachment in
                     ComposerAttachmentChip(
                         attachment: attachment,
@@ -33,13 +38,13 @@ private struct ComposerAttachmentChip: View {
 
     var body: some View {
         HStack(spacing: 9) {
-            Image(systemName: attachment.quote == nil ? fileIcon : "quote.bubble")
+            Image(systemName: fileIcon)
                 .herdrFont(.subheadline, weight: .semibold)
                 .foregroundStyle(statusColor)
                 .frame(width: 22)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(attachment.quote?.comment ?? attachment.displayName)
+                Text(attachment.displayName)
                     .herdrFont(.caption, weight: .medium)
                     .foregroundStyle(HerdrTheme.text)
                     .lineLimit(1)
@@ -74,7 +79,6 @@ private struct ComposerAttachmentChip: View {
                 .strokeBorder(borderColor, lineWidth: 1)
         }
         .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
-        .chatQuotePreview(attachment.quote)
     }
 
     @ViewBuilder

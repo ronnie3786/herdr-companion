@@ -7,8 +7,9 @@ import SwiftUI
 /// visible bounds, leaving other fields, ordinary Return, and IME input alone.
 struct ComposerModifiedReturnHandler: NSViewRepresentable {
     @Binding var text: String
+    var pasteCode: (() -> Void)? = nil
 
-    func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
+    func makeCoordinator() -> Coordinator { Coordinator(text: $text, pasteCode: pasteCode) }
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
@@ -23,6 +24,7 @@ struct ComposerModifiedReturnHandler: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         context.coordinator.text = $text
+        context.coordinator.pasteCode = pasteCode
     }
 
     static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
@@ -37,8 +39,12 @@ struct ComposerModifiedReturnHandler: NSViewRepresentable {
         var monitor: Any?
         var text: Binding<String>
         var undoObservers: [NSObjectProtocol] = []
+        var pasteCode: (() -> Void)?
 
-        init(text: Binding<String>) { self.text = text }
+        init(text: Binding<String>, pasteCode: (() -> Void)? = nil) {
+            self.text = text
+            self.pasteCode = pasteCode
+        }
 
         private func owns(_ editor: NSTextView) -> Bool {
             guard let view, !view.isHiddenOrHasHiddenAncestor, view.window === editor.window else { return false }
@@ -63,13 +69,18 @@ struct ComposerModifiedReturnHandler: NSViewRepresentable {
         }
 
         func handle(_ event: NSEvent) -> NSEvent? {
-            guard event.keyCode == 36 || event.keyCode == 76,
-                  !event.modifierFlags.intersection([.shift, .option, .command]).isEmpty,
-                  let view, !view.isHiddenOrHasHiddenAncestor,
+            guard let view, !view.isHiddenOrHasHiddenAncestor,
                   let window = view.window, event.window === window,
                   let editor = window.firstResponder as? NSTextView,
                   editor.isEditable, !editor.hasMarkedText(), owns(editor)
             else { return event }
+            let modifiers = event.modifierFlags.intersection([.shift, .option, .command, .control])
+            if modifiers == [.command, .shift], event.charactersIgnoringModifiers?.lowercased() == "v", let pasteCode {
+                pasteCode()
+                return nil
+            }
+            guard event.keyCode == 36 || event.keyCode == 76,
+                  !modifiers.intersection([.shift, .option, .command]).isEmpty else { return event }
             editor.insertText("\n", replacementRange: editor.selectedRange())
             return nil
         }

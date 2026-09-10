@@ -344,7 +344,7 @@ def audit_app(app, version, settings, *, notarized=None):
     for key in ("HerdrLegacyKeychainService", "HerdrTerminalBundleIdentifier", "HerdrDemoServerURL"):
         if info.get(key) not in (None, ""): raise ReleaseError("Public app contains a private identity or endpoint override")
     if info.get("HerdrKeychainService") not in (None, "", BUNDLE_ID): raise ReleaseError("Public app has an unexpected Keychain service")
-    if app.name != "Herdr.app": raise ReleaseError("Public update bundle must retain the canonical Herdr.app name")
+    if app.name != "Herdr Companion.app": raise ReleaseError("Public update bundle must use the canonical Herdr Companion.app name")
     if list(app.rglob("HerdrBootstrap.plist")): raise ReleaseError("Public app contains a generated machine roster")
     for target in signing_targets(app):
         if not target.exists(): raise ReleaseError("A required Sparkle update helper is missing")
@@ -415,7 +415,7 @@ def export_app(work, team, settings):
     else:
         exported = list((work / "Herdr.xcarchive/Products/Applications").glob("*.app"))
     if len(exported) != 1: raise ReleaseError("Archive export must produce exactly one Mac app")
-    app = work / "Herdr.app"
+    app = work / "Herdr Companion.app"
     shutil.move(exported[0], app)
     if signing_mode(settings) == "development":
         sign_development_app(app)
@@ -490,10 +490,10 @@ def safe_zip(archive, destination):
             if path.is_absolute() or ".." in path.parts or not path.parts or str(path) in members:
                 raise ReleaseError("Archive has an unsafe or duplicate path")
             if path.parts[0] == "__MACOSX":
-                if len(path.parts) > 1 and path.parts[1] not in {"Herdr.app", "._Herdr.app"}:
+                if len(path.parts) > 1 and path.parts[1] not in {"Herdr Companion.app", "._Herdr Companion.app"}:
                     raise ReleaseError("Archive contains unrelated resource metadata")
-            elif path.parts[0] != "Herdr.app":
-                raise ReleaseError("Archive contains a payload outside Herdr.app")
+            elif path.parts[0] != "Herdr Companion.app":
+                raise ReleaseError("Archive contains a payload outside Herdr Companion.app")
             members[str(path)] = item
             if stat.S_ISLNK(item.external_attr >> 16):
                 if item.file_size > 4096: raise ReleaseError("Archive symlink exceeds safety bounds")

@@ -259,6 +259,7 @@ struct UploadedAttachment: Codable, Equatable, Hashable, Identifiable, Sendable 
 }
 
 struct TerminalAttachment: Equatable, Identifiable, Sendable {
+    var quote: ChatQuote? = nil
     var id: UUID
     var filename: String
     var sourceURL: URL

@@ -42,6 +42,8 @@ struct PiChatView: View {
                 )
             }
             .id(paneID)
+            .environment(\.saveChatQuote, attachQuote)
+            .environment(\.chatQuoteSource, "Pi session \(store.sessionID ?? "unknown")")
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if let notice = store.commandNotice {
@@ -115,6 +117,26 @@ struct PiChatView: View {
         }
         .herdrHaptic(trigger: hapticPulse)
         .accessibilityIdentifier("pi-chat-view")
+    }
+
+    private func attachQuote(_ quote: ChatQuote) async throws {
+        let url = try quote.writeAttachment()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let candidate = try AttachmentPolicy.candidate(for: url, ownership: .appTemporary)
+        try AttachmentPolicy.validate(existingAttachments: attachments, incomingCandidates: [candidate])
+        let id = UUID()
+        attachments.append(TerminalAttachment(quote: quote, id: id, filename: candidate.filename,
+            sourceURL: url, byteCount: candidate.byteCount, sourceOwnership: .appTemporary,
+            status: .uploading, uploaded: nil, error: nil))
+        do {
+            let uploaded = try await model.uploadAttachment(from: url, contentType: "text/markdown", to: workspace)
+            guard let index = attachments.firstIndex(where: { $0.id == id }) else { return }
+            attachments[index].uploaded = uploaded
+            attachments[index].status = .uploaded
+        } catch {
+            attachments.removeAll { $0.id == id }
+            throw error
+        }
     }
 
     private var paneArtifacts: [AgentResultArtifact] {

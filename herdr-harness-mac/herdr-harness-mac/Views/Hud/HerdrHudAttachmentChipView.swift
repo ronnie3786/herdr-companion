@@ -12,7 +12,7 @@ struct HerdrHudAttachmentChipView: View {
         HStack(spacing: 6) {
             thumbnail
             VStack(alignment: .leading, spacing: 0) {
-                Text(attachment.filename)
+                Text(attachment.quote?.comment ?? attachment.filename)
                     .herdrFont(.caption2)
                     .foregroundStyle(HerdrTheme.mist)
                     .lineLimit(1)
@@ -35,6 +35,7 @@ struct HerdrHudAttachmentChipView: View {
         .padding(.trailing, 2)
         .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.compactRadius))
         .accessibilityIdentifier("hud-attachment-\(attachment.filename)")
+        .chatQuotePreview(attachment.quote)
         .task(id: attachment.id) {
             guard attachment.isImage else { return }
             guard let cgImage = await (Task.detached(priority: .utility) {
@@ -57,7 +58,7 @@ struct HerdrHudAttachmentChipView: View {
                 .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
         } else {
             Image(
-                systemName: attachment.isImage
+                systemName: attachment.quote != nil ? "quote.bubble" : attachment.isImage
                     ? "photo"
                     : Self.symbolName(forExtension: URL(fileURLWithPath: attachment.filename).pathExtension)
             )

@@ -3,6 +3,7 @@ import SwiftUI
 
 struct PiMarkdownText: View {
     let source: String
+    @Environment(\.saveChatQuote) private var saveQuote
     let font: Font
     let cacheRenderedText: Bool
     var inlineCodeFont: Font? = nil
@@ -56,11 +57,17 @@ struct PiMarkdownText: View {
             styled = rendered
         }
 
-        return Text(styled)
-            .font(font)
-            .foregroundStyle(HerdrTheme.text)
-            .tint(HerdrTheme.accent)
-            .textSelection(.enabled)
+        return Group {
+            if saveQuote != nil {
+                ChatSelectableText(text: styled, font: font)
+            } else {
+                Text(styled)
+                    .font(font)
+                    .foregroundStyle(HerdrTheme.text)
+                    .tint(HerdrTheme.accent)
+                    .textSelection(.enabled)
+            }
+        }
     }
 
     static func render(_ source: String) -> AttributedString {

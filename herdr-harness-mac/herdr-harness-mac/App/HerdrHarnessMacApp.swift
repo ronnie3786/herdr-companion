@@ -51,7 +51,7 @@ struct HerdrHarnessMacApp: App {
         // A single `Window`, not a `WindowGroup`: Herdr shows one fleet, and a
         // uniquely-identified window is the only kind `openWindow(id:)` can
         // bring back once it has been closed.
-        Window("Herdr", id: HerdrWindowID.main) {
+        Window("Herdr Companion", id: HerdrWindowID.main) {
             AppRootView(
                 model: model,
                 shell: shell,

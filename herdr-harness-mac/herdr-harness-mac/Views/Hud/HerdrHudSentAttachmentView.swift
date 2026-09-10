@@ -16,7 +16,7 @@ struct HerdrHudSentAttachmentView: View {
                         .frame(maxWidth: 220, maxHeight: 150)
                         .clipShape(.rect(cornerRadius: 7))
                 }
-                Label(attachment.filename, systemImage: attachment.isImage ? "photo" : "doc")
+                Label(attachment.quote?.comment ?? attachment.filename, systemImage: attachment.quote != nil ? "quote.bubble" : attachment.isImage ? "photo" : "doc")
                     .herdrFont(.caption)
                     .lineLimit(2)
                     .truncationMode(.middle)
@@ -29,6 +29,7 @@ struct HerdrHudSentAttachmentView: View {
             .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.compactRadius))
         }
         .buttonStyle(.plain)
+        .chatQuotePreview(attachment.quote)
         .accessibilityLabel("Open attachment: \(attachment.filename)")
         .task(id: attachment.id) { await loadThumbnail() }
     }

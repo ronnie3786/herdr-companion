@@ -1,4 +1,4 @@
-# Herdr Harness for Mac
+# Herdr Companion for Mac
 
 A native macOS companion to the Herdr Harness iOS app — same Catppuccin Mocha aesthetic, same
 attention-first workflow, near-complete feature parity, rebuilt around a Mac-native shell: a
@@ -13,6 +13,11 @@ those three affordances are dropped rather than reproduced.
 Swift 6 · SwiftUI + Observation · strict concurrency · zero third-party dependencies · macOS 26.
 
 ## September Mac improvements
+
+- **Quote & comment:** Select text in a HUD prompt, response, or main chat, then use the anchored action or selection context menu. Save stages a quoted Markdown attachment; hover its chip to preview the excerpt, comment, and session identity. Nothing is sent until you send the message. Code selections work too. See [details and lifecycle limits](../docs/mac-chat-quotes.md).
+- **Session chapters:** New Pi chats preserve the previous available transcript above the new conversation, with a copyable closed-session ID. Expand older chapters or load earlier messages. Local machine/pane-scoped archives survive relaunch; they are not automatically sent to the new session. No server update is needed.
+- **Notes polish:** Title and body defaults are one point larger. Cursors and title placeholders use readable ink colors. Top action tooltips appear after a short hover even when the HUD belongs to an inactive app.
+- **App name:** Herdr Companion is the Mac app's display name and new release bundle name. Existing bundle, Keychain, and update-feed identities are unchanged.
 
 - **Session bubbles:** Each bubble shows the chat name in bold, an emoji followed by italic activity, and a separate status with its own icon. Live activity comes from Pi's current work. A short AI topic summary is the fallback when there is no current activity; it never replaces the chat name.
 - **HUD attachments:** Drop a Finder file or image into the open HUD, or use Attach. Send a file by itself or with a prompt. Sent attachments appear inline and are copied into app storage so their history and retries survive a moved source file or app restart.

@@ -52,6 +52,7 @@ struct HerdrNoteCardView: View {
             }
         }
         .frame(width: controller.noteCardSize.width, height: controller.noteCardSize.height)
+        .environment(\.colorScheme, .light)
         .foregroundStyle(note.color.ink)
         .tint(note.color.ink)
         .background(note.color.fill, in: .rect(cornerRadius: 12))
@@ -114,16 +115,16 @@ struct HerdrNoteCardView: View {
 
     private func header(_ note: HerdrNote) -> some View {
         HStack(spacing: 6) {
-            TextField("Title", text: titleBinding(for: note))
+            TextField("Title", text: titleBinding(for: note), prompt: Text("Title").foregroundStyle(note.color.ink.opacity(0.5)))
                 .textFieldStyle(.plain)
-                .herdrFont(.subheadline, weight: .bold)
+                .herdrFont(size: NSFont.preferredFont(forTextStyle: .subheadline).pointSize + 1, weight: .bold)
                 .foregroundStyle(note.color.ink)
             Spacer(minLength: 0)
             Button("New note", systemImage: "note.text.badge.plus", action: controller.createNote)
                 .labelStyle(.iconOnly)
                 .buttonStyle(.plain)
                 .frame(width: HerdrTheme.minHitTarget, height: HerdrTheme.minHitTarget)
-                .help("Create a note")
+                .herdrDelayedTooltip("Create a note")
                 .accessibilityIdentifier("hud-note-new")
             headerButton(symbol: "bubble.left", help: "Ask about this note", identifier: "hud-note-ask", note: note) {
                 model.presentContextualAssistant(note: note)
@@ -144,7 +145,8 @@ struct HerdrNoteCardView: View {
                     .background(note.color.ink.opacity(0.08), in: .circle)
             }
             .buttonStyle(.plain)
-            .help("Close note")
+            .herdrDelayedTooltip("Close note")
+            .accessibilityLabel("Close note")
             .accessibilityIdentifier("hud-note-close")
         }
         .frame(height: HerdrTheme.minHitTarget)
@@ -171,7 +173,8 @@ struct HerdrNoteCardView: View {
         }
         .buttonStyle(.plain)
         .disabled(notes.isBusy(note.id))
-        .help(help)
+        .herdrDelayedTooltip(help)
+        .accessibilityLabel(help)
         .accessibilityIdentifier(identifier)
     }
 
@@ -179,7 +182,7 @@ struct HerdrNoteCardView: View {
         ZStack(alignment: .topLeading) {
             if note.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text("Jot anything — the AI can tidy it later.")
-                    .herdrFont(.callout)
+                    .herdrFont(size: NSFont.preferredFont(forTextStyle: .callout).pointSize + 1)
                     .foregroundStyle(note.color.ink.opacity(0.45))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 8)
@@ -187,8 +190,9 @@ struct HerdrNoteCardView: View {
             }
             TextEditor(text: bodyBinding(for: note), selection: $bodySelection)
                 .scrollContentBackground(.hidden)
-                .herdrFont(.callout)
+                .herdrFont(size: NSFont.preferredFont(forTextStyle: .callout).pointSize + 1)
                 .foregroundStyle(note.color.ink)
+                .background(HerdrNoteEditorInk(color: note.color.ink))
                 .focused($isBodyFocused)
                 .allowsHitTesting(!isCleaning)
                 .padding(2)

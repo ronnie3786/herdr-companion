@@ -58,6 +58,31 @@ struct PiChatTimelineView: View {
                 // Spacing lives on the rows (`PiTimelineRow.topSpacing`) so turn
                 // boundaries stay distinct while the stack itself adds none.
                 VStack(alignment: .leading, spacing: 0) {
+                    ForEach(store.closedSessions.filter { $0.id != store.sessionID }) { session in
+                        PiClosedSessionView(session: session, initiallyExpanded: session.id == store.closedSessions.last?.id)
+                    }
+                    if !store.closedSessions.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 12) {
+                                Rectangle().fill(HerdrTheme.separator).frame(height: 1)
+                                Label("New conversation", systemImage: "sparkle")
+                                    .herdrFont(.caption, weight: .semibold).fixedSize()
+                                    .foregroundStyle(HerdrTheme.accent)
+                                Rectangle().fill(HerdrTheme.separator).frame(height: 1)
+                            }
+                            Text("Fresh context for Pi. Previous chats stay here for reference.")
+                                .herdrFont(.caption).foregroundStyle(HerdrTheme.muted)
+                            if let id = store.sessionID {
+                                Text(id).herdrFont(.caption2, monospaced: true)
+                                    .foregroundStyle(HerdrTheme.muted).textSelection(.enabled)
+                            }
+                        }
+                        .padding(.vertical, 24)
+                        .accessibilityIdentifier("pi-new-session-divider")
+                    }
+                    if let error = store.historyError {
+                        Text(error).herdrFont(.caption).foregroundStyle(HerdrTheme.alert)
+                    }
                     transcriptHeader
                         .padding(.bottom, HerdrProse.turnSpacing)
                         .transition(.opacity)

@@ -15,6 +15,12 @@ private let piReloadLog = Logger(subsystem: HerdrAppIdentity.bundleIdentifier, c
 final class PiConversationStore {
     private(set) var turns: [PiConversationTurn] = []
     private(set) var sessionID: String?
+    private(set) var closedSessions: [PiClosedSession] = []
+    private(set) var historyError: String?
+    @ObservationIgnored var sessionArchive = PiClosedSessionArchive()
+    @ObservationIgnored private var archiveScope: String?
+    @ObservationIgnored private var archiveIsReadable = true
+    @ObservationIgnored private var unidentifiedSessionPredecessor: PiClosedSession?
     private(set) var pendingInteractions: [PiPendingInteraction] = []
     private(set) var phase: PiConversationPhase = .idle
     private(set) var compactionActivity: PiCompactionActivity?
@@ -73,6 +79,18 @@ final class PiConversationStore {
     }
 
     func follow(model: HerdrAppModel, pane: HerdrPane) async {
+        if let archiveScope, archiveScope != pane.id { reset() }
+        if archiveScope != pane.id {
+            archiveScope = pane.id
+            do {
+                closedSessions = try sessionArchive.load(scope: pane.id)
+                archiveIsReadable = true
+            } catch {
+                closedSessions = []
+                archiveIsReadable = false
+                historyError = "Saved chat history couldn't be read. The original archive has been preserved."
+            }
+        }
         connection = .loading
         lastError = nil
         var retryDelay = 0.65
@@ -402,6 +420,11 @@ final class PiConversationStore {
         coalescer = PiStreamCoalescer()
         reducer = PiConversationReducer()
         sessionID = nil
+        closedSessions = []
+        archiveScope = nil
+        archiveIsReadable = true
+        unidentifiedSessionPredecessor = nil
+        historyError = nil
         turns = []
         pendingInteractions = []
         phase = .idle
@@ -537,6 +560,7 @@ final class PiConversationStore {
         HerdrPerfDiagnostics.checkpoint("pi.publish")
         os_signpost(.event, log: piStreamLog, name: "publish")
         let previousStructureRevision = structureRevision
+        retainClosedSession(nextSessionID: reducer.sessionID)
         reconcileStreamingCaches(with: reducer.turns)
         turns = reducer.turns
         sessionID = reducer.sessionID
@@ -556,6 +580,36 @@ final class PiConversationStore {
         currentModel = reducer.currentModel
         thinkingLevel = reducer.thinkingLevel
         revision &+= 1
+    }
+
+    private func retainClosedSession(nextSessionID: String?) {
+        // Only a confirmed non-nil identity change closes a chapter. Reconnect,
+        // compaction and failed /new requests must never manufacture dividers.
+        guard let nextSessionID else {
+            if let sessionID {
+                unidentifiedSessionPredecessor = PiClosedSession(id: sessionID, turns: turns, wasTruncated: isTruncated)
+            }
+            return
+        }
+        let previousID = sessionID ?? unidentifiedSessionPredecessor?.id
+        guard let previousID, previousID != nextSessionID else {
+            unidentifiedSessionPredecessor = nil
+            return
+        }
+        let previous = sessionID == nil ? unidentifiedSessionPredecessor
+            : PiClosedSession(id: previousID, turns: turns, wasTruncated: isTruncated)
+        unidentifiedSessionPredecessor = nil
+        guard let previous else { return }
+        // A resumed session can close again with newer messages. Refresh that
+        // chapter instead of duplicating its identity or keeping stale text.
+        closedSessions.removeAll { $0.id == previous.id }
+        closedSessions.append(previous)
+        guard let archiveScope, archiveIsReadable else { return }
+        do {
+            try sessionArchive.save(closedSessions, scope: archiveScope)
+            historyError = nil
+        }
+        catch { historyError = "Previous chat is visible here, but couldn't be saved on this Mac: \(error.localizedDescription)" }
     }
 
     private func reconcileStreamingCaches(with newTurns: [PiConversationTurn]) {

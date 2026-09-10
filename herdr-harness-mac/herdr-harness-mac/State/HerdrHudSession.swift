@@ -7,6 +7,7 @@ struct HerdrHudAttachment: Codable, Identifiable, Equatable, Sendable {
     let filename: String
     let byteCount: Int
     let isImage: Bool
+    var quote: ChatQuote? = nil
 }
 
 struct HerdrHudStep: Codable, Identifiable, Equatable, Sendable {
@@ -218,6 +219,17 @@ final class HerdrHudSession {
                 validationError = "Couldn't read \(url.lastPathComponent): \(error.localizedDescription)"
             }
         }
+    }
+
+    func addQuote(_ quote: ChatQuote) throws {
+        let url = try quote.writeAttachment()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let previousIDs = Set(pendingAttachments.map(\.id))
+        addAttachments([url])
+        guard let index = pendingAttachments.firstIndex(where: { !previousIDs.contains($0.id) }) else {
+            throw NSError(domain: "ChatQuote", code: 1, userInfo: [NSLocalizedDescriptionKey: validationError ?? "Couldn't attach the quote."])
+        }
+        pendingAttachments[index].quote = quote
     }
 
     func removeAttachment(_ id: UUID) {

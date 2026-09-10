@@ -54,41 +54,41 @@ class ArchiveTopologyTests(unittest.TestCase):
     def test_symlink_chain_cannot_escape_in_either_archive_order(self):
         # Each target looks contained when normalized without resolving the
         # other archive member. Together they resolve above the extraction root.
-        links = [("Herdr.app/a", ".", True),
-                 ("Herdr.app/sub/link", "../a/../..", True)]
+        links = [("Herdr Companion.app/a", ".", True),
+                 ("Herdr Companion.app/sub/link", "../a/../..", True)]
         for entries in (links, list(reversed(links))):
             with self.subTest(order=[item[0] for item in entries]):
                 self.assert_rejected_before_extraction(entries)
 
     def test_symlink_cycle_is_rejected_before_extraction(self):
         self.assert_rejected_before_extraction([
-            ("Herdr.app/first", "second", True),
-            ("Herdr.app/second", "first", True),
+            ("Herdr Companion.app/first", "second", True),
+            ("Herdr Companion.app/second", "first", True),
         ])
 
     def test_archive_cannot_write_through_another_member_symlink(self):
         self.assert_rejected_before_extraction([
-            ("Herdr.app/link", "real", True),
-            ("Herdr.app/real/file", "first payload", False),
-            ("Herdr.app/link/file", "replacement payload", False),
+            ("Herdr Companion.app/link", "real", True),
+            ("Herdr Companion.app/real/file", "first payload", False),
+            ("Herdr Companion.app/link/file", "replacement payload", False),
         ])
 
     def test_normalized_member_aliases_cannot_overwrite_a_checked_file(self):
         self.assert_rejected_before_extraction([
-            ("Herdr.app/file", "first payload", False),
-            ("Herdr.app/./file", "replacement payload", False),
+            ("Herdr Companion.app/file", "first payload", False),
+            ("Herdr Companion.app/./file", "replacement payload", False),
         ])
 
     def test_absolute_paths_and_unaudited_top_level_payloads_are_rejected(self):
         for name in ("/outside", "unreviewed-command", "Other.app/Contents/Info.plist"):
             with self.subTest(name=name):
                 self.assert_rejected_before_extraction([
-                    ("Herdr.app/Contents/Info.plist", "synthetic plist", False),
+                    ("Herdr Companion.app/Contents/Info.plist", "synthetic plist", False),
                     (name, "unexpected payload", False),
                 ])
 
     def test_legitimate_sparkle_framework_links_and_resource_forks_are_allowed(self):
-        framework = "Herdr.app/Contents/Frameworks/Sparkle.framework/"
+        framework = "Herdr Companion.app/Contents/Frameworks/Sparkle.framework/"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             archive = root / "release.zip"
@@ -98,7 +98,7 @@ class ArchiveTopologyTests(unittest.TestCase):
                 (framework + "Versions/Current", "B", True),
                 (framework + "Sparkle", "Versions/Current/Sparkle", True),
                 (framework + "Resources", "Versions/Current/Resources", True),
-                ("__MACOSX/Herdr.app/._Contents", "synthetic resource fork", False),
+                ("__MACOSX/Herdr Companion.app/._Contents", "synthetic resource fork", False),
             ])
             with patch.object(release, "run") as command:
                 release.safe_zip(archive, root / "extracted")

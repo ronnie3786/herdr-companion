@@ -135,7 +135,7 @@ class ReleaseSafetyTests(unittest.TestCase):
             app.mkdir(parents=True)
             with patch.object(release, "run", return_value=SimpleNamespace(stderr=b"Identifier=org.example.synthetic\n")) as command, patch.object(release, "certificate_identity", return_value="A" * 40):
                 result = release.export_app(work, "TEAM123456", settings)
-            self.assertEqual(result, work / "Herdr.app")
+            self.assertEqual(result, work / "Herdr Companion.app")
             self.assertTrue(result.is_dir())
             calls = [call.args[0] for call in command.call_args_list if "--force" in call.args[0]]
             self.assertEqual([call[-1] for call in calls], release.signing_targets(result))
@@ -230,7 +230,7 @@ class ReleaseSafetyTests(unittest.TestCase):
                 archive = path / "test.zip"
                 with zipfile.ZipFile(archive, "w") as zipped:
                     if symlink:
-                        info = zipfile.ZipInfo("Herdr.app/link")
+                        info = zipfile.ZipInfo("Herdr Companion.app/link")
                         info.external_attr = (stat.S_IFLNK | 0o777) << 16
                         zipped.writestr(info, "../../outside")
                     else: zipped.writestr("../outside", "unsafe")
@@ -275,7 +275,7 @@ class PreparationBoundaryTests(unittest.TestCase):
                 with self.assertRaisesRegex(release.ReleaseError, "privacy rejected"):
                     release.prepare(args)
             self.assertEqual(audit.call_args.kwargs, {"notarized": False})
-            self.assertEqual(audit.call_args.args[0].name, "Herdr.app")
+            self.assertEqual(audit.call_args.args[0].name, "Herdr Companion.app")
             self.assertTrue(any("archive" in argv for argv in events))
             self.assertTrue(any("-exportArchive" in argv for argv in events))
             self.assertFalse(any("submit" in argv for argv in events))

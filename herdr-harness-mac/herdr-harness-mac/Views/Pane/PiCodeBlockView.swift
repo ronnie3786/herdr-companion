@@ -10,6 +10,8 @@ struct PiCodeBlockView: View {
     var ownerID: String = ""
     var blockID: Int = 0
     @State private var copied = false
+    @Environment(\.saveChatQuote) private var saveQuote
+    @Environment(\.herdrFontScale) private var fontScale
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,12 +51,19 @@ struct PiCodeBlockView: View {
                 .frame(height: 1)
 
             ScrollView(.horizontal) {
-                Text(code)
-                    .herdrFont(size: 14, monospaced: true)
-                    .foregroundStyle(HerdrTheme.text)
-                    .textSelection(.enabled)
-                    .lineSpacing(4)
-                    .padding(12)
+                Group {
+                    if saveQuote != nil {
+                        ChatSelectableText(text: AttributedString(code), font: .system(size: 14 * fontScale.rawValue, design: .monospaced), lineSpacing: 4)
+                            .frame(width: codeWidth)
+                    } else {
+                        Text(code)
+                            .herdrFont(size: 14, monospaced: true)
+                            .foregroundStyle(HerdrTheme.text)
+                            .textSelection(.enabled)
+                            .lineSpacing(4)
+                    }
+                }
+                .padding(12)
             }
             .scrollIndicators(.visible)
         }
@@ -64,6 +73,11 @@ struct PiCodeBlockView: View {
             RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
                 .stroke(HerdrTheme.separator, lineWidth: 1)
         }
+    }
+
+    private var codeWidth: CGFloat {
+        let font = NSFont.monospacedSystemFont(ofSize: 14 * fontScale.rawValue, weight: .regular)
+        return max(120, code.components(separatedBy: .newlines).map { ($0 as NSString).size(withAttributes: [.font: font]).width }.max() ?? 120) + 2
     }
 
     private func copyCode() {

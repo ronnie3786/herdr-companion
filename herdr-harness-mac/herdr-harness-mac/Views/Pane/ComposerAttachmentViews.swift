@@ -33,13 +33,13 @@ private struct ComposerAttachmentChip: View {
 
     var body: some View {
         HStack(spacing: 9) {
-            Image(systemName: fileIcon)
+            Image(systemName: attachment.quote == nil ? fileIcon : "quote.bubble")
                 .herdrFont(.subheadline, weight: .semibold)
                 .foregroundStyle(statusColor)
                 .frame(width: 22)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(attachment.displayName)
+                Text(attachment.quote?.comment ?? attachment.displayName)
                     .herdrFont(.caption, weight: .medium)
                     .foregroundStyle(HerdrTheme.text)
                     .lineLimit(1)
@@ -74,6 +74,7 @@ private struct ComposerAttachmentChip: View {
                 .strokeBorder(borderColor, lineWidth: 1)
         }
         .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+        .chatQuotePreview(attachment.quote)
     }
 
     @ViewBuilder

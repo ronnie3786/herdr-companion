@@ -8,6 +8,7 @@ struct HerdrHudTranscriptRowView: View {
     let allowsPromote: Bool
     let openPaneInMainWindow: (String) -> Void
     let collapse: () -> Void
+    @Environment(\.herdrFontScale) private var fontScale
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -23,12 +24,12 @@ struct HerdrHudTranscriptRowView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityIdentifier("hud-transcript-row-\(exchange.id)")
+        .environment(\.chatQuoteSource, "HUD exchange \(exchange.id)")
     }
 
     private var promptBubble: some View {
         VStack(alignment: .trailing, spacing: 4) {
-            Text(exchange.prompt)
-                .herdrFont(.callout)
+            ChatSelectableText(text: AttributedString(exchange.prompt), font: HerdrProse.font(.body, scale: fontScale))
                 .foregroundStyle(HerdrTheme.text)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)

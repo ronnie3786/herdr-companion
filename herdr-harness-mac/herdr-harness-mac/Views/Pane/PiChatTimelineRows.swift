@@ -125,6 +125,7 @@ enum PiTimelineMetrics {
 struct PiTimelineRowView: View, Equatable {
     let row: PiTimelineRow
     var artifactModel: HerdrAppModel? = nil
+    @Environment(\.chatQuoteSource) private var quoteSource
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.row == rhs.row
@@ -135,6 +136,7 @@ struct PiTimelineRowView: View, Equatable {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, row.topSpacing)
             .accessibilityIdentifier(accessibilityIdentifier)
+            .environment(\.chatQuoteSource, "\(quoteSource) · message \(row.id)")
     }
 
     @ViewBuilder

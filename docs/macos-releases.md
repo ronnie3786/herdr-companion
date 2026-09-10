@@ -16,7 +16,7 @@ In a configured release build, automatic checks use a four-hour interval while
 the app is running. A scheduled check that finds an update shows a banner. Choose
 **Review update…** to open Sparkle's release information, then choose whether to
 install. Sparkle verifies the download and handles installation and relaunch.
-**Later** hides the banner; **Herdr → Check for Updates…** can reopen the pending
+**Later** hides the banner; **Herdr Companion → Check for Updates…** can reopen the pending
 update. Checking automatically does not consent to automatic installation.
 
 In **Settings → App updates**, you can turn automatic checks on or off, check
@@ -30,6 +30,11 @@ pinned into the app. Verification happens before archive extraction. The feed
 also separates stable releases from the `preview` channel. A result saying no
 compatible update is available does not imply every preview or incompatible
 release is installed.
+
+New releases use **Herdr Companion.app**. Its bundle identifier, Keychain identity,
+and signed feed remain unchanged. Sparkle may keep the old installation's on-disk
+bundle filename while updating its displayed name; use the existing app's update
+menu rather than installing a second copy.
 
 ## Configure the publisher once
 

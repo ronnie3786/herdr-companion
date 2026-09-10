@@ -66,10 +66,22 @@ struct ChatRefinementTests {
         image.expectSubstantial()
         // Assert visible content, not just archive state or PNG file size. A
         // hidden timeline can still produce a substantial image of its chrome.
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        try VNImageRequestHandler(url: image.url).perform([request])
-        let visibleText = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        let bitmap = try #require(NSBitmapImageRep(data: Data(contentsOf: image.url)))
+        let fullImage = try #require(bitmap.cgImage)
+        let middle = try #require(fullImage.cropping(to: CGRect(x: 0, y: fullImage.height / 3,
+                                                               width: fullImage.width, height: fullImage.height / 3)))
+        // Small metadata can fall below the OCR detector's effective scale on
+        // CI's virtual display. Also inspect the boundary's central band at its
+        // native resolution; retain every visibility assertion below.
+        var visibleText = ""
+        for image in [fullImage, middle] {
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.recognitionLanguages = ["en-US"]
+            request.minimumTextHeight = 0.005
+            try VNImageRequestHandler(cgImage: image).perform([request])
+            visibleText += (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ") + " "
+        }
         #expect(visibleText.contains("Previous session"))
         #expect(visibleText.contains("New conversation"))
         #expect(visibleText.contains("mint"))

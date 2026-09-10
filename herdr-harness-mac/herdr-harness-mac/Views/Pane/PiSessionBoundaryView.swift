@@ -11,14 +11,14 @@ struct PiSessionBoundaryView: View {
                 Text("Previous session")
                     .herdrFont(.caption, weight: .semibold)
                 Text(previousSessionID)
-                    .herdrFont(.caption2, monospaced: true).textSelection(.enabled)
+                    .herdrFont(.caption, monospaced: true).textSelection(.enabled)
                 Button("Copy previous session ID", systemImage: "doc.on.doc") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(previousSessionID, forType: .string)
                 }
                 .labelStyle(.iconOnly).buttonStyle(.plain).help("Copy the session ID of the chat just closed")
             }
-            .foregroundStyle(HerdrTheme.muted)
+            .foregroundStyle(HerdrTheme.mist)
             HStack(spacing: 12) {
                 Rectangle().fill(HerdrTheme.separator).frame(height: 1)
                 Label("New conversation", systemImage: "sparkle")

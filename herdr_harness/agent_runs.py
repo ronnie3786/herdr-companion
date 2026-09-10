@@ -370,7 +370,7 @@ def _tool_preview(value: Any) -> tuple[str, bool]:
 
 
 class AgentRunManager:
-    """Own subprocesses and private, short-lived Pi session artifacts."""
+    """Own private Pi runs, including durable HUD chat sessions."""
 
     def __init__(
         self,
@@ -421,6 +421,8 @@ class AgentRunManager:
         self.ttl_seconds = _bounded_int(
             self.environ, "HERDR_HARNESS_AGENT_TTL_SECONDS", 86400, 60, 30 * 86400
         )
+        from .hud_chats import migrate_legacy
+        migrate_legacy(self)
         self._recover_and_prune()
         self._reaper_thread = threading.Thread(
             target=self._reap_loop,
@@ -605,9 +607,13 @@ class AgentRunManager:
         )
 
     def _prune_run_if_expired(self, run: dict) -> bool:
+        if run.get("profile") == "hud-chat-v1":
+            return False
         root_id = self._thread_root_id(run)
         members = self._thread_runs(root_id)
-        if not members or self._thread_is_protected(members):
+        if not members or self._thread_is_protected(members) or any(
+            member.get("profile") == "hud-chat-v1" for member in members
+        ):
             return False
         if any(member.get("status") not in TERMINAL_STATUSES for member in members):
             return False
@@ -693,7 +699,7 @@ class AgentRunManager:
                 referenced = self._read(continue_from_run_id)
                 root_id = self._thread_root_id(referenced)
                 root = self._read(root_id)
-                if root.get("profile") == "contextual-question-v1" and _assistant is None:
+                if root.get("profile") in {"contextual-question-v1", "hud-chat-v1"} and _assistant is None:
                     raise AgentRunError("Use the contextual question contract to continue this session.", code="assistant_profile_required", status=409)
                 root_dir = self._run_dir(root_id).resolve()
                 inherited_sessions_dir = Path(str(root.get("sessionsDir") or ""))
@@ -1010,6 +1016,16 @@ class AgentRunManager:
                 index = command.index("--tools")
                 del command[index:index + 2]
                 command.append("--no-tools")
+            if run.get("profile") == "hud-chat-v1":
+                # Normal Pi discovery and tool access; preserve Pi's configured
+                # project trust decisions instead of forcing trust or denial.
+                index = command.index("--tools")
+                del command[index:index + 2]
+                command = [arg for arg in command if arg not in {
+                    "--no-context-files", "--no-extensions", "--no-skills",
+                    "--no-prompt-templates", "--no-approve",
+                }]
+                extension_path = None  # Normal installed packages own their tools.
             if extension_path is not None:
                 # --no-extensions disables discovery only. Explicit packages
                 # remain loadable, keeping private runs isolated while making
@@ -1339,8 +1355,11 @@ class AgentRunManager:
             run = self._read(run_id)
             if run.get("status") == "promoted":
                 return run, str(run.get("sessionFile") or "")
-            if run.get("profile") == "contextual-question-v1":
+            if run.get("profile") in {"contextual-question-v1", "hud-chat-v1"}:
                 members = self._thread_runs(self._thread_root_id(run))
+                promoted = next((r for r in members if r.get("status") == "promoted"), None)
+                if promoted is not None:
+                    return promoted, str(promoted.get("sessionFile") or "")
                 if any(r["status"] not in TERMINAL_STATUSES or r.get("retainSession") for r in members):
                     raise AgentRunError("Wait for the active question or handoff to finish.", code="assistant_busy", status=409)
             if run.get("status") != "completed":
@@ -1408,6 +1427,12 @@ class AgentRunManager:
                 )
             envelope = self._envelope(run)
             root_id = self._thread_root_id(run)
+            if run.get("profile") == "hud-chat-v1":
+                members = self._thread_runs(root_id)
+                if any(r["status"] not in TERMINAL_STATUSES for r in members) or self._thread_is_protected(members):
+                    raise AgentRunError("Cannot delete a running or promoted HUD chat.", code="agent_run_active", status=409)
+                self._remove_thread(root_id)
+                return envelope
             if run_id == root_id:
                 members = self._thread_runs(root_id)
                 if any(member.get("status") in {"queued", "running"} for member in members):

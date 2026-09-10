@@ -32,5 +32,9 @@ def notes():
     return _run("herdr_notes_cli")
 
 
+def hud_chats():
+    return _run("herdr_hud_chats_cli")
+
+
 def active_work():
     return _run("herdr_active_work_cli")

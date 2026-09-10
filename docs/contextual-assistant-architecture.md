@@ -15,6 +15,10 @@ are follow-up work. Native context can be added as pasted text; existing HUD
 image/voice attachment controls remain in its action conversation. The question
 handoff opens an agent with history; the user enters the action request there.
 
+HUD action chats now use a separate durable `hud-chat-v1` profile with normal Pi
+access and searchable history; see [HUD chat history](hud-chat-history.md). This
+change does not broaden the permissions or retention of contextual questions.
+
 Question runs use the server's existing rolling retention. Client history stays
 local until a new question clears it; server request-ID tombstones prevent replay
 after expiry. The initial implementation uses fixed byte limits and rejects

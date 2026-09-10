@@ -33,6 +33,7 @@ final class HeadlessAgentController {
         attachments: [HeadlessAgentAttachment]? = nil,
         continueFromRunId: String? = nil,
         systemPrompt: String? = nil,
+        profile: String? = nil,
         model: HerdrAppModel
     ) async {
         let normalizedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -51,7 +52,8 @@ final class HeadlessAgentController {
                 thinkingLevel: thinkingLevel,
                 attachments: attachments,
                 continueFromRunId: continueFromRunId,
-                systemPrompt: systemPrompt
+                systemPrompt: systemPrompt,
+                profile: profile
             )
             run = started
             isSubmitting = false
@@ -94,6 +96,14 @@ final class HeadlessAgentController {
             errorMessage = error.localizedDescription
             return nil
         }
+    }
+
+    func observe(_ run: HeadlessAgentRun, machineID: String, model: HerdrAppModel) {
+        guard !isRunning else { return }
+        stopPolling()
+        self.run = run
+        self.machineID = machineID
+        if !run.status.isTerminal { beginPolling(runID: run.id, machineID: machineID, model: model) }
     }
 
     func reset() {

@@ -6,7 +6,9 @@ This Pi package adds these integrations to the stock interactive TUI:
   Herdr, without replacing or parsing the terminal;
 - persisted parent session IDs, automatic child-process inheritance, and
   agent instructions for tagging delegated Pi work across workspaces;
-- discovery guidance for synchronized notes and each ticket's editable task path;
+- discovery guidance for synchronized notes, each ticket's editable task path,
+  and saved HUD conversations (`herdr-hud-chats list`, `search`, and `show`);
+  [HUD history](../docs/hud-chat-history.md) stays separate from terminal workspaces;
 - `/send-to-herdr`, which hands a persisted Pi session running outside Herdr to
   the local Herdr Harness and opens the resulting pane in the Mac app;
 - `present_result`, an agent tool that explicitly registers a finished file or

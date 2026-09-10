@@ -409,6 +409,8 @@ def api_description() -> dict:
             "cleanupRun": "/api/v1/cleanup/runs/{runId}",
             "cleanupModels": "/api/v1/cleanup/models",
             "agentRuns": "/api/v1/agent-runs",
+            "hudChats": "/api/v1/hud-chats?q={query}&offset={offset}",
+            "hudChat": "/api/v1/hud-chats/{runId}",
             "agentRun": "/api/v1/agent-runs/{runId}",
             "assistantCapabilities": "/api/v1/agent-runs/capabilities",
             "agentModels": "/api/v1/agent-runs/models",
@@ -1671,6 +1673,20 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     request_id=request_id,
                     **extra,
                 )
+            if method == "GET" and tail == ["hud-chats"]:
+                from .hud_chats import catalog
+                return catalog(service.agent_runs, _string((query.get("q") or [""])[0], "q", maximum=1000, allow_empty=True),
+                               _query_int(query, "offset", default=0, minimum=0, maximum=100000))
+            if len(tail) == 2 and tail[0] == "hud-chats":
+                from .hud_chats import history, retain_legacy
+                run_id = _agent_run_id(tail[1])
+                if method == "GET":
+                    return history(service.agent_runs, run_id,
+                                   _query_int(query, "offset", default=0, minimum=0, maximum=100000))
+                if method == "POST":
+                    if body:
+                        raise HTTPValidationError("Save HUD chat request must be empty")
+                    return retain_legacy(service.agent_runs, run_id)
             if method == "POST" and tail == ["agent-runs"]:
                 if any(
                     key not in {
@@ -1716,7 +1732,10 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         continue_from_run_id = _agent_run_id(body.get("continueFromRunId"))
                     except HTTPValidationError as exc:
                         raise HTTPValidationError("continueFromRunId is invalid") from exc
-                if body.get("profile") is not None:
+                hud_chat = body.get("profile") == "hud-chat-v1"
+                if hud_chat and mode != "act":
+                    raise HTTPValidationError("HUD chats must use act mode")
+                if body.get("profile") is not None and not hud_chat:
                     return service.start_contextual_question(body), 202
                 if any(key in body for key in ("context", "scope", "clientRequestId")):
                     raise HTTPValidationError("Contextual fields require a question profile")
@@ -1731,6 +1750,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         system_prompt=system_prompt,
                         continue_from_run_id=continue_from_run_id,
                         pane_id=pane_id,
+                        **({"hud_chat": True} if hud_chat else {}),
                     ),
                     202,
                 )

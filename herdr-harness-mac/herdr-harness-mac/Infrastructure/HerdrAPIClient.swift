@@ -707,7 +707,8 @@ actor HerdrAPIClient: HerdrNotesClient {
         thinkingLevel: String? = nil,
         attachments: [HeadlessAgentAttachment]? = nil,
         continueFromRunId: String? = nil,
-        systemPrompt: String? = nil
+        systemPrompt: String? = nil,
+        profile: String? = nil
     ) async throws -> HeadlessAgentRunEnvelope {
         try await request(
             path: "/api/v1/agent-runs",
@@ -719,9 +720,24 @@ actor HerdrAPIClient: HerdrNotesClient {
                 thinkingLevel: thinkingLevel,
                 attachments: attachments,
                 continueFromRunId: continueFromRunId,
-                systemPrompt: systemPrompt
+                systemPrompt: systemPrompt,
+                profile: profile
             )
         )
+    }
+
+    func hudChats(query: String, offset: Int = 0) async throws -> HudChatCatalog {
+        try await request(path: "/api/v1/hud-chats", query: [
+            URLQueryItem(name: "q", value: query), URLQueryItem(name: "offset", value: String(offset))
+        ])
+    }
+
+    func hudChat(id: String, offset: Int = 0) async throws -> HudChatHistory {
+        try await request(path: "/api/v1/hud-chats/\(id)", query: [URLQueryItem(name: "offset", value: String(offset))])
+    }
+
+    func saveHudChat(id: String) async throws {
+        let _: MutationResponse = try await request(path: "/api/v1/hud-chats/\(id)", method: "POST", body: APIActionBody())
     }
 
     func fetchHeadlessAgent(id: String) async throws -> HeadlessAgentRunEnvelope {

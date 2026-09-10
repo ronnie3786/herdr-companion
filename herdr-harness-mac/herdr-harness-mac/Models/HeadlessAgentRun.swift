@@ -114,6 +114,7 @@ struct HeadlessAgentStartRequest: Encodable, Sendable {
     let attachments: [HeadlessAgentAttachment]?
     let continueFromRunId: String?
     let systemPrompt: String?
+    let profile: String?
 
     init(
         prompt: String,
@@ -122,7 +123,8 @@ struct HeadlessAgentStartRequest: Encodable, Sendable {
         thinkingLevel: String? = nil,
         attachments: [HeadlessAgentAttachment]? = nil,
         continueFromRunId: String? = nil,
-        systemPrompt: String? = nil
+        systemPrompt: String? = nil,
+        profile: String? = nil
     ) {
         self.prompt = prompt
         self.mode = mode
@@ -131,10 +133,11 @@ struct HeadlessAgentStartRequest: Encodable, Sendable {
         self.attachments = attachments
         self.continueFromRunId = continueFromRunId
         self.systemPrompt = systemPrompt
+        self.profile = profile
     }
 
     private enum CodingKeys: String, CodingKey {
-        case prompt, mode, model, thinkingLevel, attachments, continueFromRunId, systemPrompt
+        case prompt, mode, model, thinkingLevel, attachments, continueFromRunId, systemPrompt, profile
     }
 
     func encode(to encoder: Encoder) throws {
@@ -147,6 +150,7 @@ struct HeadlessAgentStartRequest: Encodable, Sendable {
         try container.encodeIfPresent(thinkingLevel, forKey: .thinkingLevel)
         try container.encodeIfPresent(continueFromRunId, forKey: .continueFromRunId)
         try container.encodeIfPresent(systemPrompt, forKey: .systemPrompt)
+        try container.encodeIfPresent(profile, forKey: .profile)
         if let attachments, !attachments.isEmpty {
             try container.encode(attachments, forKey: .attachments)
         }

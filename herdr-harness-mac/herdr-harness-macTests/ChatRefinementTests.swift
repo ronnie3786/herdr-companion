@@ -120,15 +120,16 @@ struct ChatRefinementTests {
         #expect(store.closedSessions.first?.id == oldID)
     }
 
-    @Test("Only the latest completed assistant output is eligible, not users or older replies")
+    @Test("Recent completed assistant outputs are eligible, never users or streaming text")
     func quoteScope() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let snapshot = try snapshot(sessionID: oldID)
         var reducer = PiConversationReducer()
         reducer.replace(with: snapshot)
-        let latest = try #require(ChatQuoteEligibility.latestAssistantID(in: reducer.turns))
-        #expect(latest.contains("answer-two"))
+        let eligible = ChatQuoteEligibility.assistantIDs(in: reducer.turns)
+        #expect(eligible.count == 2)
+        #expect(eligible.contains { $0.contains("answer-two") })
         let store = PiConversationStore()
         store.sessionArchive = PiClosedSessionArchive(directory: root)
         store.snapshotProvider = { _ in snapshot }
@@ -142,11 +143,20 @@ struct ChatRefinementTests {
         defer { window.close() }
         for _ in 0..<8 { host.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(25)) }
         let selectable = descendants(host).compactMap { $0 as? ChatSelectionTextView }.filter { $0.saveQuote != nil }
-        #expect(selectable.count == 1)
-        #expect(selectable.first?.string == "Use a wide planter for basil, with mint in its own pot. The planting plan is ready for your next question.")
+        #expect(selectable.count == 2)
+        #expect(selectable.contains { $0.string == "Use a wide planter for basil, with mint in its own pot. The planting plan is ready for your next question." })
         var turns = reducer.turns
         turns[turns.count - 1].items.append(.assistant(PiAssistantBlock(id: "in-progress", text: "A newer answer…", status: .streaming)))
-        #expect(ChatQuoteEligibility.latestAssistantID(in: turns) == nil)
+        #expect(ChatQuoteEligibility.assistantIDs(in: turns) == eligible)
+        for id in ["third", "fourth"] {
+            turns[turns.count - 1].items.append(.assistant(PiAssistantBlock(id: id, text: id, status: .complete)))
+            turns[turns.count - 1].items.append(.assistant(PiAssistantBlock(id: "empty-\(id)", text: " ", status: .complete)))
+        }
+        let lastThree = ChatQuoteEligibility.assistantIDs(in: turns)
+        #expect(lastThree.count == 3)
+        #expect(lastThree.contains("third"))
+        #expect(lastThree.contains("fourth"))
+        #expect(!lastThree.contains { $0.contains("answer-one") })
     }
 
     private func snapshot(sessionID: String, empty: Bool = false, streaming: Bool = false) throws -> PiConversationSnapshot {

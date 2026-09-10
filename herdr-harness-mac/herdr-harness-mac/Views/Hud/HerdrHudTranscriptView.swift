@@ -34,7 +34,7 @@ struct HerdrHudTranscriptView: View {
                                 allowsPromote: session.thread == nil || exchange.id == latestPromotableExchangeID,
                                 openPaneInMainWindow: openPaneInMainWindow,
                                 collapse: collapse,
-                                allowsQuote: exchange.id == ChatQuoteEligibility.latestHUDExchangeID(in: session.exchanges)
+                                allowsQuote: ChatQuoteEligibility.hudExchangeIDs(in: session.exchanges).contains(exchange.id)
                             )
                             .id(exchange.id)
                         }

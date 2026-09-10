@@ -120,15 +120,24 @@ struct HerdrNoteCardView: View {
                 .herdrFont(size: NSFont.preferredFont(forTextStyle: .subheadline).pointSize + 2, weight: .bold)
                 .foregroundStyle(note.color.ink)
             Spacer(minLength: 0)
-            headerButton(symbol: "bubble.left", help: "Ask about this note", identifier: "hud-note-ask", note: note) {
-                model.presentContextualAssistant(note: note)
+            Menu("Actions", systemImage: "ellipsis.circle") {
+                Button("Ask about this note", systemImage: "bubble.left") {
+                    model.presentContextualAssistant(note: note)
+                }
+                .accessibilityIdentifier("hud-note-ask")
+                Button("Tidy with AI", systemImage: "sparkles") {
+                    Task { await notes.cleanUp(note.id, model: model) }
+                }
+                .accessibilityIdentifier("hud-note-ai")
+                Button("Take action", systemImage: "bolt.fill") {
+                    Task { await notes.planActions(note.id, model: model) }
+                }
+                .accessibilityIdentifier("hud-note-act")
             }
-            headerButton(symbol: "sparkles", help: "Tidy with AI", identifier: "hud-note-ai", note: note) {
-                Task { await notes.cleanUp(note.id, model: model) }
-            }
-            headerButton(symbol: "bolt.fill", help: "Take action", identifier: "hud-note-act", note: note) {
-                Task { await notes.planActions(note.id, model: model) }
-            }
+            .fixedSize()
+            .disabled(notes.isBusy(note.id))
+            .accessibilityIdentifier("hud-note-actions")
+            if notes.isBusy(note.id) { ProgressView().controlSize(.small) }
             Button {
                 controller.closeNote()
             } label: {
@@ -144,32 +153,6 @@ struct HerdrNoteCardView: View {
             .accessibilityIdentifier("hud-note-close")
         }
         .frame(height: HerdrTheme.minHitTarget)
-    }
-
-    private func headerButton(
-        symbol: String,
-        help: String,
-        identifier: String,
-        note: HerdrNote,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Group {
-                if notes.isBusy(note.id) {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: symbol).herdrFont(.caption, weight: .bold)
-                }
-            }
-            .frame(width: HerdrTheme.minHitTarget, height: HerdrTheme.minHitTarget)
-            .herdrHitTarget()
-            .background(note.color.ink.opacity(0.08), in: .circle)
-        }
-        .buttonStyle(.plain)
-        .disabled(notes.isBusy(note.id))
-        .herdrDelayedTooltip(help)
-        .accessibilityLabel(help)
-        .accessibilityIdentifier(identifier)
     }
 
     private func editor(_ note: HerdrNote, isCleaning: Bool) -> some View {

@@ -40,6 +40,8 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class NotesClient:
+    api_path = "/api/v1/notes"
+
     def __init__(self, base_url, token, *, opener=None):
         try:
             parsed = urllib.parse.urlsplit(base_url)
@@ -65,7 +67,7 @@ class NotesClient:
         encoded = json.dumps(payload, allow_nan=False).encode() if payload is not None else None
         if encoded is not None and len(encoded) > MAX_BYTES:
             raise CLIError("Request is too large", "request_too_large")
-        request = urllib.request.Request(self.base_url + "/api/v1/notes" + path, data=encoded, method=method,
+        request = urllib.request.Request(self.base_url + self.api_path + path, data=encoded, method=method,
             headers={"Authorization": "Bearer " + self.token, "Accept": "application/json",
                      "Content-Type": "application/json", "User-Agent": "herdr-notes/1"})
         try:

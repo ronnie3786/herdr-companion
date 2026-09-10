@@ -2666,6 +2666,7 @@ class HerdrService:
         system_prompt: Optional[str] = None,
         continue_from_run_id: Optional[str] = None,
         pane_id: Optional[str] = None,
+        hud_chat: bool = False,
     ) -> dict:
         display_label = (label or prompt.splitlines()[0].strip() or "One-off Agent")[:120]
         try:
@@ -2680,7 +2681,16 @@ class HerdrService:
         if pane_id is not None:
             _, pane_root = self._pane_tool_context(pane_id)
             cwd = str(pane_root)
-        return self.agent_runs.start(
+        from . import hud_chats
+        # Old HUD clients can still continue an action thread saved by the
+        # migration. Question-mode requests never gain action capabilities.
+        if not hud_chat and mode == "act" and continue_from_run_id:
+            try:
+                hud_chat = self.agent_runs._read(continue_from_run_id).get("profile") == hud_chats.PROFILE
+            except AgentRunError:
+                pass
+        start_run = (lambda **kwargs: hud_chats.start(self.agent_runs, **kwargs)) if hud_chat else self.agent_runs.start
+        return start_run(
             prompt=prompt,
             label=display_label,
             cwd=cwd,
@@ -2738,7 +2748,7 @@ class HerdrService:
         with self._agent_promotion_lock:
             run, session_file = self.agent_runs.promotable(run_id)
             if run.get("status") == "promoted":
-                return self.agent_runs.get(run_id)
+                return self.agent_runs.get(run["id"])
             try:
                 if run.get("profile") == "contextual-question-v1":
                     scope = run["assistantScope"]

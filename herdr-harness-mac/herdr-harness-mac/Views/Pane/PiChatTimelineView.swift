@@ -38,7 +38,7 @@ struct PiChatTimelineView: View {
     }
 
     var body: some View {
-        let latestAssistantID = ChatQuoteEligibility.latestAssistantID(in: store.turns)
+        let assistantIDs = ChatQuoteEligibility.assistantIDs(in: store.turns)
         let responseArtifacts = PiResponseArtifacts(
             artifacts: resultArtifacts, turns: store.turns,
             machineID: artifactMachineID, sessionID: store.sessionID
@@ -90,7 +90,7 @@ struct PiChatTimelineView: View {
                         ForEach(window.rows) { row in
                             PiTimelineRowView(row: row, artifactModel: artifactModel)
                                 .equatable()
-                                .environment(\.saveChatQuote, quoteAction(for: row, latestAssistantID: latestAssistantID))
+                                .environment(\.saveChatQuote, quoteAction(for: row, assistantIDs: assistantIDs))
                                 .transition(
                                     row.startsTurn
                                         ? PiChatMotion.turnTransition(reduceMotion: reduceMotion)
@@ -110,14 +110,6 @@ struct PiChatTimelineView: View {
                         .transition(PiChatMotion.itemTransition(reduceMotion: reduceMotion))
                     }
 
-                    if let artifactModel, !responseArtifacts.unassociated.isEmpty {
-                        PiResponseArtifactsView(
-                            model: artifactModel,
-                            artifacts: responseArtifacts.unassociated,
-                            isUnassociated: true
-                        )
-                        .padding(.top, HerdrProse.turnSpacing)
-                    }
 
                 }
                 .scrollTargetLayout()
@@ -242,15 +234,15 @@ struct PiChatTimelineView: View {
         store.hasContent || !store.closedSessions.isEmpty || store.connection == .connected
     }
 
-    private func quoteAction(for row: PiTimelineRow, latestAssistantID: String?) -> (@MainActor (ChatQuote) async throws -> Void)? {
+    private func quoteAction(for row: PiTimelineRow, assistantIDs: Set<String>) -> (@MainActor (ChatQuote) async throws -> Void)? {
         guard case let .output(.assistant(block)) = row.content,
-              block.id == latestAssistantID,
+              assistantIDs.contains(block.id),
               let saveQuote else { return nil }
         let sessionID = store.sessionID
         return { quote in
             guard store.sessionID == sessionID,
-                  block.id == ChatQuoteEligibility.latestAssistantID(in: store.turns) else {
-                throw NSError(domain: "ChatQuote", code: 1, userInfo: [NSLocalizedDescriptionKey: "A newer response arrived. Select text in the latest agent response instead."])
+                  ChatQuoteEligibility.assistantIDs(in: store.turns).contains(block.id) else {
+                throw NSError(domain: "ChatQuote", code: 1, userInfo: [NSLocalizedDescriptionKey: "This response is no longer among the last three agent messages. Select a more recent response."])
             }
             try await saveQuote(quote)
         }

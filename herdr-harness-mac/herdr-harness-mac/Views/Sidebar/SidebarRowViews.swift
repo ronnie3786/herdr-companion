@@ -262,6 +262,7 @@ struct SidebarChatRow: View {
     let isSelected: Bool
     var isStarred: Bool = false
     var isUnread: Bool = false
+    var isManuallyUnread: Bool = false
     var hierarchy: PiSessionTree.Row?
     var parentContext: String?
     /// The status age everywhere but Recents, which passes its own ranking key.
@@ -301,7 +302,13 @@ struct SidebarChatRow: View {
 
     private var compactContent: some View {
         HStack(spacing: 7) {
-            SidebarStatusDot(status: pane.agentStatus)
+            if isManuallyUnread {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(AgentStatus.done.color)
+                    .accessibilityLabel("Done, waiting for you")
+            } else {
+                SidebarStatusDot(status: pane.agentStatus)
+            }
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(pane.displayTitle)
@@ -341,7 +348,9 @@ struct SidebarChatRow: View {
 
             starControl
 
-            if describesLastActivity || pane.agentStatus.needsAttention || pane.agentStatus == .working {
+            if isManuallyUnread {
+                Text("Done").herdrFont(.caption2).foregroundStyle(AgentStatus.done.color)
+            } else if describesLastActivity || pane.agentStatus.needsAttention || pane.agentStatus == .working {
                 SidebarStatusAgeLabel(
                     status: pane.agentStatus,
                     since: since,
@@ -398,8 +407,9 @@ struct SidebarChatRow: View {
                     .truncationMode(.tail)
                     .accessibilityLabel(context.accessibilityLabel)
                 Spacer(minLength: 4)
-                Label(pane.agentStatus.compactTitle, systemImage: pane.agentStatus.symbol)
-                    .foregroundStyle(SidebarTone.statusColor(for: pane.agentStatus))
+                Label(isManuallyUnread ? "Done" : pane.agentStatus.compactTitle,
+                      systemImage: isManuallyUnread ? "checkmark.circle.fill" : pane.agentStatus.symbol)
+                    .foregroundStyle(isManuallyUnread ? AgentStatus.done.color : SidebarTone.statusColor(for: pane.agentStatus))
                     .fixedSize()
             }
             .herdrFont(size: 10, relativeTo: .caption2)

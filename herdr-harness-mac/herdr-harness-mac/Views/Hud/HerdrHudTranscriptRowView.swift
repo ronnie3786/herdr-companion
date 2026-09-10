@@ -32,8 +32,8 @@ struct HerdrHudTranscriptRowView: View {
     private var quoteAction: (@MainActor (ChatQuote) async throws -> Void)? {
         guard allowsQuote else { return nil }
         return { quote in
-            guard ChatQuoteEligibility.latestHUDExchangeID(in: session.exchanges) == exchange.id else {
-                throw NSError(domain: "ChatQuote", code: 1, userInfo: [NSLocalizedDescriptionKey: "A newer response arrived. Select text in the latest agent response instead."])
+            guard ChatQuoteEligibility.hudExchangeIDs(in: session.exchanges).contains(exchange.id) else {
+                throw NSError(domain: "ChatQuote", code: 1, userInfo: [NSLocalizedDescriptionKey: "This response is no longer among the last three agent messages. Select a more recent response."])
             }
             session.addQuote(quote)
         }
@@ -127,10 +127,14 @@ struct HerdrHudTranscriptRowView: View {
 
     @ViewBuilder
     private var promotionControl: some View {
-        if exchange.promotedPaneID != nil {
-            Text("Opened as chat")
-                .herdrFont(.caption, monospaced: true)
-                .foregroundStyle(HerdrTheme.muted)
+        if let paneID = exchange.promotedPaneID {
+            Button("Open terminal session", systemImage: "terminal") {
+                collapse()
+                openPaneInMainWindow(MachineScopedID.compose(machineID: exchange.machineID, rawID: paneID))
+            }
+            .controlSize(.small)
+            .disabled(model.pane(id: MachineScopedID.compose(machineID: exchange.machineID, rawID: paneID)) == nil)
+            .help("Return to the promoted Pi session; its terminal pane must still exist")
         } else if allowsPromote {
             Button(action: promote) {
                 HStack(spacing: 5) {
@@ -138,13 +142,14 @@ struct HerdrHudTranscriptRowView: View {
                         ProgressView()
                             .controlSize(.small)
                     }
-                    Text("Continue as chat")
+                    Text("Continue in agent")
                         .herdrFont(.caption, weight: .bold)
                 }
             }
             .herdrProminentButton()
             .controlSize(.small)
-            .disabled(isPromoting)
+            .disabled(isPromoting || session.isRunning || session.isLoadingHistory)
+            .help("Promote the full saved conversation into a terminal workspace")
             .accessibilityIdentifier("hud-promote-\(exchange.id)")
         }
     }

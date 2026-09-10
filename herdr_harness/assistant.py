@@ -27,7 +27,8 @@ def fail(message: str, code: str = "invalid_assistant_context", status: int = 40
 
 
 def capabilities() -> dict:
-    return {"ok": True, "profiles": [PROFILE], "contextVersions": [1],
+    return {"ok": True, "profiles": [PROFILE, "hud-chat-v1"], "contextVersions": [1],
+            "hudChats": {"retention": "indefinite", "tools": "normal-pi", "history": "/api/v1/hud-chats"},
             "tools": "supplied-context-only", "strictContinuation": True,
             "idempotency": True, "history": True, "observation": ["poll"],
             "maxContextBytes": MAX_CONTEXT_BYTES, "maxItemBytes": MAX_ITEM_BYTES}

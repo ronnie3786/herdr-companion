@@ -130,6 +130,8 @@ final class HerdrAppModel {
     let externalPiLauncher = ExternalPiLauncher()
 
     private let userDefaults: UserDefaults
+    /// Local sidebar reminder only; never creates alerts or HUD notifications.
+    private(set) var manuallyUnreadPaneIDs: Set<String> = []
     @ObservationIgnored private let resultArtifactOpenedLedger: AgentResultArtifactOpenedLedger
     @ObservationIgnored private let resultArtifactOpener: AgentResultArtifactOpener
     @ObservationIgnored private var resultArtifactRetirementTasks: [String: Task<Void, Never>] = [:]
@@ -278,6 +280,7 @@ final class HerdrAppModel {
         )
         collapsedSidebarSessionIDs = Set(defaults.stringArray(forKey: "herdr.sidebar.collapsedSessions") ?? [])
         starredChatIDs = Set(defaults.stringArray(forKey: "herdr.sidebar.starredChats") ?? [])
+        manuallyUnreadPaneIDs = Set(defaults.stringArray(forKey: "herdr.sidebar.manuallyUnread") ?? [])
         mutedHudSessionIDs = Set(defaults.stringArray(forKey: "herdr.hud.mutedSessions") ?? [])
         dismissedHudChips = Self.loadDismissedHudChips(defaults: defaults)
 
@@ -326,7 +329,7 @@ final class HerdrAppModel {
 
     var unreadAlertCount: Int { alerts.count(where: { !$0.isRead }) }
     var unreadPaneIDs: Set<String> {
-        Set(alerts.lazy.filter { !$0.isRead }.map(\.scopedPaneID))
+        Set(alerts.lazy.filter { !$0.isRead }.map(\.scopedPaneID)).union(manuallyUnreadPaneIDs)
     }
     var workingCount: Int { workspaces.flatMap(\.panes).count(where: { $0.agentStatus == .working }) }
     var paneCount: Int { workspaces.reduce(0) { $0 + $1.paneCount } }
@@ -2274,7 +2277,8 @@ final class HerdrAppModel {
         thinkingLevel: String? = nil,
         attachments: [HeadlessAgentAttachment]? = nil,
         continueFromRunId: String? = nil,
-        systemPrompt: String? = nil
+        systemPrompt: String? = nil,
+        profile: String? = nil
     ) async throws -> HeadlessAgentRun {
         if isDemoMode {
             let now = HerdrTimestamp.string(from: .now)
@@ -2319,8 +2323,30 @@ final class HerdrAppModel {
             thinkingLevel: thinkingLevel,
             attachments: attachments,
             continueFromRunId: continueFromRunId,
-            systemPrompt: systemPrompt
+            systemPrompt: systemPrompt,
+            profile: profile
         ).run
+    }
+
+    func hudChatClient(machineID: String) throws -> HerdrAPIClient {
+        guard let client = client(forMachine: machineID) else {
+            throw APIError.noActiveConnection(machineID: machineID)
+        }
+        return client
+    }
+
+    func requireDurableHUD(machineID: String) async throws {
+        if isDemoMode { return }
+        let supported: Bool
+        do {
+            supported = try await hudChatClient(machineID: machineID).assistantCapabilities().profiles.contains("hud-chat-v1")
+        } catch APIError.server(status: 404, message: _) {
+            supported = false
+        }
+        guard supported else {
+            throw NSError(domain: "HUD", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                "Update this machine’s companion server to use saved HUD chats with normal Pi access. Your current chat is unchanged."])
+        }
     }
 
     func fetchHeadlessAgent(runID: String, machineID: String) async throws -> HeadlessAgentRun {
@@ -2569,7 +2595,18 @@ final class HerdrAppModel {
     /// server projection. The mounted session's tap gesture calls this on
     /// every interaction, so neither idle/working panes with nothing unread
     /// nor a repeat tap within the same done episode may POST.
+    func markPaneUnread(_ pane: HerdrPane) {
+        manuallyUnreadPaneIDs.insert(pane.id)
+        userDefaults.set(Array(manuallyUnreadPaneIDs), forKey: "herdr.sidebar.manuallyUnread")
+    }
+
+    func markPaneReminderRead(_ paneID: String) {
+        guard manuallyUnreadPaneIDs.remove(paneID) != nil else { return }
+        userDefaults.set(Array(manuallyUnreadPaneIDs), forKey: "herdr.sidebar.manuallyUnread")
+    }
+
     func acknowledgeUnreadAlerts(for pane: HerdrPane) {
+        markPaneReminderRead(pane.id)
         markPaneResultArtifactsRead(pane)
         let hadUnread = markPaneAlertsReadLocally(pane.id)
         let shouldAcknowledgeRemotely: Bool
@@ -3663,6 +3700,7 @@ final class HerdrAppModel {
     }
 
     private func route(to pane: HerdrPane) {
+        markPaneReminderRead(pane.id)
         markPaneResultArtifactsRead(pane)
         isSidebarPresented = false
         selectedTab = .workspaces

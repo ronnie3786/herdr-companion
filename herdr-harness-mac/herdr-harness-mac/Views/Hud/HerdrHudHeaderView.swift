@@ -4,6 +4,7 @@ struct HerdrHudHeaderView: View {
     @Bindable var model: HerdrAppModel
     let controller: HerdrHudController
     @Bindable var session: HerdrHudSession
+    @State private var showsHistory = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -16,6 +17,7 @@ struct HerdrHudHeaderView: View {
 
             if model.machines.count > 1, let selectedMachine {
                 machineMenu(selectedMachine)
+                    .disabled(session.isLoadingHistory)
             }
 
             if let machineID = selectedMachine?.id {
@@ -27,6 +29,20 @@ struct HerdrHudHeaderView: View {
 
             Spacer()
 
+            Button("Chat history", systemImage: "clock.arrow.circlepath") { showsHistory = true }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
+                .herdrHitTarget()
+                .help("Search saved HUD chats")
+                .disabled(session.isRunning || session.isLoadingHistory)
+                .accessibilityIdentifier("hud-chat-history")
+                .popover(isPresented: $showsHistory) {
+                    if let machineID = selectedMachine?.id {
+                        HerdrHudHistoryView(model: model, session: session, machineID: machineID)
+                            .id(machineID)
+                    }
+                }
+
             if !session.exchanges.isEmpty {
                 // Reads as "start a new chat" rather than "destroy something":
                 // ending the thread is how you begin the next one, and a trash
@@ -37,10 +53,10 @@ struct HerdrHudHeaderView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(HerdrTheme.mist)
-                .disabled(session.isRunning)
+                .disabled(session.isRunning || session.isLoadingHistory)
                 .accessibilityLabel("New chat")
                 .accessibilityIdentifier("hud-clear-history")
-                .help("End this thread and start a new chat")
+                .help("Save this chat in history and start a new one")
             }
 
             Button(action: controller.collapse) {

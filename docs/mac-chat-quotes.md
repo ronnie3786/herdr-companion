@@ -1,13 +1,13 @@
 # Mac chat quotes and session chapters
 
-## Quote the latest response
+## Quote recent agent responses
 
-**Quote & comment…** is available only on text or code from the latest completed
-agent response in the current Chat or HUD conversation. User messages, earlier
-agent replies, thinking, tools, and previous-session chapters remain readable and
-copyable but do not offer quoting. A new in-progress response supersedes the old
-quote target. An open quote action is removed when its response is no longer
-eligible.
+**Quote & comment…** is available on text or code from the last three completed,
+text-bearing agent messages in the current Chat or HUD conversation. User messages,
+thinking, tools, empty assistant messages, and previous-session chapters never offer
+quoting or consume slots. Streaming responses are not quotable and do not displace
+completed responses until they finish. An open quote action is removed when its
+response leaves the three-message window; saving revalidates the target and session.
 
 Select text to reveal a small action beside the visible selection endpoint, or
 choose the same action in the selection's context menu. Multiline selections anchor
@@ -93,7 +93,7 @@ No server, iOS, or Pi protocol update is required. Quotes use the ordinary text
 prompt contract. Native text measurement stays isolated from the displayed TextKit
 stack, preserving the 0.7.1 overlap fix across resizing and streaming.
 
-Tests cover latest-response eligibility, visible glyph anchoring, inline prompt
+Tests cover three-response eligibility and interleaved empty/streaming output, visible glyph anchoring, inline prompt
 serialization and quote-only HUD submission, focused keyboard routing, real CTA mouse clicks and shortcut events in both
 composers (including focus changes, caret placement, and native undo/redo), new-session confirmation without SSE, early empty checkpoints, failures,
 timeouts and late confirmation. The full new-session render is checked with local

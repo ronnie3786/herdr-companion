@@ -19,6 +19,7 @@ dev = ["build>=1.2,<2"]
 herdr-server = "herdr_dashboard:main"
 herdr-config = "herdr_harness.configuration_cli:main"
 herdr-notes = "herdr_harness.commands:notes"
+herdr-hud-chats = "herdr_harness.commands:hud_chats"
 herdr-active-work = "herdr_harness.commands:active_work"
 herdr-active-work-sync = "herdr_commands.herdr_active_work_sync:main"
 herdr-pr-review-watch = "herdr_commands.herdr_pr_review_watch:main"

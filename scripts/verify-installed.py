@@ -28,7 +28,7 @@ def main():
         assert all(resources.values()), resources
         lineage = run("from herdr_harness.resources import pi_extension_path; p=pi_extension_path({}); assert (p/'lib/session-lineage.ts').is_file(); assert '../lib/session-lineage' in (p/'extensions/pi-semantic-bridge.ts').read_text(); print('ok')")
         assert lineage.strip() == "ok"
-        for module in ("herdr_harness.configuration_cli", "herdr_commands.setup_herdr_demo", "herdr_commands.herdr_active_work_sync", "herdr_commands.herdr_pr_review_watch"):
+        for module in ("herdr_harness.configuration_cli", "herdr_commands.setup_herdr_demo", "herdr_commands.herdr_active_work_sync", "herdr_commands.herdr_pr_review_watch", "herdr_commands.herdr_hud_chats_cli"):
             run(f"from {module} import main; raise SystemExit(main())", "--help")
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
@@ -61,7 +61,7 @@ def main():
                     raise AssertionError("Control API accepted a request without credentials")
                 except urllib.error.HTTPError as error:
                     assert error.code == 401
-                for path in ("/herdr-web/", "/api/v1/config/machines", "/api/v1/notes"):
+                for path in ("/herdr-web/", "/api/v1/config/machines", "/api/v1/notes", "/api/v1/hud-chats"):
                     request = urllib.request.Request(base + path, headers={"Authorization": "Bearer " + token})
                     with urllib.request.urlopen(request, timeout=2) as response:
                         assert response.status == 200, path

@@ -2,7 +2,7 @@ import http.client
 import json
 import threading
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -565,6 +565,29 @@ class HerdrHTTPTests(unittest.TestCase):
                 return response.status, response.headers, json.loads(response.read())
         except urllib.error.HTTPError as exc:
             return exc.code, exc.headers, json.loads(exc.read())
+
+    def test_hud_chat_routes_keep_auth_and_profile_validation(self):
+        self.service.agent_runs = Mock()
+        self.service.start_agent_run = Mock(return_value={"ok": True, "run": {}})
+        payload = {"prompt": "Plan a garden", "mode": "act", "profile": "hud-chat-v1"}
+        self.assertEqual(self.request("/api/v1/agent-runs", method="POST", payload=payload, token=None)[0], 401)
+        self.service.start_agent_run.assert_not_called()
+        self.assertEqual(self.request("/api/v1/agent-runs", method="POST", payload={**payload, "mode": "ask"})[0], 400)
+        self.assertEqual(self.request("/api/v1/agent-runs", method="POST", payload={**payload, "context": {}})[0], 400)
+        self.assertEqual(self.request("/api/v1/agent-runs", method="POST", payload=payload)[0], 202)
+        self.assertTrue(self.service.start_agent_run.call_args.kwargs["hud_chat"])
+        with patch("herdr_harness.hud_chats.catalog", return_value={"ok": True, "chats": [], "nextOffset": None}) as catalog:
+            self.assertEqual(self.request("/api/v1/hud-chats", token=None)[0], 401)
+            catalog.assert_not_called()
+            self.assertEqual(self.request("/api/v1/hud-chats?q=herb%20garden&offset=50")[0], 200)
+            catalog.assert_called_once_with(self.service.agent_runs, "herb garden", 50)
+            self.assertEqual(self.request("/api/v1/hud-chats")[0], 200)
+            catalog.assert_called_with(self.service.agent_runs, "", 0)
+            self.assertEqual(self.request("/api/v1/hud-chats?offset=-1")[0], 400)
+        with patch("herdr_harness.hud_chats.retain_legacy", return_value={"ok": True}) as retain:
+            self.assertEqual(self.request("/api/v1/hud-chats/agr_0123456789ab", method="POST", payload={})[0], 200)
+            retain.assert_called_once_with(self.service.agent_runs, "agr_0123456789ab")
+            self.assertEqual(self.request("/api/v1/hud-chats/agr_0123456789ab", method="POST", payload={"tools": "all"})[0], 400)
 
     def test_quick_voice_routes_authenticate_and_validate_before_dispatch(self):
         self.service.quick_voice = Mock()

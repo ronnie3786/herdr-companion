@@ -1025,6 +1025,7 @@ struct HerdrSidebarView: View {
                 isSelected: pane.id == model.selectedPaneID,
                 isStarred: model.starredChatIDs.contains(pane.id),
                 isUnread: model.unreadPaneIDs.contains(pane.id),
+                isManuallyUnread: model.manuallyUnreadPaneIDs.contains(pane.id),
                 hierarchy: hierarchy,
                 parentContext: (hierarchy?.depth ?? 0) == 0 ? parentContext(for: pane) : nil,
                 since: showingLastActivity
@@ -1049,6 +1050,14 @@ struct HerdrSidebarView: View {
                 systemImage: model.starredChatIDs.contains(pane.id) ? "star.slash" : "star"
             ) {
                 model.toggleStarredChat(pane.id)
+            }
+            Button("Mark Unread", systemImage: "checkmark.circle") {
+                model.markPaneUnread(pane)
+            }
+            if model.manuallyUnreadPaneIDs.contains(pane.id) {
+                Button("Mark Read", systemImage: "envelope.open") {
+                    model.markPaneReminderRead(pane.id)
+                }
             }
             if model.mutedHudSessionIDs.contains(pane.id) {
                 Button("Unmute session", systemImage: "bell") {

@@ -17,6 +17,7 @@ import tarfile
 import tempfile
 import urllib.error
 import urllib.request
+import uuid
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -221,8 +222,16 @@ def require_green_ci(source):
 
 
 def read_feed():
+    # The rolling asset keeps a stable discovery URL, but GitHub/CDN redirects
+    # can still serve its deleted predecessor after a replacement upload. Ask
+    # for a fresh redirect when comparing exact signed bytes. This also keeps
+    # the pre-publication concurrency check from trusting an older cached feed.
+    request = urllib.request.Request(
+        FEED_URL + "?release_check=" + uuid.uuid4().hex,
+        headers={"User-Agent": "HerdrCompanionRelease/1", "Cache-Control": "no-cache"},
+    )
     try:
-        with urllib.request.urlopen(FEED_URL, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=30) as response:
             data = response.read(2 * 1024 * 1024 + 1)
     except urllib.error.HTTPError as error:
         if error.code == 404: return None
@@ -628,7 +637,7 @@ def publish(args):
             if api("releases/tags/" + FEED_TAG).get("immutable"):
                 raise ReleaseError("Repository immutability prevents rolling feed updates; configure hosting before publishing")
         if manifest["tag"] not in tags:
-            arguments = ["release", "create", manifest["tag"], "--repo", REPOSITORY, "--verify-tag", "--draft", "--latest=false", "--title", "Herdr " + manifest["tag"].removeprefix("macos-v"), "--notes-file", str(path.parent / manifest["notes"])]
+            arguments = ["release", "create", manifest["tag"], "--repo", REPOSITORY, "--verify-tag", "--draft", "--latest=false", "--title", "Herdr Companion " + manifest["tag"].removeprefix("macos-v"), "--notes-file", str(path.parent / manifest["notes"])]
             if manifest["release"]["channel"] == "preview": arguments += ["--prerelease"]
             gh(*arguments)
         existing = release_by_tag(manifest["tag"])

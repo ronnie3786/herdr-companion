@@ -298,6 +298,26 @@ class PreparationBoundaryTests(unittest.TestCase):
             command.assert_not_called()
 
 
+class PublicFeedFreshnessTests(unittest.TestCase):
+    def test_each_feed_read_uses_a_fresh_redirect_and_preserves_exact_bytes(self):
+        payload = feed([PREVIEW])
+        with patch.object(release.urllib.request, "urlopen", side_effect=[io.BytesIO(payload), io.BytesIO(payload)]) as fetch:
+            self.assertEqual(release.read_feed(), payload)
+            self.assertEqual(release.read_feed(), payload)
+        requests = [call.args[0] for call in fetch.call_args_list]
+        self.assertNotEqual(requests[0].full_url, requests[1].full_url)
+        for request in requests:
+            self.assertTrue(request.full_url.startswith(release.FEED_URL + "?release_check="))
+            self.assertEqual(request.get_header("Cache-control"), "no-cache")
+            self.assertEqual(request.get_header("User-agent"), "HerdrCompanionRelease/1")
+        self.assertEqual([call.kwargs["timeout"] for call in fetch.call_args_list], [30, 30])
+
+    def test_fresh_feed_read_keeps_size_limit(self):
+        with patch.object(release.urllib.request, "urlopen", return_value=io.BytesIO(b"x" * (2 * 1024 * 1024 + 1))):
+            with self.assertRaisesRegex(release.ReleaseError, "size limit"):
+                release.read_feed()
+
+
 class PublishTransactionTests(unittest.TestCase):
     def test_draft_lookup_uses_numeric_id_and_paginates(self):
         first_page = [{"tag_name": f"older-{n}", "id": n} for n in range(100)]

@@ -12,17 +12,17 @@ struct HerdrHudPlacement: Equatable, Sendable {
     static let orbControlScale: CGFloat = 0.8
     static let expandedSize = CGSize(width: 420, height: 580)
     static let shadowMargin: CGFloat = 40
-    static let chipWidth: CGFloat = 166.6
+    static let chipWidth: CGFloat = 200
     /// The chip's rendered height AND the height the panel frame reserves for
     /// it — `HerdrHudSessionChipsView` must read this, not `HerdrTheme`, or the
     /// two disagree and the collapsed panel mis-sizes. Deliberately larger than
     /// `HerdrTheme.minHitTarget`; a literal because this type is pure
     /// CoreGraphics math with no SwiftUI dependency.
-    static let chipHeight: CGFloat = 60
-    /// Grow the three text lines while retaining the same compact padding.
+    static let chipHeight: CGFloat = 74
+    /// Reserve two title lines plus activity and status, retaining compact padding.
     /// Font reduction keeps the existing minimum control size.
     static func chipHeight(fontScale: Double) -> CGFloat {
-        chipHeight + 44 * CGFloat(max(1, fontScale) - 1)
+        chipHeight + 58 * CGFloat(max(1, fontScale) - 1)
     }
     static let chipSpacing: CGFloat = 6
     /// The resting lane leaves room for one keyboard-focused title. Hovering

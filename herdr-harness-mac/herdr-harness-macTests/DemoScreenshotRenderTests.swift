@@ -582,6 +582,24 @@ struct DemoScreenshotRenderTests {
         result.expectSubstantial()
     }
 
+    @Test("HUD session titles wrap across two lines at default and large text sizes")
+    func rendersTwoLineHudSessionTitles() async throws {
+        let chip = HerdrHudSessionChips.Chip(
+            id: "demo-machine|demo-pane", title: "Review the sample project release checklist",
+            status: .working, isMuted: false, since: nil, artifacts: [],
+            emoji: "🔧", activity: "Checking the sample tests"
+        )
+        let result = try await HerdrRenderHarness.render("hud-two-line-agent-titles.png", size: CGSize(width: 464, height: 164)) {
+            HStack(alignment: .top, spacing: 24) {
+                HerdrHudSessionBubbleLabel(chip: chip)
+                HerdrHudSessionBubbleLabel(chip: chip)
+                    .environment(\.herdrFontScale, .xxxLarge)
+            }
+            .padding(20)
+        }
+        result.expectSubstantial()
+    }
+
     @Test("Session documents render compact icons and expanded hover titles")
     func rendersSessionDocumentHover() async throws {
         let suite = "DocumentHoverRender.\(UUID().uuidString)"

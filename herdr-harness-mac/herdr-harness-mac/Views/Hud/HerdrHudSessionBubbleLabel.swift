@@ -22,7 +22,7 @@ struct HerdrHudSessionBubbleLabel: View {
             Text(chip.title)
                 .herdrFont(.caption, weight: .bold)
                 .foregroundStyle(HerdrTheme.text)
-                .lineLimit(1)
+                .lineLimit(2, reservesSpace: true)
                 .truncationMode(.tail)
                 .padding(.trailing, 20)
 

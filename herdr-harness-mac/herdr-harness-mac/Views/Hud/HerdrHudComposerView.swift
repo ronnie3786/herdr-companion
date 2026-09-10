@@ -210,13 +210,11 @@ struct HerdrHudComposerView: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: 42)
             } else {
-                TextField(
-                    session.thread == nil ? "Ask anything, or tell it what to do…" : "Reply to this thread…",
+                ComposerDraftEditor(
+                    placeholder: session.thread == nil ? "Ask anything, or tell it what to do…" : "Reply to this thread…",
                     text: $session.draft,
-                    axis: .vertical
+                    maximumVisibleLines: 4
                 )
-                    .lineLimit(1...4)
-                    .textFieldStyle(.plain)
                     .herdrFont(size: 13)
                     .foregroundStyle(HerdrTheme.text)
                     .focused($isComposerFocused)

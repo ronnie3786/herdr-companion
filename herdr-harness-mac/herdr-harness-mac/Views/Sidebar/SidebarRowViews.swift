@@ -393,7 +393,7 @@ struct SidebarChatRow: View {
                 starControl
             }
             HStack(spacing: 4) {
-                Text("\(context.machine) · \(context.workspace)")
+                Text("\(context.machine) · \(Text(context.workspace).bold())")
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .accessibilityLabel(context.accessibilityLabel)
@@ -402,7 +402,7 @@ struct SidebarChatRow: View {
                     .foregroundStyle(SidebarTone.statusColor(for: pane.agentStatus))
                     .fixedSize()
             }
-            .herdrFont(size: 9, relativeTo: .caption2)
+            .herdrFont(size: 10, relativeTo: .caption2)
             .foregroundStyle(HerdrTheme.muted)
         }
     }

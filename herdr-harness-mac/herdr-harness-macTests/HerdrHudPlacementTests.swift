@@ -131,12 +131,14 @@ struct HerdrHudPlacementTests {
         #expect(HerdrHudPlacement.sessionStackHeight(chipCount: 0, visibleFrameHeight: 887) == 0)
     }
 
-    @Test("Larger fonts grow each three-line bubble while keeping compact padding")
+    @Test("Wider bubbles reserve two title lines and grow with larger fonts")
     func sessionRowsGrowForLargerFonts() {
+        #expect(abs(HerdrHudPlacement.chipWidth / 166.6 - 1.2) < 0.001)
+        #expect(HerdrHudPlacement.chipHeight == 74)
         #expect(HerdrHudPlacement.chipHeight(fontScale: 0.9) == HerdrHudPlacement.chipHeight)
         #expect(HerdrHudPlacement.chipHeight(fontScale: 1) == HerdrHudPlacement.chipHeight)
         let largerHeight = HerdrHudPlacement.chipHeight(fontScale: 1.6)
-        #expect(abs(largerHeight - 86.4) < 0.000_001)
+        #expect(abs(largerHeight - 108.8) < 0.000_001)
         let stackHeight = HerdrHudPlacement.sessionStackContentHeight(chipCount: 3, fontScale: 1.6)
         #expect(stackHeight == 3 * largerHeight + 2 * HerdrHudPlacement.chipSpacing)
         let content = HerdrHudPlacement.collapsedContentSize(chipCount: 3, fontScale: 1.6)
@@ -236,7 +238,7 @@ struct HerdrHudPlacementTests {
 
     @Test("Show all has no row cap and overflow reserves only its circular badge")
     func unlimitedRowsAndCompactOverflow() {
-        #expect(HerdrHudPlacement.sessionStackContentHeight(chipCount: 20) == CGFloat(20 * 60 + 19 * 6))
+        #expect(HerdrHudPlacement.sessionStackContentHeight(chipCount: 20) == CGFloat(20 * 74 + 19 * 6))
         for scale in [1.0, 1.6] {
             let rows = HerdrHudPlacement.sessionStackContentHeight(chipCount: 4, fontScale: scale)
             let diameter = HerdrHudPlacement.overflowDiameter(count: 1, fontScale: scale)
@@ -449,7 +451,8 @@ struct HerdrHudPlacementTests {
                 isExpanded: false, visibleFrame: CGRect(x: 0, y: 0, width: 1440, height: 900),
                 topRightOffset: .zero, chipCount: 3, notesSize: size
             )
-            #expect(frame.height == 72 + 6 + 192 + 10 + size.height + 80)
+            let sessionHeight = HerdrHudPlacement.sessionStackContentHeight(chipCount: 3)
+            #expect(frame.height == 72 + 6 + sessionHeight + 10 + size.height + 80)
         }
     }
 

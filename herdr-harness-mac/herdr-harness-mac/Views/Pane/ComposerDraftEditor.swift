@@ -6,10 +6,11 @@ import SwiftUI
 struct ComposerDraftEditor: View {
     let placeholder: String
     @Binding var text: String
+    var maximumVisibleLines = 5
 
     var body: some View {
         Text(text.isEmpty ? " " : text + " ")
-            .lineLimit(1...5)
+            .lineLimit(1...maximumVisibleLines)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 4)
@@ -21,6 +22,7 @@ struct ComposerDraftEditor: View {
                     .scrollIndicators(.visible)
                     .accessibilityLabel(placeholder)
                     .accessibilityIdentifier("composer-draft-editor")
+                    .background(ComposerModifiedReturnHandler(text: $text))
                     .overlay(alignment: .topLeading) {
                         if text.isEmpty {
                             Text(placeholder)

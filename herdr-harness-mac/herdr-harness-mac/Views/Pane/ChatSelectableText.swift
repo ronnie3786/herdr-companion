@@ -11,23 +11,16 @@ struct ChatSelectableText: NSViewRepresentable {
     @Environment(\.saveChatQuote) private var saveQuote
     @Environment(\.chatQuoteSource) private var source
 
-    func makeNSView(context: Context) -> ChatSelectionTextView {
-        let view = ChatSelectionTextView()
-        view.isEditable = false
-        view.isSelectable = true
-        view.drawsBackground = false
-        view.textContainerInset = .zero
-        view.textContainer?.lineFragmentPadding = 0
-        view.textContainer?.widthTracksTextView = true
-        view.isHorizontallyResizable = false
-        view.isVerticallyResizable = true
+    func makeNSView(context: Context) -> ChatTextLayoutView {
+        let view = ChatTextLayoutView()
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        view.linkTextAttributes = [.foregroundColor: NSColor(HerdrTheme.accent)]
-        view.selectedTextAttributes = [.backgroundColor: NSColor(HerdrTheme.accent).withAlphaComponent(0.3)]
+        view.textView.linkTextAttributes = [.foregroundColor: NSColor(HerdrTheme.accent)]
+        view.textView.selectedTextAttributes = [.backgroundColor: NSColor(HerdrTheme.accent).withAlphaComponent(0.3)]
         return view
     }
 
-    func updateNSView(_ view: ChatSelectionTextView, context: Context) {
+    func updateNSView(_ layoutView: ChatTextLayoutView, context: Context) {
+        let view = layoutView.textView
         let baseFont = font.resolve(in: environment.fontResolutionContext).ctFont as NSFont
         let result = NSMutableAttributedString(attributedString: NSAttributedString(text))
         let fullRange = NSRange(location: 0, length: result.length)
@@ -46,27 +39,18 @@ struct ChatSelectableText: NSViewRepresentable {
             result.addAttribute(.font, value: runFont, range: range)
             if let color = run.foregroundColor { result.addAttribute(.foregroundColor, value: NSColor(color), range: range) }
         }
-        if view.attributedString() != result {
-            let selection = view.selectedRange()
-            view.textStorage?.setAttributedString(result)
-            if NSMaxRange(selection) <= result.length { view.setSelectedRange(selection) }
-            view.invalidateIntrinsicContentSize()
-        }
+        layoutView.setAttributedText(result)
         view.saveQuote = saveQuote
         view.quoteSource = source
         view.quoteFontScale = environment.herdrFontScale
         view.reduceMotion = environment.accessibilityReduceMotion
     }
 
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: ChatSelectionTextView, context: Context) -> CGSize? {
-        let width = max(1, proposal.width ?? 600)
-        guard let container = nsView.textContainer, let layout = nsView.layoutManager else { return nil }
-        container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
-        layout.ensureLayout(for: container)
-        return CGSize(width: width, height: ceil(layout.usedRect(for: container).height))
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: ChatTextLayoutView, context: Context) -> CGSize? {
+        nsView.measuredSize(width: proposal.width)
     }
 
-    static func dismantleNSView(_ view: ChatSelectionTextView, coordinator: ()) {
-        view.quotePopover?.close()
+    static func dismantleNSView(_ view: ChatTextLayoutView, coordinator: ()) {
+        view.textView.quotePopover?.close()
     }
 }

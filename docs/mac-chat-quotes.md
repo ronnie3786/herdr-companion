@@ -60,7 +60,13 @@ The name **Herdr Companion** changes presentation and the release bundle filenam
 not bundle ID, URL schemes, preferences, credentials, or the signed update feed.
 Sparkle may retain an existing installation's bundle filename during an update.
 
-Regression coverage includes native selection/layout, Unicode excerpts, quote
+Text measurement uses an isolated TextKit stack; the displayed text view cannot
+resize itself or adopt speculative layout widths. Regression tests check glyph
+bounds and nonoverlapping rows across wide/narrow windows, large text sizes, and
+streaming/finalized updates. This fixes the overlapping chat rows introduced in
+0.7.0-beta.1.
+
+Regression coverage also includes native selection/layout, Unicode excerpts, quote
 attachment round trips, legacy HUD records, Save-without-send, native note cursor
 color, confirmed session boundaries, reconnect deduplication, per-pane isolation,
 archive restoration and corrupt-file preservation. Synthetic render tests cover

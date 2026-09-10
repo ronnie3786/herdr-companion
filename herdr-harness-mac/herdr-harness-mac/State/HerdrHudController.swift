@@ -71,6 +71,8 @@ final class HerdrHudController {
     private(set) var isVoiceReplyCardVisible = false
     private(set) var collapsedResultArtifactCount = 0
     private(set) var areAttachmentTitlesExpanded = false
+    /// Orb actions share the HUD-wide hover union and its gap-crossing grace.
+    var areOrbControlsVisible: Bool { areAttachmentTitlesExpanded }
     var isCollapsedResultRailVisible: Bool { collapsedResultArtifactCount > 0 }
     /// Whether the `+N` control has been clicked to reveal the grouped
     /// sessions. Regrouped `chipRegroupDelay` after the pointer leaves them.

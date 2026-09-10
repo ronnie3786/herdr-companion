@@ -7,6 +7,7 @@ struct HerdrHudPlacement: Equatable, Sendable {
 
     static let defaultInset: CGFloat = 8
     static let collapsedSize = CGSize(width: 72, height: 72)
+    static let orbControlScale: CGFloat = 0.8
     static let expandedSize = CGSize(width: 420, height: 580)
     static let shadowMargin: CGFloat = 40
     static let chipWidth: CGFloat = 166.6
@@ -73,10 +74,12 @@ struct HerdrHudPlacement: Equatable, Sendable {
         case .hidden:
             return .zero
         case .icon:
-            return CGSize(width: notesToggleSize, height: notesToggleSize)
+            // Collapsed HUDs host this toggle on the orb, not in a separate row.
+            return isExpanded ? CGSize(width: notesToggleSize, height: notesToggleSize) : .zero
         case let .compact(count):
-            let k = max(count, 0) + 1 // Include the New note row below the toggle.
-            return CGSize(width: noteCompactWidth, height: notesToggleSize + CGFloat(k) * (noteCompactBarHeight + noteCompactBarSpacing))
+            let k = max(count, 0) + 1 // Include the New note row.
+            let rowsHeight = CGFloat(k) * (noteCompactBarHeight + noteCompactBarSpacing)
+            return CGSize(width: noteCompactWidth, height: isExpanded ? notesToggleSize + rowsHeight : rowsHeight - noteCompactBarSpacing)
         case let .rows(count):
             let k = min(max(count, 0), maxNoteRows(isExpanded: isExpanded))
             return CGSize(width: notesWidth, height: noteCtaHeight + CGFloat(k) * (noteRowHeight + noteRowSpacing))

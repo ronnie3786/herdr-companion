@@ -171,7 +171,7 @@ struct HerdrHudPlacementTests {
         #expect(frame.height <= visibleFrame.height)
     }
 
-    @Test("Session scrolling reserves the Notes icon and both voice surfaces")
+    @Test("Session scrolling reserves both voice surfaces without a separate Notes icon row")
     func sessionStackBudgetLeavesOtherHudSurfacesVisible() {
         let visibleFrame = CGRect(x: 0, y: 0, width: 1_512, height: 887)
         let notes = HerdrHudPlacement.notesContentSize(.icon, isExpanded: false)
@@ -185,7 +185,7 @@ struct HerdrHudPlacementTests {
             quickVoiceSize: voice
         )
         let reservedHeight = HerdrHudPlacement.collapsedSize.height + 2 * HerdrHudPlacement.shadowMargin
-            + 2 * HerdrHudPlacement.chipSpacing + 2 * HerdrHudPlacement.notesGap
+            + 2 * HerdrHudPlacement.chipSpacing + HerdrHudPlacement.notesGap
             + notes.height + reply.height + voice.height
         #expect(height >= HerdrHudPlacement.chipHeight)
         #expect(height + reservedHeight == visibleFrame.height)
@@ -470,10 +470,13 @@ struct HerdrHudPlacementTests {
     @Test("notesContentSize matches each layout's formula")
     func notesContentSizeMatchesFormula() {
         #expect(HerdrHudPlacement.notesContentSize(.hidden, isExpanded: false) == .zero)
-        #expect(HerdrHudPlacement.notesContentSize(.icon, isExpanded: false) == CGSize(width: 32, height: 32))
-        #expect(HerdrHudPlacement.notesContentSize(.compact(count: 0), isExpanded: false) == CGSize(width: HerdrHudPlacement.noteCompactWidth, height: 32 + 22 + 4))
-        #expect(HerdrHudPlacement.notesContentSize(.compact(count: 3), isExpanded: false) == CGSize(width: HerdrHudPlacement.noteCompactWidth, height: 32 + 4 * (22 + 4)))
-        #expect(HerdrHudPlacement.notesContentSize(.compact(count: 99), isExpanded: false).height == CGFloat(32 + 100 * (22 + 4)))
+        #expect(HerdrHudPlacement.orbControlScale == 0.8)
+        #expect(HerdrHudPlacement.notesContentSize(.icon, isExpanded: false) == .zero)
+        #expect(HerdrHudPlacement.notesContentSize(.icon, isExpanded: true) == CGSize(width: 32, height: 32))
+        #expect(HerdrHudPlacement.notesContentSize(.compact(count: 0), isExpanded: false) == CGSize(width: HerdrHudPlacement.noteCompactWidth, height: 22))
+        #expect(HerdrHudPlacement.notesContentSize(.compact(count: 3), isExpanded: false) == CGSize(width: HerdrHudPlacement.noteCompactWidth, height: 4 * (22 + 4) - 4))
+        #expect(HerdrHudPlacement.notesContentSize(.compact(count: 99), isExpanded: false).height == CGFloat(100 * (22 + 4) - 4))
+        #expect(HerdrHudPlacement.notesContentSize(.compact(count: 3), isExpanded: true).height == CGFloat(32 + 4 * (22 + 4)))
         #expect(HerdrHudPlacement.notesContentSize(.rows(count: 0), isExpanded: false) == CGSize(width: HerdrHudPlacement.notesWidth, height: HerdrHudPlacement.noteCtaHeight))
         #expect(HerdrHudPlacement.notesContentSize(.rows(count: 6), isExpanded: false) == CGSize(width: HerdrHudPlacement.notesWidth, height: HerdrHudPlacement.noteCtaHeight + 6 * (HerdrHudPlacement.noteRowHeight + HerdrHudPlacement.noteRowSpacing)))
         #expect(HerdrHudPlacement.notesContentSize(.rows(count: 7), isExpanded: false) == HerdrHudPlacement.notesContentSize(.rows(count: 6), isExpanded: false))

@@ -69,7 +69,8 @@ struct HerdrHudRootView: View {
                             controller: controller,
                             session: session,
                             artifacts: chipState.detachedArtifacts,
-                            attentionChipCount: attentionChipCount
+                            attentionChipCount: attentionChipCount,
+                            notes: notes
                         )
 
                         if let voice = controller.quickVoice, voice.isExpanded {
@@ -111,8 +112,10 @@ struct HerdrHudRootView: View {
                             : .opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing))
                     )
             }
-            HerdrHudNotesStripView(model: model, controller: controller, notes: notes)
-                .herdrHudHoverRegion("notes", action: controller.setHoveringHud)
+            if notes.layout != .hidden, controller.isExpanded || notes.layout != .icon {
+                HerdrHudNotesStripView(model: model, controller: controller, notes: notes)
+                    .herdrHudHoverRegion("notes", action: controller.setHoveringHud)
+            }
         }
         .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: voiceReply.showsCard)
         .onChange(of: voiceReply.showsCard, initial: true) { _, isVisible in

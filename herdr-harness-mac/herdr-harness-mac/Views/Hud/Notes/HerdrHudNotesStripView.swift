@@ -13,11 +13,14 @@ struct HerdrHudNotesStripView: View {
             case .hidden:
                 EmptyView()
             case .icon:
-                HerdrNotesToggleButton(notes: notes)
-                    .transition(fadeTransition)
+                if controller.isExpanded {
+                    HerdrNotesToggleButton(notes: notes)
+                        .transition(fadeTransition)
+                }
             case let .compact(count):
                 HerdrNoteCompactStackView(
                     notes: notes, count: count, maximumHeight: controller.compactNotesHeight,
+                    showsToggle: controller.isExpanded,
                     createNote: controller.createNote, openNote: controller.openNote
                 )
                     .transition(fadeTransition)

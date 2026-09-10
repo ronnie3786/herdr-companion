@@ -194,6 +194,26 @@ struct HerdrHudControllerTests {
         #expect(!controller.areAttachmentTitlesExpanded)
     }
 
+    @Test("Orb controls are hidden at rest, share HUD hover, and reset when disabled")
+    func orbControlsFollowHudHover() async throws {
+        let controller = HerdrHudController(userDefaults: makeDefaults(), attachmentHoverGrace: .milliseconds(25))
+        #expect(!controller.areOrbControlsVisible)
+        controller.setHoveringHud(true, region: "session")
+        #expect(controller.areOrbControlsVisible)
+        controller.setHoveringHud(true, region: "hud-orb")
+        controller.setHoveringHud(false, region: "session")
+        try await Task.sleep(for: .milliseconds(70))
+        #expect(controller.areOrbControlsVisible)
+        controller.setHoveringHud(false, region: "hud-orb")
+        #expect(controller.areOrbControlsVisible)
+        try await Task.sleep(for: .milliseconds(70))
+        #expect(!controller.areOrbControlsVisible)
+        controller.setHoveringHud(true, region: "notes")
+        #expect(controller.areOrbControlsVisible)
+        controller.setEnabled(false)
+        #expect(!controller.areOrbControlsVisible)
+    }
+
     @Test("Attachment counts reserve only the visible result limit")
     func attachmentCountClampsToVisibleLimit() {
         let controller = HerdrHudController(userDefaults: makeDefaults())

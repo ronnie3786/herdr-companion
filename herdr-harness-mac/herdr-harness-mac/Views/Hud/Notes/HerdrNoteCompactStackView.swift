@@ -5,18 +5,21 @@ struct HerdrNoteCompactStackView: View {
     let notes: HerdrHudNotesState
     let count: Int
     var maximumHeight: CGFloat?
+    var showsToggle = true
     var createNote: () -> Void = { }
     var openNote: (UUID) -> Void = { _ in }
 
     private var naturalHeight: CGFloat {
-        HerdrHudPlacement.notesContentSize(.compact(count: count), isExpanded: false).height
+        HerdrHudPlacement.notesContentSize(.compact(count: count), isExpanded: showsToggle).height
     }
 
     private var viewportHeight: CGFloat { min(naturalHeight, max(0, maximumHeight ?? naturalHeight)) }
 
     var body: some View {
         VStack(alignment: .trailing, spacing: HerdrHudPlacement.noteCompactBarSpacing) {
-            HerdrNotesToggleButton(notes: notes)
+            if showsToggle {
+                HerdrNotesToggleButton(notes: notes)
+            }
             Button(action: createNote) {
                 Label("New note", systemImage: "plus")
                     .herdrFont(.caption2, weight: .semibold)

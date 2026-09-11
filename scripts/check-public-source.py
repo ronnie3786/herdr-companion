@@ -18,6 +18,7 @@ PRIVATE_FILES = (
 RULES = {
     "personal home path": re.compile(rb"/(?:Users|home)/(?!developer(?:/|\b)|example(?:/|\b)|test(?:/|\b)|user(?:/|\b)|your-username(?:/|\b))[A-Za-z0-9_.-]+/"),
     "tailnet DNS literal": re.compile(rb"(?:[A-Za-z0-9-]+\.)+ts\.net\b"),
+    "tailnet identifier label": re.compile(rb"\btail[0-9a-f]{5,}\b", re.I),
     "tailnet IP literal": re.compile(rb"\b100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}\b"),
     "legacy runtime import": re.compile(rb"(?:from|import)\s+cmux_harness\b"),
     "legacy repository reference": re.compile(rb"cmux[-]orchestrator"),

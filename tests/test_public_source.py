@@ -22,6 +22,14 @@ class PublicationBoundaryTests(unittest.TestCase):
         private_host = b"desktop." + b"ts" + b".net"
         self.assertTrue(checker.inspect("sample.txt", private_host))
 
+    def test_tailnet_identifier_is_rejected_even_under_example_domain(self):
+        label = b"tail" + b"abcdef"
+        for value in (label, label.upper()):
+            findings = checker.inspect("fixture.json", b"https://desktop." + value + b".example.test:8461")
+            self.assertEqual([finding["category"] for finding in findings], ["tailnet identifier label"])
+            self.assertNotIn(value.decode(), str(findings))
+        self.assertFalse(checker.inspect("fixture.json", b"https://desktop.tailnet.example.test:8461"))
+
     def test_findings_never_return_matching_values(self):
         private_path = b"/Users/" + b"fictional-sensitive-user/project"
         findings = checker.inspect("fixture.json", private_path)

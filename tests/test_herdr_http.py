@@ -2297,7 +2297,7 @@ class HerdrHTTPTests(unittest.TestCase):
 
     def test_pane_link_requires_token_and_builds_urls_from_public_url(self):
         service = FakeHTTPService()
-        service.environ = {"HERDR_HARNESS_PUBLIC_URL": "https://desktop.tail1db61d.example.test:8461"}
+        service.environ = {"HERDR_HARNESS_PUBLIC_URL": "https://desktop.tailnet.example.test:8461"}
         server = make_server(service, host="127.0.0.1", port=0, api_token="test-secret")
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -2325,7 +2325,7 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(body["customSchemeLink"], "herdr://pane/w%3Ap4")
         self.assertEqual(
             body["universalLink"],
-            "https://desktop.tail1db61d.example.test:8461/open/pane/w%3Ap4",
+            "https://desktop.tailnet.example.test:8461/open/pane/w%3Ap4",
         )
         self.assertEqual(body["baseUrlSource"], "environment")
 

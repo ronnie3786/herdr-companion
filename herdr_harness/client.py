@@ -195,6 +195,13 @@ class HerdrClient:
         identifier = request_id or f"harness:{uuid.uuid4().hex}"
         payload = self._request_payload(method, params, identifier)
         with self._connect() as connection:
+            if method == "agent.start":
+                timeout_ms = (params or {}).get("timeout_ms", 30000)
+                if isinstance(timeout_ms, int) and not isinstance(timeout_ms, bool) and 3001 <= timeout_ms <= 300000:
+                    # Herdr waits for agent readiness before replying. Keep the
+                    # socket alive beyond that wait, including a cold Pi launch
+                    # in a reserved shell. Ordinary requests keep their limit.
+                    connection.settimeout(max(self.timeout, timeout_ms / 1000.0 + 5.0))
             try:
                 connection.sendall(payload)
             except OSError as exc:

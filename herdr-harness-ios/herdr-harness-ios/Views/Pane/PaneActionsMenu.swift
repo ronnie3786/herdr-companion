@@ -133,6 +133,7 @@ struct PaneActionsMenu: View {
                 .disabled(!model.canControl(machineID: pane.machineID))
             }
         }
+        .disabled(model.paneLifecycleBusyIDs.contains(pane.id))
         .confirmationDialog(
             "Close this pane?",
             isPresented: $isConfirmingClose,
@@ -143,7 +144,7 @@ struct PaneActionsMenu: View {
             }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("This stops the process running in \(pane.displayTitle).")
+            Text("This stops the process running in \(pane.displayTitle). Closing the last pane also removes its tab, and may remove its workspace. Use End Pi & close pane to keep the tab.")
         }
         .confirmationDialog(
             "End Pi and close this pane?",
@@ -155,7 +156,7 @@ struct PaneActionsMenu: View {
             }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("Sends /quit to the Pi session, waits for it to exit, then closes \(pane.displayTitle).")
+            Text("Ends Pi and closes \(pane.displayTitle), keeping this tab and workspace open. If this is the tab’s last pane, a fresh shell is created first. Saved conversations are not deleted.")
         }
         .alert("Rename pane", isPresented: $isRenaming) {
             TextField("Pane name", text: $renameText)

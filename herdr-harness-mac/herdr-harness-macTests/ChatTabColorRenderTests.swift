@@ -39,7 +39,7 @@ struct ChatTabColorRenderTests {
             }
         }
         image.expectSubstantial()
-        #expect(ChatColorLegendRow.rowHeight == CGFloat(HerdrTheme.minHitTarget * 2))
-        #expect(ChatColorLegendRow.titleSize == 15)
+        #expect(ChatColorLegendRow.rowHeight == 56 * 0.9)
+        #expect(ChatColorLegendRow.titleSize == 14)
     }
 }

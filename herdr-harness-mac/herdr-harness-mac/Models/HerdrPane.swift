@@ -25,6 +25,7 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
     let firstSeenAt: Date?
     let lastActivityAt: Date?
     let workingSince: Date?
+    let reservedShell: Bool
 
     var machineID: String = ""
     private(set) var id: String
@@ -62,6 +63,7 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
             && firstSeenAt == other.firstSeenAt
             && lastActivityAt == other.lastActivityAt
             && workingSince == other.workingSince
+            && reservedShell == other.reservedShell
             && machineID == other.machineID
             && id == other.id
             && scopedTabID == other.scopedTabID
@@ -78,6 +80,7 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
     }
 
     var displayTitle: String {
+        if reservedShell { return "No open chats" }
         for candidate in [label, title, terminalTitleStripped, displayAgent, agent] {
             if let candidate, !candidate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return candidate
@@ -88,7 +91,7 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
     }
 
     var displayAgentName: String {
-        displayAgent ?? agent ?? (agentStatus == .unknown ? "Terminal" : "Agent")
+        reservedShell ? "Ready" : (displayAgent ?? agent ?? (agentStatus == .unknown ? "Terminal" : "Agent"))
     }
 
     var displayPath: String {
@@ -124,6 +127,7 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         case firstSeenAt = "first_seen_at"
         case lastActivityAt = "last_activity_at"
         case workingSince = "working_since"
+        case reservedShell = "reserved_shell"
     }
 
     init(from decoder: Decoder) throws {
@@ -152,6 +156,7 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         firstSeenAt = try container.decodeIfPresent(String.self, forKey: .firstSeenAt).flatMap(HerdrTimestamp.date)
         lastActivityAt = try container.decodeIfPresent(String.self, forKey: .lastActivityAt).flatMap(HerdrTimestamp.date)
         workingSince = try container.decodeIfPresent(String.self, forKey: .workingSince).flatMap(HerdrTimestamp.date)
+        reservedShell = try container.decodeIfPresent(Bool.self, forKey: .reservedShell) ?? false
         id = paneID
         scopedTabID = tabID
     }
@@ -182,6 +187,7 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         try container.encodeIfPresent(firstSeenAt.map(HerdrTimestamp.string), forKey: .firstSeenAt)
         try container.encodeIfPresent(lastActivityAt.map(HerdrTimestamp.string), forKey: .lastActivityAt)
         try container.encodeIfPresent(workingSince.map(HerdrTimestamp.string), forKey: .workingSince)
+        try container.encode(reservedShell, forKey: .reservedShell)
     }
 
     init(
@@ -208,7 +214,8 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         workingSince: Date? = nil,
         sessionTitle: String? = nil,
         sessionEmoji: String? = nil,
-        sessionActivity: String? = nil
+        sessionActivity: String? = nil,
+        reservedShell: Bool = false
     ) {
         self.paneID = paneID
         self.terminalID = terminalID
@@ -234,6 +241,7 @@ struct HerdrPane: Codable, Equatable, Hashable, Identifiable, Sendable {
         self.firstSeenAt = firstSeenAt
         self.lastActivityAt = lastActivityAt
         self.workingSince = workingSince
+        self.reservedShell = reservedShell
         self.id = paneID
         self.scopedTabID = tabID
     }

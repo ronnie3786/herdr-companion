@@ -319,6 +319,7 @@ def load_configuration(
             "CLEANUP_RUNS_ROOT": "cleanup/runs", "AGENT_RUNS_ROOT": "agent-runs",
             "ATTACHMENTS_DIR": "uploads", "NOTES_STORE_PATH": "notes.sqlite3",
             "PANE_SEEN_STORE_PATH": "pane-first-seen.json", "SESSION_LABEL_STORE_PATH": "session-labels.json",
+            "PANE_LIFECYCLE_STORE_PATH": "pane-lifecycle.sqlite3",
             "RESULT_ARTIFACTS_ROOT": "result-artifacts", "PUSH_STORE_PATH": "push-devices.json",
             "WORKFLOWS_DIR": "workflows",
         }

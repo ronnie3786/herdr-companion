@@ -57,6 +57,7 @@ struct PiChatView: View {
                 )
             }
             .id(paneID)
+            .paneResponseLinks(model: model, sourceMachineID: composerPane.machineID)
             .environment(\.saveChatQuote, attachQuote)
             .environment(\.chatQuoteSource, "Pi session \(store.sessionID ?? "unknown")")
             .frame(maxWidth: .infinity, maxHeight: .infinity)

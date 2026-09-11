@@ -194,6 +194,11 @@ struct HeadlessAgentView: View {
                             }
                         }
                         PiMarkdownMessageView(source: response, isStreaming: false, id: "agent-\(run.id)")
+                            .paneResponseLinks(model: model, sourceMachineID: controller.machineID) { paneID in
+                                guard let pane = model.pane(id: paneID) else { return }
+                                dismiss()
+                                openPane(pane)
+                            }
                             .textSelection(.enabled)
                     }
                     .padding(16)

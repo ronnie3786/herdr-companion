@@ -4,6 +4,7 @@ import socket
 import tempfile
 import threading
 import unittest
+from unittest.mock import MagicMock, patch
 
 from herdr_harness.client import HerdrAPIError, HerdrClient, resolve_socket_path
 
@@ -106,6 +107,24 @@ class HerdrClientTests(unittest.TestCase):
             self.fake.requests[0],
             {"id": "test-ping", "method": "ping", "params": {}},
         )
+
+    def test_agent_start_socket_outlives_native_readiness_timeout(self):
+        client = HerdrClient(self.fake.path, timeout=4)
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        connection.recv.return_value = b'{"id":"start-test","result":{"type":"ok"}}\n'
+        with patch.object(client, "_connect", return_value=connection):
+            client.request("agent.start", {"timeout_ms": 30000}, request_id="start-test")
+        connection.settimeout.assert_called_once_with(35.0)
+
+    def test_ordinary_mutations_keep_the_configured_socket_timeout(self):
+        client = HerdrClient(self.fake.path, timeout=4)
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        connection.recv.return_value = b'{"id":"close-test","result":{"type":"ok"}}\n'
+        with patch.object(client, "_connect", return_value=connection):
+            client.request("pane.close", {"pane_id": "w1:p1"}, request_id="close-test")
+        connection.settimeout.assert_not_called()
 
     def test_snapshot_unwraps_native_session_snapshot(self):
         snapshot = HerdrClient(self.fake.path, timeout=1).snapshot()

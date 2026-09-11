@@ -319,6 +319,34 @@ actor HerdrAPIClient {
         )
     }
 
+    func retirePiPane(_ pane: HerdrPane, requestID: String) async throws -> PaneRetirementResponse {
+        try await requirePaneRetirement()
+        let response: PaneRetirementResponse = try await request(
+            path: "/api/v1/panes/\(pane.paneID)/end-pi-and-close", method: "POST",
+            body: PaneRetirementRequest(requestID: requestID, terminalID: pane.terminalID, sessionID: pane.piSemantic?.sessionID)
+        )
+        guard response.ok, response.closedPaneID == pane.paneID,
+              response.workspaceID == pane.workspaceID, response.tabID == pane.tabID,
+              !response.nextPaneID.isEmpty, response.nextPaneID != pane.paneID else { throw APIError.invalidResponse }
+        return response
+    }
+
+    func openReservedShell(_ pane: HerdrPane, startPi: Bool) async throws {
+        try await requirePaneRetirement()
+        let response: MutationResponse = try await request(
+            path: "/api/v1/panes/\(pane.paneID)/reserved-shell", method: "POST",
+            body: ReservedShellRequest(terminalID: pane.terminalID, action: startPi ? "pi" : "shell")
+        )
+        guard response.ok else { throw APIError.invalidResponse }
+    }
+
+    private func requirePaneRetirement() async throws {
+        let response: PaneLifecycleCapabilities = try await request(path: "/api/v1")
+        guard response.supportsRetirement else {
+            throw APIError.server(status: 426, message: "Update the Companion server to close chats while keeping their tab. This pane was left open.")
+        }
+    }
+
     func closePane(id: String) async throws {
         try await mutation(path: "/api/v1/panes/\(id)", method: "DELETE", body: APIActionBody())
     }
@@ -657,6 +685,9 @@ actor HerdrAPIClient {
         }
         if path.hasPrefix("/api/v1/response-audio/") {
             return 150
+        }
+        if path.hasSuffix("/end-pi-and-close") || path.hasSuffix("/reserved-shell") {
+            return 75
         }
         if path == "/api/v1/quick-sessions/pi" {
             return 75

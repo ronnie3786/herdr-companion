@@ -5,12 +5,14 @@ struct PiMarkdownMessageView: View {
     let source: String
     let isStreaming: Bool
     let id: String?
+    let detectsPaneLinks: Bool
     @Environment(\.herdrFontScale) private var fontScale
 
-    init(source: String, isStreaming: Bool, id: String? = nil) {
+    init(source: String, isStreaming: Bool, id: String? = nil, detectsPaneLinks: Bool = true) {
         self.source = source
         self.isStreaming = isStreaming
         self.id = id
+        self.detectsPaneLinks = detectsPaneLinks
     }
 
     var body: some View {
@@ -24,6 +26,7 @@ struct PiMarkdownMessageView: View {
                 finalizedContent()
             }
         }
+        .environment(\.detectsPaneResponseLinks, detectsPaneLinks)
         .onChange(of: isStreaming) { wasStreaming, isStreaming in
             guard wasStreaming, !isStreaming, let id else { return }
             PiMarkdownDocumentCache.shared.evictStreaming(id: id)

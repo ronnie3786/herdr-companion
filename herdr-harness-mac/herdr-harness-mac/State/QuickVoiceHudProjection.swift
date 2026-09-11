@@ -15,11 +15,12 @@ enum QuickVoiceHudProjection {
         revealTitles: Bool,
         artifacts: [AgentResultArtifact],
         showAll: Bool,
-        visibleAgentLimit: Int = HerdrHudPlacement.maxChips
+        visibleAgentLimit: Int = HerdrHudPlacement.maxChips,
+        workspaceNames: [String: String] = [:]
     ) -> Projection {
         let base = HerdrHudSessionChips.chips(
             panes: panes, mutedPaneIDs: mutedPaneIDs, dismissed: dismissed,
-            revealTitles: revealTitles, artifacts: artifacts, limit: Int.max
+            revealTitles: revealTitles, artifacts: artifacts, limit: Int.max, workspaceNames: workspaceNames
         )
         var remaining = Dictionary(uniqueKeysWithValues: base.chips.map { ($0.id, $0) })
         let livePanes = Dictionary(panes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -40,8 +41,13 @@ enum QuickVoiceHudProjection {
                 remaining.removeValue(forKey: id)
                 let title = HerdrHudSessionChips.firstVisibleText([livePanes[id]?.displayTitle, existing?.title, task.title])
                     ?? "Voice agent \(index + 1)"
-                let activity = livePanes[id].map(HerdrHudSessionChips.activity(for:))
-                    ?? existing?.activity ?? "Activity details unavailable"
+                let activity: String
+                if status == .done || status == .idle {
+                    activity = HerdrHudSessionChips.firstVisibleText([workspaceNames[id]]) ?? "Workspace unavailable"
+                } else {
+                    activity = livePanes[id].map { HerdrHudSessionChips.activity(for: $0, workspaceName: workspaceNames[id]) }
+                        ?? existing?.activity ?? "Activity details unavailable"
+                }
                 voiceChips.append(.init(
                     id: id,
                     title: revealTitles ? title : "Voice agent \(index + 1)",

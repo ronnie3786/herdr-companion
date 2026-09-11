@@ -88,7 +88,7 @@ struct HerdrDemoTests {
 
         await model.endPiSessionAndClosePane(in: pane)
 
-        #expect(model.toastMessage == "ended pi and closed the pane")
+        #expect(model.toastMessage == "chat closed — tab kept open")
     }
 
     @Test("Demo adds a shell to a tab without network access")

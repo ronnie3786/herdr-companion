@@ -40,11 +40,26 @@ struct HerdrHudSessionChipsTests {
     @Test("A finished session never claims its previous action is still running")
     func staleActivityStopsAtCompletion() throws {
         let done = try pane(id: "p1", status: .done, title: "Actual chat", sessionTitle: "Fix uploads", sessionActivity: "Running tests")
-        let projection = HerdrHudSessionChips.chips(panes: [done], mutedPaneIDs: [], dismissed: [:], revealTitles: true)
+        let projection = HerdrHudSessionChips.chips(panes: [done], mutedPaneIDs: [], dismissed: [:], revealTitles: true,
+                                                   workspaceNames: [done.id: "Upload project"])
         #expect(projection.chips.first?.title == "Actual chat")
-        #expect(projection.chips.first?.activity == "Fix uploads")
+        #expect(projection.chips.first?.activity == "Upload project")
         #expect(projection.chips.first?.statusLabel == "Finished")
         #expect(projection.chips.first?.statusSymbol == "checkmark.circle.fill")
+    }
+
+    @Test("Finished workspace labels stay machine-scoped and private when titles are hidden")
+    func finishedWorkspaceLabels() throws {
+        let first = try pane(id: "w3:p9", status: .done, sessionTitle: "Old activity")
+        let second = first.stamped(machineID: "m2")
+        let names = [first.id: "Project A", second.id: "Project B"]
+        let visible = HerdrHudSessionChips.chips(panes: [first, second], mutedPaneIDs: [], dismissed: [:], revealTitles: true, workspaceNames: names)
+        #expect(Dictionary(uniqueKeysWithValues: visible.chips.map { ($0.id, $0.activity) }) == names)
+        let hidden = HerdrHudSessionChips.chips(panes: [first], mutedPaneIDs: [], dismissed: [:], revealTitles: false, workspaceNames: names)
+        #expect(hidden.chips.first?.activity == "Activity hidden")
+        #expect(HerdrHudSessionChips.activity(for: first) == "Workspace unavailable")
+        #expect(HerdrHudSessionChips.activity(for: first, workspaceName: "  ") == "Workspace unavailable")
+        #expect(HerdrHudSessionChips.activity(for: first, workspaceName: "Renamed project") == "Renamed project")
     }
 
     @Test("Activity changes invalidate pane projections even when the revision is unchanged")

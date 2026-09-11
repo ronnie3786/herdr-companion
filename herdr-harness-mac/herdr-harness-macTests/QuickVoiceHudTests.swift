@@ -106,6 +106,18 @@ struct QuickVoiceHudTests {
         #expect(project(notes: [note], panes: [done]).chips.first?.detail == "Finished")
     }
 
+    @Test("Finished voice bubbles show their workspace instead of the old activity")
+    func finishedWorkspace() throws {
+        let done = try makePane(status: "done", sessionTitle: "Old activity")
+        let result = QuickVoiceHudProjection.chips(
+            panes: [done], notes: [makeNote(statuses: ["done"], jobStatus: "done")],
+            mutedPaneIDs: [], dismissed: [:], revealTitles: true, artifacts: [], showAll: true,
+            workspaceNames: [done.id: "Notifications project"]
+        )
+        #expect(result.chips.first?.activity == "Notifications project")
+        #expect(result.chips.first?.statusLabel == "Finished")
+    }
+
     @Test("A reused pane's live status wins over an older completed voice request")
     func resumedAgent() throws {
         let result = project(notes: [makeNote(statuses: ["done"], jobStatus: "done")], panes: [try makePane(status: "working")])

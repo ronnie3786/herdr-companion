@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct ChatColorLegendRow: View {
-    static let rowHeight: CGFloat = 56
-    static let titleSize: CGFloat = 15
+    static let rowHeight: CGFloat = 56 * 0.9
+    static let titleSize: CGFloat = 14
 
     let model: HerdrAppModel
     let color: ChatTabColor

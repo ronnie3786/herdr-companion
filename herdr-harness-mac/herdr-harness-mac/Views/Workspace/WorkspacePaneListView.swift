@@ -119,7 +119,12 @@ struct WorkspacePaneListView: View {
                     .foregroundStyle(HerdrTheme.mist)
             }
             .contextMenu { ChatTabColorMenu(store: model.chatTabColors, tabID: tab.id) }
-            paneRows(panes)
+            if panes.count == 1, let pane = panes.first, pane.reservedShell {
+                ReservedShellView(model: model, pane: pane, openPane: { selectPane(pane) })
+                    .frame(minHeight: 260)
+            } else {
+                paneRows(panes)
+            }
         }
     }
 

@@ -959,49 +959,55 @@ final class HerdrAppModel {
         }
     }
 
+    private(set) var paneLifecycleBusyIDs: Set<String> = []
+
     func endPiSessionAndClosePane(in pane: HerdrPane) async {
         noteUserInteraction(machineID: pane.machineID)
         if isDemoMode {
-            toastMessage = "ended pi and closed the pane"
+            toastMessage = "chat closed — tab kept open"
             return
         }
-        guard canControl(machineID: pane.machineID),
-              let currentPane = self.pane(id: pane.id),
-              let client = client(forMachine: pane.machineID) else { return }
-
-        guard currentPane.piSemantic?.connected == true else {
-            await close(currentPane)
-            return
-        }
+        guard canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID),
+              paneLifecycleBusyIDs.insert(pane.id).inserted else { return }
+        defer { paneLifecycleBusyIDs.remove(pane.id) }
+        let generation = connectionGeneration
+        let wasSelected = selectedPaneID == pane.id
+        toastMessage = "Ending Pi and keeping the tab…"
         do {
-            try await client.sendText(toPane: pane.paneID, text: "/quit", submit: true)
+            let result = try await client.retirePiPane(pane, requestID: UUID().uuidString)
+            try await refresh(machineID: pane.machineID, using: client, showSpinner: false, expectedGeneration: generation)
+            guard generation == connectionGeneration else { return }
+            if wasSelected && (selectedPaneID == nil || selectedPaneID == pane.id) {
+                openPane(id: MachineScopedID.compose(machineID: pane.machineID, rawID: result.nextPaneID))
+            }
+            toastMessage = result.warnings.first ?? "chat closed — tab kept open"
         } catch {
+            // Reconcile uncertain outcomes without ever falling back to DELETE.
+            try? await refresh(machineID: pane.machineID, using: client, showSpinner: false, expectedGeneration: generation)
+            guard generation == connectionGeneration else { return }
+            toastMessage = nil
             errorMessage = error.localizedDescription
-            return
         }
+    }
 
-        for _ in 0..<12 {
-            do {
-                try await refresh(
-                    machineID: pane.machineID,
-                    using: client,
-                    showSpinner: false,
-                    expectedGeneration: connectionGeneration
-                )
-            } catch {
-                break
-            }
-            guard let refreshedPane = self.pane(id: pane.id) else {
-                toastMessage = "ended pi and closed the pane"
-                return
-            }
-            if refreshedPane.piSemantic?.connected != true {
-                await close(refreshedPane)
-                return
-            }
-            try? await Task.sleep(for: .milliseconds(250))
+    func openReservedShell(in pane: HerdrPane, startPi: Bool) async {
+        noteUserInteraction(machineID: pane.machineID)
+        guard pane.reservedShell, canControl(machineID: pane.machineID),
+              let client = client(forMachine: pane.machineID),
+              paneLifecycleBusyIDs.insert(pane.id).inserted else { return }
+        defer { paneLifecycleBusyIDs.remove(pane.id) }
+        let generation = connectionGeneration
+        do {
+            try await client.openReservedShell(pane, startPi: startPi)
+            try await refresh(machineID: pane.machineID, using: client, showSpinner: false, expectedGeneration: generation)
+            guard generation == connectionGeneration else { return }
+            toastMessage = startPi ? "started a new pi chat" : "opened the shell"
+        } catch {
+            try? await refresh(machineID: pane.machineID, using: client, showSpinner: false, expectedGeneration: generation)
+            guard generation == connectionGeneration else { return }
+            errorMessage = error.localizedDescription
         }
-        toastMessage = "pi didn't quit — pane left open"
     }
 
     @discardableResult
@@ -1026,6 +1032,12 @@ final class HerdrAppModel {
                 .sorted(by: { $0.paneID < $1.paneID })
                 .last
         else { return }
+        if let reserved = workspace.panes.first(where: { $0.scopedTabID == tab.id && $0.reservedShell }),
+           command == nil || command == "pi" {
+            await openReservedShell(in: reserved, startPi: command != nil)
+            openPane(id: reserved.id)
+            return
+        }
         do {
             let newPaneID = try await client.splitPane(id: source.paneID, direction: "right")
             if let command, let newPaneID {

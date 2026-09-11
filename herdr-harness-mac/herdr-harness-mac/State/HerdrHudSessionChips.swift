@@ -102,7 +102,8 @@ enum HerdrHudSessionChips {
         dismissed: [String: HudChipDismissal],
         revealTitles: Bool,
         artifacts: [AgentResultArtifact] = [],
-        limit: Int = HerdrHudPlacement.maxChips
+        limit: Int = HerdrHudPlacement.maxChips,
+        workspaceNames: [String: String] = [:]
     ) -> (chips: [Chip], overflow: Int, detachedArtifacts: [AgentResultArtifact]) {
         // Use the same session identity as Chat, including runs promoted into
         // panes and panes reused by a different Pi session.
@@ -162,7 +163,7 @@ enum HerdrHudSessionChips {
                 since: since(for: pane),
                 artifacts: sortedArtifacts(paneArtifacts[pane.id] ?? []),
                 emoji: revealTitles ? (firstVisibleText([pane.sessionEmoji]) ?? "💬") : "💬",
-                activity: revealTitles ? activity(for: pane) : "Activity hidden"
+                activity: revealTitles ? activity(for: pane, workspaceName: workspaceNames[pane.id]) : "Activity hidden"
             )
         }
         let ownedArtifactIDs = Set(paneArtifacts.values.flatMap { $0.map(\.id) })
@@ -217,10 +218,13 @@ enum HerdrHudSessionChips {
         return Dictionary(uniqueKeysWithValues: newest.map { ($0.key, $0.value) })
     }
 
-    /// Live activity describes what Pi is doing. The topic summary is a useful
-    /// fallback for older bridges, but never replaces the actual chat name.
-    static func activity(for pane: HerdrPane) -> String {
-        firstVisibleText([
+    /// Finished/seen sessions show their project, not yesterday's activity.
+    /// Keep the title privacy gate at the projection boundary.
+    static func activity(for pane: HerdrPane, workspaceName: String? = nil) -> String {
+        if pane.agentStatus == .done || pane.agentStatus == .idle {
+            return firstVisibleText([workspaceName]) ?? "Workspace unavailable"
+        }
+        return firstVisibleText([
             pane.agentStatus == .working ? pane.sessionActivity : nil,
             pane.sessionTitle,
         ]) ?? "Activity details unavailable"

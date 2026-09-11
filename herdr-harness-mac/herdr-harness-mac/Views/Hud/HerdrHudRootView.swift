@@ -23,7 +23,10 @@ struct HerdrHudRootView: View {
             revealTitles: model.showSessionTitles,
             artifacts: model.unopenedResultArtifacts,
             showAll: controller.isShowingAllChips,
-            visibleAgentLimit: controller.visibleAgentLimit
+            visibleAgentLimit: controller.visibleAgentLimit,
+            workspaceNames: Dictionary(model.workspaces.flatMap { workspace in
+                workspace.panes.map { ($0.id, workspace.label) }
+            }, uniquingKeysWith: { first, _ in first })
         )
     }
 

@@ -363,6 +363,7 @@ def api_description() -> dict:
         "ok": True,
         "service": "herdr-harness",
         "version": 1,
+        "capabilities": ["pane-retirement-v1"],
         "endpoints": {
             "health": "/api/v1/health",
             "network": "/api/v1/network",
@@ -397,6 +398,8 @@ def api_description() -> dict:
             "paneStream": "/api/v1/panes/{paneId}/stream",
             "paneStar": "/api/v1/panes/{paneId}/star",
             "paneAlertsRead": "/api/v1/panes/{paneId}/alerts/read",
+            "paneRetirement": "/api/v1/panes/{paneId}/end-pi-and-close",
+            "reservedShell": "/api/v1/panes/{paneId}/reserved-shell",
             "piSnapshot": "/api/v1/panes/{paneId}/pi/snapshot",
             "piEvents": "/api/v1/panes/{paneId}/pi/events",
             "piModels": "/api/v1/panes/{paneId}/pi/models",
@@ -438,6 +441,7 @@ def api_description() -> dict:
             "POST /api/v1/panes/{paneId}/git/stage|git/unstage|git/open",
             "POST /api/v1/panes/{paneId}/focus|zoom|split|send-text|send-keys|run|prompt|start-agent",
             "POST /api/v1/panes/{paneId}/star",
+            "POST /api/v1/panes/{paneId}/end-pi-and-close|reserved-shell",
             "POST /api/v1/panes/{paneId}/alerts/read",
             "POST /api/v1/panes/{paneId}/pi/prompt|steer|follow-up|abort|model|thinking-level",
             "POST /api/v1/panes/{paneId}/pi/interactions/{interactionId}/respond",
@@ -1485,6 +1489,23 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     return service.invoke("pane.close", {"pane_id": pane_id})
                 if method == "POST" and len(tail) == 3:
                     action = tail[2]
+                    if action == "end-pi-and-close":
+                        request_id = _string(body.get("requestId"), "requestId", maximum=128)
+                        terminal_id = _identifier(_string(body.get("terminalId"), "terminalId", maximum=256), "terminal ID")
+                        session_id = body.get("sessionId")
+                        if session_id is not None:
+                            session_id = _string(session_id, "sessionId", maximum=256)
+                        return service.pane_lifecycle.retire(
+                            pane_id, request_id=request_id, terminal_id=terminal_id, session_id=session_id,
+                        )
+                    if action == "reserved-shell":
+                        terminal_id = _identifier(_string(body.get("terminalId"), "terminalId", maximum=256), "terminal ID")
+                        reserved_action = body.get("action")
+                        if not isinstance(reserved_action, str) or reserved_action not in {"shell", "pi"}:
+                            raise HTTPValidationError("action must be shell or pi")
+                        return service.pane_lifecycle.open_reserved_shell(
+                            pane_id, terminal_id=terminal_id, action=reserved_action,
+                        )
                     if action == "focus":
                         return service.invoke("pane.focus", {"pane_id": pane_id})
                     if action == "zoom":
@@ -1917,10 +1938,14 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     if isinstance(pane, dict) and str(pane.get("tab_id")) == str(tab_id)
                 ) != 1:
                     return False
-                try:
-                    service.invoke("tab.rename", {"tab_id": tab_id, "label": label})
-                except HerdrClientError:
-                    return False
+                previous_label = next((tab.get("label") for tab in snapshot.get("tabs", [])
+                                       if isinstance(tab, dict) and tab.get("tab_id") == tab_id), None)
+                # Bypass explicit-rename provenance invalidation for this
+                # automatic fan-out, while keeping the placement lock.
+                with service._quick_session_lock:
+                    service._request_native("tab.rename", {"tab_id": tab_id, "label": label})
+                    service.pane_lifecycle.record_tab_rename(tab_id, pane_id, label, previous_label)
+                    service.refresh_snapshot(force=True)
                 return True
             except Exception:
                 return False

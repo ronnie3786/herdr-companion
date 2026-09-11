@@ -29,6 +29,7 @@ from .normalization import composite_workspaces, pane_index
 from .notes import NotesStore
 from .pi_semantic import PiSemanticError, PiSemanticManager, valid_pi_session_id
 from .panes_seen import PaneFirstSeenStore
+from .pane_lifecycle import PaneLifecycle
 from .push_notifications import APNsManager
 from .quick_voice import QuickVoiceManager
 from .remote_activity import RemoteActivityPoller
@@ -197,7 +198,10 @@ class HerdrService:
         self._quick_voice_recovery_enabled = production_environment or "HERDR_QUICK_VOICE_STORE_PATH" in self.environ
         self._quick_voice_lock = threading.Lock()
         self._lock = threading.RLock()
-        self._quick_session_lock = threading.Lock()
+        # Serialize Companion placement/retirement mutations. Native clients
+        # remain independent and are handled with fresh identity checks.
+        self._quick_session_lock = threading.RLock()
+        self._pane_lifecycle: Optional[PaneLifecycle] = None
         self._quick_session_results: dict[str, tuple[float, str, dict]] = {}
         self._quick_session_idempotency_ttl = _bounded_environment_int(
             self.environ,
@@ -248,6 +252,16 @@ class HerdrService:
             maximum=86400,
         )
         self._terminal_slots = threading.BoundedSemaphore(self._terminal_limit)
+
+    @property
+    def pane_lifecycle(self) -> PaneLifecycle:
+        with self._lock:
+            if self._pane_lifecycle is None:
+                path = self.environ.get("HERDR_HARNESS_PANE_LIFECYCLE_STORE_PATH")
+                if not path and self.environ.get("HOME"):
+                    path = str(Path(self.environ["HOME"]) / ".config/herdr-harness/pane-lifecycle.sqlite3")
+                self._pane_lifecycle = PaneLifecycle(self, path)
+            return self._pane_lifecycle
 
     @property
     def result_artifact_store(self) -> result_artifacts.ResultArtifactStore:
@@ -593,6 +607,7 @@ class HerdrService:
             if self._events_connected:
                 self._last_error = None
         self.pi_semantic.sync_snapshot(snapshot)
+        self.pane_lifecycle.observe(snapshot)
         self.agent_activity.sync_session_activity({
             pane_id: str((pane.get("agent_info") or {}).get("agent_status") or pane.get("agent_status") or "unknown")
             for pane_id, pane in pane_index(snapshot).items()
@@ -734,6 +749,7 @@ class HerdrService:
         enriched = self.pi_semantic.enrich_snapshot(snapshot)
         for pane in enriched.get("panes", []):
             if isinstance(pane, dict):
+                self.pane_lifecycle.enrich(pane)
                 pane.update(self.session_labels.label_for(str(pane.get("pane_id") or "")))
                 activity = self.agent_activity.session_activity(
                     str(pane.get("pane_id") or ""), status=str(pane.get("agent_status") or "unknown"),
@@ -761,6 +777,7 @@ class HerdrService:
                 if not isinstance(pane, dict):
                     continue
                 pane_id = str(pane.get("pane_id"))
+                self.pane_lifecycle.enrich(pane)
                 pane.update(self.session_labels.label_for(pane_id))
                 if pane.get("agent_status") == "done" and pane_id in acked_done_panes:
                     pane["agent_status"] = "idle"
@@ -1644,12 +1661,14 @@ class HerdrService:
         return result
 
     def invoke(self, method: str, params: dict) -> dict:
-        result = self._request_native(method, params)
-        try:
-            self.refresh_snapshot()
-        except HerdrClientError:
-            pass
-        return {"ok": True, "result": result}
+        with self._quick_session_lock:
+            self.pane_lifecycle.before_mutation(method, params)
+            result = self._request_native(method, params)
+            try:
+                self.refresh_snapshot()
+            except HerdrClientError:
+                pass
+            return {"ok": True, "result": result}
 
     def pi_extension_args(self) -> list[str]:
         from .resources import pi_extension_path
@@ -2381,6 +2400,15 @@ class HerdrService:
                             "tab.rename",
                             {"tab_id": tab_id, "label": tab_label or QUICK_PI_TAB_LABEL},
                         )
+                elif existing_tab is not None and (reserved_pane_id := self.pane_lifecycle.take_reserved_for_pi(
+                    snapshot, str(existing_tab.get("tab_id") or ""), target_cwd,
+                )) is not None:
+                    tab_id = str(existing_tab["tab_id"])
+                    pane_id = reserved_pane_id
+                    # This is the tab's existing anchor, not a disposable split.
+                    # A failed/uncertain agent launch must never roll it back.
+                    if focus:
+                        self._request_native("pane.focus", {"pane_id": pane_id})
                 elif existing_tab is not None:
                     tab_id = str(existing_tab.get("tab_id") or "")
                     anchor = self._quick_anchor_pane(snapshot, tab_id)

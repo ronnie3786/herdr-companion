@@ -11,6 +11,10 @@ struct ChatSelectableText: NSViewRepresentable {
     @Environment(\.saveChatQuote) private var saveQuote
     @Environment(\.chatQuoteSource) private var source
 
+    func makeCoordinator() -> ChatTextLinkDelegate {
+        ChatTextLinkDelegate(openURL: environment.openURL)
+    }
+
     func makeNSView(context: Context) -> ChatTextLayoutView {
         let view = ChatTextLayoutView()
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -21,6 +25,8 @@ struct ChatSelectableText: NSViewRepresentable {
 
     func updateNSView(_ layoutView: ChatTextLayoutView, context: Context) {
         let view = layoutView.textView
+        context.coordinator.openURL = environment.openURL
+        view.delegate = context.coordinator
         let baseFont = font.resolve(in: environment.fontResolutionContext).ctFont as NSFont
         let result = NSMutableAttributedString(attributedString: NSAttributedString(text))
         let fullRange = NSRange(location: 0, length: result.length)
@@ -50,7 +56,8 @@ struct ChatSelectableText: NSViewRepresentable {
         nsView.measuredSize(width: proposal.width)
     }
 
-    static func dismantleNSView(_ view: ChatTextLayoutView, coordinator: ()) {
+    static func dismantleNSView(_ view: ChatTextLayoutView, coordinator: ChatTextLinkDelegate) {
         view.textView.quotePopover?.close()
+        view.textView.delegate = nil
     }
 }

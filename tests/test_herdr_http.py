@@ -35,6 +35,8 @@ class FakeCleanup:
 class FakeHTTPService:
     def __init__(self):
         self.environ = {}
+        self._quick_session_lock = threading.RLock()
+        self.pane_lifecycle = Mock()
         self.broker = EventBroker()
         self.pi_semantic = FakePiSemantic()
         self.pi_command_error = None
@@ -270,6 +272,12 @@ class FakeHTTPService:
                 },
             }
         return {"ok": True, "result": {"type": "ok", "method": method}}
+
+    def _request_native(self, method, params):
+        return self.invoke(method, params)["result"]
+
+    def refresh_snapshot(self, *, force=False):
+        return self.snapshot
 
     def pi_extension_args(self):
         self.pi_extension_args_calls += 1
@@ -565,6 +573,34 @@ class HerdrHTTPTests(unittest.TestCase):
                 return response.status, response.headers, json.loads(response.read())
         except urllib.error.HTTPError as exc:
             return exc.code, exc.headers, json.loads(exc.read())
+
+    def test_pane_retirement_is_advertised_authenticated_and_identity_bound(self):
+        description = self.request("/api/v1")[2]
+        self.assertIn("pane-retirement-v1", description["capabilities"])
+        path = "/api/v1/panes/w1:p1/end-pi-and-close"
+        payload = {"requestId": "synthetic-request", "terminalId": "term_1", "sessionId": "synthetic-session"}
+        self.service.pane_lifecycle.retire.return_value = {"ok": True, "nextPaneId": "w1:p2"}
+        self.assertEqual(self.request(path, method="POST", payload=payload, token=None)[0], 401)
+        self.service.pane_lifecycle.retire.assert_not_called()
+        for invalid in ({}, {**payload, "terminalId": 123}, {**payload, "sessionId": {}}, {**payload, "requestId": ""}):
+            self.assertEqual(self.request(path, method="POST", payload=invalid)[0], 400)
+        self.service.pane_lifecycle.retire.assert_not_called()
+        self.assertEqual(self.request(path, method="POST", payload=payload)[0], 200)
+        self.service.pane_lifecycle.retire.assert_called_once_with(
+            "w1:p1", request_id="synthetic-request", terminal_id="term_1", session_id="synthetic-session",
+        )
+        self.assertEqual(self.service.calls, [])
+
+    def test_reserved_shell_actions_validate_before_dispatch(self):
+        path = "/api/v1/panes/w1:p2/reserved-shell"
+        self.service.pane_lifecycle.open_reserved_shell.return_value = {"ok": True}
+        payload = {"terminalId": "term_2", "action": "pi"}
+        self.assertEqual(self.request(path, method="POST", payload=payload, token=None)[0], 401)
+        for action in (None, {}, [], "other"):
+            self.assertEqual(self.request(path, method="POST", payload={**payload, "action": action})[0], 400)
+        self.service.pane_lifecycle.open_reserved_shell.assert_not_called()
+        self.assertEqual(self.request(path, method="POST", payload=payload)[0], 200)
+        self.service.pane_lifecycle.open_reserved_shell.assert_called_once_with("w1:p2", terminal_id="term_2", action="pi")
 
     def test_hud_chat_routes_keep_auth_and_profile_validation(self):
         self.service.agent_runs = Mock()

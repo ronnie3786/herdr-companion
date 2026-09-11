@@ -107,7 +107,7 @@ struct ComposerPasteIntegrationTests {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.minimumTextHeight = 0.005
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try HerdrOCR.perform(request, image: image)
         let label = try #require(request.results?.first { $0.topCandidates(1).first?.string.lowercased().contains("paste") == true })
         let text = try #require(label.topCandidates(1).first)
         let range = try #require(text.string.lowercased().range(of: "paste"))

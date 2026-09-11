@@ -66,7 +66,7 @@ struct PaneSessionView: View {
             }
         }
         .task(id: followTaskID) {
-            guard scenePhase == .active else { return }
+            guard scenePhase == .active, !currentPane.reservedShell else { return }
             await followOutput()
         }
         .task(id: manualRefreshTaskID) {
@@ -167,7 +167,11 @@ struct PaneSessionView: View {
                 unavailableMode("Chat", systemImage: "bubble.left.and.bubble.right")
             }
         case .terminal:
-            terminalContent
+            if currentPane.reservedShell {
+                ReservedShellView(model: model, pane: currentPane)
+            } else {
+                terminalContent
+            }
         case .git:
             if let workspace {
                 WorkspaceGitView(
@@ -277,7 +281,7 @@ struct PaneSessionView: View {
     }
 
     private var followTaskID: String {
-        "\(pane.id):\(model.connectionGeneration):\(scenePhase == .active)"
+        "\(pane.id):\(model.connectionGeneration):\(scenePhase == .active):reserved=\(currentPane.reservedShell)"
     }
 
     private var manualRefreshTaskID: String {

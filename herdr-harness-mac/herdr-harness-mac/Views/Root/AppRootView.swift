@@ -426,6 +426,7 @@ struct AppRootView: View {
             statusHapticTracker.recordRefresh(statuses: agentStatuses)
         }
         .herdrHaptic(trigger: hapticPulse)
+        .environment(\.openResponsePane, openPane)
         .onOpenURL(perform: openURL)
         .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
             if let url = activity.webpageURL {

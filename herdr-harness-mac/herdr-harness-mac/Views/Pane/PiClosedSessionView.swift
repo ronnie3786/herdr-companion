@@ -54,14 +54,14 @@ private struct PiClosedSessionEntryView: View {
         if entry.role == "You" || entry.role == "Pi" {
             VStack(alignment: .leading, spacing: 6) {
                 Text(entry.role).herdrFont(.caption, weight: .semibold).foregroundStyle(HerdrTheme.muted)
-                PiMarkdownMessageView(source: entry.text, isStreaming: false, id: "closed-\(sessionID)-\(entry.id)")
+                PiMarkdownMessageView(source: entry.text, isStreaming: false, id: "closed-\(sessionID)-\(entry.id)", detectsPaneLinks: entry.role == "Pi")
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(entry.role == "You" ? HerdrTheme.elevated : .clear, in: .rect(cornerRadius: 10))
         } else {
             DisclosureGroup(entry.role) {
-                PiMarkdownMessageView(source: entry.text, isStreaming: false, id: "closed-\(sessionID)-\(entry.id)")
+                PiMarkdownMessageView(source: entry.text, isStreaming: false, id: "closed-\(sessionID)-\(entry.id)", detectsPaneLinks: false)
             }.herdrFont(.caption).foregroundStyle(HerdrTheme.muted)
         }
     }

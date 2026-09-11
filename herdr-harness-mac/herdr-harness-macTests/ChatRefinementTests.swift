@@ -79,7 +79,7 @@ struct ChatRefinementTests {
             request.recognitionLevel = .accurate
             request.recognitionLanguages = ["en-US"]
             request.minimumTextHeight = 0.005
-            try VNImageRequestHandler(cgImage: image).perform([request])
+            try HerdrOCR.perform(request, image: image)
             visibleText += (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ") + " "
         }
         #expect(visibleText.contains("Previous session"))

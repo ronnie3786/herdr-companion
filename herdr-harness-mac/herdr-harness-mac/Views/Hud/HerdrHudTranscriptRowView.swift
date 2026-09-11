@@ -19,6 +19,10 @@ struct HerdrHudTranscriptRowView: View {
             }
             answer
                 .environment(\.saveChatQuote, quoteAction)
+                .paneResponseLinks(model: model, sourceMachineID: exchange.machineID) { paneID in
+                    collapse()
+                    openPaneInMainWindow(paneID)
+                }
             HerdrHudInlineResultArtifactsView(model: model, exchange: exchange)
             if isCompletedResponse {
                 footer

@@ -4,6 +4,8 @@ import SwiftUI
 struct PiMarkdownText: View {
     let source: String
     @Environment(\.saveChatQuote) private var saveQuote
+    @Environment(\.paneResponseLinkCatalog) private var paneLinks
+    @Environment(\.detectsPaneResponseLinks) private var detectsPaneLinks
     let font: Font
     let cacheRenderedText: Bool
     var inlineCodeFont: Font? = nil
@@ -57,11 +59,17 @@ struct PiMarkdownText: View {
             styled = rendered
         }
 
+        let linked: AttributedString
+        if detectsPaneLinks, let paneLinks {
+            linked = PaneResponseLinker.link(styled, catalog: paneLinks)
+        } else {
+            linked = styled
+        }
         return Group {
             if saveQuote != nil {
-                ChatSelectableText(text: styled, font: font)
+                ChatSelectableText(text: linked, font: font)
             } else {
-                Text(styled)
+                Text(linked)
                     .font(font)
                     .foregroundStyle(HerdrTheme.text)
                     .tint(HerdrTheme.accent)

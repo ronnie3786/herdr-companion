@@ -68,7 +68,7 @@ struct HudSessionRefinementTests {
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
             request.minimumTextHeight = 0.005
-            try VNImageRequestHandler(url: render.url).perform([request])
+            try HerdrOCR.perform(request, url: render.url)
             let visible = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
             #expect(visible.contains(showsCost ? "$0.37" : "Sonnet 4.5"))
             #expect(visible.contains(showsCost ? "$1.24" : "Opus 4.5"))

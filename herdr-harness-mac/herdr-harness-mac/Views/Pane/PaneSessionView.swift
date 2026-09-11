@@ -90,7 +90,6 @@ struct PaneSessionView: View {
                 )
                     .padding(.horizontal, 24)
                     .padding(.vertical, 10)
-                    .background(model.chatTabColors.color(for: currentPane.scopedTabID)?.paneBackground ?? .clear)
 
                 modeContent
             }
@@ -261,8 +260,7 @@ struct PaneSessionView: View {
                     focusRequest: composerFocusRequest,
                     interactionResponder: piInteractionResponder,
                     modelFavorites: modelFavorites,
-                    quotes: $composerQuotes,
-                    tabColor: model.chatTabColors.color(for: currentPane.scopedTabID)
+                    quotes: $composerQuotes
                 )
                     .equatable()
                     .transition(.opacity)

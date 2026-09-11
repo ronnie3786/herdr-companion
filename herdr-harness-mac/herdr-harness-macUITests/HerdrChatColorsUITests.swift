@@ -30,17 +30,18 @@ final class HerdrChatColorsUITests: HerdrUITestCase {
         app.buttons["chat-color-rename-lavender"].click()
         let input = app.textFields["chat-color-label-input-lavender"]
         XCTAssertTrue(input.waitForExistence(timeout: 3))
-        input.typeKey("a", modifierFlags: .command)
-        input.typeText("GARDEN-42 Irrigation")
-        input.typeKey(.return, modifierFlags: [])
+        // Send to the current responder, not the text-field element: element
+        // typing can focus it implicitly and mask the pencil's focus regression.
+        app.typeText("GARDEN-42 Irrigation")
+        app.typeKey(.return, modifierFlags: [])
         XCTAssertTrue(label.waitForExistence(timeout: 3))
         XCTAssertTrue(label.label.contains("GARDEN-42 Irrigation"))
         XCTAssertTrue(other.waitForNonExistence(timeout: 3), "Renaming must preserve the active filter")
 
         app.buttons["chat-color-rename-lavender"].click()
-        input.typeKey("a", modifierFlags: .command)
-        input.typeText("Discard this edit")
-        input.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(input.waitForExistence(timeout: 3))
+        app.typeText("Discard this edit")
+        app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(label.label.contains("GARDEN-42 Irrigation"))
         label.click()
         XCTAssertTrue(other.waitForExistence(timeout: 3), "Click again clears the filter")

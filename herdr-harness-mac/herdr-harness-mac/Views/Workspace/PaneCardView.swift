@@ -3,7 +3,6 @@ import SwiftUI
 struct PaneCardView: View {
     let pane: HerdrPane
     let isSelected: Bool
-    var tabColor: ChatTabColor?
     var colorLabel: String?
 
     var body: some View {
@@ -47,7 +46,7 @@ struct PaneCardView: View {
                 .foregroundStyle(HerdrTheme.muted)
         }
         .padding(15)
-        .background(tabColor?.rowBackground(selected: isSelected) ?? (isSelected ? HerdrTheme.selection : HerdrTheme.elevated))
+        .background(isSelected ? HerdrTheme.selection : HerdrTheme.elevated)
         .clipShape(.rect(cornerRadius: HerdrTheme.cardRadius))
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)

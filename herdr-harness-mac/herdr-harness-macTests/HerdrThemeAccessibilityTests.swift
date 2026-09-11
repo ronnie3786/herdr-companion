@@ -36,7 +36,7 @@ struct HerdrThemeAccessibilityTests {
     @Test("Chat color washes preserve secondary text and status contrast, including selection")
     func chatTabColorContrast() throws {
         for color in ChatTabColor.allCases {
-            let surfaces = [color.paneBackground, color.rowBackground(),
+            let surfaces = [color.rowBackground(),
                             color.rowBackground(hovering: true), color.rowBackground(selected: true)]
             for background in surfaces {
                 for foreground in [HerdrTheme.text, HerdrTheme.mist, HerdrTheme.muted,

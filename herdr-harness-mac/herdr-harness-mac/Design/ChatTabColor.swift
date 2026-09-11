@@ -30,7 +30,6 @@ enum ChatTabColor: String, CaseIterable, Codable, Identifiable, Sendable {
     }
 
     var swatch: Color { blended(over: rgb, amount: 0) }
-    var paneBackground: Color { blended(over: 0x20212C, amount: 0.12) }
 
     func rowBackground(selected: Bool = false, hovering: Bool = false) -> Color {
         blended(over: 0x191A23, amount: selected ? 0.20 : hovering ? 0.18 : 0.16)

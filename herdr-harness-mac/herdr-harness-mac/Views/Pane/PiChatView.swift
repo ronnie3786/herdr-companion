@@ -13,7 +13,6 @@ struct PiChatView: View {
     let interactionResponder: PiInteractionResponder
     let modelFavorites: ModelFavoritesStore
     var quotes: Binding<[ChatQuote]> = .constant([])
-    var tabColor: ChatTabColor?
     @State private var hapticPulse = HerdrHapticPulse()
     @State private var responseAudioPlayer = ResponseAudioPlayer()
 
@@ -93,14 +92,14 @@ struct PiChatView: View {
             .padding(.horizontal, 17)
             .padding(.top, 8)
             .padding(.bottom, 10)
-            .background(tabColor?.paneBackground ?? HerdrTheme.graphite)
+            .background(HerdrTheme.graphite)
             .overlay(alignment: .top) {
                 Rectangle()
                     .fill(HerdrTheme.separator)
                     .frame(height: 1)
             }
         }
-        .background(tabColor?.paneBackground ?? HerdrTheme.graphite)
+        .background(HerdrTheme.graphite)
         // Read acknowledgement belongs to explicit session navigation and
         // interaction in PaneSessionView. A mounted chat, incoming document,
         // or completed response alone does not mean the user has read it.
@@ -214,7 +213,6 @@ extension PiChatView: Equatable {
         lhs.model === rhs.model
             && lhs.store === rhs.store
             && lhs.paneID == rhs.paneID
-            && lhs.tabColor == rhs.tabColor
             && lhs.interactionResponseAvailable == rhs.interactionResponseAvailable
             && lhs.composerPane.isEqualIgnoringRevision(to: rhs.composerPane)
             && lhs.workspace.isEqualIgnoringPaneRevisions(to: rhs.workspace)

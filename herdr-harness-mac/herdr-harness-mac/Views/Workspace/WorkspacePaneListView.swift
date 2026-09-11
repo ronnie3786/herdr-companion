@@ -132,7 +132,6 @@ struct WorkspacePaneListView: View {
                     PaneCardView(
                         pane: pane,
                         isSelected: pane.id == model.selectedPaneID,
-                        tabColor: model.chatTabColors.color(for: pane.scopedTabID),
                         colorLabel: model.chatTabColors.color(for: pane.scopedTabID).map { model.chatTabColors.label(for: $0) }
                     )
                 }

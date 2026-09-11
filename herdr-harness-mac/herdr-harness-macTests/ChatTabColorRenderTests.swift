@@ -5,7 +5,7 @@ import Testing
 
 @Suite("Chat color presentation", .serialized) @MainActor
 struct ChatTabColorRenderTests {
-    @Test("Six-color Recents key and tinted conversation lay out in the real native views")
+    @Test("Larger six-color Recents key keeps the conversation background neutral")
     func rendersPaletteAndChat() async throws {
         let suite = "ChatTabColorRenderTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -29,16 +29,17 @@ struct ChatTabColorRenderTests {
                 VStack(spacing: 0) {
                     PaneSessionHeader(model: model, pane: pane, store: store)
                         .padding(20)
-                        .background(ChatTabColor.lavender.paneBackground)
+                        .background(HerdrTheme.graphite)
                     PiChatView(
                         model: model, store: store, paneID: pane.id, interactionResponseAvailable: false,
                         composerPane: pane, workspace: workspace, draft: .constant(""), attachments: .constant([]),
-                        focusRequest: 0, interactionResponder: PiInteractionResponder(), modelFavorites: ModelFavoritesStore(),
-                        tabColor: .lavender
+                        focusRequest: 0, interactionResponder: PiInteractionResponder(), modelFavorites: ModelFavoritesStore()
                     )
                 }
             }
         }
         image.expectSubstantial()
+        #expect(ChatColorLegendRow.rowHeight == CGFloat(HerdrTheme.minHitTarget * 2))
+        #expect(ChatColorLegendRow.titleSize == 15)
     }
 }

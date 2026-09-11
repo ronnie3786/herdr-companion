@@ -1,13 +1,15 @@
 import SwiftUI
 
 struct ChatColorLegendRow: View {
+    static let rowHeight: CGFloat = 56
+    static let titleSize: CGFloat = 15
+
     let model: HerdrAppModel
     let color: ChatTabColor
     let isSelected: Bool
     let select: () -> Void
     @State private var isEditing = false
     @State private var text = ""
-    @FocusState private var isFocused: Bool
 
     private var store: ChatTabColorStore { model.chatTabColors }
     private var isNaming: Bool { store.smartRenaming.contains(color) }
@@ -26,17 +28,12 @@ struct ChatColorLegendRow: View {
                 .foregroundStyle(color.swatch)
                 .accessibilityHidden(true)
             if isEditing {
-                TextField("Color label", text: $text)
-                    .textFieldStyle(.plain)
-                    .focused($isFocused)
-                    .background(InlineTitleClickAway { finish() })
-                    .onSubmit { finish() }
-                    .onExitCommand { finish(cancel: true) }
-                    .onChange(of: isFocused) { _, focused in
-                        if !focused { finish() }
-                    }
-                    .onAppear { isFocused = true }
-                    .accessibilityIdentifier("chat-color-label-input-\(color.rawValue)")
+                ChatColorLabelEditor(
+                    text: $text,
+                    identifier: "chat-color-label-input-\(color.rawValue)",
+                    finish: { finish(cancel: $0) }
+                )
+                .background(InlineTitleClickAway { finish() })
             } else {
                 Button(action: select) {
                     HStack(spacing: 4) {
@@ -49,7 +46,7 @@ struct ChatColorLegendRow: View {
                                 .accessibilityHidden(true)
                         }
                     }
-                    .frame(minHeight: HerdrTheme.minHitTarget)
+                    .frame(minHeight: Self.rowHeight)
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
@@ -62,7 +59,7 @@ struct ChatColorLegendRow: View {
                     .labelStyle(.iconOnly)
                     .buttonStyle(.plain)
                     .foregroundStyle(HerdrTheme.mist)
-                    .frame(width: HerdrTheme.minHitTarget, height: HerdrTheme.minHitTarget)
+                    .frame(width: HerdrTheme.minHitTarget, height: Self.rowHeight)
                     .contentShape(.rect)
                     .help("Edit \(store.label(for: color)) inline")
                     .accessibilityIdentifier("chat-color-rename-\(color.rawValue)")
@@ -72,10 +69,10 @@ struct ChatColorLegendRow: View {
                     .accessibilityLabel("Naming \(color.defaultLabel)")
             }
         }
-        .herdrFont(.caption)
+        .herdrFont(size: Self.titleSize, weight: .medium)
         .foregroundStyle(HerdrTheme.text)
         .padding(.horizontal, 8)
-        .frame(minHeight: HerdrTheme.minHitTarget)
+        .frame(minHeight: Self.rowHeight)
         .background(color.rowBackground(selected: isSelected), in: .rect(cornerRadius: 6))
         .overlay {
             if isSelected {
@@ -110,7 +107,6 @@ struct ChatColorLegendRow: View {
     private func finish(cancel: Bool = false) {
         guard isEditing else { return }
         isEditing = false
-        isFocused = false
         if !cancel, !store.rename(color, to: text) {
             model.toastMessage = "Label unchanged. Use 1–80 characters on one line."
         }

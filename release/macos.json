@@ -1,6 +1,6 @@
 {
-  "build": 24,
+  "build": 25,
   "channel": "preview",
   "preview": 1,
-  "version": "0.10.0"
+  "version": "0.10.1"
 }

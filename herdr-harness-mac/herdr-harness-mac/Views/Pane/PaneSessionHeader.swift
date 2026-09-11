@@ -179,6 +179,7 @@ struct PaneSessionHeader: View {
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: store.compactionActivity)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: store.connection)
         .contextMenu {
+            ChatTabColorMenu(store: model.chatTabColors, tabID: pane.scopedTabID)
             SmartRenamePaneButton(model: model, pane: pane)
             CopyPaneIDButton(pane: pane)
         }

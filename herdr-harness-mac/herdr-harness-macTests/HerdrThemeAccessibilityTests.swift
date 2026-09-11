@@ -33,6 +33,21 @@ struct HerdrThemeAccessibilityTests {
         }
     }
 
+    @Test("Chat color washes preserve secondary text and status contrast, including selection")
+    func chatTabColorContrast() throws {
+        for color in ChatTabColor.allCases {
+            let surfaces = [color.paneBackground, color.rowBackground(),
+                            color.rowBackground(hovering: true), color.rowBackground(selected: true)]
+            for background in surfaces {
+                for foreground in [HerdrTheme.text, HerdrTheme.mist, HerdrTheme.muted,
+                                   HerdrTheme.working, HerdrTheme.success, HerdrTheme.alert] {
+                    #expect(try ratio(foreground, background) >= 4.5, "\(color.defaultLabel) must preserve reading contrast")
+                }
+            }
+            #expect(try ratio(color.swatch, color.rowBackground()) >= 4.5)
+        }
+    }
+
     private func ratio(_ first: Color, _ second: Color) throws -> Double {
         let a = try luminance(first)
         let b = try luminance(second)

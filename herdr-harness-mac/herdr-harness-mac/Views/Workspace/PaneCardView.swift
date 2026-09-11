@@ -3,6 +3,8 @@ import SwiftUI
 struct PaneCardView: View {
     let pane: HerdrPane
     let isSelected: Bool
+    var tabColor: ChatTabColor?
+    var colorLabel: String?
 
     var body: some View {
         HStack(spacing: 13) {
@@ -45,7 +47,7 @@ struct PaneCardView: View {
                 .foregroundStyle(HerdrTheme.muted)
         }
         .padding(15)
-        .background(isSelected ? HerdrTheme.selection : HerdrTheme.elevated)
+        .background(tabColor?.rowBackground(selected: isSelected) ?? (isSelected ? HerdrTheme.selection : HerdrTheme.elevated))
         .clipShape(.rect(cornerRadius: HerdrTheme.cardRadius))
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
@@ -54,6 +56,7 @@ struct PaneCardView: View {
         .contentShape(.rect)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(pane.displayTitle), \(pane.displayAgentName), \(pane.agentStatus.title)")
+        .accessibilityValue(colorLabel.map { "Color group: \($0)" } ?? "No tab color")
         .accessibilityHint("Opens the live terminal")
     }
 }

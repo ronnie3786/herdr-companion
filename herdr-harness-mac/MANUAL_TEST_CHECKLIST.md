@@ -30,6 +30,15 @@ Use your configured Herdr Mac build with sample sessions. Check off each item af
 
 - [ ] **Recording permissions:** In **Settings > Screen & System Audio Recording**, use **Identify this copy of Herdr** and **Test Access**. If access fails, quit Herdr, remove the stale macOS permission entry, add `/Applications/Herdr.app`, enable it, and reopen. The test lists displays, without recording. This adds diagnosis and recovery; macOS still needs your grant, and replacing this build can change its signing identity. [Recovery instructions](RECORDING_PERMISSIONS.md).
 
+## Tab colors and sidebar filtering
+
+These preferences are local to this Mac; no server update is needed.
+
+- [ ] Right-click a tab or a chat in Recents → **Tab color**. Try all six colors. Check the menu swatches, selected checkmark, sidebar row fills, and matching Pi chat/header/composer backgrounds. Sibling chats and new panes in the same tab inherit the color; an identically numbered tab on another machine does not.
+- [ ] Confirm the color key appears below **Filter chats** and above **New session**. Click a label: only matching chats remain, including in Unread, Starred, and workspace groups. Combine with text search, machine scope, and recency. Click again or **Show all colors** to clear. Remove the last matching tab's color while filtered: a clearable empty state remains. **Reveal in Sidebar** clears the color filter.
+- [ ] Click the pencil beside a color label. Enter and clicking away save; Escape cancels. Empty, multiline, or over-80-character labels preserve the previous value with feedback. Right-click → **Smart Rename** with readable Pi chats containing a synthetic Jira key/title. Edit the label or reassign a tab while AI is running: the late result must not replace your change. Failure must retain the old label and clear the spinner.
+- [ ] Relaunch: assignments and custom labels persist. Remove a tab's color: every sibling returns to its normal background, without changing its title, status, or unread state. Check large text, keyboard navigation, VoiceOver color-group labels, and **Differentiate without color** (numbered sidebar symbols).
+
 ## iPhone notification checks
 
 The backend waits until an agent has been **finished or needs attention for 60 seconds unread**, then sends an iPhone notification. Reading, closing, or resuming the session cancels pending delivery. Failed deliveries retry without repeating successful ones.

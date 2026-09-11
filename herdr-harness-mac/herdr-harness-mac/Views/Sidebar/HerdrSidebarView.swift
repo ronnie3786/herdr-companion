@@ -9,6 +9,7 @@ struct HerdrSidebarView: View {
     let openPane: (HerdrPane) -> Void
     let openWorkspace: (HerdrWorkspace) -> Void
     @State private var query = ""
+    @State private var selectedColor: ChatTabColor?
     @State private var isPresentingCreateWorkspace = false
     @State private var isPresentingMachines = false
     @State private var creatingWorkspaceMachineID: String?
@@ -34,16 +35,17 @@ struct HerdrSidebarView: View {
         let isRecentsMode: Bool
         let showsMachineChrome: Bool
 
-        init(model: HerdrAppModel, query: String) {
+        init(model: HerdrAppModel, query: String, colorFilterTabIDs: Set<String>?) {
             if case let .machine(id) = model.machineScope {
                 scopedWorkspaces = model.workspaces.filter { $0.machineID == id }
             } else {
                 scopedWorkspaces = model.workspaces
             }
+            let visibleWorkspaces = ChatTabColorFilter.workspaces(scopedWorkspaces, tabIDs: colorFilterTabIDs)
             isRecentsMode = model.sidebarRecency == .recents
             showsMachineChrome = model.machineScope == .all && model.machines.count > 1
             if isRecentsMode {
-                recentChats = SidebarTree.recentChats(workspaces: scopedWorkspaces, query: query)
+                recentChats = SidebarTree.recentChats(workspaces: visibleWorkspaces, query: query)
                 tree = []
                 machineGroups = []
                 unreadGroups = []
@@ -54,14 +56,14 @@ struct HerdrSidebarView: View {
 
             recentChats = []
             let now = Date()
-            let familyPaneIDs = PiSessionTree(workspaces: scopedWorkspaces).familyPaneIDs
-            let scopedPaneIDs = Set(scopedWorkspaces.flatMap(\.panes).map(\.id))
+            let familyPaneIDs = PiSessionTree(workspaces: visibleWorkspaces).familyPaneIDs
+            let scopedPaneIDs = Set(visibleWorkspaces.flatMap(\.panes).map(\.id))
             // A child's completion or star must not detach it from its parent.
             // Families stay together; unrelated sessions retain priority sections.
             let unreadPaneIDs = model.unreadPaneIDs.intersection(scopedPaneIDs).subtracting(familyPaneIDs)
             let promotedStarredIDs = model.starredChatIDs.subtracting(familyPaneIDs)
             unreadGroups = SidebarTree.unreadGroups(
-                workspaces: scopedWorkspaces,
+                workspaces: visibleWorkspaces,
                 query: query,
                 unreadIDs: unreadPaneIDs,
                 machines: model.machines,
@@ -71,7 +73,7 @@ struct HerdrSidebarView: View {
             staleGroups = model.sidebarRecency == .all
                 ? SidebarTree.staleGroups(
                     machines: model.machines,
-                    workspaces: scopedWorkspaces,
+                    workspaces: visibleWorkspaces,
                     query: query,
                     excludedPaneIDs: unreadPaneIDs.union(familyPaneIDs),
                     now: now
@@ -80,7 +82,7 @@ struct HerdrSidebarView: View {
             let stalePaneIDs = Set(staleGroups.flatMap(\.chats).map(\.id))
             let promotedPaneIDs = unreadPaneIDs.union(stalePaneIDs)
             tree = SidebarTree.build(
-                workspaces: scopedWorkspaces,
+                workspaces: visibleWorkspaces,
                 query: query,
                 collapsedWorkspaceIDs: model.collapsedSidebarWorkspaceIDs,
                 collapsedTabIDs: model.collapsedSidebarTabIDs,
@@ -98,7 +100,7 @@ struct HerdrSidebarView: View {
                 collapsedMachineIDs: model.collapsedSidebarMachineIDs
             )
             starredGroups = SidebarTree.starredGroups(
-                workspaces: scopedWorkspaces,
+                workspaces: visibleWorkspaces,
                 query: query,
                 starredIDs: promotedStarredIDs,
                 machines: model.machines,
@@ -141,6 +143,7 @@ struct HerdrSidebarView: View {
         /// normal sidebar does not invalidate more often for activity changes.
         let recentsDigest: Int
         let query: String
+        let colorFilterTabIDs: Set<String>?
         let machineScope: MachineScope
         let machines: [HerdrMachine]
         let collapsedWorkspaceIDs: Set<String>
@@ -203,6 +206,7 @@ struct HerdrSidebarView: View {
             statusDigest: Self.statusDigest(model.workspaces),
             recentsDigest: model.sidebarRecency == .recents ? Self.recentsDigest(model.workspaces) : 0,
             query: query,
+            colorFilterTabIDs: selectedColor.map { model.chatTabColors.tabIDs(for: $0) },
             machineScope: model.machineScope,
             machines: model.machines,
             collapsedWorkspaceIDs: model.collapsedSidebarWorkspaceIDs,
@@ -223,6 +227,7 @@ struct HerdrSidebarView: View {
             }
 
             WorkspaceSearchField(text: $query, placeholder: "Filter chats")
+            colorLegend(snapshot)
             creationControls
 
             sidebarSectionLabel("Chats", detail: sidebarCountDetail(snapshot.paneCount))
@@ -253,6 +258,7 @@ struct HerdrSidebarView: View {
                           let paneID = model.sidebarRevealPaneID
                     else { return }
                     if !query.isEmpty { query = "" }
+                    selectedColor = nil
                     await Task.yield()
                     guard !Task.isCancelled else { return }
                     withAnimation(.snappy) {
@@ -356,7 +362,7 @@ struct HerdrSidebarView: View {
         if snapshotCache.fingerprint == fingerprint, let cached = snapshotCache.snapshot {
             return cached
         }
-        let rebuilt = SidebarSnapshot(model: model, query: query)
+        let rebuilt = SidebarSnapshot(model: model, query: query, colorFilterTabIDs: fingerprint.colorFilterTabIDs)
         snapshotCache.fingerprint = fingerprint
         snapshotCache.snapshot = rebuilt
         return rebuilt
@@ -638,7 +644,21 @@ struct HerdrSidebarView: View {
 
     @ViewBuilder
     private func workspaceContent(_ snapshot: SidebarSnapshot) -> some View {
-        if snapshot.isRecentsMode {
+        if selectedColor != nil, snapshot.paneCount == 0 {
+            VStack(spacing: 8) {
+                Text("No matching chats")
+                    .foregroundStyle(HerdrTheme.mist)
+                Text("Try another color, search, or recency filter.")
+                    .foregroundStyle(HerdrTheme.muted)
+                    .multilineTextAlignment(.center)
+                Button("Show all colors") { selectedColor = nil }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(HerdrTheme.accent)
+            }
+            .herdrFont(.caption)
+            .frame(maxWidth: .infinity)
+            .padding(.top, 24)
+        } else if snapshot.isRecentsMode {
             if snapshot.recentChats.isEmpty {
                 Text("no recent chats")
                     .herdrFont(.caption)
@@ -717,6 +737,7 @@ struct HerdrSidebarView: View {
                 ForEach(entry.sections) { section in
                     SidebarSectionRow(
                         tab: section.tab,
+                        tabColor: model.chatTabColors.color(for: section.tab.id),
                         isExpanded: section.isExpanded,
                         attentionStatus: tabAttentionStatus(section.tab, in: entry.workspace),
                         workingCount: tabWorkingCounts[section.tab.id, default: 0],
@@ -780,8 +801,41 @@ struct HerdrSidebarView: View {
     }
 
     @ViewBuilder
+    private func colorLegend(_ snapshot: SidebarSnapshot) -> some View {
+        let tabIDs = Set(snapshot.scopedWorkspaces.flatMap { workspace in
+            workspace.tabs.map(\.id) + workspace.panes.map(\.scopedTabID)
+        })
+        let active = model.chatTabColors.activeColors(tabIDs: tabIDs)
+        let colors = ChatTabColor.allCases.filter { active.contains($0) || $0 == selectedColor }
+        if !colors.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                if selectedColor != nil {
+                    Button("Show all colors", systemImage: "line.3.horizontal.decrease.circle") {
+                        selectedColor = nil
+                    }
+                    .buttonStyle(.plain)
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.mist)
+                    .frame(minHeight: HerdrTheme.minHitTarget)
+                    .accessibilityIdentifier("chat-color-filter-clear")
+                }
+                ForEach(colors) { color in
+                    ChatColorLegendRow(model: model, color: color, isSelected: selectedColor == color) {
+                        selectedColor = selectedColor == color ? nil : color
+                    }
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Tab color key")
+            .accessibilityIdentifier("chat-color-legend")
+        }
+    }
+
+    @ViewBuilder
     private func tabMenu(_ tab: HerdrTab, in workspace: HerdrWorkspace) -> some View {
         let firstPane = firstPane(in: tab, workspace: workspace)
+        ChatTabColorMenu(store: model.chatTabColors, tabID: tab.id)
+        Divider()
         Button("Focus on Mac", systemImage: "scope") {
             guard let firstPane else { return }
             Task { await model.focus(firstPane) }
@@ -1022,6 +1076,8 @@ struct HerdrSidebarView: View {
             SidebarChatRow(
                 pane: pane,
                 recentContext: showingLastActivity ? recentContext(for: pane) : nil,
+                tabColor: model.chatTabColors.color(for: pane.scopedTabID),
+                colorLabel: model.chatTabColors.color(for: pane.scopedTabID).map { model.chatTabColors.label(for: $0) },
                 isSelected: pane.id == model.selectedPaneID,
                 isStarred: model.starredChatIDs.contains(pane.id),
                 isUnread: model.unreadPaneIDs.contains(pane.id),
@@ -1076,6 +1132,7 @@ struct HerdrSidebarView: View {
                 Task { await model.sendKeys(["ctrl+c"], to: pane) }
             }
             .disabled(!model.canControl(machineID: pane.machineID))
+            ChatTabColorMenu(store: model.chatTabColors, tabID: pane.scopedTabID)
             CopyPaneIDButton(pane: pane)
             SmartRenamePaneButton(model: model, pane: pane)
             Button("Rename pane", systemImage: "pencil") {

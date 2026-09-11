@@ -188,6 +188,7 @@ struct SidebarMachineRow: View {
 
 struct SidebarSectionRow: View {
     let tab: HerdrTab
+    var tabColor: ChatTabColor?
     let isExpanded: Bool
     var attentionStatus: AgentStatus?
     var workingCount = 0
@@ -203,6 +204,11 @@ struct SidebarSectionRow: View {
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     .animation(.snappy, value: isExpanded)
 
+                if let tabColor {
+                    Image(systemName: tabColor.symbol)
+                        .foregroundStyle(tabColor.swatch)
+                        .accessibilityLabel(tabColor.defaultLabel)
+                }
                 Text(tab.label)
                     .herdrFont(
                         size: SidebarMetrics.tabLabelSize,
@@ -223,7 +229,7 @@ struct SidebarSectionRow: View {
             .padding(.trailing, SidebarMetrics.rowTrailingPadding)
             .frame(minHeight: SidebarMetrics.tabRowHeight)
             .contentShape(Rectangle())
-            .background(isHovering ? HerdrTheme.elevated.opacity(0.6) : .clear, in: .rect(cornerRadius: 6))
+            .background(tabColor?.rowBackground(hovering: isHovering) ?? (isHovering ? HerdrTheme.elevated.opacity(0.6) : .clear), in: .rect(cornerRadius: 6))
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
@@ -259,6 +265,8 @@ struct SidebarChatRow: View {
 
     let pane: HerdrPane
     var recentContext: RecentContext?
+    var tabColor: ChatTabColor?
+    var colorLabel: String?
     let isSelected: Bool
     var isStarred: Bool = false
     var isUnread: Bool = false
@@ -273,15 +281,23 @@ struct SidebarChatRow: View {
     /// tests and any non-interactive host want.
     var toggleStar: (() -> Void)?
     var toggleChildren: (() -> Void)?
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
     @State private var isHovering = false
 
     var body: some View {
         Button(action: action) {
-            Group {
-                if let recentContext {
-                    recentContent(recentContext)
-                } else {
-                    compactContent
+            HStack(spacing: 6) {
+                if differentiateWithoutColor, let tabColor {
+                    Image(systemName: tabColor.symbol)
+                        .foregroundStyle(tabColor.swatch)
+                        .accessibilityHidden(true)
+                }
+                Group {
+                    if let recentContext {
+                        recentContent(recentContext)
+                    } else {
+                        compactContent
+                    }
                 }
             }
             .padding(.leading, recentContext == nil ? leadingPadding : SidebarMetrics.containerLeadingPadding)
@@ -290,6 +306,13 @@ struct SidebarChatRow: View {
             .frame(minHeight: SidebarMetrics.chatRowHeight)
             .contentShape(Rectangle())
             .background(rowBackground, in: .rect(cornerRadius: 6))
+            .overlay {
+                if isSelected, let tabColor {
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(tabColor.swatch.opacity(0.65), lineWidth: 1)
+                        .allowsHitTesting(false)
+                }
+            }
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
@@ -457,6 +480,7 @@ struct SidebarChatRow: View {
     private var accessibilityLabel: String {
         var identity = "\(pane.displayTitle), \(pane.displayAgentName), \(pane.agentStatus.title)"
         if let recentContext { identity += ", \(recentContext.accessibilityLabel)" }
+        if let tabColor { identity += ", color group: \(colorLabel ?? tabColor.defaultLabel) (\(tabColor.defaultLabel))" }
         if let hierarchy {
             if hierarchy.depth > 0 { identity += ", child session, level \(hierarchy.depth)" }
             if let workspace = hierarchy.workspaceLabel { identity += ", workspace \(workspace)" }
@@ -470,6 +494,7 @@ struct SidebarChatRow: View {
     }
 
     private var rowBackground: Color {
+        if let tabColor { return tabColor.rowBackground(selected: isSelected, hovering: isHovering) }
         if isSelected { return HerdrTheme.selection }
         return isHovering ? HerdrTheme.elevated.opacity(0.6) : .clear
     }

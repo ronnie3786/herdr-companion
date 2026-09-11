@@ -118,6 +118,7 @@ struct WorkspacePaneListView: View {
                     .herdrFont(.caption)
                     .foregroundStyle(HerdrTheme.mist)
             }
+            .contextMenu { ChatTabColorMenu(store: model.chatTabColors, tabID: tab.id) }
             paneRows(panes)
         }
     }
@@ -130,10 +131,13 @@ struct WorkspacePaneListView: View {
                 } label: {
                     PaneCardView(
                         pane: pane,
-                        isSelected: pane.id == model.selectedPaneID
+                        isSelected: pane.id == model.selectedPaneID,
+                        tabColor: model.chatTabColors.color(for: pane.scopedTabID),
+                        colorLabel: model.chatTabColors.color(for: pane.scopedTabID).map { model.chatTabColors.label(for: $0) }
                     )
                 }
                 .buttonStyle(.plain)
+                .contextMenu { ChatTabColorMenu(store: model.chatTabColors, tabID: pane.scopedTabID) }
                 .accessibilityIdentifier("pane-\(pane.id)")
             }
         }

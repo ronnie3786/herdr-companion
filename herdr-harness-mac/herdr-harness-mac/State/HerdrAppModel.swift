@@ -130,6 +130,7 @@ final class HerdrAppModel {
     let externalPiLauncher = ExternalPiLauncher()
 
     private let userDefaults: UserDefaults
+    let chatTabColors: ChatTabColorStore
     /// Local sidebar reminder only; never creates alerts or HUD notifications.
     private(set) var manuallyUnreadPaneIDs: Set<String> = []
     @ObservationIgnored private let resultArtifactOpenedLedger: AgentResultArtifactOpenedLedger
@@ -221,6 +222,7 @@ final class HerdrAppModel {
     ) {
         self.credentials = credentials
         self.userDefaults = userDefaults
+        chatTabColors = ChatTabColorStore(defaults: userDefaults)
         promptHistory = PromptHistoryStore(userDefaults: userDefaults)
         let resultArtifactOpenedLedger = AgentResultArtifactOpenedLedger(userDefaults: userDefaults)
         self.resultArtifactOpenedLedger = resultArtifactOpenedLedger
@@ -1780,6 +1782,77 @@ final class HerdrAppModel {
                 return
             }
             await rename(current, label: title)
+        } catch {
+            toastMessage = "Smart Rename failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// Name the shared color label, never the underlying tabs or conversations.
+    func smartRenameChatColor(_ color: ChatTabColor, runner: any HerdrNoteAIRunner = HerdrLiveNoteAIRunner()) async {
+        let panes = workspaces.flatMap(\.panes)
+            .filter { chatTabColors.color(for: $0.scopedTabID) == color }
+            .sorted { $0.id < $1.id }
+        let readable = panes.filter { $0.piSemantic?.sessionID != nil && canControl(machineID: $0.machineID) }
+        guard !readable.isEmpty, chatTabColors.beginSmartRename(color) else { return }
+        defer { chatTabColors.endSmartRename(color) }
+        let revision = chatTabColors.revision(for: color)
+        toastMessage = "Finding a label for \(chatTabColors.label(for: color))…"
+        do {
+            var context = panes.prefix(32).map { pane in
+                let workspace = workspace(containing: pane)
+                let tab = workspace?.tabs.first { $0.id == pane.scopedTabID }
+                return "Tab: \((tab?.label ?? "Untitled").prefix(80)); Chat: \(pane.displayTitle.prefix(80))"
+            }.joined(separator: "\n")
+            // Give each tab a turn before taking extra panes from a single tab.
+            var seenTabs: Set<String> = []
+            let representatives = readable.filter { seenTabs.insert($0.scopedTabID).inserted }
+            let extra = readable.filter { pane in !representatives.contains(where: { $0.id == pane.id }) }
+            var loaded: [HerdrPane] = []
+            for pane in (representatives + extra).prefix(6) {
+                try Task.checkCancellation()
+                do {
+                    let snapshot = try await fetchPiConversationSnapshot(for: pane)
+                    let text = SmartChatColorTitle.conversationContext(from: snapshot)
+                    if snapshot.available, !text.isEmpty {
+                        context += "\nChat \(pane.displayTitle.prefix(80)):\n\(text)"
+                        loaded.append(pane)
+                    }
+                } catch is CancellationError { throw CancellationError() }
+                catch { continue } // One unavailable sibling must not hide the others.
+            }
+            guard let source = loaded.first else {
+                toastMessage = "This color group has no readable Pi conversation to name yet."
+                return
+            }
+            let settings = AgentModelSettings.load(from: userDefaults)
+            let charter = await supportsPromptOverrides(machineID: source.machineID)
+                ? "You name chat groups. Use only supplied text. Never call tools. Return only the requested JSON object."
+                : nil
+            let response = try await runner.run(
+                prompt: SmartChatColorTitle.prompt(context: context), machineID: source.machineID,
+                mode: .ask, model: settings.quickChatModel.isEmpty ? nil : settings.quickChatModel,
+                thinkingLevel: "low", systemPrompt: charter, deadline: .seconds(60),
+                appModel: self, onProgress: { _ in }
+            )
+            try Task.checkCancellation()
+            let currentIDs = Set(workspaces.flatMap(\.panes)
+                .filter { chatTabColors.color(for: $0.scopedTabID) == color }.map(\.id))
+            guard chatTabColors.revision(for: color) == revision,
+                  currentIDs == Set(panes.map(\.id)),
+                  loaded.allSatisfy({ old in
+                      pane(id: old.id)?.piSemantic?.sessionID == old.piSemantic?.sessionID
+                  }) else {
+                toastMessage = "Color group changed while naming it. Your changes were kept."
+                return
+            }
+            guard let title = SmartPaneTitle.parse(response) else {
+                toastMessage = "AI did not return a valid short label. Try Smart Rename again."
+                return
+            }
+            chatTabColors.rename(color, to: title)
+            toastMessage = "Color label renamed"
+        } catch is CancellationError {
+            // Keep the previous label on cancellation.
         } catch {
             toastMessage = "Smart Rename failed: \(error.localizedDescription)"
         }

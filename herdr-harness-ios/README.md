@@ -7,8 +7,9 @@ No other orchestration server is required.
 ## Native mobile interface
 
 The **Agents** tab lists all currently available Pi sessions across machines,
-newest first, without the navigator’s twenty-chat limit. System-font cards show
-the session title, agent name, machine, workspace, tab, and status. Search any
+newest first, without the navigator’s twenty-chat limit. System-font cards lead
+with a prominent workspace heading and tab subtitle, followed by the agent
+session name. Agent type and machine use small labels, with status in the footer. Search any
 of these fields and tap a card to open its session. Offline machines indicate
 that their agent status is last known. Workspace browsing and creation remain
 in the navigator; a card’s context menu also opens its workspace. No server

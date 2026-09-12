@@ -9,11 +9,18 @@ struct AgentSessionCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 10) {
-                Text(session.pane.displayTitle)
-                    .font(.headline)
-                    .foregroundStyle(HerdrTheme.text)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(session.workspace.label)
+                        .font(.title3.bold())
+                        .foregroundStyle(HerdrTheme.text)
+                        .accessibilityLabel("Workspace: \(session.workspace.label)")
+                    Text(session.tabName)
+                        .font(.subheadline)
+                        .foregroundStyle(HerdrTheme.mist)
+                        .accessibilityLabel("Tab: \(session.tabName)")
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 if isUnread {
                     Image(systemName: "circle.fill")
                         .font(.caption2)
@@ -33,18 +40,19 @@ struct AgentSessionCard: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                Label(session.agentName, systemImage: "sparkles")
-                    .accessibilityLabel("Agent: \(session.agentName)")
-                Label(session.machineName, systemImage: "desktopcomputer")
-                    .accessibilityLabel("Machine: \(session.machineName)")
-                Label(session.workspace.label, systemImage: "folder")
-                    .fontWeight(.semibold)
-                    .accessibilityLabel("Workspace: \(session.workspace.label)")
-                Label(session.tabName, systemImage: "rectangle.on.rectangle")
-                    .accessibilityLabel("Tab: \(session.tabName)")
+                Label(session.pane.displayTitle, systemImage: "sparkles")
+                    .font(.body)
+                    .foregroundStyle(HerdrTheme.text)
+
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(session.agentName)
+                        .accessibilityLabel("Agent: \(session.agentName)")
+                    Label(session.machineName, systemImage: "desktopcomputer")
+                        .accessibilityLabel("Machine: \(session.machineName)")
+                }
+                .font(.caption2)
+                .foregroundStyle(HerdrTheme.muted)
             }
-            .font(.subheadline)
-            .foregroundStyle(HerdrTheme.mist)
             .fixedSize(horizontal: false, vertical: true)
 
             Rectangle().fill(HerdrTheme.subtleSeparator).frame(height: 1)

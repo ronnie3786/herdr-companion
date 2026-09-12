@@ -166,9 +166,13 @@ final class HerdrDemoNavigationUITests: XCTestCase {
         navigator.tap()
         let pane = app.buttons["sidebar-pane-\(paneID)"]
         let sidebar = app.scrollViews["herdr-sidebar"]
-        for _ in 0..<12 {
-            if pane.exists, sidebar.frame.contains(CGPoint(x: pane.frame.midX, y: pane.frame.midY)) { break }
-            sidebar.swipeUp()
+        for _ in 0..<16 {
+            let visibleFrame = sidebar.frame.insetBy(dx: 0, dy: 40)
+            if pane.exists, visibleFrame.contains(CGPoint(x: pane.frame.midX, y: pane.frame.midY)) { break }
+            let scrollDown = pane.exists && pane.frame.midY < visibleFrame.minY
+            let start = sidebar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: scrollDown ? 0.4 : 0.6))
+            let end = sidebar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: scrollDown ? 0.6 : 0.4))
+            start.press(forDuration: 0.05, thenDragTo: end)
         }
         XCTAssertTrue(pane.waitForExistence(timeout: 3))
         pane.tap()

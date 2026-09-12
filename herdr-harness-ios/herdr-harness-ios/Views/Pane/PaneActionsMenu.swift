@@ -29,7 +29,10 @@ struct PaneActionsMenu: View {
                         )
                     }
                     .disabled(!modeIsEnabled(mode))
-                    .accessibilityLabel("\(mode.label) view")
+                    .accessibilityLabel(
+                        selectedMode == mode ? "\(mode.label) view, selected" : "\(mode.label) view"
+                    )
+                    .accessibilityHint(modeAccessibilityHint(mode))
                     .accessibilityIdentifier("pane-action-mode-\(mode.rawValue)")
                 }
             }
@@ -182,11 +185,22 @@ struct PaneActionsMenu: View {
         } message: {
             Text("This label is shared with Herdr on your Mac.")
         }
+        .accessibilityValue("\(selectedMode.label) view")
         .accessibilityIdentifier("pane-mode-toggle")
     }
 
     private var availableModes: [PaneDetailMode] {
-        PaneDetailMode.allCases.filter { $0 != .chat || pane.supportsPiSemanticChat }
+        [.chat, .git, .terminal, .skills]
+    }
+
+    private func modeAccessibilityHint(_ mode: PaneDetailMode) -> String {
+        if mode == .chat, !pane.supportsPiSemanticChat {
+            return "Native chat is unavailable for this pane"
+        }
+        if mode == .git, !gitIsAvailable {
+            return "Git is unavailable until this workspace's repository is confirmed"
+        }
+        return "Shows the \(mode.label) view for this pane"
     }
 
     private var isStarred: Bool {

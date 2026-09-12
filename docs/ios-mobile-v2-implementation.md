@@ -1,5 +1,9 @@
 # iOS mobile UI revision 02 — implementation plan
 
+**Follow-up:** [Chat space and visible attachments](ios-chat-space.md) supersedes
+this plan's separate pane-mode row and composer presentation. The original plan
+and its verification record remain below for context.
+
 Status: implemented native slice; full native suite passed on September 12, 2026.
 Planned against `0efbb60` (September 11, 2026).
 `design/ios-mobile-ui-v2-2026-09-11/` is the visual/spec source, not runtime

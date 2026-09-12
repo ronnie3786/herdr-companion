@@ -41,14 +41,6 @@ struct PaneSessionView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
 
-                PaneModeBar(
-                    selection: modeSelection,
-                    supportsChat: currentPane.supportsPiSemanticChat,
-                    gitAvailability: gitAvailability
-                )
-                .padding(.horizontal, 12)
-                .padding(.bottom, 10)
-
                 modeContent
             }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: selectedMode)

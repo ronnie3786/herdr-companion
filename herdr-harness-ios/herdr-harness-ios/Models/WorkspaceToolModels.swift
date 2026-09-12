@@ -267,6 +267,9 @@ struct TerminalAttachment: Equatable, Identifiable, Sendable {
     var status: TerminalAttachmentStatus
     var uploaded: UploadedAttachment?
     var error: String?
+    /// Small encoded preview used only by the native composer UI.
+    /// The original file remains governed by `sourceOwnership` cleanup.
+    var thumbnailData: Data? = nil
 
     var displayName: String {
         let originalName = uploaded?.originalFilename.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

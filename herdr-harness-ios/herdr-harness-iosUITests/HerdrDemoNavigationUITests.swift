@@ -12,58 +12,53 @@ final class HerdrDemoNavigationUITests: XCTestCase {
     }
 
     @MainActor
-    func testFullScreenPaneModesAndExpandableControls() throws {
-        let app = XCUIApplication()
-        app.launchArguments = ["-HerdrDemoMode"]
-        app.launch()
-
-        let workspace = app.buttons["Garden Planner, Needs you, 3 panes"]
-        XCTAssertTrue(workspace.waitForExistence(timeout: 8), "The workspace switcher should appear in demo mode")
-        workspace.tap()
-
-        let blockedPane = app.buttons["Choose sample garden colors, Claude, Needs you"]
-        XCTAssertTrue(blockedPane.waitForExistence(timeout: 3))
-        blockedPane.tap()
+    func testPaneModesLiveInMenuAndTerminalKeysAreOptIn() throws {
+        let app = launchDemoPane(label: "Choose sample garden colors, Claude, Needs you")
 
         XCTAssertTrue(app.buttons["pane-session-title"].waitForExistence(timeout: 3))
-        XCTAssertTrue(
-            app.descendants(matching: .any)["pane-session-scope"].waitForExistence(timeout: 3)
-        )
+        XCTAssertTrue(app.descendants(matching: .any)["pane-session-scope"].exists)
         XCTAssertTrue(app.textFields["prompt-composer"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.tabBars.firstMatch.exists, "Pane detail should hide the app tab bar")
-
-        let chatMode = app.buttons["pane-mode-chat"]
-        let gitMode = app.buttons["pane-mode-git"]
-        let terminalMode = app.buttons["pane-mode-terminal"]
-        for mode in [chatMode, gitMode, terminalMode] {
-            XCTAssertTrue(mode.waitForExistence(timeout: 3))
+        XCTAssertFalse(app.descendants(matching: .any)["pane-mode-bar"].exists)
+        for mode in ["chat", "git", "terminal"] {
+            XCTAssertFalse(app.buttons["pane-mode-\(mode)"].exists, "Modes must not consume a separate row")
         }
-        XCTAssertEqual(chatMode.frame.width, gitMode.frame.width, accuracy: 1)
-        XCTAssertEqual(gitMode.frame.width, terminalMode.frame.width, accuracy: 1)
-        XCTAssertLessThan(chatMode.frame.minX, gitMode.frame.minX)
-        XCTAssertLessThan(gitMode.frame.minX, terminalMode.frame.minX)
-        XCTAssertFalse(chatMode.isEnabled, "The nonsemantic Claude demo pane must not expose native Chat")
-        XCTAssertEqual(terminalMode.value as? String, "Selected")
-        XCTAssertFalse(app.buttons["Yes, proceed"].exists, "Canned response chips should not consume pane space")
+        XCTAssertFalse(app.buttons["Yes, proceed"].exists)
+        XCTAssertTrue(app.buttons["composer-record-voice"].exists)
+        XCTAssertTrue(app.buttons["composer-attach"].exists)
+        assertTerminalKeysHidden(app)
+        try saveScreenshot("01-compact-composer", app: app)
 
-        for key in ["up", "down", "tab", "enter"] {
-            XCTAssertTrue(app.buttons["terminal-key-\(key)"].exists)
-        }
-        XCTAssertFalse(app.buttons["terminal-key-left"].exists)
-        try saveScreenshot("01-terminal-collapsed", app: app)
+        let paneMenu = app.descendants(matching: .any)["pane-mode-toggle"]
+        XCTAssertEqual(paneMenu.value as? String, "Terminal view")
+        paneMenu.tap()
+        let chat = app.buttons["pane-action-mode-chat"]
+        XCTAssertTrue(chat.waitForExistence(timeout: 3))
+        XCTAssertFalse(chat.isEnabled, "A nonsemantic pane must not acquire native Chat support")
+        let terminal = app.buttons["pane-action-mode-terminal"]
+        XCTAssertEqual(terminal.label, "Terminal view, selected")
+        XCTAssertTrue(app.buttons["pane-action-mode-git"].isEnabled)
+        XCTAssertTrue(app.buttons["pane-action-mode-skills"].isEnabled)
+        terminal.tap()
 
-        app.buttons["terminal-controls-toggle"].tap()
-        XCTAssertTrue(app.buttons["terminal-key-left"].waitForExistence(timeout: 2))
-        for key in ["left", "right", "escape", "backspace"] {
-            XCTAssertTrue(app.buttons["terminal-key-\(key)"].exists)
+        openPromptTools(app)
+        assertTerminalKeysHidden(app)
+        let keysToggle = app.descendants(matching: .any)["composer-terminal-keys-toggle"]
+        XCTAssertTrue(keysToggle.waitForExistence(timeout: 3))
+        keysToggle.tap()
+        for key in ["up", "down", "tab", "enter", "left", "right", "escape", "backspace"] {
+            XCTAssertTrue(app.buttons["terminal-key-\(key)"].waitForExistence(timeout: 3))
         }
-        try saveScreenshot("02-terminal-expanded", app: app)
+        try saveScreenshot("02-opt-in-terminal-keys", app: app)
+        openPromptTools(app)
+        app.descendants(matching: .any)["composer-terminal-keys-toggle"].tap()
+        assertTerminalKeysHidden(app)
 
         let composer = app.textFields["prompt-composer"]
         composer.tap()
         composer.typeText("draft survives pane modes")
 
-        try selectPaneMode("Git", app: app)
+        selectPaneMode("Git", app: app)
         XCTAssertTrue(app.staticTexts["staged"].waitForExistence(timeout: 3))
         try saveScreenshot("03-git-status", app: app)
 
@@ -74,18 +69,20 @@ final class HerdrDemoNavigationUITests: XCTestCase {
         try saveScreenshot("04-git-diff", app: app)
         app.buttons["Done"].tap()
 
-        try selectPaneActionMode("Skills", app: app)
+        selectPaneMode("Skills", app: app)
         XCTAssertTrue(app.staticTexts["workspace skills"].waitForExistence(timeout: 3))
         try saveScreenshot("05-skills", app: app)
 
-        try selectPaneMode("Terminal", app: app)
+        selectPaneMode("Terminal", app: app)
         let restoredComposer = app.textFields["prompt-composer"]
         XCTAssertTrue(restoredComposer.waitForExistence(timeout: 3))
         XCTAssertEqual(restoredComposer.value as? String, "draft survives pane modes")
-        app.buttons["terminal-controls-toggle"].tap()
-        XCTAssertTrue(app.buttons["Insert a workspace file path"].waitForExistence(timeout: 2))
+        assertTerminalKeysHidden(app)
 
-        app.buttons["Insert a workspace file path"].tap()
+        openPromptTools(app)
+        let files = app.buttons["composer-workspace-file"]
+        XCTAssertTrue(files.waitForExistence(timeout: 3))
+        files.tap()
         let fileSearch = app.textFields["Search project files"]
         XCTAssertTrue(fileSearch.waitForExistence(timeout: 3))
         fileSearch.tap()
@@ -94,8 +91,10 @@ final class HerdrDemoNavigationUITests: XCTestCase {
         try saveScreenshot("06-file-search", app: app)
         app.buttons["Done"].tap()
 
-        XCTAssertTrue(app.buttons["Insert Jira ticket context"].waitForExistence(timeout: 3))
-        app.buttons["Insert Jira ticket context"].tap()
+        openPromptTools(app)
+        let jira = app.buttons["composer-jira"]
+        XCTAssertTrue(jira.waitForExistence(timeout: 3))
+        jira.tap()
         XCTAssertTrue(app.navigationBars["JIRA CONTEXT"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["TASK-101"].waitForExistence(timeout: 3))
         try saveScreenshot("07-jira-context", app: app)
@@ -111,27 +110,24 @@ final class HerdrDemoNavigationUITests: XCTestCase {
     }
 
     @MainActor
-    func testPlainShellKeepsThreeModesAndDisablesChat() throws {
-        let app = XCUIApplication()
-        app.launchArguments = ["-HerdrDemoMode"]
-        app.launch()
-
-        let workspace = app.buttons["Garden Planner, Needs you, 3 panes"]
-        XCTAssertTrue(workspace.waitForExistence(timeout: 8))
-        workspace.tap()
-
-        let shellPane = app.buttons["Unit tests, Terminal, Shell"]
-        XCTAssertTrue(shellPane.waitForExistence(timeout: 3))
-        shellPane.tap()
-
-        let chatMode = app.buttons["pane-mode-chat"]
-        let terminalMode = app.buttons["pane-mode-terminal"]
-        XCTAssertTrue(chatMode.waitForExistence(timeout: 3))
-        XCTAssertFalse(chatMode.isEnabled)
-        XCTAssertEqual(terminalMode.value as? String, "Selected")
+    func testPlainShellKeepsMenuModesAndHidesPiControls() throws {
+        let app = launchDemoPane(label: "Unit tests, Terminal, Shell")
+        let menu = app.descendants(matching: .any)["pane-mode-toggle"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 3))
+        XCTAssertEqual(menu.value as? String, "Terminal view")
+        XCTAssertFalse(app.descendants(matching: .any)["pane-mode-bar"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["pi-context-meter"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["pi-chat-model"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["pi-chat-thinking"].exists)
+        assertTerminalKeysHidden(app)
+
+        menu.tap()
+        let chat = app.buttons["pane-action-mode-chat"]
+        XCTAssertTrue(chat.waitForExistence(timeout: 3))
+        XCTAssertFalse(chat.isEnabled)
+        XCTAssertEqual(app.buttons["pane-action-mode-terminal"].label, "Terminal view, selected")
+        XCTAssertTrue(app.buttons["pane-action-mode-git"].exists)
+        XCTAssertTrue(app.buttons["pane-action-mode-skills"].exists)
     }
 
     @MainActor
@@ -139,28 +135,18 @@ final class HerdrDemoNavigationUITests: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeLeft
         defer { XCUIDevice.shared.orientation = .portrait }
 
-        let app = XCUIApplication()
-        app.launchArguments = [
-            "-HerdrDemoMode",
-            "-UIPreferredContentSizeCategoryName",
-            "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge",
-        ]
-        app.launch()
-
-        let workspace = app.buttons["Garden Planner, Needs you, 3 panes"]
-        XCTAssertTrue(workspace.waitForExistence(timeout: 8))
-        workspace.tap()
-
-        let blockedPane = app.buttons["Choose sample garden colors, Claude, Needs you"]
-        XCTAssertTrue(blockedPane.waitForExistence(timeout: 3))
-        blockedPane.tap()
-
-        let controls = app.buttons["terminal-controls-toggle"]
-        XCTAssertTrue(controls.waitForExistence(timeout: 3))
-        controls.tap()
-
+        let app = launchDemoPane(
+            label: "Choose sample garden colors, Claude, Needs you",
+            extraArguments: [
+                "-UIPreferredContentSizeCategoryName",
+                "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge",
+            ]
+        )
+        XCTAssertFalse(app.descendants(matching: .any)["pane-mode-bar"].exists)
+        assertTerminalKeysHidden(app)
         let voice = app.buttons["composer-record-voice"]
         XCTAssertTrue(voice.waitForExistence(timeout: 3))
+        XCTAssertTrue(voice.isHittable)
         voice.tap()
 
         XCTAssertTrue(app.navigationBars["VOICE NOTE"].waitForExistence(timeout: 3))
@@ -171,30 +157,48 @@ final class HerdrDemoNavigationUITests: XCTestCase {
     }
 
     @MainActor
-    private func selectPaneMode(_ mode: String, app: XCUIApplication) throws {
-        let modeButton = app.buttons["pane-mode-\(mode.lowercased())"]
-        XCTAssertTrue(modeButton.waitForExistence(timeout: 3), "The pane mode bar should expose \(mode)")
-        let enabled = NSPredicate(format: "enabled == true")
-        expectation(for: enabled, evaluatedWith: modeButton)
-        waitForExpectations(timeout: 3)
-        modeButton.tap()
+    private func launchDemoPane(label: String, extraArguments: [String] = []) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["-HerdrDemoMode"] + extraArguments
+        app.launch()
+        let workspace = app.buttons["Garden Planner, Needs you, 3 panes"]
+        XCTAssertTrue(workspace.waitForExistence(timeout: 8))
+        workspace.tap()
+        let pane = app.buttons[label]
+        XCTAssertTrue(pane.waitForExistence(timeout: 3))
+        pane.tap()
+        return app
     }
 
     @MainActor
-    private func selectPaneActionMode(_ mode: String, app: XCUIApplication) throws {
-        let menu = app.buttons["Pane actions"]
+    private func assertTerminalKeysHidden(_ app: XCUIApplication) {
+        for key in ["up", "down", "tab", "enter", "left", "right", "escape", "backspace"] {
+            XCTAssertFalse(app.buttons["terminal-key-\(key)"].exists, "Terminal keys are mounted only after opting in")
+        }
+    }
+
+    @MainActor
+    private func openPromptTools(_ app: XCUIApplication) {
+        let more = app.descendants(matching: .any)["composer-more-tools"]
+        XCTAssertTrue(more.waitForExistence(timeout: 3))
+        more.tap()
+    }
+
+    @MainActor
+    private func selectPaneMode(_ mode: String, app: XCUIApplication) {
+        let menu = app.descendants(matching: .any)["pane-mode-toggle"]
         XCTAssertTrue(menu.waitForExistence(timeout: 3))
         menu.tap()
-        let modeButton = app.buttons["\(mode) view"]
-        XCTAssertTrue(modeButton.waitForExistence(timeout: 2), "Pane actions should keep \(mode) reachable")
-        modeButton.tap()
+        let choice = app.buttons["pane-action-mode-\(mode.lowercased())"]
+        XCTAssertTrue(choice.waitForExistence(timeout: 3), "Pane actions should keep \(mode) reachable")
+        XCTAssertTrue(choice.isEnabled)
+        choice.tap()
     }
 
     @MainActor
     private func saveScreenshot(_ name: String, app: XCUIApplication) throws {
         let screenshot = app.screenshot()
         try screenshot.pngRepresentation.write(to: screenshotDirectory.appending(path: "\(name).png"))
-
         let attachment = XCTAttachment(screenshot: screenshot)
         attachment.name = name
         attachment.lifetime = .keepAlways

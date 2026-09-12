@@ -43,22 +43,25 @@ struct PiModelPickerChip: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .disabled(!isEnabled)
             .accessibilityIdentifier("pi-chat-model")
+            .composerLayoutMeasurement(id: "pi-chat-model", label: "Model: \(displayText)")
             .accessibilityLabel("Model: \(displayText)")
         } else if currentModel != nil {
             controlLabel
                 .opacity(0.65)
                 .accessibilityIdentifier("pi-chat-model")
+                .composerLayoutMeasurement(id: "pi-chat-model", label: "Model: \(displayText)")
                 .accessibilityLabel("Model: \(displayText)")
         }
     }
 
     private var controlLabel: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 1) {
             Text("Model")
                 .font(.caption)
                 .foregroundStyle(HerdrTheme.mist)
+                .lineLimit(1)
 
-            HStack(alignment: .firstTextBaseline, spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if isSetting {
                     ProgressView()
                         .controlSize(.small)
@@ -69,9 +72,10 @@ struct PiModelPickerChip: View {
 
                 Text(displayText)
                     .font(.callout.bold())
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .allowsTightening(true)
+                    .composerLayoutMeasurement(id: "pi-chat-model-value", label: displayText)
 
                 if isInteractive {
                     Image(systemName: "chevron.up.down")
@@ -81,8 +85,8 @@ struct PiModelPickerChip: View {
             }
             .foregroundStyle(isInteractive ? HerdrTheme.mauve : HerdrTheme.mist)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         .background(HerdrTheme.elevated)
         .overlay {
@@ -112,13 +116,13 @@ struct PiModelPickerChip: View {
     }
 }
 
-#Preview("Long model name wraps") {
+#Preview("Long synthetic model stays readable") {
     HStack {
         PiModelPickerChip(
             currentModel: PiModelIdentity(
-                provider: "anthropic",
-                id: "claude-sonnet-4-5-20250929",
-                name: "claude-sonnet-4-5-20250929"
+                provider: "synthetic-provider",
+                id: "synthetic-model-long",
+                name: "Synthetic Runtime Model With A Long Name"
             ),
             availableModels: [],
             isLoading: false,

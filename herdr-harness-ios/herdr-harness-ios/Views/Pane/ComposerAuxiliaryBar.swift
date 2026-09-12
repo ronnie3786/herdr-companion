@@ -1,15 +1,18 @@
 import SwiftUI
 
-/// The expandable utility row shown above the pane composer.
-///
-/// The view is intentionally closure-driven so the composer owns presentation
-/// and networking state while this control stays reusable and previewable.
+/// Compact primary composer actions plus the secondary tools menu.
 struct ComposerAuxiliaryBar: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let attach: () -> Void
     let recordVoice: () -> Void
     let searchFiles: () -> Void
     let chooseJira: () -> Void
+    let pasteCodeBlock: () -> Void
+    let toggleTerminalKeys: () -> Void
+    let startLockedVoiceCapture: () -> Void
+    let showsTerminalKeys: Bool
+    let canPasteCode: Bool
+    let canStartVoiceCapture: Bool
     let voicePhase: HerdrQuickVoiceCapture.Phase
     let beginVoiceHold: () -> Void
     let endVoiceHold: () -> Void
@@ -20,8 +23,8 @@ struct ComposerAuxiliaryBar: View {
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            controls(showsTitles: true)
-            controls(showsTitles: false)
+            primaryControls(showsTitles: true)
+            primaryControls(showsTitles: false)
         }
         .herdrHaptic(trigger: hapticPulse)
         .onChange(of: voicePhase) { _, phase in
@@ -32,37 +35,23 @@ struct ComposerAuxiliaryBar: View {
         }
     }
 
-    private func controls(showsTitles: Bool) -> some View {
-        HStack(spacing: 8) {
-            auxiliaryButton(
-                title: "attach",
+    private func primaryControls(showsTitles: Bool) -> some View {
+        HStack(spacing: 4) {
+            actionButton(
+                title: "Attach",
                 systemImage: "paperclip",
-                accessibilityLabel: "Attach a file",
                 showsTitle: showsTitles,
                 action: attach
             )
             voiceButton(showsTitle: showsTitles)
-            auxiliaryButton(
-                title: "@ file",
-                systemImage: "at",
-                accessibilityLabel: "Insert a workspace file path",
-                showsTitle: showsTitles,
-                action: searchFiles
-            )
-            auxiliaryButton(
-                title: "jira",
-                systemImage: "ticket",
-                accessibilityLabel: "Insert Jira ticket context",
-                showsTitle: showsTitles,
-                action: chooseJira
-            )
+            moreMenu(showsTitle: showsTitles)
         }
+        .fixedSize(horizontal: true, vertical: false)
     }
 
-    private func auxiliaryButton(
+    private func actionButton(
         title: LocalizedStringKey,
         systemImage: String,
-        accessibilityLabel: LocalizedStringKey,
         showsTitle: Bool,
         action: @escaping () -> Void
     ) -> some View {
@@ -70,57 +59,43 @@ struct ComposerAuxiliaryBar: View {
             hapticPulse.fire(.selection)
             action()
         } label: {
-            HStack(spacing: 7) {
+            HStack(spacing: 5) {
                 Image(systemName: systemImage)
-                    .font(.subheadline.weight(.semibold))
-
                 if showsTitle {
                     Text(title)
-                        .font(.caption.monospaced().weight(.semibold))
                         .lineLimit(1)
                 }
             }
-            .foregroundStyle(HerdrTheme.mist)
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .padding(.horizontal, showsTitle ? 8 : 12)
-            .background(HerdrTheme.elevated)
-            .overlay {
-                RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                    .strokeBorder(HerdrTheme.surface, lineWidth: 1)
-            }
-            .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+            .font(.caption.weight(.medium))
+            .padding(.horizontal, 5)
+            .frame(minWidth: 44, minHeight: 44)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(accessibilityLabel)
+        .foregroundStyle(HerdrTheme.mist)
+        .accessibilityLabel(title)
+        .accessibilityIdentifier("composer-attach")
+        .composerLayoutMeasurement(id: "composer-attach", label: "Attach")
     }
 
     private func voiceButton(showsTitle: Bool) -> some View {
-        HStack(spacing: 7) {
+        HStack(spacing: 5) {
             if voicePhase == .transcribing {
                 ProgressView()
+                    .controlSize(.small)
                     .tint(HerdrTheme.mist)
-                    .frame(width: 16, height: 16)
             } else {
                 Image(systemName: voicePhase == .locked ? "lock.fill" : "mic.fill")
-                    .font(.subheadline.weight(.semibold))
             }
-
             if showsTitle {
-                Text("voice")
-                    .font(.caption.monospaced().weight(.semibold))
+                Text("Voice")
                     .lineLimit(1)
             }
         }
-        .foregroundStyle(voiceForeground)
-        .frame(maxWidth: .infinity, minHeight: 44)
-        .padding(.horizontal, showsTitle ? 8 : 12)
-        .background(voiceBackground)
-        .overlay {
-            RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                .strokeBorder(voiceBorder, lineWidth: 1)
-        }
-        .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+        .font(.caption.weight(.medium))
+        .foregroundStyle(isRecordingOrLocked ? HerdrTheme.alert : HerdrTheme.mist)
+        .padding(.horizontal, 5)
+        .frame(minWidth: 44, minHeight: 44)
         .contentShape(.rect)
         .scaleEffect(voicePhase == .locked && isLockPulsing && !reduceMotion ? 1.035 : 1)
         .opacity(voicePhase == .locked && isLockPulsing && !reduceMotion ? 0.86 : 1)
@@ -128,7 +103,7 @@ struct ComposerAuxiliaryBar: View {
             reduceMotion ? nil : .easeInOut(duration: 0.9).repeatForever(autoreverses: true),
             value: isLockPulsing
         )
-        .onTapGesture { activateVoice() }
+        .onTapGesture(perform: activateVoice)
         .gesture(
             LongPressGesture(minimumDuration: 0.35)
                 .onEnded { _ in beginVoiceHold() }
@@ -142,6 +117,55 @@ struct ComposerAuxiliaryBar: View {
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { activateVoice() }
         .accessibilityHint("Opens the voice recorder. Press and hold to dictate into the prompt.")
+        .composerLayoutMeasurement(
+            id: "composer-record-voice",
+            label: "Record a voice note"
+        )
+    }
+
+    private func moreMenu(showsTitle: Bool) -> some View {
+        Menu {
+            Button("Paste code", systemImage: "doc.on.clipboard", action: pasteCodeBlock)
+                .disabled(!canPasteCode)
+                .accessibilityIdentifier("composer-paste-code")
+
+            Button("Workspace file", systemImage: "at", action: searchFiles)
+                .accessibilityIdentifier("composer-workspace-file")
+
+            Button("Jira ticket", systemImage: "ticket", action: chooseJira)
+                .accessibilityIdentifier("composer-jira")
+
+            Divider()
+
+            Button(
+                showsTerminalKeys ? "Hide terminal keys" : "Show terminal keys",
+                systemImage: "keyboard",
+                action: toggleTerminalKeys
+            )
+            .accessibilityIdentifier("composer-terminal-keys-toggle")
+
+            Button("Start voice dictation", systemImage: "mic", action: startLockedVoiceCapture)
+                .disabled(!canStartVoiceCapture)
+                .accessibilityIdentifier("composer-start-voice-dictation")
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "ellipsis")
+                if showsTitle {
+                    Text("More")
+                        .lineLimit(1)
+                }
+            }
+            .font(.caption.weight(.medium))
+            .padding(.horizontal, 5)
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(HerdrTheme.mist)
+        .accessibilityLabel("More prompt tools")
+        .accessibilityValue(showsTerminalKeys ? "Terminal keys shown" : "Terminal keys hidden")
+        .accessibilityIdentifier("composer-more-tools")
+        .composerLayoutMeasurement(id: "composer-more-tools", label: "More prompt tools")
     }
 
     private func activateVoice() {
@@ -154,18 +178,6 @@ struct ComposerAuxiliaryBar: View {
         case .recording, .transcribing:
             break
         }
-    }
-
-    private var voiceForeground: Color {
-        isRecordingOrLocked ? HerdrTheme.ink : HerdrTheme.mist
-    }
-
-    private var voiceBackground: Color {
-        isRecordingOrLocked ? HerdrTheme.alert : HerdrTheme.elevated
-    }
-
-    private var voiceBorder: Color {
-        isRecordingOrLocked ? HerdrTheme.alert : HerdrTheme.surface
     }
 
     private var isRecordingOrLocked: Bool {

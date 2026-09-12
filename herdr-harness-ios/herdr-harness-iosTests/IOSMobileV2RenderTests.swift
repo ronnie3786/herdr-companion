@@ -4,242 +4,301 @@ import UIKit
 import XCTest
 @testable import herdr_harness_ios
 
-/// Isolated native component renders for the mobile-v2 pane chrome.
-///
-/// These snapshots exercise real SwiftUI presentation components with synthetic
-/// state. They do not represent a connected conversation, network behavior, or
-/// manual VoiceOver certification.
+/// Native renders of the complete Pi options bar across realistic state, width,
+/// audio, and Dynamic Type combinations. Menu-backed controls are hosted by
+/// UIKit; no ImageRenderer substitution is used.
 @MainActor
 final class IOSMobileV2RenderTests: XCTestCase {
-    private struct DynamicTypeFixture {
+    private struct OptionsFixture {
         let name: String
-        let swiftUI: DynamicTypeSize
-        let uiKit: UIContentSizeCategory
+        let configuration: PiPromptComposerConfiguration
+        let audioPlayer: ResponseAudioPlayer
+        let audioIsVisible: Bool
+        let expectedModelValue: String
+        let expectedThinkingValue: String
+        let expectsCompactCommonCase: Bool
     }
 
-    private struct HostedSnapshot {
-        let image: UIImage
-        let fittingSize: CGSize
-        let bounds: CGRect
-    }
-
-    private let widths: [CGFloat] = [320, 390, 430]
-    private let dynamicTypeSizes = [
-        DynamicTypeFixture(name: "large", swiftUI: .large, uiKit: .large),
-        DynamicTypeFixture(
-            name: "accessibility3",
-            swiftUI: .accessibility3,
-            uiKit: .accessibilityExtraLarge
-        ),
+    private let widths: [CGFloat] = [320, 375, 402, 430]
+    private let dynamicTypeSizes: [IOSNativeRenderHarness.DynamicTypeFixture] = [
+        .defaultSize,
+        .accessibility3,
     ]
+    private let harness = IOSNativeRenderHarness()
 
-    func testPaneControlRenderMatrix() throws {
-        let fixture = try makeFixture()
-        let configuration = makeConfiguration()
+    func testFullPiComposerOptionsBarRenderMatrix() async throws {
         let directory = try renderDirectory()
         print("HERDR_IOS_MOBILE_V2_RENDER_DIR=\(directory.path)")
 
-        for dynamicType in dynamicTypeSizes {
-            for width in widths {
-                let surface = IOSMobileV2RenderSurface(
-                    model: fixture.model,
-                    pane: fixture.pane,
-                    store: fixture.store,
-                    configuration: configuration
-                )
+        for fixture in optionsFixtures {
+            for dynamicType in dynamicTypeSizes {
+                for width in widths {
+                    let bar = PiComposerOptionsBar(
+                        configuration: fixture.configuration,
+                        responseAudioPlayer: fixture.audioPlayer,
+                        activateResponseAudio: { _ in }
+                    )
+                    .padding(.horizontal, 12)
+                    let render = await harness.render(
+                        bar,
+                        width: width,
+                        dynamicType: dynamicType
+                    )
+                    let artifactName = "options-\(fixture.name)-\(Int(width))-\(dynamicType.name)"
+                    try save(render: render, name: artifactName, directory: directory)
+                    try saveGeometryDiagnostics(
+                        render: render,
+                        name: artifactName,
+                        directory: directory
+                    )
 
-                let snapshot = try hostAndSnapshot(
-                    surface,
-                    width: width,
-                    dynamicType: dynamicType
-                )
-                assertExactWidth(snapshot, expectedWidth: width, name: "component surface")
-                XCTAssertGreaterThan(
-                    snapshot.bounds.height,
-                    132,
-                    "Header, mode bar, and composer options should all contribute visible layout"
-                )
+                    let context = "\(fixture.name), \(Int(width))pt, \(dynamicType.name)"
+                    assertRenderBounds(render, expectedWidth: width, context: context)
+                    try assertPickerLayout(
+                        render,
+                        fixture: fixture,
+                        width: width,
+                        dynamicType: dynamicType,
+                        context: context
+                    )
+                    try assertAudioLayout(render, fixture: fixture, context: context)
 
-                try assertMinimumControlSizes(
-                    configuration: configuration,
-                    width: width,
-                    dynamicType: dynamicType
-                )
+                    if fixture.expectsCompactCommonCase, dynamicType.name == "default" {
+                        XCTAssertLessThanOrEqual(
+                            render.fittingSize.height,
+                            68,
+                            "Common short-model options should remain a compact single row: \(context)"
+                        )
+                        let model = try XCTUnwrap(render.element(identifier: "pi-chat-model"))
+                        let thinking = try XCTUnwrap(render.element(identifier: "pi-chat-thinking"))
+                        XCTAssertEqual(
+                            model.frame.midY,
+                            thinking.frame.midY,
+                            accuracy: 1,
+                            "Common controls should share one row: \(context)"
+                        )
+                    }
 
-                let filename = "ios-mobile-v2-\(Int(width))-\(dynamicType.name).png"
-                let output = directory.appending(path: filename)
-                let png = try XCTUnwrap(snapshot.image.pngData())
-                try png.write(to: output, options: .atomic)
-
-                let attachment = XCTAttachment(image: snapshot.image)
-                attachment.name = filename
-                attachment.lifetime = .keepAlways
-                add(attachment)
+                }
             }
         }
     }
 
-    private func assertMinimumControlSizes(
-        configuration: PiPromptComposerConfiguration,
-        width: CGFloat,
-        dynamicType: DynamicTypeFixture
-    ) throws {
-        let controls: [(String, AnyView)] = [
-            (
-                "mode bar",
-                AnyView(
-                    PaneModeBar(
-                        selection: .constant(.chat),
-                        supportsChat: true,
-                        gitAvailability: .available
-                    )
-                )
+    private var optionsFixtures: [OptionsFixture] {
+        [
+            OptionsFixture(
+                name: "short-high-hidden-audio",
+                configuration: IOSMobileV2ConfigurationFixture.configuration(
+                    modelName: "Sample Pro",
+                    thinkingLevel: PiThinkingLevel.high.rawValue
+                ),
+                audioPlayer: IOSMobileV2ConfigurationFixture.audioPlayer(isVisible: false),
+                audioIsVisible: false,
+                expectedModelValue: "Sample Pro",
+                expectedThinkingValue: "High",
+                expectsCompactCommonCase: true
             ),
-            (
-                "model",
-                AnyView(
-                    PiModelPickerChip(
-                        currentModel: configuration.currentModel,
-                        availableModels: configuration.availableModels,
-                        isLoading: false,
-                        isSetting: false,
-                        isEnabled: true,
-                        isInteractive: true,
-                        errorMessage: nil,
-                        selectModel: { _ in },
-                        retry: { }
-                    )
-                )
+            OptionsFixture(
+                name: "standard-high-hidden-audio",
+                configuration: IOSMobileV2ConfigurationFixture.configuration(
+                    modelName: "Synthetic Standard",
+                    thinkingLevel: PiThinkingLevel.high.rawValue
+                ),
+                audioPlayer: IOSMobileV2ConfigurationFixture.audioPlayer(isVisible: false),
+                audioIsVisible: false,
+                expectedModelValue: "Synthetic Standard",
+                expectedThinkingValue: "High",
+                expectsCompactCommonCase: true
             ),
-            (
-                "thinking",
-                AnyView(
-                    PiThinkingLevelChip(
-                        currentLevel: configuration.thinkingLevel,
-                        isSetting: false,
-                        isEnabled: true,
-                        isInteractive: true,
-                        selectLevel: { _ in }
-                    )
-                )
+            OptionsFixture(
+                name: "short-high-visible-audio",
+                configuration: IOSMobileV2ConfigurationFixture.configuration(
+                    modelName: "Synthetic Standard",
+                    thinkingLevel: PiThinkingLevel.high.rawValue
+                ),
+                audioPlayer: IOSMobileV2ConfigurationFixture.audioPlayer(isVisible: true),
+                audioIsVisible: true,
+                expectedModelValue: "Synthetic Standard",
+                expectedThinkingValue: "High",
+                expectsCompactCommonCase: false
+            ),
+            OptionsFixture(
+                name: "long-extra-high-visible-audio",
+                configuration: IOSMobileV2ConfigurationFixture.configuration(
+                    modelName: "Synthetic reasoning model with a deliberately long display name",
+                    thinkingLevel: PiThinkingLevel.xhigh.rawValue
+                ),
+                audioPlayer: IOSMobileV2ConfigurationFixture.audioPlayer(isVisible: true),
+                audioIsVisible: true,
+                expectedModelValue: "Synthetic reasoning model with a deliberately long display name",
+                expectedThinkingValue: "Extra High",
+                expectsCompactCommonCase: false
+            ),
+            OptionsFixture(
+                name: "unknown-hidden-audio",
+                configuration: IOSMobileV2ConfigurationFixture.configuration(
+                    modelName: nil,
+                    thinkingLevel: nil
+                ),
+                audioPlayer: IOSMobileV2ConfigurationFixture.audioPlayer(isVisible: false),
+                audioIsVisible: false,
+                expectedModelValue: "Not reported",
+                expectedThinkingValue: "Not reported",
+                expectsCompactCommonCase: false
+            ),
+            OptionsFixture(
+                name: "loading-visible-audio",
+                configuration: IOSMobileV2ConfigurationFixture.configuration(
+                    modelName: nil,
+                    thinkingLevel: PiThinkingLevel.high.rawValue,
+                    isLoadingModels: true
+                ),
+                audioPlayer: IOSMobileV2ConfigurationFixture.audioPlayer(isVisible: true),
+                audioIsVisible: true,
+                expectedModelValue: "Loading…",
+                expectedThinkingValue: "High",
+                expectsCompactCommonCase: false
+            ),
+            OptionsFixture(
+                name: "disabled-hidden-audio",
+                configuration: IOSMobileV2ConfigurationFixture.configuration(
+                    modelName: "Synthetic Standard",
+                    thinkingLevel: PiThinkingLevel.xhigh.rawValue,
+                    isConnected: false
+                ),
+                audioPlayer: IOSMobileV2ConfigurationFixture.audioPlayer(isVisible: false),
+                audioIsVisible: false,
+                expectedModelValue: "Synthetic Standard",
+                expectedThinkingValue: "Extra High",
+                expectsCompactCommonCase: false
             ),
         ]
-
-        for (name, control) in controls {
-            let snapshot = try hostAndSnapshot(
-                control,
-                width: width,
-                dynamicType: dynamicType
-            )
-            assertExactWidth(snapshot, expectedWidth: width, name: name)
-            XCTAssertGreaterThanOrEqual(
-                snapshot.fittingSize.height,
-                44,
-                "The \(name) control must retain a 44-point minimum target"
-            )
-        }
     }
 
-    /// Hosts SwiftUI in a real UIKit window so platform-backed views such as
-    /// `Menu` render their native labels. `ImageRenderer` substitutes warning
-    /// placeholders for those views and rounds the three equal mode columns to
-    /// a 321-point bitmap at a 320-point proposal. An integral UIKit host bound
-    /// keeps logical points and backing pixels exact without masking overflow
-    /// behind a tolerance.
-    private func hostAndSnapshot<Content: View>(
-        _ content: Content,
+    private func assertPickerLayout(
+        _ render: IOSNativeRenderHarness.HostedRender,
+        fixture: OptionsFixture,
         width: CGFloat,
-        dynamicType: DynamicTypeFixture
-    ) throws -> HostedSnapshot {
-        let root = AnyView(
-            content
-                .environment(\.dynamicTypeSize, dynamicType.swiftUI)
-                .frame(width: width, alignment: .topLeading)
-                .fixedSize(horizontal: false, vertical: true)
-                .background(HerdrTheme.ink)
+        dynamicType: IOSNativeRenderHarness.DynamicTypeFixture,
+        context: String
+    ) throws {
+        let diagnostics = render.measurementDiagnostics
+        let model = try XCTUnwrap(
+            render.element(identifier: "pi-chat-model"),
+            "Missing real model control: \(context)\n\(diagnostics)"
         )
-        let controller = UIHostingController(rootView: root)
-        controller.safeAreaRegions = []
-        controller.view.backgroundColor = .clear
-        controller.traitOverrides.preferredContentSizeCategory = dynamicType.uiKit
-        controller.traitOverrides.userInterfaceStyle = .dark
+        let thinking = try XCTUnwrap(
+            render.element(identifier: "pi-chat-thinking"),
+            "Missing real Thinking control: \(context)\n\(diagnostics)"
+        )
 
-        // Attach before fitting. A hosting controller computes its final safe-area
-        // environment only after joining a window; measuring it first clipped the
-        // last Thinking row when the window later contributed bottom insets.
-        let maximumSize = CGSize(width: width, height: 10_000)
-        let provisionalBounds = CGRect(origin: .zero, size: maximumSize)
-        let window = makeWindow(frame: provisionalBounds)
-        window.traitOverrides.preferredContentSizeCategory = dynamicType.uiKit
-        window.traitOverrides.userInterfaceStyle = .dark
-        window.rootViewController = controller
-        window.isHidden = false
-        defer {
-            window.isHidden = true
-            window.rootViewController = nil
+        assertMinimumControlFrame(model.frame, name: "Model", render: render, context: context)
+        assertMinimumControlFrame(thinking.frame, name: "Thinking", render: render, context: context)
+        XCTAssertTrue(
+            model.label?.localizedCaseInsensitiveContains(fixture.expectedModelValue) == true,
+            "Model value must remain present: \(context); label=\(model.label ?? "nil")"
+        )
+        XCTAssertTrue(
+            thinking.label?.localizedCaseInsensitiveContains(fixture.expectedThinkingValue) == true,
+            "Thinking value must remain present: \(context); label=\(thinking.label ?? "nil")"
+        )
+
+        let modelValue = try XCTUnwrap(render.element(identifier: "pi-chat-model-value"))
+        let thinkingValue = try XCTUnwrap(render.element(identifier: "pi-chat-thinking-value"))
+        for (value, control) in [(modelValue, model), (thinkingValue, thinking)] {
+            XCTAssertGreaterThan(value.frame.width, 0, "A rendered picker value must not collapse: \(context)")
+            XCTAssertGreaterThan(value.frame.height, 0, "A rendered picker value must remain visible: \(context)")
+            XCTAssertTrue(control.frame.insetBy(dx: -0.5, dy: -0.5).contains(value.frame), context)
         }
+        XCTAssertFalse(model.frame.intersects(thinking.frame), "Independent pickers must not overlap: \(context)")
 
-        controller.view.frame = provisionalBounds
-        controller.view.setNeedsLayout()
-        controller.view.layoutIfNeeded()
-        window.layoutIfNeeded()
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
-
-        let fittingSize = controller.sizeThatFits(in: maximumSize)
-        let height = max(1, ceil(fittingSize.height))
-        let bounds = CGRect(x: 0, y: 0, width: width, height: height)
-        window.frame = bounds
-        controller.view.frame = bounds
-        controller.view.setNeedsLayout()
-        controller.view.layoutIfNeeded()
-        window.layoutIfNeeded()
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
-
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = window.screen.scale
-        format.opaque = true
-        var drewHierarchy = false
-        let renderer = UIGraphicsImageRenderer(bounds: bounds, format: format)
-        let image = renderer.image { context in
-            UIColor(red: 0.098, green: 0.102, blue: 0.137, alpha: 1).setFill()
-            context.cgContext.fill(bounds)
-            drewHierarchy = controller.view.drawHierarchy(
-                in: bounds,
-                afterScreenUpdates: true
-            )
-        }
-        XCTAssertTrue(drewHierarchy, "UIKit should draw the hosted SwiftUI hierarchy")
-        return HostedSnapshot(image: image, fittingSize: fittingSize, bounds: bounds)
-    }
-
-    private func makeWindow(frame: CGRect) -> UIWindow {
-        if let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
-            let window = UIWindow(windowScene: scene)
-            window.frame = frame
-            return window
-        }
-        return UIWindow(frame: frame)
-    }
-
-    private func assertExactWidth(
-        _ snapshot: HostedSnapshot,
-        expectedWidth: CGFloat,
-        name: String
-    ) {
+        let font = UIFont.preferredFont(
+            forTextStyle: .callout,
+            compatibleWith: UITraitCollection(preferredContentSizeCategory: dynamicType.uiKit)
+        )
         XCTAssertLessThanOrEqual(
-            snapshot.fittingSize.width,
-            expectedWidth,
-            "The \(name) must fit its requested logical width"
+            thinkingValue.frame.height, ceil(font.lineHeight) + 1,
+            "Thinking must not wrap or hyphenate its value: \(context)"
         )
-        XCTAssertEqual(snapshot.bounds.width, expectedWidth)
-        XCTAssertEqual(snapshot.image.size.width, expectedWidth)
-        if let cgImage = snapshot.image.cgImage {
-            XCTAssertEqual(
-                cgImage.width,
-                Int(expectedWidth * snapshot.image.scale),
-                "The \(name) backing pixels should exactly match its point width and scale"
-            )
+    }
+
+    private func assertAudioLayout(
+        _ render: IOSNativeRenderHarness.HostedRender,
+        fixture: OptionsFixture,
+        context: String
+    ) throws {
+        let listen = render.element(label: "Listen to response")
+        let summary = render.element(label: "Listen to response summary")
+        if fixture.audioIsVisible {
+            let listen = try XCTUnwrap(listen, "Missing visible Listen control: \(context)")
+            let summary = try XCTUnwrap(summary, "Missing visible summary control: \(context)")
+            assertMinimumControlFrame(listen.frame, name: "Listen", render: render, context: context)
+            assertMinimumControlFrame(summary.frame, name: "TL;DR", render: render, context: context)
+        } else {
+            XCTAssertNil(listen, "Hidden nonnil audio player must not reserve a Listen control: \(context)")
+            XCTAssertNil(summary, "Hidden nonnil audio player must not reserve a summary control: \(context)")
         }
+    }
+
+    private func assertMinimumControlFrame(
+        _ frame: CGRect,
+        name: String,
+        render: IOSNativeRenderHarness.HostedRender,
+        context: String
+    ) {
+        XCTAssertGreaterThanOrEqual(frame.width, 44, "\(name) width: \(context)")
+        XCTAssertGreaterThanOrEqual(frame.height, 44, "\(name) height: \(context)")
+        XCTAssertGreaterThanOrEqual(frame.minX, render.bounds.minX - 0.5, "\(name) clips left: \(context)")
+        XCTAssertLessThanOrEqual(frame.maxX, render.bounds.maxX + 0.5, "\(name) clips right: \(context)")
+        XCTAssertGreaterThanOrEqual(frame.minY, render.bounds.minY - 0.5, "\(name) clips top: \(context)")
+        XCTAssertLessThanOrEqual(frame.maxY, render.bounds.maxY + 0.5, "\(name) clips bottom: \(context)")
+    }
+
+    private func assertRenderBounds(
+        _ render: IOSNativeRenderHarness.HostedRender,
+        expectedWidth: CGFloat,
+        context: String
+    ) {
+        XCTAssertTrue(render.drewHierarchy, "UIKit should draw the hosted hierarchy: \(context)")
+        XCTAssertGreaterThan(render.fittingSize.height, 0, "Options bar must be visible: \(context)")
+        XCTAssertLessThanOrEqual(render.fittingSize.width, expectedWidth, "Options bar overflow: \(context)")
+        XCTAssertEqual(render.bounds.width, expectedWidth)
+        XCTAssertEqual(render.image.size.width, expectedWidth)
+        if let cgImage = render.image.cgImage {
+            XCTAssertEqual(cgImage.width, Int(expectedWidth * render.image.scale))
+        }
+    }
+
+    private func save(
+        render: IOSNativeRenderHarness.HostedRender,
+        name: String,
+        directory: URL
+    ) throws {
+        let filename = "\(name).png"
+        let output = directory.appending(path: filename)
+        let png = try XCTUnwrap(render.image.pngData())
+        try png.write(to: output, options: .atomic)
+        let attachment = XCTAttachment(image: render.image)
+        attachment.name = filename
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    private func saveGeometryDiagnostics(
+        render: IOSNativeRenderHarness.HostedRender,
+        name: String,
+        directory: URL
+    ) throws {
+        let filename = "\(name)-geometry.txt"
+        let data = Data(render.measurementDiagnostics.utf8)
+        try data.write(to: directory.appending(path: filename), options: .atomic)
+        let attachment = XCTAttachment(
+            data: data,
+            uniformTypeIdentifier: "public.plain-text"
+        )
+        attachment.name = filename
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private func renderDirectory() throws -> URL {
@@ -253,96 +312,5 @@ final class IOSMobileV2RenderTests: XCTestCase {
             withIntermediateDirectories: true
         )
         return directory
-    }
-
-    private func makeFixture() throws -> (
-        model: HerdrAppModel,
-        pane: HerdrPane,
-        store: PiConversationStore
-    ) {
-        let suiteName = "IOSMobileV2RenderTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        addTeardownBlock {
-            defaults.removePersistentDomain(forName: suiteName)
-        }
-
-        let model = HerdrAppModel(arguments: ["-HerdrDemoMode"], userDefaults: defaults)
-        var workspace = try XCTUnwrap(model.workspace(id: "demo1|w1"))
-        let paneJSON = #"{"pane_id":"w1:p-render","terminal_id":"render-terminal","workspace_id":"w1","tab_id":"w1:t1","agent_status":"working","title":"Review a deliberately long synthetic conversation title without truncating its meaning","agent":"Pi","cwd":"/tmp/herdr-demo/garden-planner"}"#
-        let pane = try JSONDecoder()
-            .decode(HerdrPane.self, from: Data(paneJSON.utf8))
-            .stamped(machineID: "demo1")
-        workspace.panes = [pane]
-        model.workspaces = [workspace]
-        return (model, pane, PiConversationStore())
-    }
-
-    private func makeConfiguration() -> PiPromptComposerConfiguration {
-        let model = PiAvailableModel(
-            provider: "synthetic-provider",
-            modelID: "synthetic-reasoning-model",
-            name: "Synthetic reasoning model with a deliberately long display name",
-            reasoning: true,
-            contextWindow: 128_000
-        )
-        return PiPromptComposerConfiguration(
-            capabilities: PiSemanticCapabilities(
-                prompt: true,
-                steer: true,
-                followUp: true,
-                abort: true,
-                listModels: true,
-                setModel: true,
-                setThinkingLevel: true,
-                interactionResponse: true
-            ),
-            phase: .idle,
-            compactionActivity: nil,
-            isConnected: true,
-            isSubmitting: false,
-            isAborting: false,
-            currentModel: PiModelIdentity(
-                provider: model.provider,
-                id: model.modelID,
-                name: model.name
-            ),
-            availableModels: [model],
-            isLoadingModels: false,
-            isSettingModel: false,
-            modelCatalogError: nil,
-            isModelSwitchingUnsupported: false,
-            submit: { _, _ in false },
-            abort: { false },
-            selectModel: { _ in false },
-            retryLoadModels: { },
-            thinkingLevel: PiThinkingLevel.xhigh.rawValue,
-            isSettingThinkingLevel: false,
-            selectThinkingLevel: { _ in false }
-        )
-    }
-}
-
-private struct IOSMobileV2RenderSurface: View {
-    let model: HerdrAppModel
-    let pane: HerdrPane
-    let store: PiConversationStore
-    let configuration: PiPromptComposerConfiguration
-    @State private var selectedMode: PaneDetailMode = .chat
-
-    var body: some View {
-        VStack(spacing: 12) {
-            PaneSessionHeader(model: model, pane: pane, store: store)
-            PaneModeBar(
-                selection: $selectedMode,
-                supportsChat: true,
-                gitAvailability: .available
-            )
-            PiComposerOptionsBar(
-                configuration: configuration,
-                responseAudioPlayer: nil,
-                activateResponseAudio: nil
-            )
-        }
-        .padding(12)
     }
 }

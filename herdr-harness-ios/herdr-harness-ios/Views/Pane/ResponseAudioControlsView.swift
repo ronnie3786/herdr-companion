@@ -65,6 +65,7 @@ private struct ResponseAudioButton: View {
         .opacity(activeAction != nil && activeAction != action ? 0.38 : 1)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityHint(accessibilityHint)
+        .composerLayoutMeasurement(id: "pi-response-audio-\(action.rawValue)", label: accessibilityLabel)
     }
 
     private var activeAction: ResponseAudioAction? { phase.activeAction }

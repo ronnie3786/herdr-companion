@@ -4,73 +4,140 @@ struct ComposerAttachmentTray: View {
     let attachments: [TerminalAttachment]
     let retry: (TerminalAttachment) -> Void
     let remove: (TerminalAttachment) -> Void
+    @ScaledMetric(relativeTo: .body) private var scaledHeight = 68.0
 
     var body: some View {
-        ScrollView(.horizontal) {
-            LazyHStack(spacing: 8) {
-                ForEach(attachments) { attachment in
-                    ComposerAttachmentChip(
-                        attachment: attachment,
-                        retry: { retry(attachment) },
-                        remove: { remove(attachment) }
-                    )
+        GeometryReader { proxy in
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    ForEach(attachments) { attachment in
+                        ComposerAttachmentChip(
+                            attachment: attachment,
+                            thumbnailData: attachment.thumbnailData,
+                            retry: { retry(attachment) },
+                            remove: { remove(attachment) }
+                        )
+                        .frame(width: max(1, proxy.size.width - 2))
+                    }
                 }
+                .padding(.horizontal, 1)
             }
-            .padding(.horizontal, 1)
+            .scrollIndicators(.hidden)
         }
-        .scrollIndicators(.hidden)
+        .frame(height: trayHeight)
         .accessibilityLabel("Attachments")
+        .accessibilityIdentifier("composer-attachments")
+        .composerLayoutMeasurement(id: "composer-attachments", label: "Attachments")
+    }
+
+    private var trayHeight: CGFloat {
+        min(max(scaledHeight, 68), 104)
     }
 }
 
 private struct ComposerAttachmentChip: View {
     let attachment: TerminalAttachment
+    let thumbnailData: Data?
     let retry: () -> Void
     let remove: () -> Void
+    @ScaledMetric(relativeTo: .body) private var scaledThumbnailSize = 48.0
 
     var body: some View {
         HStack(spacing: 9) {
-            Image(systemName: fileIcon)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(statusColor)
-                .frame(width: 22)
+            thumbnail
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(attachment.displayName)
-                    .font(.caption.monospaced().weight(.semibold))
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(HerdrTheme.text)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .frame(maxWidth: 180, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityLabel(attachment.displayName)
+                    .composerLayoutMeasurement(
+                        id: "composer-attachment-filename-\(attachment.id)",
+                        label: attachment.displayName
+                    )
 
                 Text(statusText)
-                    .font(.caption2.monospaced())
+                    .font(.caption)
                     .foregroundStyle(statusColor)
                     .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityLabel(statusText)
+                    .composerLayoutMeasurement(
+                        id: "composer-attachment-status-\(attachment.id)",
+                        label: statusText
+                    )
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
 
             statusAccessory
+                .fixedSize(horizontal: true, vertical: false)
 
-            Button(action: remove) {
-                Image(systemName: "xmark")
-                    .font(.caption.weight(.bold))
-                    .frame(width: 44, height: 44)
-                    .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(HerdrTheme.mist)
-            .accessibilityLabel("Remove \(attachment.displayName)")
+            Button("Remove \(attachment.displayName)", systemImage: "xmark", action: remove)
+                .labelStyle(.iconOnly)
+                .font(.caption.bold())
+                .foregroundStyle(HerdrTheme.mist)
+                .frame(width: 44, height: 44)
+                .contentShape(.rect)
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("composer-attachment-remove-\(attachment.id)")
+                .composerLayoutMeasurement(
+                    id: "composer-attachment-remove-\(attachment.id)",
+                    label: "Remove \(attachment.displayName)"
+                )
         }
-        .padding(.leading, 11)
+        .padding(.leading, 7)
         .padding(.trailing, 2)
-        .padding(.vertical, 4)
-        .frame(minHeight: 52)
+        .padding(.vertical, 5)
+        .frame(maxWidth: .infinity, minHeight: 64)
         .background(HerdrTheme.elevated)
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
                 .strokeBorder(borderColor, lineWidth: 1)
         }
         .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("composer-attachment-\(attachment.id)")
+        .composerLayoutMeasurement(
+            id: "composer-attachment-\(attachment.id)",
+            label: attachment.displayName
+        )
+    }
+
+    @ViewBuilder
+    private var thumbnail: some View {
+        if let thumbnailData,
+           let image = ComposerAttachmentThumbnail.boundedImage(from: thumbnailData) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: thumbnailSize, height: thumbnailSize)
+                .clipShape(.rect(cornerRadius: 7))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 7)
+                        .strokeBorder(HerdrTheme.surface, lineWidth: 1)
+                }
+                .accessibilityHidden(true)
+                .composerLayoutMeasurement(
+                    id: "composer-attachment-preview-\(attachment.id)",
+                    label: attachment.displayName
+                )
+        } else {
+            Image(systemName: fileIcon)
+                .font(.title3)
+                .foregroundStyle(statusColor)
+                .frame(width: thumbnailSize, height: thumbnailSize)
+                .background(HerdrTheme.graphite, in: .rect(cornerRadius: 7))
+                .accessibilityHidden(true)
+                .composerLayoutMeasurement(
+                    id: "composer-attachment-preview-\(attachment.id)",
+                    label: attachment.displayName
+                )
+        }
     }
 
     @ViewBuilder
@@ -80,36 +147,45 @@ private struct ComposerAttachmentChip: View {
             ProgressView()
                 .controlSize(.small)
                 .tint(HerdrTheme.accent)
+                .frame(minWidth: 28, minHeight: 44)
                 .accessibilityLabel("Uploading")
 
         case .uploaded:
-            Image(systemName: "checkmark")
-                .font(.caption.weight(.bold))
+            Image(systemName: "checkmark.circle.fill")
+                .font(.subheadline)
                 .foregroundStyle(HerdrTheme.success)
+                .frame(minWidth: 28, minHeight: 44)
                 .accessibilityLabel("Ready")
 
         case .failed:
-            Button(action: retry) {
-                Image(systemName: "arrow.clockwise")
-                    .font(.caption.weight(.bold))
-                    .frame(width: 44, height: 44)
-                    .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(HerdrTheme.alert)
-            .accessibilityLabel("Retry \(attachment.displayName)")
+            Button("Retry \(attachment.displayName)", systemImage: "arrow.clockwise", action: retry)
+                .labelStyle(.iconOnly)
+                .font(.caption.bold())
+                .foregroundStyle(HerdrTheme.alert)
+                .frame(width: 44, height: 44)
+                .contentShape(.rect)
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("composer-attachment-retry-\(attachment.id)")
+                .composerLayoutMeasurement(
+                    id: "composer-attachment-retry-\(attachment.id)",
+                    label: "Retry \(attachment.displayName)"
+                )
         }
+    }
+
+    private var thumbnailSize: CGFloat {
+        min(max(scaledThumbnailSize, 44), 64)
     }
 
     private var statusText: String {
         switch attachment.status {
         case .uploading:
-            return "uploading"
+            return "Uploading"
         case .uploaded:
-            return "attached"
+            return "Ready"
         case .failed:
             let message = attachment.error?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return message.isEmpty ? "upload failed" : message
+            return message.isEmpty ? "Upload failed" : message
         }
     }
 

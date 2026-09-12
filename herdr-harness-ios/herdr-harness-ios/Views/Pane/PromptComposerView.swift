@@ -17,7 +17,7 @@ struct PromptComposerView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @FocusState private var isFocused: Bool
-    @State private var isExpanded = false
+    @State private var showsTerminalKeys = false
     @State private var isShowingAttachOptions = false
     @State private var isShowingFileImporter = false
     @State private var isShowingPhotoPicker = false
@@ -25,6 +25,8 @@ struct PromptComposerView: View {
     @State private var isShowingFileSearch = false
     @State private var isShowingJira = false
     @State private var selectedPhotos: [PhotosPickerItem] = []
+    @State private var photoPreparation = ComposerPhotoPreparationState()
+    @State private var photoImportTask: Task<Void, Never>?
     @State private var disposition: PiPromptDisposition = .prompt
     @State private var hapticPulse = HerdrHapticPulse()
     @State private var quickVoiceCapture = HerdrQuickVoiceCapture()
@@ -59,14 +61,6 @@ struct PromptComposerView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            if !attachments.isEmpty {
-                ComposerAttachmentTray(
-                    attachments: attachments,
-                    retry: retryAttachment,
-                    remove: removeAttachment
-                )
-            }
-
             if let activity = piConfiguration?.compactionActivity {
                 PiCompactionStatusBar(activity: activity)
                     .transition(semanticControlTransition)
@@ -82,20 +76,6 @@ struct PromptComposerView: View {
                     .transition(semanticControlTransition)
             }
 
-            if isExpanded {
-                ComposerAuxiliaryBar(
-                    attach: { isShowingAttachOptions = true },
-                    recordVoice: { isShowingVoiceRecorder = true },
-                    searchFiles: { isShowingFileSearch = true },
-                    chooseJira: { isShowingJira = true },
-                    voicePhase: quickVoiceCapture.phase,
-                    beginVoiceHold: beginQuickVoiceCapture,
-                    endVoiceHold: finishQuickVoiceCapture,
-                    finishLockedVoiceCapture: finishLockedQuickVoiceCapture
-                )
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-
             if let piConfiguration, showsPiOptionsBar {
                 PiComposerOptionsBar(
                     configuration: piConfiguration,
@@ -105,8 +85,8 @@ struct PromptComposerView: View {
             }
 
             if quickVoiceCapture.phase == .locked {
-                Text("recording locked · tap mic to finish")
-                    .font(.caption.monospaced().weight(.semibold))
+                Text("recording locked · tap Voice to finish")
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(HerdrTheme.alert)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
@@ -115,11 +95,14 @@ struct PromptComposerView: View {
                     .transition(semanticControlTransition)
             }
 
-            composerRow
+            if showsTerminalKeys {
+                TerminalKeyDeck(model: model, pane: pane, isExpanded: true)
+                    .transition(semanticControlTransition)
+            }
 
-            TerminalKeyDeck(model: model, pane: pane, isExpanded: isExpanded)
+            composerCard
         }
-        .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: isExpanded)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: showsTerminalKeys)
         .animation(
             reduceMotion ? nil : .snappy(duration: 0.24),
             value: piConfiguration?.phase
@@ -137,21 +120,12 @@ struct PromptComposerView: View {
             isLockPulsing = quickVoiceCapture.phase == .locked
         }
         .onDisappear {
+            cancelPhotoPreparation(clearSelection: true)
             quickVoiceCapture.cancel()
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {
                 quickVoiceCapture.cancel()
-            }
-        }
-        .onChange(of: isExpanded) { _, expanded in
-            if !expanded, quickVoiceCapture.phase == .recording {
-                quickVoiceCapture.cancel()
-            }
-        }
-        .onChange(of: isFocused) { _, focused in
-            if focused, !isQuickVoiceCaptureActive {
-                isExpanded = false
             }
         }
         .onChange(of: quickVoiceCapture.phase) { _, phase in
@@ -181,8 +155,11 @@ struct PromptComposerView: View {
             disposition = options.first ?? .prompt
         }
         .onChange(of: selectedPhotos) { _, items in
-            guard !items.isEmpty else { return }
-            Task { await importPhotos(items) }
+            handlePhotoSelection(items)
+        }
+        .onChange(of: pane.id) { _, _ in
+            cancelPhotoPreparation(clearSelection: true)
+            showsTerminalKeys = false
         }
         .confirmationDialog("Attach", isPresented: $isShowingAttachOptions) {
             Button("Photo Library", systemImage: "photo") {
@@ -269,64 +246,65 @@ struct PromptComposerView: View {
         return .move(edge: .bottom).combined(with: .opacity)
     }
 
-    private var composerRow: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            Button {
-                isFocused = false
-                isExpanded.toggle()
-            } label: {
-                Image(systemName: "chevron.up")
-                    .font(.headline.weight(.bold))
-                    .rotationEffect(.degrees(isExpanded ? 180 : 0))
-                    .foregroundStyle(isExpanded ? HerdrTheme.ink : HerdrTheme.accent)
-                    .frame(width: 48, height: 48)
-                    .background(isExpanded ? HerdrTheme.accent : HerdrTheme.elevated)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                            .strokeBorder(isExpanded ? HerdrTheme.accent : HerdrTheme.surface, lineWidth: 1)
-                    }
-                    .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+    private var composerCard: some View {
+        VStack(spacing: 0) {
+            if photoPreparation.isPreparing {
+                photoPreparationIndicator
+
+                Rectangle()
+                    .fill(HerdrTheme.subtleSeparator)
+                    .frame(height: 1)
             }
-            .buttonStyle(.plain)
-            .disabled(isQuickVoiceCaptureActive)
-            .accessibilityLabel(isExpanded ? "Collapse composer controls" : "Expand composer controls")
-            .accessibilityIdentifier("terminal-controls-toggle")
+
+            if !attachments.isEmpty {
+                ComposerAttachmentTray(
+                    attachments: attachments,
+                    retry: retryAttachment,
+                    remove: removeAttachment
+                )
+                .padding(.horizontal, 9)
+                .padding(.top, 9)
+
+                Rectangle()
+                    .fill(HerdrTheme.subtleSeparator)
+                    .frame(height: 1)
+                    .padding(.top, 7)
+            }
 
             composerInput
 
-            trailingComposerButton
-        }
-    }
+            Rectangle()
+                .fill(HerdrTheme.subtleSeparator)
+                .frame(height: 1)
 
-    private var composerInput: some View {
-        Group {
-            if isCTALockedCapture {
-                HerdrVoiceWaveform(
-                    samples: quickVoiceCapture.samples,
-                    isRecording: true,
-                    showsContainer: false
+            HStack(spacing: 4) {
+                ComposerAuxiliaryBar(
+                    attach: { isShowingAttachOptions = true },
+                    recordVoice: { isShowingVoiceRecorder = true },
+                    searchFiles: { isShowingFileSearch = true },
+                    chooseJira: { isShowingJira = true },
+                    pasteCodeBlock: pasteCodeBlock,
+                    toggleTerminalKeys: toggleTerminalKeys,
+                    startLockedVoiceCapture: startLockedVoiceCapture,
+                    showsTerminalKeys: showsTerminalKeys,
+                    canPasteCode: !isSubmitting && canControl && !isPiCompacting,
+                    canStartVoiceCapture: quickVoiceCapture.phase == .idle
+                        && !isSubmitting
+                        && canControl
+                        && !isPiCompacting,
+                    voicePhase: quickVoiceCapture.phase,
+                    beginVoiceHold: beginQuickVoiceCapture,
+                    endVoiceHold: finishQuickVoiceCapture,
+                    finishLockedVoiceCapture: finishLockedQuickVoiceCapture
                 )
-                .padding(.horizontal, 13)
-            } else if isCTATranscribing {
-                ProgressView()
-                    .tint(HerdrTheme.alert)
-                    .frame(maxWidth: .infinity, minHeight: 48)
-            } else {
-                TextField(placeholder, text: $draft, axis: .vertical)
-                    .lineLimit(1...5)
-                    .font(.body.monospaced())
-                    .foregroundStyle(HerdrTheme.text)
-                    .focused($isFocused)
-                    .submitLabel(.send)
-                    .onSubmit(send)
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 12)
-                    .frame(minHeight: 48)
-                    .disabled(isSubmitting || !canControl || isPiCompacting)
+
+                Spacer(minLength: 4)
+                trailingComposerButton
             }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
         }
-        .frame(minHeight: 48)
-        .background(HerdrTheme.elevated)
+        .background(HerdrTheme.input)
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
                 .strokeBorder(composerInputBorder, lineWidth: 1)
@@ -342,27 +320,81 @@ struct PromptComposerView: View {
             reduceMotion ? nil : .easeInOut(duration: 0.9).repeatForever(autoreverses: true),
             value: isLockPulsing
         )
-        .accessibilityIdentifier("prompt-composer")
+    }
+
+    private var photoPreparationIndicator: some View {
+        HStack(spacing: 9) {
+            ProgressView()
+                .controlSize(.small)
+                .tint(HerdrTheme.mist)
+
+            Text(photoPreparation.statusText)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(HerdrTheme.mist)
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 9)
+        .frame(minHeight: 36)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(photoPreparation.statusText)
+        .accessibilityIdentifier("composer-photo-preparing")
+    }
+
+    private var composerInput: some View {
+        Group {
+            if isCTALockedCapture {
+                HerdrVoiceWaveform(
+                    samples: quickVoiceCapture.samples,
+                    isRecording: true,
+                    showsContainer: false
+                )
+                .padding(.horizontal, 13)
+            } else if isCTATranscribing {
+                ProgressView()
+                    .tint(HerdrTheme.alert)
+                    .frame(maxWidth: .infinity, minHeight: 56)
+            } else {
+                TextField(placeholder, text: $draft, axis: .vertical)
+                    .lineLimit(1...5)
+                    .font(.body)
+                    .foregroundStyle(HerdrTheme.text)
+                    .focused($isFocused)
+                    .submitLabel(.send)
+                    .onSubmit(send)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 11)
+                    .frame(maxWidth: .infinity, minHeight: 56, alignment: .topLeading)
+                    .disabled(isSubmitting || !canControl || isPiCompacting)
+                    .accessibilityIdentifier("prompt-composer")
+                    .composerLayoutMeasurement(id: "prompt-composer", label: placeholder)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 56)
     }
 
     private var trailingComposerButton: some View {
         Button(action: handleTrailingComposerAction) {
-            if isCTACaptureInProgress {
-                Image(systemName: "stop.fill")
-            } else if isCTAMicAvailable {
-                Image(systemName: "mic.fill")
-            } else if isSubmitting {
-                ProgressView()
-                    .tint(HerdrTheme.ink)
-            } else {
-                Image(systemName: effectiveDisposition.symbol)
+            Group {
+                if isCTACaptureInProgress {
+                    Image(systemName: "stop.fill")
+                } else if isSubmitting {
+                    ProgressView()
+                        .tint(HerdrTheme.ink)
+                } else {
+                    Image(systemName: effectiveDisposition.symbol)
+                }
             }
+            .font(.subheadline.bold())
+            .foregroundStyle(HerdrTheme.ink)
+            .frame(width: 34, height: 34)
+            .background(isCTALockedCapture ? HerdrTheme.alert : HerdrTheme.primaryAction)
+            .clipShape(.rect(cornerRadius: 8))
         }
-        .font(.headline.bold())
-        .foregroundStyle(HerdrTheme.ink)
-        .frame(width: 48, height: 48)
-        .background(isCTALockedCapture ? HerdrTheme.alert : HerdrTheme.accent)
-        .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+        .frame(width: 44, height: 44)
+        .contentShape(.rect)
         .scaleEffect(isCTALockedCapture && isLockPulsing && !reduceMotion ? 1.035 : 1)
         .opacity(trailingComposerOpacity)
         .animation(
@@ -373,11 +405,15 @@ struct PromptComposerView: View {
         .disabled(
             (isPiCompacting && !isCTALockedCapture)
                 || isCTATranscribing
-                || (!isCTAMicAvailable && !isCTALockedCapture && !canSend)
+                || (!isCTALockedCapture && !canSend)
         )
         .accessibilityLabel(trailingComposerAccessibilityLabel)
         .accessibilityHint(trailingComposerAccessibilityHint)
         .accessibilityIdentifier("prompt-send")
+        .composerLayoutMeasurement(
+            id: "prompt-send",
+            label: trailingComposerAccessibilityLabel
+        )
     }
 
     private var placeholder: String {
@@ -421,6 +457,7 @@ struct PromptComposerView: View {
         }
         let dispositionIsAvailable = piConfiguration?.availableDispositions.contains(effectiveDisposition) ?? true
         return (hasText || hasAttachment)
+            && !photoPreparation.blocksSending
             && !isUploading
             && !isSubmitting
             && canControl
@@ -437,19 +474,6 @@ struct PromptComposerView: View {
         }
     }
 
-    private var isEmptyInput: Bool {
-        !hasDraftText && attachments.isEmpty
-    }
-
-    private var isQuickVoiceCaptureActive: Bool {
-        switch quickVoiceCapture.phase {
-        case .idle:
-            false
-        case .recording, .locked, .transcribing:
-            true
-        }
-    }
-
     private var isCTALockedCapture: Bool {
         isCTACapture && quickVoiceCapture.phase == .locked
     }
@@ -462,10 +486,6 @@ struct PromptComposerView: View {
         isCTALockedCapture || isCTATranscribing
     }
 
-    private var isCTAMicAvailable: Bool {
-        isEmptyInput && quickVoiceCapture.phase == .idle && !isCTACapture && !isPiCompacting
-    }
-
     private var composerInputBorder: Color {
         quickVoiceCapture.phase == .locked
             ? HerdrTheme.alert
@@ -473,7 +493,7 @@ struct PromptComposerView: View {
     }
 
     private var trailingComposerOpacity: Double {
-        if isCTAMicAvailable || isCTALockedCapture { return 1 }
+        if isCTALockedCapture { return 1 }
         if isCTATranscribing { return 0.45 }
         return canSend ? 1 : 0.45
     }
@@ -481,28 +501,39 @@ struct PromptComposerView: View {
     private var trailingComposerAccessibilityLabel: String {
         if isCTALockedCapture { return "Stop voice dictation" }
         if isCTATranscribing { return "Transcribing voice dictation" }
-        if isCTAMicAvailable { return "Start voice dictation" }
         return effectiveDisposition.label
     }
 
     private var trailingComposerAccessibilityHint: String {
         if isCTALockedCapture { return "Stops recording and transcribes the dictation" }
         if isCTATranscribing { return "Voice dictation is being transcribed" }
-        if isCTAMicAvailable { return "Starts a locked voice dictation" }
         return sendAccessibilityHint
     }
 
     private func appendToken(_ token: String) {
-        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        draft = trimmed.isEmpty ? token : "\(trimmed) \(token)"
+        draft = draft.isEmpty ? token : "\(draft) \(token)"
         isFocused = true
+    }
+
+    private func pasteCodeBlock() {
+        guard !isSubmitting, canControl, !isPiCompacting else { return }
+        if ComposerCodeBlockPaste.paste(into: $draft) {
+            hapticPulse.fire(.selection)
+            isFocused = true
+        } else {
+            model.toastMessage = "Copy some text before pasting a code block"
+        }
+    }
+
+    private func toggleTerminalKeys() {
+        showsTerminalKeys.toggle()
+        hapticPulse.fire(showsTerminalKeys ? .controlsExpanded : .controlsCollapsed)
     }
 
     private func appendTranscript(_ transcript: String) {
         let cleaned = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return }
-        let existing = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        draft = existing.isEmpty ? cleaned : "\(existing)\n\n\(cleaned)"
+        draft = draft.isEmpty ? cleaned : "\(draft)\n\n\(cleaned)"
         draftContainsDictation = true
         isFocused = true
     }
@@ -521,6 +552,16 @@ struct PromptComposerView: View {
     private func finishLockedQuickVoiceCapture() {
         guard quickVoiceCapture.phase == .locked else { return }
         completeQuickVoiceCapture()
+    }
+
+    private func startLockedVoiceCapture() {
+        guard quickVoiceCapture.phase == .idle,
+              !isSubmitting,
+              canControl,
+              !isPiCompacting
+        else { return }
+        isCTACapture = true
+        quickVoiceCapture.beginLocked()
     }
 
     private func completeQuickVoiceCapture() {
@@ -551,9 +592,6 @@ struct PromptComposerView: View {
     private func handleTrailingComposerAction() {
         if isCTALockedCapture {
             finishLockedQuickVoiceCapture()
-        } else if isCTAMicAvailable {
-            isCTACapture = true
-            quickVoiceCapture.beginLocked()
         } else {
             send()
         }
@@ -565,8 +603,7 @@ struct PromptComposerView: View {
         Status: \(ticket.status) · Priority: \(ticket.priority)
         \(ticket.url)
         """
-        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        draft = trimmed.isEmpty ? block : "\(trimmed)\n\n\(block)"
+        draft = draft.isEmpty ? block : "\(draft)\n\n\(block)"
         isFocused = true
     }
 
@@ -610,6 +647,19 @@ struct PromptComposerView: View {
     private func upload(_ item: TerminalAttachment) {
         let url = item.sourceURL
         Task {
+            var thumbnailData = item.thumbnailData
+            if thumbnailData == nil {
+                thumbnailData = await Task.detached(priority: .utility) {
+                    ComposerAttachmentThumbnail.encodedData(at: url)
+                }.value
+            }
+            guard attachments.contains(where: { $0.id == item.id }) else { return }
+            if let thumbnailData {
+                updateAttachment(item.id) { current in
+                    current.thumbnailData = thumbnailData
+                }
+            }
+
             do {
                 let uploaded = try await model.uploadAttachment(
                     from: url,
@@ -656,21 +706,44 @@ struct PromptComposerView: View {
         UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
     }
 
-    private func importPhotos(_ items: [PhotosPickerItem]) async {
-        defer { selectedPhotos = [] }
-        guard !items.isEmpty else { return }
+    @MainActor
+    private func handlePhotoSelection(_ items: [PhotosPickerItem]) {
+        guard !items.isEmpty else {
+            if photoPreparation.isPreparing {
+                cancelPhotoPreparation(clearSelection: false)
+            }
+            return
+        }
 
+        photoImportTask?.cancel()
+        let token = photoPreparation.begin(photoCount: items.count)
+        photoImportTask = Task { @MainActor in
+            await importPhotos(items, token: token)
+        }
+    }
+
+    @MainActor
+    private func importPhotos(
+        _ items: [PhotosPickerItem],
+        token: ComposerPhotoPreparationState.Token
+    ) async {
         var candidates: [AttachmentCandidate] = []
+        defer { completePhotoPreparation(token) }
+
         do {
+            try checkPhotoPreparation(token)
             try AttachmentPolicy.validateCount(
                 existingCount: attachments.count,
                 incomingCount: items.count
             )
 
             for item in items {
+                try checkPhotoPreparation(token)
                 guard let data = try await item.loadTransferable(type: Data.self) else {
                     throw APIError.invalidResponse
                 }
+                try checkPhotoPreparation(token)
+
                 let type = item.supportedContentTypes.first ?? .jpeg
                 let fileExtension = type.preferredFilenameExtension ?? "jpg"
                 let url = FileManager.default.temporaryDirectory
@@ -689,21 +762,55 @@ struct PromptComposerView: View {
                     existingAttachments: attachments,
                     incomingCandidates: candidates + [candidate]
                 )
-                try data.write(to: url, options: .atomic)
                 candidates.append(candidate)
+                try data.write(to: url, options: .atomic)
+                try checkPhotoPreparation(token)
             }
 
             try AttachmentPolicy.validate(
                 existingAttachments: attachments,
                 incomingCandidates: candidates
             )
+            try checkPhotoPreparation(token)
             enqueue(candidates)
+            candidates.removeAll()
+        } catch is CancellationError {
+            removeTemporarySources(
+                candidates.map(\.sourceURL),
+                ownership: .appTemporary
+            )
         } catch {
             removeTemporarySources(
                 candidates.map(\.sourceURL),
                 ownership: .appTemporary
             )
+            guard photoPreparation.owns(token) else { return }
             model.errorMessage = "A selected photo could not be attached: \(error.localizedDescription)"
+        }
+    }
+
+    @MainActor
+    private func checkPhotoPreparation(
+        _ token: ComposerPhotoPreparationState.Token
+    ) throws {
+        try Task.checkCancellation()
+        guard photoPreparation.owns(token) else { throw CancellationError() }
+    }
+
+    @MainActor
+    private func completePhotoPreparation(_ token: ComposerPhotoPreparationState.Token) {
+        guard photoPreparation.finish(token) else { return }
+        photoImportTask = nil
+        selectedPhotos = []
+    }
+
+    @MainActor
+    private func cancelPhotoPreparation(clearSelection: Bool) {
+        photoImportTask?.cancel()
+        photoImportTask = nil
+        photoPreparation.cancel()
+        if clearSelection {
+            selectedPhotos = []
         }
     }
 

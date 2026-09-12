@@ -12,10 +12,19 @@ hierarchy. Search, machine, range, and optional tab-color filters work together.
 Six tab-owned colors and editable labels are stored only in this iOS app sandbox;
 Mac assignments are not imported or synchronized.
 
-Pane views use charcoal chrome and system-scaled prose. Chat, Git, and Terminal
-have a separate mode row, while Skills remains available from Pane actions. Model
-and Thinking stay independent and follow the connected Pi session's catalog and
-capabilities. Unsent text drafts remain in memory per pane while the app runs;
+Pane views use charcoal chrome and system-scaled prose. Chat, Git, Terminal, and
+Skills are available from **Pane actions → View**, without a separate segment
+row taking conversation space. Compact Model and Thinking controls stay
+independent and follow the connected Pi session's catalog and capabilities.
+
+The unified input card keeps Attach, Voice, More, and Send close to the editor.
+**More → Show terminal keys** reveals the optional key deck; it is hidden by
+default. More also contains Paste code, workspace-file and Jira context, and
+explicit voice dictation. Selected attachments appear inside the input card with
+upload status, retry/removal controls, and small photo previews retained in
+memory after upload. No full-size preview image is retained.
+
+Unsent text drafts remain in memory per pane while the app runs;
 they are not persisted or synced. The legacy Pi bridge may still trim surrounding
 whitespace when a draft is submitted.
 

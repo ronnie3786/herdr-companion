@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct WorkspaceHeader: View {
+struct AgentsHeader: View {
     @Bindable var model: HerdrAppModel
 
     var body: some View {
@@ -9,10 +9,10 @@ struct WorkspaceHeader: View {
                 HerdrBrandMark(size: 42)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("herdr")
+                    Text("Agents")
                         .font(.title.bold())
-                    Text("switch")
-                        .font(.caption.monospaced())
+                    Text("Recent Pi sessions")
+                        .font(.caption)
                         .foregroundStyle(HerdrTheme.mist)
                 }
 
@@ -55,16 +55,18 @@ struct WorkspaceHeader: View {
             }
 
             HStack {
-                Text("choose a workspace")
-                    .font(.subheadline.monospaced())
+                Text("Across all machines")
+                    .font(.subheadline)
                     .foregroundStyle(HerdrTheme.mist)
                 Spacer()
-                ConnectionPill(state: model.connectionState)
+                Label(model.connectionState.title, systemImage: model.connectionState.symbol)
+                    .font(.caption)
+                    .foregroundStyle(model.connectionState.color)
             }
 
             if model.isDemoMode {
                 Label("Demo data is active", systemImage: "sparkles")
-                    .font(.footnote.monospaced().bold())
+                    .font(.footnote.bold())
                     .foregroundStyle(HerdrTheme.accent)
             }
         }

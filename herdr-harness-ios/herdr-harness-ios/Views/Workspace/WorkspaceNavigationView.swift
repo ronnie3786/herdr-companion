@@ -14,7 +14,7 @@ struct WorkspaceNavigationView: View {
 
     private var compactNavigation: some View {
         NavigationStack(path: $model.workspacePath) {
-            WorkspaceListView(
+            AgentsListView(
                 model: model,
                 selectWorkspace: { workspace in
                     model.selectedWorkspaceID = workspace.id
@@ -44,7 +44,7 @@ struct WorkspaceNavigationView: View {
 
     private var regularNavigation: some View {
         NavigationSplitView {
-            WorkspaceListView(
+            AgentsListView(
                 model: model,
                 selectWorkspace: { workspace in
                     model.selectedWorkspaceID = workspace.id

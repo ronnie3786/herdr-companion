@@ -136,7 +136,8 @@ final class HerdrAppModel {
     init(
         credentials: any HerdrCredentialStore = KeychainCredentialStore(),
         arguments: [String] = ProcessInfo.processInfo.arguments,
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        bootstrapMachines: [HerdrMachine]? = nil
     ) {
         self.credentials = credentials
         self.userDefaults = userDefaults
@@ -160,7 +161,7 @@ final class HerdrAppModel {
         #endif
         self.chatTabColors = ChatTabColorStore(defaults: defaults)
         self.paneDrafts = PaneDraftStore()
-        Self.migrateMachinesIfNeeded(defaults: defaults, credentials: credentials)
+        Self.migrateMachinesIfNeeded(defaults: defaults, credentials: credentials, bootstrapMachines: bootstrapMachines)
         let bundledURL = Bundle.main.object(forInfoDictionaryKey: "HerdrDemoServerURL") as? String
         let persistedMachines = Self.loadMachines(defaults: defaults)
         machines = uiTestServerURL.map {
@@ -2368,10 +2369,14 @@ final class HerdrAppModel {
         return machines
     }
 
-    private static func migrateMachinesIfNeeded(defaults: UserDefaults, credentials: any HerdrCredentialStore) {
+    private static func migrateMachinesIfNeeded(
+        defaults: UserDefaults,
+        credentials: any HerdrCredentialStore,
+        bootstrapMachines: [HerdrMachine]?
+    ) {
         guard defaults.object(forKey: "herdr.machines") == nil else { return }
         guard let urlString = defaults.string(forKey: "herdr.serverURL") else {
-            defaults.set(try? JSONEncoder().encode(HerdrMachine.configuredMachines()), forKey: "herdr.machines")
+            defaults.set(try? JSONEncoder().encode(bootstrapMachines ?? HerdrMachine.configuredMachines()), forKey: "herdr.machines")
             return
         }
         let machine = HerdrMachine(id: UUID().uuidString, name: Self.machineName(for: urlString), urlString: urlString)

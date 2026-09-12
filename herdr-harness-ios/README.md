@@ -6,11 +6,20 @@ No other orchestration server is required.
 
 ## Native mobile interface
 
+The **Agents** tab lists all currently available Pi sessions across machines,
+newest first, without the navigator’s twenty-chat limit. System-font cards show
+the session title, agent name, machine, workspace, tab, and status. Search any
+of these fields and tap a card to open its session. Offline machines indicate
+that their agent status is last known. Workspace browsing and creation remain
+in the navigator; a card’s context menu also opens its workspace. No server
+update is needed.
+
 The navigator defaults to **Recents**, a flat newest-20 conversation list. Choose
 **All** for Unread, then Starred, then the real machine → workspace → tab → pane
 hierarchy. Search, machine, range, and optional tab-color filters work together.
 Six tab-owned colors and editable labels are stored only in this iOS app sandbox;
-Mac assignments are not imported or synchronized.
+Mac assignments are not imported or synchronized. The navigator scrolls as a
+whole so chats remain reachable with large text in landscape.
 
 Pane views use charcoal chrome and system-scaled prose. Chat, Git, Terminal, and
 Skills are available from **Pane actions → View**, without a separate segment

@@ -86,7 +86,7 @@ struct AppRootView: View {
 
     private var appTabs: some View {
         TabView(selection: $model.selectedTab) {
-            Tab("Workspaces", systemImage: "rectangle.3.group", value: .workspaces) {
+            Tab("Agents", systemImage: "bubble.left.and.bubble.right", value: .workspaces) {
                 WorkspaceNavigationView(model: model)
             }
 

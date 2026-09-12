@@ -9,7 +9,7 @@ enum DemoData {
             label: "Garden Planner",
             path: "/tmp/herdr-demo/garden-planner",
             panes: [
-                pane(id: "w1:p1", tabID: "w1:t1", status: .working, title: "Plan a fictional herb garden", agent: "Codex", revision: 184, firstSeenAt: Date().addingTimeInterval(-3_600), lastActivityAt: Date(), workingSince: Date().addingTimeInterval(-47 * 60)),
+                pane(id: "w1:p1", tabID: "w1:t1", status: .working, title: "Plan a fictional herb garden", agent: "Pi", revision: 184, firstSeenAt: Date().addingTimeInterval(-3_600), lastActivityAt: Date(), workingSince: Date().addingTimeInterval(-47 * 60)),
                 pane(id: "w1:p2", tabID: "w1:t1", status: .blocked, title: "Choose sample garden colors", agent: "Claude", revision: 97, firstSeenAt: Date().addingTimeInterval(-7_200), lastActivityAt: Date().addingTimeInterval(-22 * 60)),
                 pane(id: "w1:p3", tabID: "w1:t2", status: .unknown, title: "Unit tests", agent: nil, revision: 52, firstSeenAt: Date().addingTimeInterval(-3 * 86_400), lastActivityAt: Date().addingTimeInterval(-2 * 86_400)),
             ],
@@ -21,7 +21,7 @@ enum DemoData {
             label: "Reading Journal",
             path: "/tmp/herdr-demo/reading-journal",
             panes: [
-                pane(id: "w2:p1", tabID: "w2:t1", status: .done, title: "Sample reading list export", agent: "Codex", revision: 311, firstSeenAt: Date(), lastActivityAt: Date()),
+                pane(id: "w2:p1", tabID: "w2:t1", status: .done, title: "Sample reading list export", agent: "Pi", revision: 311, firstSeenAt: Date(), lastActivityAt: Date()),
                 pane(id: "w2:p2", tabID: "w2:t1", status: .working, title: "Validate the example book list", agent: "Claude", revision: 118, firstSeenAt: Date().addingTimeInterval(-5_400), lastActivityAt: Date(), workingSince: Date().addingTimeInterval(-35 * 60)),
             ],
             layouts: [layout(workspaceID: "w2", tabID: "w2:t1", paneIDs: ["w2:p1", "w2:p2"])]
@@ -68,7 +68,7 @@ enum DemoData {
             label: "Art Notebook",
             path: "/tmp/herdr-demo/art-notebook",
             panes: [
-                pane(id: "w1:p1", tabID: "w1:t1", status: .working, title: "Sketch a fictional postcard", agent: "Codex", revision: 28),
+                pane(id: "w1:p1", tabID: "w1:t1", status: .working, title: "Sketch a fictional postcard", agent: "Pi", revision: 28),
                 pane(id: "w1:p2", tabID: "w1:t1", status: .idle, title: "Choose the sample postcard border", agent: "Claude", revision: 12),
             ],
             layouts: [layout(workspaceID: "w1", tabID: "w1:t1", paneIDs: ["w1:p1", "w1:p2"])]

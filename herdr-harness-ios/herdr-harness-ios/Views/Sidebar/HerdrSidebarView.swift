@@ -19,43 +19,43 @@ struct HerdrSidebarView: View {
     var body: some View {
         let projection = sidebarProjection
 
-        VStack(alignment: .leading, spacing: 8) {
-            SidebarHeaderView(model: model, close: dismiss)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                SidebarHeaderView(model: model, close: dismiss)
 
-            if model.machines.count > 1 {
-                machinePicker
-            }
+                if model.machines.count > 1 {
+                    machinePicker
+                }
 
-            WorkspaceSearchField(text: $model.sidebarQuery, placeholder: "Filter chats")
+                WorkspaceSearchField(text: $model.sidebarQuery, placeholder: "Filter chats")
 
-            ChatTabColorFilterButton(
-                store: model.chatTabColors,
-                selectedColor: model.sidebarColorFilter,
-                action: { isPresentingColorFilter = true }
-            )
+                ChatTabColorFilterButton(
+                    store: model.chatTabColors,
+                    selectedColor: model.sidebarColorFilter,
+                    action: { isPresentingColorFilter = true }
+                )
 
-            SidebarCreationControls(
-                model: model,
-                showsMachineChrome: showsMachineChrome,
-                scopedMachineID: scopedMachineID,
-                presentCreateWorkspace: presentCreateWorkspace,
-                dismissSidebar: dismiss
-            )
+                SidebarCreationControls(
+                    model: model,
+                    showsMachineChrome: showsMachineChrome,
+                    scopedMachineID: scopedMachineID,
+                    presentCreateWorkspace: presentCreateWorkspace,
+                    dismissSidebar: dismiss
+                )
 
-            HerdrSectionLabel(
-                title: "chats",
-                detail: sidebarCountDetail(projection.visiblePaneCount),
-                monospaced: false
-            )
-            .padding(.horizontal, SidebarMetrics.rowHorizontalPadding)
+                HerdrSectionLabel(
+                    title: "chats",
+                    detail: sidebarCountDetail(projection.visiblePaneCount),
+                    monospaced: false
+                )
+                .padding(.horizontal, SidebarMetrics.rowHorizontalPadding)
 
-            ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     sidebarRows(projection)
                 }
             }
-            .scrollIndicators(.hidden)
         }
+        .scrollIndicators(.hidden)
         .padding(.horizontal, SidebarMetrics.containerHorizontalPadding)
         .padding(.top, 10)
         .padding(.bottom, 18)

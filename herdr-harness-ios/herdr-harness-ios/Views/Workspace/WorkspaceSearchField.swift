@@ -9,6 +9,7 @@ struct WorkspaceSearchField: View {
     /// Spelled out rather than derived from `accessibilityLabel`: composing it
     /// produced "Clear filter spaces".
     var clearAccessibilityLabel: String = "Clear workspace filter"
+    var monospaced = true
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -17,7 +18,7 @@ struct WorkspaceSearchField: View {
                 .foregroundStyle(isFocused ? HerdrTheme.accent : HerdrTheme.mist)
 
             TextField(placeholder, text: $text)
-                .font(.body.monospaced())
+                .font(monospaced ? .body.monospaced() : .body)
                 .foregroundStyle(HerdrTheme.text)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()

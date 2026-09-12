@@ -64,7 +64,7 @@ struct HerdrMachineMigrationTests {
             UserDefaults().removePersistentDomain(forName: suiteName)
         }
         defaults.set(false, forKey: "herdr.completedSetup")
-        let model = HerdrAppModel(credentials: credentials, arguments: [], userDefaults: defaults)
+        let model = HerdrAppModel(credentials: credentials, arguments: [], userDefaults: defaults, bootstrapMachines: [])
         #expect(model.machines.isEmpty)
         #expect(defaults.data(forKey: "herdr.machines") != nil)
         #expect(!model.hasCompletedSetup)

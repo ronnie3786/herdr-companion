@@ -13,7 +13,7 @@ final class HerdrDemoNavigationUITests: XCTestCase {
 
     @MainActor
     func testPaneModesLiveInMenuAndTerminalKeysAreOptIn() throws {
-        let app = launchDemoPane(label: "Choose sample garden colors, Claude, Needs you")
+        let app = launchDemoPane(paneID: "demo1|w1:p2")
 
         XCTAssertTrue(app.buttons["pane-session-title"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.descendants(matching: .any)["pane-session-scope"].exists)
@@ -111,7 +111,7 @@ final class HerdrDemoNavigationUITests: XCTestCase {
 
     @MainActor
     func testPlainShellKeepsMenuModesAndHidesPiControls() throws {
-        let app = launchDemoPane(label: "Unit tests, Terminal, Shell")
+        let app = launchDemoPane(paneID: "demo1|w1:p3")
         let menu = app.descendants(matching: .any)["pane-mode-toggle"]
         XCTAssertTrue(menu.waitForExistence(timeout: 3))
         XCTAssertEqual(menu.value as? String, "Terminal view")
@@ -136,7 +136,7 @@ final class HerdrDemoNavigationUITests: XCTestCase {
         defer { XCUIDevice.shared.orientation = .portrait }
 
         let app = launchDemoPane(
-            label: "Choose sample garden colors, Claude, Needs you",
+            paneID: "demo1|w1:p2",
             extraArguments: [
                 "-UIPreferredContentSizeCategoryName",
                 "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge",
@@ -157,14 +157,19 @@ final class HerdrDemoNavigationUITests: XCTestCase {
     }
 
     @MainActor
-    private func launchDemoPane(label: String, extraArguments: [String] = []) -> XCUIApplication {
+    private func launchDemoPane(paneID: String, extraArguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-HerdrDemoMode"] + extraArguments
         app.launch()
-        let workspace = app.buttons["Garden Planner, Needs you, 3 panes"]
-        XCTAssertTrue(workspace.waitForExistence(timeout: 8))
-        workspace.tap()
-        let pane = app.buttons[label]
+        let navigator = app.buttons["sidebar-toggle"]
+        XCTAssertTrue(navigator.waitForExistence(timeout: 8))
+        navigator.tap()
+        let pane = app.buttons["sidebar-pane-\(paneID)"]
+        let sidebar = app.scrollViews["herdr-sidebar"]
+        for _ in 0..<12 {
+            if pane.exists, sidebar.frame.contains(CGPoint(x: pane.frame.midX, y: pane.frame.midY)) { break }
+            sidebar.swipeUp()
+        }
         XCTAssertTrue(pane.waitForExistence(timeout: 3))
         pane.tap()
         return app

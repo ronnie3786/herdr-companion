@@ -116,6 +116,25 @@ struct PiPromptComposerConfigurationTests {
         #expect(!configuration.supportsModelMenu)
     }
 
+    @Test("Model and thinking busy states remain independent")
+    func independentBusyStates() {
+        let modelBusy = makeConfiguration(
+            phase: .idle,
+            isSettingModel: true,
+            isSettingThinkingLevel: false
+        )
+        let thinkingBusy = makeConfiguration(
+            phase: .idle,
+            isSettingModel: false,
+            isSettingThinkingLevel: true
+        )
+
+        #expect(!modelBusy.canSelectModel)
+        #expect(modelBusy.canSelectThinkingLevel)
+        #expect(thinkingBusy.canSelectModel)
+        #expect(!thinkingBusy.canSelectThinkingLevel)
+    }
+
     @Test("Thinking capability controls whether the thinking menu is supported")
     func unavailableThinkingCapabilityDoesNotSupportMenu() {
         let configuration = makeConfiguration(
@@ -189,6 +208,7 @@ struct PiPromptComposerConfigurationTests {
         isConnected: Bool = true,
         currentModel: PiModelIdentity? = nil,
         thinkingLevel: String? = nil,
+        isSettingModel: Bool = false,
         isSettingThinkingLevel: Bool = false,
         availableModels: [PiAvailableModel] = [],
         isModelSwitchingUnsupported: Bool = false
@@ -203,7 +223,7 @@ struct PiPromptComposerConfigurationTests {
             currentModel: currentModel,
             availableModels: availableModels,
             isLoadingModels: false,
-            isSettingModel: false,
+            isSettingModel: isSettingModel,
             modelCatalogError: nil,
             isModelSwitchingUnsupported: isModelSwitchingUnsupported,
             submit: { _, _ in true },

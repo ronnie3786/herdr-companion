@@ -21,46 +21,62 @@ struct PiThinkingLevelChip: View {
                     }
                 }
             } label: {
-                chipLabel
+                controlLabel
             }
             .disabled(!isEnabled)
             .accessibilityIdentifier("pi-chat-thinking")
             .accessibilityLabel("Thinking level: \(displayText)")
         } else if currentLevel != nil {
-            chipLabel
-                .opacity(0.6)
+            controlLabel
+                .opacity(0.65)
                 .accessibilityIdentifier("pi-chat-thinking")
                 .accessibilityLabel("Thinking level: \(displayText)")
         }
     }
 
-    @ViewBuilder
-    private var chipLabel: some View {
-        HStack(spacing: 4) {
-            if isSetting {
-                ProgressView()
-            } else {
-                Image(systemName: "brain")
+    private var controlLabel: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Thinking")
+                .font(.caption)
+                .foregroundStyle(HerdrTheme.mist)
+
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                if isSetting {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "brain")
+                        .accessibilityHidden(true)
+                }
+
+                Text(displayText)
+                    .font(.callout.bold())
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if isInteractive {
+                    Image(systemName: "chevron.up.down")
+                        .font(.caption)
+                        .accessibilityHidden(true)
+                }
             }
-            Text(displayText)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-            if isInteractive {
-                Image(systemName: "chevron.up.down")
-                    .font(.caption2)
-            }
+            .foregroundStyle(isInteractive ? HerdrTheme.mauve : HerdrTheme.mist)
         }
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(isInteractive ? HerdrTheme.accent : HerdrTheme.mist)
-        .padding(.horizontal, 10)
-        .frame(minHeight: 36)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .frame(minHeight: 44, alignment: .leading)
         .background(HerdrTheme.elevated)
-        .clipShape(.capsule)
-        .opacity(isInteractive && !isEnabled ? 0.45 : 1)
+        .overlay {
+            RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+                .strokeBorder(HerdrTheme.surface, lineWidth: 1)
+        }
+        .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+        .contentShape(.rect)
+        .opacity(isInteractive && !isEnabled ? 0.48 : 1)
     }
 
     private var displayText: String {
-        guard let currentLevel else { return "thinking" }
+        guard let currentLevel else { return "Not reported" }
         return PiThinkingLevel(rawValue: currentLevel)?.displayName ?? currentLevel
     }
 

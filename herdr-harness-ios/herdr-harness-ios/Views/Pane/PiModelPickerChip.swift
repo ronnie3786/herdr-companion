@@ -16,7 +16,7 @@ struct PiModelPickerChip: View {
             Menu {
                 if isLoading {
                     Text("Loading models…").disabled(true)
-                } else if let errorMessage {
+                } else if let errorMessage = errorMessage {
                     Text(errorMessage).disabled(true)
                     Button("Retry", action: retry)
                 } else if availableModels.isEmpty {
@@ -38,42 +38,65 @@ struct PiModelPickerChip: View {
                     }
                 }
             } label: {
-                chipLabel
+                controlLabel
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .disabled(!isEnabled)
             .accessibilityIdentifier("pi-chat-model")
-            .accessibilityLabel("Model: \(currentModel?.displayName ?? "unknown")")
+            .accessibilityLabel("Model: \(displayText)")
         } else if currentModel != nil {
-            chipLabel
-                .opacity(0.6)
+            controlLabel
+                .opacity(0.65)
                 .accessibilityIdentifier("pi-chat-model")
-                .accessibilityLabel("Model: \(currentModel?.displayName ?? "unknown")")
+                .accessibilityLabel("Model: \(displayText)")
         }
     }
 
-    @ViewBuilder
-    private var chipLabel: some View {
-        HStack(spacing: 4) {
-            if isSetting {
-                ProgressView()
-            } else {
-                Image(systemName: "cpu")
+    private var controlLabel: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Model")
+                .font(.caption)
+                .foregroundStyle(HerdrTheme.mist)
+
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                if isSetting {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "cpu")
+                        .accessibilityHidden(true)
+                }
+
+                Text(displayText)
+                    .font(.callout.bold())
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if isInteractive {
+                    Image(systemName: "chevron.up.down")
+                        .font(.caption)
+                        .accessibilityHidden(true)
+                }
             }
-            Text(currentModel?.displayName ?? "model")
-                .lineLimit(1)
-                .truncationMode(.middle)
-            if isInteractive {
-                Image(systemName: "chevron.up.down")
-                    .font(.caption2)
-            }
+            .foregroundStyle(isInteractive ? HerdrTheme.mauve : HerdrTheme.mist)
         }
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(isInteractive ? HerdrTheme.accent : HerdrTheme.mist)
-        .padding(.horizontal, 10)
-        .frame(minHeight: 36)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         .background(HerdrTheme.elevated)
-        .clipShape(.capsule)
-        .opacity(isInteractive && !isEnabled ? 0.45 : 1)
+        .overlay {
+            RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+                .strokeBorder(HerdrTheme.surface, lineWidth: 1)
+        }
+        .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+        .contentShape(.rect)
+        .opacity(isInteractive && !isEnabled ? 0.48 : 1)
+    }
+
+    private var displayText: String {
+        if isLoading, currentModel == nil { return "Loading…" }
+        return currentModel?.displayName ?? "Not reported"
     }
 
     private var modelsByProvider: [String: [PiAvailableModel]] {
@@ -89,7 +112,7 @@ struct PiModelPickerChip: View {
     }
 }
 
-#Preview("Long model name stays one line") {
+#Preview("Long model name wraps") {
     HStack {
         PiModelPickerChip(
             currentModel: PiModelIdentity(
@@ -104,7 +127,7 @@ struct PiModelPickerChip: View {
             isInteractive: true,
             errorMessage: nil,
             selectModel: { _ in },
-            retry: {}
+            retry: { }
         )
         PiThinkingLevelChip(
             currentLevel: PiThinkingLevel.xhigh.rawValue,
@@ -113,7 +136,6 @@ struct PiModelPickerChip: View {
             isInteractive: true,
             selectLevel: { _ in }
         )
-        Spacer()
     }
     .padding(.horizontal, 12)
     .frame(width: 375)

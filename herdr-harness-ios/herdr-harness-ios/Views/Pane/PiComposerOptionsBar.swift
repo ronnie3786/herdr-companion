@@ -13,10 +13,9 @@ struct PiComposerOptionsBar: View {
                 showsAudioTitles: true,
                 activateResponseAudio: activateResponseAudio
             )
-            PiComposerOptionsRow(
+            PiComposerOptionsColumn(
                 configuration: configuration,
                 responseAudioPlayer: responseAudioPlayer,
-                showsAudioTitles: false,
                 activateResponseAudio: activateResponseAudio
             )
         }
@@ -30,7 +29,7 @@ private struct PiComposerOptionsRow: View {
     let activateResponseAudio: ((ResponseAudioAction) -> Void)?
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(alignment: .center, spacing: 8) {
             PiModelPickerChip(
                 currentModel: configuration.currentModel,
                 availableModels: configuration.availableModels,
@@ -46,6 +45,9 @@ private struct PiComposerOptionsRow: View {
                     Task { await configuration.retryLoadModels() }
                 }
             )
+            .frame(minWidth: 132)
+            .layoutPriority(1)
+
             PiThinkingLevelChip(
                 currentLevel: configuration.thinkingLevel,
                 isSetting: configuration.isSettingThinkingLevel,
@@ -55,13 +57,63 @@ private struct PiComposerOptionsRow: View {
                     Task { _ = await configuration.selectThinkingLevel(level) }
                 }
             )
-            Spacer(minLength: 4)
+
             if let responseAudioPlayer, let activateResponseAudio {
+                Spacer(minLength: 0)
                 ResponseAudioControlsView(
                     player: responseAudioPlayer,
                     showsTitles: showsAudioTitles,
                     activate: activateResponseAudio
                 )
+            }
+        }
+    }
+}
+
+private struct PiComposerOptionsColumn: View {
+    let configuration: PiPromptComposerConfiguration
+    let responseAudioPlayer: ResponseAudioPlayer?
+    let activateResponseAudio: ((ResponseAudioAction) -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            PiModelPickerChip(
+                currentModel: configuration.currentModel,
+                availableModels: configuration.availableModels,
+                isLoading: configuration.isLoadingModels,
+                isSetting: configuration.isSettingModel,
+                isEnabled: configuration.canSelectModel,
+                isInteractive: configuration.supportsModelMenu,
+                errorMessage: configuration.modelCatalogError,
+                selectModel: { candidate in
+                    Task { _ = await configuration.selectModel(candidate) }
+                },
+                retry: {
+                    Task { await configuration.retryLoadModels() }
+                }
+            )
+
+            PiThinkingLevelChip(
+                currentLevel: configuration.thinkingLevel,
+                isSetting: configuration.isSettingThinkingLevel,
+                isEnabled: configuration.canSelectThinkingLevel,
+                isInteractive: configuration.supportsThinkingMenu,
+                selectLevel: { level in
+                    Task { _ = await configuration.selectThinkingLevel(level) }
+                }
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let responseAudioPlayer, let activateResponseAudio {
+                HStack {
+                    Spacer(minLength: 0)
+                    ResponseAudioControlsView(
+                        player: responseAudioPlayer,
+                        showsTitles: false,
+                        activate: activateResponseAudio
+                    )
+                }
+                .frame(maxWidth: .infinity)
             }
         }
     }

@@ -88,18 +88,27 @@ enum HerdrProse {
         color.opacity(subOutputOpacity)
     }
 
-    /// Inter font for a role, anchored to its Dynamic Type text style via
-    /// `Font.custom(_:size:relativeTo:)` so accessibility text sizes still
-    /// scale it. `Font.custom` falls back to the system font at the same
-    /// size if Inter isn't resolvable, so this degrades gracefully.
+    /// System font for a role, preserving its established default point size
+    /// while continuing to follow the role's Dynamic Type text style.
     static func font(_ role: Role) -> Font {
-        .custom(postScriptName(for: role), size: role.baseSize, relativeTo: role.textStyle)
+        var font = role.textStyle.systemFont
+            .scaled(by: role.baseSize / role.textStyle.defaultPointSize)
+            .weight(role.weight)
+        if role.isItalic { font = font.italic() }
+        return font
     }
 
-    /// Monospaced chip font for inline `code` spans within prose, sized
-    /// relative to the surrounding role.
+    /// Monospaced system font for inline `code`, scaled from the same Dynamic
+    /// Type anchor as its surrounding prose role.
     static func inlineCodeFont(_ role: Role) -> Font {
-        .system(size: (role.baseSize * 0.9).rounded(), weight: .medium, design: .monospaced)
+        role.textStyle.systemFont
+            .scaled(by: inlineCodeSize(for: role) / role.textStyle.defaultPointSize)
+            .monospaced()
+            .weight(.medium)
+    }
+
+    static func inlineCodeSize(for role: Role) -> CGFloat {
+        (role.baseSize * 0.9).rounded()
     }
 
     /// Foreground color for inline `code` spans within prose.
@@ -122,20 +131,48 @@ enum HerdrProse {
         }
     }
 
-    private static func postScriptName(for role: Role) -> String {
-        if role.isItalic { return "Inter-Italic" }
-        switch role.weight {
-        case .bold, .heavy, .black: return "Inter-Bold"
-        case .semibold: return "Inter-SemiBold"
-        case .medium: return "Inter-Medium"
-        default: return "Inter-Regular"
+    /// Runtime check that the still-bundled Inter-Regular asset resolves.
+    /// The mobile chat now uses system prose; retaining this check prevents the
+    /// focused visual revision from silently turning into unrelated asset work.
+    static func isInterRegularAvailable() -> Bool {
+        UIFont(name: "Inter-Regular", size: 12) != nil
+    }
+}
+
+private extension Font.TextStyle {
+    var systemFont: Font {
+        switch self {
+        case .largeTitle: .largeTitle
+        case .title: .title
+        case .title2: .title2
+        case .title3: .title3
+        case .headline: .headline
+        case .subheadline: .subheadline
+        case .body: .body
+        case .callout: .callout
+        case .footnote: .footnote
+        case .caption: .caption
+        case .caption2: .caption2
+        @unknown default: .body
         }
     }
 
-    /// Runtime check that the bundled Inter-Regular face actually resolves.
-    /// Used by a unit test to catch bundling regressions (e.g. a missing
-    /// Fonts/ resource or a stale `UIAppFonts` entry) in CI.
-    static func isInterRegularAvailable() -> Bool {
-        UIFont(name: "Inter-Regular", size: 12) != nil
+    /// Default iOS point sizes for the semantic styles. Scaling a semantic
+    /// system font by the role's ratio retains Dynamic Type behavior while
+    /// matching Herdr's established default prose hierarchy.
+    var defaultPointSize: CGFloat {
+        switch self {
+        case .largeTitle: 34
+        case .title: 28
+        case .title2: 22
+        case .title3: 20
+        case .headline, .body: 17
+        case .subheadline: 15
+        case .callout: 16
+        case .footnote: 13
+        case .caption: 12
+        case .caption2: 11
+        @unknown default: 17
+        }
     }
 }

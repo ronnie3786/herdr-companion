@@ -717,18 +717,16 @@ struct PromptComposerView: View {
 
     private func send() {
         guard canSend else { return }
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let paths = attachments.compactMap(\.uploadedPath)
-        let attachmentBlock = paths.isEmpty
-            ? ""
-            : paths.map { "Attachment: `\($0)`" }.joined(separator: "\n")
-        var message = [text, attachmentBlock]
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n\n")
-        if draftContainsDictation,
-           !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            message += "\n\n(transcribed audio, please account for incorrect names or typos)"
-        }
+        let originPane = pane
+        let originPaneID = pane.id
+        let submittedDraft = draft
+        let submittedAttachments = Self.submittedAttachments(from: attachments)
+        let submittedAttachmentIDs = Set(submittedAttachments.map(\.id))
+        let message = Self.submissionMessage(
+            draft: submittedDraft,
+            uploadedPaths: submittedAttachments.compactMap(\.uploadedPath),
+            containsDictation: draftContainsDictation
+        )
         let piConfiguration = self.piConfiguration
         let disposition = effectiveDisposition
 
@@ -736,19 +734,57 @@ struct PromptComposerView: View {
             let didSend = if let piConfiguration {
                 await piConfiguration.submit(message, disposition)
             } else {
-                await model.sendPrompt(message, to: pane)
+                await model.sendPrompt(message, to: originPane)
             }
 
             if didSend {
-                draft = ""
-                draftContainsDictation = false
-                attachments.forEach { $0.removeSourceFileIfOwned() }
-                attachments = []
+                let clearedSubmittedDraft = model.paneDrafts.clearText(
+                    for: originPaneID,
+                    ifUnchanged: submittedDraft
+                )
+                if clearedSubmittedDraft {
+                    draftContainsDictation = false
+                }
+                submittedAttachments.forEach { $0.removeSourceFileIfOwned() }
+                attachments = Self.remainingAttachments(
+                    afterRemoving: submittedAttachmentIDs,
+                    from: attachments
+                )
                 hapticPulse.fire(.promptSent)
             } else if piConfiguration != nil {
                 hapticPulse.fire(.failed)
             }
         }
+    }
+
+    static func submissionMessage(
+        draft: String,
+        uploadedPaths: [String],
+        containsDictation: Bool
+    ) -> String {
+        let hasSendableText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let attachmentBlock = uploadedPaths
+            .map { "Attachment: `\($0)`" }
+            .joined(separator: "\n")
+        var message = [hasSendableText ? draft : "", attachmentBlock]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+        if containsDictation,
+           !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            message += "\n\n(transcribed audio, please account for incorrect names or typos)"
+        }
+        return message
+    }
+
+    static func submittedAttachments(from attachments: [TerminalAttachment]) -> [TerminalAttachment] {
+        attachments.filter { $0.status == .uploaded && $0.uploadedPath != nil }
+    }
+
+    static func remainingAttachments(
+        afterRemoving submittedIDs: Set<UUID>,
+        from current: [TerminalAttachment]
+    ) -> [TerminalAttachment] {
+        current.filter { !submittedIDs.contains($0.id) }
     }
 
     private func selectDisposition(_ selection: PiPromptDisposition) {

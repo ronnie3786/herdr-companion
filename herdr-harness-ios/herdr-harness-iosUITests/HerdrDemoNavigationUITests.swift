@@ -25,9 +25,25 @@ final class HerdrDemoNavigationUITests: XCTestCase {
         XCTAssertTrue(blockedPane.waitForExistence(timeout: 3))
         blockedPane.tap()
 
-        XCTAssertTrue(app.navigationBars["Choose sample garden colors"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["pane-session-title"].waitForExistence(timeout: 3))
+        XCTAssertTrue(
+            app.descendants(matching: .any)["pane-session-scope"].waitForExistence(timeout: 3)
+        )
         XCTAssertTrue(app.textFields["prompt-composer"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.tabBars.firstMatch.exists, "Pane detail should hide the app tab bar")
+
+        let chatMode = app.buttons["pane-mode-chat"]
+        let gitMode = app.buttons["pane-mode-git"]
+        let terminalMode = app.buttons["pane-mode-terminal"]
+        for mode in [chatMode, gitMode, terminalMode] {
+            XCTAssertTrue(mode.waitForExistence(timeout: 3))
+        }
+        XCTAssertEqual(chatMode.frame.width, gitMode.frame.width, accuracy: 1)
+        XCTAssertEqual(gitMode.frame.width, terminalMode.frame.width, accuracy: 1)
+        XCTAssertLessThan(chatMode.frame.minX, gitMode.frame.minX)
+        XCTAssertLessThan(gitMode.frame.minX, terminalMode.frame.minX)
+        XCTAssertFalse(chatMode.isEnabled, "The nonsemantic Claude demo pane must not expose native Chat")
+        XCTAssertEqual(terminalMode.value as? String, "Selected")
         XCTAssertFalse(app.buttons["Yes, proceed"].exists, "Canned response chips should not consume pane space")
 
         for key in ["up", "down", "tab", "enter"] {
@@ -43,6 +59,10 @@ final class HerdrDemoNavigationUITests: XCTestCase {
         }
         try saveScreenshot("02-terminal-expanded", app: app)
 
+        let composer = app.textFields["prompt-composer"]
+        composer.tap()
+        composer.typeText("draft survives pane modes")
+
         try selectPaneMode("Git", app: app)
         XCTAssertTrue(app.staticTexts["staged"].waitForExistence(timeout: 3))
         try saveScreenshot("03-git-status", app: app)
@@ -54,11 +74,14 @@ final class HerdrDemoNavigationUITests: XCTestCase {
         try saveScreenshot("04-git-diff", app: app)
         app.buttons["Done"].tap()
 
-        try selectPaneMode("Skills", app: app)
+        try selectPaneActionMode("Skills", app: app)
         XCTAssertTrue(app.staticTexts["workspace skills"].waitForExistence(timeout: 3))
         try saveScreenshot("05-skills", app: app)
 
         try selectPaneMode("Terminal", app: app)
+        let restoredComposer = app.textFields["prompt-composer"]
+        XCTAssertTrue(restoredComposer.waitForExistence(timeout: 3))
+        XCTAssertEqual(restoredComposer.value as? String, "draft survives pane modes")
         app.buttons["terminal-controls-toggle"].tap()
         XCTAssertTrue(app.buttons["Insert a workspace file path"].waitForExistence(timeout: 2))
 
@@ -85,6 +108,30 @@ final class HerdrDemoNavigationUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["VOICE NOTE"].waitForExistence(timeout: 3))
         try saveScreenshot("08-voice-note", app: app)
         app.buttons["Close"].tap()
+    }
+
+    @MainActor
+    func testPlainShellKeepsThreeModesAndDisablesChat() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-HerdrDemoMode"]
+        app.launch()
+
+        let workspace = app.buttons["Garden Planner, Needs you, 3 panes"]
+        XCTAssertTrue(workspace.waitForExistence(timeout: 8))
+        workspace.tap()
+
+        let shellPane = app.buttons["Unit tests, Terminal, Shell"]
+        XCTAssertTrue(shellPane.waitForExistence(timeout: 3))
+        shellPane.tap()
+
+        let chatMode = app.buttons["pane-mode-chat"]
+        let terminalMode = app.buttons["pane-mode-terminal"]
+        XCTAssertTrue(chatMode.waitForExistence(timeout: 3))
+        XCTAssertFalse(chatMode.isEnabled)
+        XCTAssertEqual(terminalMode.value as? String, "Selected")
+        XCTAssertFalse(app.descendants(matching: .any)["pi-context-meter"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["pi-chat-model"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["pi-chat-thinking"].exists)
     }
 
     @MainActor
@@ -125,11 +172,21 @@ final class HerdrDemoNavigationUITests: XCTestCase {
 
     @MainActor
     private func selectPaneMode(_ mode: String, app: XCUIApplication) throws {
+        let modeButton = app.buttons["pane-mode-\(mode.lowercased())"]
+        XCTAssertTrue(modeButton.waitForExistence(timeout: 3), "The pane mode bar should expose \(mode)")
+        let enabled = NSPredicate(format: "enabled == true")
+        expectation(for: enabled, evaluatedWith: modeButton)
+        waitForExpectations(timeout: 3)
+        modeButton.tap()
+    }
+
+    @MainActor
+    private func selectPaneActionMode(_ mode: String, app: XCUIApplication) throws {
         let menu = app.buttons["Pane actions"]
         XCTAssertTrue(menu.waitForExistence(timeout: 3))
         menu.tap()
         let modeButton = app.buttons["\(mode) view"]
-        XCTAssertTrue(modeButton.waitForExistence(timeout: 2), "The pane menu should expose \(mode)")
+        XCTAssertTrue(modeButton.waitForExistence(timeout: 2), "Pane actions should keep \(mode) reachable")
         modeButton.tap()
     }
 

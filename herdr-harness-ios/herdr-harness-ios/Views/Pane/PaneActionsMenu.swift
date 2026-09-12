@@ -4,6 +4,7 @@ struct PaneActionsMenu: View {
     @Bindable var model: HerdrAppModel
     let pane: HerdrPane
     @Binding var selectedMode: PaneDetailMode
+    let gitIsAvailable: Bool
     var isPiCompacting = false
     /// Mirrors the Mac's `PaneSessionHeader` parameters. Defaulted so the flag
     /// and the action can be added at the single call site without touching
@@ -27,9 +28,22 @@ struct PaneActionsMenu: View {
                             systemImage: selectedMode == mode ? "checkmark.circle.fill" : mode.symbol
                         )
                     }
+                    .disabled(!modeIsEnabled(mode))
                     .accessibilityLabel("\(mode.label) view")
-                    .accessibilityIdentifier("pane-mode-\(mode.rawValue)")
+                    .accessibilityIdentifier("pane-action-mode-\(mode.rawValue)")
                 }
+            }
+
+            Section("Chat organization") {
+                Button(
+                    isStarred ? "Unstar chat" : "Star chat",
+                    systemImage: isStarred ? "star.fill" : "star"
+                ) {
+                    model.toggleStarredChat(pane.id)
+                }
+                .accessibilityIdentifier("pane-action-star")
+
+                ChatTabColorMenu(store: model.chatTabColors, tabID: pane.scopedTabID)
             }
 
             Section("Focus and control") {
@@ -173,6 +187,21 @@ struct PaneActionsMenu: View {
 
     private var availableModes: [PaneDetailMode] {
         PaneDetailMode.allCases.filter { $0 != .chat || pane.supportsPiSemanticChat }
+    }
+
+    private var isStarred: Bool {
+        model.starredChatIDs.contains(pane.id)
+    }
+
+    private func modeIsEnabled(_ mode: PaneDetailMode) -> Bool {
+        switch mode {
+        case .chat:
+            return pane.supportsPiSemanticChat
+        case .git:
+            return gitIsAvailable
+        case .terminal, .skills:
+            return true
+        }
     }
 
     private var piSessionMutationIsDisabled: Bool {

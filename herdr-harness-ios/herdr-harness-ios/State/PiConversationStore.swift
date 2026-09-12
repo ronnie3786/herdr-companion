@@ -207,8 +207,8 @@ final class PiConversationStore {
         model: HerdrAppModel,
         pane: HerdrPane
     ) async -> Bool {
-        let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !prompt.isEmpty, !isSubmitting, compactionActivity == nil else { return false }
+        let hasSendableText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard hasSendableText, !isSubmitting, compactionActivity == nil else { return false }
         guard canSendCommands else {
             lastError = "Pi is offline. Reconnect before sending a message."
             return false
@@ -217,7 +217,7 @@ final class PiConversationStore {
         commandNotice = nil
         defer { isSubmitting = false }
         do {
-            try await model.sendPiConversationPrompt(prompt, disposition: disposition, to: pane)
+            try await model.sendPiConversationPrompt(text, disposition: disposition, to: pane)
             lastError = nil
             commandNotice = disposition == .followUp ? "Follow-up queued" : nil
             return true

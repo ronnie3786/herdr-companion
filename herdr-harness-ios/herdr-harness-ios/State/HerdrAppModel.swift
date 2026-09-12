@@ -32,7 +32,9 @@ final class HerdrAppModel {
     var workspacePath: [WorkspaceRoute] = []
     var isSidebarPresented = false
     var agentRequest: HeadlessAgentRequest?
-    var sidebarRecency: SidebarRecency = .all
+    var sidebarRecency: SidebarRecency = .recents
+    var sidebarQuery = ""
+    var sidebarColorFilter: ChatTabColor?
     var collapsedSidebarWorkspaceIDs: Set<String>
     var collapsedSidebarMachineIDs: Set<String>
     var collapsedSidebarTabIDs: Set<String>
@@ -92,6 +94,8 @@ final class HerdrAppModel {
     var remotePushRegistrationError: String?
 
     private let userDefaults: UserDefaults
+    let chatTabColors: ChatTabColorStore
+    let paneDrafts: PaneDraftStore
     @ObservationIgnored private var runtimes: [String: MachineRuntime] = [:]
     @ObservationIgnored private var pendingPushToken: String?
     @ObservationIgnored private var pendingPaneID: String?
@@ -145,13 +149,17 @@ final class HerdrAppModel {
             ?? ""
         if arguments.contains("-HerdrResetSidebarState") {
             defaults.removeObject(forKey: "herdr.sidebar.collapsedWorkspaces")
+            defaults.removeObject(forKey: "herdr.sidebar.collapsedMachines")
             defaults.removeObject(forKey: "herdr.sidebar.collapsedTabs")
             defaults.removeObject(forKey: "herdr.sidebar.starredChats")
+            defaults.removeObject(forKey: "herdr.chatTabColors.v1")
         }
         #else
         let uiTestServerURL: String? = nil
         let uiTestToken = ""
         #endif
+        self.chatTabColors = ChatTabColorStore(defaults: defaults)
+        self.paneDrafts = PaneDraftStore()
         Self.migrateMachinesIfNeeded(defaults: defaults, credentials: credentials)
         let bundledURL = Bundle.main.object(forInfoDictionaryKey: "HerdrDemoServerURL") as? String
         let persistedMachines = Self.loadMachines(defaults: defaults)
@@ -783,14 +791,14 @@ final class HerdrAppModel {
         to pane: HerdrPane
     ) async throws {
         noteUserInteraction(machineID: pane.machineID)
-        let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !prompt.isEmpty,
+        let hasSendableText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard hasSendableText,
               !isDemoMode,
               canControl(machineID: pane.machineID),
               self.pane(id: pane.id) != nil,
               let client = client(forMachine: pane.machineID)
         else { throw APIError.invalidResponse }
-        try await client.sendPiPrompt(paneID: pane.paneID, text: prompt, disposition: disposition)
+        try await client.sendPiPrompt(paneID: pane.paneID, text: text, disposition: disposition)
     }
 
     func abortPiConversation(for pane: HerdrPane) async throws {
@@ -845,8 +853,8 @@ final class HerdrAppModel {
 
     func sendPrompt(_ text: String, to pane: HerdrPane) async -> Bool {
         noteUserInteraction(machineID: pane.machineID)
-        let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !prompt.isEmpty else { return false }
+        let hasSendableText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard hasSendableText else { return false }
         if isDemoMode {
             toastMessage = "Sent to \(pane.displayAgentName)"
             return true
@@ -857,9 +865,9 @@ final class HerdrAppModel {
         defer { isSending = false }
         do {
             if pane.agentStatus == .unknown {
-                try await client.sendText(toPane: pane.paneID, text: prompt, submit: true)
+                try await client.sendText(toPane: pane.paneID, text: text, submit: true)
             } else {
-                try await client.promptPane(id: pane.paneID, text: prompt)
+                try await client.promptPane(id: pane.paneID, text: text)
             }
             toastMessage = "Sent to \(pane.displayAgentName)"
             return true
@@ -2008,6 +2016,7 @@ final class HerdrAppModel {
             collapsedSidebarTabIDs = prunedCollapsedTabs
             userDefaults.set(Array(collapsedSidebarTabIDs), forKey: "herdr.sidebar.collapsedTabs")
         }
+        paneDrafts.reconcile(machineID: machineID, validPaneIDs: validPaneIDs)
     }
 
     private func resolvePendingPaneRoute() {
@@ -2094,6 +2103,7 @@ final class HerdrAppModel {
         collapsedSidebarWorkspaceIDs = collapsedSidebarWorkspaceIDs.filter { MachineScopedID.split($0)?.machineID != id }
         collapsedSidebarTabIDs = collapsedSidebarTabIDs.filter { MachineScopedID.split($0)?.machineID != id }
         collapsedSidebarMachineIDs.remove(id)
+        paneDrafts.removeAll(forMachineID: id)
         userDefaults.set(Array(starredChatIDs), forKey: "herdr.sidebar.starredChats")
         userDefaults.set(Array(collapsedSidebarWorkspaceIDs), forKey: "herdr.sidebar.collapsedWorkspaces")
         userDefaults.set(Array(collapsedSidebarTabIDs), forKey: "herdr.sidebar.collapsedTabs")

@@ -2,7 +2,8 @@ import SwiftUI
 
 struct HerdrSidebarView: View {
     @Bindable var model: HerdrAppModel
-    @State private var query = ""
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isPresentingColorFilter = false
     @State private var isPresentingCreateWorkspace = false
     @State private var isPresentingMachines = false
     @State private var creatingWorkspaceMachineID: String?
@@ -16,34 +17,57 @@ struct HerdrSidebarView: View {
     @State private var closingPane: HerdrPane?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            header
+        let projection = sidebarProjection
+
+        VStack(alignment: .leading, spacing: 8) {
+            SidebarHeaderView(model: model, close: dismiss)
 
             if model.machines.count > 1 {
                 machinePicker
             }
 
-            WorkspaceSearchField(text: $query, placeholder: "filter chats")
-            creationControls
+            WorkspaceSearchField(text: $model.sidebarQuery, placeholder: "Filter chats")
+
+            ChatTabColorFilterButton(
+                store: model.chatTabColors,
+                selectedColor: model.sidebarColorFilter,
+                action: { isPresentingColorFilter = true }
+            )
+
+            SidebarCreationControls(
+                model: model,
+                showsMachineChrome: showsMachineChrome,
+                scopedMachineID: scopedMachineID,
+                presentCreateWorkspace: presentCreateWorkspace,
+                dismissSidebar: dismiss
+            )
+
+            HerdrSectionLabel(
+                title: "chats",
+                detail: sidebarCountDetail(projection.visiblePaneCount),
+                monospaced: false
+            )
+            .padding(.horizontal, SidebarMetrics.rowHorizontalPadding)
 
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 3) {
-                    HerdrSectionLabel(
-                        title: "chats",
-                        detail: sidebarCountDetail(paneCount),
-                        monospaced: false
-                    )
-                    .padding(.bottom, 2)
-
-                    starredSection
-                    workspaceContent
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    sidebarRows(projection)
                 }
             }
             .scrollIndicators(.hidden)
         }
         .padding(.horizontal, SidebarMetrics.containerHorizontalPadding)
-        .padding(.top, 12)
+        .padding(.top, 10)
         .padding(.bottom, 18)
+        .sheet(isPresented: $isPresentingColorFilter) {
+            ChatTabColorFilterSheet(
+                store: model.chatTabColors,
+                activeColors: activeColors,
+                paneCounts: colorPaneCounts,
+                selection: $model.sidebarColorFilter
+            )
+            .presentationDetents([.medium, .large])
+        }
         .sheet(isPresented: $isPresentingCreateWorkspace) {
             CreateWorkspaceView { label, cwd in
                 let created = await model.createWorkspace(
@@ -114,43 +138,21 @@ struct HerdrSidebarView: View {
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            HerdrBrandMark(size: 28)
-            Text("herdr")
-                .font(.headline.monospaced().bold())
-                .foregroundStyle(HerdrTheme.text)
-            Spacer()
-            Menu {
-                ForEach(SidebarRecency.allCases) { recency in
-                    Button {
-                        model.sidebarRecency = recency
-                    } label: {
-                        Label(
-                            recency.title,
-                            systemImage: recency == model.sidebarRecency ? "checkmark" : recency.symbolName
-                        )
-                    }
-                }
-            } label: {
-                Image(systemName: model.sidebarRecency.symbolName)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .foregroundStyle(model.sidebarRecency == .all ? HerdrTheme.mist : HerdrTheme.accent)
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("sidebar-recent-filter")
-            .accessibilityLabel("Chat range, \(model.sidebarRecency.title)")
-            Button(action: dismiss) {
-                Image(systemName: "xmark")
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .foregroundStyle(HerdrTheme.mist)
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("sidebar-close")
-            .accessibilityLabel("Close navigator")
-        }
+    private var sidebarProjection: SidebarProjection {
+        SidebarProjection(
+            workspaces: model.workspaces,
+            machines: model.machines,
+            machineStates: model.machineStates,
+            machineScope: model.machineScope,
+            query: model.sidebarQuery,
+            recency: model.sidebarRecency,
+            colorFilterTabIDs: model.sidebarColorFilter.map { model.chatTabColors.tabIDs(for: $0) },
+            collapsedMachineIDs: model.collapsedSidebarMachineIDs,
+            collapsedWorkspaceIDs: model.collapsedSidebarWorkspaceIDs,
+            collapsedTabIDs: model.collapsedSidebarTabIDs,
+            starredPaneIDs: model.starredChatIDs,
+            unreadPaneIDs: model.unreadPaneIDs
+        )
     }
 
     private var machinePicker: some View {
@@ -160,13 +162,9 @@ struct HerdrSidebarView: View {
                 Button {
                     model.setMachineScope(.machine(machine.id))
                 } label: {
-                    Label {
-                        Text(machine.name)
-                    } icon: {
-                        Circle()
-                            .fill(model.connectionState(forMachine: machine.id).color)
-                    }
+                    Label(machine.name, systemImage: "desktopcomputer")
                 }
+                .accessibilityValue(model.connectionState(forMachine: machine.id).title)
             }
             Divider()
             Button("Manage Machines…", systemImage: "server.rack") {
@@ -174,110 +172,90 @@ struct HerdrSidebarView: View {
             }
         } label: {
             HStack(spacing: 7) {
+                Image(systemName: "desktopcomputer")
+                    .accessibilityHidden(true)
                 Text(scopeTitle)
-                Spacer()
+                    .lineLimit(2)
+                Spacer(minLength: 8)
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.caption.bold())
+                    .accessibilityHidden(true)
             }
-            .font(.caption.bold())
+            .font(.subheadline)
             .foregroundStyle(HerdrTheme.mist)
-            .frame(minHeight: 30)
+            .padding(.horizontal, SidebarMetrics.rowHorizontalPadding)
+            .frame(minHeight: SidebarMetrics.controlHeight)
+            .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("sidebar-machine-picker")
+        .accessibilityLabel("Machine scope")
+        .accessibilityValue(scopeTitle)
     }
 
     @ViewBuilder
-    private var creationControls: some View {
-        if showsMachineChrome {
-            Menu {
-                ForEach(model.machines) { machine in
-                    Button(machine.name) { presentCreateWorkspace(for: machine.id) }
-                }
-            } label: {
-                Label("new workspace", systemImage: "plus")
-                    .sidebarActionStyle()
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("sidebar-new-workspace")
-
-            Menu {
-                ForEach(model.machines) { machine in
-                    Button(machine.name) {
-                        Task { await model.createQuickPiSession(machineID: machine.id) }
-                    }
-                }
-            } label: {
-                Label("new pi session", systemImage: "bolt")
-                    .sidebarActionStyle()
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("sidebar-new-pi-session")
-
-            Menu {
-                ForEach(model.machines) { machine in
-                    Button(machine.name) {
-                        model.presentAgent(machineID: machine.id)
-                        dismiss()
-                    }
-                }
-            } label: {
-                Label("run agent", systemImage: "sparkles")
-                    .sidebarActionStyle()
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("sidebar-run-agent")
+    private func sidebarRows(_ projection: SidebarProjection) -> some View {
+        if projection.isRecents {
+            recentsSection(projection)
         } else {
-            Button("new workspace", systemImage: "plus") {
-                presentCreateWorkspace(for: scopedMachineID)
-            }
-            .sidebarActionStyle()
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("sidebar-new-workspace")
-
-            Button("new pi session", systemImage: "bolt") {
-                Task { await model.createQuickPiSession(machineID: scopedMachineID) }
-            }
-            .sidebarActionStyle()
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("sidebar-new-pi-session")
-
-            Button("run agent", systemImage: "sparkles") {
-                model.presentAgent(machineID: scopedMachineID)
-                dismiss()
-            }
-            .sidebarActionStyle()
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("sidebar-run-agent")
+            unreadSection(projection)
+            starredSection(projection)
+            groupedContent(projection)
         }
     }
 
     @ViewBuilder
-    private var starredSection: some View {
-        if !starredGroups.isEmpty {
-            HerdrSectionLabel(title: "starred", detail: "\(starredCount)", monospaced: false)
-                .padding(.top, 4)
-            ForEach(starredGroups) { group in
-                Text(starredGroupTitle(group))
-                    .font(.caption.bold())
-                    .foregroundStyle(HerdrTheme.muted)
-                    .lineLimit(1)
-                    .padding(.leading, SidebarMetrics.chatRowLeadingPadding)
-                    .padding(.top, 6)
-                ForEach(group.chats) { chatRow($0) }
+    private func recentsSection(_ projection: SidebarProjection) -> some View {
+        if projection.recentChats.isEmpty {
+            filteredEmptyState(
+                title: "No recent chats",
+                description: "Try another machine, color, or search."
+            )
+        } else {
+            sectionHeader("Recents", count: projection.recentChats.count, identifier: "sidebar-recents-section")
+            ForEach(projection.recentChats) { pane in
+                chatRow(pane, recentContext: recentContext(for: pane))
             }
-            Rectangle()
-                .fill(HerdrTheme.surface.opacity(0.65))
-                .frame(height: 1)
-                .padding(.top, 10)
-                .padding(.bottom, 6)
         }
     }
 
     @ViewBuilder
-    private var workspaceContent: some View {
-        if showsMachineChrome {
-            ForEach(machineGroups) { group in
+    private func unreadSection(_ projection: SidebarProjection) -> some View {
+        if !projection.unreadGroups.isEmpty {
+            sectionHeader("Unread", count: projection.unreadGroups.reduce(0) { $0 + $1.chats.count }, identifier: "sidebar-unread-section")
+            ForEach(projection.unreadGroups) { group in
+                priorityGroupLabel(group.workspace)
+                ForEach(group.chats) { pane in
+                    chatRow(pane)
+                }
+            }
+            Color.clear.frame(height: 6)
+        }
+    }
+
+    @ViewBuilder
+    private func starredSection(_ projection: SidebarProjection) -> some View {
+        if !projection.starredGroups.isEmpty {
+            sectionHeader("Starred", count: projection.starredGroups.reduce(0) { $0 + $1.chats.count }, identifier: "sidebar-starred-section")
+            ForEach(projection.starredGroups) { group in
+                priorityGroupLabel(group.workspace)
+                ForEach(group.chats) { pane in
+                    chatRow(pane)
+                }
+            }
+            Color.clear.frame(height: 6)
+        }
+    }
+
+    @ViewBuilder
+    private func groupedContent(_ projection: SidebarProjection) -> some View {
+        if projection.visiblePaneCount == 0, hasActiveListFilter {
+            filteredEmptyState(
+                title: "No matching chats",
+                description: "Try another range, machine, color, or search."
+            )
+        } else if showsMachineChrome {
+            ForEach(projection.machineGroups) { group in
                 SidebarMachineRow(
                     machine: group.machine,
                     state: group.state,
@@ -287,7 +265,7 @@ struct HerdrSidebarView: View {
                 )
                 if group.isExpanded {
                     if group.entries.isEmpty {
-                        Text("no workspaces yet")
+                        Text("No matching workspaces")
                             .font(.caption)
                             .foregroundStyle(HerdrTheme.muted)
                             .padding(.leading, SidebarMetrics.chatRowLeadingPadding)
@@ -298,54 +276,166 @@ struct HerdrSidebarView: View {
                 }
                 machineSeparator
             }
-        } else if tree.isEmpty {
-            if model.sidebarRecency != .all {
-                if starredGroups.isEmpty {
-                    Text("no chats from \(model.sidebarRecency.title.lowercased())")
-                        .font(.caption)
-                        .foregroundStyle(HerdrTheme.muted)
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 42)
-                }
-            } else {
-                emptyState
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 42)
-            }
+        } else if projection.tree.isEmpty {
+            emptyState
+                .frame(maxWidth: .infinity)
+                .padding(.top, 32)
         } else {
-            entriesContent(tree)
+            entriesContent(projection.tree)
         }
     }
 
     @ViewBuilder
     private func entriesContent(_ entries: [SidebarTree.ProjectEntry]) -> some View {
         ForEach(entries) { entry in
-            SidebarProjectRow(workspace: entry.workspace, isExpanded: entry.isExpanded, action: { toggle(entry.workspace) })
-                .contextMenu { workspaceMenu(entry.workspace) }
+            SidebarProjectRow(
+                workspace: entry.workspace,
+                isExpanded: entry.isExpanded,
+                action: { toggle(entry.workspace) }
+            )
+            .contextMenu { workspaceMenu(entry.workspace) }
+
             if entry.isExpanded {
                 ForEach(entry.sections) { section in
-                    SidebarSectionRow(tab: section.tab, isExpanded: section.isExpanded, action: { toggle(section.tab) })
-                        .contextMenu { tabMenu(section.tab, in: entry.workspace) }
+                    let tabColor = model.chatTabColors.color(for: section.tab.id)
+                    SidebarSectionRow(
+                        tab: section.tab,
+                        tabColor: tabColor,
+                        colorLabel: tabColor.map { model.chatTabColors.label(for: $0) },
+                        isExpanded: section.isExpanded,
+                        attentionStatus: tabAttentionStatus(section.tab, in: entry.workspace),
+                        workingCount: tabWorkingCount(section.tab, in: entry.workspace),
+                        action: { toggle(section.tab) }
+                    )
+                    .contextMenu { tabMenu(section.tab, in: entry.workspace) }
+
                     if section.isExpanded {
-                        ForEach(section.chats) { chatRow($0) }
+                        ForEach(section.chats) { pane in
+                            chatRow(pane)
+                        }
                     }
                 }
-                ForEach(entry.looseChats) { chatRow($0) }
+
+                ForEach(entry.looseChats) { pane in
+                    chatRow(pane)
+                }
+
                 if entry.sections.isEmpty && entry.looseChats.isEmpty {
-                    Text("no panes yet")
+                    Text("No panes yet")
                         .font(.caption)
                         .foregroundStyle(HerdrTheme.muted)
                         .padding(.leading, SidebarMetrics.chatRowLeadingPadding)
                         .frame(minHeight: SidebarMetrics.placeholderRowHeight)
                 }
             }
-            separator
+
+            Color.clear.frame(height: 6)
+        }
+    }
+
+    private func sectionHeader(_ title: String, count: Int, identifier: String) -> some View {
+        HStack {
+            Text(title)
+                .bold()
+            Spacer(minLength: 8)
+            Text("\(count)")
+                .monospacedDigit()
+        }
+        .font(.caption)
+        .foregroundStyle(HerdrTheme.mist)
+        .padding(.horizontal, SidebarMetrics.rowHorizontalPadding)
+        .frame(minHeight: 32)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(identifier)
+    }
+
+    private func priorityGroupLabel(_ workspace: HerdrWorkspace) -> some View {
+        Text(priorityGroupTitle(workspace))
+            .font(.caption.bold())
+            .foregroundStyle(HerdrTheme.muted)
+            .lineLimit(2)
+            .padding(.leading, SidebarMetrics.chatRowLeadingPadding)
+            .padding(.top, 4)
+            .frame(minHeight: SidebarMetrics.controlHeight, alignment: .leading)
+            .contextMenu { workspaceMenu(workspace) }
+    }
+
+    private func chatRow(_ pane: HerdrPane, recentContext: SidebarRecentContext? = nil) -> some View {
+        let color = model.chatTabColors.color(for: pane.scopedTabID)
+        return SidebarChatRow(
+            pane: pane,
+            recentContext: recentContext,
+            tabColor: color,
+            colorLabel: color.map { model.chatTabColors.label(for: $0) },
+            isSelected: pane.id == model.selectedPaneID,
+            isStarred: model.starredChatIDs.contains(pane.id),
+            isUnread: model.unreadPaneIDs.contains(pane.id),
+            since: recentContext == nil ? statusSince(for: pane) : (pane.lastActivityAt ?? pane.firstSeenAt),
+            action: { open(pane) }
+        )
+        .contextMenu {
+            if recentContext != nil, let workspace = model.workspace(containing: pane) {
+                Button("Open \(workspace.label) workspace", systemImage: "folder") {
+                    model.openWorkspace(id: workspace.id)
+                    dismiss()
+                }
+                Divider()
+            }
+
+            Button(
+                model.starredChatIDs.contains(pane.id) ? "Unstar chat" : "Star chat",
+                systemImage: model.starredChatIDs.contains(pane.id) ? "star.slash" : "star"
+            ) {
+                model.toggleStarredChat(pane.id)
+            }
+            Button("Focus on Mac", systemImage: "scope") {
+                Task { await model.focus(pane) }
+            }
+            .disabled(!model.canControl(machineID: pane.machineID))
+            Button("Focus on Mac + Zoom", systemImage: "arrow.up.left.and.arrow.down.right") {
+                Task { await model.focusAndZoom(pane) }
+            }
+            .disabled(!model.canControl(machineID: pane.machineID))
+            Button("Interrupt", systemImage: "stop.fill", role: .destructive) {
+                Task { await model.sendKeys(["ctrl+c"], to: pane) }
+            }
+            .disabled(!model.canControl(machineID: pane.machineID))
+            ChatTabColorMenu(store: model.chatTabColors, tabID: pane.scopedTabID)
+            Button("Rename pane", systemImage: "pencil") {
+                paneName = pane.displayTitle
+                renamingPane = pane
+            }
+            .disabled(!model.canControl(machineID: pane.machineID))
+            Menu("Split pane", systemImage: "rectangle.split.2x1") {
+                Button("Split right", systemImage: "rectangle.split.2x1") {
+                    Task { await model.split(pane, direction: "right") }
+                }
+                Button("Split down", systemImage: "rectangle.split.1x2") {
+                    Task { await model.split(pane, direction: "down") }
+                }
+            }
+            .disabled(!model.canControl(machineID: pane.machineID))
+            if pane.agentStatus == .unknown {
+                Menu("Start agent", systemImage: "cpu") {
+                    Button("Codex") { Task { await model.startAgent(in: pane, kind: "codex") } }
+                    Button("Claude") { Task { await model.startAgent(in: pane, kind: "claude") } }
+                    Button("OpenCode") { Task { await model.startAgent(in: pane, kind: "opencode") } }
+                }
+                .disabled(!model.canControl(machineID: pane.machineID))
+            }
+            Divider()
+            Button("Close pane", systemImage: "xmark.rectangle", role: .destructive) {
+                closingPane = pane
+            }
+            .disabled(!model.canControl(machineID: pane.machineID))
         }
     }
 
     @ViewBuilder
     private func tabMenu(_ tab: HerdrTab, in workspace: HerdrWorkspace) -> some View {
         let firstPane = firstPane(in: tab, workspace: workspace)
+        ChatTabColorMenu(store: model.chatTabColors, tabID: tab.id)
+        Divider()
         Button("Focus on Mac", systemImage: "scope") {
             guard let firstPane else { return }
             Task { await model.focus(firstPane) }
@@ -373,15 +463,19 @@ struct HerdrSidebarView: View {
             model.openWorkspace(id: workspace.id)
             dismiss()
         }
-        Button("Focus on Mac", systemImage: "scope") { Task { await model.focus(workspace) } }
-            .disabled(!model.canControl(machineID: workspace.machineID))
+        Button("Focus on Mac", systemImage: "scope") {
+            Task { await model.focus(workspace) }
+        }
+        .disabled(!model.canControl(machineID: workspace.machineID))
         Button("Rename workspace", systemImage: "pencil") {
             workspaceName = workspace.label
             renamingWorkspace = workspace
         }
         .disabled(!model.canControl(machineID: workspace.machineID))
-        Button("New tab", systemImage: "folder.badge.plus") { Task { await model.createTab(in: workspace) } }
-            .disabled(!model.canControl(machineID: workspace.machineID))
+        Button("New tab", systemImage: "folder.badge.plus") {
+            Task { await model.createTab(in: workspace) }
+        }
+        .disabled(!model.canControl(machineID: workspace.machineID))
         Divider()
         Button("Close workspace", systemImage: "xmark.rectangle", role: .destructive) {
             closingWorkspace = workspace
@@ -389,64 +483,23 @@ struct HerdrSidebarView: View {
         .disabled(!model.canControl(machineID: workspace.machineID))
     }
 
-    private var separator: some View {
-        Rectangle()
-            .fill(HerdrTheme.surface.opacity(0.65))
-            .frame(height: 1)
-            .padding(.vertical, 10)
-    }
-
-    private var machineSeparator: some View {
-        Rectangle()
-            .fill(HerdrTheme.surface.opacity(0.65))
-            .frame(height: 2)
-            .padding(.vertical, 16)
-    }
-
-    private var scopedWorkspaces: [HerdrWorkspace] {
+    private var scopedColorWorkspaces: [HerdrWorkspace] {
         guard case let .machine(id) = model.machineScope else { return model.workspaces }
         return model.workspaces.filter { $0.machineID == id }
     }
 
-    private var tree: [SidebarTree.ProjectEntry] {
-        SidebarTree.build(
-            workspaces: scopedWorkspaces,
-            query: query,
-            collapsedWorkspaceIDs: model.collapsedSidebarWorkspaceIDs,
-            collapsedTabIDs: model.collapsedSidebarTabIDs,
-            starredIDs: model.starredChatIDs,
-            recency: model.sidebarRecency
-        )
+    private var activeColors: [ChatTabColor] {
+        let tabIDs = Set(scopedColorWorkspaces.flatMap { workspace in
+            workspace.tabs.map(\.id) + workspace.panes.map(\.scopedTabID)
+        })
+        return model.chatTabColors.activeColors(tabIDs: tabIDs)
     }
 
-    private var machineGroups: [SidebarTree.MachineGroup] {
-        SidebarTree.machineGroups(
-            machines: model.machines,
-            states: model.machineStates,
-            workspaces: model.workspaces,
-            query: query,
-            collapsedMachineIDs: model.collapsedSidebarMachineIDs,
-            collapsedWorkspaceIDs: model.collapsedSidebarWorkspaceIDs,
-            collapsedTabIDs: model.collapsedSidebarTabIDs,
-            starredIDs: model.starredChatIDs,
-            recency: model.sidebarRecency
-        )
-    }
-
-    private var starredGroups: [SidebarTree.StarredGroup] {
-        SidebarTree.starredGroups(
-            workspaces: scopedWorkspaces,
-            query: query,
-            starredIDs: model.starredChatIDs,
-            machines: model.machines,
-            recency: model.sidebarRecency
-        )
-    }
-
-    private var starredCount: Int { starredGroups.reduce(0) { $0 + $1.chats.count } }
-
-    private var paneCount: Int {
-        starredCount + paneCount(in: showsMachineChrome ? machineGroups.flatMap(\.entries) : tree)
+    private var colorPaneCounts: [ChatTabColor: Int] {
+        scopedColorWorkspaces.flatMap(\.panes).reduce(into: [:]) { counts, pane in
+            guard let color = model.chatTabColors.color(for: pane.scopedTabID) else { return }
+            counts[color, default: 0] += 1
+        }
     }
 
     private var showsMachineChrome: Bool {
@@ -462,9 +515,15 @@ struct HerdrSidebarView: View {
     private var scopeTitle: String {
         if case let .machine(id) = model.machineScope,
            let machine = model.machines.first(where: { $0.id == id }) {
-            return machine.name.lowercased()
+            return machine.name
         }
-        return "all machines"
+        return "All Machines"
+    }
+
+    private var hasActiveListFilter: Bool {
+        !model.sidebarQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || model.sidebarColorFilter != nil
+            || model.sidebarRecency != .all
     }
 
     private var isRenamingWorkspace: Binding<Bool> {
@@ -488,71 +547,52 @@ struct HerdrSidebarView: View {
     }
 
     private var emptyState: some View {
-        Group {
-            if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                ContentUnavailableView("No Herdr workspaces", systemImage: "rectangle.3.group", description: Text("Create a workspace here or on your Mac to begin."))
-            } else {
-                ContentUnavailableView.search
-            }
-        }
-    }
-
-    private func chatRow(_ pane: HerdrPane) -> some View {
-        SidebarChatRow(
-            pane: pane,
-            isSelected: pane.id == model.selectedPaneID,
-            isStarred: model.starredChatIDs.contains(pane.id),
-            statusSince: statusSince(for: pane),
-            action: { open(pane) }
+        ContentUnavailableView(
+            "No Herdr workspaces",
+            systemImage: "rectangle.3.group",
+            description: Text("Create a workspace here or on your Mac to begin.")
         )
-        .contextMenu {
-            Button(model.starredChatIDs.contains(pane.id) ? "Unstar chat" : "Star chat", systemImage: model.starredChatIDs.contains(pane.id) ? "star.slash" : "star") {
-                model.toggleStarredChat(pane.id)
-            }
-            Button("Focus on Mac", systemImage: "scope") { Task { await model.focus(pane) } }
-                .disabled(!model.canControl(machineID: pane.machineID))
-            Button("Focus on Mac + Zoom", systemImage: "arrow.up.left.and.arrow.down.right") {
-                Task { await model.focusAndZoom(pane) }
-            }
-            .disabled(!model.canControl(machineID: pane.machineID))
-            Button("Interrupt", systemImage: "stop.fill", role: .destructive) { Task { await model.sendKeys(["ctrl+c"], to: pane) } }
-                .disabled(!model.canControl(machineID: pane.machineID))
-            Button("Rename pane", systemImage: "pencil") {
-                paneName = pane.displayTitle
-                renamingPane = pane
-            }
-            .disabled(!model.canControl(machineID: pane.machineID))
-            Menu("Split pane", systemImage: "rectangle.split.2x1") {
-                Button("Split right", systemImage: "rectangle.split.2x1") { Task { await model.split(pane, direction: "right") } }
-                Button("Split down", systemImage: "rectangle.split.1x2") { Task { await model.split(pane, direction: "down") } }
-            }
-            .disabled(!model.canControl(machineID: pane.machineID))
-            if pane.agentStatus == .unknown {
-                Menu("Start agent", systemImage: "cpu") {
-                    Button("Codex") { Task { await model.startAgent(in: pane, kind: "codex") } }
-                    Button("Claude") { Task { await model.startAgent(in: pane, kind: "claude") } }
-                    Button("OpenCode") { Task { await model.startAgent(in: pane, kind: "opencode") } }
+    }
+
+    private func filteredEmptyState(title: String, description: String) -> some View {
+        ContentUnavailableView {
+            Label(title, systemImage: "line.3.horizontal.decrease.circle")
+        } description: {
+            Text(description)
+        } actions: {
+            if !model.sidebarQuery.isEmpty || model.sidebarColorFilter != nil {
+                Button("Clear search and color") {
+                    model.sidebarQuery = ""
+                    model.sidebarColorFilter = nil
                 }
-                .disabled(!model.canControl(machineID: pane.machineID))
+                .frame(minHeight: SidebarMetrics.controlHeight)
             }
-            Divider()
-            Button("Close pane", systemImage: "xmark.rectangle", role: .destructive) { closingPane = pane }
-                .disabled(!model.canControl(machineID: pane.machineID))
+            if model.sidebarRecency != .all {
+                Button("Show all chats") {
+                    model.sidebarRecency = .all
+                }
+                .frame(minHeight: SidebarMetrics.controlHeight)
+            }
         }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 28)
     }
 
-    private func starredGroupTitle(_ group: SidebarTree.StarredGroup) -> String {
+    private func recentContext(for pane: HerdrPane) -> SidebarRecentContext {
+        let workspace = model.workspace(containing: pane)
+        let tab = workspace?.tabs.first { $0.id == pane.scopedTabID }
+        return SidebarRecentContext(
+            machine: model.machines.first { $0.id == pane.machineID }?.name ?? "Unknown machine",
+            workspace: workspace?.label ?? "Unknown workspace",
+            tab: tab?.label ?? "Untitled tab"
+        )
+    }
+
+    private func priorityGroupTitle(_ workspace: HerdrWorkspace) -> String {
         guard showsMachineChrome,
-              let machineID = MachineScopedID.split(group.workspace.id)?.machineID,
-              let machine = model.machines.first(where: { $0.id == machineID })
-        else { return group.workspace.label.lowercased() }
-        return "\(machine.name.lowercased()) · \(group.workspace.label.lowercased())"
-    }
-
-    private func paneCount(in entries: [SidebarTree.ProjectEntry]) -> Int {
-        entries.reduce(0) { count, entry in
-            count + entry.looseChats.count + entry.sections.reduce(0) { $0 + $1.chats.count }
-        }
+              let machine = model.machines.first(where: { $0.id == workspace.machineID })
+        else { return workspace.label }
+        return "\(machine.name) · \(workspace.label)"
     }
 
     private func machinePaneCount(for machineID: String) -> Int {
@@ -561,8 +601,24 @@ struct HerdrSidebarView: View {
             .reduce(0) { $0 + $1.paneCount }
     }
 
+    private func tabAttentionStatus(_ tab: HerdrTab, in workspace: HerdrWorkspace) -> AgentStatus? {
+        let statuses = workspace.panes
+            .filter { $0.scopedTabID == tab.id }
+            .map(\.agentStatus)
+        if statuses.contains(.blocked) { return .blocked }
+        if statuses.contains(.done) { return .done }
+        return nil
+    }
+
+    private func tabWorkingCount(_ tab: HerdrTab, in workspace: HerdrWorkspace) -> Int {
+        workspace.panes.count(where: { $0.scopedTabID == tab.id && $0.agentStatus == .working })
+    }
+
     private func firstPane(in tab: HerdrTab, workspace: HerdrWorkspace) -> HerdrPane? {
-        workspace.panes.filter { $0.scopedTabID == tab.id }.sorted { $0.paneID < $1.paneID }.first
+        workspace.panes
+            .filter { $0.scopedTabID == tab.id }
+            .sorted { $0.paneID < $1.paneID }
+            .first
     }
 
     private func sidebarCountDetail(_ count: Int) -> String {
@@ -570,17 +626,11 @@ struct HerdrSidebarView: View {
         case .today: "\(count) today"
         case .last3Days: "\(count) in 3 days"
         case .thisWeek: "\(count) this week"
-        case .all: "\(count) total shown"
+        case .all: "\(count) shown"
+        case .recents: "\(count) recent"
         }
     }
 
-    /// When the pane's current status started.
-    ///
-    /// `workingSince` is the server's own clock for a working pane. Every other
-    /// status is dated from the newest alert that still matches it — the alert
-    /// feed is the only place the snapshot records *when* a pane became blocked
-    /// or done. A pane whose status has no matching alert simply has no age, and
-    /// `SidebarStatusAgeLabel` falls back to the bare status word.
     private func statusSince(for pane: HerdrPane) -> Date? {
         let newestMatchingAlert = model.alerts.lazy
             .filter {
@@ -596,24 +646,31 @@ struct HerdrSidebarView: View {
         return newestMatchingAlert
     }
 
+    private var machineSeparator: some View {
+        Rectangle()
+            .fill(HerdrTheme.surface.opacity(0.65))
+            .frame(height: 1)
+            .padding(.vertical, 8)
+    }
+
     private func presentCreateWorkspace(for machineID: String?) {
         creatingWorkspaceMachineID = machineID
         isPresentingCreateWorkspace = true
     }
 
     private func toggle(_ workspace: HerdrWorkspace) {
-        guard query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        withAnimation(.snappy) { model.toggleSidebarSection(workspace.id) }
+        guard model.sidebarQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        withAnimation(reduceMotion ? nil : .snappy) { model.toggleSidebarSection(workspace.id) }
     }
 
     private func toggle(_ tab: HerdrTab) {
-        guard query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        withAnimation(.snappy) { model.toggleSidebarTabSection(tab.id) }
+        guard model.sidebarQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        withAnimation(reduceMotion ? nil : .snappy) { model.toggleSidebarTabSection(tab.id) }
     }
 
     private func toggle(_ machine: HerdrMachine) {
-        guard query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        withAnimation(.snappy) { model.toggleSidebarMachineSection(machine.id) }
+        guard model.sidebarQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        withAnimation(reduceMotion ? nil : .snappy) { model.toggleSidebarMachineSection(machine.id) }
     }
 
     private func open(_ pane: HerdrPane) {
@@ -622,14 +679,8 @@ struct HerdrSidebarView: View {
     }
 
     private func dismiss() {
-        withAnimation(.snappy) { model.isSidebarPresented = false }
-    }
-}
-
-private extension View {
-    func sidebarActionStyle() -> some View {
-        font(.subheadline.bold())
-            .foregroundStyle(HerdrTheme.accent)
-            .frame(minHeight: 44)
+        withAnimation(reduceMotion ? nil : .snappy) {
+            model.isSidebarPresented = false
+        }
     }
 }

@@ -21,9 +21,9 @@ struct PaneSessionView: View {
     @State private var isManuallyRefreshing = false
     @State private var outputError: String?
     @State private var selectedMode: PaneDetailMode = .terminal
+    @State private var gitAvailability: PaneGitAvailability = .checking
     @State private var piConversationStore = PiConversationStore()
     @State private var didAutoSelectChat = false
-    @State private var composerDraft = ""
     @State private var composerAttachments: [TerminalAttachment] = []
     @State private var composerFocusRequest = 0
     @State private var piSessionSummaryRequest: PiSessionSummaryRequest?
@@ -33,11 +33,27 @@ struct PaneSessionView: View {
             HerdrBackground()
 
             VStack(spacing: 0) {
+                PaneSessionHeader(
+                    model: model,
+                    pane: currentPane,
+                    store: piConversationStore
+                )
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+
+                PaneModeBar(
+                    selection: modeSelection,
+                    supportsChat: currentPane.supportsPiSemanticChat,
+                    gitAvailability: gitAvailability
+                )
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
+
                 modeContent
             }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: selectedMode)
         }
-        .navigationTitle(currentPane.displayTitle)
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarVisibility(hidesAppTabBar ? .hidden : .automatic, for: .tabBar)
         .toolbar {
@@ -59,6 +75,7 @@ struct PaneSessionView: View {
                     model: model,
                     pane: currentPane,
                     selectedMode: modeSelection,
+                    gitIsAvailable: gitIsAvailable,
                     isPiCompacting: isPiCompacting,
                     showsPiSessionSummary: summaryRequest != nil,
                     summarizePiSession: presentPiSessionSummary
@@ -85,6 +102,10 @@ struct PaneSessionView: View {
             else { return }
             await piConversationStore.follow(model: model, pane: currentPane)
         }
+        .task(id: gitProbeTaskID) {
+            guard scenePhase == .active else { return }
+            await refreshGitAvailability()
+        }
         .sheet(item: $piSessionSummaryRequest) { request in
             PiSessionSummaryView(model: model, request: request)
         }
@@ -98,10 +119,22 @@ struct PaneSessionView: View {
                 selectedMode = .terminal
             }
         }
+        .onChange(of: gitAvailability) { _, availability in
+            if availability != .available, selectedMode == .git {
+                selectedMode = .terminal
+            }
+        }
+        .onChange(of: currentPane.displayPath) {
+            gitAvailability = .checking
+        }
+        .onChange(of: workspace?.id) {
+            gitAvailability = .checking
+        }
         .onChange(of: pane.id) { oldPaneID, newPaneID in
             guard oldPaneID != newPaneID else { return }
-            discardComposerState()
+            discardMountedComposerState()
             piConversationStore.reset()
+            gitAvailability = .checking
             didAutoSelectChat = false
             if currentPane.supportsPiSemanticChat {
                 autoSelectChatIfNeeded()
@@ -158,7 +191,7 @@ struct PaneSessionView: View {
                     store: piConversationStore,
                     pane: currentPane,
                     workspace: workspace,
-                    draft: $composerDraft,
+                    draft: composerDraftBinding(for: currentPane.id),
                     attachments: $composerAttachments,
                     focusRequest: composerFocusRequest
                 )
@@ -222,7 +255,7 @@ struct PaneSessionView: View {
                     model: model,
                     pane: currentPane,
                     workspace: workspace,
-                    draft: $composerDraft,
+                    draft: composerDraftBinding(for: currentPane.id),
                     attachments: $composerAttachments,
                     focusRequest: composerFocusRequest
                 )
@@ -258,16 +291,24 @@ struct PaneSessionView: View {
     }
 
     private func insertComposerToken(_ token: String) {
-        let trimmed = composerDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        composerDraft = trimmed.isEmpty ? token : "\(trimmed) \(token)"
+        let paneID = currentPane.id
+        let draft = model.paneDrafts.text(for: paneID)
+        let updatedDraft = draft.isEmpty ? token : "\(draft) \(token)"
+        model.paneDrafts.setText(updatedDraft, for: paneID)
         selectedMode = .terminal
         composerFocusRequest &+= 1
     }
 
-    private func discardComposerState() {
+    private func composerDraftBinding(for paneID: String) -> Binding<String> {
+        Binding(
+            get: { model.paneDrafts.text(for: paneID) },
+            set: { model.paneDrafts.setText($0, for: paneID) }
+        )
+    }
+
+    private func discardMountedComposerState() {
         composerAttachments.forEach { $0.removeSourceFileIfOwned() }
         composerAttachments = []
-        composerDraft = ""
         composerFocusRequest = 0
     }
 
@@ -290,6 +331,58 @@ struct PaneSessionView: View {
 
     private var piChatTaskID: String {
         "\(pane.id):pi-chat:\(model.connectionGeneration):\(scenePhase == .active):\(selectedMode.rawValue)"
+    }
+
+    private var gitProbeTaskID: String {
+        let workspaceID = workspace?.id ?? "none"
+        let connection = model.connectionState(forMachine: currentPane.machineID).title
+        return "\(currentPane.id):\(workspaceID):\(currentPane.displayPath):\(model.connectionGeneration):\(scenePhase == .active):\(connection)"
+    }
+
+    private var gitIsAvailable: Bool {
+        model.isDemoMode || gitAvailability == .available
+    }
+
+    private func refreshGitAvailability() async {
+        guard let workspace else {
+            gitAvailability = .unavailable
+            return
+        }
+        if model.isDemoMode {
+            gitAvailability = .available
+            return
+        }
+
+        while !Task.isCancelled {
+            do {
+                let status = try await model.fetchGitStatus(for: workspace)
+                try Task.checkCancellation()
+                gitAvailability = PaneGitProbePolicy.availability(
+                    after: .status(ok: status.ok, rootPath: status.cwd),
+                    preserving: gitAvailability
+                )
+            } catch APIError.server(let status, _) where status == 404 {
+                guard !Task.isCancelled else { return }
+                gitAvailability = PaneGitProbePolicy.availability(
+                    after: .notFound,
+                    preserving: gitAvailability
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                gitAvailability = PaneGitProbePolicy.availability(
+                    after: .transientFailure,
+                    preserving: gitAvailability
+                )
+            }
+
+            do {
+                try await Task.sleep(for: PaneGitProbePolicy.refreshInterval)
+            } catch {
+                return
+            }
+        }
     }
 
     private func followOutput() async {

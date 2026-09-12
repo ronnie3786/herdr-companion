@@ -25,6 +25,13 @@ enum SidebarTree {
         var id: String { "starred:\(workspace.id)" }
     }
 
+    struct UnreadGroup: Identifiable, Equatable {
+        let workspace: HerdrWorkspace
+        let chats: [HerdrPane]
+
+        var id: String { "unread:\(workspace.id)" }
+    }
+
     struct MachineGroup: Identifiable, Equatable {
         let machine: HerdrMachine
         let state: ConnectionState
@@ -34,6 +41,13 @@ enum SidebarTree {
         var id: String { "machine:\(machine.id)" }
     }
 
+    /// Human-readable workspace order with a deterministic creation-order tie.
+    static func byWorkspaceName(_ lhs: HerdrWorkspace, _ rhs: HerdrWorkspace) -> Bool {
+        let comparison = lhs.label.localizedStandardCompare(rhs.label)
+        if comparison != .orderedSame { return comparison == .orderedAscending }
+        return lhs.number < rhs.number
+    }
+
     static func build(
         workspaces: [HerdrWorkspace],
         query: String,
@@ -41,17 +55,18 @@ enum SidebarTree {
         collapsedTabIDs: Set<String> = [],
         starredIDs: Set<String> = [],
         recency: SidebarRecency = .all,
-        now: Date = Date(),
+        excludedPaneIDs: Set<String> = [],
+        now: Date = .now,
         calendar: Calendar = .autoupdatingCurrent
     ) -> [ProjectEntry] {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return workspaces.sorted { $0.number < $1.number }.compactMap { workspace in
+        return workspaces.sorted(by: byWorkspaceName).compactMap { workspace in
             buildEntry(
                 for: workspace,
                 query: trimmedQuery,
                 collapsedWorkspaceIDs: collapsedWorkspaceIDs,
                 collapsedTabIDs: collapsedTabIDs,
-                starredIDs: starredIDs,
+                excludedPaneIDs: starredIDs.union(excludedPaneIDs),
                 recency: recency,
                 now: now,
                 calendar: calendar
@@ -65,31 +80,41 @@ enum SidebarTree {
         starredIDs: Set<String>,
         machines: [HerdrMachine] = [],
         recency: SidebarRecency = .all,
-        now: Date = Date(),
+        excludedPaneIDs: Set<String> = [],
+        now: Date = .now,
         calendar: Calendar = .autoupdatingCurrent
     ) -> [StarredGroup] {
-        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let machineOrder = Dictionary(uniqueKeysWithValues: machines.enumerated().map { ($0.element.id, $0.offset) })
-        return workspaces
-            .sorted {
-                let lhsMachine = MachineScopedID.split($0.id)?.machineID
-                let rhsMachine = MachineScopedID.split($1.id)?.machineID
-                let lhsOrder = lhsMachine.flatMap { machineOrder[$0] } ?? Int.max
-                let rhsOrder = rhsMachine.flatMap { machineOrder[$0] } ?? Int.max
-                if lhsOrder != rhsOrder { return lhsOrder < rhsOrder }
-                return $0.number < $1.number
-            }
-            .compactMap { workspace in
-                let chats = workspace.panes
-                    .filter {
-                        starredIDs.contains($0.id)
-                            && matchesPaneQuery($0, query: trimmedQuery)
-                            && recency.includes($0, now: now, calendar: calendar)
-                    }
-                    .sorted { $0.paneID < $1.paneID }
-                guard !chats.isEmpty else { return nil }
-                return StarredGroup(workspace: workspace, chats: chats)
-            }
+        priorityGroups(
+            workspaces: workspaces,
+            query: query,
+            includedPaneIDs: starredIDs,
+            excludedPaneIDs: excludedPaneIDs,
+            machines: machines,
+            recency: recency,
+            now: now,
+            calendar: calendar
+        ).map { StarredGroup(workspace: $0.workspace, chats: $0.chats) }
+    }
+
+    static func unreadGroups(
+        workspaces: [HerdrWorkspace],
+        query: String,
+        unreadIDs: Set<String>,
+        machines: [HerdrMachine] = [],
+        recency: SidebarRecency = .all,
+        now: Date = .now,
+        calendar: Calendar = .autoupdatingCurrent
+    ) -> [UnreadGroup] {
+        priorityGroups(
+            workspaces: workspaces,
+            query: query,
+            includedPaneIDs: unreadIDs,
+            excludedPaneIDs: [],
+            machines: machines,
+            recency: recency,
+            now: now,
+            calendar: calendar
+        ).map { UnreadGroup(workspace: $0.workspace, chats: $0.chats) }
     }
 
     static func machineGroups(
@@ -102,8 +127,36 @@ enum SidebarTree {
         collapsedTabIDs: Set<String> = [],
         starredIDs: Set<String> = [],
         recency: SidebarRecency = .all,
-        now: Date = Date(),
+        excludedPaneIDs: Set<String> = [],
+        now: Date = .now,
         calendar: Calendar = .autoupdatingCurrent
+    ) -> [MachineGroup] {
+        let entries = build(
+            workspaces: workspaces,
+            query: query,
+            collapsedWorkspaceIDs: collapsedWorkspaceIDs,
+            collapsedTabIDs: collapsedTabIDs,
+            starredIDs: starredIDs,
+            recency: recency,
+            excludedPaneIDs: excludedPaneIDs,
+            now: now,
+            calendar: calendar
+        )
+        return machineGroups(
+            machines: machines,
+            states: states,
+            entries: entries,
+            query: query,
+            collapsedMachineIDs: collapsedMachineIDs
+        )
+    }
+
+    static func machineGroups(
+        machines: [HerdrMachine],
+        states: [String: ConnectionState],
+        entries: [ProjectEntry],
+        query: String,
+        collapsedMachineIDs: Set<String>
     ) -> [MachineGroup] {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return machines.map { machine in
@@ -111,67 +164,123 @@ enum SidebarTree {
                 machine: machine,
                 state: states[machine.id] ?? .disconnected,
                 isExpanded: trimmedQuery.isEmpty ? !collapsedMachineIDs.contains(machine.id) : true,
-                entries: build(
-                    workspaces: workspaces.filter { $0.machineID == machine.id },
-                    query: query,
-                    collapsedWorkspaceIDs: collapsedWorkspaceIDs,
-                    collapsedTabIDs: collapsedTabIDs,
-                    starredIDs: starredIDs,
-                    recency: recency,
-                    now: now,
-                    calendar: calendar
-                )
+                entries: entries.filter { $0.workspace.machineID == machine.id }
             )
         }
+    }
+
+    /// Flat newest-first conversations. Container hierarchy is intentionally
+    /// absent because it would erase the ranking this mode exists to show.
+    static func recentChats(
+        workspaces: [HerdrWorkspace],
+        query: String,
+        limit: Int = SidebarRecency.recentsLimit
+    ) -> [HerdrPane] {
+        guard limit > 0 else { return [] }
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return Array(workspaces.flatMap { workspace in
+            let workspaceMatches = matchesWorkspace(workspace, query: trimmedQuery)
+            let matchingTabIDs = matchingTabIDs(in: workspace, query: trimmedQuery)
+            return workspace.panes.filter { pane in
+                workspaceMatches
+                    || matchingTabIDs.contains(pane.scopedTabID)
+                    || matchesPaneQuery(pane, query: trimmedQuery)
+            }
+        }
+        .sorted {
+            let lhsActivity = $0.lastActivityAt ?? $0.firstSeenAt ?? .distantPast
+            let rhsActivity = $1.lastActivityAt ?? $1.firstSeenAt ?? .distantPast
+            if lhsActivity != rhsActivity { return lhsActivity > rhsActivity }
+            return $0.id < $1.id
+        }
+        .prefix(limit))
+    }
+
+    private struct PriorityGroup {
+        let workspace: HerdrWorkspace
+        let chats: [HerdrPane]
+    }
+
+    private static func priorityGroups(
+        workspaces: [HerdrWorkspace],
+        query: String,
+        includedPaneIDs: Set<String>,
+        excludedPaneIDs: Set<String>,
+        machines: [HerdrMachine],
+        recency: SidebarRecency,
+        now: Date,
+        calendar: Calendar
+    ) -> [PriorityGroup] {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let machineOrder = Dictionary(
+            uniqueKeysWithValues: machines.enumerated().map { ($0.element.id, $0.offset) }
+        )
+        return workspaces
+            .sorted { lhs, rhs in
+                let lhsOrder = machineOrder[lhs.machineID] ?? Int.max
+                let rhsOrder = machineOrder[rhs.machineID] ?? Int.max
+                if lhsOrder != rhsOrder { return lhsOrder < rhsOrder }
+                return byWorkspaceName(lhs, rhs)
+            }
+            .compactMap { workspace in
+                let workspaceMatches = matchesWorkspace(workspace, query: trimmedQuery)
+                let matchingTabs = matchingTabIDs(in: workspace, query: trimmedQuery)
+                let chats = workspace.panes
+                    .filter { pane in
+                        includedPaneIDs.contains(pane.id)
+                            && !excludedPaneIDs.contains(pane.id)
+                            && recency.includes(pane, now: now, calendar: calendar)
+                            && (workspaceMatches
+                                || matchingTabs.contains(pane.scopedTabID)
+                                || matchesPaneQuery(pane, query: trimmedQuery))
+                    }
+                    .sorted { $0.paneID < $1.paneID }
+                guard !chats.isEmpty else { return nil }
+                return PriorityGroup(workspace: workspace, chats: chats)
+            }
     }
 
     private static func buildEntry(
         for workspace: HerdrWorkspace,
         query: String,
         collapsedWorkspaceIDs: Set<String>,
-        collapsedTabIDs: Set<String> = [],
-        starredIDs: Set<String>,
-        recency: SidebarRecency = .all,
-        now: Date = Date(),
-        calendar: Calendar = .autoupdatingCurrent
+        collapsedTabIDs: Set<String>,
+        excludedPaneIDs: Set<String>,
+        recency: SidebarRecency,
+        now: Date,
+        calendar: Calendar
     ) -> ProjectEntry? {
         let sortedTabs = workspace.tabs.sorted { $0.number < $1.number }
         let tabIDs = Set(sortedTabs.map(\.id))
-        let workspaceMatches = workspace.label.localizedStandardContains(query)
-            || workspace.displayPath.localizedStandardContains(query)
-        let matchingTabIDs = Set(sortedTabs.filter {
-            $0.label.localizedStandardContains(query)
-        }.map(\.id))
-        let matchingPaneIDs = Set(workspace.panes.filter {
+        let workspaceMatches = matchesWorkspace(workspace, query: query)
+        let matchingTabs = matchingTabIDs(in: workspace, query: query)
+        let matchingPanes = Set(workspace.panes.filter {
             matchesPaneQuery($0, query: query)
+                && !excludedPaneIDs.contains($0.id)
                 && recency.includes($0, now: now, calendar: calendar)
         }.map(\.id))
 
-        guard query.isEmpty || workspaceMatches || !matchingTabIDs.isEmpty || !matchingPaneIDs.isEmpty else {
+        guard query.isEmpty || workspaceMatches || !matchingTabs.isEmpty || !matchingPanes.isEmpty else {
             return nil
         }
 
-        let filteredPanes: [HerdrPane]
-        if query.isEmpty || workspaceMatches {
-            filteredPanes = workspace.panes.filter {
-                !starredIDs.contains($0.id)
-                    && recency.includes($0, now: now, calendar: calendar)
-            }
-        } else {
-            filteredPanes = workspace.panes.filter {
-                !starredIDs.contains($0.id)
-                    && (matchingPaneIDs.contains($0.id) || matchingTabIDs.contains($0.scopedTabID))
-                    && recency.includes($0, now: now, calendar: calendar)
-            }
+        let filteredPanes = workspace.panes.filter { pane in
+            !excludedPaneIDs.contains(pane.id)
+                && recency.includes(pane, now: now, calendar: calendar)
+                && (query.isEmpty
+                    || workspaceMatches
+                    || matchingPanes.contains(pane.id)
+                    || matchingTabs.contains(pane.scopedTabID))
         }
-
-        let filtersPanes = recency != .all
+        let filtersPanes = recency != .all || !excludedPaneIDs.isEmpty
 
         let sections = sortedTabs.compactMap { tab -> SectionEntry? in
             let chats = filteredPanes
                 .filter { $0.scopedTabID == tab.id }
                 .sorted { $0.paneID < $1.paneID }
-            guard (query.isEmpty && !filtersPanes) || !chats.isEmpty || (!filtersPanes && matchingTabIDs.contains(tab.id)) else { return nil }
+            let preservesEmptyTab = query.isEmpty && !filtersPanes
+            let matchedEmptyTab = !filtersPanes && matchingTabs.contains(tab.id)
+            guard preservesEmptyTab || !chats.isEmpty || matchedEmptyTab else { return nil }
             return SectionEntry(
                 tab: tab,
                 isExpanded: query.isEmpty ? !collapsedTabIDs.contains(tab.id) : true,
@@ -183,13 +292,25 @@ enum SidebarTree {
             .sorted { $0.paneID < $1.paneID }
 
         guard !filtersPanes || !sections.isEmpty || !looseChats.isEmpty else { return nil }
-
         return ProjectEntry(
             workspace: workspace,
             isExpanded: query.isEmpty ? !collapsedWorkspaceIDs.contains(workspace.id) : true,
             sections: sections,
             looseChats: looseChats
         )
+    }
+
+    private static func matchesWorkspace(_ workspace: HerdrWorkspace, query: String) -> Bool {
+        query.isEmpty
+            || workspace.label.localizedStandardContains(query)
+            || workspace.displayPath.localizedStandardContains(query)
+    }
+
+    private static func matchingTabIDs(in workspace: HerdrWorkspace, query: String) -> Set<String> {
+        guard !query.isEmpty else { return [] }
+        return Set(workspace.tabs.filter {
+            $0.label.localizedStandardContains(query)
+        }.map(\.id))
     }
 
     private static func matchesPaneQuery(_ pane: HerdrPane, query: String) -> Bool {

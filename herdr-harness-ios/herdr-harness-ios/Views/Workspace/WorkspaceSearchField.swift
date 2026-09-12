@@ -3,9 +3,9 @@ import SwiftUI
 struct WorkspaceSearchField: View {
     @Binding var text: String
     var placeholder: String = "filter spaces"
-    /// Defaults to the workspace wording so every existing call site keeps
-    /// its current VoiceOver label; Fleet passes its own.
-    var accessibilityLabel: String = "Filter spaces"
+    /// Defaults to the visible placeholder so reused search fields keep their
+    /// VoiceOver purpose aligned; callers may still provide more specific copy.
+    var accessibilityLabel: String? = nil
     /// Spelled out rather than derived from `accessibilityLabel`: composing it
     /// produced "Clear filter spaces".
     var clearAccessibilityLabel: String = "Clear workspace filter"
@@ -23,7 +23,7 @@ struct WorkspaceSearchField: View {
                 .autocorrectionDisabled()
                 .focused($isFocused)
                 .submitLabel(.done)
-                .accessibilityLabel(accessibilityLabel)
+                .accessibilityLabel(accessibilityLabel ?? placeholder)
 
             if !text.isEmpty {
                 Button(clearAccessibilityLabel, systemImage: "xmark.circle.fill") {

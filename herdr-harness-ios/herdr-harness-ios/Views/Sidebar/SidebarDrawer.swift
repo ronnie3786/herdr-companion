@@ -11,15 +11,22 @@ struct SidebarDrawer: View {
             if model.isSidebarPresented {
                 GeometryReader { proxy in
                     ZStack(alignment: .leading) {
-                        Color.black
-                            .opacity(0.45)
-                            .ignoresSafeArea()
-                            .contentShape(Rectangle())
-                            .onTapGesture(perform: dismiss)
-                            .transition(.opacity)
+                        Button(action: dismiss) {
+                            Color.black
+                                .opacity(0.45)
+                                .ignoresSafeArea()
+                                .contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Close navigator")
+                        .accessibilityHidden(true)
+                        .transition(.opacity)
 
                         HerdrSidebarView(model: model)
-                            .frame(width: min(340, proxy.size.width * 0.86), height: proxy.size.height)
+                            .frame(
+                                width: min(360, proxy.size.width * 0.88),
+                                height: proxy.size.height
+                            )
                             .background(HerdrTheme.ink.ignoresSafeArea())
                             .overlay(alignment: .trailing) {
                                 Rectangle()
@@ -29,6 +36,7 @@ struct SidebarDrawer: View {
                             .offset(x: dragOffset)
                             .gesture(dragGesture)
                             .transition(reduceMotion ? .opacity : .move(edge: .leading))
+                            .accessibilityElement(children: .contain)
                             .accessibilityIdentifier("herdr-sidebar")
                             .accessibilityAddTraits(.isModal)
                     }
@@ -37,7 +45,7 @@ struct SidebarDrawer: View {
                 .transition(.opacity)
             }
         }
-        .animation(.snappy, value: model.isSidebarPresented)
+        .animation(reduceMotion ? .easeOut(duration: 0.12) : .snappy, value: model.isSidebarPresented)
         .onChange(of: model.isSidebarPresented) { _, isPresented in
             guard isPresented else { return }
             UIApplication.shared.sendAction(
@@ -55,7 +63,7 @@ struct SidebarDrawer: View {
                 dragOffset = min(0, value.translation.width)
             }
             .onEnded { value in
-                withAnimation(.snappy) {
+                withAnimation(reduceMotion ? nil : .snappy) {
                     if value.translation.width < -44 {
                         model.isSidebarPresented = false
                     }
@@ -65,7 +73,7 @@ struct SidebarDrawer: View {
     }
 
     private func dismiss() {
-        withAnimation(.snappy) {
+        withAnimation(reduceMotion ? nil : .snappy) {
             model.isSidebarPresented = false
         }
     }

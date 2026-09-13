@@ -10,7 +10,8 @@ struct AgentsListView: View {
     @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
-        let sessions = sessions
+        let groups = groups
+        let sessionCount = groups.reduce(0) { $0 + $1.sessionCount }
 
         ZStack {
             HerdrBackground()
@@ -27,12 +28,12 @@ struct AgentsListView: View {
                     )
 
                     HerdrSectionLabel(
-                        title: "Recent Pi sessions",
-                        detail: "\(sessions.count) shown",
+                        title: "Recent workspaces",
+                        detail: "\(sessionCount) agents",
                         monospaced: false
                     )
 
-                    if sessions.isEmpty {
+                    if groups.isEmpty {
                         ContentUnavailableView(
                             query.isEmpty ? "No Pi sessions" : "No matching agents",
                             systemImage: "bubble.left.and.bubble.right",
@@ -41,25 +42,13 @@ struct AgentsListView: View {
                                 : "Search by agent, machine, workspace, tab, or status.")
                         )
                     } else {
-                        ForEach(sessions) { session in
-                            Button {
-                                selectPane(session.pane)
-                            } label: {
-                                AgentSessionCard(
-                                    session: session,
-                                    connectionState: model.connectionState(forMachine: session.pane.machineID),
-                                    isUnread: model.unreadPaneIDs.contains(session.id),
-                                    isStarred: model.starredChatIDs.contains(session.id)
-                                )
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier("agent-card-\(session.id)")
-                            .accessibilityHint("Opens this agent session")
-                            .contextMenu {
-                                Button("Open workspace", systemImage: "folder") {
-                                    selectWorkspace(session.workspace)
-                                }
-                            }
+                        ForEach(groups) { group in
+                            AgentWorkspaceSection(
+                                model: model,
+                                group: group,
+                                selectWorkspace: selectWorkspace,
+                                selectPane: selectPane
+                            )
                         }
                     }
                 }
@@ -93,8 +82,8 @@ struct AgentsListView: View {
         .herdrHaptic(trigger: hapticPulse)
     }
 
-    private var sessions: [AgentSession] {
-        AgentSession.recent(workspaces: model.workspaces, machines: model.machines, query: query)
+    private var groups: [AgentWorkspaceGroup] {
+        AgentWorkspaceGroup.recent(workspaces: model.workspaces, machines: model.machines, query: query)
     }
 
     private var agentStatuses: [String: AgentStatus] {

@@ -22,7 +22,7 @@ enum DemoData {
             path: "/tmp/herdr-demo/reading-journal",
             panes: [
                 pane(id: "w2:p1", tabID: "w2:t1", status: .done, title: "Sample reading list export", agent: "Pi", revision: 311, firstSeenAt: Date(), lastActivityAt: Date()),
-                pane(id: "w2:p2", tabID: "w2:t1", status: .working, title: "Validate the example book list", agent: "Claude", revision: 118, firstSeenAt: Date().addingTimeInterval(-5_400), lastActivityAt: Date(), workingSince: Date().addingTimeInterval(-35 * 60)),
+                pane(id: "w2:p2", tabID: "w2:t1", status: .working, title: "Validate the example book list", agent: "Pi", revision: 118, firstSeenAt: Date().addingTimeInterval(-5_400), lastActivityAt: Date().addingTimeInterval(-300), workingSince: Date().addingTimeInterval(-35 * 60)),
             ],
             layouts: [layout(workspaceID: "w2", tabID: "w2:t1", paneIDs: ["w2:p1", "w2:p2"])]
         ),

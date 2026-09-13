@@ -11,7 +11,7 @@ struct AgentsHeader: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Agents")
                         .font(.title.bold())
-                    Text("Recent Pi sessions")
+                    Text("By workspace")
                         .font(.caption)
                         .foregroundStyle(HerdrTheme.mist)
                 }

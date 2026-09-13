@@ -6,14 +6,16 @@ No other orchestration server is required.
 
 ## Native mobile interface
 
-The **Agents** tab lists all currently available Pi sessions across machines,
-newest first, without the navigator’s twenty-chat limit. System-font cards lead
-with a prominent workspace heading and tab subtitle, followed by the agent
-session name. Agent type and machine use small labels, with status in the footer. Search any
-of these fields and tap a card to open its session. Offline machines indicate
-that their agent status is last known. Workspace browsing and creation remain
-in the navigator; a card’s context menu also opens its workspace. No server
-update is needed.
+The **Agents** tab groups all currently available Pi sessions by workspace
+across machines, without the navigator’s twenty-chat limit. A prominent
+workspace heading and small machine label introduce tab sections containing
+individual agent cards. Workspaces and tabs sort by their newest matching
+chat, and agents within each tab sort newest first. Workspaces with identical
+names on different machines stay separate. Search filters before grouping, so
+counts and ordering describe the matching chats. Tap any agent to open its
+session. Offline machines indicate that agent status is last known. Workspace
+browsing and creation remain in the navigator; a group or card’s context menu
+also opens its workspace. No server update is needed.
 
 The navigator defaults to **Recents**, a flat newest-20 conversation list. Choose
 **All** for Unread, then Starred, then the real machine → workspace → tab → pane

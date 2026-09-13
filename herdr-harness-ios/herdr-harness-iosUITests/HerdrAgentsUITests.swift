@@ -10,7 +10,14 @@ final class HerdrAgentsUITests: XCTestCase {
         XCTAssertFalse(app.tabBars.buttons["Workspaces"].exists)
         let card = app.buttons["agent-card-demo1|w2:p1"]
         XCTAssertTrue(card.waitForExistence(timeout: 5))
-        XCTAssertTrue(card.label.contains("Reading Journal"))
+        let workspace = app.staticTexts["agent-workspace-demo1|w2"]
+        XCTAssertTrue(workspace.exists)
+        XCTAssertEqual(app.staticTexts.matching(identifier: "agent-workspace-demo1|w2").count, 1)
+        XCTAssertEqual(workspace.label, "Reading Journal")
+        let secondAgent = app.buttons["agent-card-demo1|w2:p2"]
+        XCTAssertTrue(secondAgent.waitForExistence(timeout: 3))
+        XCTAssertLessThan(workspace.frame.minY, card.frame.minY)
+        XCTAssertLessThan(card.frame.minY, secondAgent.frame.minY)
         XCTAssertTrue(card.label.contains("Pi"))
         XCTAssertTrue(card.label.contains("Done"))
         let screenshot = app.screenshot()

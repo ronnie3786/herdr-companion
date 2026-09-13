@@ -9,18 +9,11 @@ struct AgentSessionCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(session.workspace.label)
-                        .font(.title3.bold())
-                        .foregroundStyle(HerdrTheme.text)
-                        .accessibilityLabel("Workspace: \(session.workspace.label)")
-                    Text(session.tabName)
-                        .font(.subheadline)
-                        .foregroundStyle(HerdrTheme.mist)
-                        .accessibilityLabel("Tab: \(session.tabName)")
-                }
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                Text(session.pane.displayTitle)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(HerdrTheme.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 if isUnread {
                     Image(systemName: "circle.fill")
                         .font(.caption2)
@@ -39,21 +32,11 @@ struct AgentSessionCard: View {
                     .accessibilityHidden(true)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Label(session.pane.displayTitle, systemImage: "sparkles")
-                    .font(.body)
-                    .foregroundStyle(HerdrTheme.text)
-
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(session.agentName)
-                        .accessibilityLabel("Agent: \(session.agentName)")
-                    Label(session.machineName, systemImage: "desktopcomputer")
-                        .accessibilityLabel("Machine: \(session.machineName)")
-                }
+            Label(session.agentName, systemImage: "sparkles")
                 .font(.caption2)
                 .foregroundStyle(HerdrTheme.muted)
-            }
-            .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel("Agent: \(session.agentName)")
+                .fixedSize(horizontal: false, vertical: true)
 
             Rectangle().fill(HerdrTheme.subtleSeparator).frame(height: 1)
 

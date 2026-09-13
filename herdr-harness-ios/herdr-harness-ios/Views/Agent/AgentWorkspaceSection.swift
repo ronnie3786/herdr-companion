@@ -7,19 +7,8 @@ struct AgentWorkspaceSection: View {
     let selectPane: (HerdrPane) -> Void
 
     var body: some View {
-        LazyVStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(group.workspace.label)
-                    .font(.title2.bold())
-                    .foregroundStyle(HerdrTheme.text)
-                    .accessibilityAddTraits(.isHeader)
-                    .accessibilityIdentifier("agent-workspace-\(group.id)")
-                Label(group.machineName, systemImage: "desktopcomputer")
-                    .font(.caption2)
-                    .foregroundStyle(HerdrTheme.muted)
-                    .accessibilityLabel("Machine: \(group.machineName)")
-            }
-            .fixedSize(horizontal: false, vertical: true)
+        LazyVStack(alignment: .leading, spacing: 8) {
+            AgentWorkspaceHeading(group: group)
             .contextMenu {
                 Button("Open workspace", systemImage: "folder") { selectWorkspace(group.workspace) }
             }
@@ -39,7 +28,7 @@ struct AgentWorkspaceSection: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("agent-card-\(session.id)")
-                        .accessibilityHint("Opens this agent in \(group.workspace.label), tab \(tab.name), on \(group.machineName)")
+                        .accessibilityHint("Opens this \(session.agentName) agent in \(group.workspace.label), tab \(tab.name), on \(group.machineName)")
                         .contextMenu {
                             Button("Open workspace", systemImage: "folder") { selectWorkspace(group.workspace) }
                         }
@@ -53,6 +42,7 @@ struct AgentWorkspaceSection: View {
                         Text("\(tab.sessions.count)")
                             .font(.caption)
                     }
+                    .padding(.top, 4)
                     .foregroundStyle(HerdrTheme.mist)
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("Tab: \(tab.name), \(tab.sessions.count) agents")
@@ -61,7 +51,7 @@ struct AgentWorkspaceSection: View {
                 }
             }
         }
-        .padding(.top, 8)
-        .padding(.bottom, 16)
+        .padding(.top, 4)
+        .padding(.bottom, 12)
     }
 }

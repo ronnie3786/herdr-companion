@@ -18,7 +18,7 @@ final class HerdrAgentsUITests: XCTestCase {
         XCTAssertTrue(secondAgent.waitForExistence(timeout: 3))
         XCTAssertLessThan(workspace.frame.minY, card.frame.minY)
         XCTAssertLessThan(card.frame.minY, secondAgent.frame.minY)
-        XCTAssertTrue(card.label.contains("Pi"))
+        XCTAssertLessThan(card.frame.height, 100, "A standard single-title card should stay compact")
         XCTAssertTrue(card.label.contains("Done"))
         let screenshot = app.screenshot()
         try screenshot.pngRepresentation.write(to: URL(fileURLWithPath: "/tmp/herdr-agents-cards.png"))

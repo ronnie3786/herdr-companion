@@ -9,7 +9,12 @@ No other orchestration server is required.
 The **Agents** tab groups all currently available Pi sessions by workspace
 across machines, without the navigator’s twenty-chat limit. A prominent
 workspace heading and small machine label introduce tab sections containing
-individual agent cards. Workspaces and tabs sort by their newest matching
+compact agent cards with full wrapping titles and a single status/activity row.
+Short activity ages update once a minute. Generic Pi labels appear once in the
+list summary; specific agent names remain visible on their cards. Workspace and
+machine labels share a row when they fit, and long names or large text expand
+the layout. Header controls keep at least 44-point touch targets.
+Workspaces and tabs sort by their newest matching
 chat, and agents within each tab sort newest first. Workspaces with identical
 names on different machines stay separate. Search filters before grouping, so
 counts and ordering describe the matching chats. Tap any agent to open its

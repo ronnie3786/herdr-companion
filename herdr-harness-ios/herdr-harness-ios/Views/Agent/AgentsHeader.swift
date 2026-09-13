@@ -4,14 +4,14 @@ struct AgentsHeader: View {
     @Bindable var model: HerdrAppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                HerdrBrandMark(size: 42)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                HerdrBrandMark(size: 28)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Agents")
-                        .font(.title.bold())
-                    Text("By workspace")
+                        .font(.title2.bold())
+                    Text("All machines")
                         .font(.caption)
                         .foregroundStyle(HerdrTheme.mist)
                 }
@@ -24,7 +24,7 @@ struct AgentsHeader: View {
                 .labelStyle(.iconOnly)
                 .font(.headline.bold())
                 .foregroundStyle(HerdrTheme.accent)
-                .frame(width: 48, height: 48)
+                .frame(width: 44, height: 44)
                 .background(HerdrTheme.elevated)
                 .overlay {
                     RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
@@ -34,7 +34,7 @@ struct AgentsHeader: View {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("sidebar-toggle")
 
-                HerdPulseButton()
+                HerdPulseButton(controlSize: 44)
 
                 Button("Refresh", systemImage: "arrow.clockwise") {
                     Task { await model.refresh() }
@@ -42,7 +42,7 @@ struct AgentsHeader: View {
                 .labelStyle(.iconOnly)
                 .font(.headline.bold())
                 .foregroundStyle(HerdrTheme.accent)
-                .frame(width: 48, height: 48)
+                .frame(width: 44, height: 44)
                 .background(HerdrTheme.elevated)
                 .overlay {
                     RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
@@ -54,19 +54,9 @@ struct AgentsHeader: View {
 
             }
 
-            HStack {
-                Text("Across all machines")
-                    .font(.subheadline)
-                    .foregroundStyle(HerdrTheme.mist)
-                Spacer()
-                Label(model.connectionState.title, systemImage: model.connectionState.symbol)
-                    .font(.caption)
-                    .foregroundStyle(model.connectionState.color)
-            }
-
             if model.isDemoMode {
                 Label("Demo data is active", systemImage: "sparkles")
-                    .font(.footnote.bold())
+                    .font(.caption)
                     .foregroundStyle(HerdrTheme.accent)
             }
         }

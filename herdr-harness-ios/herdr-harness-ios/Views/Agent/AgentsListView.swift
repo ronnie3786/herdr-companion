@@ -17,7 +17,7 @@ struct AgentsListView: View {
             HerdrBackground()
 
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 16) {
+                LazyVStack(alignment: .leading, spacing: 12) {
                     AgentsHeader(model: model)
 
                     WorkspaceSearchField(
@@ -27,10 +27,10 @@ struct AgentsListView: View {
                         monospaced: false
                     )
 
-                    HerdrSectionLabel(
-                        title: "Recent workspaces",
-                        detail: "\(sessionCount) agents",
-                        monospaced: false
+                    AgentsListSummary(
+                        sessionCount: sessionCount,
+                        workspaceCount: groups.count,
+                        connectionState: model.connectionState
                     )
 
                     if groups.isEmpty {
@@ -53,7 +53,7 @@ struct AgentsListView: View {
                     }
                 }
                 .padding(.horizontal, HerdrTheme.pagePadding)
-                .padding(.top, 18)
+                .padding(.top, 8)
                 .padding(.bottom, 34)
             }
             .scrollIndicators(.hidden)

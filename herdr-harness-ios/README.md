@@ -19,8 +19,17 @@ chat, and agents within each tab sort newest first. Workspaces with identical
 names on different machines stay separate. Search filters before grouping, so
 counts and ordering describe the matching chats. Tap any agent to open its
 session. Offline machines indicate that agent status is last known. Workspace
-browsing and creation remain in the navigator; a group or card’s context menu
-also opens its workspace. No server update is needed.
+browsing and creation remain in the navigator. Long-press any agent card for
+**Rename**, **Smart Rename**, star/unstar, tab color, its workspace, and copying
+its workspace pane ID. Mac focus/zoom and Interrupt are grouped under **Mac
+controls**. Interrupt and both close options require confirmation; **End Pi &
+close pane** preserves the tab and workspace. Remote controls respect each
+machine's connection and busy state. Smart Rename appears for identified Pi
+sessions and requires a readable conversation. It uses a separate read-only run with the
+selected agent model and low thinking, and never prompts the live chat. A newer
+manual rename or changed session takes precedence over an in-flight result.
+Smart Rename is also available in the navigator and pane actions. These actions
+use existing server endpoints; no server update is needed.
 
 The navigator defaults to **Recents**, a flat newest-20 conversation list. Choose
 **All** for Unread, then Starred, then the real machine → workspace → tab → pane

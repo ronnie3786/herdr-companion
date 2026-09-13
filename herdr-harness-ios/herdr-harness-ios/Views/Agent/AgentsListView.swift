@@ -6,6 +6,7 @@ struct AgentsListView: View {
     let selectPane: (HerdrPane) -> Void
     @Environment(\.scenePhase) private var scenePhase
     @State private var query = ""
+    @State private var sessionAction: AgentSessionAction?
     @State private var statusHapticTracker = AgentStatusHapticTracker()
     @State private var hapticPulse = HerdrHapticPulse()
 
@@ -47,7 +48,8 @@ struct AgentsListView: View {
                                 model: model,
                                 group: group,
                                 selectWorkspace: selectWorkspace,
-                                selectPane: selectPane
+                                selectPane: selectPane,
+                                confirmAction: { sessionAction = $0 }
                             )
                         }
                     }
@@ -80,6 +82,7 @@ struct AgentsListView: View {
             statusHapticTracker.recordRefresh(statuses: agentStatuses)
         }
         .herdrHaptic(trigger: hapticPulse)
+        .modifier(AgentSessionActionPresentation(model: model, action: $sessionAction))
     }
 
     private var groups: [AgentWorkspaceGroup] {

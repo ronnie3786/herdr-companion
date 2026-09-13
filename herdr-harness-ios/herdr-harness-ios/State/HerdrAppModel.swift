@@ -1084,9 +1084,46 @@ final class HerdrAppModel {
         }
     }
 
+    private(set) var smartRenamingPaneIDs: Set<String> = []
+    private var paneRenameRevisions: [String: UUID] = [:]
+
+    func smartRename(_ pane: HerdrPane, runner: any SmartPaneTitleRunning = SmartPaneTitleRunner()) async {
+        guard canControl(machineID: pane.machineID),
+              pane.piSemantic?.sessionID?.isEmpty == false,
+              self.pane(id: pane.id) != nil,
+              !paneLifecycleBusyIDs.contains(pane.id),
+              smartRenamingPaneIDs.insert(pane.id).inserted else { return }
+        defer { smartRenamingPaneIDs.remove(pane.id) }
+        let revision = paneRenameRevisions[pane.id]
+        let generation = connectionGeneration
+        toastMessage = "Finding a smart title…"
+        do {
+            let response = try await runner.response(for: pane, model: self)
+            try Task.checkCancellation()
+            guard generation == connectionGeneration,
+                  let current = self.pane(id: pane.id),
+                  current.piSemantic?.sessionID == pane.piSemantic?.sessionID,
+                  current.displayTitle == pane.displayTitle,
+                  paneRenameRevisions[pane.id] == revision else {
+                toastMessage = "Chat changed while naming it. Try Smart Rename again."
+                return
+            }
+            guard let title = SmartPaneTitle.parse(response) else {
+                toastMessage = "AI did not return a valid short title. Try Smart Rename again."
+                return
+            }
+            await rename(current, label: title)
+        } catch is CancellationError {
+            toastMessage = "Smart Rename cancelled."
+        } catch {
+            errorMessage = "Smart Rename failed: \(error.localizedDescription)"
+        }
+    }
+
     func rename(_ pane: HerdrPane, label: String) async {
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        paneRenameRevisions[pane.id] = UUID()
         await perform("Pane renamed", machineID: pane.machineID) { client in
             try await client.renamePane(id: pane.paneID, label: trimmed)
         }

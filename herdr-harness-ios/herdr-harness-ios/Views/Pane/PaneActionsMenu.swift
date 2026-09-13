@@ -116,6 +116,7 @@ struct PaneActionsMenu: View {
             }
 
             Section("Pane") {
+                SmartRenamePaneButton(model: model, pane: pane)
                 Button("Rename pane", systemImage: "pencil") {
                     renameText = pane.displayTitle
                     isRenaming = true

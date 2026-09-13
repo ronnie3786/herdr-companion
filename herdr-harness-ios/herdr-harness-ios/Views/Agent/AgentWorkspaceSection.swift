@@ -6,6 +6,8 @@ struct AgentWorkspaceSection: View {
     let selectWorkspace: (HerdrWorkspace) -> Void
     let selectPane: (HerdrPane) -> Void
 
+    let confirmAction: (AgentSessionAction) -> Void
+
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 8) {
             AgentWorkspaceHeading(group: group)
@@ -30,7 +32,12 @@ struct AgentWorkspaceSection: View {
                         .accessibilityIdentifier("agent-card-\(session.id)")
                         .accessibilityHint("Opens this \(session.agentName) agent in \(group.workspace.label), tab \(tab.name), on \(group.machineName)")
                         .contextMenu {
-                            Button("Open workspace", systemImage: "folder") { selectWorkspace(group.workspace) }
+                            AgentSessionContextMenu(
+                                model: model,
+                                session: session,
+                                openWorkspace: { selectWorkspace(group.workspace) },
+                                confirm: confirmAction
+                            )
                         }
                     }
                 } header: {

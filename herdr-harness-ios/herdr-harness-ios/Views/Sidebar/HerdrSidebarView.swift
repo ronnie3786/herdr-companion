@@ -401,6 +401,7 @@ struct HerdrSidebarView: View {
             }
             .disabled(!model.canControl(machineID: pane.machineID))
             ChatTabColorMenu(store: model.chatTabColors, tabID: pane.scopedTabID)
+            SmartRenamePaneButton(model: model, pane: pane)
             Button("Rename pane", systemImage: "pencil") {
                 paneName = pane.displayTitle
                 renamingPane = pane

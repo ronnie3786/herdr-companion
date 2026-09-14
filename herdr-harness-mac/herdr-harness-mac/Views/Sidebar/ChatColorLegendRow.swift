@@ -3,11 +3,15 @@ import SwiftUI
 struct ChatColorLegendRow: View {
     static let rowHeight: CGFloat = 56 * 0.9
     static let titleSize: CGFloat = 14
+    static let titleLineLimit: ClosedRange<Int> = 1...2
 
     let model: HerdrAppModel
     let color: ChatTabColor
     let isSelected: Bool
     let select: () -> Void
+    var destinations: [ChatTabColorDestination] = []
+    var createNewChat: ((ChatTabColorDestination) -> Void)?
+    var canCreateNewChat: ((ChatTabColorDestination) -> Bool)?
     @State private var isEditing = false
     @State private var text = ""
 
@@ -38,8 +42,10 @@ struct ChatColorLegendRow: View {
                 Button(action: select) {
                     HStack(spacing: 4) {
                         Text(store.label(for: color))
-                            .lineLimit(1)
+                            .lineLimit(Self.titleLineLimit)
                             .truncationMode(.tail)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .layoutPriority(1)
                         Spacer(minLength: 0)
                         if isSelected {
                             Image(systemName: "checkmark")
@@ -83,6 +89,17 @@ struct ChatColorLegendRow: View {
         }
         .onDisappear { finish() }
         .contextMenu {
+            if let createNewChat, let canCreateNewChat {
+                ChatColorNewChatMenu(
+                    color: color,
+                    destinations: destinations,
+                    canCreate: { destination in
+                        !isEditing && canCreateNewChat(destination)
+                    },
+                    create: createNewChat
+                )
+                Divider()
+            }
             Button("Rename label", systemImage: "pencil", action: edit)
             Button(isNaming ? "Renaming…" : "Smart Rename", systemImage: "sparkles") {
                 Task { await model.smartRenameChatColor(color) }

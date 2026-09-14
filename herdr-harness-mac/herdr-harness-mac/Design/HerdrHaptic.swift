@@ -22,7 +22,9 @@ enum HerdrHaptic: Equatable, Sendable {
     case completed
     case failed
 
-    var feedback: SensoryFeedback {
+    // macOS may render semantic success feedback as audio even when our
+    // NSSound sink is silent. Sending a prompt must not request either channel.
+    var feedback: SensoryFeedback? {
         switch self {
         case .selection:
             .selection
@@ -32,7 +34,9 @@ enum HerdrHaptic: Equatable, Sendable {
             .selection(.on)
         case .controlsCollapsed:
             .selection(.off)
-        case .promptSent, .transcriptionSucceeded, .completed:
+        case .promptSent:
+            nil
+        case .transcriptionSucceeded, .completed:
             .success
         case .gitStaged:
             .increase

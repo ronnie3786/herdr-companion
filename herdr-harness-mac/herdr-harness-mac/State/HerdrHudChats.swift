@@ -61,6 +61,7 @@ final class HerdrHudChats {
             composerID = UUID().uuidString
             composer = prototype.makeIndependentSession(id: composerID)
             composer.selectedMachineID = machineID
+            composer.resetWorkingFolderForNewChat()
             persistIndex()
         }
         session.isCollapsed = true

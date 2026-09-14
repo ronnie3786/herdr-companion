@@ -21,6 +21,12 @@ final class HerdrChatColorsUITests: HerdrUITestCase {
         let label = app.buttons["chat-color-label-lavender"]
         XCTAssertTrue(label.waitForExistence(timeout: 3))
         XCTAssertTrue(sibling.label.contains("Lavender"), "Every sibling inherits the tab color")
+
+        label.rightClick()
+        let newChat = app.menuItems["New chat"]
+        XCTAssertTrue(newChat.waitForExistence(timeout: 3), "A single-tab color should expose a direct New chat action")
+        newChat.click()
+
         label.click()
         XCTAssertTrue(first.exists)
         XCTAssertTrue(sibling.exists)

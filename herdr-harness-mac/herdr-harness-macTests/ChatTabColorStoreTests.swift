@@ -65,6 +65,34 @@ struct ChatTabColorStoreTests {
         }
     }
 
+    @Test("Color destinations retain machine, workspace, and tab identity")
+    func destinations() throws {
+        try withStore { store, _ in
+            let desktop = DemoData.workspaces.map { $0.stamped(machineID: "desktop") }
+            let laptop = DemoData.secondaryWorkspaces.map { $0.stamped(machineID: "laptop") }
+            store.assign(.sage, to: "desktop|w1:t1")
+            store.assign(.sage, to: "laptop|w2:t1")
+
+            let machines = [
+                HerdrMachine(id: "desktop", name: "Desktop", urlString: "http://localhost:9092"),
+                HerdrMachine(id: "laptop", name: "Laptop", urlString: "http://localhost:9093"),
+            ]
+            let destinations = store.destinations(
+                for: .sage,
+                in: laptop + desktop,
+                machines: machines
+            )
+
+            #expect(destinations.map(\.scopedTabID) == ["desktop|w1:t1", "laptop|w2:t1"])
+            let first = try #require(destinations.first)
+            #expect(first.displayTitle == "Desktop · Garden Planner · Agents")
+            #expect(first.identityTitle == "IDs: desktop / w1 / w1:t1")
+            #expect(first.rawWorkspaceID == "w1")
+            #expect(first.rawTabID == "w1:t1")
+            #expect(first.hasOpenPane)
+        }
+    }
+
     @Test("Invalid labels preserve the old label, and unknown persisted colors are ignored")
     func validation() {
         withStore { store, defaults in

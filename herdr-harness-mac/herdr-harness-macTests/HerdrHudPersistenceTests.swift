@@ -43,6 +43,26 @@ struct HerdrHudPersistenceTests {
         #expect(second.status == .completed)
         #expect(second.modelLabel == "custom/model")
         #expect(second.steps.count == 2)
+        #expect(second.workingFolderPath == HerdrHudWorkingFolder.homePath)
+    }
+
+    @Test("A custom working folder survives HUD persistence")
+    func workingFolderRoundTrip() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("hud-thread.json")
+        let folder = "/synthetic/remote/project"
+        let session = makeSession(fileURL: fileURL)
+        session.seedExchangesForTesting([
+            exchange(id: "custom", prompt: "Custom folder", response: "Done", workingFolderPath: folder)
+        ])
+        try HerdrHudPersistenceSnapshot(thread: session.thread, exchanges: session.exchanges).save(to: fileURL)
+
+        let restored = makeSession(fileURL: fileURL)
+        await restored.waitForPersistenceRestoreForTesting()
+
+        #expect(restored.exchanges.first?.workingFolderPath == folder)
+        #expect(restored.selectedWorkingFolder.path == folder)
     }
 
     @Test("A missing persistence file restores as an empty HUD")
@@ -218,7 +238,8 @@ struct HerdrHudPersistenceTests {
         response: String? = nil,
         status: HeadlessAgentRunStatus = .completed,
         modelLabel: String = "default",
-        steps: [HerdrHudStep] = []
+        steps: [HerdrHudStep] = [],
+        workingFolderPath: String = HerdrHudWorkingFolder.homePath
     ) -> HerdrHudExchange {
         HerdrHudExchange(
             id: id,
@@ -232,6 +253,7 @@ struct HerdrHudPersistenceTests {
             createdAt: Date(timeIntervalSince1970: 1_700_000_000),
             promotedPaneID: nil,
             attachmentFilenames: ["image.png"],
+            workingFolderPath: workingFolderPath,
             modelLabel: modelLabel,
             steps: steps,
             stepsTruncated: true

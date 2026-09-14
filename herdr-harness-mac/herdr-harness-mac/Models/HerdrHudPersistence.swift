@@ -70,6 +70,9 @@ struct HerdrHudPersistenceSnapshot: Codable, Equatable, Sendable {
         let createdAt: Date
         let promotedPaneID: String?
         let attachmentFilenames: [String]
+        /// Optional keeps caches from before folder selection readable; home is
+        /// the semantic default when older data has no folder field.
+        let workingFolderPath: String?
         let localAttachments: [HerdrHudAttachment]?
         let modelLabel: String
         let steps: [HerdrHudStep]
@@ -87,6 +90,8 @@ struct HerdrHudPersistenceSnapshot: Codable, Equatable, Sendable {
             createdAt = exchange.createdAt
             promotedPaneID = exchange.promotedPaneID
             attachmentFilenames = exchange.attachmentFilenames
+            workingFolderPath = exchange.workingFolderPath == HerdrHudWorkingFolder.homePath
+                ? nil : exchange.workingFolderPath
             localAttachments = exchange.localAttachments.isEmpty ? nil : exchange.localAttachments
             modelLabel = exchange.modelLabel
             steps = exchange.steps
@@ -106,6 +111,8 @@ struct HerdrHudPersistenceSnapshot: Codable, Equatable, Sendable {
                 createdAt: createdAt,
                 promotedPaneID: promotedPaneID,
                 attachmentFilenames: attachmentFilenames,
+                workingFolderPath: HerdrHudWorkingFolder.normalizedPath(workingFolderPath ?? HerdrHudWorkingFolder.homePath)
+                    ?? HerdrHudWorkingFolder.homePath,
                 attachments: [],
                 localAttachments: localAttachments ?? [],
                 modelLabel: modelLabel,

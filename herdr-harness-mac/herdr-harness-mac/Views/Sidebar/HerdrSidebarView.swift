@@ -829,9 +829,27 @@ struct HerdrSidebarView: View {
                     .accessibilityIdentifier("chat-color-filter-clear")
                 }
                 ForEach(colors) { color in
-                    ChatColorLegendRow(model: model, color: color, isSelected: selectedColor == color) {
-                        selectedColor = selectedColor == color ? nil : color
-                    }
+                    let destinations = model.chatTabColors.destinations(
+                        for: color,
+                        in: snapshot.scopedWorkspaces,
+                        machines: model.machines
+                    )
+                    ChatColorLegendRow(
+                        model: model,
+                        color: color,
+                        isSelected: selectedColor == color,
+                        select: {
+                            selectedColor = selectedColor == color ? nil : color
+                        },
+                        destinations: destinations,
+                        createNewChat: { destination in
+                            createNewChat(for: color, in: destination)
+                        },
+                        canCreateNewChat: { destination in
+                            destination.hasOpenPane
+                                && model.canControl(machineID: destination.machineID)
+                        }
+                    )
                 }
             }
             .accessibilityElement(children: .contain)
@@ -1213,6 +1231,43 @@ struct HerdrSidebarView: View {
     private func presentCreateWorkspace(for machineID: String?) {
         creatingWorkspaceMachineID = machineID
         isPresentingCreateWorkspace = true
+    }
+
+    /// Re-resolve the destination when the menu action runs. A refresh or a
+    /// color reassignment can make the snapshot used to build the menu stale;
+    /// creation must never silently land in a different tab.
+    private func createNewChat(for color: ChatTabColor, in destination: ChatTabColorDestination) {
+        guard model.canControl(machineID: destination.machineID),
+              let workspace = model.workspace(id: destination.scopedWorkspaceID)
+                ?? model.workspaces.first(where: {
+                    $0.machineID == destination.machineID
+                        && $0.workspaceID == destination.rawWorkspaceID
+                }),
+              let tab = workspace.tabs.first(where: {
+                  $0.id == destination.scopedTabID || $0.tabID == destination.rawTabID
+              })
+        else { return }
+
+        let currentScopedTabID: String
+        if !tab.machineID.isEmpty || destination.machineID.isEmpty {
+            currentScopedTabID = tab.id
+        } else {
+            currentScopedTabID = MachineScopedID.compose(
+                machineID: destination.machineID,
+                rawID: tab.tabID
+            )
+        }
+        guard model.chatTabColors.color(for: currentScopedTabID) == color,
+              workspace.panes.contains(where: {
+                  $0.scopedTabID == tab.id
+                      || ($0.tabID == tab.tabID && $0.machineID == destination.machineID)
+              })
+        else { return }
+
+        // Keep this on the existing guarded tab path. It reuses a reserved shell
+        // when present and starts Pi in the new pane, so the inherited color
+        // remains tab-owned rather than being copied onto one pane.
+        Task { await model.addPane(toTab: tab, in: workspace, running: "pi") }
     }
 
     /// Option-click expands or collapses every workspace at once, the way

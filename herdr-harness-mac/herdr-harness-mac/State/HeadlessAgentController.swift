@@ -28,6 +28,7 @@ final class HeadlessAgentController {
         prompt: String,
         machineID: String,
         mode: HeadlessAgentRunMode = .ask,
+        cwd: String? = nil,
         agentModel: String? = nil,
         thinkingLevel: String? = nil,
         attachments: [HeadlessAgentAttachment]? = nil,
@@ -47,6 +48,7 @@ final class HeadlessAgentController {
             let started = try await model.startHeadlessAgent(
                 prompt: normalizedPrompt,
                 machineID: machineID,
+                cwd: cwd,
                 mode: mode,
                 model: agentModel,
                 thinkingLevel: thinkingLevel,

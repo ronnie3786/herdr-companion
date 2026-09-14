@@ -41,5 +41,7 @@ struct ChatTabColorRenderTests {
         image.expectSubstantial()
         #expect(ChatColorLegendRow.rowHeight == 56 * 0.9)
         #expect(ChatColorLegendRow.titleSize == 14)
+        #expect(ChatColorLegendRow.titleLineLimit.lowerBound == 1)
+        #expect(ChatColorLegendRow.titleLineLimit.upperBound == 2)
     }
 }

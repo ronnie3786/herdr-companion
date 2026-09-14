@@ -31,11 +31,54 @@ struct HerdrHudExchange: Identifiable, Equatable, Sendable {
     let createdAt: Date
     var promotedPaneID: String?
     let attachmentFilenames: [String]
+    /// The folder captured when this turn was created. A HUD session can show
+    /// older turns from another machine, so retries and continuations must not
+    /// read a mutable fresh-composer selection instead.
+    let workingFolderPath: String
     var attachments: [HeadlessAgentAttachment] = []
     var localAttachments: [HerdrHudAttachment] = []
     var modelLabel: String = "default"
     var steps: [HerdrHudStep] = []
     var stepsTruncated = false
+
+    init(
+        id: String,
+        machineID: String,
+        prompt: String,
+        sentPrompt: String,
+        response: String?,
+        error: String?,
+        status: HeadlessAgentRunStatus,
+        costUSD: Double?,
+        createdAt: Date,
+        promotedPaneID: String?,
+        attachmentFilenames: [String],
+        workingFolderPath: String = HerdrHudWorkingFolder.homePath,
+        attachments: [HeadlessAgentAttachment] = [],
+        localAttachments: [HerdrHudAttachment] = [],
+        modelLabel: String = "default",
+        steps: [HerdrHudStep] = [],
+        stepsTruncated: Bool = false
+    ) {
+        self.id = id
+        self.machineID = machineID
+        self.prompt = prompt
+        self.sentPrompt = sentPrompt
+        self.response = response
+        self.error = error
+        self.status = status
+        self.costUSD = costUSD
+        self.createdAt = createdAt
+        self.promotedPaneID = promotedPaneID
+        self.attachmentFilenames = attachmentFilenames
+        self.workingFolderPath = HerdrHudWorkingFolder.normalizedPath(workingFolderPath)
+            ?? HerdrHudWorkingFolder.homePath
+        self.attachments = attachments
+        self.localAttachments = localAttachments
+        self.modelLabel = modelLabel
+        self.steps = steps
+        self.stepsTruncated = stepsTruncated
+    }
 }
 
 @MainActor
@@ -55,6 +98,7 @@ final class HerdrHudSession {
 
     private let controller = HeadlessAgentController()
     private let userDefaults: UserDefaults
+    @ObservationIgnored private let workingFolderStore: HerdrHudWorkingFolderStore
     private let attachmentDirectory: URL
     private let storeURL: URL
     @ObservationIgnored private let agentSettings: AgentModelSettingsStore
@@ -80,8 +124,25 @@ final class HerdrHudSession {
     var draft = ""
     var pendingAttachments: [HerdrHudAttachment] = []
     var pendingQuotes: [ChatQuote] = []
+    private(set) var selectedWorkingFolder = HerdrHudWorkingFolder.home
+    private(set) var workingFolderOptionsRevision = 0
     var selectedMachineID: String? {
-        didSet { userDefaults.set(selectedMachineID, forKey: Self.machineIDDefaultsKey) }
+        didSet {
+            userDefaults.set(selectedMachineID, forKey: Self.machineIDDefaultsKey)
+            guard oldValue != selectedMachineID else { return }
+            // A machine owns its filesystem. A fresh composer always returns
+            // to that machine's home choice instead of carrying the previous
+            // machine's path across the switch.
+            selectedWorkingFolder = .home
+            workingFolderOptionsRevision &+= 1
+        }
+    }
+
+    var workingFolderPath: String { selectedWorkingFolder.path }
+    var workingDirectory: String? { selectedWorkingFolder.requestPath }
+    var canEditWorkingFolder: Bool {
+        exchanges.isEmpty && !isRunning && !isLoadingHistory && !isEnding && !hasEnded
+            && promotingExchangeIDs.isEmpty
     }
     /// The HUD chip and Settings edit the same preference; @Observable
     /// propagation through the store keeps both surfaces honest.
@@ -143,9 +204,11 @@ final class HerdrHudSession {
         agentSettings: AgentModelSettingsStore? = nil,
         persistenceURL: URL? = nil,
         promptSettings: HerdrPromptSettingsStore? = nil,
-        modelFavorites: ModelFavoritesStore? = nil
+        modelFavorites: ModelFavoritesStore? = nil,
+        workingFolderStore: HerdrHudWorkingFolderStore? = nil
     ) {
         self.userDefaults = userDefaults
+        self.workingFolderStore = workingFolderStore ?? HerdrHudWorkingFolderStore(userDefaults: userDefaults)
         let storeURL = persistenceURL ?? HerdrHudPersistenceStore.defaultFileURL()
         self.storeURL = storeURL
         self.attachmentDirectory = storeURL.deletingPathExtension().appendingPathExtension("attachments")
@@ -177,10 +240,77 @@ final class HerdrHudSession {
                         persistenceURL: storeURL.deletingLastPathComponent()
                             .appendingPathComponent("hud-chats", isDirectory: true)
                             .appendingPathComponent("\(id).json"),
-                        promptSettings: promptSettings, modelFavorites: modelFavorites)
+                        promptSettings: promptSettings, modelFavorites: modelFavorites,
+                        workingFolderStore: workingFolderStore)
     }
 
     func waitForPersistenceRestore() async { await restoreTask?.value }
+
+    /// The built-in home choice is always first. A restored chat may retain a
+    /// path that is no longer in the fresh-composer list, so keep that path
+    /// visible while the chat is read-only.
+    func workingFolderOptions(for machineID: String?) -> [HerdrHudWorkingFolder] {
+        _ = workingFolderOptionsRevision
+        guard let machineID, !machineID.isEmpty else { return [.home] }
+        var options = [HerdrHudWorkingFolder.home]
+        options.append(contentsOf: workingFolderStore.customFolders(for: machineID))
+        if selectedMachineID == machineID, !options.contains(selectedWorkingFolder) {
+            options.append(selectedWorkingFolder)
+        }
+        return options
+    }
+
+    func customWorkingFolders(for machineID: String) -> [HerdrHudWorkingFolder] {
+        _ = workingFolderOptionsRevision
+        return workingFolderStore.customFolders(for: machineID)
+    }
+
+    @discardableResult
+    func selectWorkingFolder(path rawPath: String, for machineID: String? = nil) -> Bool {
+        guard canEditWorkingFolder,
+              selectedMachineID == nil || machineID == nil || selectedMachineID == machineID,
+              let path = HerdrHudWorkingFolder.normalizedPath(rawPath)
+        else { return false }
+        let targetMachineID = machineID ?? selectedMachineID
+        guard path == HerdrHudWorkingFolder.homePath
+                || targetMachineID.map({ workingFolderStore.customFolders(for: $0).contains { $0.path == path } }) == true
+        else { return false }
+        if selectedMachineID == nil, let machineID {
+            selectedMachineID = machineID
+        }
+        selectedWorkingFolder = HerdrHudWorkingFolder(path: path)
+        return true
+    }
+
+    @discardableResult
+    func addCustomWorkingFolder(path: String, machineID: String) throws -> HerdrHudWorkingFolder {
+        let folder = try workingFolderStore.add(path: path, for: machineID)
+        workingFolderOptionsRevision &+= 1
+        if selectedMachineID == nil {
+            selectedMachineID = machineID
+        }
+        if selectedMachineID == machineID, canEditWorkingFolder {
+            selectedWorkingFolder = folder
+        }
+        return folder
+    }
+
+    @discardableResult
+    func removeCustomWorkingFolder(path: String, machineID: String) -> Bool {
+        guard workingFolderStore.remove(path: path, for: machineID) else { return false }
+        workingFolderOptionsRevision &+= 1
+        if canEditWorkingFolder, selectedMachineID == machineID, selectedWorkingFolder.path == path {
+            selectedWorkingFolder = .home
+        }
+        return true
+    }
+
+    /// Starts every fresh composer at the target machine's home choice. This
+    /// is intentionally not a "last used folder" preference.
+    func resetWorkingFolderForNewChat() {
+        guard exchanges.isEmpty else { return }
+        selectedWorkingFolder = .home
+    }
 
     var historyIdentity: String? {
         if let thread { return "\(thread.machineID):\(thread.rootRunID)" }
@@ -325,6 +455,9 @@ final class HerdrHudSession {
             return
         }
 
+        // A live thread owns the folder of its first turn. The fresh composer
+        // is the only place where a folder can be changed.
+        let workingFolder = submissionWorkingFolder(for: machineID)
         let attachmentsToSend = pendingAttachments
         guard attachmentsToSend.reduce(Int64(0), { $0 + Int64($1.byteCount) }) <= Self.maxCombinedAttachmentBytes else {
             validationError = "Attachments can total up to 21 MB per message."
@@ -366,6 +499,7 @@ final class HerdrHudSession {
                 createdAt: submittedAt,
                 promotedPaneID: nil,
                 attachmentFilenames: attachmentFilenames,
+                workingFolderPath: workingFolder.path,
                 localAttachments: attachmentsToSend,
                 modelLabel: label
             )
@@ -413,6 +547,7 @@ final class HerdrHudSession {
             thinkingLevel: thinkingLevel,
             attachments: hasAttachments ? wireAttachments : nil,
             continueFromRunId: continueFromRunId,
+            workingFolderPath: workingFolder.path,
             model: model
         )
         guard let index = exchanges.firstIndex(where: { $0.id == pendingID }) else {
@@ -433,6 +568,7 @@ final class HerdrHudSession {
                 createdAt: submittedAt,
                 promotedPaneID: nil,
                 attachmentFilenames: attachmentFilenames,
+                workingFolderPath: workingFolder.path,
                 attachments: wireAttachments,
                 localAttachments: attachmentsToSend,
                 modelLabel: label
@@ -462,6 +598,7 @@ final class HerdrHudSession {
             createdAt: submittedAt,
             promotedPaneID: run.promotedPaneID,
             attachmentFilenames: attachmentFilenames,
+            workingFolderPath: workingFolder.path,
             attachments: retainedAttachments,
             localAttachments: attachmentsToSend,
             modelLabel: label,
@@ -747,7 +884,8 @@ final class HerdrHudSession {
             let result = try await model.promoteHeadlessAgent(
                 runID: exchange.id,
                 machineID: exchange.machineID,
-                workspaceID: nil
+                workspaceID: nil,
+                cwd: HerdrHudWorkingFolder(path: exchange.workingFolderPath).requestPath
             )
             if let index = exchanges.firstIndex(where: { $0.id == exchange.id }) {
                 exchanges[index].promotedPaneID = result.pane.paneID
@@ -792,6 +930,10 @@ final class HerdrHudSession {
             validationError = "Couldn't read the saved attachments: \(error.localizedDescription)"
             return
         }
+        let workingFolder = HerdrHudWorkingFolder(
+            path: HerdrHudWorkingFolder.normalizedPath(exchange.workingFolderPath)
+                ?? HerdrHudWorkingFolder.homePath
+        )
         let hasAttachments = !retryAttachments.isEmpty
         let hasImageAttachments = retryAttachments.contains {
             HerdrAttachmentTypes.isImage(URL(fileURLWithPath: $0.filename))
@@ -818,6 +960,7 @@ final class HerdrHudSession {
             agentModel: agentModel,
             thinkingLevel: thinkingLevel,
             attachments: hasAttachments ? retryAttachments : nil,
+            workingFolderPath: workingFolder.path,
             model: model
         ) else {
             validationError = controller.errorMessage ?? validationError
@@ -842,6 +985,7 @@ final class HerdrHudSession {
                 createdAt: .now,
                 promotedPaneID: run.promotedPaneID,
                 attachmentFilenames: exchange.attachmentFilenames,
+                workingFolderPath: workingFolder.path,
                 attachments: retainedAttachments,
                 localAttachments: exchange.localAttachments,
                 modelLabel: label,
@@ -896,6 +1040,11 @@ final class HerdrHudSession {
         }
         try Task.checkCancellation()
         let isSameConversation = historyIdentity == "\(machineID):\(id)"
+        let previousWorkingFolder = selectedWorkingFolder
+        let historyWorkingFolder = turns.lazy.compactMap(\.cwd).first.flatMap {
+            HerdrHudWorkingFolder.normalizedPath($0)
+        } ?? workingFolderStore.rememberedFolder(for: machineID, chatID: id)?.path
+            ?? (isSameConversation ? previousWorkingFolder.path : HerdrHudWorkingFolder.homePath)
         let wasAwaitingAnswer = needsHistoryRefresh || exchanges.last?.id.hasPrefix("hud-") == true
             || exchanges.last?.status.isTerminal == false
         needsHistoryRefresh = false
@@ -905,6 +1054,7 @@ final class HerdrHudSession {
                              response: run.response, error: run.error, status: run.status, costUSD: run.costUSD,
                              createdAt: HerdrTimestamp.date(from: run.createdAt) ?? .now,
                              promotedPaneID: page.promotedPaneId, attachmentFilenames: run.attachments ?? [],
+                             workingFolderPath: historyWorkingFolder,
                              modelLabel: run.model.map(PiModelDisplayName.short(fullID:)) ?? "default",
                              steps: Self.hudSteps(from: run.steps ?? []), stepsTruncated: run.stepsTruncated == true)
         }
@@ -916,6 +1066,12 @@ final class HerdrHudSession {
         thread = page.promotedPaneId == nil ? HerdrHudThread(machineID: machineID, rootRunID: page.rootRunId,
                                                            lastRunID: page.latestRunId, turnCount: turns.count) : nil
         selectedMachineID = machineID
+        selectedWorkingFolder = HerdrHudWorkingFolder(path: historyWorkingFolder)
+        workingFolderStore.remember(
+            folder: selectedWorkingFolder,
+            for: machineID,
+            chatID: id
+        )
         if !isSameConversation { pendingQuotes = [] }
         validationError = nil
         markExchangesChanged()
@@ -962,8 +1118,20 @@ final class HerdrHudSession {
         thread = nil
         historyRootRunID = nil
         needsHistoryRefresh = false
+        selectedWorkingFolder = .home
         await persistence.remove()
         pruneStoredAttachments()
+    }
+
+    private func submissionWorkingFolder(for machineID: String) -> HerdrHudWorkingFolder {
+        guard let thread, thread.machineID == machineID,
+              let exchange = exchanges.last(where: { $0.machineID == machineID }) else {
+            return selectedWorkingFolder
+        }
+        return HerdrHudWorkingFolder(
+            path: HerdrHudWorkingFolder.normalizedPath(exchange.workingFolderPath)
+                ?? HerdrHudWorkingFolder.homePath
+        )
     }
 
     private func resolvedMachineID(in model: HerdrAppModel) -> String? {
@@ -1044,7 +1212,15 @@ final class HerdrHudSession {
             || (restored.thread != nil && restored.thread?.lastRunID != snapshot.exchanges.last?.id)
         thread = restored.thread
         historyRootRunID = snapshot.historyRootRunID ?? thread?.rootRunID
-        selectedMachineID = thread?.machineID ?? exchanges.first?.machineID ?? selectedMachineID
+        let restoredMachineID = thread?.machineID ?? exchanges.first?.machineID
+        selectedMachineID = restoredMachineID ?? selectedMachineID
+        let restoredFolderPath = restored.exchanges.last(where: { exchange in
+            exchange.machineID == restoredMachineID
+        })?.workingFolderPath ?? HerdrHudWorkingFolder.homePath
+        selectedWorkingFolder = HerdrHudWorkingFolder(path: restoredFolderPath)
+        if let root = thread?.rootRunID {
+            workingFolderStore.remember(folder: selectedWorkingFolder, for: restoredMachineID ?? "", chatID: root)
+        }
         pruneStoredAttachments()
         markExchangesChanged()
     }
@@ -1071,6 +1247,7 @@ final class HerdrHudSession {
         thinkingLevel: String?,
         attachments: [HeadlessAgentAttachment]?,
         continueFromRunId: String? = nil,
+        workingFolderPath: String = HerdrHudWorkingFolder.homePath,
         model: HerdrAppModel
     ) async -> HeadlessAgentRun? {
         elapsedSeconds = 0
@@ -1096,6 +1273,7 @@ final class HerdrHudSession {
             prompt: prompt,
             machineID: machineID,
             mode: .act,
+            cwd: HerdrHudWorkingFolder(path: workingFolderPath).requestPath,
             agentModel: agentModel,
             thinkingLevel: thinkingLevel,
             attachments: attachments,
@@ -1112,6 +1290,11 @@ final class HerdrHudSession {
             let count = thread?.rootRunID == root ? (thread?.turnCount ?? 0) + 1 : 1
             thread = HerdrHudThread(machineID: machineID, rootRunID: root,
                                    lastRunID: run.id, turnCount: count)
+            workingFolderStore.remember(
+                folder: HerdrHudWorkingFolder(path: workingFolderPath),
+                for: machineID,
+                chatID: root
+            )
             await schedulePersistenceSave()
         }
         beginElapsedTimer()

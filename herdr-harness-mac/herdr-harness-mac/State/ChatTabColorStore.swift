@@ -71,6 +71,92 @@ final class ChatTabColorStore {
         return ChatTabColor.allCases.filter { active.contains($0) }
     }
 
+    /// Resolves color assignments to the concrete tabs currently visible in the
+    /// sidebar. The result deliberately retains every target, including tabs on
+    /// disconnected machines, so the menu can show the destination and disable
+    /// only the targets that cannot be controlled.
+    func destinations(
+        for color: ChatTabColor,
+        in workspaces: [HerdrWorkspace],
+        machines: [HerdrMachine]
+    ) -> [ChatTabColorDestination] {
+        let machineNames = Dictionary(uniqueKeysWithValues: machines.map { ($0.id, $0.name) })
+        let machineOrder = Dictionary(
+            uniqueKeysWithValues: machines.enumerated().map { ($0.element.id, $0.offset) }
+        )
+        var seenTabIDs = Set<String>()
+
+        let destinations = workspaces.flatMap { workspace in
+            workspace.tabs.compactMap { tab -> ChatTabColorDestination? in
+                let machineID = workspace.machineID.isEmpty ? tab.machineID : workspace.machineID
+                let scopedTabID: String
+                if !tab.machineID.isEmpty {
+                    scopedTabID = tab.id
+                } else if !machineID.isEmpty {
+                    scopedTabID = MachineScopedID.compose(machineID: machineID, rawID: tab.tabID)
+                } else {
+                    scopedTabID = tab.id
+                }
+                guard self.color(for: scopedTabID) == color,
+                      seenTabIDs.insert(scopedTabID).inserted
+                else { return nil }
+
+                let scopedWorkspaceID: String
+                if !workspace.machineID.isEmpty {
+                    scopedWorkspaceID = workspace.id
+                } else if !machineID.isEmpty {
+                    scopedWorkspaceID = MachineScopedID.compose(
+                        machineID: machineID,
+                        rawID: workspace.workspaceID
+                    )
+                } else {
+                    scopedWorkspaceID = workspace.id
+                }
+                let hasOpenPane = workspace.panes.contains {
+                    $0.scopedTabID == scopedTabID
+                        || ($0.tabID == tab.tabID && $0.machineID == machineID)
+                }
+
+                let machineName = machineNames[machineID].flatMap { $0.isEmpty ? nil : $0 }
+                    ?? (machineID.isEmpty ? "Unknown machine" : machineID)
+                return ChatTabColorDestination(
+                    machineID: machineID,
+                    machineName: machineName,
+                    scopedWorkspaceID: scopedWorkspaceID,
+                    rawWorkspaceID: workspace.workspaceID,
+                    workspaceLabel: workspace.label.isEmpty ? workspace.workspaceID : workspace.label,
+                    scopedTabID: scopedTabID,
+                    rawTabID: tab.tabID,
+                    tabLabel: tab.label.isEmpty ? tab.tabID : tab.label,
+                    workspaceNumber: workspace.number,
+                    tabNumber: tab.number,
+                    hasOpenPane: hasOpenPane
+                )
+            }
+        }
+
+        return destinations.sorted { lhs, rhs in
+            let lhsMachineOrder = machineOrder[lhs.machineID] ?? Int.max
+            let rhsMachineOrder = machineOrder[rhs.machineID] ?? Int.max
+            if lhsMachineOrder != rhsMachineOrder { return lhsMachineOrder < rhsMachineOrder }
+            if lhs.machineName != rhs.machineName {
+                let comparison = lhs.machineName.localizedStandardCompare(rhs.machineName)
+                if comparison != .orderedSame { return comparison == .orderedAscending }
+            }
+            let workspaceComparison = lhs.workspaceLabel.localizedStandardCompare(rhs.workspaceLabel)
+            if workspaceComparison != .orderedSame {
+                return workspaceComparison == .orderedAscending
+            }
+            if lhs.workspaceNumber != rhs.workspaceNumber {
+                return lhs.workspaceNumber < rhs.workspaceNumber
+            }
+            if lhs.tabNumber != rhs.tabNumber { return lhs.tabNumber < rhs.tabNumber }
+            let tabComparison = lhs.tabLabel.localizedStandardCompare(rhs.tabLabel)
+            if tabComparison != .orderedSame { return tabComparison == .orderedAscending }
+            return lhs.id < rhs.id
+        }
+    }
+
     static func validLabel(_ text: String) -> String? {
         let label = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !label.isEmpty, label.count <= 80,

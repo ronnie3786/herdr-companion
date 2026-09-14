@@ -9,8 +9,9 @@ import AppKit
 ///
 /// Everything else stays silent on purpose. Key presses, toggles, staging and
 /// recording lifecycle are direct manipulation: the user already knows they did
-/// it. `play(_:)` is the only place in the app that makes noise — route any
-/// future mute setting through `isEnabled` rather than adding a second caller.
+/// it. `play(_:)` owns explicit notification sounds. SwiftUI sensory feedback
+/// can also produce audio; prompt submission suppresses that channel in
+/// `HerdrHaptic.feedback` as well. A future mute setting must cover both sinks.
 @MainActor
 enum HerdrMacFeedback {
     /// Master mute. Reserved for a future Settings toggle.

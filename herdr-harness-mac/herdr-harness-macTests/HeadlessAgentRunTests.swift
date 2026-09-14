@@ -164,6 +164,20 @@ struct HeadlessAgentRunTests {
         #expect(object["mode"] == nil)
     }
 
+    @Test("Encodes a selected working folder without expanding it")
+    func encodesWorkingFolder() throws {
+        let data = try JSONEncoder().encode(
+            HeadlessAgentStartRequest(prompt: "hello", cwd: "/synthetic/remote/project")
+        )
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        #expect(object["cwd"] as? String == "/synthetic/remote/project")
+
+        let homeData = try JSONEncoder().encode(HeadlessAgentStartRequest(prompt: "hello", cwd: nil))
+        let homeObject = try #require(JSONSerialization.jsonObject(with: homeData) as? [String: Any])
+        #expect(homeObject["cwd"] == nil)
+    }
+
     @Test("Encodes optional model routing and attachments")
     func encodesModelRoutingAndAttachments() throws {
         let data = try JSONEncoder().encode(

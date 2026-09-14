@@ -20,6 +20,10 @@ struct HerdrHudHeaderView: View {
                     .disabled(session.isLoadingHistory || !session.exchanges.isEmpty || session.isRunning)
             }
 
+            if let selectedMachine {
+                HerdrHudWorkingFolderPicker(session: session, machine: selectedMachine)
+            }
+
             if let machineID = selectedMachine?.id {
                 Circle()
                     .fill(model.connectionState(forMachine: machineID).color)

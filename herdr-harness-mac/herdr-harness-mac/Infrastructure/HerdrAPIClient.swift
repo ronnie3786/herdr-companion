@@ -753,6 +753,7 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient {
 
     func startHeadlessAgent(
         prompt: String,
+        cwd: String? = nil,
         mode: HeadlessAgentRunMode = .ask,
         model: String? = nil,
         thinkingLevel: String? = nil,
@@ -766,6 +767,7 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient {
             method: "POST",
             body: HeadlessAgentStartRequest(
                 prompt: prompt,
+                cwd: cwd,
                 mode: mode,
                 model: model,
                 thinkingLevel: thinkingLevel,

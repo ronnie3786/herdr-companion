@@ -10,7 +10,7 @@ struct HerdrHapticTests {
         #expect(HerdrHaptic.terminalKey.feedback == .press(.buttonIconOnly))
         #expect(HerdrHaptic.controlsExpanded.feedback == .selection(.on))
         #expect(HerdrHaptic.controlsCollapsed.feedback == .selection(.off))
-        #expect(HerdrHaptic.promptSent.feedback == .success)
+        #expect(HerdrHaptic.promptSent.feedback == nil)
         #expect(HerdrHaptic.gitStaged.feedback == .increase)
         #expect(HerdrHaptic.gitUnstaged.feedback == .decrease)
         #expect(HerdrHaptic.recordingStarted.feedback == .start)
@@ -47,6 +47,15 @@ struct HerdrHapticTests {
         #expect(tracker.observe(["pane": .blocked]) == nil)
         #expect(tracker.observe(["pane": .done]) == .completed)
         #expect(tracker.observe(["pane": .idle]) == nil)
+    }
+
+    @Test("Starting activity stays silent, including newly discovered agents")
+    func startsSilently() {
+        var tracker = AgentStatusHapticTracker()
+        tracker.setSceneActive(true, isDemoMode: true, statuses: ["pane": .done])
+
+        #expect(tracker.observe(["pane": .working]) == nil)
+        #expect(tracker.observe(["pane": .working, "new": .working]) == nil)
     }
 
     @Test("Foreground catch-up can replace the baseline without feedback")

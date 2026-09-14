@@ -41,6 +41,9 @@ struct HeadlessAgentRun: Codable, Equatable, Identifiable, Sendable {
     let model: String?
     let thinkingLevel: String?
     let prompt: String
+    /// Newer companions may echo the resolved target folder. Older servers omit
+    /// it, so callers keep their locally selected semantic folder as fallback.
+    let cwd: String?
     let response: String?
     let error: String?
     let createdAt: String
@@ -63,6 +66,7 @@ struct HeadlessAgentRun: Codable, Equatable, Identifiable, Sendable {
         case model
         case thinkingLevel
         case prompt
+        case cwd
         case response
         case error
         case createdAt
@@ -108,6 +112,7 @@ struct HeadlessAgentAttachment: Encodable, Equatable, Sendable {
 
 struct HeadlessAgentStartRequest: Encodable, Sendable {
     let prompt: String
+    let cwd: String?
     let mode: HeadlessAgentRunMode
     let model: String?
     let thinkingLevel: String?
@@ -118,6 +123,7 @@ struct HeadlessAgentStartRequest: Encodable, Sendable {
 
     init(
         prompt: String,
+        cwd: String? = nil,
         mode: HeadlessAgentRunMode = .ask,
         model: String? = nil,
         thinkingLevel: String? = nil,
@@ -127,6 +133,7 @@ struct HeadlessAgentStartRequest: Encodable, Sendable {
         profile: String? = nil
     ) {
         self.prompt = prompt
+        self.cwd = cwd
         self.mode = mode
         self.model = model
         self.thinkingLevel = thinkingLevel
@@ -137,12 +144,13 @@ struct HeadlessAgentStartRequest: Encodable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case prompt, mode, model, thinkingLevel, attachments, continueFromRunId, systemPrompt, profile
+        case prompt, cwd, mode, model, thinkingLevel, attachments, continueFromRunId, systemPrompt, profile
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(prompt, forKey: .prompt)
+        try container.encodeIfPresent(cwd, forKey: .cwd)
         if mode != .ask {
             try container.encode(mode, forKey: .mode)
         }

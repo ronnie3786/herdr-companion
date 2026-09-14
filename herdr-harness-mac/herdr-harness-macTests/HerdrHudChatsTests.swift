@@ -63,6 +63,77 @@ struct HerdrHudChatsTests {
         #expect(HudChatsURLProtocol.state.withLock { $0.starts.allSatisfy { $0.profile == "hud-chat-v1" } })
     }
 
+    @Test("Fresh chats send their selected folder and reset the next composer to home")
+    func freshChatFolderRouting() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let chats = fixture.chats
+        let first = chats.composer
+        let customPath = "/synthetic/remote/project"
+        #expect(first.selectWorkingFolder(path: customPath) == false)
+        _ = try first.addCustomWorkingFolder(path: customPath, machineID: "synthetic")
+        #expect(first.selectedWorkingFolder.path == customPath)
+        first.draft = "Work from the selected folder"
+
+        let task = Task { await first.submit(model: fixture.model) { chats.submissionStarted(first) } }
+        try await wait { first.thread != nil }
+        let runID = try #require(first.thread?.lastRunID)
+        let start = try #require(HudChatsURLProtocol.state.withLock { $0.starts.first })
+        #expect(start.cwd == customPath)
+
+        HudChatsURLProtocol.finish(runID)
+        await task.value
+        #expect(chats.composer.selectedWorkingFolder.isHome)
+        #expect(chats.composer.workingDirectory == nil)
+    }
+
+    @Test("History turns retain their original working folder")
+    func historyRetainsWorkingFolder() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let customPath = "/synthetic/remote/original"
+        let session = fixture.chats.composer
+        _ = try session.addCustomWorkingFolder(path: customPath, machineID: "synthetic")
+        session.draft = "Keep this folder"
+        let task = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        let rootID = try #require(session.thread?.rootRunID)
+        let chatID = try #require(fixture.chats.visibleChats.first?.id)
+        HudChatsURLProtocol.finish(rootID)
+        await task.value
+        let cache = fixture.directory.appendingPathComponent("hud-chats/\(chatID).json")
+        try await wait { HerdrHudPersistenceSnapshot.load(from: cache)?.exchanges.last?.workingFolderPath == customPath }
+
+        let restored = HerdrHudChats(legacySession: fixture.prototype, defaults: fixture.defaults)
+        let cached = try #require(restored.chats.first { $0.id == chatID }?.session)
+        await cached.waitForPersistenceRestore()
+        #expect(cached.selectedWorkingFolder.path == customPath)
+        #expect(cached.workingDirectory == customPath)
+    }
+
+    @Test("Reopening a dismissed history chat keeps its original folder")
+    func dismissedHistoryRetainsWorkingFolder() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let customPath = "/synthetic/remote/reopened"
+        let session = fixture.chats.composer
+        _ = try session.addCustomWorkingFolder(path: customPath, machineID: "synthetic")
+        session.draft = "Remember this folder"
+        let task = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        let rootID = try #require(session.thread?.rootRunID)
+        let chatID = try #require(fixture.chats.visibleChats.first?.id)
+        HudChatsURLProtocol.finish(rootID)
+        await task.value
+
+        let summary = HudChatSummary(id: rootID, title: "Remember this folder", updatedAt: "2026-09-01T12:00:00Z",
+                                     latestRunId: rootID, turnCount: 1, status: .completed, sessionId: nil, promotedPaneId: nil)
+        try await fixture.chats.dismiss(chatID, model: fixture.model)
+        let reopenedID = try await fixture.chats.openHistory(summary, machineID: "synthetic", model: fixture.model)
+        let reopened = try #require(fixture.chats.chats.first { $0.id == reopenedID })
+        #expect(reopened.session.selectedWorkingFolder.path == customPath)
+    }
+
     @Test("History reuses active roots and relaunch reattaches without another submission")
     func restorationAndHistoryDeduplication() async throws {
         let fixture = try Fixture()
@@ -369,6 +440,7 @@ private final class HudChatsURLProtocol: URLProtocol {
         let id: String
         let root: String
         let prompt: String
+        let cwd: String?
         let profile: String
     }
     struct State: Sendable {
@@ -407,7 +479,8 @@ private final class HudChatsURLProtocol: URLProtocol {
                 let id = String(format: "agr_%012d", state.starts.count + 1)
                 let prior = input["continueFromRunId"] as? String
                 let root = state.starts.first { $0.id == prior }?.root ?? id
-                let start = Start(id: id, root: root, prompt: input["prompt"] as? String ?? "", profile: input["profile"] as? String ?? "")
+                let start = Start(id: id, root: root, prompt: input["prompt"] as? String ?? "",
+                                  cwd: input["cwd"] as? String, profile: input["profile"] as? String ?? "")
                 state.starts.append(start)
                 state.statuses[id] = "running"
                 response["run"] = Self.run(start, state: state)

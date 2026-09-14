@@ -2368,6 +2368,7 @@ final class HerdrAppModel {
     func startHeadlessAgent(
         prompt: String,
         machineID: String,
+        cwd: String? = nil,
         mode: HeadlessAgentRunMode = .ask,
         model: String? = nil,
         thinkingLevel: String? = nil,
@@ -2379,6 +2380,7 @@ final class HerdrAppModel {
         if isDemoMode {
             let now = HerdrTimestamp.string(from: .now)
             let id = "demo-agent-\(UUID().uuidString)"
+            let demoFolder = cwd ?? HerdrHudWorkingFolder.homePath
             return HeadlessAgentRun(
                 id: id,
                 status: .completed,
@@ -2386,7 +2388,8 @@ final class HerdrAppModel {
                 model: model,
                 thinkingLevel: thinkingLevel,
                 prompt: prompt,
-                response: "This is a demo Agent response. On a live machine, Pi answers from your home folder with a read-only snapshot of the current Herdr fleet.",
+                cwd: cwd,
+                response: "This is a demo Agent response. On a live machine, Pi answers from \(demoFolder) with a read-only snapshot of the current Herdr fleet.",
                 error: nil,
                 createdAt: now,
                 startedAt: now,
@@ -2414,6 +2417,7 @@ final class HerdrAppModel {
         }
         return try await client.startHeadlessAgent(
             prompt: prompt,
+            cwd: cwd,
             mode: mode,
             model: model,
             thinkingLevel: thinkingLevel,
@@ -2476,7 +2480,8 @@ final class HerdrAppModel {
     func promoteHeadlessAgent(
         runID: String,
         machineID: String,
-        workspaceID: String?
+        workspaceID: String?,
+        cwd: String? = nil
     ) async throws -> HeadlessAgentPromotionResult {
         if isDemoMode {
             guard let workspace = workspaces.first(where: {
@@ -2493,6 +2498,7 @@ final class HerdrAppModel {
                     model: nil,
                     thinkingLevel: nil,
                     prompt: "Demo prompt",
+                    cwd: nil,
                     response: "Demo response",
                     error: nil,
                     createdAt: now,
@@ -2521,7 +2527,7 @@ final class HerdrAppModel {
                 machineID: machines.first(where: { $0.id == machineID })?.name ?? machineID
             )
         }
-        let envelope = try await client.promoteHeadlessAgent(id: runID, workspaceID: workspaceID)
+        let envelope = try await client.promoteHeadlessAgent(id: runID, workspaceID: workspaceID, cwd: cwd)
         guard let rawPaneID = envelope.run.promotedPaneID?.nonEmpty else {
             throw APIError.invalidResponse
         }

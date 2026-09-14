@@ -122,6 +122,13 @@ struct HerdrHudChatsTests {
         #expect(cached.draft == "Do not duplicate this run")
         #expect(cached.validationError != nil)
         #expect(HudChatsURLProtocol.state.withLock { $0.starts.count } == 1)
+        fixture.model.machineStates["synthetic"] = .disconnected
+        await #expect(throws: HerdrHudChatEndError.self) {
+            try await restored.end(id, model: fixture.model)
+        }
+        #expect(restored.visibleChats.count == 1)
+        #expect(!cached.hasEnded && !cached.isEnding)
+        fixture.model.machineStates["synthetic"] = .live
         await session.stop(model: fixture.model)
         await task.value
     }
@@ -163,6 +170,87 @@ struct HerdrHudChatsTests {
         #expect(fixture.chats.composer.draft == "Another unsent idea")
     }
 
+    @Test("End Chat stops one run, removes only its bubble, and retains history")
+    func endActiveChat() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let chats = fixture.chats
+        let first = chats.composer
+        first.draft = "Plan a picnic"
+        let firstTask = Task { await first.submit(model: fixture.model) { chats.submissionStarted(first) } }
+        try await wait { first.thread != nil }
+        let firstChat = try #require(chats.visibleChats.first)
+        let root = try #require(first.thread?.rootRunID)
+        let second = chats.composer
+        second.draft = "Compare trail maps"
+        let secondTask = Task { await second.submit(model: fixture.model) { chats.submissionStarted(second) } }
+        try await wait { second.thread != nil }
+        let secondID = try #require(chats.visibleChats.first { $0.session === second }?.id)
+        chats.select(secondID)
+        #expect(try await chats.end(firstChat.id, model: fixture.model) == false)
+        await firstTask.value
+        #expect(first.hasEnded)
+        #expect(first.exchanges.last?.status == .cancelled)
+        #expect(chats.selectedID == secondID)
+        #expect(chats.visibleChats.count == 1)
+        #expect(second.isRunning)
+        #expect(HudChatsURLProtocol.state.withLock { $0.deleteCount } == 0)
+        first.draft = "A stale view must not resubmit an ended chat"
+        await first.submit(model: fixture.model)
+        #expect(HudChatsURLProtocol.state.withLock { $0.starts.count } == 2)
+
+        let summary = HudChatSummary(id: root, title: "Plan a picnic", updatedAt: "2026-09-01T12:00:00Z",
+                                     latestRunId: root, turnCount: 1, status: .cancelled, sessionId: nil, promotedPaneId: nil)
+        let reopenedID = try await chats.openHistory(summary, machineID: "synthetic", model: fixture.model)
+        let reopened = try #require(chats.chats.first { $0.id == reopenedID })
+        #expect(reopened.id != firstChat.id)
+        #expect(!reopened.session.hasEnded)
+        #expect(reopened.session.exchanges.last?.status == .cancelled)
+        await second.stop(model: fixture.model)
+        await secondTask.value
+    }
+
+    @Test("Failed End Chat retains the running bubble and can be retried")
+    func failedEndIsRetryable() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.draft = "Plan a garden"
+        let task = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        let id = try #require(fixture.chats.visibleChats.first?.id)
+        HudChatsURLProtocol.state.withLock { $0.rejectNextCancellation = true }
+        await #expect(throws: HerdrHudChatEndError.self) {
+            try await fixture.chats.end(id, model: fixture.model)
+        }
+        #expect(fixture.chats.visibleChats.count == 1)
+        #expect(session.isRunning)
+        #expect(!session.hasEnded && !session.isEnding)
+        _ = try await fixture.chats.end(id, model: fixture.model)
+        await task.value
+        #expect(fixture.chats.visibleChats.isEmpty)
+        #expect(session.hasEnded)
+    }
+
+    @Test("Ending during submission waits for its accepted identity before stopping it")
+    func endDuringSubmission() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.draft = "Plan a reading nook"
+        var endTask: Task<Bool, Error>?
+        await session.submit(model: fixture.model) {
+            fixture.chats.submissionStarted(session)
+            let id = fixture.chats.visibleChats.first!.id
+            endTask = Task { try await fixture.chats.end(id, model: fixture.model) }
+        }
+        _ = try await #require(endTask).value
+        #expect(session.hasEnded)
+        #expect(session.exchanges.last?.status == .cancelled)
+        #expect(fixture.chats.visibleChats.isEmpty)
+        #expect(HudChatsURLProtocol.state.withLock { $0.starts.count } == 1)
+    }
+
     @Test("Mini HUDs render running and ready states beside ordinary workspace agents")
     func renderIndependentChats() async throws {
         let fixture = try Fixture()
@@ -201,6 +289,13 @@ struct HerdrHudChatsTests {
                 .preferredColorScheme(.dark)
         }
         card.expectSubstantial()
+        controller.resizeChat(to: CGSize(width: 640, height: 680))
+        let larger = try await HerdrRenderHarness.render("hud-chat-resized.png",
+            size: CGSize(width: controller.chatCardSize.width + 20, height: controller.chatCardSize.height + 20)) {
+            HerdrHudCardView(model: fixture.model, controller: controller, session: second)
+                .preferredColorScheme(.dark)
+        }
+        larger.expectSubstantial()
         await first.stop(model: fixture.model)
         await firstTask.value
         controller.setEnabled(false)

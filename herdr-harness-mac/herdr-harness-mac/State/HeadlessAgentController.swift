@@ -71,6 +71,7 @@ final class HeadlessAgentController {
         stopPolling()
         do {
             self.run = try await model.cancelHeadlessAgent(runID: run.id, machineID: machineID)
+            errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
             // A failed stop request must not strand this conversation in a

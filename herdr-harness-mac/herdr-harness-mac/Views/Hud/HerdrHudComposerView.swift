@@ -236,6 +236,7 @@ struct HerdrHudComposerView: View {
 
     private var canSubmit: Bool {
         (!session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !session.pendingAttachments.isEmpty || !session.pendingQuotes.isEmpty) && !session.isRunning && !session.isLoadingHistory
+            && !session.isEnding && !session.hasEnded
             && !session.needsHistoryRefresh && session.promotingExchangeIDs.isEmpty
             && !session.exchanges.contains(where: { $0.promotedPaneID != nil })
     }

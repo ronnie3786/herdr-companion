@@ -11,6 +11,7 @@ struct HerdrHudChatStatusView: View {
     }
 
     private var label: String {
+        if session.isEnding { return "Ending…" }
         if session.isLoadingHistory { return "Loading…" }
         if session.needsHistoryRefresh { return "Reconnect to check status" }
         if session.isRunning { return session.errorMessage == nil ? "Running" : "Reconnecting…" }
@@ -25,6 +26,7 @@ struct HerdrHudChatStatusView: View {
     }
 
     private var symbol: String {
+        if session.isEnding { return "stop.circle" }
         if session.isLoadingHistory { return "arrow.trianglehead.2.clockwise" }
         if session.needsHistoryRefresh { return "wifi.exclamationmark" }
         if session.isRunning { return "circle.dotted" }

@@ -99,13 +99,14 @@ struct HerdrHudPlacement: Equatable, Sendable {
         voiceReplySize: CGSize = .zero,
         quickVoiceSize: CGSize = .zero,
         fontScale: Double = 1,
-        measuredContentHeight: CGFloat? = nil
+        measuredContentHeight: CGFloat? = nil,
+        expandedChatSize: CGSize = expandedSize
     ) -> CGSize {
         let natural = notesContentSize(.compact(count: count), isExpanded: isExpanded)
         guard natural.height > 0 else { return .zero }
         let sessionHeight = sessionStackContentHeight(chipCount: min(chipCount, maxChips), fontScale: fontScale,
                                                      measuredContentHeight: chipCount <= maxChips ? measuredContentHeight : nil)
-        let mainHeight = isExpanded ? expandedSize.height
+        let mainHeight = isExpanded ? expandedChatSize.height
             : collapsedSize.height + (sessionHeight > 0 ? chipSpacing + sessionHeight : 0)
         let reserved = mainHeight + shadowMargin * 2 + notesGap
             + (voiceReplySize.height > 0 ? notesGap + voiceReplySize.height : 0)
@@ -183,10 +184,11 @@ struct HerdrHudPlacement: Equatable, Sendable {
         voiceReplySize: CGSize = .zero,
         quickVoiceSize: CGSize = .zero,
         fontScale: Double = 1,
-        measuredContentHeight: CGFloat? = nil
+        measuredContentHeight: CGFloat? = nil,
+        expandedChatSize: CGSize = expandedSize
     ) -> CGRect {
         var contentSize = isExpanded
-            ? expandedSize
+            ? expandedChatSize
             : collapsedContentSize(
                 chipCount: chipCount,
                 overflow: overflow,

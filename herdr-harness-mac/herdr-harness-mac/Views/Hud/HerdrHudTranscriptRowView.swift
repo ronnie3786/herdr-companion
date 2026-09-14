@@ -78,7 +78,7 @@ struct HerdrHudTranscriptRowView: View {
                     .buttonStyle(.bordered)
                     .tint(HerdrTheme.accent)
                     .controlSize(.small)
-                    .disabled(session.isRunning || session.isLoadingHistory || session.needsHistoryRefresh
+                    .disabled(session.isEnding || session.hasEnded || session.isRunning || session.isLoadingHistory || session.needsHistoryRefresh
                               || !session.promotingExchangeIDs.isEmpty
                               || session.exchanges.contains(where: { $0.promotedPaneID != nil }))
                     .accessibilityIdentifier("hud-retry-\(exchange.id)")
@@ -154,7 +154,7 @@ struct HerdrHudTranscriptRowView: View {
             }
             .herdrProminentButton()
             .controlSize(.small)
-            .disabled(isPromoting || session.isRunning || session.isLoadingHistory || session.needsHistoryRefresh)
+            .disabled(isPromoting || session.isEnding || session.hasEnded || session.isRunning || session.isLoadingHistory || session.needsHistoryRefresh)
             .help("Promote the full saved conversation into a terminal workspace")
             .accessibilityIdentifier("hud-promote-\(exchange.id)")
         }

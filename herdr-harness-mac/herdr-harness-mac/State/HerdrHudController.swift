@@ -33,6 +33,8 @@ final class HerdrHudController {
         static let notesVisible = "herdr.hud.notesVisible"
         static let offset = "herdr.hud.offset.v2"
         static let visibleAgentLimit = "herdr.hud.visibleAgentLimit"
+        static let chatWidth = "herdr.hud.chatWidth"
+        static let chatHeight = "herdr.hud.chatHeight"
     }
 
     private let userDefaults: UserDefaults
@@ -58,6 +60,8 @@ final class HerdrHudController {
     private var enabledRevision = 0
 
     private(set) var noteCardSize = HerdrHudPlacement.noteCardSize
+    private(set) var chatCardSize = HerdrHudPlacement.expandedSize
+    private var preferredChatCardSize = HerdrHudPlacement.expandedSize
     private(set) var isExpanded = false
     private(set) var isDraggingPanel = false
     private(set) var focusRequest = 0
@@ -112,6 +116,11 @@ final class HerdrHudController {
         if width.isFinite, height.isFinite, width >= 320, height >= 360 {
             noteCardSize = CGSize(width: min(width, 720), height: min(height, 800))
         }
+        let chatSize = HerdrHudChatSizing.constrained(
+            CGSize(width: userDefaults.double(forKey: DefaultsKey.chatWidth),
+                   height: userDefaults.double(forKey: DefaultsKey.chatHeight)), screen: .zero)
+        self.chatCardSize = chatSize
+        self.preferredChatCardSize = chatSize
         self.chipRegroupDelay = chipRegroupDelay
         self.attachmentHoverGrace = attachmentHoverGrace
     }
@@ -202,6 +211,14 @@ final class HerdrHudController {
     func openChat(_ id: String) {
         chats?.select(id)
         showSelectedChat()
+    }
+
+    func endChat(_ id: String, model: HerdrAppModel) async throws {
+        let focusBefore = focusRequest
+        if try await chats?.end(id, model: model) == true,
+           focusRequest == focusBefore, chats?.selectedID == nil {
+            collapse()
+        }
     }
 
     func submitChat(_ submittedSession: HerdrHudSession, model: HerdrAppModel) async {
@@ -428,6 +445,35 @@ final class HerdrHudController {
         }
     }
 
+    func resizeChat(to size: CGSize) {
+        guard size.width.isFinite, size.height.isFinite else { return }
+        preferredChatCardSize = HerdrHudChatSizing.constrained(size, screen: visibleFrame(for: panel).size,
+                                                              otherHeight: chatOtherHeight)
+        chatCardSize = preferredChatCardSize
+        userDefaults.set(preferredChatCardSize.width, forKey: DefaultsKey.chatWidth)
+        userDefaults.set(preferredChatCardSize.height, forKey: DefaultsKey.chatHeight)
+        applyFrame(animated: false)
+    }
+
+    func resetChatSize() { resizeChat(to: HerdrHudPlacement.expandedSize) }
+
+    private var chatOtherHeight: CGFloat {
+        let layout = notes?.layout ?? .hidden
+        let natural = HerdrHudPlacement.notesContentSize(layout, isExpanded: true).height
+        let notesHeight: CGFloat
+        if case .compact = layout {
+            // Compact notes scroll; reserve the toggle and two usable rows,
+            // rather than shrinking the chat for every saved note.
+            notesHeight = min(natural, HerdrHudPlacement.notesToggleSize
+                              + 2 * (HerdrHudPlacement.noteCompactBarHeight + HerdrHudPlacement.noteCompactBarSpacing))
+        } else {
+            notesHeight = natural
+        }
+        return (notesHeight > 0 ? HerdrHudPlacement.notesGap + notesHeight : 0)
+            + (isVoiceReplyCardVisible ? HerdrHudPlacement.notesGap + HerdrHudPlacement.voiceReplyCardSize.height : 0)
+            + (quickVoice?.isExpanded == true ? HerdrHudPlacement.chipSpacing + HerdrHudPlacement.quickVoiceCardSize.height : 0)
+    }
+
     func resizeNote(to size: CGSize) {
         noteCardSize = constrainedNoteSize(size)
         userDefaults.set(noteCardSize.width, forKey: "herdr.hud.noteWidth")
@@ -621,6 +667,10 @@ final class HerdrHudController {
     private func frame(for isExpanded: Bool) -> CGRect {
         let visibleFrame = visibleFrame(for: panel)
         let fontScale = fontScaleStore?.scale.rawValue ?? 1
+        if isExpanded {
+            chatCardSize = HerdrHudChatSizing.constrained(preferredChatCardSize, screen: visibleFrame.size,
+                                                        otherHeight: chatOtherHeight)
+        }
         let measuredHeight = sessionStackMeasurement.flatMap {
             $0.matches(chipCount: collapsedChipCount, overflow: collapsedOverflowCount, fontScale: fontScale) ? $0.height : nil
         }
@@ -636,7 +686,8 @@ final class HerdrHudController {
                 count: count, isExpanded: isExpanded, visibleFrameHeight: visibleFrame.height,
                 chipCount: collapsedChipCount, voiceReplySize: voiceReplySize,
                 quickVoiceSize: quickVoiceSize, fontScale: fontScale,
-                measuredContentHeight: measuredHeight
+                measuredContentHeight: measuredHeight,
+                expandedChatSize: chatCardSize
             )
             compactNotesHeight = notesSize.height
         }
@@ -663,7 +714,8 @@ final class HerdrHudController {
             voiceReplySize: voiceReplySize,
             quickVoiceSize: quickVoiceSize,
             fontScale: fontScale,
-            measuredContentHeight: isExpanded ? nil : measuredHeight
+            measuredContentHeight: isExpanded ? nil : measuredHeight,
+            expandedChatSize: chatCardSize
         )
     }
 

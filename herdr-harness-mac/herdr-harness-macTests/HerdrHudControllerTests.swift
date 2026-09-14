@@ -328,6 +328,47 @@ struct HerdrHudControllerTests {
         #expect(submitted.draft == "Add a pond")
     }
 
+    @Test("Chat resizing persists across expansion and relaunch without changing note size")
+    func resizeChatPersists() async throws {
+        let harness = makeHarness()
+        defer { harness.controller.setEnabled(false) }
+        harness.controller.summon()
+        try await Task.sleep(for: .milliseconds(250))
+        let noteSize = harness.controller.noteCardSize
+        let before = try #require(harness.controller.panelFrameForTesting)
+        harness.controller.resizeChat(to: CGSize(width: 540, height: 500))
+        let size = harness.controller.chatCardSize
+        let resized = try #require(harness.controller.panelFrameForTesting)
+        #expect(size == CGSize(width: 540, height: 500))
+        #expect(abs(resized.maxX - before.maxX) < 1)
+        #expect(abs(resized.maxY - before.maxY) < 1)
+        #expect(harness.controller.noteCardSize == noteSize)
+        harness.controller.collapse()
+        harness.controller.summon()
+        #expect(harness.controller.chatCardSize == size)
+        #expect(HerdrHudController(userDefaults: harness.defaults).chatCardSize == size)
+        harness.controller.resetChatSize()
+        #expect(harness.controller.chatCardSize == HerdrHudPlacement.expandedSize)
+    }
+
+    @Test("End Chat closes only its selected card and keeps the fresh composer's draft")
+    func endSelectedChat() async throws {
+        let harness = makeHarness()
+        defer { harness.controller.setEnabled(false) }
+        let chats = try #require(harness.controller.chats)
+        let session = chats.composer
+        session.draft = "Plan a picnic"
+        await harness.controller.submitChat(session, model: harness.model)
+        let id = try #require(chats.visibleChats.first?.id)
+        chats.composer.draft = "Keep this other draft"
+        harness.controller.openChat(id)
+        try await harness.controller.endChat(id, model: harness.model)
+        #expect(!harness.controller.isExpanded)
+        #expect(chats.visibleChats.isEmpty)
+        #expect(chats.composer.draft == "Keep this other draft")
+        #expect(session.hasEnded)
+    }
+
     @Test("Validation failures keep the original composer open and do not create bubbles")
     func invalidSubmissionStaysOpen() async throws {
         let harness = makeHarness()

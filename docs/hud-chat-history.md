@@ -32,6 +32,26 @@ A conversation stays on its original machine; use the fresh composer to choose a
 different machine. After promotion, replies belong in its workspace, not a new
 headless conversation silently appended to the same card.
 
+### Resize and end a chat
+
+Drag **Resize** at the expanded card’s lower-left corner: left/right changes its
+width, down/up changes its height. The panel grows from its top-right anchor.
+Right-click Resize for **Larger chat**, **Smaller chat**, or **Reset chat size**;
+VoiceOver supports incremental size adjustment. The chosen size is shared by all
+HUD chat cards on this Mac and remembered across launches. Screen changes clamp
+the displayed size without replacing the saved preference. Notes and voice surfaces
+keep their own sizing and reserved space; compact notes scroll when necessary.
+
+Use the dedicated **End Chat** beside a conversation’s status to stop its HUD task
+and close its bubble. Confirmation explains that saved history is retained and
+unsent drafts/attachments are discarded. Ending waits for an in-flight submission
+to obtain its run identity before stopping it. It never deletes history or closes
+a promoted workspace session. If cancellation, reconnection, or saving fails, the
+bubble stays available with an error; retry End Chat after resolving the failure.
+Other chats and the fresh composer remain intact, including when you switch cards
+while a stop is pending. Reopening an ended conversation from history creates a
+new local card attached to that same saved conversation.
+
 Right-click a finished bubble → **Remove from HUD** to hide it locally. This saves
 legacy history first and never calls DELETE, cancels an agent, or removes its Pi
 session. Search history to bring it back. Bubbles, their stable titles, and unread
@@ -78,6 +98,14 @@ summarize its active model context; it does not remove the retained JSONL file.
   opening another result must not overwrite the fresh composer's draft.
 - Let a reply finish while editing another chat, reading a note, or with the HUD
   disabled. It must not open the panel or move keyboard focus.
+- Resize the expanded card horizontally and vertically; collapse/reopen it and
+  relaunch the app to check the saved size. Check smaller displays and expanded
+  notes, and reset through the Resize context menu.
+- End a running chat, including immediately after Send. Confirm that its bubble
+  closes only after stopping, other chats/drafts remain intact, and its history
+  is still searchable. Reject the confirmation to leave everything unchanged.
+- Disconnect the machine and attempt End Chat: it must retain the bubble rather
+  than claim that an unconfirmed run stopped. Reconnect and retry.
 - Stop one run. Other chats must continue. A rejected start or failed attachment
   read must show an error in its own bubble/card and retain retryable input.
 - Relaunch during a run, including while its machine is offline. Reconnect and

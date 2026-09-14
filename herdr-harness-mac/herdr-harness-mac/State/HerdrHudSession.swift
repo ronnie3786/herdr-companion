@@ -74,6 +74,8 @@ final class HerdrHudSession {
     private var historyRootRunID: String?
     private(set) var isLoadingHistory = false
     private(set) var needsHistoryRefresh = false
+    private(set) var isEnding = false
+    private(set) var hasEnded = false
     @ObservationIgnored private var savedHistoryRunKeys: Set<String> = []
     var draft = ""
     var pendingAttachments: [HerdrHudAttachment] = []
@@ -187,7 +189,7 @@ final class HerdrHudSession {
     }
 
     func refreshSavedHistory(model: HerdrAppModel) async {
-        guard !model.isDemoMode, !isRunning, !isLoadingHistory, promotingExchangeIDs.isEmpty,
+        guard !hasEnded, !model.isDemoMode, !isRunning, !isLoadingHistory, promotingExchangeIDs.isEmpty,
               let thread, model.canControl(machineID: thread.machineID) else { return }
         do {
             try await openHistory(id: thread.rootRunID, machineID: thread.machineID, model: model)
@@ -295,6 +297,7 @@ final class HerdrHudSession {
     #endif
 
     func submit(model: HerdrAppModel, onStarted: () -> Void = {}) async {
+        guard !isEnding, !hasEnded else { return }
         beginSessionActivity()
         validationError = nil
         promoteErrorMessage = nil
@@ -492,7 +495,58 @@ final class HerdrHudSession {
     }
 
     func stop(model: HerdrAppModel) async {
+        guard !isEnding, !hasEnded else { return }
         await controller.cancel(model: model)
+    }
+
+    /// Ending is not deletion or promotion. Confirm a terminal run and retain
+    /// server history before the collection removes this chat's local bubble.
+    func endChat(model: HerdrAppModel, timeout: Duration = .seconds(30)) async throws {
+        guard !hasEnded else { return }
+        guard !isEnding, !isLoadingHistory, promotingExchangeIDs.isEmpty else {
+            throw HerdrHudChatEndError.busy
+        }
+        isEnding = true
+        validationError = nil
+        defer { isEnding = false }
+        do {
+            try await finishForEndChat(model: model, timeout: timeout)
+        } catch {
+            validationError = error.localizedDescription
+            throw error
+        }
+    }
+
+    private func finishForEndChat(model: HerdrAppModel, timeout: Duration) async throws {
+        if needsHistoryRefresh { await refreshSavedHistory(model: model) }
+        guard !needsHistoryRefresh else { throw HerdrHudChatEndError.statusUnavailable }
+
+        let deadline = ContinuousClock.now + timeout
+        // A just-submitted request may still be uploading or waiting for its
+        // accepted run ID. Do not hide it while cancellation cannot address it.
+        while isPreparingSubmission && controller.run == nil {
+            guard ContinuousClock.now < deadline else { throw HerdrHudChatEndError.timedOut }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        if controller.isRunning {
+            await controller.cancel(model: model)
+            guard !controller.isRunning else {
+                throw HerdrHudChatEndError.stopFailed(controller.errorMessage ?? "The run is still active.")
+            }
+        }
+        while isPreparingSubmission {
+            guard ContinuousClock.now < deadline else { throw HerdrHudChatEndError.timedOut }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        try Task.checkCancellation()
+        try await saveHistory(model: model)
+        responseAudioPlayer.stop()
+        draft = ""
+        pendingAttachments = []
+        pendingQuotes = []
+        pruneStoredAttachments()
+        markSeen()
+        hasEnded = true
     }
 
     func loadAudioCapabilities(model: HerdrAppModel) async {
@@ -684,7 +738,7 @@ final class HerdrHudSession {
     #endif
 
     func promote(exchange: HerdrHudExchange, model: HerdrAppModel) async -> HerdrPane? {
-        guard !isRunning, !isLoadingHistory, !needsHistoryRefresh, promotingExchangeIDs.isEmpty else { return nil }
+        guard !isEnding, !hasEnded, !isRunning, !isLoadingHistory, !needsHistoryRefresh, promotingExchangeIDs.isEmpty else { return nil }
         beginSessionActivity()
         promoteErrorMessage = nil
         promotingExchangeIDs.insert(exchange.id)
@@ -713,7 +767,7 @@ final class HerdrHudSession {
         beginSessionActivity()
         // Retry stays a fresh single-turn run: re-appending it would double a turn in the
         // session file, and doing it properly needs a harness-side fork.
-        guard !isRunning, !isLoadingHistory, !needsHistoryRefresh, promotingExchangeIDs.isEmpty,
+        guard !isEnding, !hasEnded, !isRunning, !isLoadingHistory, !needsHistoryRefresh, promotingExchangeIDs.isEmpty,
               !exchanges.contains(where: { $0.promotedPaneID != nil }) else { return }
         hasUnseenAnswer = false
         isPreparingSubmission = true
@@ -828,7 +882,7 @@ final class HerdrHudSession {
     }
 
     private func openHistory(id: String, machineID: String, model: HerdrAppModel) async throws {
-        guard !isRunning, !isLoadingHistory, promotingExchangeIDs.isEmpty else { return }
+        guard !hasEnded, !isRunning, !isLoadingHistory, promotingExchangeIDs.isEmpty else { return }
         isLoadingHistory = true
         defer { isLoadingHistory = false }
         try await saveHistory(model: model)
@@ -880,7 +934,7 @@ final class HerdrHudSession {
                     self.exchanges[index].steps = Self.hudSteps(from: run.steps ?? [])
                     self.markExchangesChanged()
                     if run.status.isTerminal {
-                        self.hasUnseenAnswer = self.isCollapsed
+                        self.hasUnseenAnswer = !self.hasEnded && self.isCollapsed
                         await self.schedulePersistenceSave()
                         if self.controller.run?.id == run.id { self.controller.reset() }
                         return
@@ -892,7 +946,7 @@ final class HerdrHudSession {
     }
 
     func clear(model: HerdrAppModel) async {
-        guard !isRunning, !isLoadingHistory else { return }
+        guard !isEnding, !hasEnded, !isRunning, !isLoadingHistory else { return }
         isLoadingHistory = true
         defer { isLoadingHistory = false }
         do {

@@ -66,7 +66,7 @@ struct HerdrHudChatBubbleView: View {
                     }
                 }
             }
-            .disabled(chat.session.isRunning || chat.session.isLoadingHistory || chat.session.needsHistoryRefresh
+            .disabled(chat.session.isEnding || chat.session.isRunning || chat.session.isLoadingHistory || chat.session.needsHistoryRefresh
                       || !chat.session.promotingExchangeIDs.isEmpty)
         }
         .alert("Couldn’t remove chat", isPresented: $showsDismissalError) {

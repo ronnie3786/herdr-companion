@@ -75,7 +75,7 @@ final class HerdrHudChats {
     /// Removing a bubble is local only. Server history and its Pi session remain.
     func dismiss(_ id: String, model: HerdrAppModel) async throws {
         guard let chat = chats.first(where: { $0.id == id }), !chat.session.isRunning,
-              !chat.session.isLoadingHistory, !chat.session.needsHistoryRefresh,
+              !chat.session.isEnding, !chat.session.isLoadingHistory, !chat.session.needsHistoryRefresh,
               chat.session.promotingExchangeIDs.isEmpty else { return }
         try await chat.session.saveHistory(model: model)
         guard !chat.session.isRunning, !chat.session.isLoadingHistory else { return }
@@ -84,12 +84,26 @@ final class HerdrHudChats {
         persistIndex()
     }
 
+    /// Returns whether the ended chat was selected at removal time. A caller
+    /// must not collapse a different card the user opened while stopping it.
+    func end(_ id: String, model: HerdrAppModel) async throws -> Bool {
+        guard let chat = chats.first(where: { $0.id == id }) else { return false }
+        try await chat.session.endChat(model: model)
+        let wasSelected = selectedID == id
+        if wasSelected { select(nil) }
+        chats.removeAll { $0.id == id }
+        pendingRestorationIDs.remove(id)
+        persistIndex()
+        return wasSelected
+    }
+
     func openHistory(_ summary: HudChatSummary, machineID: String, model: HerdrAppModel) async throws -> String {
         // Let startup restoration establish durable IDs before deduplicating.
         for chat in chats { await chat.session.waitForPersistenceRestore() }
         if let existing = chats.first(where: {
             $0.session.historyIdentity == "\(machineID):\(summary.id)"
         }) {
+            guard !existing.session.isEnding else { throw HerdrHudChatEndError.busy }
             if !existing.session.isRunning, !existing.session.isLoadingHistory {
                 try await existing.session.openHistory(summary, machineID: machineID, model: model)
             }

@@ -17,7 +17,11 @@ struct HerdrHudCardView: View {
                         .herdrFont(.subheadline, weight: .semibold)
                         .foregroundStyle(HerdrTheme.text)
                         .lineLimit(2)
-                    HerdrHudChatStatusView(session: session)
+                    HStack {
+                        HerdrHudChatStatusView(session: session)
+                        Spacer(minLength: 8)
+                        HerdrHudEndChatButton(chat: chat, controller: controller, model: model)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, HerdrTheme.cardPadding)
@@ -42,9 +46,14 @@ struct HerdrHudCardView: View {
                 .padding(HerdrTheme.cardPadding)
             } else {
                 HerdrHudComposerView(model: model, controller: controller, session: session)
+                    .disabled(session.isEnding)
+            }
+            HStack {
+                HerdrHudChatResizeHandle(controller: controller)
+                Spacer()
             }
         }
-        .frame(width: HerdrHudPlacement.expandedSize.width, height: HerdrHudPlacement.expandedSize.height)
+        .frame(width: controller.chatCardSize.width, height: controller.chatCardSize.height)
         .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.cardRadius))
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)

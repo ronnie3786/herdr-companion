@@ -822,6 +822,7 @@ enum HerdrRenderHarness {
         try await renderGate.acquire()
         defer { renderGate.release() }
         try Task.checkCancellation()
+        HerdrTestAppIcon.install()
 
         let hosting = NSHostingView(
             rootView: content()

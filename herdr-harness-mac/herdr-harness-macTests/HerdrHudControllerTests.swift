@@ -444,6 +444,7 @@ struct HerdrHudControllerTests {
     }
 
     private func makeHarness(chipRegroupDelay: Duration = .seconds(5), includesVoice: Bool = false) -> Harness {
+        HerdrTestAppIcon.install()
         let defaults = makeDefaults()
         let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"], userDefaults: defaults)
         let agentSettings = AgentModelSettingsStore(defaults: defaults)

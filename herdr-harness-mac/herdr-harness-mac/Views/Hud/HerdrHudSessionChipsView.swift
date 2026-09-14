@@ -17,6 +17,10 @@ struct HerdrHudSessionChipsView: View {
     @Bindable var session: HerdrHudSession
     let chips: [HerdrHudSessionChips.Chip]
     let overflow: Int
+    var chatController: HerdrHudController? = nil
+
+    private var hudChats: [HerdrHudChats.Chat] { chatController?.chats?.visibleChats ?? [] }
+    private var totalChipCount: Int { chips.count + hudChats.count }
     var showAll: () -> Void = { }
     var summon: () -> Void = { }
     var voiceReply: HerdrHudVoiceReply?
@@ -47,11 +51,11 @@ struct HerdrHudSessionChipsView: View {
     }
 
     private var contentHeight: CGFloat {
-        if let measurement, measurement.matches(chipCount: chips.count, overflow: overflow, fontScale: fontScale.rawValue) {
+        if let measurement, measurement.matches(chipCount: totalChipCount, overflow: overflow, fontScale: fontScale.rawValue) {
             return measurement.height
         }
         return HerdrHudPlacement.sessionStackContentHeight(
-            chipCount: chips.count,
+            chipCount: totalChipCount,
             overflow: overflow,
             fontScale: fontScale.rawValue
         )
@@ -66,6 +70,12 @@ struct HerdrHudSessionChipsView: View {
 
     private var chipRows: some View {
         VStack(alignment: .trailing, spacing: HerdrHudPlacement.chipSpacing) {
+            if let chatController {
+                ForEach(hudChats) { chat in
+                    HerdrHudChatBubbleView(chat: chat, model: model, controller: chatController)
+                        .herdrHudHoverRegion("hud-chat-\(chat.id)", action: onHoverHud)
+                }
+            }
             ForEach(chips) { chip in
                 sessionRow(chip)
             }
@@ -74,9 +84,9 @@ struct HerdrHudSessionChipsView: View {
             }
         }
         .fixedSize(horizontal: false, vertical: true)
-        .onGeometryChange(for: HerdrHudSessionStackMeasurement.self) { geometry in
-            HerdrHudSessionStackMeasurement(height: ceil(geometry.size.height), chipCount: chips.count,
-                                           overflow: overflow, fontScale: fontScale.rawValue)
+        .onGeometryChange(for: HerdrHudSessionStackMeasurement.self) { [count = totalChipCount, scale = fontScale.rawValue, overflow] geometry in
+            HerdrHudSessionStackMeasurement(height: ceil(geometry.size.height), chipCount: count,
+                                           overflow: overflow, fontScale: scale)
         } action: { measured in
             measurement = measured
             measureContent(measured)

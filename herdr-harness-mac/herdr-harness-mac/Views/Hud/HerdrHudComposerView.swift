@@ -16,11 +16,6 @@ struct HerdrHudComposerView: View {
     @State private var composerWidth: CGFloat = .infinity
     @State private var editorTarget = ComposerEditorTarget()
 
-    /// A submission clears validation within a turn or two; the ceiling only
-    /// exists so a failed submit cannot leave this polling forever.
-    private static let runStartPollInterval = Duration.milliseconds(40)
-    private static let runStartPollAttempts = 25
-
     var body: some View {
         VStack(spacing: 7) {
             HStack(spacing: 12) {
@@ -240,7 +235,9 @@ struct HerdrHudComposerView: View {
     }
 
     private var canSubmit: Bool {
-        (!session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !session.pendingAttachments.isEmpty || !session.pendingQuotes.isEmpty) && !session.isRunning
+        (!session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !session.pendingAttachments.isEmpty || !session.pendingQuotes.isEmpty) && !session.isRunning && !session.isLoadingHistory
+            && !session.needsHistoryRefresh && session.promotingExchangeIDs.isEmpty
+            && !session.exchanges.contains(where: { $0.promotedPaneID != nil })
     }
 
     private var isVoiceCaptureActive: Bool {
@@ -278,26 +275,8 @@ struct HerdrHudComposerView: View {
 
     private func submit() {
         guard canSubmit else { return }
-        Task {
-            let startedBefore = session.runStartedRevision
-            let submission = Task { await session.submit(model: model) }
-            // Get out of the way for the length of the run, then come back with
-            // the answer. Waiting for the run to actually start keeps a
-            // validation failure — which never starts one — on screen.
-            let didCollapse = await collapseOnceRunning(startedBefore: startedBefore)
-            await submission.value
-            if didCollapse { controller.endRunAutoCollapse() }
-        }
-    }
-
-    private func collapseOnceRunning(startedBefore: Int) async -> Bool {
-        for _ in 0..<Self.runStartPollAttempts {
-            if session.runStartedRevision != startedBefore {
-                return controller.beginRunAutoCollapse()
-            }
-            try? await Task.sleep(for: Self.runStartPollInterval)
-        }
-        return false
+        // An explicit submission outlives this view when its mini HUD takes over.
+        Task { await controller.submitChat(session, model: model) }
     }
 
     private func toggleVoiceCapture() {

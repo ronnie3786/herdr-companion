@@ -33,7 +33,8 @@ struct HerdrHudRootView: View {
     /// Overflow is navigation, not unread attention. Project every session so
     /// hidden working sessions never create a notification count.
     private var attentionChipCount: Int {
-        QuickVoiceHudProjection.chips(
+        let hudAnswers = controller.chats?.visibleChats.count(where: { $0.session.hasUnseenAnswer }) ?? 0
+        return hudAnswers + QuickVoiceHudProjection.chips(
             panes: model.workspaces.flatMap(\.panes),
             notes: controller.quickVoice?.session.notes ?? [],
             mutedPaneIDs: model.mutedHudSessionIDs,
@@ -52,11 +53,14 @@ struct HerdrHudRootView: View {
 
     var body: some View {
         let chipState = sessionChips
-        let collapsedCounts = [chipState.chips.count, chipState.overflow]
+        let hudChatCount = controller.chats?.visibleChats.count ?? 0
+        let collapsedCounts = [chipState.chips.count + hudChatCount, chipState.overflow]
         VStack(alignment: .trailing, spacing: HerdrHudPlacement.notesGap) {
             Group {
                 if controller.isExpanded {
-                    HerdrHudCardView(model: model, controller: controller, session: session)
+                    HerdrHudCardView(model: model, controller: controller,
+                                     session: controller.chats?.displayedSession ?? session)
+                        .id(ObjectIdentifier(controller.chats?.displayedSession ?? session))
                         .herdrHudHoverRegion("hud-card", action: controller.setHoveringHud)
                         .transition(
                             reduceMotion
@@ -82,12 +86,13 @@ struct HerdrHudRootView: View {
                                 .herdrHudHoverRegion("quick-voice", action: controller.setHoveringHud)
                         }
 
-                        if !chipState.chips.isEmpty || chipState.overflow > 0 {
+                        if hudChatCount > 0 || !chipState.chips.isEmpty || chipState.overflow > 0 {
                             HerdrHudSessionChipsView(
                                 model: model,
                                 session: session,
                                 chips: chipState.chips,
                                 overflow: chipState.overflow,
+                                chatController: controller,
                                 showAll: controller.showAllChips,
                                 summon: controller.summon,
                                 voiceReply: voiceReply,
@@ -121,6 +126,9 @@ struct HerdrHudRootView: View {
                 HerdrHudNotesStripView(model: model, controller: controller, notes: notes)
                     .herdrHudHoverRegion("notes", action: controller.setHoveringHud)
             }
+        }
+        .task(id: model.machines.filter { model.canControl(machineID: $0.id) }.map(\.id).sorted()) {
+            await controller.chats?.restore(model: model)
         }
         .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: voiceReply.showsCard)
         .onChange(of: voiceReply.showsCard, initial: true) { _, isVisible in

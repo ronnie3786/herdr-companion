@@ -11,6 +11,18 @@ struct HerdrHudCardView: View {
     var body: some View {
         VStack(spacing: 0) {
             HerdrHudHeaderView(model: model, controller: controller, session: session)
+            if let chat = controller.chats?.selectedChat {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(chat.displayTitle)
+                        .herdrFont(.subheadline, weight: .semibold)
+                        .foregroundStyle(HerdrTheme.text)
+                        .lineLimit(2)
+                    HerdrHudChatStatusView(session: session)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, HerdrTheme.cardPadding)
+                .padding(.bottom, 10)
+            }
             Divider().overlay { HerdrTheme.separator }
             HerdrHudTranscriptView(
                 model: model,
@@ -19,7 +31,18 @@ struct HerdrHudCardView: View {
                 collapse: controller.collapse
             )
             Divider().overlay { HerdrTheme.separator }
-            HerdrHudComposerView(model: model, controller: controller, session: session)
+            if session.exchanges.contains(where: { $0.promotedPaneID != nil }) {
+                VStack(spacing: 8) {
+                    Text("This chat now continues in its workspace. Open the terminal session above to reply.")
+                        .herdrFont(.caption)
+                        .foregroundStyle(HerdrTheme.mist)
+                    Button("New HUD chat", systemImage: "square.and.pencil", action: controller.summon)
+                        .buttonStyle(.bordered)
+                }
+                .padding(HerdrTheme.cardPadding)
+            } else {
+                HerdrHudComposerView(model: model, controller: controller, session: session)
+            }
         }
         .frame(width: HerdrHudPlacement.expandedSize.width, height: HerdrHudPlacement.expandedSize.height)
         .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.cardRadius))
@@ -41,6 +64,7 @@ struct HerdrHudCardView: View {
             session.acceptAttachmentDrop(providers)
         }
         .task(id: session.selectedMachineID) {
+            if session.needsHistoryRefresh { await session.refreshSavedHistory(model: model) }
             updateResponseAudioAvailability()
             session.responseAudioPlayer.stop()
             await session.loadAudioCapabilities(model: model)

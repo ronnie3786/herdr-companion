@@ -9,13 +9,19 @@ struct HerdrHudPersistenceSnapshot: Codable, Equatable, Sendable {
     let version: Int
     let thread: HerdrHudSession.HerdrHudThread?
     let exchanges: [PersistedExchange]
+    let hasUnseenAnswer: Bool?
+    let historyRootRunID: String?
 
     init(
         version: Int = HerdrHudPersistenceSnapshot.currentVersion,
         thread: HerdrHudSession.HerdrHudThread?,
-        exchanges: [HerdrHudExchange]
+        exchanges: [HerdrHudExchange],
+        hasUnseenAnswer: Bool = false,
+        historyRootRunID: String? = nil
     ) {
         self.version = version
+        self.hasUnseenAnswer = hasUnseenAnswer
+        self.historyRootRunID = historyRootRunID
         self.thread = thread
         self.exchanges = exchanges.suffix(Self.maximumExchangeCount).map(PersistedExchange.init)
     }

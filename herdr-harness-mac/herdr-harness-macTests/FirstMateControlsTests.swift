@@ -24,7 +24,8 @@ struct FirstMateControlsTests {
         let defaults = try #require(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
         let credentials = TestCredentialStore()
-        let model = HerdrAppModel(credentials: credentials, arguments: ["test"], userDefaults: defaults)
+        // Keep this fixture independent of a contributor's compiled machine roster.
+        let model = HerdrAppModel(credentials: credentials, arguments: ["test"], userDefaults: defaults, configuredMachines: [])
         #expect(model.addMachine(name: "Synthetic host", urlString: "https://companion.example.test", token: "synthetic-token"))
         let machine = try #require(model.machines.first)
         model.useDemo()

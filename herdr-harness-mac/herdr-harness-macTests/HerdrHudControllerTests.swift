@@ -300,66 +300,45 @@ struct HerdrHudControllerTests {
         #expect(!harness.notes.isHovering)
     }
 
-    @Test("A run auto-collapses the card and reopens it when the answer lands")
-    func runAutoCollapseRoundTrip() {
+    @Test("A submission becomes an independent mini HUD and never auto-opens its answer")
+    func submissionCreatesMiniHUD() async throws {
         let harness = makeHarness()
+        defer { harness.controller.setEnabled(false) }
         harness.controller.summon()
+        let chats = try #require(harness.controller.chats)
+        let submitted = chats.displayedSession
+        submitted.draft = "Plan a garden"
+        await harness.controller.submitChat(submitted, model: harness.model)
+
+        #expect(!harness.controller.isExpanded)
+        let chat = try #require(chats.visibleChats.first)
+        #expect(chat.session === submitted)
+        #expect(chat.displayTitle == "Plan a garden")
+        #expect(submitted.hasUnseenAnswer)
+        #expect(chats.composer !== submitted)
+        #expect(chats.composer.exchanges.isEmpty)
+
+        harness.controller.openChat(chat.id)
         #expect(harness.controller.isExpanded)
-
-        #expect(harness.controller.beginRunAutoCollapse())
-        #expect(!harness.controller.isExpanded)
-        #expect(harness.controller.isAwaitingRunAutoOpen)
-
-        harness.controller.endRunAutoCollapse()
-        #expect(harness.controller.isExpanded)
-        #expect(!harness.controller.isAwaitingRunAutoOpen)
-    }
-
-    @Test("Submitting from an already-collapsed HUD does not arm an auto-open")
-    func autoCollapseIgnoresAnAlreadyCollapsedHud() {
-        let harness = makeHarness()
-        #expect(!harness.controller.isExpanded)
-
-        #expect(!harness.controller.beginRunAutoCollapse())
-        #expect(!harness.controller.isAwaitingRunAutoOpen)
-
-        harness.controller.endRunAutoCollapse()
-        #expect(!harness.controller.isExpanded)
-    }
-
-    @Test("Reopening or dismissing the HUD mid-run cancels the pending auto-open")
-    func userGesturesCancelTheAutoOpen() {
-        for gesture in ["summon", "collapse", "note"] {
-            let harness = makeHarness()
-            harness.controller.summon()
-            harness.controller.beginRunAutoCollapse()
-            #expect(harness.controller.isAwaitingRunAutoOpen)
-
-            switch gesture {
-            case "summon": harness.controller.summon()
-            case "collapse": harness.controller.collapse()
-            default: harness.controller.openNote(harness.notes.createNote())
-            }
-            #expect(!harness.controller.isAwaitingRunAutoOpen)
-
-            // The run finishing must not now yank the HUD around.
-            let before = harness.controller.isExpanded
-            harness.controller.endRunAutoCollapse()
-            #expect(harness.controller.isExpanded == before)
-        }
-    }
-
-    @Test("A note opened while the run was in flight keeps the card shut")
-    func autoOpenYieldsToAnOpenNote() {
-        let harness = makeHarness()
+        #expect(chats.displayedSession === submitted)
+        #expect(!submitted.hasUnseenAnswer)
+        submitted.draft = "Add a pond"
         harness.controller.summon()
-        harness.controller.beginRunAutoCollapse()
-        let id = harness.notes.createNote()
-        harness.notes.openNote(id)
+        #expect(chats.displayedSession === chats.composer)
+        #expect(submitted.draft == "Add a pond")
+    }
 
-        harness.controller.endRunAutoCollapse()
-
-        #expect(!harness.controller.isExpanded)
+    @Test("Validation failures keep the original composer open and do not create bubbles")
+    func invalidSubmissionStaysOpen() async throws {
+        let harness = makeHarness()
+        defer { harness.controller.setEnabled(false) }
+        harness.controller.summon()
+        let chats = try #require(harness.controller.chats)
+        let composer = chats.composer
+        await harness.controller.submitChat(composer, model: harness.model)
+        #expect(harness.controller.isExpanded)
+        #expect(chats.composer === composer)
+        #expect(chats.visibleChats.isEmpty)
     }
 
     @Test("Hiding notes preserves their contents and the HUD, and persists independently")

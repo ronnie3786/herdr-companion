@@ -5,6 +5,45 @@ stay outside Herdr terminal workspaces until **Continue in agent** promotes thei
 actual Pi session, including all turns. Closing the HUD, starting a new chat, or
 restarting the app/server does not expire or delete these conversations.
 
+## Independent one-off chats on Mac
+
+Sending from the fresh HUD composer immediately creates a **HUD chat** mini bubble
+beneath the orb. It owns a separate run controller, transcript, attachments, draft,
+and audio player. Reopen the orb to send another idea without waiting. Server
+concurrency limits still apply; rejected starts remain visible with their error and
+retryable draft instead of disappearing.
+
+HUD chat bubbles use a rounded rectangular card, speech-bubble icon, task title
+(from the first prompt), machine, and explicit running/ready/error status. Workspace
+agent bubbles keep their existing appearance and behavior. An unread completed
+reply gets a static green outline/glow and **Ready** label; opening it clears the
+unread signal. Completion never expands a card or steals focus. Titles respect
+**Show session titles** while collapsed. HUD chats remain individually available
+in the measured, scrollable stack; the existing **Visible agents** limit and +N
+continue to apply to workspace/voice agents.
+
+Click a mini bubble to expand that conversation in the floating HUD's anchored
+chat card, including its title, transcript, reply composer, Stop, and **Continue in
+agent**. One card is expanded at a time; all other conversations continue running.
+**New chat** returns to the separate fresh composer without moving or clearing the
+previous chat's draft. The clock/history search stays available during a run and
+reuses a chat that is already in the stack rather than attaching a second writer.
+A conversation stays on its original machine; use the fresh composer to choose a
+different machine. After promotion, replies belong in its workspace, not a new
+headless conversation silently appended to the same card.
+
+Right-click a finished bubble → **Remove from HUD** to hide it locally. This saves
+legacy history first and never calls DELETE, cancels an agent, or removes its Pi
+session. Search history to bring it back. Bubbles, their stable titles, and unread
+state are cached privately on this Mac. Accepted run identities are saved before
+completion, so relaunch observes the original server run without resending. If an
+unfinished cached chat cannot reconnect, it says **Reconnect to check status** and
+blocks a stale follow-up until the server confirms its state. Unsent drafts and
+quote chips are retained per chat in memory, not synced or restored after quit.
+
+The UI is Mac-only and uses the existing `hud-chat-v1` contract; it does not require
+a new server, iOS, web, or Pi extension release when that profile is already installed.
+
 ## Find and resume a chat
 
 1. Choose a machine in the Mac HUD and click **Chat history** (the clock button).
@@ -21,13 +60,38 @@ writer; stale continuation IDs fail explicitly rather than silently starting a
 fresh conversation. A missing working directory/session produces an error without
 removing saved history. Failed/cancelled turns remain in history.
 
-**New chat** detaches the current conversation without calling DELETE. Its draft
-remains available for the next chat; unsent quote chips from the old conversation
-are cleared. The local recent-transcript cache is bounded (20 displayed exchanges during
+**New chat** switches to the fresh composer without calling DELETE. Each previous
+chat keeps its own draft and unsent quote chips in memory. The local recent-transcript
+cache is bounded per chat (20 displayed exchanges during
 normal use, 10 cached on relaunch, 64 KiB per cached reply). The server's original Pi
 JSONL, attachments, and per-turn records are authoritative and are not subject to
 those local limits. Reopen history to retrieve older replies. Pi compaction may
 summarize its active model context; it does not remove the retained JSONL file.
+
+## Verify the Mac interaction
+
+- Send two different tasks from the orb before either completes. Both bubbles
+  should stay visible; complete the second first and verify the first stays running.
+- Open either bubble, then **New chat**. Draft text, quotes, and file chips must
+  remain with their own chat. A reply must continue only that chat's Pi session.
+- Search history during a run. Opening that same chat must reuse its bubble;
+  opening another result must not overwrite the fresh composer's draft.
+- Let a reply finish while editing another chat, reading a note, or with the HUD
+  disabled. It must not open the panel or move keyboard focus.
+- Stop one run. Other chats must continue. A rejected start or failed attachment
+  read must show an error in its own bubble/card and retain retryable input.
+- Relaunch during a run, including while its machine is offline. Reconnect and
+  verify that the original run resumes observation without another submitted prompt.
+- Promote a completed chat with **Continue in agent**. Verify the full thread in
+  the workspace and no implicit workspace creation for the other HUD chats.
+- Remove a finished bubble, find it again in history, and reopen it. Check long
+  titles, hidden titles, larger text, reduced motion, and scrolling a tall stack.
+
+Automated Mac coverage includes synthetic concurrent HTTP runs, out-of-order
+completion, per-chat cancellation, continuation routing, history deduplication,
+restart reattachment, offline stale-write prevention, and no-auto-open controller
+behavior. Existing HUD attachment, persistence, placement, notes, and render tests
+remain regression coverage.
 
 ## Agent discovery
 

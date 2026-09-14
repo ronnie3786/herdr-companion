@@ -81,7 +81,8 @@ struct HerdrHudOrbView: View {
             .accessibilityAction { controller.summon() }
             .onHover { isHovered = $0 }
             .onDrop(of: [.fileURL, .image], isTargeted: $isDropTargeted) { providers in
-                let accepted = session.acceptAttachmentDrop(providers)
+                let target = controller.chats?.composer ?? session
+                let accepted = target.acceptAttachmentDrop(providers)
                 if accepted { controller.summon() }
                 return accepted
             }

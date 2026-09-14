@@ -56,6 +56,7 @@ final class HerdrHudSession {
     private let controller = HeadlessAgentController()
     private let userDefaults: UserDefaults
     private let attachmentDirectory: URL
+    private let storeURL: URL
     @ObservationIgnored private let agentSettings: AgentModelSettingsStore
     @ObservationIgnored private let promptSettings: HerdrPromptSettingsStore
     @ObservationIgnored let modelFavorites: ModelFavoritesStore
@@ -70,7 +71,9 @@ final class HerdrHudSession {
     private(set) var exchangesRevision = 0
     private(set) var latestPromotableExchangeID: String?
     private(set) var thread: HerdrHudThread?
+    private var historyRootRunID: String?
     private(set) var isLoadingHistory = false
+    private(set) var needsHistoryRefresh = false
     @ObservationIgnored private var savedHistoryRunKeys: Set<String> = []
     var draft = ""
     var pendingAttachments: [HerdrHudAttachment] = []
@@ -97,8 +100,6 @@ final class HerdrHudSession {
         }
     }
     private(set) var hasUnseenAnswer = false
-    /// Bumped once per submission that clears validation and actually starts.
-    private(set) var runStartedRevision = 0
     private(set) var elapsedSeconds = 0
     private(set) var liveStepCount = 0
     private(set) var validationError: String?
@@ -144,6 +145,7 @@ final class HerdrHudSession {
     ) {
         self.userDefaults = userDefaults
         let storeURL = persistenceURL ?? HerdrHudPersistenceStore.defaultFileURL()
+        self.storeURL = storeURL
         self.attachmentDirectory = storeURL.deletingPathExtension().appendingPathExtension("attachments")
         self.agentSettings = agentSettings ?? AgentModelSettingsStore(defaults: userDefaults)
         self.promptSettings = promptSettings ?? HerdrPromptSettingsStore(defaults: userDefaults)
@@ -168,8 +170,36 @@ final class HerdrHudSession {
         historyObservationTask?.cancel()
     }
 
+    func makeIndependentSession(id: String) -> HerdrHudSession {
+        HerdrHudSession(userDefaults: userDefaults, agentSettings: agentSettings,
+                        persistenceURL: storeURL.deletingLastPathComponent()
+                            .appendingPathComponent("hud-chats", isDirectory: true)
+                            .appendingPathComponent("\(id).json"),
+                        promptSettings: promptSettings, modelFavorites: modelFavorites)
+    }
+
+    func waitForPersistenceRestore() async { await restoreTask?.value }
+
+    var historyIdentity: String? {
+        if let thread { return "\(thread.machineID):\(thread.rootRunID)" }
+        guard let exchange = exchanges.first, !exchange.id.hasPrefix("hud-") else { return nil }
+        return "\(exchange.machineID):\(historyRootRunID ?? exchange.id)"
+    }
+
+    func refreshSavedHistory(model: HerdrAppModel) async {
+        guard !model.isDemoMode, !isRunning, !isLoadingHistory, promotingExchangeIDs.isEmpty,
+              let thread, model.canControl(machineID: thread.machineID) else { return }
+        do {
+            try await openHistory(id: thread.rootRunID, machineID: thread.machineID, model: model)
+        } catch {
+            validationError = "Couldn’t refresh this saved chat: \(error.localizedDescription)"
+        }
+    }
+
     func markSeen() {
+        guard hasUnseenAnswer else { return }
         hasUnseenAnswer = false
+        Task { await schedulePersistenceSave() }
     }
 
     func addAttachments(_ urls: [URL]) {
@@ -264,15 +294,20 @@ final class HerdrHudSession {
     }
     #endif
 
-    func submit(model: HerdrAppModel) async {
+    func submit(model: HerdrAppModel, onStarted: () -> Void = {}) async {
         beginSessionActivity()
         validationError = nil
         promoteErrorMessage = nil
         audioErrorMessage = nil
 
+        guard !needsHistoryRefresh else {
+            validationError = "Reconnect to this chat’s machine to check its previous run before replying."
+            return
+        }
         let enteredPrompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !enteredPrompt.isEmpty || !pendingAttachments.isEmpty || !pendingQuotes.isEmpty,
-              !isRunning, !isLoadingHistory else { return }
+              !isRunning, !isLoadingHistory, promotingExchangeIDs.isEmpty,
+              !exchanges.contains(where: { $0.promotedPaneID != nil }) else { return }
         isPreparingSubmission = true
         defer { isPreparingSubmission = false }
         let quotesToSend = pendingQuotes
@@ -335,10 +370,10 @@ final class HerdrHudSession {
         draft = ""
         pendingAttachments = []
         pendingQuotes = []
-        // Past every validation guard, so a run is genuinely in flight. The
-        // composer waits for this before auto-collapsing the HUD — collapsing
-        // on a validation failure would hide the error it needs to show.
-        runStartedRevision &+= 1
+        // Transfer this conversation to its mini HUD only after local validation.
+        // Upload/server failures stay in that same chat with retryable input.
+        hasUnseenAnswer = false
+        onStarted()
 
         let wireAttachments: [HeadlessAgentAttachment]
         do {
@@ -359,6 +394,7 @@ final class HerdrHudSession {
                 return
             }
             exchanges[index].status = .failed
+            hasUnseenAnswer = isCollapsed
             exchanges[index].error = "Couldn't read \(attachmentsToSend.first?.filename ?? "attachment"): \(error.localizedDescription)"
             markExchangesChanged()
             restoreDraftAfterFailedStart(enteredPrompt, quotes: quotesToSend, attachments: attachmentsToSend)
@@ -381,6 +417,7 @@ final class HerdrHudSession {
             return
         }
         guard let run else {
+            hasUnseenAnswer = isCollapsed
             exchanges[index] = HerdrHudExchange(
                 id: pendingID,
                 machineID: machineID,
@@ -436,7 +473,7 @@ final class HerdrHudSession {
             if let thread,
                thread.machineID == machineID,
                thread.rootRunID == rootRunID {
-                turnCount = thread.turnCount + 1
+                turnCount = thread.turnCount + (thread.lastRunID == run.id ? 0 : 1)
             } else {
                 turnCount = 1
             }
@@ -647,7 +684,7 @@ final class HerdrHudSession {
     #endif
 
     func promote(exchange: HerdrHudExchange, model: HerdrAppModel) async -> HerdrPane? {
-        guard !isRunning, !isLoadingHistory, promotingExchangeIDs.isEmpty else { return nil }
+        guard !isRunning, !isLoadingHistory, !needsHistoryRefresh, promotingExchangeIDs.isEmpty else { return nil }
         beginSessionActivity()
         promoteErrorMessage = nil
         promotingExchangeIDs.insert(exchange.id)
@@ -676,7 +713,9 @@ final class HerdrHudSession {
         beginSessionActivity()
         // Retry stays a fresh single-turn run: re-appending it would double a turn in the
         // session file, and doing it properly needs a harness-side fork.
-        guard !isRunning, !isLoadingHistory else { return }
+        guard !isRunning, !isLoadingHistory, !needsHistoryRefresh, promotingExchangeIDs.isEmpty,
+              !exchanges.contains(where: { $0.promotedPaneID != nil }) else { return }
+        hasUnseenAnswer = false
         isPreparingSubmission = true
         defer { isPreparingSubmission = false }
         validationError = nil
@@ -785,19 +824,27 @@ final class HerdrHudSession {
     }
 
     func openHistory(_ chat: HudChatSummary, machineID: String, model: HerdrAppModel) async throws {
-        guard !isRunning, !isLoadingHistory else { return }
+        try await openHistory(id: chat.id, machineID: machineID, model: model)
+    }
+
+    private func openHistory(id: String, machineID: String, model: HerdrAppModel) async throws {
+        guard !isRunning, !isLoadingHistory, promotingExchangeIDs.isEmpty else { return }
         isLoadingHistory = true
         defer { isLoadingHistory = false }
         try await saveHistory(model: model)
         let client = try model.hudChatClient(machineID: machineID)
-        var page = try await client.hudChat(id: chat.id)
+        var page = try await client.hudChat(id: id)
         var turns = page.turns
         while let offset = page.nextOffset {
             try Task.checkCancellation()
-            page = try await client.hudChat(id: chat.id, offset: offset)
+            page = try await client.hudChat(id: id, offset: offset)
             turns += page.turns
         }
         try Task.checkCancellation()
+        let isSameConversation = historyIdentity == "\(machineID):\(id)"
+        let wasAwaitingAnswer = needsHistoryRefresh || exchanges.last?.id.hasPrefix("hud-") == true
+            || exchanges.last?.status.isTerminal == false
+        needsHistoryRefresh = false
         beginSessionActivity()
         exchanges = turns.map { run in
             HerdrHudExchange(id: run.id, machineID: machineID, prompt: run.prompt, sentPrompt: run.prompt,
@@ -808,10 +855,14 @@ final class HerdrHudSession {
                              steps: Self.hudSteps(from: run.steps ?? []), stepsTruncated: run.stepsTruncated == true)
         }
         savedHistoryRunKeys.formUnion(turns.map { "\(machineID):\($0.id)" })
+        historyRootRunID = page.rootRunId
+        if let latest = turns.last, latest.status.isTerminal, isCollapsed, wasAwaitingAnswer {
+            hasUnseenAnswer = true
+        }
         thread = page.promotedPaneId == nil ? HerdrHudThread(machineID: machineID, rootRunID: page.rootRunId,
                                                            lastRunID: page.latestRunId, turnCount: turns.count) : nil
         selectedMachineID = machineID
-        pendingQuotes = []
+        if !isSameConversation { pendingQuotes = [] }
         validationError = nil
         markExchangesChanged()
         await schedulePersistenceSave()
@@ -829,6 +880,7 @@ final class HerdrHudSession {
                     self.exchanges[index].steps = Self.hudSteps(from: run.steps ?? [])
                     self.markExchangesChanged()
                     if run.status.isTerminal {
+                        self.hasUnseenAnswer = self.isCollapsed
                         await self.schedulePersistenceSave()
                         if self.controller.run?.id == run.id { self.controller.reset() }
                         return
@@ -854,6 +906,8 @@ final class HerdrHudSession {
         pendingQuotes = []
         markExchangesChanged()
         thread = nil
+        historyRootRunID = nil
+        needsHistoryRefresh = false
         await persistence.remove()
         pruneStoredAttachments()
     }
@@ -931,7 +985,12 @@ final class HerdrHudSession {
         guard !hasStartedSessionActivity, exchanges.isEmpty, thread == nil else { return }
         let restored = snapshot.restoredValues()
         exchanges = restored.exchanges
+        hasUnseenAnswer = isCollapsed && snapshot.hasUnseenAnswer == true
+        needsHistoryRefresh = snapshot.exchanges.last?.status.isTerminal == false
+            || (restored.thread != nil && restored.thread?.lastRunID != snapshot.exchanges.last?.id)
         thread = restored.thread
+        historyRootRunID = snapshot.historyRootRunID ?? thread?.rootRunID
+        selectedMachineID = thread?.machineID ?? exchanges.first?.machineID ?? selectedMachineID
         pruneStoredAttachments()
         markExchangesChanged()
     }
@@ -943,7 +1002,11 @@ final class HerdrHudSession {
     }
 
     private func schedulePersistenceSave() async {
-        let snapshot = HerdrHudPersistenceSnapshot(thread: thread, exchanges: exchanges)
+        // Keep the accepted running snapshot until the server tells us its real
+        // outcome; the legacy cache decoder marks interrupted rows as failed.
+        guard !needsHistoryRefresh else { return }
+        let snapshot = HerdrHudPersistenceSnapshot(thread: thread, exchanges: exchanges,
+                                                   hasUnseenAnswer: hasUnseenAnswer, historyRootRunID: historyRootRunID)
         await persistence.scheduleSave(snapshot)
     }
 
@@ -987,6 +1050,16 @@ final class HerdrHudSession {
             profile: "hud-chat-v1",
             model: model
         )
+        // Persist the accepted durable identity before waiting for completion so
+        // a relaunched app can observe the real run rather than resubmit it.
+        if let run = controller.run {
+            let root = run.threadRootRunId ?? run.id
+            historyRootRunID = root
+            let count = thread?.rootRunID == root ? (thread?.turnCount ?? 0) + 1 : 1
+            thread = HerdrHudThread(machineID: machineID, rootRunID: root,
+                                   lastRunID: run.id, turnCount: count)
+            await schedulePersistenceSave()
+        }
         beginElapsedTimer()
         defer { endElapsedTimer() }
         while controller.isRunning {

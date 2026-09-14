@@ -5,6 +5,7 @@ struct HerdrHudHistoryView: View {
     let model: HerdrAppModel
     let session: HerdrHudSession
     let machineID: String
+    var controller: HerdrHudController? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
     @State private var chats: [HudChatSummary] = []
@@ -44,7 +45,7 @@ struct HerdrHudHistoryView: View {
                             .background(HerdrTheme.elevated, in: .rect(cornerRadius: 8))
                         }
                         .buttonStyle(.plain)
-                        .disabled(isOpening || session.isRunning)
+                        .disabled(isOpening)
                         .contextMenu {
                             if let id = chat.sessionId {
                                 Button("Copy Pi session ID", systemImage: "doc.on.doc") { model.copyToPasteboard(id) }
@@ -100,8 +101,14 @@ struct HerdrHudHistoryView: View {
         isOpening = true
         defer { isOpening = false }
         do {
-            try await session.openHistory(chat, machineID: machineID, model: model)
-            dismiss()
+            if let controller, let collection = controller.chats {
+                let id = try await collection.openHistory(chat, machineID: machineID, model: model)
+                dismiss()
+                controller.openChat(id)
+            } else {
+                try await session.openHistory(chat, machineID: machineID, model: model)
+                dismiss()
+            }
         } catch {
             self.error = error.localizedDescription
         }

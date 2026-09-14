@@ -11,13 +11,13 @@ struct HerdrHudHeaderView: View {
             Image(systemName: "sparkles")
                 .foregroundStyle(HerdrTheme.accent)
                 .accessibilityHidden(true)
-            Text("HUD")
+            Text(controller.chats?.selectedChat == nil ? "New HUD chat" : "HUD chat")
                 .herdrFont(.caption, weight: .semibold)
                 .foregroundStyle(HerdrTheme.text)
 
             if model.machines.count > 1, let selectedMachine {
                 machineMenu(selectedMachine)
-                    .disabled(session.isLoadingHistory)
+                    .disabled(session.isLoadingHistory || !session.exchanges.isEmpty || session.isRunning)
             }
 
             if let machineID = selectedMachine?.id {
@@ -34,29 +34,25 @@ struct HerdrHudHeaderView: View {
                 .buttonStyle(.plain)
                 .herdrHitTarget()
                 .help("Search saved HUD chats")
-                .disabled(session.isRunning || session.isLoadingHistory)
                 .accessibilityIdentifier("hud-chat-history")
                 .popover(isPresented: $showsHistory) {
                     if let machineID = selectedMachine?.id {
-                        HerdrHudHistoryView(model: model, session: session, machineID: machineID)
+                        HerdrHudHistoryView(model: model, session: session, machineID: machineID, controller: controller)
                             .id(machineID)
                     }
                 }
 
             if !session.exchanges.isEmpty {
-                // Reads as "start a new chat" rather than "destroy something":
-                // ending the thread is how you begin the next one, and a trash
-                // can made a routine action look consequential.
-                Button(action: clearHistory) {
+                // Switching composers leaves this conversation and its draft intact.
+                Button(action: startNewChat) {
                     Image(systemName: "square.and.pencil")
                         .herdrHitTarget()
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(HerdrTheme.mist)
-                .disabled(session.isRunning || session.isLoadingHistory)
                 .accessibilityLabel("New chat")
                 .accessibilityIdentifier("hud-clear-history")
-                .help("Save this chat in history and start a new one")
+                .help("Leave this chat in its mini HUD and start another")
             }
 
             Button(action: controller.collapse) {
@@ -117,7 +113,7 @@ struct HerdrHudHeaderView: View {
         }
     }
 
-    private func clearHistory() {
-        Task { await session.clear(model: model) }
+    private func startNewChat() {
+        controller.summon()
     }
 }

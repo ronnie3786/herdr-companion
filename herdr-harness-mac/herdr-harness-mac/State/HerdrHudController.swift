@@ -39,6 +39,8 @@ final class HerdrHudController {
     private var panel: HerdrHudPanel?
     private var hotKey: HerdrGlobalHotKey?
     private var session: HerdrHudSession?
+    private(set) var chats: HerdrHudChats?
+    private var displayedSession: HerdrHudSession? { chats?.displayedSession ?? session }
     private var notes: HerdrHudNotesState?
     private var fontScaleStore: HerdrFontScaleStore?
     private(set) var quickVoice: QuickVoicePanelController?
@@ -58,12 +60,6 @@ final class HerdrHudController {
     private(set) var noteCardSize = HerdrHudPlacement.noteCardSize
     private(set) var isExpanded = false
     private(set) var isDraggingPanel = false
-    /// Set while a HUD prompt runs with the card auto-collapsed, so the run's
-    /// completion knows it is allowed to reopen. `isExpanded == false` cannot
-    /// answer that on its own — it also means "user collapsed", "a note is
-    /// open" and "the HUD is disabled" — so intent gets its own flag, cleared
-    /// by every user action that means "leave it shut".
-    private(set) var isAwaitingRunAutoOpen = false
     private(set) var focusRequest = 0
     private(set) var noteFocusRequest = 0
     /// Zero means Show all; finite limits apply equally to voice and pane agents.
@@ -149,6 +145,7 @@ final class HerdrHudController {
         guard !isConfigured else { return }
         isConfigured = true
         self.session = session
+        self.chats = HerdrHudChats(legacySession: session, defaults: userDefaults)
         self.notes = notes
         notes.setVisible(areNotesVisible)
         self.fontScaleStore = fontScale
@@ -198,7 +195,26 @@ final class HerdrHudController {
     }
 
     func summon() {
-        isAwaitingRunAutoOpen = false
+        chats?.select(nil)
+        showSelectedChat()
+    }
+
+    func openChat(_ id: String) {
+        chats?.select(id)
+        showSelectedChat()
+    }
+
+    func submitChat(_ submittedSession: HerdrHudSession, model: HerdrAppModel) async {
+        await submittedSession.submit(model: model) { [self] in
+            let wasDisplayed = displayedSession === submittedSession
+            chats?.submissionStarted(submittedSession)
+            if wasDisplayed { collapse() }
+        }
+        // Completion is represented by the conversation bubble, never by focus
+        // theft or opening over a different conversation/draft.
+    }
+
+    private func showSelectedChat() {
         quickVoice?.collapse()
         if !isEnabled {
             setEnabled(true)
@@ -208,49 +224,24 @@ final class HerdrHudController {
         regroupChips()
         isExpanded = true
         if notes?.isHudExpanded == false { notes?.isHudExpanded = true }
-        session?.isCollapsed = false
+        displayedSession?.isCollapsed = false
         applyFrame(animated: true)
         panel.makeKeyAndOrderFront(nil)
         focusRequest &+= 1
-        session?.markSeen()
+        displayedSession?.markSeen()
     }
 
     func collapse() {
-        isAwaitingRunAutoOpen = false
         guard let panel else { return }
         isExpanded = false
         if notes?.isHudExpanded == true { notes?.isHudExpanded = false }
-        session?.isCollapsed = true
+        displayedSession?.isCollapsed = true
         applyFrame(animated: true)
         if panel.isKeyWindow {
             refocusPanelWithoutFade(panel)
         } else {
             panel.orderFrontRegardless()
         }
-    }
-
-    /// Gets the HUD out of the way for the length of a run.
-    ///
-    /// Only collapses a card that is actually open — a submit from a HUD the
-    /// user already tucked away should not arm an auto-open they never asked
-    /// for. Returns whether the caller now owes an `endRunAutoCollapse()`.
-    @discardableResult
-    func beginRunAutoCollapse() -> Bool {
-        guard isEnabled, isExpanded, panel != nil, !isDraggingPanel else { return false }
-        collapse()
-        isAwaitingRunAutoOpen = true
-        return true
-    }
-
-    /// Reopens after the run finishes, unless the user has since taken the HUD
-    /// somewhere else. `summon()` clears the flag, so this is idempotent.
-    func endRunAutoCollapse() {
-        guard isAwaitingRunAutoOpen else { return }
-        isAwaitingRunAutoOpen = false
-        guard isEnabled, panel != nil, !isExpanded, !isDraggingPanel,
-              notes?.openNoteID == nil
-        else { return }
-        summon()
     }
 
     func toggleFromHotKey() {
@@ -265,7 +256,6 @@ final class HerdrHudController {
     func setEnabled(_ enabled: Bool) {
         if !enabled { resetHudHover() }
         if !enabled { quickVoice?.collapse() }
-        if !enabled { isAwaitingRunAutoOpen = false }
         notes?.closeNote()
         regroupChips()
         userDefaults.set(enabled, forKey: DefaultsKey.enabled)
@@ -276,13 +266,13 @@ final class HerdrHudController {
             installHotKey()
             isExpanded = false
             if notes?.isHudExpanded == true { notes?.isHudExpanded = false }
-            session?.isCollapsed = true
+            displayedSession?.isCollapsed = true
             applyFrame(animated: false)
             panel.orderFrontRegardless()
         } else {
             isExpanded = false
             if notes?.isHudExpanded == true { notes?.isHudExpanded = false }
-            session?.isCollapsed = true
+            displayedSession?.isCollapsed = true
             applyFrame(animated: false)
             panel.orderOut(nil)
             hotKey?.unregister()
@@ -296,12 +286,11 @@ final class HerdrHudController {
     }
 
     func presentQuickVoice() {
-        isAwaitingRunAutoOpen = false
         if !isEnabled { setEnabled(true) }
         notes?.closeNote()
         isExpanded = false
         notes?.isHudExpanded = false
-        session?.isCollapsed = true
+        displayedSession?.isCollapsed = true
         applyFrame(animated: false)
         panel?.makeKeyAndOrderFront(nil)
     }
@@ -494,14 +483,13 @@ final class HerdrHudController {
     }
 
     func openNote(_ id: UUID) {
-        isAwaitingRunAutoOpen = false
         quickVoice?.collapse()
         guard let panel, let notes else { return }
         if !isEnabled { setEnabled(true) }
         if !areNotesVisible { setNotesVisible(true) }
         if isExpanded {
             isExpanded = false
-            session?.isCollapsed = true
+            displayedSession?.isCollapsed = true
             if notes.isHudExpanded { notes.isHudExpanded = false }
         }
         notes.openNote(id)

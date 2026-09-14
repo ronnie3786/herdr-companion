@@ -1,6 +1,10 @@
 import Foundation
 import Testing
+#if os(macOS)
 @testable import herdr_harness_mac
+#else
+@testable import herdr_harness_ios
+#endif
 
 @Suite("First Mate native contract", .serialized)
 @MainActor
@@ -191,48 +195,189 @@ struct FirstMateTests {
         #expect(!store.resourceText.contains("Original direction"))
     }
 
+    @Test("A delayed host response cannot replace the newly configured host")
+    func delayedHostResponse() async {
+        let client = FirstMateTestClient(holdList: true)
+        let store = FirstMateStore()
+        store.configure(client: client, demo: false)
+        let refresh = Task { await store.refresh() }
+        while !(await client.isWaitingForList) { await Task.yield() }
+        store.configure(client: nil, demo: true)
+        store.draft = "Direction for the newly selected host"
+        await client.releaseList()
+        await refresh.value
+        #expect(store.isDemo)
+        #expect(store.features.count == 2)
+        #expect(store.draft == "Direction for the newly selected host")
+        #expect(store.error == nil)
+        #expect(!store.isRefreshing)
+    }
+
+    @Test("A mismatched mutation response preserves direction for a safe retry")
+    func mismatchedMutationResponse() async {
+        let client = FirstMateTestClient(mismatchedMutation: true)
+        let store = FirstMateStore()
+        store.configure(client: client, demo: false)
+        await store.refresh()
+        store.draft = "Keep this direction on the original feature"
+        // The first attempt simulates an interrupted connection.
+        await store.send()
+        await store.send()
+        #expect(store.error != nil)
+        #expect(store.features.count == 1)
+        #expect(store.selectedFeatureID == "demo-session-continuity")
+        #expect(store.draft == "Keep this direction on the original feature")
+    }
+
+    @Test("A response for a different native session is rejected")
+    func rejectsMismatchedSession() async throws {
+        let client = FirstMateTestClient(mismatchedSession: true)
+        let store = FirstMateStore()
+        store.configure(client: client, demo: false)
+        let agent = FirstMateDemo.features(step: 0)[0].assignments[0]
+        await store.open(.session(agent))
+        #expect(store.resourceError != nil)
+        #expect(store.resourceText.isEmpty)
+        #expect(store.sessionLoadedMessages == 0)
+        store.configure(client: nil, demo: false)
+        #expect(store.resourceError == nil)
+        #expect(!store.resourceLoading)
+    }
+
+    @Test("A queued send cannot submit a newly selected feature's draft")
+    func queuedSendRetainsFeatureIntent() async {
+        let client = FirstMateTestClient()
+        let store = FirstMateStore()
+        store.configure(client: client, demo: false)
+        await store.refresh()
+        let first = FirstMateDemo.features(step: 0)[0].feature.id
+        let second = FirstMateDemo.features(step: 0)[1]
+        store.receive(second)
+        store.draft = "Direction intended for the first feature"
+        let context = store.operationContext
+        let text = store.draft
+        let sending = Task { await store.send(expectedContext: context, expectedText: text) }
+        store.select(second.feature.id)
+        store.draft = "A separate unsent draft for the second feature"
+        await sending.value
+        #expect(await client.messageRequests.isEmpty)
+        #expect(store.draft == "A separate unsent draft for the second feature")
+        store.select(first)
+        #expect(store.draft == text)
+    }
+
+    @Test("An edited draft is not submitted by an earlier queued send")
+    func queuedSendRetainsTextIntent() async {
+        let client = FirstMateTestClient()
+        let store = FirstMateStore()
+        store.configure(client: client, demo: false)
+        await store.refresh()
+        store.draft = "Plan the change"
+        let context = store.operationContext
+        let text = store.draft
+        let sending = Task { await store.send(expectedContext: context, expectedText: text) }
+        store.draft = "Plan the change, and wait for my review"
+        await sending.value
+        #expect(await client.messageRequests.isEmpty)
+        #expect(store.draft == "Plan the change, and wait for my review")
+    }
+
+    @Test("Queued mutations cannot follow an identical feature ID onto another host")
+    func queuedMutationsRetainHostIntent() async {
+        let previous = FirstMateTestClient()
+        let replacement = FirstMateTestClient()
+        let store = FirstMateStore()
+        store.configure(client: previous, demo: false)
+        await store.refresh()
+        store.draft = "Direction for the previous host"
+        let context = store.operationContext
+        let text = store.draft
+        let sending = Task { await store.send(expectedContext: context, expectedText: text) }
+        let pausing = Task { await store.perform("pause", expectedContext: context) }
+        let creating = Task {
+            await store.create(title: "Previous host feature", goal: "Keep the original host", cwd: "/workspace/sample-app",
+                               requestID: "original-host-create", expectedContext: context)
+        }
+        // The replacement deliberately has the same feature ID and draft text.
+        store.configure(client: replacement, demo: false)
+        let replacementSnapshot = FirstMateDemo.features(step: 0)[0]
+        store.receive(replacementSnapshot)
+        store.select(replacementSnapshot.feature.id)
+        store.draft = text
+        await sending.value
+        await pausing.value
+        #expect(await creating.value == false)
+        #expect(await previous.messageRequests.isEmpty)
+        #expect(await previous.actionRequests.isEmpty)
+        #expect(await previous.creationRequests.isEmpty)
+        #expect(await replacement.messageRequests.isEmpty)
+        #expect(await replacement.actionRequests.isEmpty)
+        #expect(await replacement.creationRequests.isEmpty)
+        #expect(store.draft == text)
+    }
+
+    #if os(macOS)
     @Test("First Mate is a persistent shell destination outside the crowded picker")
     func navigationRecord() throws {
         let record = try #require(HerdrDestinationRecord(.firstMate))
         #expect(record.destination == .firstMate)
         #expect(HerdrDetailScope.pickerSelection(for: .firstMate) == nil)
     }
+    #endif
 }
 
 private actor FirstMateTestClient: FirstMateClient {
     let unsupported: Bool
     let paginated: Bool
     let holdEarlier: Bool
+    let holdList: Bool
+    let mismatchedMutation: Bool
+    let mismatchedSession: Bool
+    private var listContinuation: CheckedContinuation<Void, Never>?
+    var isWaitingForList: Bool { listContinuation != nil }
     private var earlierContinuation: CheckedContinuation<Void, Never>?
     var isWaitingForEarlier: Bool { earlierContinuation != nil }
     var messageRequests: [String] = []
+    var actionRequests: [String] = []
+    var creationRequests: [String] = []
     var lastSessionID: String?
-    init(unsupported: Bool = false, paginated: Bool = false, holdEarlier: Bool = false) {
+    init(unsupported: Bool = false, paginated: Bool = false, holdEarlier: Bool = false, holdList: Bool = false, mismatchedMutation: Bool = false, mismatchedSession: Bool = false) {
         self.unsupported = unsupported
         self.paginated = paginated
         self.holdEarlier = holdEarlier
+        self.holdList = holdList
+        self.mismatchedMutation = mismatchedMutation
+        self.mismatchedSession = mismatchedSession
     }
+    func releaseList() { listContinuation?.resume(); listContinuation = nil }
     func releaseEarlier() { earlierContinuation?.resume(); earlierContinuation = nil }
 
     func fetchFirstMateFeatures() async throws -> FirstMateFeatureList {
         if unsupported { throw APIError.server(status: 404, message: "Not found") }
+        if holdList { await withCheckedContinuation { listContinuation = $0 } }
         return .init(ok: true, features: [FirstMateDemo.features(step: 0)[0].feature])
     }
     func fetchFirstMateFeature(_ id: String) async throws -> FirstMateSnapshot { FirstMateDemo.features(step: 0)[0] }
     func createFirstMateFeature(title: String, goal: String, cwd: String, requestID: String) async throws -> FirstMateSnapshot {
-        FirstMateDemo.newFeature(title: title, goal: goal, cwd: cwd)
+        creationRequests.append(requestID)
+        return FirstMateDemo.newFeature(title: title, goal: goal, cwd: cwd)
     }
     func sendFirstMateMessage(featureID: String, text: String, requestID: String) async throws -> FirstMateSnapshot {
         messageRequests.append(requestID)
         if messageRequests.count == 1 { throw URLError(.networkConnectionLost) }
+        if mismatchedMutation { return FirstMateDemo.features(step: 1)[1] }
         return FirstMateDemo.features(step: 1)[0]
     }
-    func performFirstMateAction(featureID: String, action: String, requestID: String) async throws -> FirstMateSnapshot { FirstMateDemo.features(step: 0)[0] }
+    func performFirstMateAction(featureID: String, action: String, requestID: String) async throws -> FirstMateSnapshot {
+        actionRequests.append(requestID)
+        return FirstMateDemo.features(step: 0)[0]
+    }
     func fetchFirstMateDocument(_ id: String) async throws -> FirstMateDocumentResponse {
         .init(ok: true, document: FirstMateDemo.features(step: 0)[0].documents[0])
     }
     func fetchFirstMateSession(_ id: String, before: Int?) async throws -> FirstMateSessionResponse {
         lastSessionID = id
+        if mismatchedSession { return .init(ok: true, nativeSessionID: "wrong-session", messages: [.init(role: "assistant", text: "Wrong session content")]) }
         if paginated {
             if before != nil {
                 if holdEarlier { await withCheckedContinuation { earlierContinuation = $0 } }

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AppRootView: View {
     @Bindable var model: HerdrAppModel
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(HerdPulseCoordinator.self) private var herdPulse
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -38,6 +39,10 @@ struct AppRootView: View {
         .task(id: model.hasCompletedSetup && model.smartAlertsEnabled && !model.isDemoMode) {
             await model.prepareSmartAlerts()
         }
+        .task(id: firstMateObservation) {
+            guard firstMateObservation.isActive else { return }
+            await model.observeFirstMate()
+        }
         .task(id: herdPulseContext) {
             await herdPulse.synchronize(context: herdPulseContext)
         }
@@ -71,6 +76,15 @@ struct AppRootView: View {
         }
     }
 
+    private var firstMateObservation: FirstMateObservationContext {
+        FirstMateObservationContext(
+            machineID: model.firstMateMachineID,
+            generation: model.connectionGeneration,
+            isDemo: model.isDemoMode,
+            isActive: model.hasCompletedSetup && model.selectedTab == .firstMate && scenePhase == .active
+        )
+    }
+
     private var herdPulseContext: HerdPulseSyncContext {
         return HerdPulseSyncContext(
             aggregate: HerdPulseAggregate(
@@ -86,6 +100,11 @@ struct AppRootView: View {
 
     private var appTabs: some View {
         TabView(selection: $model.selectedTab) {
+            Tab("First Mate", systemImage: "sailboat", value: .firstMate) {
+                FirstMateWorkspaceView(model: model, store: model.firstMate)
+            }
+
+
             Tab("Agents", systemImage: "bubble.left.and.bubble.right", value: .workspaces) {
                 WorkspaceNavigationView(model: model)
             }

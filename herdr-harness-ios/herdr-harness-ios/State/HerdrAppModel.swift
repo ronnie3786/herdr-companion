@@ -27,6 +27,9 @@ final class HerdrAppModel {
     var activityFeedError: String?
     var connectionState: ConnectionState = .disconnected
     var selectedTab: AppTab = .workspaces
+    let firstMate = FirstMateStore()
+    private(set) var firstMateMachineID = ""
+    @ObservationIgnored private var firstMateIdentity: FirstMateConnectionIdentity?
     var selectedWorkspaceID: String?
     var selectedPaneID: String?
     var workspacePath: [WorkspaceRoute] = []
@@ -71,7 +74,10 @@ final class HerdrAppModel {
             // Every bump — connect, demo in/out, machine added/edited/removed —
             // orphans the clients the deferred refresh tasks captured. Without
             // this a task from the old generation keeps polling a dead client.
-            if connectionGeneration != oldValue { cancelDeferredRefreshes() }
+            if connectionGeneration != oldValue {
+                cancelDeferredRefreshes()
+                invalidateFirstMateConnection()
+            }
         }
     }
     private(set) var activeServerConnection: ActiveServerConnection?
@@ -142,7 +148,7 @@ final class HerdrAppModel {
         self.credentials = credentials
         self.userDefaults = userDefaults
         let defaults = userDefaults
-        let forcedDemo = arguments.contains("-HerdrDemoMode")
+        let forcedDemo = arguments.contains("-HerdrDemoMode") || arguments.contains("-HerdrFirstMateDemo")
         #if DEBUG
         let uiTestServerURL = Self.launchArgumentValue("-HerdrUITestServerURL", in: arguments)
         let uiTestToken = Self.launchArgumentValue("-HerdrUITestAPIToken", in: arguments)
@@ -180,7 +186,7 @@ final class HerdrAppModel {
         apiToken = storedToken
         isDemoMode = uiTestServerURL == nil && (forcedDemo || defaults.bool(forKey: "herdr.demoMode"))
         hasCompletedSetup = forcedDemo || uiTestServerURL != nil || defaults.bool(forKey: "herdr.completedSetup")
-        smartAlertsEnabled = defaults.object(forKey: "herdr.smartAlerts") as? Bool ?? true
+        smartAlertsEnabled = defaults.object(forKey: "herdr.smartAlerts") == nil ? true : defaults.bool(forKey: "herdr.smartAlerts")
         preferPrivateTranscription = defaults.object(forKey: "herdr.preferPrivateTranscription") as? Bool ?? true
         showSessionTitles = defaults.object(forKey: "herdr.herdPulse.showSessionTitles") as? Bool ?? true
         agentModel = defaults.string(forKey: "herdr.agent.model") ?? ""
@@ -216,6 +222,12 @@ final class HerdrAppModel {
 
         if isDemoMode {
             loadDemo()
+        }
+        let savedFirstMateMachine = defaults.string(forKey: "herdr.firstMate.machine")
+        firstMateMachineID = machines.first(where: { $0.id == savedFirstMateMachine })?.id
+            ?? machines.first?.id ?? ""
+        if arguments.contains("-HerdrFirstMateDemo") || arguments.contains("-HerdrOpenFirstMate") {
+            selectedTab = .firstMate
         }
     }
 
@@ -2155,6 +2167,64 @@ final class HerdrAppModel {
         mirrorPrimaryConnection()
     }
 
+    var firstMateMachineName: String {
+        machines.first(where: { $0.id == firstMateMachineID })?.name ?? "Choose a machine"
+    }
+
+    var firstMateCanControl: Bool {
+        hasCompletedSetup && machines.contains(where: { $0.id == firstMateMachineID })
+            && (isDemoMode || canControl(machineID: firstMateMachineID)) && !firstMate.unsupported
+    }
+
+    func selectFirstMateMachine(id: String) {
+        guard id != firstMateMachineID, machines.contains(where: { $0.id == id }) else { return }
+        invalidateFirstMateConnection()
+        firstMateMachineID = id
+        if !isDemoMode { userDefaults.set(id, forKey: "herdr.firstMate.machine") }
+    }
+
+    private func invalidateFirstMateConnection() {
+        firstMate.configure(client: nil, demo: false)
+        firstMateIdentity = nil
+        if !machines.contains(where: { $0.id == firstMateMachineID }) {
+            firstMateMachineID = machines.first?.id ?? ""
+        }
+    }
+
+    /// The phone observes the host's durable workflow. Leaving this screen or
+    /// suspending the app never pauses the host's coordinator or its workers.
+    func observeFirstMate() async {
+        guard !Task.isCancelled, hasCompletedSetup else { return }
+        if !machines.contains(where: { $0.id == firstMateMachineID }) {
+            selectFirstMateMachine(id: machines.first?.id ?? "")
+        }
+        let machineID = firstMateMachineID
+        let currentConnection = runtimes[machineID]?.connection
+        let configuration: ServerConfiguration? = if currentConnection?.generation == connectionGeneration {
+            currentConnection?.configuration
+        } else {
+            machines.first(where: { $0.id == machineID }).flatMap {
+                ServerConfiguration(urlString: $0.urlString, token: connectionToken(for: $0.id))
+            }
+        }
+        let identity = FirstMateConnectionIdentity(
+            configuration: configuration, generation: connectionGeneration, isDemo: isDemoMode
+        )
+        if identity != firstMateIdentity {
+            firstMate.configure(client: isDemoMode ? nil : configuration.map(clientFactory), demo: isDemoMode)
+            firstMateIdentity = identity
+        }
+        guard isDemoMode || configuration != nil else { return }
+        repeat {
+            guard !Task.isCancelled, machineID == firstMateMachineID,
+                  identity == firstMateIdentity else { return }
+            await firstMate.refresh()
+            guard !Task.isCancelled, machineID == firstMateMachineID, identity == firstMateIdentity,
+                  !firstMate.isDemo, !firstMate.unsupported else { return }
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+        } while !Task.isCancelled
+    }
+
     private var primaryClient: HerdrAPIClient? {
         machines.first.flatMap { runtimes[$0.id]?.client }
     }
@@ -2163,8 +2233,16 @@ final class HerdrAppModel {
         runtimes[id]?.client
     }
 
+    private func connectionToken(for machineID: String) -> String {
+        #if DEBUG
+        // UI test credentials are ephemeral launch arguments, never Keychain writes.
+        if machineID == "ui-test" { return apiToken }
+        #endif
+        return credentials.value(for: "api-token.\(machineID)")
+    }
+
     func prepareRuntime(for machine: HerdrMachine, generation: Int) {
-        let token = credentials.value(for: "api-token.\(machine.id)")
+        let token = connectionToken(for: machine.id)
         guard let configuration = ServerConfiguration(urlString: machine.urlString, token: token) else { return }
         runtimes[machine.id] = MachineRuntime(
             client: clientFactory(configuration),

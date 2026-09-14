@@ -4,6 +4,19 @@ The iPhone app connects directly to the standalone Herdr server. It includes
 terminal and Pi chat views, machine management, notes, and Herd Pulse Live Activities.
 No other orchestration server is required.
 
+## First Mate
+
+The **First Mate** tab brings the feature workspace to iPhone and iPad. Talk to one
+First Mate per feature, then inspect its workflow, independent agents, documents,
+and exact saved sessions. Features waiting for your direction appear first. iPhone uses
+focused detail sheets; iPad keeps a feature sidebar and a trailing inspector.
+Choose System, Light, or Dark from First Mate options.
+
+The matching companion server with `first-mate-v1` is required. Work continues on
+that host when the phone app closes. Launch with `-HerdrFirstMateDemo` to explore
+synthetic planning, seven reviewers, checkpoints, and session handoffs. See
+[mobile behavior and verification](../docs/first-mate/ios.md).
+
 ## Native mobile interface
 
 The **Agents** tab groups all currently available Pi sessions by workspace

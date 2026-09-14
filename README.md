@@ -20,6 +20,7 @@ every client supports every feature or that all integrations work without setup.
 | Multiple computers | Save your computers in one private configuration and switch between their workspaces and sessions. Connection credentials stay in Keychain in the native apps. |
 | Mac, iPhone, and browser clients | Follow work from a native desktop app, your phone, or a browser connected to your companion server. The clients have different capabilities. |
 | Native iPhone and iPad conversations | **Agents** groups currently available Pi sessions by workspace, with a prominent workspace heading, small machine label, tab sections, and compact agent cards with full wrapping titles, a single status/activity row, and short ages. Workspace and machine labels share a row when space allows; large text and long names expand naturally. Generic Pi labels appear once in the list summary. Workspaces and tabs are ordered by their newest matching chat, with newest-first agents inside each tab. Search these fields and tap a card to open its session. Long-press for Rename, Smart Rename, star, tab color, workspace navigation, copy pane ID, Mac controls, and confirmed close actions. Smart Rename uses a separate read-only run and preserves newer manual edits. Offline machines show the last known status. No server update is needed. The mobile navigator defaults to a flat newest-20 **Recents** list; choose **All** for Unread, then Starred, then machine → workspace → tab → pane. Search, machine, range, and optional tab-color filters intersect. Six tab-owned colors and editable labels persist only in that iOS app sandbox; Mac assignments are neither imported nor synchronized. Pane screens use charcoal chrome with system-scaled prose and Chat/Git/Terminal/Skills in Pane actions. Compact independent Model and Thinking controls follow connected Pi capabilities. The unified input card shows selected attachments with upload status and photo previews; terminal keys stay hidden until requested from More. Unsent text drafts remain in memory per pane while the app runs; they are not persisted or synced, and the legacy Pi bridge may still trim surrounding whitespace on submission. |
+| First Mate on iPhone and iPad | One conversation per feature, with a workflow timeline/graph, step-linked agents and documents, and exact saved Pi sessions including handoff history. iPhone uses focused sheets; iPad adds a feature sidebar and inspector. Supports system/light/dark appearance and scalable text. Uses the same First Mate state and authenticated API as Mac; requires the matching companion server with `first-mate-v1`. See [mobile behavior and verification](docs/first-mate/ios.md). |
 | Terminal sessions | Browse workspaces and panes, see terminal output, and send input to a running upstream Herdr terminal session. |
 | Comfortable reading on Mac | A charcoal and lavender interface with 15-point system-font conversation text at the default scale in Chat and the HUD, bounded reading width, and Quiet chrome navigation. The prompt keeps labeled Attach, Paste code, and Voice actions close at hand, with Terminal keys above the input. Paste code appends a fenced clipboard block at the end of the draft; Command-Shift-V does the same while a Chat or HUD prompt is focused. Both routes preserve native undo and target their own composer even after a focus change. Long drafts scroll with the mouse or trackpad after five visible lines. Shift-, Option-, and Command-Return are handled before SwiftUI key dispatch in both chat and HUD editors, inserting a newline at the caret without sending and preserving undo/redo. Terminal follow re-anchors after viewport resizing and mode switches. Command cards show a three-line preview, the full command on expansion, and available structured input and partial output while running. Tool groups are labeled Clanking and stay collapsed on failures, with a failure count in the header. Appearance follows the app text-size preference. No server update is needed. |
 | Pi agent conversations | Chat with Pi agents, follow their replies and tool activity, attach files in a compact, horizontally scrolling strip, and choose available models and reasoning settings. On Mac, the chat header shows the machine. Use the star beside its title to add or remove the chat from Starred. Click its title to edit inline (Enter or focus loss saves, Escape cancels). Right-click a sidebar chat or chat header and choose Smart Rename for a contextual title using a separate quick AI run with low thinking and your Quick Chat model setting. Requires the existing headless agent API and a readable Pi conversation. You can also use the pane actions menu, or right-click a sidebar chat, HUD session, or chat header to copy its workspace pane ID. The pane actions menu groups view, control, Pi session, and pane actions. Compact Chat and Reload Pi extensions (`/reload`) live in the prompt's … More popover. Requires Pi and its configured providers. |
@@ -285,8 +286,8 @@ separate, consistent backup and a state migration plan.
 
 ### First Mate feature workflows
 
-Open **First Mate** in the Mac sidebar and create a feature with its goal and
-project folder on the connected companion host. Each feature has one saved Pi
+Open **First Mate** in the Mac sidebar or iOS tab and create a feature with its
+goal and project folder on the connected companion host. Each feature has one saved Pi
 coordinator conversation. Workers run independently, return typed outcomes and
 documents, and remain linked to their exact saved sessions. Every completed major
 stage waits for your next plain-English direction. The timeline and graph show the
@@ -301,12 +302,14 @@ notification service or provider is enabled by a source-code default.
 
 See the [runtime and operations guide](docs/first-mate/runtime.md),
 [API contract](docs/first-mate/build-contract.md), and
-[visual explainer](docs/first-mate/explainer/index.html).
+[visual explainer](docs/first-mate/explainer/index.html). The
+[iPhone and iPad guide](docs/first-mate/ios.md) covers mobile navigation and testing.
 
 The native demo launch arguments `-HerdrDemoMode -HerdrFirstMateDemo` use entirely
-synthetic records and never dispatch agents. Add `-HerdrFirstMateDark` to start in
-dark mode. This demo is for UI exploration and explainer captures; real execution
-uses the active companion connection.
+synthetic records and never dispatch agents. On Mac, add `-HerdrFirstMateDark` to
+start in dark mode. On iOS, use `-herdr.firstMate.appearance dark` or change the
+appearance in First Mate options. This demo is for UI exploration and explainer
+captures; real execution uses the active companion connection.
 
 ### Repository checks
 

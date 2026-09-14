@@ -67,6 +67,18 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		F17A7E000000000000000001 /* HerdrFirstMateShared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			name = HerdrFirstMateShared;
+			path = ../HerdrFirstMateShared;
+			sourceTree = "<group>";
+		};
+		F17A7E000000000000000002 /* HerdrFirstMateSharedTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			name = HerdrFirstMateSharedTests;
+			path = ../HerdrFirstMateSharedTests;
+			sourceTree = "<group>";
+		};
 		E40000022FABC00000000001 /* HerdrPulseShared */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = HerdrPulseShared;
@@ -133,9 +145,11 @@
 			isa = PBXGroup;
 			children = (
 				3C0541782F9E6F0100621813 /* herdr-harness-ios */,
+				F17A7E000000000000000001 /* HerdrFirstMateShared */,
 				E40000022FABC00000000001 /* HerdrPulseShared */,
 				E40000032FABC00000000001 /* HerdPulseWidgets */,
 				3C0541862F9E6F0200621813 /* herdr-harness-iosTests */,
+				F17A7E000000000000000002 /* HerdrFirstMateSharedTests */,
 				3C0541902F9E6F0200621813 /* herdr-harness-iosUITests */,
 				3C0541772F9E6F0100621813 /* Products */,
 			);
@@ -171,6 +185,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				3C0541782F9E6F0100621813 /* herdr-harness-ios */,
+				F17A7E000000000000000001 /* HerdrFirstMateShared */,
 				E40000022FABC00000000001 /* HerdrPulseShared */,
 			);
 			name = "herdr-harness-ios";
@@ -218,6 +233,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				3C0541862F9E6F0200621813 /* herdr-harness-iosTests */,
+				F17A7E000000000000000002 /* HerdrFirstMateSharedTests */,
 			);
 			name = "herdr-harness-iosTests";
 			packageProductDependencies = (

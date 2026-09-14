@@ -35,6 +35,18 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		F17A7E000000000000000001 /* HerdrFirstMateShared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			name = HerdrFirstMateShared;
+			path = ../HerdrFirstMateShared;
+			sourceTree = "<group>";
+		};
+		F17A7E000000000000000002 /* HerdrFirstMateSharedTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			name = HerdrFirstMateSharedTests;
+			path = ../HerdrFirstMateSharedTests;
+			sourceTree = "<group>";
+		};
 		ACAF00000000000000000015 /* herdr-harness-mac */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = "herdr-harness-mac";
@@ -82,7 +94,9 @@
 			isa = PBXGroup;
 			children = (
 				ACAF00000000000000000015 /* herdr-harness-mac */,
+				F17A7E000000000000000001 /* HerdrFirstMateShared */,
 				ACAF00000000000000000025 /* herdr-harness-macTests */,
+				F17A7E000000000000000002 /* HerdrFirstMateSharedTests */,
 				ACAF00000000000000000035 /* herdr-harness-macUITests */,
 				ACAF00000000000000000003 /* Products */,
 			);
@@ -115,6 +129,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				ACAF00000000000000000015 /* herdr-harness-mac */,
+				F17A7E000000000000000001 /* HerdrFirstMateShared */,
 			);
 			name = "herdr-harness-mac";
 			packageProductDependencies = (
@@ -139,6 +154,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				ACAF00000000000000000025 /* herdr-harness-macTests */,
+				F17A7E000000000000000002 /* HerdrFirstMateSharedTests */,
 			);
 			name = "herdr-harness-macTests";
 			packageProductDependencies = (

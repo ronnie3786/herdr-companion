@@ -4,6 +4,14 @@ import SwiftUI
 
 @MainActor @Observable
 final class FirstMateStore {
+    struct OperationContext: Equatable, Sendable {
+        fileprivate let generation: Int
+        fileprivate let featureID: String?
+    }
+
+    /// Capture when the human acts, before scheduling an asynchronous UI task.
+    var operationContext: OperationContext { .init(generation: generation, featureID: selectedFeatureID) }
+
     private(set) var features: [FirstMateFeature] = []
     private(set) var snapshots: [String: FirstMateSnapshot] = [:]
     var selectedFeatureID: String?
@@ -59,6 +67,8 @@ final class FirstMateStore {
         openedResource = nil
         resourcePresentation = nil
         resourceText = ""
+        resourceLoading = false
+        resourceError = nil
         resetSessionPagination()
         error = nil
         unsupported = false
@@ -118,7 +128,7 @@ final class FirstMateStore {
             if let id = selectedFeatureID {
                 let value = try await client.fetchFirstMateFeature(id)
                 guard capturedGeneration == generation else { return }
-                guard value.feature.id == id else { throw APIError.invalidResponse }
+                guard value.ok, value.feature.id == id else { throw APIError.invalidResponse }
                 receive(value)
             }
             hasLoaded = true
@@ -133,7 +143,8 @@ final class FirstMateStore {
         }
     }
 
-    func create(title: String, goal: String, cwd: String, requestID: String) async -> Bool {
+    func create(title: String, goal: String, cwd: String, requestID: String, expectedContext: OperationContext? = nil) async -> Bool {
+        if let expectedContext, expectedContext != operationContext { return false }
         guard !isSending else { return false }
         let capturedGeneration = generation
         isSending = true
@@ -148,6 +159,7 @@ final class FirstMateStore {
         do {
             let value = try await client.createFirstMateFeature(title: title, goal: goal, cwd: cwd, requestID: requestID)
             guard capturedGeneration == generation else { return false }
+            guard value.ok, !value.feature.id.isEmpty else { throw APIError.invalidResponse }
             receive(value)
             select(value.feature.id)
             await refresh()
@@ -159,7 +171,9 @@ final class FirstMateStore {
         }
     }
 
-    func send() async {
+    func send(expectedContext: OperationContext? = nil, expectedText: String? = nil) async {
+        if let expectedContext, expectedContext != operationContext { return }
+        if let expectedText, expectedText != draft { return }
         guard let id = selectedFeatureID, !isSending else { return }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
@@ -174,6 +188,7 @@ final class FirstMateStore {
         do {
             let value = try await client.sendFirstMateMessage(featureID: id, text: text, requestID: pending.requestID)
             guard capturedGeneration == generation else { return }
+            guard value.ok, value.feature.id == id else { throw APIError.invalidResponse }
             receive(value)
             pendingMessages[id] = nil
             if selectedFeatureID == id, draft.trimmingCharacters(in: .whitespacesAndNewlines) == text { draft = "" }
@@ -186,7 +201,8 @@ final class FirstMateStore {
         }
     }
 
-    func perform(_ action: String) async {
+    func perform(_ action: String, expectedContext: OperationContext? = nil) async {
+        if let expectedContext, expectedContext != operationContext { return }
         guard let id = selectedFeatureID, !isSending else { return }
         if isDemo {
             guard var value = snapshot else { return }
@@ -202,6 +218,7 @@ final class FirstMateStore {
         do {
             let value = try await client.performFirstMateAction(featureID: id, action: action, requestID: UUID().uuidString)
             guard capturedGeneration == generation else { return }
+            guard value.ok, value.feature.id == id else { throw APIError.invalidResponse }
             receive(value)
             error = nil
             await refresh()

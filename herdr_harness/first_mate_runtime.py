@@ -499,9 +499,18 @@ class FirstMateRuntime:
                     if state.get("ended"):
                         self._finish(job, state)
                     elif (directory / "started.json").exists() and not _locked(directory / "writer.lock"):
-                        # Without a supervisor completion receipt, side effects may
-                        # have happened. Never automatically replay this dispatch.
-                        self._unknown(job)
+                        # The supervisor writes its final receipt before releasing
+                        # the writer lock. It can finish between our first status
+                        # read and this lock check; re-read after observing unlock
+                        # before classifying a completed dispatch as uncertain.
+                        final_state = _read_json(directory / "status.json", {})
+                        if final_state.get("ended"):
+                            self._observe(job)
+                            self._requests(job)
+                            self._finish(job, final_state)
+                        else:
+                            # No final receipt: retain the no-replay safety rule.
+                            self._unknown(job)
                     else:
                         if job["kind"] == "coordinator":
                             active_features.add(job["feature_id"])

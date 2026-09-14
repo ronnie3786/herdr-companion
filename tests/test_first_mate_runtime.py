@@ -85,6 +85,16 @@ for line in sys.stdin:
     tool('fm_handoff',{'summary':'Inspected requirements. Remaining: produce the final plan. Workspace unchanged.'},'handoff')
     response='Checkpoint ready.'
    else:
+    parent=job['claim'].get('metadata',{}).get('parent_assignment_id')
+    if parent and 'nested review' in job['prompt']:
+     # This scenario verifies yielding/resuming, not the legitimate fast-child
+     # rejection. Hold synthetic children until the parent's yield is recorded.
+     limit=time.monotonic()+25
+     while True:
+      parents=[json.loads(p.read_text()) for p in root.parent.glob('*/job.json')]
+      if any(p['claim'].get('id')==parent and p.get('waiting_children') for p in parents):break
+      if time.monotonic()>limit:raise RuntimeError('parent did not record its yield')
+      time.sleep(.03)
     if job.get('handoff_id'):
      tool('fm_acknowledge_handoff',{'summary':'Workspace verified; continue the remaining plan'},'ack')
     emit({'type':'tool_execution_start','toolName':'read','toolCallId':'read1','args':{'path':'README.md'}})
@@ -120,18 +130,43 @@ class FirstMateRuntimeTests(unittest.TestCase):
         self.environ = {'HERDR_HARNESS_AGENT_PI_BIN': str(self.fake), 'PATH': os.environ.get('PATH','')}
         self.runtime = FirstMateRuntime(self.store, environ=self.environ, runtime_root=self.root / 'runtime')
         self.managers = [self.runtime]
+        self.children = []
+        popen = subprocess.Popen
+
+        def record_supervisor(*args, **kwargs):
+            child = popen(*args, **kwargs)
+            directory = kwargs.get('env', {}).get('HERDR_FIRST_MATE_JOB_DIR')
+            if directory and Path(directory).is_relative_to(self.root):
+                self.children.append((child, Path(directory)))
+            return child
+
+        self.spawn_patch = patch('herdr_harness.first_mate_runtime.subprocess.Popen', side_effect=record_supervisor)
+        self.spawn_patch.start()
+        self.addCleanup(self.spawn_patch.stop)
 
     def tearDown(self):
         for manager in self.managers:
             manager.stop()
-        # Only terminate processes recorded in this test's private runtime.
-        for path in (self.root / 'runtime' / 'jobs').glob('*/status.json'):
-            state = _read_json(path, {})
-            if not state.get('ended'):
-                for key in ('pi_pid','pid'):
-                    try: os.kill(state[key], 15)
-                    except (ProcessLookupError, KeyError): pass
-        time.sleep(.15)
+        # A final reconciliation can launch a coordinator just before a test's
+        # predicate succeeds. Track actual Popen handles (not just status files,
+        # which may not exist yet) and wait for writers before removing storage.
+        for child, directory in self.children:
+            if child.poll() is None:
+                _write_json(directory / 'controls' / 'test-stop.json', {'action': 'abort'})
+        deadline = time.monotonic() + 1
+        while any(child.poll() is None for child, _ in self.children) and time.monotonic() < deadline:
+            time.sleep(.03)
+        for child, directory in self.children:
+            if child.poll() is None:
+                state = _read_json(directory / 'status.json', {})
+                if state.get('pid') == child.pid and state.get('pi_pid'):
+                    try: os.kill(state['pi_pid'], 15)
+                    except ProcessLookupError: pass
+                try:
+                    child.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    child.terminate()
+                    child.wait(timeout=2)
         self.store.close()
         self.temp.cleanup()
 
@@ -240,6 +275,35 @@ class FirstMateRuntimeTests(unittest.TestCase):
         self.assertEqual(assignment['generation'], 3)
         self.assertEqual(assignment['recovery_count'], 3)
         self.assertEqual(len(self.store.snapshot(feature['id'])['documents']), 0)
+
+    def test_completion_between_status_read_and_lock_check_is_not_unknown(self):
+        feature = self.feature()
+        claim = self.store.claim_message(feature['id'], self.runtime.owner)
+        job = self.runtime._new_job(feature, kind='coordinator', prompt='Synthetic completion', claim=claim)
+        directory = self.runtime._job_dir(job)
+        _write_json(directory / 'started.json', {'pid': 123})
+        final_state = {'ended': True, 'response': 'Completed before the lock check'}
+        for publish_receipt in (True, False):
+            with self.subTest(publish_receipt=publish_receipt):
+                _write_json(directory / 'status.json', {'ended': False})
+
+                def unlock(_path):
+                    if publish_receipt:
+                        _write_json(directory / 'status.json', final_state)
+                    return False
+
+                with patch('herdr_harness.first_mate_runtime._locked', side_effect=unlock), \
+                     patch.object(self.runtime, '_observe'), patch.object(self.runtime, '_requests'), \
+                     patch.object(self.runtime, '_actions'), patch.object(self.runtime, '_watch'), \
+                     patch.object(self.runtime, 'capabilities', return_value={'available': False}), \
+                     patch.object(self.runtime, '_finish') as finish, patch.object(self.runtime, '_unknown') as unknown:
+                    self.runtime.reconcile()
+                if publish_receipt:
+                    finish.assert_called_once_with(job, final_state)
+                    unknown.assert_not_called()
+                else:
+                    finish.assert_not_called()
+                    unknown.assert_called_once_with(job)
 
     def test_scoped_worker_cannot_begin_stage_or_read_another_feature(self):
         feature = self.feature()

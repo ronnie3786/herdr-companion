@@ -34,6 +34,10 @@ concurrency limits and timeouts remain in effect. Model and thinking controls
 retain the shared HUD preferences. Unsent drafts remain in memory per chat, not
 synced or restored after quitting.
 
+Release verification also uncovered a First Mate supervisor completion race. Its
+fix and regression coverage are included in source; this Mac package does not
+deliver that server-side fix. Companion deployment remains a separate update.
+
 This is a preview signed with Apple Development credentials, not a notarized
 Developer ID release. The signed updater remains enabled. The Mac updater does
 not install or restart the companion server, and this release does not update iOS.

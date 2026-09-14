@@ -18,7 +18,16 @@ struct WorkspaceNavigationView: View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             Group {
                 if shell.detailScope == .firstMate {
-                    FirstMateSidebarView(store: shell.firstMate, back: { shell.show(.session, model: model) }, canControl: model.canControlPrimary)
+                    VStack(spacing: 0) {
+                        if !model.isDemoMode {
+                            Picker("Companion host", selection: Binding(get: { shell.firstMateMachineID ?? model.machines.first?.id ?? "" }, set: { shell.firstMateMachineID = $0 })) {
+                                ForEach(model.machines) { machine in
+                                    Text(machine.name).tag(machine.id)
+                                }
+                            }.padding(12).accessibilityIdentifier("first-mate-host")
+                        }
+                        FirstMateSidebarView(store: shell.firstMate, back: { shell.show(.session, model: model) }, canControl: model.isDemoMode || firstMateConfiguration != nil, leaveDemo: model.leaveDemo)
+                    }
                 } else {
                     HerdrSidebarView(
                         model: model,
@@ -37,12 +46,21 @@ struct WorkspaceNavigationView: View {
                 .toolbar { detailToolbar }
         }
         .navigationSplitViewStyle(.balanced)
-        .task(id: FirstMateConnectionIdentity(configuration: model.activeServerConfiguration, generation: model.connectionGeneration, isDemo: model.isDemoMode)) {
+        .task(id: FirstMateNavigationIdentity(connection: FirstMateConnectionIdentity(configuration: firstMateConfiguration, generation: model.connectionGeneration, isDemo: model.isDemoMode), requestID: shell.firstMateOpenRequest?.id)) {
             shell.firstMate.configure(
-                client: model.activeServerConfiguration.map { HerdrAPIClient(configuration: $0) },
+                client: firstMateConfiguration.map { HerdrAPIClient(configuration: $0) },
                 demo: model.isDemoMode
             )
             await shell.firstMate.refresh()
+            if !Task.isCancelled, let request = shell.firstMateOpenRequest,
+               request.id != shell.firstMateAppliedRequestID,
+               request.serverURL == firstMateConfiguration?.baseURL.absoluteString {
+                shell.firstMate.select(request.featureID)
+                shell.firstMate.inspector = request.graph ? .workflow : request.tab
+                shell.firstMate.graphMode = request.graph
+                shell.firstMateAppliedRequestID = request.id
+                await shell.firstMate.refresh()
+            }
             if model.isDemoMode, ProcessInfo.processInfo.arguments.contains("-HerdrFirstMateDemo") {
                 shell.show(.firstMate, model: model)
             }
@@ -66,6 +84,10 @@ struct WorkspaceNavigationView: View {
                   !activeWorkStore.hasLoaded || activeWorkStore.hasError else { return }
             await refreshActiveWork()
         }
+    }
+
+    private var firstMateConfiguration: ServerConfiguration? {
+        model.firstMateConfiguration(machineID: shell.firstMateMachineID)
     }
 
     @ViewBuilder
@@ -100,7 +122,7 @@ struct WorkspaceNavigationView: View {
                 )
             }
         case .firstMate:
-            FirstMateWorkspaceView(store: shell.firstMate, canControl: model.canControlPrimary)
+            FirstMateWorkspaceView(store: shell.firstMate, canControl: model.isDemoMode || firstMateConfiguration != nil)
         case .activeWork:
             Group {
                 if model.isDemoMode || model.activeWorkLegacyUI {

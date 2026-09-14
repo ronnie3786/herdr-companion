@@ -50,7 +50,7 @@ print(json.dumps({
 store.close()
 """))
         assert all(first_mate.values()), first_mate
-        for module in ("herdr_harness.configuration_cli", "herdr_commands.setup_herdr_demo", "herdr_commands.herdr_active_work_sync", "herdr_commands.herdr_pr_review_watch", "herdr_commands.herdr_hud_chats_cli"):
+        for module in ("herdr_harness.configuration_cli", "herdr_commands.setup_herdr_demo", "herdr_commands.herdr_active_work_sync", "herdr_commands.herdr_pr_review_watch", "herdr_commands.herdr_hud_chats_cli", "herdr_commands.herdr_first_mate_cli"):
             run(f"from {module} import main; raise SystemExit(main())", "--help")
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))

@@ -351,3 +351,6 @@ written. Preserve credentials, notes, jobs, artifacts, and board state privately
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Source is MIT licensed; included
 third-party materials retain their licenses.
+
+First Mate can also be driven through the authenticated `herdr-first-mate` CLI.
+See [commands and native navigation](docs/first-mate/cli.md).

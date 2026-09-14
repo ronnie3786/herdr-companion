@@ -456,11 +456,18 @@ final class HerdrAppModel {
         loadDemo()
     }
 
+    func firstMateConfiguration(machineID: String?) -> ServerConfiguration? {
+        guard !isDemoMode, let machine = machines.first(where: { $0.id == machineID }) ?? machines.first else { return nil }
+        let token = machine.id == "ui-test" ? runtimes[machine.id]?.connection?.configuration.token ?? "" : credentials.value(for: "api-token.\(machine.id)")
+        return ServerConfiguration(urlString: machine.urlString, token: token)
+    }
+
     func leaveDemo() {
         userDefaults.set(false, forKey: "herdr.demoMode")
         isDemoMode = false
-        hasCompletedSetup = false
         machines = Self.loadMachines(defaults: userDefaults)
+        hasCompletedSetup = !machines.isEmpty
+        userDefaults.set(hasCompletedSetup, forKey: "herdr.completedSetup")
         if let primary = machines.first {
             serverURLString = primary.urlString
             apiToken = credentials.value(for: "api-token.\(primary.id)")

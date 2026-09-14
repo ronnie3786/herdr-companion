@@ -4,6 +4,7 @@ struct FirstMateSidebarView: View {
     @Bindable var store: FirstMateStore
     let back: () -> Void
     let canControl: Bool
+    var leaveDemo: () -> Void = {}
     @Environment(\.colorScheme) private var scheme
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -51,6 +52,9 @@ struct FirstMateSidebarView: View {
             }
             Spacer(minLength: 0)
             if store.isDemo {
+                Button("Connect to live work", systemImage: "server.rack", action: leaveDemo)
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("first-mate-leave-demo")
                 Label("Synthetic demo", systemImage: "flask").herdrFont(.caption).foregroundStyle(.secondary)
                 Text(store.demoStepTitle).herdrFont(.caption, weight: .medium)
                 Button("Next scenario", systemImage: "forward.end", action: store.advanceDemo)

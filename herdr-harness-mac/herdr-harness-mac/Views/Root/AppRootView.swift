@@ -78,6 +78,9 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
 final class HerdrShellState {
     var detailScope: HerdrDetailScope = .session
     let firstMate = FirstMateStore()
+    var firstMateMachineID: String?
+    var firstMateOpenRequest: FirstMateOpenRequest?
+    var firstMateAppliedRequestID: UUID?
     private(set) var paneModeFocusRequest = 0
     var isCreatingWorkspace = false
     var isAgentPresented = false
@@ -511,6 +514,26 @@ struct AppRootView: View {
     }
 
     private func openURL(_ url: URL) {
+        if url.scheme == "herdr", url.host == "first-mate" {
+            guard let request = FirstMateOpenRequest(url: url) else {
+                externalPiError = "Invalid First Mate navigation link."
+                isShowingExternalPiError = true
+                return
+            }
+            if model.isDemoMode { model.leaveDemo() }
+            guard let machine = model.machines.first(where: {
+                ServerConfiguration(urlString: $0.urlString, token: "route-validation")?.baseURL.absoluteString == request.serverURL
+            }) else {
+                externalPiError = "Add this feature's companion server in Settings → Machines, then open the link again."
+                isShowingExternalPiError = true
+                return
+            }
+            shell.firstMateMachineID = machine.id
+            shell.firstMateOpenRequest = request
+            shell.show(.firstMate, model: model)
+            return
+        }
+
         if ExternalPiRequest.recognizes(url) {
             launchExternalPi(url)
             return

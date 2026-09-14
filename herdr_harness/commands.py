@@ -38,3 +38,7 @@ def hud_chats():
 
 def active_work():
     return _run("herdr_active_work_cli")
+
+
+def first_mate():
+    return _run("herdr_first_mate_cli")

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "herdr-companion"
-version = "0.12.0b1"
+version = "0.12.0b2"
 description = "Standalone Mac, iPhone, and web companion server for Herdr"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,6 +18,7 @@ dev = ["build>=1.2,<2"]
 [project.scripts]
 herdr-server = "herdr_dashboard:main"
 herdr-config = "herdr_harness.configuration_cli:main"
+herdr-first-mate = "herdr_harness.commands:first_mate"
 herdr-notes = "herdr_harness.commands:notes"
 herdr-hud-chats = "herdr_harness.commands:hud_chats"
 herdr-active-work = "herdr_harness.commands:active_work"

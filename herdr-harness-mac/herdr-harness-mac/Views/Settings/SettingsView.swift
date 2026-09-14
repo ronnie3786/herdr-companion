@@ -115,7 +115,8 @@ struct SettingsView: View {
             .accessibilityIdentifier("settings-manage-machines")
 
             if model.isDemoMode {
-                Button("Connect a real server", systemImage: "server.rack", action: model.leaveDemo)
+                Button("Exit demo mode and connect", systemImage: "server.rack", action: model.leaveDemo)
+                    .accessibilityIdentifier("settings-leave-demo")
             } else {
                 Button("Use demo data", systemImage: "sparkles", action: model.useDemo)
             }

@@ -21,7 +21,11 @@ final class FirstMateStore {
     var draft = ""
     var search = ""
     var isCreating = false
+    #if os(macOS)
+    var isDark = true
+    #else
     var isDark = ProcessInfo.processInfo.arguments.contains("-HerdrFirstMateDark")
+    #endif
     private(set) var isDemo = false
     private(set) var isRefreshing = false
     private(set) var isSending = false

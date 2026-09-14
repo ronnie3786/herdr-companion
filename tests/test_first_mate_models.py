@@ -90,6 +90,7 @@ class ModelSettingsTests(unittest.TestCase):
 request=json.loads(sys.stdin.readline())
 assert request['type']=='get_available_models'
 assert '--no-session' in sys.argv and '--no-extensions' in sys.argv
+assert '--offline' in sys.argv, 'Catalog discovery must not start a credential refresh'
 print(json.dumps({'id':'catalog','success':True,'data':{'models':[{'provider':'synthetic','id':'model','name':'Test Model','reasoning':True,'apiKey':'not-for-clients','baseUrl':'https://private.example.invalid','headers':{'x-private':'secret'}}]}}),flush=True)
 sys.stdin.read()
 ''')

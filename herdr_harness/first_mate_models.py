@@ -13,7 +13,11 @@ def read_model_catalog(pi_bin, environ, cwd):
     if not pi_bin:
         raise FirstMateError("Pi is not available on this host", code="model_catalog_unavailable", status=503)
     # Never forward full model objects: they can contain private URLs and headers.
-    command = [pi_bin, "--mode", "rpc", "--no-session", "--no-extensions", "--no-skills",
+    # The picker needs the configured catalog, not Pi's background network
+    # refresh. Stopping that refresh can strand its auth lock for 30 seconds,
+    # blocking the coordinator launched immediately after a model selection.
+    # This flag is scoped to discovery; actual agent turns still run online.
+    command = [pi_bin, "--offline", "--mode", "rpc", "--no-session", "--no-extensions", "--no-skills",
                "--no-prompt-templates", "--no-context-files", "--no-builtin-tools"]
     process = None
     selector = selectors.DefaultSelector()

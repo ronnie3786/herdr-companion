@@ -6,6 +6,7 @@ struct FirstMateChatView: View {
     let canControl: Bool
     @Environment(\.colorScheme) private var scheme
     @State private var followsLatest = true
+    @State private var showsModelSettings = false
     private var featureIsClosed: Bool { ["completed", "cancelled"].contains(snapshot.feature.status) }
     var body: some View {
         VStack(spacing: 0) {
@@ -59,6 +60,26 @@ struct FirstMateChatView: View {
                     .herdrFont(.caption).foregroundStyle(.secondary).padding(.horizontal, 20).padding(.vertical, 10)
             }
             VStack(alignment: .leading, spacing: 12) {
+                Button {
+                    showsModelSettings = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "cpu")
+                        Text(snapshot.feature.modelDisplayName).lineLimit(1).truncationMode(.middle)
+                        if let effort = snapshot.feature.coordinatorThinking, !effort.isEmpty {
+                            Text(effort.capitalized).foregroundStyle(.secondary)
+                        }
+                        Image(systemName: "chevron.down").font(.caption2)
+                    }.herdrFont(.caption)
+                }
+                .buttonStyle(.plain)
+                .disabled(!canControl || featureIsClosed || store.isDemo)
+                .help(store.isDemo ? "Connect to live work to configure your First Mate." : "Model and thinking effort for this feature's next First Mate turn")
+                .accessibilityIdentifier("first-mate-model-settings")
+                .popover(isPresented: $showsModelSettings, arrowEdge: .top) {
+                    FirstMateModelSettingsView(store: store, feature: snapshot.feature, context: store.operationContext)
+                }
+                .onChange(of: store.operationContext) { showsModelSettings = false }
                 TextField("Give direction, ask a question, or change the plan…", text: $store.draft, axis: .vertical)
                     .textFieldStyle(.plain).lineLimit(3...7).herdrFont(.body)
                     .disabled(!canControl || featureIsClosed)

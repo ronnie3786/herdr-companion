@@ -27,7 +27,7 @@ def parser(environ):
     p.add_argument("--base-url", default=environ.get("HERDR_HARNESS_URL") or "http://127.0.0.1:9092")
     p.add_argument("--token-file")
     commands = p.add_subparsers(dest="command", required=True)
-    for name in ("list", "capabilities"):
+    for name in ("list", "capabilities", "models"):
         commands.add_parser(name)
     create = commands.add_parser("create")
     for field in ("title", "goal", "cwd"):
@@ -52,6 +52,12 @@ def parser(environ):
             sub.add_argument("--graph", action="store_true")
             sub.add_argument("--app-server-url", help="Existing saved Mac app origin when the API uses a different loopback origin")
             sub.add_argument("--print-url", action="store_true", help="Return the native app link without launching it")
+    settings = commands.add_parser("set-model")
+    settings.add_argument("feature_id")
+    settings.add_argument("--model", required=True, help="provider/model, or an empty string for host default")
+    settings.add_argument("--thinking", default="", choices=("", "off", "minimal", "low", "medium", "high", "xhigh", "max"))
+    settings.add_argument("--expected-settings-revision", type=int, required=True)
+    settings.add_argument("--request-id")
     commands.add_parser("document").add_argument("id")
     session = commands.add_parser("session")
     session.add_argument("id")
@@ -61,7 +67,7 @@ def parser(environ):
 
 def execute(args, client, *, stdin, launch):
     quote = lambda value: urllib.parse.quote(value, safe="")
-    if args.command == "capabilities": return client.request("GET", "/capabilities")
+    if args.command in ("capabilities", "models"): return client.request("GET", "/" + args.command)
     if args.command == "list": return client.request("GET", "/features")
     if args.command == "create":
         body = {k: getattr(args, k) for k in ("title", "goal", "cwd")}
@@ -74,6 +80,11 @@ def execute(args, client, *, stdin, launch):
         if args.command == "session" and args.before is not None: query["before"] = args.before
         return client.request("GET", path + quote(args.id) + ("?" + urllib.parse.urlencode(query) if query else ""))
     path = "/features/" + quote(args.feature_id)
+    if args.command == "set-model":
+        return client.request("POST", path + "/model-settings", {
+            "model": args.model, "thinking": args.thinking,
+            "expected_settings_revision": args.expected_settings_revision,
+            "request_id": args.request_id or str(uuid.uuid4())})
     if args.command == "events": return client.request("GET", path + "/events?" + urllib.parse.urlencode({"after": args.after}))
     if args.command == "send":
         text = _read_file(args.text_file, stdin) if args.text_file else args.text

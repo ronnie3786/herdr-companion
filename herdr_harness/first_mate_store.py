@@ -130,6 +130,13 @@ class FirstMateStore:
         self._db.execute("INSERT OR IGNORE INTO fm_assignment_memberships SELECT a.visit_id,a.id,a.input_revision,v.authorization_message_id,NULL,a.created_at FROM fm_assignments a JOIN fm_visits v ON v.id=a.visit_id")
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(1,?)", (_now(),))
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(2,?)", (_now(),))
+        columns = {row[1] for row in self._db.execute("PRAGMA table_info(fm_features)")}
+        for name, definition in (("coordinator_model", "TEXT NOT NULL DEFAULT ''"),
+                                 ("coordinator_thinking", "TEXT NOT NULL DEFAULT ''"),
+                                 ("model_settings_revision", "INTEGER NOT NULL DEFAULT 0")):
+            if name not in columns:
+                self._db.execute(f"ALTER TABLE fm_features ADD COLUMN {name} {definition}")
+        self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(3,?)", (_now(),))
 
     def close(self) -> None:
         with self._lock:
@@ -225,6 +232,35 @@ class FirstMateStore:
             message = self._message(feature_id, "user", goal, metadata={"initial": True})
             self._event(feature_id, "feature.created", "Feature created", {"message_id": message["id"]})
             return self._save_receipt("create_feature", request_id, body, self._one("fm_features", feature_id))
+
+    def set_model_settings(self, feature_id: str, body: dict) -> dict:
+        # A separate revision avoids invalidating running assignments or human gates.
+        if set(body) != {"model", "thinking", "expected_settings_revision", "request_id"}:
+            raise FirstMateError("Invalid model settings fields", code="invalid_request", status=400)
+        model = _text(body.get("model"), "model", 300, optional=True)
+        thinking = _text(body.get("thinking"), "thinking", 20, optional=True)
+        if model and ("/" not in model or any(c.isspace() or ord(c) < 32 for c in model)):
+            raise FirstMateError("Use a full provider/model identifier", code="invalid_request", status=400)
+        if thinking not in {"", "off", "minimal", "low", "medium", "high", "xhigh", "max"}:
+            raise FirstMateError("Invalid thinking effort", code="invalid_request", status=400)
+        revision = body.get("expected_settings_revision")
+        if type(revision) is not int or revision < 0:
+            raise FirstMateError("Invalid model settings revision", code="invalid_request", status=400)
+        with self._transaction():
+            scope = "model_settings:" + feature_id
+            cached = self._receipt(scope, body.get("request_id"), body)
+            if cached is not None:
+                return cached
+            feature = self._one("fm_features", feature_id)
+            if feature["model_settings_revision"] != revision:
+                raise FirstMateError("Model settings changed. Reload them before saving.", code="stale_model_settings")
+            if feature["status"] in {"completed", "cancelled"}:
+                raise FirstMateError("This feature is closed", code="feature_closed")
+            self._db.execute("UPDATE fm_features SET coordinator_model=?,coordinator_thinking=?,model_settings_revision=model_settings_revision+1 WHERE id=?", (model, thinking, feature_id))
+            self._event(feature_id, "feature.model_settings_changed", "First Mate model settings updated for the next turn", {
+                "model": model, "thinking": thinking, "settings_revision": revision + 1,
+                "previous_model": feature["coordinator_model"], "previous_thinking": feature["coordinator_thinking"]})
+            return self._save_receipt(scope, body["request_id"], body, self._one("fm_features", feature_id))
 
     def get_feature(self, feature_id: str) -> dict:
         with self._lock:

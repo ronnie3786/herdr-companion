@@ -27,6 +27,12 @@ class FirstMateCLITests(unittest.TestCase):
         self.assertEqual(body,{'text':'Plan only.\nDo not implement.','request_id':'stable-send'})
         self.assertEqual(self.requests[0].full_url,'https://host.example.test/api/v1/first-mate/features/fmf_sample/messages')
 
+    def test_set_model_preserves_revision_effort_and_retry_identity(self):
+        code, _ = self.run_cli(['set-model', 'fmf_sample', '--model', 'synthetic/reasoner', '--thinking', 'high', '--expected-settings-revision', '2', '--request-id', 'model-one'])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.requests[0].full_url, 'https://host.example.test/api/v1/first-mate/features/fmf_sample/model-settings')
+        self.assertEqual(json.loads(self.requests[0].data), {'model': 'synthetic/reasoner', 'thinking': 'high', 'expected_settings_revision': 2, 'request_id': 'model-one'})
+
     def test_pause_has_revision_and_no_automatic_retries(self):
         code,_=self.run_cli(['pause','fmf_sample','--expected-revision','3','--request-id','pause-one'])
         self.assertEqual(code,0);self.assertEqual(len(self.requests),1)

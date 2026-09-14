@@ -38,6 +38,26 @@ struct FirstMateHTTPTests {
         #expect(bodies[2] == ["action": "pause", "request_id": "pause-789"])
     }
 
+    @Test("Model settings use the authenticated host and independent settings revision")
+    func modelSettings() async throws {
+        let (client, session) = try makeClient()
+        defer { session.invalidateAndCancel() }
+        let catalog = try await client.fetchFirstMateModels()
+        #expect(catalog.models.first?.id == "synthetic/reasoner")
+        let settings = FirstMateModelSettings(model: "synthetic/reasoner", thinking: "high", expectedSettingsRevision: 3, requestID: "model-123")
+        _ = try await client.setFirstMateModel(featureID: "feature:123", settings: settings)
+        let requests = FirstMateURLProtocol.recorder.requests()
+        #expect(requests.map(\.httpMethod) == ["GET", "POST"])
+        #expect(requests.last?.url?.path == "/api/v1/first-mate/features/feature:123/model-settings")
+        #expect(requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer first-mate-test-token")
+        let body = try #require(requests.last?.httpBody)
+        let object = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(object["expected_settings_revision"] as? Int == 3)
+        #expect(object["model"] as? String == "synthetic/reasoner")
+        #expect(object["thinking"] as? String == "high")
+        #expect(object["request_id"] as? String == "model-123")
+    }
+
     @Test("Reading a retained session sends the exact identity and earlier-page cursor")
     func savedSessionAndDocuments() async throws {
         let (client, session) = try makeClient()
@@ -129,6 +149,8 @@ private final class FirstMateURLProtocol: URLProtocol {
             let data: Data
             if status != 200 {
                 data = Data(#"{"ok":false,"error":{"code":"unauthorized","message":"Authentication required"}}"#.utf8)
+            } else if url.path == "/api/v1/first-mate/models" {
+                data = Data(#"{"ok":true,"models":[{"id":"synthetic/reasoner","name":"Reasoner","provider":"synthetic","reasoning":true}],"default_model":"synthetic/default","thinking_levels":["off","high"]}"#.utf8)
             } else if url.path.contains("/sessions/") {
                 data = Data(#"{"ok":true,"native_session_id":"native-session:123","messages":[{"role":"assistant","text":"Saved review result"}],"next_before":140,"total_messages":340}"#.utf8)
             } else if url.path.contains("/documents/") {

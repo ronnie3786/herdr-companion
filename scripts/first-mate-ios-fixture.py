@@ -43,6 +43,12 @@ class FixtureRuntime:
         return {"available": False, "saved_sessions": True,
                 "reason": "Synthetic simulator fixture. Agent execution is disabled."}
 
+    def model_catalog(self):
+        return {"models": [
+            {"id": "synthetic/reasoner", "provider": "synthetic", "name": "Reasoner", "reasoning": True},
+            {"id": "synthetic/quick", "provider": "synthetic", "name": "Quick", "reasoning": False}],
+            "default_model": "synthetic/default", "thinking_levels": ["off", "low", "medium", "high"]}
+
     def action(self, feature_id, action, request_id, **kwargs):
         return self.store.feature_action(feature_id, action, request_id, **kwargs)
 

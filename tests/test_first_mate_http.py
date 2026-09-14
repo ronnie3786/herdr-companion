@@ -95,6 +95,23 @@ class FirstMateHTTPTests(unittest.TestCase):
             code, _ = self.request(path, {"action": action, "request_id": action})
             self.assertEqual(code, 400)
 
+    def test_model_settings_require_auth_and_do_not_wake_agents(self):
+        _, data = self.create()
+        identity = data["feature"]["id"]
+        path = f"/api/v1/first-mate/features/{identity}/model-settings"
+        body = {"model": "synthetic/reasoner", "thinking": "high", "expected_settings_revision": 0, "request_id": "settings-one"}
+        for token in (None, "synthetic-ingest-token"):
+            self.assertEqual(self.request(path, body, token=token)[0], 401)
+        wakes = list(self.wakes)
+        code, result = self.request(path, body)
+        self.assertEqual(code, 200)
+        self.assertEqual(result["feature"]["coordinator_model"], body["model"])
+        self.assertEqual(self.wakes, wakes)
+        self.assertEqual(len(result["messages"]), 1)
+        self.assertEqual(self.request(path, body)[0], 200)
+        self.assertEqual(self.request(path, {**body, "request_id": "stale"})[0], 409)
+        self.assertEqual(self.request(path, {**body, "thinking": "invalid"})[0], 400)
+
     def test_events_and_validation(self):
         _, data = self.create()
         identity = data["feature"]["id"]

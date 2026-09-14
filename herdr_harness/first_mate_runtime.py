@@ -207,6 +207,9 @@ class FirstMateRuntime:
         self._mutex = threading.RLock()
         self._manager_lock = None
         self._last_watch = 0.0
+        self._catalog_lock = threading.Lock()
+        self._catalog_cache = None
+        self._catalog_at = 0.0
 
     def capabilities(self) -> dict:
         return {"available": bool(self.pi_bin and self.extension and self.extension.is_file()),
@@ -215,6 +218,14 @@ class FirstMateRuntime:
                 "max_workers": self.max_workers,
                 "reason": ("Pi is not installed or executable on this host" if not self.pi_bin else
                            "The managed First Mate Pi extension is unavailable" if not self.extension or not self.extension.is_file() else None)}
+
+    def model_catalog(self) -> dict:
+        from .first_mate_models import read_model_catalog
+        with self._catalog_lock:
+            if self._catalog_cache is None or time.monotonic() - self._catalog_at > 30:
+                self._catalog_cache = read_model_catalog(self.pi_bin, self.environ, self.root)
+                self._catalog_at = time.monotonic()
+            return self._catalog_cache
 
     def start(self) -> None:
         with self._mutex:
@@ -376,6 +387,12 @@ class FirstMateRuntime:
                "workspace_mode": claim.get("metadata", {}).get("workspace_mode", "read_only"),
                "model": claim.get("model") or self.environ.get("HERDR_FIRST_MATE_MODEL", ""),
                "charter": {"coordinator": COORDINATOR_PROMPT, "worker": WORKER_PROMPT, "advisor": ADVISOR_PROMPT}[kind]}
+        if kind == "coordinator":
+            # Refresh at durable job creation. Existing jobs keep their original settings.
+            settings = self.store.get_feature(feature["id"])
+            job["model"] = settings.get("coordinator_model") or self.environ.get("HERDR_FIRST_MATE_MODEL", "")
+            job["thinking"] = settings.get("coordinator_thinking", "")
+            job["model_settings_revision"] = settings.get("model_settings_revision", 0)
         if kind == "worker":
             if claim.get("attempt", 0) > 1 and not handoff_id:
                 predecessors = [j for j in self._jobs() if j["kind"] == "worker" and j["claim"]["id"] == claim["id"]]
@@ -1156,6 +1173,8 @@ def run_detached(directory: Path) -> int:
         command += ["--tools", "read,grep,find,ls,fm_status,fm_read_document,fm_read_session,fm_advice,fm_recovery_brief"]
     if job.get("model"):
         command += ["--model", job["model"]]
+    if job.get("thinking"):
+        command += ["--thinking", job["thinking"]]
     process = None
     event_lock = threading.Lock()
     accepted = threading.Event()

@@ -938,7 +938,9 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
         def _first_mate_route(self, method: str, tail: list[str], query: dict, body: dict):
             store = service.first_mate_store
             if method == "GET" and tail == ["capabilities"]:
-                return {"ok": True, "capabilities": ["first-mate-v1"], **service.first_mate.capabilities()}
+                return {"ok": True, "capabilities": ["first-mate-v1", "first-mate-model-settings-v1"], **service.first_mate.capabilities()}
+            if method == "GET" and tail == ["models"]:
+                return {"ok": True, **service.first_mate.model_catalog()}
             if tail == ["features"]:
                 if method == "GET":
                     return {"ok": True, "features": store.list_features()}
@@ -954,6 +956,10 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             if len(tail) >= 2 and tail[0] == "features":
                 feature_id = _string(tail[1], "feature_id", maximum=128)
                 if len(tail) == 2 and method == "GET":
+                    return {"ok": True, **store.snapshot(feature_id)}
+                if tail[2:] == ["model-settings"] and method == "POST":
+                    store.set_model_settings(feature_id, body)
+                    # Settings alone never enqueue a conversation turn or authorize work.
                     return {"ok": True, **store.snapshot(feature_id)}
                 if tail[2:] == ["messages"] and method == "POST":
                     if set(body) - {"text", "request_id"}:

@@ -96,7 +96,9 @@ final class FirstMateStore {
 
     func receive(_ value: FirstMateSnapshot) {
         guard value.ok else { return }
-        if let existing = snapshots[value.feature.id], existing.feature.revision > value.feature.revision { return }
+        if let existing = snapshots[value.feature.id],
+           existing.feature.revision > value.feature.revision ||
+           (existing.feature.modelSettingsRevision ?? 0) > (value.feature.modelSettingsRevision ?? 0) { return }
         if value.hasDetails, let existing = snapshots[value.feature.id], existing.feature.revision == value.feature.revision,
            (existing.events.map(\.sequence).max() ?? 0) > (value.events.map(\.sequence).max() ?? 0) { return }
         if !value.hasDetails, var existing = snapshots[value.feature.id] {
@@ -223,6 +225,24 @@ final class FirstMateStore {
             error = nil
             await refresh()
         } catch { if capturedGeneration == generation { record(error) } }
+    }
+
+    func fetchModelCatalog(expectedContext: OperationContext) async throws -> FirstMateModelCatalog {
+        guard expectedContext == operationContext, !isDemo, let client else { throw APIError.invalidResponse }
+        let catalog = try await client.fetchFirstMateModels()
+        guard expectedContext == operationContext, catalog.ok else { throw APIError.invalidResponse }
+        return catalog
+    }
+
+    func saveModelSettings(_ settings: FirstMateModelSettings, expectedContext: OperationContext) async throws {
+        guard expectedContext == operationContext, let id = selectedFeatureID,
+              !isDemo, !isSending, let client else { throw APIError.invalidResponse }
+        let capturedGeneration = generation
+        isSending = true
+        defer { if generation == capturedGeneration { isSending = false } }
+        let value = try await client.setFirstMateModel(featureID: id, settings: settings)
+        guard generation == capturedGeneration, value.ok, value.feature.id == id else { throw APIError.invalidResponse }
+        receive(value)
     }
 
     func open(_ resource: FirstMateResource) async {

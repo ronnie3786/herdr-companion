@@ -23,6 +23,7 @@ import hashlib,json,os,sys,time,uuid
 from pathlib import Path
 root=Path(os.environ['HERDR_FIRST_MATE_JOB_DIR'])
 job=json.loads((root/'job.json').read_text())
+(root/'argv.json').write_text(json.dumps(sys.argv))
 session=Path(job['session_file'])
 session.parent.mkdir(parents=True,exist_ok=True)
 if session.exists() and session.stat().st_size:
@@ -146,6 +147,19 @@ class FirstMateRuntimeTests(unittest.TestCase):
         errors = {str(p): p.read_text() for p in (self.root / 'runtime').rglob('*error*.json')}
         statuses = {str(p): p.read_text() for p in (self.root / 'runtime').rglob('status.json')}
         self.fail(f'Condition not reached. Errors: {errors}; status: {statuses}')
+
+    def test_selected_model_and_effort_reach_pi_without_overriding_workers(self):
+        feature = self.feature()
+        self.store.set_model_settings(feature['id'], {'model': 'synthetic/reasoner', 'thinking': 'high', 'expected_settings_revision': 0, 'request_id': 'select-model'})
+        self.until(lambda: self.store.get_feature(feature['id'])['status']=='awaiting_direction')
+        for job in self.runtime._jobs():
+            argv = json.loads((self.runtime._job_dir(job) / 'argv.json').read_text())
+            if job['kind'] == 'coordinator':
+                self.assertEqual(argv[argv.index('--model') + 1], 'synthetic/reasoner')
+                self.assertEqual(argv[argv.index('--thinking') + 1], 'high')
+            else:
+                self.assertNotIn('--model', argv)
+                self.assertNotIn('--thinking', argv)
 
     def test_real_process_plans_reports_and_parks_at_human_gate(self):
         feature = self.feature()

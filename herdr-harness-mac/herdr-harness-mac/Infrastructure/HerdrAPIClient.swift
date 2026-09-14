@@ -27,6 +27,14 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient {
         try await request(path: "/api/v1/workspaces")
     }
 
+    func fetchFirstMateModels() async throws -> FirstMateModelCatalog {
+        try await request(path: "/api/v1/first-mate/models")
+    }
+
+    func setFirstMateModel(featureID: String, settings: FirstMateModelSettings) async throws -> FirstMateSnapshot {
+        try await request(path: firstMatePath("features", id: featureID) + "/model-settings", method: "POST", body: settings)
+    }
+
     func fetchFirstMateFeatures() async throws -> FirstMateFeatureList {
         try await request(path: "/api/v1/first-mate/features")
     }

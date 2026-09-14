@@ -58,3 +58,38 @@ provider/model identifier verified in that same environment. Pi's advertised
 catalog alone does not prove account access. Check a small real request before
 switching. Expired OAuth refresh tokens require Pi's `/login` flow for that
 provider; never copy credentials from another host.
+
+## Feature model and thinking effort (companion 0.12.0b3+)
+
+In Mac build 29 or later, click the model control above the First Mate message
+field. Search the connected host's Pi model catalog, choose a model and thinking
+effort, then Save. Each feature retains its own coordinator settings. Choose
+Host default to inherit `first_mate.model`; Automatic effort retains Pi's saved
+session/default behavior. Pi clamps requested effort to levels the model supports.
+The model catalog reflects configured providers, not a successful billing or OAuth
+check. Provider failures remain visible when the next turn runs.
+
+```sh
+herdr-first-mate models
+herdr-first-mate get FEATURE_ID
+herdr-first-mate set-model FEATURE_ID --model 'provider/model' --thinking high \
+  --expected-settings-revision 0 --request-id feature-model-1
+# Restore the host model and Pi's session/default effort:
+herdr-first-mate set-model FEATURE_ID --model '' --thinking '' \
+  --expected-settings-revision 1 --request-id feature-model-reset
+```
+
+Read `feature.model_settings_revision` before updating. A stale revision returns
+409 without overwriting another client's choice. Reuse the same request ID and
+payload after an uncertain response. Each change adds one journal event. Settings
+apply to new coordinator dispatches; existing dispatches, workers, advisors,
+workflow revisions and human approvals remain unchanged. Saving does not start
+a model turn. The native conversation continues across model changes.
+
+The authenticated API adds `GET /api/v1/first-mate/models` and
+`POST /api/v1/first-mate/features/:id/model-settings` with `model`, `thinking`,
+`expected_settings_revision` and `request_id`. Capability:
+`first-mate-model-settings-v1`. The feature fields are additive. Older apps and
+CLI versions can continue using the server. New apps retain chat on older servers
+and explain that model controls require a companion update. The Mac updater does
+not install the companion package; update that component separately.

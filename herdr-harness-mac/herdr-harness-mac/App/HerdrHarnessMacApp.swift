@@ -77,10 +77,10 @@ struct HerdrHarnessMacApp: App {
                 // on macOS, so Herdr uses this custom scale environment instead.
                 .environment(\.herdrFontScale, fontScale.scale)
                 .frame(minWidth: 1000, minHeight: 680)
-                .background(HerdrTheme.ink)
-                .foregroundStyle(HerdrTheme.text)
-                .preferredColorScheme(.dark)
-                .tint(HerdrTheme.accent)
+                .background(shell.detailScope == .firstMate ? FirstMatePalette(scheme: shell.firstMate.colorScheme).background : HerdrTheme.ink)
+                .foregroundStyle(shell.detailScope == .firstMate ? FirstMatePalette(scheme: shell.firstMate.colorScheme).text : HerdrTheme.text)
+                .preferredColorScheme(shell.detailScope == .firstMate ? shell.firstMate.colorScheme : .dark)
+                .tint(shell.detailScope == .firstMate ? FirstMatePalette(scheme: shell.firstMate.colorScheme).accent : HerdrTheme.accent)
         }
         // When the NSWindow has been closed, ask SwiftUI to recreate this scene
         // before delivering the URL to AppRootView's onOpenURL handler.

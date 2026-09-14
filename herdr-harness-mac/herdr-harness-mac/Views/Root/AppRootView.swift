@@ -10,6 +10,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
     case git
     case workspace
     case activeWork
+    case firstMate
     case fleet
     case attention
     case activity
@@ -18,11 +19,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
 
     /// Destinations represented by the central segmented picker.
     ///
-    /// Every destination is a segment today. The indirection stays because the
-    /// shell may yet grow a destination that does not belong in the picker —
-    /// Fleet briefly was one, and reaching it from its own toolbar button put a
-    /// second Fleet affordance in the window chrome that the picker already
-    /// had room for.
+    /// First Mate has its own feature sidebar and a dedicated entry from the navigator.
     static let pickerCases: [HerdrDetailScope] = [
         .session,
         .git,
@@ -51,6 +48,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .session: "Session"
         case .git: "Git"
         case .workspace: "Workspace"
+        case .firstMate: "First Mate"
         case .activeWork: "Active Work"
         case .fleet: "Fleet"
         case .attention: "Attention"
@@ -63,6 +61,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .session: "bubble.left"
         case .git: "arrow.triangle.branch"
         case .workspace: "rectangle.3.group"
+        case .firstMate: "sailboat"
         case .activeWork: "square.grid.2x2"
         case .fleet: "desktopcomputer"
         case .attention: "bell"
@@ -78,6 +77,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
 @Observable
 final class HerdrShellState {
     var detailScope: HerdrDetailScope = .session
+    let firstMate = FirstMateStore()
     private(set) var paneModeFocusRequest = 0
     var isCreatingWorkspace = false
     var isAgentPresented = false
@@ -180,6 +180,8 @@ final class HerdrShellState {
             return .attention
         case .workspace:
             return model.workspace(id: model.selectedWorkspaceID) != nil ? .workspace : .attention
+        case .firstMate:
+            return .firstMate
         case .activeWork:
             return .activeWork
         case .fleet:
@@ -201,6 +203,7 @@ final class HerdrShellState {
         case .session, .git:
             model.selectedPaneID.map { detailScope == .git ? .git($0) : .pane($0) }
         case .workspace: model.selectedWorkspaceID.map(HerdrDestination.workspace)
+        case .firstMate: .firstMate
         case .activeWork: .activeWork
         case .fleet: .fleet
         case .attention: .attention
@@ -284,6 +287,7 @@ final class HerdrShellState {
             model.selectedWorkspaceID = id
             model.selectedPaneID = nil      // mirrors showWorkspace(id:model:)
             detailScope = .workspace
+        case .firstMate: detailScope = .firstMate
         case .activeWork: detailScope = .activeWork
         case .fleet: detailScope = .fleet
         case .attention: detailScope = .attention
@@ -296,7 +300,7 @@ final class HerdrShellState {
         switch destination {
         case let .pane(id), let .git(id): model.pane(id: id) != nil
         case let .workspace(id): model.workspace(id: id) != nil
-        case .activeWork, .fleet, .attention, .activity: true
+        case .firstMate, .activeWork, .fleet, .attention, .activity: true
         }
     }
 
@@ -389,8 +393,14 @@ struct AppRootView: View {
         }
         .onAppear {
             driver.startPulse(model: model, pulse: herdPulse)
-            hudNotes.configureSync(model: model)
-            hudController.configure(model: model, session: hudSession, notes: hudNotes, fontScale: fontScale, quickVoice: quickVoiceController)
+            // The isolated First Mate recording and unit-test host need no floating HUD.
+            // Creating it here also asks iconservices for an app icon during layout.
+            if !ProcessInfo.processInfo.arguments.contains("-HerdrFirstMateDemo"),
+               ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
+               NSClassFromString("XCTestCase") == nil {
+                hudNotes.configureSync(model: model)
+                hudController.configure(model: model, session: hudSession, notes: hudNotes, fontScale: fontScale, quickVoice: quickVoiceController)
+            }
         }
         .task {
             if let paneID = HerdrMacAppDelegate.takePendingPaneID() {

@@ -125,9 +125,8 @@ struct ShellNavigationHistoryTests {
         #expect(HerdrDetailScope.pickerCases.contains(.fleet))
         #expect(HerdrDetailScope.pickerSelection(for: .fleet) == .fleet)
         #expect(HerdrDetailScope.pickerSelection(for: .attention) == .attention)
-        // Every destination is a segment today, so the proxy is the identity —
-        // pin that rather than let a dropped case pass unnoticed.
-        #expect(HerdrDetailScope.pickerCases == HerdrDetailScope.allCases)
+        // First Mate has its own feature sidebar; the other destinations remain segments.
+        #expect(HerdrDetailScope.pickerCases == HerdrDetailScope.allCases.filter { $0 != .firstMate })
 
         try withModel { model, shell, firstPane, _, _, _ in
             shell.openPane(id: firstPane.id, model: model)

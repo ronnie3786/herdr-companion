@@ -1,0 +1,17 @@
+[
+  {
+    "id": "one-conversation",
+    "title": "One conversation. A whole crew.",
+    "text": "Every feature gets its own First Mate. Tell it what you want to achieve, and it shapes the next step with you. Planning, implementation, and review happen in independent agent sessions. Your First Mate stays here, ready for your next question. The workspace shows what is running and where the evidence lives. When a major step finishes, the work pauses. First Mate brings you a clear result and a recommendation. You choose what comes next, in your own words."
+  },
+  {
+    "id": "review-crew",
+    "title": "Seven perspectives. One clear result.",
+    "text": "A review can involve seven independent agents without turning your workspace into seven conversations to manage. Open the workflow to see the review as one step. Open Agents to meet the specialists. Each has its own saved session, assignment, and result. Documents stay attached to the step that produced them, so you can trace a finding back to its source. First Mate brings those findings together. You inspect the evidence, make the decision, and shape the next part of the workflow."
+  },
+  {
+    "id": "continuity",
+    "title": "Fresh sessions. Continuous work.",
+    "text": "Long work needs more than a long conversation. The companion service keeps the work log, tracks execution, and watches for trouble. When a session needs a fresh start, its checkpoint preserves the assignment, decisions, evidence, and next action. A successor loads that checkpoint and verifies its workspace before taking over. The old session becomes history, not a loose end. You can follow what happened in the feature journal. First Mate stays focused on the feature, while the system keeps track of the details."
+  }
+]

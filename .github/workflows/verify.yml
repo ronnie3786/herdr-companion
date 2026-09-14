@@ -26,6 +26,7 @@ jobs:
       - run: python -m unittest discover -s tests
       - run: npm --prefix pi-semantic-bridge ci --ignore-scripts
       - run: npm --prefix pi-semantic-bridge test
+      - run: node --test tests/first_mate_web.test.cjs
       - run: npm --prefix frontend/herdr-web ci --ignore-scripts
       - run: npm --prefix frontend/herdr-web test
       - run: npm --prefix frontend/herdr-web run build

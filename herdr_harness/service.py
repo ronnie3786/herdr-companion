@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import socket
+import tempfile
 import threading
 import time
 import uuid
@@ -24,6 +25,7 @@ from .agent_runs import ACT_CHARTER, ASK_CHARTER, THINKING_LEVELS, AgentRunError
 from .client import DEFAULT_SUBSCRIPTIONS, HerdrClient, HerdrClientError
 from .cleanup import DEFAULT_JUDGE_CHARTER, CleanupManager, _parse_time
 from .events import EventBroker
+from .first_mate_store import FirstMateStore
 from .network import network_payload
 from .normalization import composite_workspaces, pane_index
 from .notes import NotesStore
@@ -123,6 +125,8 @@ class HerdrService:
         agent_activity: Optional[AgentActivityManager] = None,
         remote_activity: Optional[RemoteActivityPoller] = None,
         result_artifact_store: Optional[result_artifacts.ResultArtifactStore] = None,
+        first_mate_store: Optional[FirstMateStore] = None,
+        first_mate_runtime: Optional[Any] = None,
     ) -> None:
         production_environment = environ is None
         self.environ = dict(os.environ if production_environment else environ)
@@ -194,6 +198,16 @@ class HerdrService:
         # a subprocess manager, and delaying creation avoids touching its
         # private persistence directory until the feature is actually used.
         self._agent_runs = agent_runs
+        self._first_mate_store = first_mate_store
+        self._first_mate_runtime = first_mate_runtime
+        self._first_mate_notifications = None
+        self._owns_first_mate_store = first_mate_store is None
+        self._first_mate_store_path = self.environ.get("HERDR_HARNESS_FIRST_MATE_STORE_PATH") or (
+            str(Path(self.environ.get("HERDR_STATE_DIR") or Path.home() / ".local/share/herdr-companion") / "first-mate.sqlite3")
+            if production_environment or self.environ.get("HERDR_STATE_DIR") else ":memory:"
+        )
+        self._first_mate_execution_enabled = first_mate_runtime is not None or self._first_mate_store_path != ":memory:"
+        self._first_mate_transient_root = None
         self._quick_voice = None
         self._quick_voice_recovery_enabled = production_environment or "HERDR_QUICK_VOICE_STORE_PATH" in self.environ
         self._quick_voice_lock = threading.Lock()
@@ -478,10 +492,19 @@ class HerdrService:
         self._refresh_thread.start()
         self.unread_notifications.start()
         self.session_labels.start()
+        # The service resumes recorded First Mate work independently of any
+        # client opening the feature screen or the coordinator being active.
+        if self._first_mate_execution_enabled:
+            self.first_mate.start()
+            self.first_mate_notifications.start()
         if self._quick_voice_recovery_enabled:
             self.quick_voice.recover()
 
     def stop(self) -> None:
+        if self._first_mate_notifications is not None:
+            self._first_mate_notifications.stop()
+        if self._first_mate_runtime is not None:
+            self._first_mate_runtime.stop()
         self.notes.close()
         self.unread_notifications.stop()
         self.session_labels.stop()
@@ -516,6 +539,44 @@ class HerdrService:
                 stop_agent_runs()
         if self._owns_active_work:
             self.active_work.close()
+        if self._owns_first_mate_store and self._first_mate_store is not None:
+            self._first_mate_store.close()
+        if self._first_mate_transient_root is not None:
+            self._first_mate_transient_root.cleanup()
+
+    @property
+    def first_mate_store(self) -> FirstMateStore:
+        with self._lock:
+            if self._first_mate_store is None:
+                self._first_mate_store = FirstMateStore(self._first_mate_store_path)
+            return self._first_mate_store
+
+    @property
+    def first_mate(self):
+        from .first_mate_runtime import FirstMateRuntime
+        with self._lock:
+            if self._first_mate_runtime is None:
+                runtime_root = None
+                if not self._first_mate_execution_enabled:
+                    # Explicit in-memory services are ephemeral (for example,
+                    # protocol tests) and must never inspect a host's live jobs.
+                    self._first_mate_transient_root = tempfile.TemporaryDirectory(prefix="herdr-first-mate-")
+                    runtime_root = self._first_mate_transient_root.name
+                self._first_mate_runtime = FirstMateRuntime(self.first_mate_store, environ=self.environ, runtime_root=runtime_root)
+            return self._first_mate_runtime
+
+    def first_mate_changed(self, feature_id: str) -> None:
+        if self._first_mate_execution_enabled:
+            self.first_mate.wake()
+        self.broker.publish("first_mate.updated", {"feature_id": feature_id, "generatedAt": utc_now()})
+
+    @property
+    def first_mate_notifications(self):
+        from .first_mate_notifications import FirstMateNotifications
+        with self._lock:
+            if self._first_mate_notifications is None:
+                self._first_mate_notifications = FirstMateNotifications(self.first_mate_store, self.environ)
+            return self._first_mate_notifications
 
     @property
     def agent_runs(self) -> AgentRunManager:

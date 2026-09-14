@@ -16,15 +16,20 @@ struct WorkspaceNavigationView: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            HerdrSidebarView(
-                model: model,
-                openPane: openSession,
-                openWorkspace: { shell.showWorkspace(id: $0.id, model: model) }
-            )
-                // AppKit remembers a column the user has dragged, so ideal only
-                // affects a fresh profile. Sidebar padding moves existing content.
-                .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 480)
-                .background(HerdrTheme.ink)
+            Group {
+                if shell.detailScope == .firstMate {
+                    FirstMateSidebarView(store: shell.firstMate, back: { shell.show(.session, model: model) }, canControl: model.canControlPrimary)
+                } else {
+                    HerdrSidebarView(
+                        model: model,
+                        openPane: openSession,
+                        openWorkspace: { shell.showWorkspace(id: $0.id, model: model) },
+                        openFirstMate: { shell.show(.firstMate, model: model) }
+                    )
+                    .background(HerdrTheme.ink)
+                }
+            }
+            .navigationSplitViewColumnWidth(min: shell.detailScope == .firstMate ? 210 : 240, ideal: shell.detailScope == .firstMate ? 235 : 280, max: 480)
         } detail: {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -32,6 +37,16 @@ struct WorkspaceNavigationView: View {
                 .toolbar { detailToolbar }
         }
         .navigationSplitViewStyle(.balanced)
+        .task(id: FirstMateConnectionIdentity(configuration: model.activeServerConfiguration, generation: model.connectionGeneration, isDemo: model.isDemoMode)) {
+            shell.firstMate.configure(
+                client: model.activeServerConfiguration.map { HerdrAPIClient(configuration: $0) },
+                demo: model.isDemoMode
+            )
+            await shell.firstMate.refresh()
+            if model.isDemoMode, ProcessInfo.processInfo.arguments.contains("-HerdrFirstMateDemo") {
+                shell.show(.firstMate, model: model)
+            }
+        }
         // Revealing a pane in a column the user has hidden would be a silent
         // no-op, so ⇧⌘K brings the navigator back first.
         .onChange(of: model.sidebarRevealToken) { _, token in
@@ -84,6 +99,8 @@ struct WorkspaceNavigationView: View {
                     detail: "Its tabs and panes will appear here."
                 )
             }
+        case .firstMate:
+            FirstMateWorkspaceView(store: shell.firstMate, canControl: model.canControlPrimary)
         case .activeWork:
             Group {
                 if model.isDemoMode || model.activeWorkLegacyUI {
@@ -215,11 +232,16 @@ struct WorkspaceNavigationView: View {
         .sharedBackgroundVisibility(.hidden)
 
         ToolbarItem(placement: .principal) {
-            WorkspaceScopePicker(
-                selection: scopeSelection,
-                includesGit: model.currentPaneGitIsAvailable,
-                unreadAlertCount: model.unreadAlertCount
-            )
+            if shell.detailScope == .firstMate {
+                Label("First Mate", systemImage: "sailboat")
+                    .foregroundStyle(.primary)
+            } else {
+                WorkspaceScopePicker(
+                    selection: scopeSelection,
+                    includesGit: model.currentPaneGitIsAvailable,
+                    unreadAlertCount: model.unreadAlertCount
+                )
+            }
         }
         .sharedBackgroundVisibility(.hidden)
 
@@ -229,7 +251,7 @@ struct WorkspaceNavigationView: View {
             }
             .labelStyle(.iconOnly)
             .buttonStyle(.plain)
-            .foregroundStyle(HerdrTheme.mist)
+            .foregroundStyle(shell.detailScope == .firstMate ? FirstMatePalette(scheme: shell.firstMate.colorScheme).secondaryText : HerdrTheme.mist)
             .herdrHitTarget()
             .disabled(!model.canControl)
             .help("Ask a one-off question without creating a chat")
@@ -281,7 +303,7 @@ struct WorkspaceNavigationView: View {
                 .herdrHitTarget()
         }
         .buttonStyle(.plain)
-        .foregroundStyle(isEnabled ? HerdrTheme.mist : HerdrTheme.muted)
+        .foregroundStyle(shell.detailScope == .firstMate ? FirstMatePalette(scheme: shell.firstMate.colorScheme).secondaryText : isEnabled ? HerdrTheme.mist : HerdrTheme.muted)
         .disabled(!isEnabled)
         .help(help)
         .accessibilityLabel(label)

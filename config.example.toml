@@ -112,6 +112,21 @@ thinking_level = "high"
 # workflow_root = "~/projects/your-workflows" # Optional Buzz integration.
 # workflows_dir = "~/.local/share/herdr-companion/workflows" # Local workflow JSON definitions; defaults to <state_dir>/workflows.
 
+[first_mate]
+# Each feature gets a saved Pi coordinator and independent worker sessions.
+# Pi must be available to the server with a configured provider/login.
+# model = "your-provider/your-model" # Omit to use Pi's configured default.
+max_workers = 8
+context_target = 150000
+stall_seconds = 600
+coordinator_timeout_seconds = 180
+# State defaults to first-mate.sqlite3 and first-mate-runs under server.state_dir.
+# message_hub_url = "https://messages.example.invalid/api/v1/messages"
+# message_hub_token_file = "~/.config/herdr-companion/secrets/message-hub-token"
+# app_url = "https://desktop.example.invalid/first-mate/"
+# A major-stage completion sends one Message Hub notification when configured.
+# Ambiguous delivery is logged, without an automatic duplicate phone alert.
+
 [remote_activity]
 # url = "https://worker.example.invalid"
 # token = { env = "WORKER_HERDR_TOKEN" }

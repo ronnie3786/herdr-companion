@@ -8,6 +8,7 @@ struct HerdrSidebarView: View {
     /// to work too).
     let openPane: (HerdrPane) -> Void
     let openWorkspace: (HerdrWorkspace) -> Void
+    var openFirstMate: (() -> Void)? = nil
     @State private var query = ""
     @State private var selectedColor: ChatTabColor?
     @State private var isPresentingCreateWorkspace = false
@@ -221,6 +222,14 @@ struct HerdrSidebarView: View {
         let snapshot = resolvedSnapshot(fingerprint: fingerprint)
         VStack(alignment: .leading, spacing: 8) {
             header
+            if let openFirstMate {
+                Button("First Mate", systemImage: "sailboat", action: openFirstMate)
+                    .buttonStyle(.plain)
+                    .font(.headline)
+                    .foregroundStyle(HerdrTheme.accent)
+                    .padding(.vertical, 10)
+                    .accessibilityIdentifier("open-first-mate")
+            }
 
             if model.machines.count > 1 {
                 machinePicker

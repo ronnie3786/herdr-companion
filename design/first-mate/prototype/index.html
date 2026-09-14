@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark"><title>Herdr · First Mate prototype</title>
+<link rel="stylesheet" href="styles.css?v=c9fea6cb967e">
+<script src="data.js?v=c53995bfe112" defer></script><script src="app.js?v=b4e2ac0ca58d" defer></script>
+</head>
+<body>
+<header class="titlebar">
+  <div class="brand"><span class="traffic" aria-hidden="true"><i></i><i></i><i></i></span><button class="icon-button mobile-menu" data-action="sidebar" aria-label="Show features"></button><strong>Herdr</strong><span class="brand-caption">First Mate</span></div>
+  <button class="global-search" data-action="search" aria-label="Search features, agents, or documents"><span data-icon="search"></span><span>Search features, agents, or documents</span><kbd>⌘ K</kbd></button>
+  <div class="top-actions"><button class="demo-button" data-action="demo"><span class="demo-dot"></span>Prototype</button><button class="icon-button" data-action="theme" id="theme-button" aria-label="Switch to dark mode"></button><span class="user-avatar" aria-label="You">You</span></div>
+</header>
+<nav class="mobile-switch" aria-label="Mobile view"><button data-action="mobile-chat" class="selected">First Mate</button><button data-action="mobile-workspace">Workspace</button></nav>
+<main class="app-shell">
+  <aside class="sidebar" id="sidebar" aria-label="Features"></aside>
+  <div class="divider" data-divider="sidebar" role="separator" aria-label="Resize features" aria-orientation="vertical" tabindex="0"></div>
+  <section class="conversation" aria-label="First Mate conversation">
+    <header class="conversation-header" id="conversation-header"></header>
+    <div class="messages" id="messages" role="log" aria-label="Conversation messages" aria-live="polite"></div>
+    <div class="composer-wrap">
+      <div class="suggestions" id="suggestions"></div>
+      <form class="composer" id="chat-form"><label class="sr-only" for="prompt">Message First Mate</label><textarea id="prompt" rows="2" placeholder="Message First Mate…"></textarea><div id="attachment-list" class="attachment-list"></div><div class="composer-toolbar"><div><button type="button" class="icon-button" data-action="attach" aria-label="Attach a file"><span data-icon="plus"></span></button><button type="button" class="voice-button" data-action="voice"><span data-icon="mic"></span><span id="voice-label">Voice</span></button><span class="toolbar-rule"></span><label class="sr-only" for="model">First Mate model</label><select id="model"><option>Deep model</option><option>Fast model</option><option>Balanced model</option></select></div><button class="send-button" id="send-button" type="submit" aria-label="Send message"><span data-icon="send"></span></button></div></form>
+      <div class="composer-foot"><span class="live-dot"></span><span id="composer-status">Ready when you are</span><span>Enter to send</span></div>
+    </div>
+  </section>
+  <div class="divider" data-divider="chat" role="separator" aria-label="Resize conversation" aria-orientation="vertical" tabindex="0"></div>
+  <section class="workspace" aria-label="Feature workspace">
+    <nav class="workspace-tabs" role="tablist" aria-label="Feature views" id="workspace-tabs"></nav>
+    <div class="workspace-body" id="workspace-body" role="tabpanel"></div>
+  </section>
+</main>
+<input type="file" id="file-picker" hidden multiple>
+<dialog id="modal"><div id="modal-content"></div></dialog>
+<div id="resource-picker" class="resource-picker" popover="auto" role="dialog" aria-labelledby="picker-title"></div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script>try{const t=new URLSearchParams(location.search).get('theme')||localStorage.getItem('herdr-first-mate-theme');document.documentElement.dataset.theme=t==='dark'?'dark':'light'}catch{}</script>
+</body></html>

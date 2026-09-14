@@ -76,6 +76,14 @@ ENVIRONMENT_FIELDS = {
         "url": "HERDR_HARNESS_REMOTE_ACTIVITY_URL", "prefix": "HERDR_HARNESS_REMOTE_ACTIVITY_PREFIX",
         "token": "HERDR_HARNESS_REMOTE_ACTIVITY_TOKEN", "poll_seconds": "HERDR_HARNESS_REMOTE_ACTIVITY_POLL_SECONDS",
     },
+    "first_mate": {
+        "model": "HERDR_FIRST_MATE_MODEL", "max_workers": "HERDR_FIRST_MATE_MAX_WORKERS",
+        "context_target": "HERDR_FIRST_MATE_CONTEXT_TARGET", "stall_seconds": "HERDR_FIRST_MATE_STALL_SECONDS",
+        "coordinator_timeout_seconds": "HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS",
+        "store_path": "HERDR_HARNESS_FIRST_MATE_STORE_PATH", "runs_root": "HERDR_HARNESS_FIRST_MATE_RUNS_ROOT",
+        "message_hub_url": "HERDR_FIRST_MATE_MESSAGE_HUB_URL",
+        "message_hub_token": "HERDR_FIRST_MATE_MESSAGE_HUB_TOKEN", "app_url": "HERDR_FIRST_MATE_APP_URL",
+    },
     "integrations": {
         "github_repository": "HERDR_REVIEW_REPOSITORY", "jira_url": "HERDR_JIRA_URL",
         "review_model": "HERDR_REVIEW_MODEL", "review_assessor": "HERDR_REVIEW_ASSESSOR",
@@ -223,7 +231,7 @@ def load_configuration(
                 data = tomllib.load(handle)
         except (OSError, tomllib.TOMLDecodeError):
             raise ConfigurationError("Herdr configuration could not be read as valid TOML") from None
-        allowed_sections = {"version", "machine", "server", "fleet", "providers", "active_work", "remote_activity", "integrations", "push", "apple", "deployment", "environment", "machines"}
+        allowed_sections = {"version", "machine", "server", "fleet", "providers", "active_work", "first_mate", "remote_activity", "integrations", "push", "apple", "deployment", "environment", "machines"}
         if set(data) - allowed_sections:
             raise ConfigurationError("Unrecognized top-level configuration section; use the Herdr cluster configuration sample")
         if data.get("version", 1) != 1:
@@ -316,6 +324,7 @@ def load_configuration(
         paths = {
             "ALERT_STORE_PATH": "alerts.json", "STAR_STORE_PATH": "stars.json",
             "PI_STORE_PATH": "pi-semantic.sqlite3", "ACTIVE_WORK_STORE_PATH": "active-work.sqlite3",
+            "FIRST_MATE_STORE_PATH": "first-mate.sqlite3", "FIRST_MATE_RUNS_ROOT": "first-mate-runs",
             "CLEANUP_RUNS_ROOT": "cleanup/runs", "AGENT_RUNS_ROOT": "agent-runs",
             "ATTACHMENTS_DIR": "uploads", "NOTES_STORE_PATH": "notes.sqlite3",
             "PANE_SEEN_STORE_PATH": "pane-first-seen.json", "SESSION_LABEL_STORE_PATH": "session-labels.json",

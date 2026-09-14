@@ -13,10 +13,12 @@ import sys
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from . import attachments, response_audio, result_artifacts, voice
 from .active_work import ActiveWorkError
+from .first_mate_store import FirstMateError
 from .agent_runs import AgentRunError, MAX_ATTACHMENTS, MODEL_PATTERN, THINKING_LEVELS
 from .alerts import utc_now
 from .client import HerdrAPIError, HerdrClientError
@@ -75,6 +77,7 @@ _DISCONNECT_ERRNOS = {errno.EBADF, errno.ECONNABORTED, errno.ECONNRESET, errno.E
 
 _HERDR_WEB_STATIC = os.path.join(os.path.dirname(__file__), "static", "herdr-web")
 _BOARD_STATIC = os.path.join(os.path.dirname(__file__), "static", "board.html")
+_FIRST_MATE_STATIC = os.path.join(os.path.dirname(__file__), "static", "first-mate")
 _HERDR_WEB_CONTENT_TYPES = {
     ".html": "text/html",
     ".js": "text/javascript",
@@ -363,9 +366,11 @@ def api_description() -> dict:
         "ok": True,
         "service": "herdr-harness",
         "version": 1,
-        "capabilities": ["pane-retirement-v1"],
+        "capabilities": ["pane-retirement-v1", "first-mate-v1"],
         "endpoints": {
             "health": "/api/v1/health",
+            "firstMate": "/api/v1/first-mate/features",
+            "firstMateCapabilities": "/api/v1/first-mate/capabilities",
             "network": "/api/v1/network",
             "snapshot": "/api/v1/snapshot",
             "workspaces": "/api/v1/workspaces",
@@ -730,6 +735,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     return
                 if method == "GET" and self._serve_board_static(path):
                     return
+                if method == "GET" and self._serve_first_mate_static(path):
+                    return
                 if len(segments) < 2 or segments[:2] != ["api", "v1"]:
                     self._error(404, "not_found", "Endpoint not found")
                     return
@@ -793,6 +800,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             except AgentRunError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except ActiveWorkError as exc:
+                self._error(exc.status, exc.code, str(exc))
+            except FirstMateError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except WorkspaceToolError as exc:
                 self._error(exc.status, exc.code, str(exc))
@@ -861,6 +870,36 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 return False
             return True
 
+        def _serve_first_mate_static(self, path: str) -> bool:
+            # Only public shell assets are served here. All feature data and
+            # mutations still pass through the normal authenticated API.
+            if path == "/first-mate":
+                if not urllib.parse.urlparse(self.path).path.endswith("/"):
+                    self.send_response(308)
+                    self.send_header("Location", "first-mate/")
+                    self.send_header("Content-Length", "0")
+                    self._common_headers()
+                    self.end_headers()
+                    return True
+                relative = "index.html"
+            elif path.startswith("/first-mate/"):
+                relative = path[len("/first-mate/"):]
+            else:
+                return False
+            if relative not in {"index.html", "styles.css", "app.js"}:
+                return False
+            target = Path(_FIRST_MATE_STATIC) / relative
+            if not target.is_file():
+                return False
+            body = target.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", _HERDR_WEB_CONTENT_TYPES.get(target.suffix, "application/octet-stream"))
+            self.send_header("Content-Length", str(len(body)))
+            self._common_headers()
+            self.end_headers()
+            self.wfile.write(body)
+            return True
+
         def _serve_board_static(self, path: str) -> bool:
             if path == "/board":
                 raw_path = urllib.parse.urlparse(self.path).path
@@ -896,6 +935,58 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 return False
             return True
 
+        def _first_mate_route(self, method: str, tail: list[str], query: dict, body: dict):
+            store = service.first_mate_store
+            if method == "GET" and tail == ["capabilities"]:
+                return {"ok": True, "capabilities": ["first-mate-v1"], **service.first_mate.capabilities()}
+            if tail == ["features"]:
+                if method == "GET":
+                    return {"ok": True, "features": store.list_features()}
+                if method == "POST":
+                    if set(body) - {"title", "goal", "cwd", "request_id", "work_item_id"}:
+                        raise HTTPValidationError("Feature contains an unsupported field")
+                    cwd = _string(body.get("cwd"), "cwd", maximum=4096)
+                    if not Path(cwd).is_absolute() or not Path(cwd).is_dir():
+                        raise HTTPValidationError("Choose an existing absolute project directory", code="first_mate_directory_invalid")
+                    feature = store.create_feature(body)
+                    service.first_mate_changed(feature["id"])
+                    return {"ok": True, "feature": feature}, 201
+            if len(tail) >= 2 and tail[0] == "features":
+                feature_id = _string(tail[1], "feature_id", maximum=128)
+                if len(tail) == 2 and method == "GET":
+                    return {"ok": True, **store.snapshot(feature_id)}
+                if tail[2:] == ["messages"] and method == "POST":
+                    if set(body) - {"text", "request_id"}:
+                        raise HTTPValidationError("Message contains an unsupported field")
+                    text = _string(body.get("text"), "text", maximum=200000)
+                    request_id = _string(body.get("request_id"), "request_id", maximum=200)
+                    message = store.append_human_message(feature_id, text, request_id)
+                    service.first_mate_changed(feature_id)
+                    return {"ok": True, "message": message, "feature": store.get_feature(feature_id)}, 202
+                if tail[2:] == ["actions"] and method == "POST":
+                    if set(body) - {"action", "request_id", "expected_revision"}:
+                        raise HTTPValidationError("Action contains an unsupported field")
+                    action = _string(body.get("action"), "action", maximum=32)
+                    if action not in {"pause", "resume", "cancel"}:
+                        raise HTTPValidationError("Use a message to direct the next stage", code="first_mate_action_invalid")
+                    request_id = _string(body.get("request_id"), "request_id", maximum=200)
+                    feature = service.first_mate.action(feature_id, action, request_id, expected_revision=body.get("expected_revision"))
+                    service.first_mate_changed(feature_id)
+                    return {"ok": True, "feature": feature}
+                if tail[2:] == ["events"] and method == "GET":
+                    try:
+                        after = int((query.get("after") or ["0"])[0])
+                    except (TypeError, ValueError) as exc:
+                        raise HTTPValidationError("Invalid event cursor") from exc
+                    return {"ok": True, **store.get_events(feature_id, after=after)}
+            if len(tail) == 2 and tail[0] == "documents" and method == "GET":
+                return {"ok": True, "document": store.get_document(tail[1])}
+            if len(tail) == 2 and tail[0] == "sessions" and method == "GET":
+                before = _query_int(query, "before", default=0, minimum=0, maximum=100000000) if "before" in query else None
+                limit = _query_int(query, "limit", default=100, minimum=1, maximum=100)
+                return service.first_mate.session(tail[1], before=before, limit=limit)
+            raise HTTPValidationError("First Mate endpoint not found", code="not_found", status=404)
+
         def _route(
             self,
             method: str,
@@ -907,6 +998,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             tail = segments[2:]
             if method == "GET" and not tail:
                 return api_description()
+            if tail[:1] == ["first-mate"]:
+                return self._first_mate_route(method, tail[1:], query, body)
             if tail == ["notes"]:
                 if method == "GET":
                     return service.notes.list((query.get("q") or [""])[0])

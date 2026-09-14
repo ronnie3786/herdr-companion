@@ -1,0 +1,40 @@
+WEBVTT
+
+1
+00:00:00.600 --> 00:00:03.000
+Long work needs more than a long conversation.
+
+2
+00:00:03.280 --> 00:00:07.360
+The companion service keeps the work log, tracks
+execution, and watches for trouble.
+
+3
+00:00:07.630 --> 00:00:09.180
+When a session needs a fresh start,
+
+4
+00:00:09.300 --> 00:00:13.320
+its checkpoint preserves the assignment, decisions,
+evidence, and next action.
+
+5
+00:00:13.700 --> 00:00:18.020
+A successor loads that checkpoint and verifies its
+workspace before taking over.
+
+6
+00:00:18.280 --> 00:00:21.060
+The old session becomes history, not a loose end.
+
+7
+00:00:21.310 --> 00:00:23.420
+You can follow what happened in the feature journal.
+
+8
+00:00:23.770 --> 00:00:25.950
+First Mate stays focused on the feature,
+
+9
+00:00:26.170 --> 00:00:28.330
+while the system keeps track of the details.

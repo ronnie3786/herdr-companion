@@ -1,0 +1,312 @@
+import Foundation
+import Observation
+import SwiftUI
+
+@MainActor @Observable
+final class FirstMateStore {
+    private(set) var features: [FirstMateFeature] = []
+    private(set) var snapshots: [String: FirstMateSnapshot] = [:]
+    var selectedFeatureID: String?
+    var inspector = FirstMateInspector.overview
+    var graphMode = false
+    var selectedVisitID: String?
+    var draft = ""
+    var search = ""
+    var isCreating = false
+    var isDark = ProcessInfo.processInfo.arguments.contains("-HerdrFirstMateDark")
+    private(set) var isDemo = false
+    private(set) var isRefreshing = false
+    private(set) var isSending = false
+    private(set) var hasLoaded = false
+    private(set) var error: String?
+    private(set) var unsupported = false
+    private(set) var lastUpdated: Date?
+    var openedResource: FirstMateResource?
+    var resourcePresentation: FirstMateResourcePresentation?
+    private(set) var resourceText = ""
+    private(set) var resourceLoading = false
+    private(set) var resourceError: String?
+    private(set) var sessionNextBefore: Int?
+    private(set) var sessionTotalMessages: Int?
+    private(set) var sessionLoadedMessages = 0
+    private(set) var isLoadingEarlier = false
+    private(set) var sessionPageError: String?
+    private var generation = 0
+    private var resourceGeneration = 0
+    private var drafts: [String: String] = [:]
+    private var pendingMessages: [String: (text: String, requestID: String)] = [:]
+    private var demoStep = 0
+    @ObservationIgnored private var client: (any FirstMateClient)?
+
+    var colorScheme: ColorScheme { isDark ? .dark : .light }
+    var snapshot: FirstMateSnapshot? { selectedFeatureID.flatMap { snapshots[$0] } }
+    var filteredFeatures: [FirstMateFeature] {
+        features.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.goal.localizedCaseInsensitiveContains(search) }
+    }
+
+    func configure(client: (any FirstMateClient)?, demo: Bool) {
+        generation += 1
+        resourceGeneration += 1
+        self.client = client
+        isDemo = demo
+        features = []
+        snapshots = [:]
+        selectedFeatureID = nil
+        selectedVisitID = nil
+        draft = ""
+        drafts = [:]
+        pendingMessages = [:]
+        openedResource = nil
+        resourcePresentation = nil
+        resourceText = ""
+        resetSessionPagination()
+        error = nil
+        unsupported = false
+        isRefreshing = false
+        isSending = false
+        isCreating = false
+        hasLoaded = false
+        lastUpdated = nil
+        if demo {
+            demoStep = 0
+            for value in FirstMateDemo.features(step: 0) { receive(value) }
+            selectedFeatureID = features.first?.id
+            hasLoaded = true
+        }
+    }
+
+    func select(_ id: String) {
+        if let old = selectedFeatureID { drafts[old] = draft }
+        selectedFeatureID = id
+        draft = drafts[id] ?? ""
+        selectedVisitID = snapshots[id]?.feature.currentVisitID
+        error = nil
+        closeResource()
+    }
+
+    func receive(_ value: FirstMateSnapshot) {
+        guard value.ok else { return }
+        if let existing = snapshots[value.feature.id], existing.feature.revision > value.feature.revision { return }
+        if value.hasDetails, let existing = snapshots[value.feature.id], existing.feature.revision == value.feature.revision,
+           (existing.events.map(\.sequence).max() ?? 0) > (value.events.map(\.sequence).max() ?? 0) { return }
+        if !value.hasDetails, var existing = snapshots[value.feature.id] {
+            // Mutations acknowledge the feature; their omitted arrays are not deletions.
+            existing.feature = value.feature
+            snapshots[value.feature.id] = existing
+        } else { snapshots[value.feature.id] = value }
+        if let index = features.firstIndex(where: { $0.id == value.feature.id }) {
+            features[index] = value.feature
+        } else { features.append(value.feature) }
+        lastUpdated = .now
+    }
+
+    func refresh() async {
+        guard !isDemo, !isRefreshing, let client else { return }
+        let capturedGeneration = generation
+        isRefreshing = true
+        defer { if capturedGeneration == generation { isRefreshing = false } }
+        do {
+            let list = try await client.fetchFirstMateFeatures()
+            guard capturedGeneration == generation else { return }
+            guard list.ok else { throw APIError.invalidResponse }
+            features = list.features.map { feature in
+                if let cached = snapshots[feature.id]?.feature,
+                   cached.revision > feature.revision || cached.updatedAt > feature.updatedAt { return cached }
+                return feature
+            }
+            if selectedFeatureID == nil { selectedFeatureID = features.first?.id }
+            if let id = selectedFeatureID {
+                let value = try await client.fetchFirstMateFeature(id)
+                guard capturedGeneration == generation else { return }
+                guard value.feature.id == id else { throw APIError.invalidResponse }
+                receive(value)
+            }
+            hasLoaded = true
+            unsupported = false
+            error = nil
+            lastUpdated = .now
+        } catch is CancellationError { return }
+        catch {
+            guard capturedGeneration == generation else { return }
+            hasLoaded = true
+            record(error)
+        }
+    }
+
+    func create(title: String, goal: String, cwd: String, requestID: String) async -> Bool {
+        guard !isSending else { return false }
+        let capturedGeneration = generation
+        isSending = true
+        defer { if capturedGeneration == generation { isSending = false } }
+        if isDemo {
+            let feature = FirstMateDemo.newFeature(title: title, goal: goal, cwd: cwd)
+            receive(feature)
+            select(feature.feature.id)
+            return true
+        }
+        guard let client else { error = "Connect to a companion server to create a feature."; return false }
+        do {
+            let value = try await client.createFirstMateFeature(title: title, goal: goal, cwd: cwd, requestID: requestID)
+            guard capturedGeneration == generation else { return false }
+            receive(value)
+            select(value.feature.id)
+            await refresh()
+            return true
+        } catch {
+            guard capturedGeneration == generation else { return false }
+            record(error)
+            return false
+        }
+    }
+
+    func send() async {
+        guard let id = selectedFeatureID, !isSending else { return }
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        if isDemo { sendDemo(text, featureID: id); return }
+        guard let client else { error = "Connect to send your direction."; return }
+        let pending = pendingMessages[id].flatMap { $0.text == text ? $0 : nil }
+            ?? (text: text, requestID: UUID().uuidString)
+        pendingMessages[id] = pending
+        let capturedGeneration = generation
+        isSending = true
+        defer { if capturedGeneration == generation { isSending = false } }
+        do {
+            let value = try await client.sendFirstMateMessage(featureID: id, text: text, requestID: pending.requestID)
+            guard capturedGeneration == generation else { return }
+            receive(value)
+            pendingMessages[id] = nil
+            if selectedFeatureID == id, draft.trimmingCharacters(in: .whitespacesAndNewlines) == text { draft = "" }
+            if drafts[id]?.trimmingCharacters(in: .whitespacesAndNewlines) == text { drafts[id] = nil }
+            error = nil
+            await refresh()
+        } catch {
+            guard capturedGeneration == generation else { return }
+            record(error)
+        }
+    }
+
+    func perform(_ action: String) async {
+        guard let id = selectedFeatureID, !isSending else { return }
+        if isDemo {
+            guard var value = snapshot else { return }
+            value.feature.status = action == "pause" ? "paused" : action == "cancel" ? "cancelled" : "awaiting_direction"
+            value.feature.revision += 1
+            receive(value)
+            return
+        }
+        guard let client else { return }
+        let capturedGeneration = generation
+        isSending = true
+        defer { if capturedGeneration == generation { isSending = false } }
+        do {
+            let value = try await client.performFirstMateAction(featureID: id, action: action, requestID: UUID().uuidString)
+            guard capturedGeneration == generation else { return }
+            receive(value)
+            error = nil
+            await refresh()
+        } catch { if capturedGeneration == generation { record(error) } }
+    }
+
+    func open(_ resource: FirstMateResource) async {
+        resourceGeneration += 1
+        let token = resourceGeneration
+        openedResource = resource
+        if resourcePresentation == nil { resourcePresentation = FirstMateResourcePresentation() }
+        resourceText = ""
+        resourceError = nil
+        resetSessionPagination()
+        resourceLoading = true
+        defer { if token == resourceGeneration { resourceLoading = false } }
+        if isDemo {
+            resourceText = FirstMateDemo.content(for: resource, snapshot: snapshot)
+            return
+        }
+        guard let client else { resourceError = "Reconnect to this feature's host to read its saved resource."; return }
+        do {
+            let content: String
+            switch resource {
+            case .document(let document):
+                let response = try await client.fetchFirstMateDocument(document.id)
+                guard response.ok, response.document.id == document.id else { throw APIError.invalidResponse }
+                content = response.document.content ?? response.content ?? "This document has no text preview."
+            case .session, .history:
+                guard let sessionID = resource.nativeSessionID else { throw APIError.invalidResponse }
+                let response = try await client.fetchFirstMateSession(sessionID, before: nil)
+                guard response.ok, response.nativeSessionID == sessionID else { throw APIError.invalidResponse }
+                guard token == resourceGeneration else { return }
+                sessionNextBefore = response.nextBefore
+                sessionTotalMessages = response.totalMessages
+                sessionLoadedMessages = response.messages?.count ?? 0
+                content = response.messages?.map { "\($0.role.capitalized)\n\($0.text)" }.joined(separator: "\n\n")
+                    ?? response.content ?? "The saved session does not have any messages yet."
+            }
+            guard token == resourceGeneration else { return }
+            resourceText = content
+        } catch { if token == resourceGeneration { resourceError = error.localizedDescription } }
+    }
+
+    func closeResource() {
+        resourceGeneration += 1
+        openedResource = nil
+        resourcePresentation = nil
+        resourceLoading = false
+        resetSessionPagination()
+    }
+
+    func loadEarlierSessionMessages() async {
+        guard !isLoadingEarlier, let before = sessionNextBefore,
+              let sessionID = openedResource?.nativeSessionID, let client else { return }
+        let token = resourceGeneration
+        isLoadingEarlier = true
+        sessionPageError = nil
+        defer { if token == resourceGeneration { isLoadingEarlier = false } }
+        do {
+            let response = try await client.fetchFirstMateSession(sessionID, before: before)
+            guard token == resourceGeneration else { return }
+            guard response.ok, response.nativeSessionID == sessionID else { throw APIError.invalidResponse }
+            if let next = response.nextBefore, next < 0 || next >= before { throw APIError.invalidResponse }
+            let earlier = response.messages ?? []
+            let text = earlier.map { "\($0.role.capitalized)\n\($0.text)" }.joined(separator: "\n\n")
+            if !text.isEmpty { resourceText = text + (resourceText.isEmpty ? "" : "\n\n" + resourceText) }
+            sessionLoadedMessages += earlier.count
+            sessionNextBefore = response.nextBefore
+            sessionTotalMessages = response.totalMessages ?? sessionTotalMessages
+        } catch { if token == resourceGeneration { sessionPageError = error.localizedDescription } }
+    }
+
+    private func resetSessionPagination() {
+        sessionNextBefore = nil
+        sessionTotalMessages = nil
+        sessionLoadedMessages = 0
+        isLoadingEarlier = false
+        sessionPageError = nil
+    }
+
+    func advanceDemo() {
+        guard isDemo else { return }
+        demoStep = (demoStep + 1) % FirstMateDemo.stepTitles.count
+        for value in FirstMateDemo.features(step: demoStep) {
+            snapshots[value.feature.id] = nil
+            receive(value)
+        }
+        selectedVisitID = snapshot?.feature.currentVisitID
+    }
+    var demoStepTitle: String { FirstMateDemo.stepTitles[demoStep] }
+
+    private func sendDemo(_ text: String, featureID: String) {
+        guard var value = snapshot else { return }
+        value.messages.append(.init(id: UUID().uuidString, featureID: featureID, role: "user", text: text, status: "delivered", createdAt: FirstMateDemo.timestamp))
+        value.messages.append(.init(id: UUID().uuidString, featureID: featureID, role: "assistant", text: "Your direction is recorded in this synthetic demo. Use Next scenario to inspect the planned implementation, review, checkpoint, and handoff states.", status: "delivered", createdAt: FirstMateDemo.timestamp))
+        value.feature.revision += 1
+        receive(value)
+        draft = ""
+    }
+
+    private func record(_ failure: Error) {
+        if case APIError.server(let status, _) = failure, status == 404 || status == 501 {
+            unsupported = true
+            error = "This companion server needs First Mate support. Update the server to a version with first-mate-v1."
+        } else { error = failure.localizedDescription }
+    }
+}

@@ -283,10 +283,38 @@ separate, consistent backup and a state migration plan.
 
 ## Development and verification
 
+### First Mate feature workflows
+
+Open **First Mate** in the Mac sidebar and create a feature with its goal and
+project folder on the connected companion host. Each feature has one saved Pi
+coordinator conversation. Workers run independently, return typed outcomes and
+documents, and remain linked to their exact saved sessions. Every completed major
+stage waits for your next plain-English direction. The timeline and graph show the
+recorded workflow; Agents and Documents open the evidence behind each visit.
+
+The companion server runs the durable queue, execution watcher, bounded recovery,
+and work log. Closing the Mac window does not stop the work. The optional browser
+view is served at `/first-mate/` and uses the same authenticated API and records.
+Configure Pi and optional Message Hub notifications in the private `[first_mate]`
+section described in [config.example.toml](config.example.toml). No private
+notification service or provider is enabled by a source-code default.
+
+See the [runtime and operations guide](docs/first-mate/runtime.md),
+[API contract](docs/first-mate/build-contract.md), and
+[visual explainer](docs/first-mate/explainer/index.html).
+
+The native demo launch arguments `-HerdrDemoMode -HerdrFirstMateDemo` use entirely
+synthetic records and never dispatch agents. Add `-HerdrFirstMateDark` to start in
+dark mode. This demo is for UI exploration and explainer captures; real execution
+uses the active companion connection.
+
+### Repository checks
+
 ```sh
 .venv/bin/python -m unittest discover -s tests
 npm --prefix pi-semantic-bridge ci
 npm --prefix pi-semantic-bridge test
+node --test tests/first_mate_web.test.cjs
 npm --prefix frontend/herdr-web test
 npm --prefix frontend/herdr-web run build
 .venv/bin/python scripts/check-public-source.py

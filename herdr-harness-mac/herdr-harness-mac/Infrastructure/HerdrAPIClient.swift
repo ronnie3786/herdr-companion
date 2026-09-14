@@ -3,7 +3,7 @@ import os
 
 private let piStreamLog = OSLog(subsystem: HerdrAppIdentity.bundleIdentifier, category: "pi-stream")
 
-actor HerdrAPIClient: HerdrNotesClient {
+actor HerdrAPIClient: HerdrNotesClient, FirstMateClient {
     private let configuration: ServerConfiguration
     private let session: URLSession
     private let cleanupApplyPollInterval: Duration
@@ -25,6 +25,49 @@ actor HerdrAPIClient: HerdrNotesClient {
 
     func fetchWorkspaces() async throws -> WorkspacesResponse {
         try await request(path: "/api/v1/workspaces")
+    }
+
+    func fetchFirstMateFeatures() async throws -> FirstMateFeatureList {
+        try await request(path: "/api/v1/first-mate/features")
+    }
+
+    func fetchFirstMateFeature(_ id: String) async throws -> FirstMateSnapshot {
+        try await request(path: firstMatePath("features", id: id))
+    }
+
+    func createFirstMateFeature(title: String, goal: String, cwd: String, requestID: String) async throws -> FirstMateSnapshot {
+        try await request(path: "/api/v1/first-mate/features", method: "POST", body: [
+            "title": title, "goal": goal, "cwd": cwd, "request_id": requestID,
+        ])
+    }
+
+    func sendFirstMateMessage(featureID: String, text: String, requestID: String) async throws -> FirstMateSnapshot {
+        try await request(path: firstMatePath("features", id: featureID) + "/messages", method: "POST", body: [
+            "text": text, "request_id": requestID,
+        ])
+    }
+
+    func performFirstMateAction(featureID: String, action: String, requestID: String) async throws -> FirstMateSnapshot {
+        try await request(path: firstMatePath("features", id: featureID) + "/actions", method: "POST", body: [
+            "action": action, "request_id": requestID,
+        ])
+    }
+
+    func fetchFirstMateDocument(_ id: String) async throws -> FirstMateDocumentResponse {
+        try await request(path: firstMatePath("documents", id: id))
+    }
+
+    func fetchFirstMateSession(_ id: String, before: Int? = nil) async throws -> FirstMateSessionResponse {
+        var query = [URLQueryItem(name: "limit", value: "100")]
+        if let before { query.append(URLQueryItem(name: "before", value: String(before))) }
+        return try await request(path: firstMatePath("sessions", id: id), query: query)
+    }
+
+    private func firstMatePath(_ collection: String, id: String) throws -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_.:"))
+        guard !id.isEmpty, id != ".", id != "..", id.count <= 256,
+              id.unicodeScalars.allSatisfy(allowed.contains) else { throw APIError.invalidResponse }
+        return "/api/v1/first-mate/\(collection)/\(id)"
     }
 
     func fetchNotes() async throws -> HerdrNotesCollection {

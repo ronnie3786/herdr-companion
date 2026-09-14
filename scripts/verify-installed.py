@@ -28,6 +28,28 @@ def main():
         assert all(resources.values()), resources
         lineage = run("from herdr_harness.resources import pi_extension_path; p=pi_extension_path({}); assert (p/'lib/session-lineage.ts').is_file(); assert '../lib/session-lineage' in (p/'extensions/pi-semantic-bridge.ts').read_text(); print('ok')")
         assert lineage.strip() == "ok"
+        first_mate = json.loads(run("""
+import json
+from pathlib import Path
+import herdr_harness
+from herdr_harness.first_mate_runtime import FirstMateRuntime
+from herdr_harness.first_mate_store import FirstMateStore
+from herdr_harness.resources import pi_extension_path
+package = Path(herdr_harness.__file__).parent
+extension = pi_extension_path({}) / 'extensions/first-mate.ts'
+store = FirstMateStore(Path.cwd() / 'first-mate-check.sqlite3')
+runtime = FirstMateRuntime(store, environ={}, runtime_root=Path.cwd() / 'first-mate-check-runs')
+print(json.dumps({
+    'installed_extension': extension.is_file() and '_bundled' in extension.parts,
+    'runtime_extension': runtime.extension == extension,
+    'typed_tools': 'fm_delegate' in extension.read_text(),
+    'html': (package / 'static/first-mate/index.html').is_file(),
+    'javascript': (package / 'static/first-mate/app.js').is_file(),
+    'empty_store': store.list_features() == [],
+}))
+store.close()
+"""))
+        assert all(first_mate.values()), first_mate
         for module in ("herdr_harness.configuration_cli", "herdr_commands.setup_herdr_demo", "herdr_commands.herdr_active_work_sync", "herdr_commands.herdr_pr_review_watch", "herdr_commands.herdr_hud_chats_cli"):
             run(f"from {module} import main; raise SystemExit(main())", "--help")
         with socket.socket() as probe:
@@ -61,7 +83,7 @@ def main():
                     raise AssertionError("Control API accepted a request without credentials")
                 except urllib.error.HTTPError as error:
                     assert error.code == 401
-                for path in ("/herdr-web/", "/api/v1/config/machines", "/api/v1/notes", "/api/v1/hud-chats"):
+                for path in ("/herdr-web/", "/first-mate/", "/api/v1/config/machines", "/api/v1/notes", "/api/v1/hud-chats", "/api/v1/first-mate/features", "/api/v1/first-mate/capabilities"):
                     request = urllib.request.Request(base + path, headers={"Authorization": "Bearer " + token})
                     with urllib.request.urlopen(request, timeout=2) as response:
                         assert response.status == 200, path
@@ -78,7 +100,7 @@ def main():
         assert process.returncode == 0, "Installed server returned a nonzero exit status"
         assert not list((root / ".local/share/herdr-companion/connections").glob("*.json"))
         assert token not in log.read_text(), "Server log contains a credential"
-    print("Installed wheel: resources, CLI entry points, authenticated API, web assets, isolated state, and clean shutdown passed.")
+    print("Installed wheel: resources, First Mate runtime/extension, CLI entry points, authenticated API, web assets, isolated state, and clean shutdown passed.")
 
 
 if __name__ == "__main__":

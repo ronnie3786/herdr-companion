@@ -62,6 +62,19 @@ HERDR_CUSTOM = "worker"
         with self.assertRaises(ConfigurationError):
             load_configuration(self.root / 'missing.toml', environ={})
 
+    def test_first_mate_settings_use_private_configuration_and_state_root(self):
+        config = self.load('''[server]
+state_dir = "state"
+[first_mate]
+context_target = 120000
+max_workers = 4
+message_hub_url = "https://messages.example.invalid/api/v1/messages"
+''')
+        self.assertEqual(config.environ['HERDR_FIRST_MATE_CONTEXT_TARGET'], '120000')
+        self.assertEqual(config.environ['HERDR_FIRST_MATE_MAX_WORKERS'], '4')
+        self.assertEqual(config.environ['HERDR_HARNESS_FIRST_MATE_RUNS_ROOT'], str(self.root.resolve() / 'state/first-mate-runs'))
+        self.assertNotIn('HERDR_FIRST_MATE_MESSAGE_HUB_TOKEN', config.environ)
+
     def test_terminal_configuration_is_not_treated_as_cluster_configuration(self):
         directory = self.root / '.config/herdr'
         directory.mkdir(parents=True)

@@ -455,7 +455,14 @@ final class HerdrHudController {
         applyFrame(animated: false)
     }
 
-    func resetChatSize() { resizeChat(to: HerdrHudPlacement.expandedSize) }
+    func resetChatSize() {
+        preferredChatCardSize = HerdrHudPlacement.expandedSize
+        userDefaults.set(preferredChatCardSize.width, forKey: DefaultsKey.chatWidth)
+        userDefaults.set(preferredChatCardSize.height, forKey: DefaultsKey.chatHeight)
+        chatCardSize = HerdrHudChatSizing.constrained(preferredChatCardSize, screen: visibleFrame(for: panel).size,
+                                                     otherHeight: chatOtherHeight)
+        applyFrame(animated: false)
+    }
 
     private var chatOtherHeight: CGFloat {
         let layout = notes?.layout ?? .hidden

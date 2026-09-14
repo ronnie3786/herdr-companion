@@ -335,6 +335,7 @@ struct HerdrHudControllerTests {
         harness.controller.summon()
         try await Task.sleep(for: .milliseconds(250))
         let noteSize = harness.controller.noteCardSize
+        let initialChatSize = harness.controller.chatCardSize
         let before = try #require(harness.controller.panelFrameForTesting)
         harness.controller.resizeChat(to: CGSize(width: 540, height: 500))
         let size = harness.controller.chatCardSize
@@ -348,7 +349,10 @@ struct HerdrHudControllerTests {
         #expect(harness.controller.chatCardSize == size)
         #expect(HerdrHudController(userDefaults: harness.defaults).chatCardSize == size)
         harness.controller.resetChatSize()
-        #expect(harness.controller.chatCardSize == HerdrHudPlacement.expandedSize)
+        // The displayed default can be shorter on the CI runner's small screen;
+        // reset still saves the full preference for a larger display later.
+        #expect(harness.controller.chatCardSize == initialChatSize)
+        #expect(HerdrHudController(userDefaults: harness.defaults).chatCardSize == HerdrHudPlacement.expandedSize)
     }
 
     @Test("End Chat closes only its selected card and keeps the fresh composer's draft")

@@ -31,10 +31,16 @@ struct HerdrHudRootView: View {
     }
 
     /// Overflow is navigation, not unread attention. Project every session so
-    /// hidden working sessions never create a notification count.
-    private var attentionChipCount: Int {
-        let hudAnswers = controller.chats?.visibleChats.count(where: { $0.session.hasUnseenAnswer }) ?? 0
-        return hudAnswers + QuickVoiceHudProjection.chips(
+    /// hidden working sessions never create a notification count. Keep the
+    /// statuses so the orb can distinguish finished work from genuine alerts.
+    private var attentionChipStatuses: [AgentStatus] {
+        let hudAnswers = controller.chats?.visibleChats.compactMap { chat -> AgentStatus? in
+            guard chat.session.hasUnseenAnswer else { return nil }
+            return HerdrHudNotificationPresentation.status(
+                forHUDChat: chat.session.exchanges.last?.status
+            )
+        } ?? []
+        let paneStatuses = QuickVoiceHudProjection.chips(
             panes: model.workspaces.flatMap(\.panes),
             notes: controller.quickVoice?.session.notes ?? [],
             mutedPaneIDs: model.mutedHudSessionIDs,
@@ -42,7 +48,8 @@ struct HerdrHudRootView: View {
             revealTitles: false,
             artifacts: [],
             showAll: true
-        ).chips.count(where: { $0.status.needsAttention })
+        ).chips.filter { $0.status.needsAttention }.map(\.status)
+        return hudAnswers + paneStatuses
     }
 
     /// Recomputed whenever the target pane reports new work, which is the cue
@@ -53,6 +60,7 @@ struct HerdrHudRootView: View {
 
     var body: some View {
         let chipState = sessionChips
+        let orbNotificationStatuses = attentionChipStatuses
         let hudChatCount = controller.chats?.visibleChats.count ?? 0
         let collapsedCounts = [chipState.chips.count + hudChatCount, chipState.overflow]
         VStack(alignment: .trailing, spacing: HerdrHudPlacement.notesGap) {
@@ -77,7 +85,8 @@ struct HerdrHudRootView: View {
                             controller: controller,
                             session: session,
                             artifacts: chipState.detachedArtifacts,
-                            attentionChipCount: attentionChipCount,
+                            attentionChipCount: orbNotificationStatuses.count,
+                            attentionChipStatuses: orbNotificationStatuses,
                             notes: notes
                         )
 

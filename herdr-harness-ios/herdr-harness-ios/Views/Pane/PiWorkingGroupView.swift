@@ -12,10 +12,15 @@ struct PiWorkingGroupView: View {
     @State private var isExpanded = false
     @State private var hapticPulse = HerdrHapticPulse()
 
+    init(group: PiWorkingGroup, initiallyExpanded: Bool = false) {
+        self.group = group
+        _isExpanded = State(initialValue: initiallyExpanded)
+    }
+
     var body: some View {
         PiDisclosureCard(
             isExpanded: $isExpanded,
-            chevronColor: group.hasFailure ? HerdrTheme.alert : HerdrTheme.mist
+            chevronColor: chevronColor
         ) {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(group.items) { item in
@@ -33,10 +38,6 @@ struct PiWorkingGroupView: View {
         .onChange(of: isExpanded) { _, expanded in
             hapticPulse.fire(expanded ? .controlsExpanded : .controlsCollapsed)
         }
-        // A failed tool is never hidden behind a collapsed row.
-        .onChange(of: group.hasFailure, initial: true) { _, failed in
-            if failed { isExpanded = true }
-        }
         .herdrHaptic(trigger: hapticPulse)
         .frame(minHeight: 44)
         .accessibilityIdentifier("pi-working-\(group.id)")
@@ -51,8 +52,8 @@ struct PiWorkingGroupView: View {
                         .tint(HerdrTheme.working)
                         .transition(PiChatMotion.stateTransition(reduceMotion: reduceMotion))
                 } else {
-                    Image(systemName: group.hasFailure ? "exclamationmark.triangle" : "gearshape.2")
-                        .foregroundStyle(HerdrProse.dimmed(group.hasFailure ? HerdrTheme.alert : HerdrTheme.muted))
+                    Image(systemName: "gearshape.2")
+                        .foregroundStyle(HerdrProse.dimmed(iconColor))
                         .transition(PiChatMotion.stateTransition(reduceMotion: reduceMotion))
                 }
             }
@@ -61,14 +62,34 @@ struct PiWorkingGroupView: View {
 
             Text(group.isLive ? "Clanking…" : "Clanking")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(HerdrProse.dimmed(HerdrTheme.mist))
+                .foregroundStyle(HerdrProse.dimmed(titleColor))
                 .contentTransition(.opacity)
 
-            Text(summary)
+            Text(stepSummary)
                 .font(.caption)
-                .foregroundStyle(HerdrProse.dimmed(HerdrTheme.muted))
+                .foregroundStyle(HerdrProse.dimmed(summaryColor))
                 .lineLimit(1)
+                .layoutPriority(1)
                 .contentTransition(.opacity)
+
+            if let latestToolTitle = group.latestToolTitle {
+                Text("· \(latestToolTitle)")
+                    .font(.caption)
+                    .foregroundStyle(HerdrProse.dimmed(summaryColor))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .contentTransition(.opacity)
+            }
+
+            if let failureSummary {
+                Text("· \(failureSummary)")
+                    .font(.caption)
+                    .foregroundStyle(failureCountColor)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .layoutPriority(2)
+                    .contentTransition(.opacity)
+            }
 
             Spacer(minLength: 8)
         }
@@ -77,11 +98,25 @@ struct PiWorkingGroupView: View {
         .accessibilityHint("Shows Pi's thinking and tool activity")
     }
 
-    /// e.g. "3 steps · Command", "1 step", "2 steps · 1 failed".
-    private var summary: String {
-        var parts = ["\(group.stepCount) step\(group.stepCount == 1 ? "" : "s")"]
+    var chevronColor: Color { HerdrTheme.mist }
+    var iconColor: Color { HerdrTheme.muted }
+    var titleColor: Color { HerdrTheme.mist }
+    var summaryColor: Color { HerdrTheme.muted }
+    var failureCountColor: Color { HerdrTheme.alert }
+
+    var stepSummary: String {
+        "\(group.stepCount) step\(group.stepCount == 1 ? "" : "s")"
+    }
+
+    var failureSummary: String? {
+        group.failureCount > 0 ? "\(group.failureCount) failed" : nil
+    }
+
+    /// The complete, untruncated summary remains available to assistive technology.
+    var summary: String {
+        var parts = [stepSummary]
         if let latestToolTitle = group.latestToolTitle { parts.append(latestToolTitle) }
-        if group.failureCount > 0 { parts.append("\(group.failureCount) failed") }
+        if let failureSummary { parts.append(failureSummary) }
         return parts.joined(separator: " · ")
     }
 

@@ -55,7 +55,10 @@ struct HerdrHudSessionBubbleLabel: View {
         .background(HerdrTheme.elevated, in: .rect(cornerRadius: 10))
         .overlay {
             RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(chip.status.color.opacity(0.25), lineWidth: 1)
+                .strokeBorder(
+                    HerdrHudNotificationPresentation.outlineColor(for: chip.status).opacity(0.25),
+                    lineWidth: 1
+                )
         }
         .shadow(color: chip.status == .working ? chip.status.color.opacity(0.16) : .clear, radius: 4)
         .contentShape(.rect(cornerRadius: 10))

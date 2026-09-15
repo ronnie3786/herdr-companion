@@ -56,7 +56,7 @@ struct HudRenderTests {
         result.expectSubstantial()
     }
 
-    @Test("HUD orb renders its unread-alert attention badge")
+    @Test("HUD orb renders unread-alert status without a visual count")
     func rendersHudOrb() async throws {
         let model = HerdrRenderFixtures.demoModel()
         let session = HerdrHudSession(

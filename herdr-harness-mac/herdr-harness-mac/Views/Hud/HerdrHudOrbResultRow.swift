@@ -7,6 +7,7 @@ struct HerdrHudOrbResultRow: View {
     let session: HerdrHudSession
     let artifacts: [AgentResultArtifact]
     var attentionChipCount: Int = 0
+    var attentionChipStatuses: [AgentStatus] = []
     var notes: HerdrHudNotesState?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -28,7 +29,8 @@ struct HerdrHudOrbResultRow: View {
                     model: model,
                     controller: controller,
                     session: session,
-                    attentionChipCount: attentionChipCount
+                    attentionChipCount: attentionChipCount,
+                    attentionChipStatuses: attentionChipStatuses
                 )
                 .frame(width: 56, height: 56)
                 .padding(.leading, HerdrHudPlacement.orbLeadingInset)

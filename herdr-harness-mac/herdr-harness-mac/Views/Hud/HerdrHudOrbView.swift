@@ -55,6 +55,9 @@ struct HerdrHudOrbView: View {
     /// the chip projection. Defaulted so previews and render tests can mount
     /// the orb alone.
     var attentionChipCount: Int = 0
+    /// Statuses corresponding to `attentionChipCount`, so completion can use
+    /// the green signal while blocked and failed notifications remain alerts.
+    var attentionChipStatuses: [AgentStatus] = []
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
@@ -128,16 +131,6 @@ struct HerdrHudOrbView: View {
                 .foregroundStyle(glyphColor)
                 .accessibilityHidden(true)
 
-                if attentionCount > 0 {
-                    Text("\(attentionCount)")
-                        .herdrFont(.caption2, monospaced: true, weight: .bold)
-                        .foregroundStyle(HerdrTheme.ink)
-                        .padding(5)
-                        .background(HerdrTheme.alert, in: Capsule())
-                        .offset(x: -20, y: -20)
-                        .accessibilityHidden(true)
-                }
-
                 if session.hasUnseenAnswer {
                     Circle()
                         .fill(HerdrTheme.accent)
@@ -174,7 +167,7 @@ struct HerdrHudOrbView: View {
         switch state {
         case .attention:
             Circle()
-                .strokeBorder(HerdrTheme.alert, lineWidth: 2.5)
+                .strokeBorder(notificationOutlineColor, lineWidth: 2.5)
                 .padding(2)
         case .thinking:
             Circle()
@@ -204,12 +197,24 @@ struct HerdrHudOrbView: View {
     /// self-heals through the server's ack projection. Whatever the HUD is
     /// willing to show as a chip is now what the orb counts.
     private var attentionCount: Int {
-        filteredUnreadAlertCount > 0 ? filteredUnreadAlertCount : attentionChipCount
+        filteredUnreadAlerts.isEmpty ? attentionChipCount : filteredUnreadAlerts.count
     }
 
-    private var filteredUnreadAlertCount: Int {
+    private var filteredUnreadAlerts: [HerdrAlert] {
         HerdrHudNotificationFilter.alerts(model.alerts, panes: model.workspaces.flatMap(\.panes))
-            .count(where: { !$0.isRead })
+            .filter { !$0.isRead }
+    }
+
+    private var notificationStatuses: [AgentStatus] {
+        filteredUnreadAlerts.map(\.status) + attentionChipStatuses
+    }
+
+    private var notificationOutlineColor: Color {
+        let tone = HerdrHudNotificationPresentation.tone(
+            for: notificationStatuses,
+            fallbackCount: attentionCount
+        ) ?? .alert
+        return HerdrHudNotificationPresentation.outlineColor(for: tone)
     }
 
     private var glyphColor: Color {
@@ -217,11 +222,12 @@ struct HerdrHudOrbView: View {
     }
 
     private var accessibilityValue: String {
-        if session.isRunning { return "Thinking" }
-        if attentionCount > 0 { return "\(attentionCount) need attention" }
-        if model.workingCount > 0 { return "Working" }
-        if model.connectionState == .live || model.isDemoMode { return "Idle" }
-        return "Offline"
+        HerdrHudNotificationPresentation.orbAccessibilityValue(
+            sessionIsRunning: session.isRunning,
+            attentionCount: attentionCount,
+            workingCount: model.workingCount,
+            isConnected: model.connectionState == .live || model.isDemoMode
+        )
     }
 }
 

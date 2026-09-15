@@ -86,6 +86,64 @@ struct HerdrPulseGlowTests {
     }
 }
 
+@Suite("Herdr HUD notification presentation")
+struct HerdrHudNotificationPresentationTests {
+    @Test("Finished notifications use the green signal tone")
+    func finishedTone() {
+        #expect(HerdrHudNotificationPresentation.tone(for: [.done]) == .finished)
+        #expect(
+            HerdrHudNotificationPresentation.outlineColor(
+                for: HerdrHudNotificationPresentation.Tone.finished
+            ) == HerdrTheme.signal
+        )
+        #expect(AgentStatus.done.color == HerdrTheme.signal)
+        #expect(HerdrHudNotificationPresentation.outlineColor(for: AgentStatus.done) == HerdrTheme.signal)
+        #expect(HerdrHudNotificationPresentation.status(forHUDChat: .completed) == .done)
+    }
+
+    @Test("Blocked and failed notification projections retain the alert tone")
+    func alertTone() {
+        #expect(HerdrHudNotificationPresentation.tone(for: [.blocked]) == .alert)
+        #expect(HerdrHudNotificationPresentation.tone(for: [.done, .blocked]) == .alert)
+        #expect(
+            HerdrHudNotificationPresentation.outlineColor(
+                for: HerdrHudNotificationPresentation.Tone.alert
+            ) == HerdrTheme.alert
+        )
+        #expect(AgentStatus.blocked.color == HerdrTheme.alert)
+        #expect(HerdrHudNotificationPresentation.outlineColor(for: AgentStatus.blocked) == HerdrTheme.alert)
+        #expect(HerdrHudNotificationPresentation.outlineColor(for: AgentStatus.working) == HerdrTheme.working)
+        #expect(HerdrHudNotificationPresentation.status(forHUDChat: .failed) == .blocked)
+        #expect(HerdrHudNotificationPresentation.status(forHUDChat: nil) == .blocked)
+    }
+
+    @Test("Legacy count-only callers get completion styling without inventing attention")
+    func fallbackTone() {
+        #expect(HerdrHudNotificationPresentation.tone(for: [], fallbackCount: 2) == .finished)
+        #expect(HerdrHudNotificationPresentation.tone(for: [], fallbackCount: 0) == nil)
+    }
+
+    @Test("The hidden visual count remains available to accessibility tools")
+    func accessibleCount() {
+        #expect(
+            HerdrHudNotificationPresentation.orbAccessibilityValue(
+                sessionIsRunning: false,
+                attentionCount: 3,
+                workingCount: 0,
+                isConnected: true
+            ) == "3 need attention"
+        )
+        #expect(
+            HerdrHudNotificationPresentation.orbAccessibilityValue(
+                sessionIsRunning: true,
+                attentionCount: 3,
+                workingCount: 0,
+                isConnected: true
+            ) == "Thinking"
+        )
+    }
+}
+
 @Suite("Herdr HUD orb motion")
 struct HerdrHudOrbMotionTests {
     @Test("Motion state prioritizes an active HUD session")

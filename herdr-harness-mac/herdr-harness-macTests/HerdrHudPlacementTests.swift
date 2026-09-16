@@ -80,11 +80,13 @@ struct HerdrHudPlacementTests {
         #expect(collapsed.size != expanded.size)
     }
 
-    @Test("Ultra-compact placement uses a 20-point visual, Mac hit target, and small panel margin")
+    @Test("Ultra-compact placement uses a centered 20-point visual, Mac hit target, and small panel margin")
     func ultraCompactGeometryIsGenuinelyCompact() {
         #expect(HerdrHudPlacement.ultraCompactIndicatorSize == 20)
+        #expect(HerdrHudPlacement.ultraCompactHitTargetSize == 28)
         #expect(HerdrHudPlacement.ultraCompactHitTargetSize >= HerdrTheme.minHitTarget)
-        #expect(HerdrHudPlacement.ultraCompactShadowMargin < HerdrHudPlacement.shadowMargin)
+        #expect(HerdrHudPlacement.ultraCompactContentSize == HerdrHudPlacement.collapsedSize)
+        #expect(HerdrHudPlacement.ultraCompactShadowMargin == 8)
 
         let frame = HerdrHudPlacement.frame(
             isExpanded: false,
@@ -96,13 +98,16 @@ struct HerdrHudPlacementTests {
             voiceReplySize: HerdrHudPlacement.voiceReplyCardSize,
             quickVoiceSize: HerdrHudPlacement.quickVoiceCardSize
         )
-        let expectedSide = HerdrHudPlacement.ultraCompactHitTargetSize
-            + 2 * HerdrHudPlacement.ultraCompactShadowMargin
-        #expect(frame.size == CGSize(width: expectedSide, height: expectedSide))
+        #expect(
+            frame.size == CGSize(
+                width: HerdrHudPlacement.collapsedSize.width + 2 * HerdrHudPlacement.ultraCompactShadowMargin,
+                height: HerdrHudPlacement.collapsedSize.height + 2 * HerdrHudPlacement.ultraCompactShadowMargin
+            )
+        )
     }
 
-    @Test("Ultra-compact and preview frames retain the same top-right anchor")
-    func ultraCompactPreviewKeepsTopRightAnchorFixed() {
+    @Test("Ultra-compact signal and preview orb share one screen center for a fixed offset")
+    func ultraCompactPreviewKeepsOrbCenterFixed() {
         let visibleFrame = CGRect(x: 100, y: 200, width: 1_920, height: 1_080)
         let offset = CGSize(width: 24, height: 32)
         let resting = HerdrHudPlacement.frame(
@@ -118,10 +123,49 @@ struct HerdrHudPlacementTests {
             chipCount: 3,
             hasResultRail: true
         )
+        let compactCenter = CGPoint(
+            x: resting.minX + HerdrHudPlacement.ultraCompactShadowMargin
+                + HerdrHudPlacement.collapsedSize.width / 2,
+            y: resting.minY + HerdrHudPlacement.ultraCompactShadowMargin
+                + HerdrHudPlacement.collapsedSize.height / 2
+        )
+        let previewOrbCenter = CGPoint(
+            x: preview.maxX - HerdrHudPlacement.shadowMargin
+                - HerdrHudPlacement.collapsedSize.width / 2,
+            y: preview.maxY - HerdrHudPlacement.shadowMargin
+                - HerdrHudPlacement.collapsedSize.height / 2
+        )
+        let expectedScreenCenter = CGPoint(
+            x: visibleFrame.maxX - offset.width - HerdrHudPlacement.shadowMargin
+                - HerdrHudPlacement.collapsedSize.width / 2,
+            y: visibleFrame.maxY - offset.height - HerdrHudPlacement.shadowMargin
+                - HerdrHudPlacement.collapsedSize.height / 2
+        )
 
-        #expect(resting.maxX == preview.maxX)
-        #expect(resting.maxY == preview.maxY)
-        #expect(resting.size != preview.size)
+        #expect(compactCenter == previewOrbCenter)
+        #expect(compactCenter == expectedScreenCenter)
+        #expect(resting.maxX + HerdrHudPlacement.ultraCompactAnchorAdjustment == preview.maxX)
+        #expect(resting.maxY + HerdrHudPlacement.ultraCompactAnchorAdjustment == preview.maxY)
+    }
+
+    @Test("Ultra-compact frame offsets round-trip without changing saved placement semantics")
+    func ultraCompactOffsetsRoundTrip() {
+        let visibleFrame = CGRect(x: 100, y: 200, width: 1_920, height: 1_080)
+        let offset = CGSize(width: 24, height: 32)
+        let frame = HerdrHudPlacement.frame(
+            isExpanded: false,
+            isUltraCompact: true,
+            visibleFrame: visibleFrame,
+            topRightOffset: offset
+        )
+
+        #expect(
+            HerdrHudPlacement.offset(
+                forFrame: frame,
+                visibleFrame: visibleFrame,
+                isUltraCompact: true
+            ) == offset
+        )
     }
 
     @Test("Panel frames include transparent room for HUD shadows")

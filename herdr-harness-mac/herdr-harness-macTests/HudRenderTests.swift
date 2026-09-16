@@ -80,14 +80,11 @@ struct HudRenderTests {
         result.expectSubstantial()
     }
 
-    @Test("Ultra-compact HUD renders its 20-point status glow inside the pointer target")
+    @Test("Ultra-compact HUD renders its restrained 20-point signal centered in the collapsed lane")
     func rendersUltraCompactIndicator() async throws {
         let result = try await HerdrRenderHarness.render(
             "29-hud-ultra-compact.png",
-            size: CGSize(
-                width: HerdrHudPlacement.ultraCompactHitTargetSize,
-                height: HerdrHudPlacement.ultraCompactHitTargetSize
-            )
+            size: HerdrHudPlacement.ultraCompactContentSize
         ) {
             HerdrHudUltraCompactIndicator(
                 controller: HerdrHudController(),

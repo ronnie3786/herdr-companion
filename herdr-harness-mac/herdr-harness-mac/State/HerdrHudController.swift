@@ -166,6 +166,11 @@ final class HerdrHudController {
         guard isUltraCompactEnabled != enabled else { return }
         isUltraCompactEnabled = enabled
         userDefaults.set(enabled, forKey: DefaultsKey.ultraCompactEnabled)
+        if enabled {
+            // The enabling click belongs to the outgoing preview. Clear its
+            // hover union now so compact rest does not wait for pointer exit.
+            resetHudHover()
+        }
         applyFrame(animated: true)
     }
 
@@ -425,7 +430,11 @@ final class HerdrHudController {
         isDraggingPanel = false
         if let panel {
             let visibleFrame = visibleFrame(for: panel)
-            let offset = HerdrHudPlacement.offset(forFrame: panel.frame, visibleFrame: visibleFrame)
+            let offset = HerdrHudPlacement.offset(
+                forFrame: panel.frame,
+                visibleFrame: visibleFrame,
+                isUltraCompact: isUltraCompactResting
+            )
             placementOffset = HerdrHudPlacement.reclamp(
                 topRightOffset: offset,
                 isExpanded: isExpanded,
@@ -645,14 +654,16 @@ final class HerdrHudController {
         if isDraggingPanel {
             placementOffset = HerdrHudPlacement.offset(
                 forFrame: panel.frame,
-                visibleFrame: visibleFrame(for: panel)
+                visibleFrame: visibleFrame(for: panel),
+                isUltraCompact: isUltraCompactResting
             )
             return
         }
         guard !isProgrammaticMove else { return }
         placementOffset = HerdrHudPlacement.offset(
             forFrame: panel.frame,
-            visibleFrame: visibleFrame(for: panel)
+            visibleFrame: visibleFrame(for: panel),
+            isUltraCompact: isUltraCompactResting
         )
         savePlacementOffset()
     }

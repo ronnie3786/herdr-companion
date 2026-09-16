@@ -21,7 +21,24 @@ struct HerdrHudControllerTests {
 
         controller.toggleUltraCompact()
         #expect(!controller.isUltraCompactEnabled)
+        #expect(!controller.isUltraCompactResting)
+        #expect(!controller.isExpanded)
         #expect(!HerdrHudController(userDefaults: defaults).isUltraCompactEnabled)
+    }
+
+    @Test("Enabling ultra-compact mode immediately clears the outgoing hover preview")
+    func ultraCompactEntryClearsHoverImmediately() {
+        let controller = HerdrHudController(userDefaults: makeDefaults())
+        controller.setHoveringHud(true, region: "hud-orb")
+        #expect(controller.areOrbControlsVisible)
+
+        controller.setUltraCompactEnabled(true)
+
+        #expect(controller.isUltraCompactResting)
+        #expect(!controller.areOrbControlsVisible)
+        #expect(!controller.isExpanded)
+        controller.setHoveringHud(false, region: "hud-orb")
+        #expect(controller.isUltraCompactResting)
     }
 
     @Test("Ultra-compact hover previews with grace and the HUD region union cancels exit")
@@ -30,7 +47,10 @@ struct HerdrHudControllerTests {
             userDefaults: makeDefaults(),
             attachmentHoverGrace: .milliseconds(80)
         )
+        controller.setHoveringHud(true, region: "hud-orb")
         controller.setUltraCompactEnabled(true)
+        #expect(controller.isUltraCompactResting)
+        controller.setHoveringHud(false, region: "hud-orb")
         #expect(controller.isUltraCompactResting)
 
         controller.setHoveringHud(true, region: "hud-ultra-compact")
@@ -514,11 +534,12 @@ struct HerdrHudControllerTests {
         #expect(harness.notes.layout == .card)
     }
 
-    @Test("Orb renders compact toggle opposite quick-hide with Notes and microphone below")
+    @Test("Orb renders selected compact toggle opposite quick-hide with Notes and microphone below")
     func rendersFourOrbHoverControls() async throws {
         let harness = makeHarness(includesVoice: true)
+        harness.controller.setUltraCompactEnabled(true)
         harness.controller.setHoveringHud(true, region: "render")
-        let result = try await HerdrRenderHarness.render("hud-four-hover-controls.png", size: CGSize(width: 180, height: 180)) {
+        let result = try await HerdrRenderHarness.render("hud-four-hover-controls-selected.png", size: CGSize(width: 180, height: 180)) {
             HerdrHudOrbResultRow(
                 model: harness.model, controller: harness.controller, session: harness.session,
                 artifacts: [], attentionChipCount: 1

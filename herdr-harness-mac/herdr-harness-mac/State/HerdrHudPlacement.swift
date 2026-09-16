@@ -12,15 +12,17 @@ struct HerdrHudPlacement: Equatable, Sendable {
     /// A compact panel still leaves enough transparent room for the status
     /// glow, without carrying the ordinary HUD's 40-point shadow margin.
     static let ultraCompactShadowMargin: CGFloat = 8
-    static let ultraCompactContentSize = CGSize(
-        width: ultraCompactHitTargetSize,
-        height: ultraCompactHitTargetSize
-    )
+    /// Compact mode preserves the ordinary collapsed lane so its centered
+    /// signal occupies the same screen coordinate as the full-size orb.
+    static let ultraCompactContentSize = collapsedSize
     /// Reserves the left satellite's half-width, mirroring the right edge.
     static let orbLeadingInset: CGFloat = 16
     static let orbControlScale: CGFloat = 0.8
     static let expandedSize = CGSize(width: 420, height: 580)
     static let shadowMargin: CGFloat = 40
+    /// Compact panels use less transparent padding, so their panel edge shifts
+    /// inward by this amount to preserve the ordinary orb's screen center.
+    static let ultraCompactAnchorAdjustment = shadowMargin - ultraCompactShadowMargin
     static let chipWidth: CGFloat = 200
     /// Conservative first-layout estimate. Once rows render, their measured
     /// natural height replaces this budget in both the panel and scroll view.
@@ -251,17 +253,23 @@ struct HerdrHudPlacement: Equatable, Sendable {
             width: min(preferredSize.width, visibleFrame.width),
             height: min(preferredSize.height, visibleFrame.height)
         )
-        let desiredX = visibleFrame.maxX - topRightOffset.width - size.width
-        let desiredY = visibleFrame.maxY - topRightOffset.height - size.height
+        let anchorAdjustment = isUltraCompact ? ultraCompactAnchorAdjustment : 0
+        let desiredX = visibleFrame.maxX - topRightOffset.width - size.width - anchorAdjustment
+        let desiredY = visibleFrame.maxY - topRightOffset.height - size.height - anchorAdjustment
         let x = min(max(desiredX, visibleFrame.minX - panelMargin), visibleFrame.maxX - size.width + panelMargin)
         let y = min(max(desiredY, visibleFrame.minY - panelMargin), visibleFrame.maxY - size.height + panelMargin)
         return CGRect(origin: CGPoint(x: x, y: y), size: size)
     }
 
-    static func offset(forFrame frame: CGRect, visibleFrame: CGRect) -> CGSize {
-        CGSize(
-            width: visibleFrame.maxX - frame.maxX,
-            height: visibleFrame.maxY - frame.maxY
+    static func offset(
+        forFrame frame: CGRect,
+        visibleFrame: CGRect,
+        isUltraCompact: Bool = false
+    ) -> CGSize {
+        let anchorAdjustment = isUltraCompact ? ultraCompactAnchorAdjustment : 0
+        return CGSize(
+            width: visibleFrame.maxX - frame.maxX - anchorAdjustment,
+            height: visibleFrame.maxY - frame.maxY - anchorAdjustment
         )
     }
 
@@ -277,6 +285,10 @@ struct HerdrHudPlacement: Equatable, Sendable {
             visibleFrame: visibleFrame,
             topRightOffset: topRightOffset
         )
-        return offset(forFrame: clampedFrame, visibleFrame: visibleFrame)
+        return offset(
+            forFrame: clampedFrame,
+            visibleFrame: visibleFrame,
+            isUltraCompact: isUltraCompact
+        )
     }
 }

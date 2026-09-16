@@ -58,8 +58,20 @@ struct HerdrHudOrbResultRow: View {
         .herdrFont(.callout, weight: .bold)
         .foregroundStyle(HerdrTheme.text)
         .frame(width: 32, height: 32)
-        .background(HerdrTheme.elevated, in: .circle)
-        .overlay { Circle().strokeBorder(HerdrTheme.graphite, lineWidth: 3) }
+        .background {
+            if controller.isUltraCompactEnabled {
+                Circle().fill(HerdrTheme.controlAccent)
+            } else {
+                Circle().fill(HerdrTheme.elevated)
+            }
+        }
+        .overlay {
+            if controller.isUltraCompactEnabled {
+                Circle().strokeBorder(HerdrTheme.controlAccent, lineWidth: 3)
+            } else {
+                Circle().strokeBorder(HerdrTheme.graphite, lineWidth: 3)
+            }
+        }
         .scaleEffect(0.625 * HerdrHudPlacement.orbControlScale)
         .contentShape(.circle)
         .buttonStyle(.plain)
@@ -67,8 +79,9 @@ struct HerdrHudOrbResultRow: View {
         .help(
             controller.isUltraCompactEnabled
                 ? "Keep the standard collapsed HUD visible."
-                : "Rest as a 20-point status glow; hover it to preview the HUD."
+                : "Rest as a 20-point status signal; hover it to preview the HUD."
         )
+        .accessibilityValue(controller.isUltraCompactEnabled ? "On" : "Off")
         .accessibilityIdentifier("hud-ultra-compact-toggle")
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 

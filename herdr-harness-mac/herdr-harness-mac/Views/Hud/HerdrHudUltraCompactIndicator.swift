@@ -31,6 +31,10 @@ struct HerdrHudUltraCompactIndicator: View {
         .accessibilityHint("Hover to preview the HUD. Activate to open chat.")
         .accessibilityAction { controller.summon() }
         .accessibilityIdentifier("hud-ultra-compact-indicator")
+        .frame(
+            width: HerdrHudPlacement.ultraCompactContentSize.width,
+            height: HerdrHudPlacement.ultraCompactContentSize.height
+        )
     }
 
     private func indicator(opacity: Double) -> some View {
@@ -41,8 +45,7 @@ struct HerdrHudUltraCompactIndicator: View {
                 Circle()
                     .strokeBorder(HerdrTheme.text.opacity(tone == .offline ? 0.28 : 0.55), lineWidth: 1)
             }
-            .shadow(color: color.opacity(0.9), radius: 6)
-            .shadow(color: color.opacity(0.45), radius: 10)
+            .shadow(color: color.opacity(0.22), radius: 3)
             .opacity(opacity)
             .frame(
                 width: HerdrHudPlacement.ultraCompactIndicatorSize,

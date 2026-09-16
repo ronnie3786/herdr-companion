@@ -26,7 +26,7 @@ private actor PiSnapshotGate {
     }
 }
 
-@Suite("Pi conversation reconnect state machine", .timeLimit(.minutes(1)))
+@Suite("Pi conversation reconnect state machine", .serialized, .timeLimit(.minutes(1)))
 @MainActor
 struct PiConversationStoreReloadGuardTests {
     @Test("Overflow, disconnect, and EOF retry the applied cursor without refetching")

@@ -19,6 +19,23 @@ struct PiClosedSessionTests {
         await store.follow(model: model, pane: pane)
         #expect(store.closedSessions.isEmpty)
         store.snapshotProvider = { _ in try snapshot(id: "new-session", prompt: "") }
+        var shouldReset = true
+        store.eventsProvider = { _, _ in
+            guard shouldReset else {
+                return AsyncThrowingStream { $0.finish(throwing: CancellationError()) }
+            }
+            shouldReset = false
+            return AsyncThrowingStream { continuation in
+                continuation.yield(.envelope(PiConversationEnvelope(
+                    paneID: "w1:p1", sessionID: "old-session", cursor: "1",
+                    event: .object([
+                        "type": .string("stream.reset"),
+                        "reason": .string("session_changed")
+                    ])
+                )))
+                continuation.finish()
+            }
+        }
         await store.follow(model: model, pane: pane)
         #expect(store.sessionID == "new-session")
         #expect(store.turns.isEmpty)
@@ -51,6 +68,23 @@ struct PiClosedSessionTests {
         let model = HerdrAppModel(arguments: [])
         await store.follow(model: model, pane: pane)
         store.snapshotProvider = { _ in try snapshot(id: "two", prompt: "") }
+        var shouldReset = true
+        store.eventsProvider = { _, _ in
+            guard shouldReset else {
+                return AsyncThrowingStream { $0.finish(throwing: CancellationError()) }
+            }
+            shouldReset = false
+            return AsyncThrowingStream { continuation in
+                continuation.yield(.envelope(PiConversationEnvelope(
+                    paneID: "w1:p1", sessionID: "one", cursor: "1",
+                    event: .object([
+                        "type": .string("stream.reset"),
+                        "reason": .string("session_changed")
+                    ])
+                )))
+                continuation.finish()
+            }
+        }
         await store.follow(model: model, pane: pane)
         #expect(store.historyError != nil)
         #expect(store.closedSessions.count == 1)

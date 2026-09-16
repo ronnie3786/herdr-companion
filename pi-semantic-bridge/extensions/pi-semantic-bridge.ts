@@ -35,6 +35,12 @@ const MAX_REPLAY_BYTES = positiveEnvironmentInt(
 	256 * 1024 * 1024,
 );
 const MAX_SUBSCRIBE_REPLAY_BYTES = 256 * 1024;
+const INTERMEDIATE_CHECKPOINT_EVENT_INTERVAL = positiveEnvironmentInt(
+	"HERDR_PI_SEMANTIC_CHECKPOINT_EVENT_INTERVAL",
+	256,
+	8,
+	4096,
+);
 const UNIX_PATH_BYTES = 100;
 const SNAPSHOT_ENTRY_BYTES = Math.min(384 * 1024, Math.max(16 * 1024, Math.floor(MAX_QUEUE_BYTES / 2)));
 
@@ -364,6 +370,8 @@ class BridgeRuntime {
 	private hasStarted = false;
 	private activeCompaction?: ActiveCompaction;
 	private compactionGeneration = 0;
+	private lastCheckpointSequence = 0;
+	private lastIntermediateCheckpointAttemptSequence = 0;
 
 	constructor(private readonly pi: ExtensionAPI, herdrPath: string, paneId: string) {
 		this.paneId = paneId;
@@ -423,6 +431,8 @@ class BridgeRuntime {
 		this.queueBytes = 0;
 		this.replay = [];
 		this.replayBytes = 0;
+		this.lastCheckpointSequence = 0;
+		this.lastIntermediateCheckpointAttemptSequence = 0;
 	}
 
 	private listen(): void {
@@ -618,18 +628,36 @@ class BridgeRuntime {
 		this.queueRecovery(reason, false);
 	}
 
-	checkpoint(): void {
+	checkpoint(): boolean {
 		const ctx = this.latestContext;
-		if (!ctx) return;
+		if (!ctx) return false;
+		// Capture both the persisted projection and its source cursor synchronously.
+		// Deferring snapshot construction would let later event handlers advance
+		// `sequence` beyond the entries represented by this checkpoint.
 		const record = this.snapshot(ctx);
 		const bytes = encoded(record);
-		if (bytes.length > MAX_LINE_BYTES) return;
+		if (bytes.length > MAX_LINE_BYTES) return false;
 		if (this.queue.length >= MAX_QUEUE_RECORDS || this.queueBytes + bytes.length > MAX_QUEUE_BYTES) {
 			this.flush();
 		}
 		this.queue.push({ record, bytes });
 		this.queueBytes += bytes.length;
+		this.lastCheckpointSequence = record.sequence;
 		queueMicrotask(() => this.flush());
+		return true;
+	}
+
+	checkpointDurableTurnIfDue(): void {
+		const previousWorkBoundary = Math.max(
+			this.lastCheckpointSequence,
+			this.lastIntermediateCheckpointAttemptSequence,
+		);
+		if (this.sequence - previousWorkBoundary < INTERMEDIATE_CHECKPOINT_EVENT_INTERVAL) return;
+		// Count an oversized snapshot attempt as work. Final settled/lifecycle
+		// checkpoints still retry unconditionally, while an active run cannot make
+		// every subsequent durable turn rebuild the same over-limit projection.
+		this.lastIntermediateCheckpointAttemptSequence = this.sequence;
+		this.checkpoint();
 	}
 
 	private queueRecovery(reason: string, clear: boolean): void {
@@ -655,6 +683,7 @@ class BridgeRuntime {
 		if (bytes.length > MAX_LINE_BYTES) return;
 		this.queue.push({ record: reset, bytes });
 		this.queueBytes += bytes.length;
+		this.lastCheckpointSequence = reset.sequence;
 		queueMicrotask(() => this.flush());
 	}
 
@@ -973,6 +1002,14 @@ export default function piSemanticBridge(pi: ExtensionAPI): void {
 					runtime.finishCompaction("settled");
 				}
 				runtime.emit(type, event, replaceKeyFor(type, event));
+				if (type === "turn_end") {
+					// Verified against Pi 0.84.2's Agent.processEvents/runLoop and
+					// AgentSession._handleAgentEvent ordering: each prior message_end is
+					// awaited through SessionManager.appendMessage before turn_end is
+					// emitted. The projection therefore contains the complete assistant
+					// message and every tool result for this turn, with no tool in flight.
+					runtime.checkpointDurableTurnIfDue();
+				}
 				if (type === "agent_settled") runtime.checkpoint();
 				if (type === "session_tree" || type === "session_compact") {
 					runtime.recover(type === "session_tree" ? "session_tree_changed" : "session_compacted");

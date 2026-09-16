@@ -11,6 +11,8 @@ struct PiConversationSnapshot: Decodable, Equatable, Sendable {
     let entries: [PiJSONValue]
     let pendingInteractions: [PiJSONValue]
     let cursor: String?
+    /// Finite durable catch-up boundary captured atomically with the snapshot.
+    /// Older servers omit it; callers intentionally fall back to the checkpoint.
     let latestCursor: String?
     let oldestCursor: String?
     let truncated: Bool

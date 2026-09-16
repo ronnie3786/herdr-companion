@@ -574,9 +574,10 @@ actor HerdrAPIClient: FirstMateClient {
         let eventRequest = request
         let session = self.session
 
-        // Pi deltas and tool transitions are order-dependent. Preserve every
-        // event and let the reducer de-duplicate durable cursors.
-        return AsyncThrowingStream { continuation in
+        // Pi envelopes are order-dependent. A bounded oldest-first buffer
+        // preserves a contiguous prefix on overflow so recovery can resume at
+        // the last applied durable cursor without dropping a middle delta.
+        return AsyncThrowingStream(bufferingPolicy: .bufferingOldest(512)) { continuation in
             let task = Task {
                 do {
                     let (bytes, response) = try await session.bytes(for: eventRequest)
@@ -587,14 +588,19 @@ actor HerdrAPIClient: FirstMateClient {
                         os_signpost(.event, log: piStreamLog, name: "sse.line")
                         try Task.checkCancellation()
                         if let event = try parser.consume(line: line) {
-                            continuation.yield(event)
+                            if case .dropped = continuation.yield(event) {
+                                continuation.finish(throwing: APIError.streamBacklogOverflow)
+                                return
+                            }
                         }
                     }
                     throw APIError.streamEnded
-                } catch is CancellationError {
-                    continuation.finish()
                 } catch {
-                    continuation.finish(throwing: error)
+                    if HerdrCancellation.isCancellation(error) {
+                        continuation.finish(throwing: CancellationError())
+                    } else {
+                        continuation.finish(throwing: error)
+                    }
                 }
             }
 

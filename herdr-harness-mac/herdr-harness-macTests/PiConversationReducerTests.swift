@@ -4,6 +4,48 @@ import Testing
 
 @Suite("Pi conversation reducer")
 struct PiConversationReducerTests {
+    @Test("Ready and reset metadata never advance the applied durable cursor")
+    func transportMetadataDoesNotAdvanceAppliedCursor() throws {
+        var reducer = PiConversationReducer()
+        let snapshot = try JSONDecoder().decode(
+            PiConversationSnapshot.self,
+            from: Data(#"{"protocol":{"name":"herdr.pi.semantic","version":1},"pane_id":"p1","available":true,"connected":true,"session":{"id":"s1"},"state":{"context":{"tokens":1}},"entries":[],"pending_interactions":[],"cursor":"40","latest_cursor":"47","oldest_cursor":"1","truncated":false}"#.utf8)
+        )
+        reducer.replace(with: snapshot)
+
+        let ready = PiConversationEnvelope(
+            paneID: "p1", sessionID: "s1", cursor: "47", connected: true,
+            event: .object(["type": .string("ready"), "connected": .bool(true)])
+        )
+        #expect(reducer.apply(ready) == .none)
+        #expect(reducer.cursor == "40")
+
+        let reset = PiConversationEnvelope(
+            paneID: "p1", sessionID: "s1", cursor: "99",
+            event: .object(["type": .string("stream.reset"), "reason": .string("replay_gap")])
+        )
+        #expect(reducer.apply(reset) == .needsSnapshot)
+        #expect(reducer.cursor == "40")
+    }
+
+    @Test("A different session requests rehydration before applying its cursor")
+    func sessionBoundaryDoesNotAdvanceAppliedCursor() throws {
+        var reducer = PiConversationReducer()
+        let snapshot = try JSONDecoder().decode(
+            PiConversationSnapshot.self,
+            from: Data(#"{"pane_id":"p1","available":true,"connected":true,"session":{"id":"s1"},"state":{},"entries":[],"pending_interactions":[],"cursor":"8","truncated":false}"#.utf8)
+        )
+        reducer.replace(with: snapshot)
+        let switched = PiConversationEnvelope(
+            paneID: "p1", sessionID: "s2", cursor: "9",
+            event: .object(["type": .string("session_switch"), "id": .string("s2")])
+        )
+
+        #expect(reducer.rehydrationReason(for: switched) == "session_changed")
+        #expect(reducer.apply(switched) == .needsSnapshot)
+        #expect(reducer.cursor == "8")
+        #expect(reducer.sessionID == "s1")
+    }
     @MainActor
     @Test("A reset exits a still-open stream so follow can reload its snapshot")
     func resetInterruptsLiveStream() async throws {

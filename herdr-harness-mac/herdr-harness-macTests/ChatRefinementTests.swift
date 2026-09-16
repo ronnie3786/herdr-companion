@@ -4,7 +4,7 @@ import Testing
 import Vision
 @testable import herdr_harness_mac
 
-@Suite("Chat response scope and new-session flow", .serialized)
+@Suite("Chat response scope and new-session flow", .serialized, .timeLimit(.minutes(2)))
 @MainActor
 struct ChatRefinementTests {
     private let oldID = "00000000-0000-0000-0000-000000000101"
@@ -37,7 +37,9 @@ struct ChatRefinementTests {
             // Pi can clear the transcript before its new identity propagates.
             store.snapshotProvider = { _ in cleared }
             await store.follow(model: model, pane: pane)
-            #expect(store.turns.isEmpty)
+            // A same-pane transport restart must retain the committed prefix;
+            // only the confirmed new identity below may close the chapter.
+            #expect(store.turns == original)
             store.snapshotProvider = { _ in fresh }
         }
         await store.startNewSession(model: model, pane: pane)
@@ -87,6 +89,135 @@ struct ChatRefinementTests {
         #expect(visibleText.contains("mint"))
     }
 
+    @Test("New-chat confirmation wakes a silent old live stream")
+    func newSessionWakesSilentStream() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = PiConversationStore()
+        store.sessionArchive = PiClosedSessionArchive(directory: root)
+        store.newSessionPollInterval = .milliseconds(1)
+        store.newSessionPollAttempts = 200
+        let pane = try HerdrRenderFixtures.piCapablePane()
+        let model = HerdrRenderFixtures.demoModel()
+        let old = try snapshot(sessionID: oldID)
+        let fresh = try snapshot(sessionID: newID, empty: true)
+        var requestedNew = false
+        var streams = 0
+        let (started, startedContinuation) = AsyncStream<Void>.makeStream()
+        let (terminated, terminationContinuation) = AsyncStream<Void>.makeStream()
+        store.snapshotProvider = { _ in requestedNew ? fresh : old }
+        store.eventsProvider = { _, _ in
+            streams += 1
+            if streams == 1 {
+                return AsyncThrowingStream { continuation in
+                    continuation.onTermination = { _ in terminationContinuation.yield(()) }
+                    startedContinuation.yield(())
+                }
+            }
+            return AsyncThrowingStream { _ in }
+        }
+        store.newSessionCommand = { _ in requestedNew = true }
+
+        let follow = Task { @MainActor in await store.follow(model: model, pane: pane) }
+        defer {
+            follow.cancel()
+            startedContinuation.finish()
+            terminationContinuation.finish()
+        }
+        var startedIterator = started.makeAsyncIterator()
+        _ = await startedIterator.next()
+        for _ in 0..<10 { await Task.yield() }
+        await store.startNewSession(model: model, pane: pane)
+        var terminatedIterator = terminated.makeAsyncIterator()
+        _ = await terminatedIterator.next()
+
+        #expect(store.sessionID == newID)
+        #expect(store.closedSessions.count == 1)
+        #expect(streams == 2)
+
+        follow.cancel()
+        await follow.value
+    }
+
+    @Test("New-chat confirmation cancels polling, catches up atomically, and resumes live delivery")
+    func newSessionSupersedesPollingAndResumesLive() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = PiConversationStore()
+        store.sessionArchive = PiClosedSessionArchive(directory: root)
+        store.newSessionPollInterval = .milliseconds(1)
+        store.newSessionPollAttempts = 200
+        store.offlineSnapshotPollInterval = .seconds(60)
+        store.reconnectBackoffBase = .zero
+        let pane = try HerdrRenderFixtures.piCapablePane()
+        let model = HerdrRenderFixtures.demoModel()
+        let old = try snapshot(sessionID: oldID, connected: false)
+        let fresh = try snapshot(sessionID: newID, cursor: "1", latest: "2", prompt: "New prompt")
+        var requestedNew = false
+        var streams = 0
+        let (published, continuation) = AsyncStream<Void>.makeStream()
+        store.publishObserver = { _, _ in
+            if store.turns.contains(where: { $0.user?.text == "Live delivery" }) {
+                continuation.yield(())
+            }
+        }
+        store.snapshotProvider = { _ in requestedNew ? fresh : old }
+        store.eventsProvider = { _, cursor in
+            streams += 1
+            if cursor == "1" {
+                return AsyncThrowingStream { stream in
+                    stream.yield(.envelope(PiConversationEnvelope(
+                        paneID: pane.paneID, sessionID: newID, cursor: "2",
+                        event: .object([
+                            "type": .string("message_start"),
+                            "message": .object([
+                                "id": .string("caught-up-user"),
+                                "role": .string("user"),
+                                "content": .string("Caught up atomically")
+                            ])
+                        ])
+                    )))
+                }
+            }
+            return AsyncThrowingStream { stream in
+                stream.yield(.envelope(PiConversationEnvelope(
+                    paneID: pane.paneID, sessionID: newID, cursor: "3",
+                    event: .object([
+                        "type": .string("message_start"),
+                        "message": .object([
+                            "id": .string("live-user"),
+                            "role": .string("user"),
+                            "content": .string("Live delivery")
+                        ])
+                    ])
+                )))
+            }
+        }
+        store.newSessionCommand = { _ in requestedNew = true }
+
+        let follow = Task { @MainActor in await store.follow(model: model, pane: pane) }
+        defer {
+            follow.cancel()
+            continuation.finish()
+        }
+        for _ in 0..<100 where store.sessionID != oldID { await Task.yield() }
+        #expect(store.sessionID == oldID)
+        await store.startNewSession(model: model, pane: pane)
+        var iterator = published.makeAsyncIterator()
+        _ = await iterator.next()
+
+        #expect(store.sessionID == newID)
+        #expect(store.turns.first?.user?.text == "New prompt")
+        #expect(store.turns.contains(where: { $0.user?.text == "Caught up atomically" }))
+        #expect(store.turns.contains(where: { $0.user?.text == "Live delivery" }))
+        #expect(store.closedSessions.count == 1)
+        #expect(store.closedSessions.first?.id == oldID)
+        #expect(streams == 2)
+
+        follow.cancel()
+        await follow.value
+    }
+
     @Test("Failed new-chat commands do not fabricate closed history")
     func failedReset() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -114,6 +245,23 @@ struct ChatRefinementTests {
         #expect(store.closedSessions.isEmpty)
         let fresh = try snapshot(sessionID: newID, empty: true)
         store.snapshotProvider = { _ in fresh }
+        var shouldReset = true
+        store.eventsProvider = { _, _ in
+            guard shouldReset else {
+                return AsyncThrowingStream { $0.finish(throwing: CancellationError()) }
+            }
+            shouldReset = false
+            return AsyncThrowingStream { continuation in
+                continuation.yield(.envelope(PiConversationEnvelope(
+                    paneID: pane.paneID, sessionID: oldID, cursor: "1",
+                    event: .object([
+                        "type": .string("stream.reset"),
+                        "reason": .string("session_changed")
+                    ])
+                )))
+                continuation.finish()
+            }
+        }
         await store.follow(model: model, pane: pane)
         #expect(!store.hasUnconfirmedNewSession)
         #expect(store.closedSessions.count == 1)
@@ -159,8 +307,18 @@ struct ChatRefinementTests {
         #expect(!lastThree.contains { $0.contains("answer-one") })
     }
 
-    private func snapshot(sessionID: String, empty: Bool = false, streaming: Bool = false) throws -> PiConversationSnapshot {
-        let entries: [[String: Any]] = empty ? [] : [
+    private func snapshot(
+        sessionID: String,
+        empty: Bool = false,
+        streaming: Bool = false,
+        connected: Bool = true,
+        cursor: String = "1",
+        latest: String = "1",
+        prompt: String? = nil
+    ) throws -> PiConversationSnapshot {
+        let entries: [[String: Any]] = empty ? [] : prompt.map {
+            [["type": "message", "id": "question-new", "message": ["role": "user", "content": $0]]]
+        } ?? [
             ["type": "message", "id": "question-one", "message": ["role": "user", "content": "Help me plan a small herb garden."]],
             ["type": "message", "id": "answer-one", "message": ["role": "assistant", "content": [["type": "text", "text": "Choose basil, parsley, and mint for a simple first garden."]]]],
             ["type": "message", "id": "question-two", "message": ["role": "user", "content": "Which pots should I use?"]],
@@ -168,10 +326,10 @@ struct ChatRefinementTests {
         ]
         let data = try JSONSerialization.data(withJSONObject: [
             "protocol": ["name": "herdr.pi.semantic", "version": 1], "pane_id": "w1:p1",
-            "available": true, "connected": true, "session": ["id": sessionID],
+            "available": true, "connected": connected, "session": ["id": sessionID],
             "state": ["context": ["tokens": 0], "isStreaming": streaming,
                       "model": ["provider": "anthropic", "id": "claude-sonnet-4-5", "name": "Sonnet 4.5"], "thinkingLevel": "high"], "entries": entries,
-            "pending_interactions": [], "cursor": "1", "latest_cursor": "1", "oldest_cursor": "1", "truncated": false
+            "pending_interactions": [], "cursor": cursor, "latest_cursor": latest, "oldest_cursor": "1", "truncated": false
         ])
         return try JSONDecoder().decode(PiConversationSnapshot.self, from: data)
     }

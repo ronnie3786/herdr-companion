@@ -8,7 +8,69 @@ enum PiStreamTransport: Equatable, Sendable {
 }
 
 private let piStreamLog = OSLog(subsystem: HerdrAppIdentity.bundleIdentifier, category: "pi-stream")
-private let piReloadLog = Logger(subsystem: HerdrAppIdentity.bundleIdentifier, category: "pi-stream")
+
+private struct PiRecoveryBoundary: Equatable, Sendable {
+    let reason: String
+    let expectedSessionID: String?
+    let previousSessionID: String?
+    let minimumSnapshotCursor: String?
+
+    var permitsHistoryRewrite: Bool {
+        ["backend_restarted", "session_tree", "session_compact", "session_changed", "session_lineage_changed"]
+            .contains(reason)
+    }
+}
+
+private enum PiRecoveryCause: Equatable, Sendable {
+    case initial
+    case reset(PiRecoveryBoundary)
+
+    var permitsHistoryRewrite: Bool {
+        guard case let .reset(boundary) = self else { return false }
+        return boundary.permitsHistoryRewrite
+    }
+}
+
+private struct PiPendingRecovery: Sendable {
+    let generation: Int
+    let cause: PiRecoveryCause
+    let snapshot: PiConversationSnapshot?
+}
+
+private enum PiCommittedStreamResult: Sendable {
+    case ended
+    case recover(PiRecoveryCause)
+    case superseded
+}
+
+private enum PiRehydrationResult: Sendable {
+    case live
+    case polling(PiConversationSnapshot)
+    case restart(PiRecoveryCause)
+    case superseded
+    case stop
+}
+
+private enum PiPollingResult: Sendable {
+    case live
+    case superseded
+    case stopped
+}
+
+private struct PiRecoveryExhausted: Error {}
+private struct PiCandidateReset: Error {
+    let cause: PiRecoveryCause
+}
+
+@MainActor
+private final class PiRecoveryCandidateState {
+    var reducer: PiConversationReducer
+    var failedAttempts = 0
+
+    init(reducer: PiConversationReducer) {
+        self.reducer = reducer
+    }
+}
 
 @MainActor
 @Observable
@@ -38,17 +100,28 @@ final class PiConversationStore {
     private(set) var transport: PiStreamTransport = .liveStream
 
     @ObservationIgnored private var reducer = PiConversationReducer()
+    @ObservationIgnored private var activePaneScope: String?
+    @ObservationIgnored private var activeFollowID: UUID?
+    @ObservationIgnored private var projectionGeneration = 0
+    @ObservationIgnored private var hasLoadedSnapshot = false
     @ObservationIgnored private var coalescer = PiStreamCoalescer()
     @ObservationIgnored private var flushTask: Task<Void, Never>?
-    @ObservationIgnored private var lastReloadCursor: String?
-    @ObservationIgnored private var lastReloadAt: ContinuousClock.Instant?
-    @ObservationIgnored private(set) var noProgressReloads = 0
+    @ObservationIgnored private var activeOwnedWorkID: UUID?
+    @ObservationIgnored private var activeOwnedWorkCancellation: (() -> Void)?
+    @ObservationIgnored private var pendingRecovery: PiPendingRecovery?
+    @ObservationIgnored private var recoveryDeadlineTask: Task<Void, Never>?
+    @ObservationIgnored private var activeRecoveryDeadline: UUID?
+    @ObservationIgnored private var expiredRecoveryDeadline: UUID?
     /// Internal test seams for deterministic snapshot and stream sequences.
-    @ObservationIgnored var reloadBackoffBase: Duration = .milliseconds(250)
-    @ObservationIgnored var reloadDecayWindow: Duration = .seconds(60)
-    @ObservationIgnored var stuckCursorPollingHold: Duration = .seconds(60)
+    @ObservationIgnored var reconnectBackoffBase: Duration = .milliseconds(250)
+    @ObservationIgnored var reconnectAttemptLimit = 8
+    @ObservationIgnored var recoveryNoProgressTimeout: Duration = .seconds(15)
+    @ObservationIgnored var connectedSnapshotPollInterval: Duration = .seconds(2)
+    @ObservationIgnored var offlineSnapshotPollInterval: Duration = .seconds(5)
     @ObservationIgnored var snapshotProvider: (@MainActor (HerdrPane) async throws -> PiConversationSnapshot)?
     @ObservationIgnored var eventsProvider: (@MainActor (HerdrPane, String?) async -> AsyncThrowingStream<PiConversationStreamEvent, any Error>?)?
+    @ObservationIgnored var recoveryProgress: (@MainActor (String?) -> Void)?
+    @ObservationIgnored var publishObserver: (@MainActor (PiSessionCost?, Int) -> Void)?
 
     var hasContent: Bool {
         turns.contains(where: \.hasVisibleContent)
@@ -75,132 +148,6 @@ final class PiConversationStore {
         bridgeConnected && connection.isConnected
     }
 
-    func follow(model: HerdrAppModel, pane: HerdrPane) async {
-        connection = .loading
-        lastError = nil
-        var retryDelay = 0.65
-        var retryAttempt = 0
-
-        followLoop: while !Task.isCancelled {
-            do {
-                let snapshot = try await fetchSnapshot(model: model, pane: pane)
-                try Task.checkCancellation()
-                guard snapshot.protocolInfo.name == "herdr.pi.semantic",
-                      snapshot.protocolInfo.version == 1,
-                      snapshot.available
-                else {
-                    connection = .unavailable
-                    lastError = "This Pi session does not expose a compatible native transcript."
-                    return
-                }
-
-                reducer.replace(with: snapshot)
-                schedulePublish(.streamReset)
-                guard !Task.isCancelled else { return }
-                connection = snapshot.connected ? .connected : .bridgeOffline
-                lastError = snapshot.connected
-                    ? nil
-                    : "Pi is offline. The saved transcript is still available."
-
-                // A transcript from an older bridge is still useful, but its
-                // event stream may not have the newer semantic contract. Do
-                // not block the chat on an SSE stream that cannot provide the
-                // optional context telemetry. Polling keeps legacy chats
-                // readable and automatically upgrades when a new bridge is
-                // available.
-                if !snapshot.reportsContextUsage || !snapshot.connected {
-                    if await followSnapshotPolling(
-                        model: model,
-                        pane: pane,
-                        initialSnapshot: snapshot
-                    ) {
-                        retryAttempt = 0
-                        retryDelay = 0.65
-                        continue followLoop
-                    }
-                    return
-                }
-
-                if pane.piSemantic?.capabilities.listModels == true, availableModels.isEmpty {
-                    Task { await loadModels(model: model, pane: pane) }
-                }
-
-                transport = .liveStream
-                guard let events = await fetchEvents(model: model, pane: pane, after: reducer.cursor) else {
-                    throw APIError.streamEnded
-                }
-                if try await consume(events) {
-                    // A reducer that demands a snapshot on every stream while
-                    // the cursor never advances is a hot loop: fetch snapshot,
-                    // open SSE, get the same reset frame, repeat. On a phone
-                    // that is a battery and cellular-data leak with no visible
-                    // symptom, so back off exponentially and hand the pane to
-                    // snapshot polling once the cursor has proven it is stuck.
-                    let cursor = reducer.cursor
-                    let now = ContinuousClock().now
-                    if let lastReloadAt, lastReloadAt.duration(to: now) > reloadDecayWindow {
-                        noProgressReloads = 0
-                    }
-                    if cursor == lastReloadCursor {
-                        noProgressReloads += 1
-                    } else {
-                        noProgressReloads = 0
-                    }
-                    lastReloadCursor = cursor
-                    lastReloadAt = now
-                    let reloadNumber = noProgressReloads + 1
-                    let reloadBackoff = min(
-                        reloadBackoffBase * (1 << noProgressReloads),
-                        .milliseconds(6_000)
-                    )
-                    piReloadLog.notice(
-                        "pi needsSnapshot reload #\(reloadNumber) pane=\(pane.paneID, privacy: .public) cursor=\(cursor ?? "nil", privacy: .public) noProgress=\(self.noProgressReloads)"
-                    )
-                    try await Task.sleep(for: reloadBackoff)
-                    if noProgressReloads >= 2 {
-                        piReloadLog.error(
-                            "pi needsSnapshot polling fallback pane=\(pane.paneID, privacy: .public) cursor=\(cursor ?? "nil", privacy: .public)"
-                        )
-                        if await followSnapshotPolling(
-                            model: model,
-                            pane: pane,
-                            initialSnapshot: snapshot,
-                            stuckCursor: cursor
-                        ) {
-                            retryAttempt = 0
-                            retryDelay = 0.65
-                            lastReloadCursor = nil
-                            lastReloadAt = nil
-                            noProgressReloads = 0
-                            continue followLoop
-                        }
-                        return
-                    }
-                    retryAttempt = 0
-                    retryDelay = 0.65
-                    continue followLoop
-                }
-                throw APIError.streamEnded
-            } catch is CancellationError {
-                return
-            } catch {
-                guard !HerdrCancellation.isCancellation(error) else { return }
-                retryAttempt += 1
-                connection = .reconnecting(attempt: retryAttempt)
-                lastError = hasContent
-                    ? "Live updates paused. Reconnecting…"
-                    : error.localizedDescription
-            }
-
-            do {
-                try await Task.sleep(for: .seconds(retryDelay))
-            } catch {
-                return
-            }
-            retryDelay = min(retryDelay * 1.7, 6)
-        }
-    }
-
     func submit(
         text: String,
         disposition: PiPromptDisposition,
@@ -213,15 +160,18 @@ final class PiConversationStore {
             lastError = "Pi is offline. Reconnect before sending a message."
             return false
         }
+        let generation = projectionGeneration
         isSubmitting = true
         commandNotice = nil
-        defer { isSubmitting = false }
+        defer { if activePaneScope == nil || activePaneScope == pane.id { isSubmitting = false } }
         do {
             try await model.sendPiConversationPrompt(text, disposition: disposition, to: pane)
+            guard ownsOperation(generation, pane: pane) else { return false }
             lastError = nil
             commandNotice = disposition == .followUp ? "Follow-up queued" : nil
             return true
         } catch {
+            guard ownsOperation(generation, pane: pane) else { return false }
             commandNotice = nil
             lastError = error.localizedDescription
             return false
@@ -230,15 +180,18 @@ final class PiConversationStore {
 
     func abort(model: HerdrAppModel, pane: HerdrPane) async -> Bool {
         guard !isAborting, canSendCommands, compactionActivity == nil else { return false }
+        let generation = projectionGeneration
         isAborting = true
         commandNotice = nil
-        defer { isAborting = false }
+        defer { if activePaneScope == nil || activePaneScope == pane.id { isAborting = false } }
         do {
             try await model.abortPiConversation(for: pane)
+            guard ownsOperation(generation, pane: pane) else { return false }
             lastError = nil
             commandNotice = "Stop requested"
             return true
         } catch {
+            guard ownsOperation(generation, pane: pane) else { return false }
             lastError = error.localizedDescription
             return false
         }
@@ -246,18 +199,22 @@ final class PiConversationStore {
 
     func setModel(_ candidate: PiAvailableModel, model: HerdrAppModel, pane: HerdrPane) async -> Bool {
         guard canSendCommands, !isSettingModel, compactionActivity == nil else { return false }
+        let generation = projectionGeneration
         isSettingModel = true
         commandNotice = nil
-        defer { isSettingModel = false }
+        defer { if activePaneScope == nil || activePaneScope == pane.id { isSettingModel = false } }
         do {
             try await model.setPiModel(provider: candidate.provider, modelID: candidate.modelID, for: pane)
+            guard ownsOperation(generation, pane: pane) else { return false }
             lastError = nil
             commandNotice = "Model set to \(candidate.displayName)"
             return true
         } catch let APIError.server(status, _) where status == 501 {
+            guard ownsOperation(generation, pane: pane) else { return false }
             lastError = "Model switching isn't supported by this Pi session"
             return false
         } catch {
+            guard ownsOperation(generation, pane: pane) else { return false }
             lastError = error.localizedDescription
             return false
         }
@@ -265,20 +222,24 @@ final class PiConversationStore {
 
     func setThinkingLevel(_ level: PiThinkingLevel, model: HerdrAppModel, pane: HerdrPane) async -> Bool {
         guard canSendCommands, !isSettingThinkingLevel, compactionActivity == nil else { return false }
+        let generation = projectionGeneration
         isSettingThinkingLevel = true
         commandNotice = nil
-        defer { isSettingThinkingLevel = false }
+        defer { if activePaneScope == nil || activePaneScope == pane.id { isSettingThinkingLevel = false } }
         do {
             let effective = try await model.setPiThinkingLevel(level: level.rawValue, for: pane)
+            guard ownsOperation(generation, pane: pane) else { return false }
             lastError = nil
             let effectiveDisplay = effective.flatMap { PiThinkingLevel(rawValue: $0)?.displayName ?? $0 }
                 ?? level.displayName
             commandNotice = "Thinking set to \(effectiveDisplay)"
             return true
         } catch let APIError.server(status, _) where status == 501 {
+            guard ownsOperation(generation, pane: pane) else { return false }
             lastError = "Thinking control isn't supported by this Pi session"
             return false
         } catch {
+            guard ownsOperation(generation, pane: pane) else { return false }
             lastError = error.localizedDescription
             return false
         }
@@ -300,17 +261,20 @@ final class PiConversationStore {
             lastError = "Pi is offline. Reconnect before responding."
             return false
         }
+        let generation = projectionGeneration
         do {
             try await model.respondToPiInteraction(
                 id: interaction.id,
                 response: response,
                 in: pane
             )
+            guard ownsOperation(generation, pane: pane) else { return false }
             reducer.removeInteraction(id: interaction.id)
             schedulePublish(.pendingInteraction)
             lastError = nil
             return true
         } catch {
+            guard ownsOperation(generation, pane: pane) else { return false }
             lastError = error.localizedDescription
             return false
         }
@@ -335,6 +299,7 @@ final class PiConversationStore {
                 // It says nothing about the extension socket behind it.
                 continue
             case let .envelope(envelope):
+                if reducer.rehydrationReason(for: envelope) != nil { return true }
                 let previousPhase = reducer.phase
                 let previousCompactionActivity = reducer.compactionActivity
                 let previousTurnCount = reducer.turns.count
@@ -343,6 +308,7 @@ final class PiConversationStore {
                 os_signpost(.begin, log: piStreamLog, name: "reducer.apply")
                 let effect = reducer.apply(envelope)
                 os_signpost(.end, log: piStreamLog, name: "reducer.apply")
+                if effect == .needsSnapshot { return true }
                 schedulePublish(
                     trigger(
                         for: effect,
@@ -360,15 +326,21 @@ final class PiConversationStore {
                 let newError = reducer.bridgeConnected ? nil : "Pi is offline. The saved transcript is still available."
                 if connection != newConnection { connection = newConnection }
                 if lastError != newError { lastError = newError }
-                if effect == .needsSnapshot {
-                    return true
-                }
             }
         }
         return false
     }
 
     func reset() {
+        activeFollowID = nil
+        activePaneScope = nil
+        activeOwnedWorkCancellation?()
+        activeOwnedWorkID = nil
+        activeOwnedWorkCancellation = nil
+        pendingRecovery = nil
+        cancelRecoveryDeadline()
+        projectionGeneration &+= 1
+        hasLoadedSnapshot = false
         flushTask?.cancel()
         flushTask = nil
         coalescer = PiStreamCoalescer()
@@ -396,86 +368,6 @@ final class PiConversationStore {
         lastError = nil
         commandNotice = nil
         transport = .liveStream
-        lastReloadCursor = nil
-        lastReloadAt = nil
-        noProgressReloads = 0
-    }
-
-    /// Legacy bridges can provide a durable snapshot without a compatible
-    /// live context/event stream. Keep that transcript usable with a gentle
-    /// snapshot poll instead of retrying a long-lived SSE connection forever.
-    private func followSnapshotPolling(
-        model: HerdrAppModel,
-        pane: HerdrPane,
-        initialSnapshot: PiConversationSnapshot,
-        stuckCursor: String? = nil
-    ) async -> Bool {
-        transport = .polling
-        var previousSnapshot = initialSnapshot
-        var retryDelay = 2.0
-        let pollingStartedAt = ContinuousClock().now
-
-        while !Task.isCancelled {
-            do {
-                // An offline bridge has nothing to report; polling it at the
-                // live cadence is pure radio wake-up cost on a phone.
-                try await Task.sleep(for: .seconds(previousSnapshot.connected ? 2 : 5))
-                let snapshot = try await fetchSnapshot(model: model, pane: pane)
-                try Task.checkCancellation()
-                guard snapshot.protocolInfo.name == "herdr.pi.semantic",
-                      snapshot.protocolInfo.version == 1,
-                      snapshot.available
-                else {
-                    if connection != .unavailable { connection = .unavailable }
-                    let message = "This Pi session does not expose a compatible native transcript."
-                    if lastError != message { lastError = message }
-                    return false
-                }
-
-                if snapshotContentChanged(from: previousSnapshot, to: snapshot) {
-                    reducer.replace(with: snapshot)
-                    schedulePublish(.streamReset)
-                    guard !Task.isCancelled else { return false }
-                    previousSnapshot = snapshot
-                }
-                let newConnection: PiConversationConnection = snapshot.connected ? .connected : .bridgeOffline
-                let newError = snapshot.connected
-                    ? nil
-                    : "Pi is offline. The saved transcript is still available."
-                if connection != newConnection { connection = newConnection }
-                if lastError != newError { lastError = newError }
-                retryDelay = 2
-
-                // Returning to the live stream the moment the bridge reports a
-                // modern contract would bounce straight back into the same
-                // stuck reset frame. When polling was entered because of a
-                // stuck cursor, stay here until the server actually moves the
-                // cursor on, or until the hold expires.
-                let heldStuckCursorLongEnough = pollingStartedAt.duration(to: ContinuousClock().now) >= stuckCursorPollingHold
-                if snapshot.reportsContextUsage && snapshot.connected && (
-                    stuckCursor == nil || snapshot.cursor != stuckCursor || heldStuckCursorLongEnough
-                ) {
-                    return true
-                }
-            } catch is CancellationError {
-                return false
-            } catch {
-                guard !HerdrCancellation.isCancellation(error) else { return false }
-                retryDelay = min(retryDelay * 1.7, 8)
-                let newConnection: PiConversationConnection = .reconnecting(attempt: 1)
-                let newError = hasContent
-                    ? "Live updates paused. Reconnecting…"
-                    : error.localizedDescription
-                if connection != newConnection { connection = newConnection }
-                if lastError != newError { lastError = newError }
-                do {
-                    try await Task.sleep(for: .seconds(retryDelay))
-                } catch {
-                    return false
-                }
-            }
-        }
-        return false
     }
 
     private func snapshotContentChanged(
@@ -523,6 +415,7 @@ final class PiConversationStore {
         currentModel = reducer.currentModel
         thinkingLevel = reducer.thinkingLevel
         revision &+= 1
+        publishObserver?(sessionCost, revision)
     }
 
     private func trigger(
@@ -563,6 +456,7 @@ final class PiConversationStore {
 
     private func schedulePublish(_ trigger: PiStreamCoalescer.Trigger) {
         let clock = ContinuousClock()
+        let generation = projectionGeneration
         switch coalescer.register(trigger, now: clock.now) {
         case .flushNow:
             flushTask?.cancel()
@@ -577,7 +471,9 @@ final class PiConversationStore {
                 } catch {
                     return
                 }
-                guard !Task.isCancelled, let self else { return }
+                guard !Task.isCancelled, let self,
+                      self.projectionGeneration == generation
+                else { return }
                 self.publishReducerState()
                 self.coalescer.markFlushed()
                 self.flushTask = nil
@@ -585,18 +481,646 @@ final class PiConversationStore {
         }
     }
 
+    /// Follows one pane with a durable-cursor state machine. Ordinary transport
+    /// reconnects resume the committed reducer; only semantic reset boundaries
+    /// enter transactional snapshot recovery.
+    func follow(model: HerdrAppModel, pane: HerdrPane) async {
+        if activePaneScope != pane.id {
+            reset()
+            activePaneScope = pane.id
+        }
+        pendingRecovery = nil
+        beginProjectionGeneration()
+        let runID = UUID()
+        activeFollowID = runID
+        defer {
+            if activeFollowID == runID {
+                activeFollowID = nil
+                activeOwnedWorkCancellation?()
+                cancelRecoveryDeadline()
+            }
+        }
+        connection = hasLoadedSnapshot ? .reconnecting(attempt: 0) : .loading
+        lastError = nil
+
+        var recovery: PiRecoveryCause? = hasLoadedSnapshot ? nil : .initial
+        var preparedSnapshot: PiConversationSnapshot?
+        var preparedGeneration: Int?
+        var failedAttempts = 0
+        var semanticRecoveryAttempts = 0
+        var transportAttemptStartCursor = reducer.cursor
+
+        while ownsFollow(runID, pane: pane) {
+            if let request = pendingRecovery, request.generation == projectionGeneration {
+                pendingRecovery = nil
+                recovery = request.cause
+                preparedSnapshot = request.snapshot
+                preparedGeneration = request.generation
+                semanticRecoveryAttempts = 0
+            }
+            do {
+                if let cause = recovery {
+                    switch try await rehydrateTransactionally(
+                        cause: cause,
+                        preparedSnapshot: preparedSnapshot,
+                        preparedGeneration: preparedGeneration,
+                        model: model,
+                        pane: pane,
+                        runID: runID
+                    ) {
+                    case .live:
+                        semanticRecoveryAttempts = 0
+                        recovery = nil
+                        preparedSnapshot = nil
+                        preparedGeneration = nil
+                        failedAttempts = 0
+                        if pane.piSemantic?.capabilities.listModels == true, availableModels.isEmpty {
+                            Task { await loadModels(model: model, pane: pane) }
+                        }
+                    case let .polling(snapshot):
+                        preparedSnapshot = nil
+                        preparedGeneration = nil
+                        switch await pollSnapshots(model: model, pane: pane, initialSnapshot: snapshot, runID: runID) {
+                        case .live:
+                            recovery = .initial
+                            failedAttempts = 0
+                            continue
+                        case .superseded:
+                            continue
+                        case .stopped:
+                            return
+                        }
+                    case let .restart(nextCause):
+                        preparedSnapshot = nil
+                        preparedGeneration = nil
+                        semanticRecoveryAttempts += 1
+                        guard semanticRecoveryAttempts <= reconnectAttemptLimit else {
+                            pauseRecovery()
+                            return
+                        }
+                        recovery = nextCause
+                        let retryGeneration = projectionGeneration
+                        let delay = retryDelay(attempt: semanticRecoveryAttempts)
+                        do {
+                            try await performOwnedWork { try await Task.sleep(for: delay) }
+                        } catch is CancellationError where !Task.isCancelled && retryGeneration != projectionGeneration {
+                            continue
+                        }
+                        continue
+                    case .superseded:
+                        continue
+                    case .stop:
+                        return
+                    }
+                }
+
+                guard ownsFollow(runID, pane: pane) else { return }
+                transport = .liveStream
+                let generation = projectionGeneration
+                transportAttemptStartCursor = reducer.cursor
+                let requestedCursor = reducer.cursor
+                let events: AsyncThrowingStream<PiConversationStreamEvent, any Error>?
+                do {
+                    events = try await performOwnedWork {
+                        await self.fetchEvents(model: model, pane: pane, after: requestedCursor)
+                    }
+                } catch is CancellationError where !Task.isCancelled && generation != projectionGeneration {
+                    continue
+                }
+                guard let events else { throw APIError.streamEnded }
+                guard ownsFollow(runID, pane: pane), generation == projectionGeneration else { continue }
+                connection = reducer.bridgeConnected ? .connected : .bridgeOffline
+                lastError = reducer.bridgeConnected ? nil : "Pi is offline. The saved transcript is still available."
+
+                let streamResult: PiCommittedStreamResult
+                do {
+                    streamResult = try await performOwnedWork {
+                        try await self.consumeCommittedStream(events, pane: pane, runID: runID, generation: generation)
+                    }
+                } catch is CancellationError where !Task.isCancelled && generation != projectionGeneration {
+                    continue
+                }
+                switch streamResult {
+                case .ended:
+                    if reducer.cursor != transportAttemptStartCursor {
+                        failedAttempts = 0
+                        semanticRecoveryAttempts = 0
+                    }
+                    throw APIError.streamEnded
+                case let .recover(cause):
+                    if reducer.cursor != transportAttemptStartCursor { semanticRecoveryAttempts = 0 }
+                    semanticRecoveryAttempts += 1
+                    guard semanticRecoveryAttempts <= reconnectAttemptLimit else {
+                        pauseRecovery()
+                        return
+                    }
+                    connection = .reconnecting(attempt: semanticRecoveryAttempts)
+                    lastError = hasContent ? "Live updates paused. Reconnecting…" : nil
+                    recovery = cause
+                    let retryGeneration = projectionGeneration
+                    let delay = retryDelay(attempt: semanticRecoveryAttempts)
+                    do {
+                        try await performOwnedWork { try await Task.sleep(for: delay) }
+                    } catch is CancellationError where !Task.isCancelled && retryGeneration != projectionGeneration {
+                        continue
+                    }
+                case .superseded:
+                    continue
+                }
+            } catch is CancellationError {
+                return
+            } catch is PiRecoveryExhausted {
+                pauseRecovery()
+                return
+            } catch {
+                guard ownsFollow(runID, pane: pane), !HerdrCancellation.isCancellation(error) else { return }
+                if isPermanentStreamError(error) {
+                    connection = .unavailable
+                    lastError = error.localizedDescription
+                    return
+                }
+                if reducer.cursor != transportAttemptStartCursor { failedAttempts = 0 }
+                failedAttempts = min(failedAttempts + 1, reconnectAttemptLimit)
+                connection = .reconnecting(attempt: failedAttempts)
+                lastError = hasContent ? "Live updates paused. Reconnecting…" : error.localizedDescription
+                let retryGeneration = projectionGeneration
+                let delay = retryDelay(attempt: failedAttempts)
+                do {
+                    try await performOwnedWork { try await Task.sleep(for: delay) }
+                } catch is CancellationError where !Task.isCancelled && retryGeneration != projectionGeneration {
+                    continue
+                } catch {
+                    return
+                }
+            }
+        }
+    }
+
+    private func rehydrateTransactionally(
+        cause: PiRecoveryCause,
+        preparedSnapshot: PiConversationSnapshot?,
+        preparedGeneration: Int?,
+        model: HerdrAppModel,
+        pane: HerdrPane,
+        runID: UUID
+    ) async throws -> PiRehydrationResult {
+        let generation: Int
+        if let preparedGeneration {
+            guard preparedGeneration == projectionGeneration else { return .superseded }
+            generation = preparedGeneration
+        } else {
+            beginProjectionGeneration()
+            generation = projectionGeneration
+        }
+
+        let snapshot: PiConversationSnapshot
+        if let preparedSnapshot {
+            snapshot = preparedSnapshot
+        } else {
+            do {
+                snapshot = try await performOwnedWork {
+                    try await self.fetchSnapshot(model: model, pane: pane)
+                }
+            } catch is CancellationError where !Task.isCancelled && generation != projectionGeneration {
+                return .superseded
+            }
+        }
+        try Task.checkCancellation()
+        guard ownsFollow(runID, pane: pane), generation == projectionGeneration else {
+            return .superseded
+        }
+        guard snapshot.protocolInfo.name == "herdr.pi.semantic",
+              snapshot.protocolInfo.version == 1,
+              snapshot.available,
+              snapshot.paneID.isEmpty || snapshot.paneID == pane.paneID
+        else {
+            connection = .unavailable
+            lastError = "This Pi session does not expose a compatible native transcript."
+            return .stop
+        }
+
+        var candidate = reducer
+        candidate.replace(with: snapshot)
+        guard snapshotSatisfies(cause, candidate: candidate) else {
+            return .restart(cause)
+        }
+        let retainsCommittedProjection = snapshotWouldRegressCommitted(candidate, cause: cause)
+
+        guard snapshot.reportsContextUsage, snapshot.connected else {
+            if !retainsCommittedProjection {
+                commit(candidate, snapshot: snapshot, generation: generation)
+            } else {
+                connection = .bridgeOffline
+                lastError = "Pi is offline. The saved transcript is still available."
+            }
+            return .polling(snapshot)
+        }
+
+        guard var watermark = snapshot.latestCursor else {
+            if !retainsCommittedProjection {
+                commit(candidate, snapshot: snapshot, generation: generation)
+            }
+            return .live
+        }
+
+        if !cause.permitsHistoryRewrite,
+           candidate.sessionID == reducer.sessionID,
+           let visibleCursor = reducer.cursor,
+           cursor(visibleCursor, isAfter: watermark) {
+            watermark = visibleCursor
+        }
+        if let checkpoint = candidate.cursor, cursor(checkpoint, isAfter: watermark) {
+            watermark = checkpoint
+        }
+        if cursor(candidate.cursor, reached: watermark) {
+            commit(candidate, snapshot: snapshot, generation: generation)
+            return .live
+        }
+
+        let catchUpWatermark = watermark
+        let replay = PiRecoveryCandidateState(reducer: candidate)
+        let deadlineToken = UUID()
+        armRecoveryDeadline(deadlineToken, generation: generation)
+        defer { cancelRecoveryDeadline(deadlineToken) }
+        while ownsFollow(runID, pane: pane), generation == projectionGeneration {
+            if expiredRecoveryDeadline == deadlineToken { throw PiRecoveryExhausted() }
+            let requestedCursor = replay.reducer.cursor
+            let events: AsyncThrowingStream<PiConversationStreamEvent, any Error>?
+            do {
+                events = try await performOwnedWork {
+                    await self.fetchEvents(model: model, pane: pane, after: requestedCursor)
+                }
+            } catch is CancellationError where expiredRecoveryDeadline == deadlineToken {
+                throw PiRecoveryExhausted()
+            } catch is CancellationError where !Task.isCancelled && generation != projectionGeneration {
+                return .superseded
+            }
+            guard let events else {
+                replay.failedAttempts = min(replay.failedAttempts + 1, reconnectAttemptLimit)
+                do {
+                    try await performOwnedWork {
+                        try await Task.sleep(for: self.retryDelay(attempt: replay.failedAttempts))
+                    }
+                } catch is CancellationError where expiredRecoveryDeadline == deadlineToken {
+                    throw PiRecoveryExhausted()
+                } catch is CancellationError where !Task.isCancelled && generation != projectionGeneration {
+                    return .superseded
+                }
+                continue
+            }
+            do {
+                try await performOwnedWork {
+                    for try await streamEvent in events {
+                        try Task.checkCancellation()
+                        guard self.ownsFollow(runID, pane: pane), generation == self.projectionGeneration else {
+                            throw CancellationError()
+                        }
+                        guard case let .envelope(envelope) = streamEvent else { continue }
+                        try self.validate(envelope, for: pane)
+                        if let reason = replay.reducer.rehydrationReason(for: envelope) {
+                            throw PiCandidateReset(cause: self.recoveryCause(for: envelope, reason: reason, reducer: replay.reducer))
+                        }
+                        let previousCursor = replay.reducer.cursor
+                        _ = replay.reducer.apply(envelope)
+                        self.recoveryProgress?(replay.reducer.cursor)
+                        if replay.reducer.cursor != previousCursor {
+                            replay.failedAttempts = 0
+                            self.armRecoveryDeadline(deadlineToken, generation: generation)
+                        }
+                        if self.cursor(replay.reducer.cursor, reached: catchUpWatermark) { return }
+                    }
+                    throw APIError.streamEnded
+                }
+                commit(replay.reducer, snapshot: snapshot, generation: generation)
+                return .live
+            } catch let reset as PiCandidateReset {
+                return .restart(reset.cause)
+            } catch is CancellationError where expiredRecoveryDeadline == deadlineToken {
+                throw PiRecoveryExhausted()
+            } catch is CancellationError where !Task.isCancelled && generation != projectionGeneration {
+                return .superseded
+            } catch {
+                if isPermanentStreamError(error) { throw error }
+                replay.failedAttempts = min(replay.failedAttempts + 1, reconnectAttemptLimit)
+            }
+            if expiredRecoveryDeadline == deadlineToken { throw PiRecoveryExhausted() }
+            do {
+                try await performOwnedWork {
+                    try await Task.sleep(for: self.retryDelay(attempt: replay.failedAttempts))
+                }
+            } catch is CancellationError where expiredRecoveryDeadline == deadlineToken {
+                throw PiRecoveryExhausted()
+            } catch is CancellationError where !Task.isCancelled && generation != projectionGeneration {
+                return .superseded
+            }
+        }
+        return .superseded
+    }
+
+    private func consumeCommittedStream(
+        _ events: AsyncThrowingStream<PiConversationStreamEvent, any Error>,
+        pane: HerdrPane,
+        runID: UUID,
+        generation: Int
+    ) async throws -> PiCommittedStreamResult {
+        for try await streamEvent in events {
+            try Task.checkCancellation()
+            guard ownsFollow(runID, pane: pane), generation == projectionGeneration else {
+                return .superseded
+            }
+            guard case let .envelope(envelope) = streamEvent else { continue }
+            try validate(envelope, for: pane)
+            if let reason = reducer.rehydrationReason(for: envelope) {
+                return .recover(recoveryCause(for: envelope, reason: reason, reducer: reducer))
+            }
+            let previousPhase = reducer.phase
+            let previousCompactionActivity = reducer.compactionActivity
+            let previousTurnCount = reducer.turns.count
+            let previousPendingInteractions = reducer.pendingInteractions
+            let previousBridgeConnected = reducer.bridgeConnected
+            let effect = reducer.apply(envelope)
+            schedulePublish(trigger(
+                for: effect,
+                previousPhase: previousPhase,
+                previousCompactionActivity: previousCompactionActivity,
+                previousTurnCount: previousTurnCount,
+                previousPendingInteractions: previousPendingInteractions,
+                previousBridgeConnected: previousBridgeConnected
+            ))
+            let nextConnection: PiConversationConnection = reducer.bridgeConnected ? .connected : .bridgeOffline
+            let nextError = reducer.bridgeConnected ? nil : "Pi is offline. The saved transcript is still available."
+            if connection != nextConnection { connection = nextConnection }
+            if lastError != nextError { lastError = nextError }
+        }
+        return .ended
+    }
+
+    private func pollSnapshots(
+        model: HerdrAppModel,
+        pane: HerdrPane,
+        initialSnapshot: PiConversationSnapshot,
+        runID: UUID
+    ) async -> PiPollingResult {
+        transport = .polling
+        var previous = initialSnapshot
+        var failures = 0
+        while ownsFollow(runID, pane: pane) {
+            let generation = projectionGeneration
+            do {
+                let delay = previous.connected ? connectedSnapshotPollInterval : offlineSnapshotPollInterval
+                let snapshot = try await performOwnedWork {
+                    try await Task.sleep(for: delay)
+                    return try await self.fetchSnapshot(model: model, pane: pane)
+                }
+                try Task.checkCancellation()
+                guard ownsFollow(runID, pane: pane) else { return .stopped }
+                guard generation == projectionGeneration else { return .superseded }
+                guard snapshot.protocolInfo.name == "herdr.pi.semantic",
+                      snapshot.protocolInfo.version == 1,
+                      snapshot.available,
+                      snapshot.paneID.isEmpty || snapshot.paneID == pane.paneID
+                else {
+                    connection = .unavailable
+                    lastError = "This Pi session does not expose a compatible native transcript."
+                    return .stopped
+                }
+                if snapshot.reportsContextUsage && snapshot.connected { return .live }
+                if snapshotContentChanged(from: previous, to: snapshot) {
+                    var candidate = reducer
+                    candidate.replace(with: snapshot)
+                    let sameSessionRegression = snapshotWouldRegressCommitted(candidate, cause: .initial)
+                    if !sameSessionRegression {
+                        beginProjectionGeneration()
+                        commit(candidate, snapshot: snapshot, generation: projectionGeneration)
+                    }
+                    previous = snapshot
+                }
+                failures = 0
+                connection = snapshot.connected ? .connected : .bridgeOffline
+                lastError = snapshot.connected ? nil : "Pi is offline. The saved transcript is still available."
+            } catch is CancellationError where !Task.isCancelled && generation != projectionGeneration {
+                return .superseded
+            } catch {
+                guard !HerdrCancellation.isCancellation(error), ownsFollow(runID, pane: pane) else { return .stopped }
+                if isPermanentStreamError(error) {
+                    connection = .unavailable
+                    lastError = error.localizedDescription
+                    return .stopped
+                }
+                failures = min(failures + 1, reconnectAttemptLimit)
+                connection = .reconnecting(attempt: failures)
+                lastError = hasContent ? "Live updates paused. Reconnecting…" : error.localizedDescription
+                let delay = retryDelay(attempt: failures)
+                do {
+                    try await performOwnedWork { try await Task.sleep(for: delay) }
+                } catch is CancellationError where !Task.isCancelled && generation != projectionGeneration {
+                    return .superseded
+                } catch {
+                    return .stopped
+                }
+            }
+        }
+        return .stopped
+    }
+
+    private func recoveryCause(
+        for envelope: PiConversationEnvelope,
+        reason: String,
+        reducer: PiConversationReducer
+    ) -> PiRecoveryCause {
+        let currentSessionID = reducer.sessionID
+        let normalizedType = envelope.eventType.replacingOccurrences(of: ".", with: "_")
+        let explicitEventSessionID = envelope.event.string(for: "sessionId", "session_id")
+            ?? (["session_start", "session_switch"].contains(normalizedType)
+                ? envelope.event.string(for: "id")
+                : nil)
+        let incomingSessionID = [explicitEventSessionID, envelope.sessionID]
+            .compactMap { $0 }
+            .first { $0 != currentSessionID }
+        let durableBoundary = ["session_tree", "session_compact"].contains(normalizedType)
+            ? envelope.cursor
+            : nil
+        return .reset(PiRecoveryBoundary(
+            reason: reason,
+            expectedSessionID: incomingSessionID,
+            previousSessionID: reason == "session_changed" ? currentSessionID : nil,
+            minimumSnapshotCursor: durableBoundary
+        ))
+    }
+
+    private func snapshotSatisfies(
+        _ cause: PiRecoveryCause,
+        candidate: PiConversationReducer
+    ) -> Bool {
+        guard case let .reset(boundary) = cause else { return true }
+        if let expectedSessionID = boundary.expectedSessionID,
+           candidate.sessionID != expectedSessionID {
+            return false
+        }
+        if boundary.expectedSessionID == nil,
+           let previousSessionID = boundary.previousSessionID,
+           candidate.sessionID == previousSessionID || candidate.sessionID == nil {
+            return false
+        }
+        if let minimum = boundary.minimumSnapshotCursor,
+           !cursor(candidate.cursor, reached: minimum) {
+            return false
+        }
+        return true
+    }
+
+    private func snapshotWouldRegressCommitted(
+        _ candidate: PiConversationReducer,
+        cause: PiRecoveryCause
+    ) -> Bool {
+        guard hasLoadedSnapshot,
+              !cause.permitsHistoryRewrite,
+              candidate.sessionID == reducer.sessionID,
+              let visibleCursor = reducer.cursor
+        else { return false }
+        guard let checkpoint = candidate.cursor else { return true }
+        return cursor(visibleCursor, isAfter: checkpoint)
+    }
+
+    private func performOwnedWork<T: Sendable>(
+        _ operation: @escaping @MainActor @Sendable () async throws -> T
+    ) async throws -> T {
+        let workID = UUID()
+        let task = Task { @MainActor in try await operation() }
+        activeOwnedWorkID = workID
+        activeOwnedWorkCancellation = { task.cancel() }
+        defer {
+            if activeOwnedWorkID == workID {
+                activeOwnedWorkID = nil
+                activeOwnedWorkCancellation = nil
+            }
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    private func armRecoveryDeadline(_ token: UUID, generation: Int) {
+        // A candidate may rearm only its own deadline. Intentional
+        // supersession clears the active token through cancel(nil) first, so a
+        // stale candidate can never cancel or replace newer recovery work.
+        guard activeRecoveryDeadline == nil || activeRecoveryDeadline == token else { return }
+        recoveryDeadlineTask?.cancel()
+        activeRecoveryDeadline = token
+        expiredRecoveryDeadline = nil
+        let timeout = recoveryNoProgressTimeout
+        recoveryDeadlineTask = Task { [weak self] in
+            do { try await Task.sleep(for: timeout) } catch { return }
+            guard !Task.isCancelled, let self,
+                  self.projectionGeneration == generation,
+                  self.activeRecoveryDeadline == token
+            else { return }
+            self.expiredRecoveryDeadline = token
+            self.activeOwnedWorkCancellation?()
+        }
+    }
+
+    private func cancelRecoveryDeadline(_ token: UUID? = nil) {
+        if let token, activeRecoveryDeadline != token { return }
+        recoveryDeadlineTask?.cancel()
+        recoveryDeadlineTask = nil
+        activeRecoveryDeadline = nil
+        if token == nil || expiredRecoveryDeadline == token { expiredRecoveryDeadline = nil }
+    }
+
+    private func pauseRecovery() {
+        connection = .unavailable
+        lastError = hasContent
+            ? "Live updates paused. Reopen this chat to retry."
+            : "Live transcript unavailable. Reopen this chat to retry."
+    }
+
+    private func commit(
+        _ candidate: PiConversationReducer,
+        snapshot: PiConversationSnapshot,
+        generation: Int
+    ) {
+        guard generation == projectionGeneration else { return }
+        cancelPendingPublish()
+        reducer = candidate
+        hasLoadedSnapshot = true
+        publishReducerState()
+        connection = snapshot.connected ? .connected : .bridgeOffline
+        lastError = snapshot.connected ? nil : "Pi is offline. The saved transcript is still available."
+    }
+
+    private func beginProjectionGeneration() {
+        let hadPendingPublish = flushTask != nil
+        projectionGeneration &+= 1
+        activeOwnedWorkCancellation?()
+        cancelRecoveryDeadline()
+        cancelPendingPublish()
+        if hadPendingPublish { publishReducerState() }
+    }
+
+    private func cancelPendingPublish() {
+        flushTask?.cancel()
+        flushTask = nil
+        coalescer = PiStreamCoalescer()
+    }
+
+    private func ownsFollow(_ runID: UUID, pane: HerdrPane) -> Bool {
+        !Task.isCancelled && activeFollowID == runID && activePaneScope == pane.id
+    }
+
+    private func ownsOperation(_ generation: Int, pane: HerdrPane) -> Bool {
+        generation == projectionGeneration && (activePaneScope == nil || activePaneScope == pane.id)
+    }
+
+    private func validate(_ envelope: PiConversationEnvelope, for pane: HerdrPane) throws {
+        guard envelope.protocolInfo.name == "herdr.pi.semantic",
+              envelope.protocolInfo.version == 1,
+              envelope.paneID.isEmpty || envelope.paneID == pane.paneID
+        else { throw APIError.invalidResponse }
+    }
+
+    private func cursor(_ cursor: String?, reached watermark: String) -> Bool {
+        guard let cursor else { return false }
+        if let value = Int64(cursor), let target = Int64(watermark) { return value >= target }
+        return cursor == watermark
+    }
+
+    private func cursor(_ lhs: String, isAfter rhs: String) -> Bool {
+        if let left = Int64(lhs), let right = Int64(rhs) { return left > right }
+        return false
+    }
+
+    private func retryDelay(attempt: Int) -> Duration {
+        let exponent = max(0, min(attempt - 1, 5))
+        return min(reconnectBackoffBase * (1 << exponent), .seconds(6))
+    }
+
+    private func isPermanentStreamError(_ error: any Error) -> Bool {
+        if case APIError.invalidResponse = error { return true }
+        if case let APIError.server(status, _) = error {
+            return (400..<500).contains(status) && status != 408 && status != 429
+        }
+        return false
+    }
+
     private func loadModels(model: HerdrAppModel, pane: HerdrPane) async {
         guard !isLoadingModels else { return }
+        let generation = projectionGeneration
         isLoadingModels = true
-        defer { isLoadingModels = false }
+        defer { if activePaneScope == nil || activePaneScope == pane.id { isLoadingModels = false } }
         do {
             let response = try await model.fetchPiModels(for: pane)
+            guard ownsOperation(generation, pane: pane) else { return }
             availableModels = response.models
             if currentModel == nil { currentModel = response.current }
             modelCatalogError = nil
         } catch let APIError.server(status, _) where status == 501 {
+            guard ownsOperation(generation, pane: pane) else { return }
             isModelSwitchingUnsupported = true
         } catch {
+            guard ownsOperation(generation, pane: pane) else { return }
             modelCatalogError = "Couldn't load models"
         }
     }

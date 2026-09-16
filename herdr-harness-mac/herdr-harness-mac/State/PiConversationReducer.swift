@@ -74,23 +74,39 @@ struct PiConversationReducer: Sendable {
         structureRevision += 1
     }
 
+    /// Returns the authoritative-reload reason without mutating the committed
+    /// projection. Transport-only reset/ready cursors are not durable events
+    /// delivered to the reducer and must never advance its applied prefix.
+    func rehydrationReason(for envelope: PiConversationEnvelope) -> String? {
+        let type = Self.normalizedEventType(envelope.eventType)
+        if type == "stream.reset" {
+            return envelope.event.string(for: "reason") ?? "stream_reset"
+        }
+        if type == "session_tree" || type == "session_compact" { return type }
+        if let incomingSessionID = envelope.sessionID,
+           let sessionID,
+           sessionID != incomingSessionID {
+            return "session_changed"
+        }
+        if type == "session_start" || type == "session_switch",
+           let incomingID = envelope.event.string(for: "sessionId", "session_id", "id"),
+           let sessionID,
+           sessionID != incomingID {
+            return "session_changed"
+        }
+        return nil
+    }
+
     mutating func apply(_ envelope: PiConversationEnvelope) -> Effect {
         let event = envelope.event
         let type = Self.normalizedEventType(envelope.eventType)
 
-        // Ready and reset frames describe the replay cursor itself, rather
-        // than a journal entry. The server can legitimately give both frames
-        // the same cursor, so they must bypass durable-event de-duplication.
         if type == "ready" {
-            cursor = envelope.cursor ?? cursor
             return updateBridgeConnection(
                 event.bool(for: "connected") ?? envelope.connected ?? false
             )
         }
-        if type == "stream.reset" {
-            cursor = envelope.cursor ?? cursor
-            return .needsSnapshot
-        }
+        if rehydrationReason(for: envelope) != nil { return .needsSnapshot }
 
         if let eventCursor = envelope.cursor {
             guard !seenCursors.contains(eventCursor) else { return .none }
@@ -98,10 +114,7 @@ struct PiConversationReducer: Sendable {
             cursor = eventCursor
         }
 
-        if let incomingSessionID = envelope.sessionID {
-            if let sessionID, sessionID != incomingSessionID { return .needsSnapshot }
-            sessionID = incomingSessionID
-        }
+        if let incomingSessionID = envelope.sessionID { sessionID = incomingSessionID }
 
         switch type {
         case "bridge.connection":

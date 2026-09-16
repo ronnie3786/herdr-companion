@@ -35,6 +35,27 @@ No global Pi settings are changed by either command. For durable installation,
 idempotent because Pi records the local package path rather than copying or
 modifying another extension.
 
+## Live chat checkpoints and recovery
+
+Semantic snapshots are durable checkpoints, not a token-by-token copy of the
+current display. Clients replay later journal events from the snapshot cursor.
+Updated native clients resume ordinary reconnects from their last applied cursor
+and rebuild required snapshot refreshes before replacing the visible conversation.
+
+The bridge also saves intermediate checkpoints at completed `turn_end` boundaries,
+after Pi has persisted the assistant message and every tool result for that turn.
+It checks for a checkpoint after 256 emitted semantic events by default; it never
+checkpoints a partial assistant response or a running tool on a timer. Settled,
+compaction, and lifecycle checkpoints remain available independently of this
+interval. A single long-running turn can still require a substantial replay.
+
+Advanced operators may set `HERDR_PI_SEMANTIC_CHECKPOINT_EVENT_INTERVAL` in their
+private environment configuration to an integer from 8 through 4096. Invalid
+values use the default. Lower values increase snapshot work at durable boundaries;
+this setting is not a wall-clock refresh interval. Install the updated Pi package
+on each companion host to enable the checkpoint improvement. A Mac app update
+does not update remote Pi packages or restart their services.
+
 ## Track parent and child sessions
 
 Lineage is active in every Pi session that loads this package, including

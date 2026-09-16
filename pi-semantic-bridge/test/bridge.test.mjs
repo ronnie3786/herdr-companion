@@ -11,6 +11,7 @@ process.env.HERDR_SOCKET_PATH = join(temporary, "herdr.sock");
 process.env.HERDR_PANE_ID = "w1:p1";
 process.env.HERDR_PI_SEMANTIC_MAX_QUEUE_RECORDS = "8";
 process.env.HERDR_PI_SEMANTIC_MAX_QUEUE_BYTES = String(64 * 1024);
+process.env.HERDR_PI_SEMANTIC_CHECKPOINT_EVENT_INTERVAL = "8";
 
 const jiti = createJiti(import.meta.url);
 const bridgeModule = await jiti.import("../extensions/pi-semantic-bridge.ts");
@@ -313,7 +314,8 @@ try {
 		type: "session_before_tree",
 		entriesToSummarize: [{ id: "inactive-tree", content: privateSentinel.repeat(20_000) }],
 	}, context);
-	for (let index = 0; index < 6; index += 1) {
+	idle = false;
+	for (let index = 0; index < 8; index += 1) {
 		const delta = String(index);
 		deltas.push(delta);
 		handlers.get("message_update")({
@@ -326,6 +328,9 @@ try {
 			},
 			message: { role: "assistant", content: "x".repeat(200_000) },
 		}, context);
+		// Let the bridge's delivery microtask run so this fixture does not test
+		// queue overflow while exercising the checkpoint schedule.
+		await Promise.resolve();
 	}
 	const deltaRecords = await readRecords(subscription, (records) => records.filter(
 		(item) => item.event?.type === "message_update",
@@ -339,31 +344,209 @@ try {
 	assert.equal(JSON.stringify(deltaRecords).includes('"partial"'), false);
 	assert.equal(JSON.stringify(deltaRecords).includes('"message":{"role":"assistant"'), false);
 
-	handlers.get("turn_end")({ type: "turn_end", turnIndex: 1 }, context);
-	const turnEndRecords = await readRecords(subscription, (records) => records.some(
-		(item) => item.event?.type === "turn_end",
-	));
-	assert.deepEqual(
-		turnEndRecords.find((item) => item.event?.type === "turn_end").event.context,
-		{ tokens: 12_345, contextWindow: 192_000, percent: 6.43 },
-	);
-	assert.ok(Math.abs(turnEndRecords.find((item) => item.event?.type === "turn_end").event.cost.totalUSD - 0.035) < 1e-9);
-
-	entries.push({
+	const toolCalls = [
+		{
+			id: "tool-call-1",
+			name: "lookup",
+			arguments: { query: "alpha" },
+			result: { content: [{ type: "text", text: "alpha result" }], details: { matchCount: 1 } },
+		},
+		{
+			id: "tool-call-2",
+			name: "calculate",
+			arguments: { expression: "2 + 2" },
+			result: { content: [{ type: "text", text: "4" }], details: { exact: true } },
+		},
+	];
+	const completedAnswer = {
+		role: "assistant",
+		content: [
+			{ type: "text", text: "I will use both tools." },
+			...toolCalls.map((call) => ({
+				type: "toolCall",
+				id: call.id,
+				name: call.name,
+				arguments: call.arguments,
+			})),
+		],
+	};
+	const assistantEntry = {
 		type: "message",
 		id: "entry-2",
 		parentId: "entry-1",
 		timestamp: "2026-08-12T00:01:00Z",
-		message: { role: "assistant", content: [{ type: "text", text: "completed answer" }] },
+		message: completedAnswer,
+	};
+	const toolResultEntries = toolCalls.map((call, index) => ({
+		type: "message",
+		id: `entry-2-tool-${index + 1}`,
+		parentId: index === 0 ? assistantEntry.id : `entry-2-tool-${index}`,
+		timestamp: `2026-08-12T00:01:0${index + 1}Z`,
+		message: {
+			role: "toolResult",
+			toolCallId: call.id,
+			toolName: call.name,
+			content: call.result.content,
+			details: call.result.details,
+			isError: false,
+			timestamp: 1_786_493_460_000 + index,
+		},
+	}));
+	const beforeTurnEndPromise = readRecords(subscription, (records) => records.some(
+		(item) => item.event?.type === "message_end"
+			&& item.event.message?.role === "toolResult"
+			&& item.event.message.toolCallId === "tool-call-2",
+	));
+	// Pi invokes each extension message_end handler before appending that message
+	// to SessionManager. Mirror that persistence order for the assistant tool calls
+	// and both tool results; no checkpoint is safe until the enclosing turn ends.
+	handlers.get("message_end")({ type: "message_end", message: completedAnswer }, context);
+	entries.push(assistantEntry);
+	for (let index = 0; index < toolCalls.length; index += 1) {
+		const call = toolCalls[index];
+		handlers.get("tool_execution_start")({
+			type: "tool_execution_start",
+			toolCallId: call.id,
+			toolName: call.name,
+			args: call.arguments,
+		}, context);
+		handlers.get("tool_execution_end")({
+			type: "tool_execution_end",
+			toolCallId: call.id,
+			toolName: call.name,
+			result: call.result,
+			isError: false,
+		}, context);
+		handlers.get("message_end")({
+			type: "message_end",
+			message: toolResultEntries[index].message,
+		}, context);
+		entries.push(toolResultEntries[index]);
+	}
+	const beforeTurnEnd = await beforeTurnEndPromise;
+	assert.equal(beforeTurnEnd.some((item) => item.kind === "snapshot"), false);
+	assert.equal(beforeTurnEnd.some((item) => item.event?.type === "turn_end"), false);
+	assert.deepEqual(beforeTurnEnd.filter(
+		(item) => item.event?.type === "tool_execution_start" || item.event?.type === "tool_execution_end",
+	).map((item) => ({
+		type: item.event.type,
+		toolCallId: item.event.toolCallId,
+		toolName: item.event.toolName,
+	})), [
+		{ type: "tool_execution_start", toolCallId: "tool-call-1", toolName: "lookup" },
+		{ type: "tool_execution_end", toolCallId: "tool-call-1", toolName: "lookup" },
+		{ type: "tool_execution_start", toolCallId: "tool-call-2", toolName: "calculate" },
+		{ type: "tool_execution_end", toolCallId: "tool-call-2", toolName: "calculate" },
+	]);
+
+	const firstDurableTurnPromise = readRecords(subscription, (records) => records.some(
+		(item) => item.event?.type === "turn_end",
+	) && records.some((item) => item.kind === "snapshot"));
+	handlers.get("turn_end")({ type: "turn_end", turnIndex: 1 }, context);
+	const firstDurableTurn = await firstDurableTurnPromise;
+	const firstTurnEndIndex = firstDurableTurn.findIndex((item) => item.event?.type === "turn_end");
+	const firstCheckpointIndex = firstDurableTurn.findIndex((item) => item.kind === "snapshot");
+	const firstTurnEnd = firstDurableTurn[firstTurnEndIndex];
+	const firstCheckpoint = firstDurableTurn[firstCheckpointIndex];
+	assert.ok(firstTurnEndIndex >= 0 && firstCheckpointIndex > firstTurnEndIndex);
+	assert.equal(firstCheckpoint.sequence, firstTurnEnd.sequence);
+	assert.deepEqual(firstCheckpoint.snapshot.entries.map((entry) => entry.id),
+		["entry-1", "entry-2", "entry-2-tool-1", "entry-2-tool-2"]);
+	assert.deepEqual(firstCheckpoint.snapshot.entries.slice(1), [assistantEntry, ...toolResultEntries]);
+	assert.equal(firstCheckpoint.snapshot.state.working, true);
+	assert.ok(Math.abs(firstCheckpoint.snapshot.state.cost.totalUSD - 0.035) < 1e-9);
+	assert.deepEqual(firstTurnEnd.event.context, { tokens: 12_345, contextWindow: 192_000, percent: 6.43 });
+	assert.ok(Math.abs(firstTurnEnd.event.cost.totalUSD - 0.035) < 1e-9);
+
+	const belowIntervalPromise = readRecords(subscription, (records) => records.some(
+		(item) => item.event?.type === "model_select" && item.event?.source === "set",
+	));
+	handlers.get("turn_start")({ type: "turn_start", turnIndex: 2 }, context);
+	const shortAnswer = { role: "assistant", content: [{ type: "text", text: "short answer" }] };
+	handlers.get("message_start")({ type: "message_start", message: shortAnswer }, context);
+	handlers.get("message_end")({ type: "message_end", message: shortAnswer }, context);
+	entries.push({
+		type: "message",
+		id: "entry-3",
+		parentId: "entry-2-tool-2",
+		timestamp: "2026-08-12T00:02:00Z",
+		message: shortAnswer,
 	});
+	handlers.get("turn_end")({ type: "turn_end", turnIndex: 2 }, context);
+	handlers.get("model_select")({
+		type: "model_select",
+		model: availableModels[0],
+		previousModel: availableModels[1],
+		source: "set",
+	}, context);
+	const belowInterval = await belowIntervalPromise;
+	assert.equal(belowInterval.some((item) => item.kind === "snapshot"), false);
+
+	const secondDurableTurnPromise = readRecords(subscription, (records) => records.some(
+		(item) => item.event?.type === "turn_end" && item.event.turnIndex === 3,
+	) && records.some((item) => item.kind === "snapshot"));
+	handlers.get("turn_start")({ type: "turn_start", turnIndex: 3 }, context);
+	handlers.get("message_update")({
+		type: "message_update",
+		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "durable" },
+	}, context);
+	const finalActiveAnswer = { role: "assistant", content: [{ type: "text", text: "durable answer" }] };
+	handlers.get("message_end")({ type: "message_end", message: finalActiveAnswer }, context);
+	entries.push({
+		type: "message",
+		id: "entry-4",
+		parentId: "entry-3",
+		timestamp: "2026-08-12T00:03:00Z",
+		message: finalActiveAnswer,
+	});
+	costEntries.push({
+		type: "message",
+		id: "cost-entry-assistant-2",
+		parentId: "cost-entry-user",
+		message: {
+			role: "assistant",
+			content: [{ type: "text", text: "durable answer" }],
+			usage: {
+				input: 7,
+				output: 3,
+				cacheRead: 2,
+				cacheWrite: 1,
+				totalTokens: 13,
+				cost: { input: 0.003, output: 0.004, cacheRead: 0, cacheWrite: 0, total: 0.007 },
+			},
+		},
+	});
+	handlers.get("turn_end")({ type: "turn_end", turnIndex: 3 }, context);
+	const secondDurableTurn = await secondDurableTurnPromise;
+	const secondTurnEndIndex = secondDurableTurn.findIndex(
+		(item) => item.event?.type === "turn_end" && item.event.turnIndex === 3,
+	);
+	const secondCheckpointIndex = secondDurableTurn.findIndex((item) => item.kind === "snapshot");
+	const secondCheckpoint = secondDurableTurn[secondCheckpointIndex];
+	assert.ok(secondCheckpointIndex > secondTurnEndIndex);
+	assert.equal(secondCheckpoint.sequence, secondDurableTurn[secondTurnEndIndex].sequence);
+	assert.deepEqual(secondCheckpoint.snapshot.entries.map((entry) => entry.id),
+		["entry-1", "entry-2", "entry-2-tool-1", "entry-2-tool-2", "entry-3", "entry-4"]);
+	const secondCheckpointCost = secondCheckpoint.snapshot.state.cost;
+	assert.ok(Math.abs(secondCheckpointCost.totalUSD - 0.042) < 1e-9);
+	assert.deepEqual({ ...secondCheckpointCost, totalUSD: 0.042 }, {
+		totalUSD: 0.042,
+		inputTokens: 127,
+		outputTokens: 63,
+		cacheReadTokens: 12,
+		cacheWriteTokens: 6,
+		totalTokens: 208,
+		assistantTurns: 2,
+	});
+
 	idle = true;
 	contextUsageValue = undefined;
 	const settledCheckpoint = readRecords(subscription, (records) => records.some(
-		(item) => item.kind === "snapshot" && item.snapshot?.entries?.some((entry) => entry.id === "entry-2"),
+		(item) => item.kind === "snapshot" && item.snapshot?.entries?.at(-1)?.id === "entry-4",
 	));
 	await handlers.get("agent_settled")({ type: "agent_settled" }, context);
 	const settled = await settledCheckpoint;
-	assert.ok(settled.some((item) => item.kind === "snapshot" && item.snapshot.entries.at(-1).id === "entry-2"));
+	assert.ok(settled.some((item) => item.kind === "snapshot" && item.snapshot.entries.at(-1).id === "entry-4"));
 	assert.deepEqual(settled.find((item) => item.kind === "snapshot").snapshot.state.context,
 		{ tokens: null, contextWindow: null, percent: null },
 	);
@@ -794,11 +977,21 @@ try {
 	assert.ok((await survivorSnapshotPromise).some((item) => item.kind === "snapshot"));
 	survivor.destroy();
 
-	const shutdownRecord = readRecords(subscription, (records) => records.some(
-		(item) => item.event?.type === "session_shutdown",
-	));
+	const shutdownRecord = readRecords(subscription, (records) => {
+		const shutdown = records.find((item) => item.event?.type === "session_shutdown");
+		return Boolean(shutdown && records.some(
+			(item) => item.kind === "snapshot" && item.sequence === shutdown.sequence,
+		));
+	});
 	await handlers.get("session_shutdown")({ type: "session_shutdown", reason: "quit" }, context);
-	assert.equal((await shutdownRecord).at(-1).event.type, "session_shutdown");
+	const shutdownRecords = await shutdownRecord;
+	const shutdownEventIndex = shutdownRecords.findIndex((item) => item.event?.type === "session_shutdown");
+	const shutdownCheckpointIndex = shutdownRecords.findIndex(
+		(item) => item.kind === "snapshot" && item.sequence === shutdownRecords[shutdownEventIndex].sequence,
+	);
+	assert.ok(shutdownCheckpointIndex > shutdownEventIndex);
+	assert.equal(shutdownRecords[shutdownEventIndex].event.reason, "quit");
+	assert.equal(shutdownRecords[shutdownCheckpointIndex].snapshot.entries.at(-1).id, "entry-4");
 	assert.equal(existsSync(socketPath), false);
 	subscription.destroy();
 } finally {

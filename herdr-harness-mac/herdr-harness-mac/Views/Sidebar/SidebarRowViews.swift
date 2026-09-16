@@ -316,11 +316,15 @@ struct SidebarChatRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
-        .help(accessibilityLabel)
+        .help(dragHelp)
         .accessibilityIdentifier("sidebar-pane-\(pane.id)")
         .accessibilityElement(children: toggleStar == nil ? .combine : .contain)
         .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint(canDragConversation
+            ? "Opens this chat. Drag it onto another prompt to quote its conversation."
+            : "Opens this pane.")
         .overlay(alignment: .leading) { disclosureControl }
+        .modifier(SidebarConversationDragModifier(pane: pane))
     }
 
     private var compactContent: some View {
@@ -493,9 +497,38 @@ struct SidebarChatRow: View {
         return describesLastActivity ? "\(identity), last active \(age)" : "\(identity), \(age)"
     }
 
+    private var dragHelp: String {
+        guard canDragConversation else { return accessibilityLabel }
+        return "\(accessibilityLabel)\nDrag onto another prompt to add this conversation as context."
+    }
+
+    private var canDragConversation: Bool {
+        pane.supportsPiSemanticChat
+            && pane.piSemantic?.sessionID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
     private var rowBackground: Color {
         if let tabColor { return tabColor.rowBackground(selected: isSelected, hovering: isHovering) }
         if isSelected { return HerdrTheme.selection }
         return isHovering ? HerdrTheme.elevated.opacity(0.6) : .clear
+    }
+}
+
+private struct SidebarConversationDragModifier: ViewModifier {
+    let pane: HerdrPane
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if pane.supportsPiSemanticChat,
+           pane.piSemantic?.sessionID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            content.draggable(ConversationContextTransfer(pane: pane)) {
+                Label(pane.displayTitle, systemImage: "bubble.left.and.text.bubble.right")
+                    .padding(8)
+                    .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.compactRadius))
+                    .accessibilityLabel("Conversation context from \(pane.displayTitle)")
+            }
+        } else {
+            content
+        }
     }
 }

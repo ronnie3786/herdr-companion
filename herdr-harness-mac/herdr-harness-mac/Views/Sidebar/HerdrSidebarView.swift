@@ -1128,6 +1128,19 @@ struct HerdrSidebarView: View {
                 }
                 Divider()
             }
+            if let destination = model.selectedPaneID.flatMap({ model.pane(id: $0) }),
+               model.canAddConversationContext(from: pane, to: destination) {
+                Button("Add to current prompt", systemImage: "bubble.left.and.text.bubble.right") {
+                    Task {
+                        await model.addConversationContext(
+                            ConversationContextTransfer(pane: pane),
+                            toDestinationPaneID: destination.id
+                        )
+                    }
+                }
+                .accessibilityIdentifier("sidebar-add-conversation-context-\(pane.id)")
+                Divider()
+            }
             Button(
                 model.starredChatIDs.contains(pane.id) ? "Unstar chat" : "Star chat",
                 systemImage: model.starredChatIDs.contains(pane.id) ? "star.slash" : "star"

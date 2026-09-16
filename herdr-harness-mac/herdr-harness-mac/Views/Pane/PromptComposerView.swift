@@ -60,7 +60,8 @@ struct PromptComposerView: View {
     @State private var isShowingJira = false
     @State private var isShowingMoreTools = false
     @State private var showsTerminalKeys = false
-    @State private var isDropTargeted = false
+    @State private var isFileDropTargeted = false
+    @State private var isConversationDropTargeted = false
     @State private var disposition: PiPromptDisposition = .prompt
     @State private var hapticPulse = HerdrHapticPulse()
     @State private var quickVoiceCapture = HerdrQuickVoiceCapture()
@@ -104,15 +105,23 @@ struct PromptComposerView: View {
         _disposition = State(initialValue: piConfiguration?.preferredDisposition ?? .prompt)
     }
 
+    private var stagedConversationReferences: [ConversationContextReference] {
+        model.conversationReferences(for: pane.id)
+    }
+
     var body: some View {
         VStack(spacing: 8) {
-            if !attachments.isEmpty || !quotes.isEmpty {
+            if !attachments.isEmpty || !quotes.isEmpty || !stagedConversationReferences.isEmpty {
                 ComposerAttachmentTray(
                     attachments: attachments,
                     retry: retryAttachment,
                     remove: removeAttachment,
                     quotes: quotes,
-                    removeQuote: { id in quotes.removeAll { $0.id == id } }
+                    removeQuote: { id in quotes.removeAll { $0.id == id } },
+                    conversationReferences: stagedConversationReferences,
+                    removeConversationReference: { id in
+                        model.removeConversationReference(id, from: pane.id)
+                    }
                 )
             }
 
@@ -240,10 +249,21 @@ struct PromptComposerView: View {
             queueAttachments(urls, ownership: .userSelected)
             return true
         } isTargeted: { isTargeted in
-            isDropTargeted = isTargeted
+            isFileDropTargeted = isTargeted
+        }
+        .dropDestination(for: ConversationContextTransfer.self) { transfers, _ in
+            guard canControl, !isSubmitting, !isPiCompacting, let transfer = transfers.first else {
+                return false
+            }
+            Task {
+                await model.addConversationContext(transfer, toDestinationPaneID: pane.id)
+            }
+            return true
+        } isTargeted: { isTargeted in
+            isConversationDropTargeted = isTargeted
         }
         .overlay {
-            if isDropTargeted {
+            if isFileDropTargeted || isConversationDropTargeted {
                 RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
                     .strokeBorder(HerdrTheme.accent, lineWidth: 1.5)
                     .padding(-6)
@@ -689,7 +709,7 @@ struct PromptComposerView: View {
             item.status == .uploading
         }
         let dispositionIsAvailable = piConfiguration?.availableDispositions.contains(effectiveDisposition) ?? true
-        return (hasText || hasAttachment || !quotes.isEmpty)
+        return (hasText || hasAttachment || !quotes.isEmpty || !model.conversationReferences(for: pane.id).isEmpty)
             && !isUploading
             && !isSubmitting
             && canControl
@@ -1024,6 +1044,7 @@ struct PromptComposerView: View {
     private func send() {
         guard canSend else { return }
         let quotesToSend = quotes
+        let referencesToSend = model.conversationReferences(for: pane.id)
         let text = ChatQuote.prompt(draft.trimmingCharacters(in: .whitespacesAndNewlines), quotes: quotesToSend)
         let paths = attachments.compactMap(\.uploadedPath)
         let attachmentBlock = paths.isEmpty
@@ -1036,6 +1057,10 @@ struct PromptComposerView: View {
            !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             message += "\n\n(transcribed audio, please account for incorrect names or typos)"
         }
+        message = ConversationContextReference.prompt(
+            currentRequest: message,
+            references: referencesToSend
+        )
         let piConfiguration = self.piConfiguration
         let disposition = effectiveDisposition
 
@@ -1053,6 +1078,8 @@ struct PromptComposerView: View {
                 attachments = []
                 let sentQuoteIDs = Set(quotesToSend.map(\.id))
                 quotes.removeAll { sentQuoteIDs.contains($0.id) }
+                let sentReferenceIDs = Set(referencesToSend.map(\.id))
+                model.removeConversationReferences(sentReferenceIDs, from: pane.id)
                 hapticPulse.fire(.promptSent)
             } else if piConfiguration != nil {
                 hapticPulse.fire(.failed)

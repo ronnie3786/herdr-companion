@@ -6,10 +6,18 @@ struct ComposerAttachmentTray: View {
     let remove: (TerminalAttachment) -> Void
     var quotes: [ChatQuote] = []
     var removeQuote: (UUID) -> Void = { _ in }
+    var conversationReferences: [ConversationContextReference] = []
+    var removeConversationReference: (UUID) -> Void = { _ in }
 
     var body: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
+                ForEach(conversationReferences) { reference in
+                    ConversationContextChip(
+                        reference: reference,
+                        remove: { removeConversationReference(reference.id) }
+                    )
+                }
                 ForEach(quotes) { quote in
                     ChatQuoteChip(quote: quote, remove: { removeQuote(quote.id) })
                 }
@@ -28,6 +36,56 @@ struct ComposerAttachmentTray: View {
         // Keep horizontal scrolling available when the attachments overflow.
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityLabel("Attachments")
+    }
+}
+
+struct ConversationContextChip: View {
+    let reference: ConversationContextReference
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "bubble.left.and.text.bubble.right.fill")
+                .herdrFont(.subheadline, weight: .semibold)
+                .foregroundStyle(HerdrTheme.primaryAction)
+                .frame(width: 22)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(reference.title)
+                    .herdrFont(.caption, weight: .medium)
+                    .foregroundStyle(HerdrTheme.text)
+                    .lineLimit(1)
+                    .frame(maxWidth: 180, alignment: .leading)
+                Text(reference.compactSummary)
+                    .herdrFont(.caption2)
+                    .foregroundStyle(reference.isPartial ? HerdrTheme.mauve : HerdrTheme.primaryAction)
+                    .lineLimit(1)
+            }
+
+            Button(action: remove) {
+                Image(systemName: "xmark")
+                    .herdrFont(.caption, weight: .bold)
+                    .frame(width: 30, height: 30)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(HerdrTheme.mist)
+            .accessibilityLabel("Remove conversation context from \(reference.title)")
+            .accessibilityIdentifier("conversation-context-remove-\(reference.id.uuidString)")
+        }
+        .padding(.leading, 11)
+        .padding(.trailing, 2)
+        .padding(.vertical, 4)
+        .frame(minHeight: 44)
+        .background(HerdrTheme.primaryAction.opacity(0.10))
+        .overlay {
+            RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+                .strokeBorder(HerdrTheme.mauve.opacity(0.72), lineWidth: 1)
+        }
+        .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(reference.accessibilityLabel)
+        .accessibilityIdentifier("conversation-context-chip-\(reference.id.uuidString)")
     }
 }
 

@@ -69,6 +69,10 @@ final class HerdrAppModel {
     /// pasted and dictated content, and their attachments are security-scoped
     /// URLs that cannot survive a relaunch anyway.
     private(set) var composerDrafts: [String: String] = [:]
+    /// Frozen Pi conversation excerpts staged for each destination composer.
+    /// Like drafts, these live only for this app run. The source can disappear
+    /// after capture without invalidating the destination's quoted context.
+    private(set) var stagedConversationReferences: [String: [ConversationContextReference]] = [:]
     let promptHistory: PromptHistoryStore
     /// What the mounted pane session is showing, published so the window
     /// toolbar's scope picker can render and select a Git segment. The mode
@@ -2917,6 +2921,109 @@ final class HerdrAppModel {
         composerDrafts[paneID] = text
     }
 
+    func conversationReferences(for paneID: String) -> [ConversationContextReference] {
+        stagedConversationReferences[paneID] ?? []
+    }
+
+    func canAddConversationContext(from source: HerdrPane, to destination: HerdrPane?) -> Bool {
+        guard let destination else { return false }
+        return source.id != destination.id
+            && source.supportsPiSemanticChat
+            && source.piSemantic?.sessionID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            && pane(id: source.id) != nil
+            && pane(id: destination.id) != nil
+            && canControl(machineID: source.machineID)
+            && canControl(machineID: destination.machineID)
+    }
+
+    func addConversationContext(
+        _ transfer: ConversationContextTransfer,
+        toDestinationPaneID destinationPaneID: String
+    ) async {
+        do {
+            guard let destination = pane(id: destinationPaneID),
+                  canControl(machineID: destination.machineID) else {
+                throw ConversationContextError.destinationUnavailable
+            }
+            guard destination.id != transfer.sourcePaneID else {
+                throw ConversationContextError.samePane
+            }
+            guard let source = pane(id: transfer.sourcePaneID), source.supportsPiSemanticChat else {
+                throw ConversationContextError.sourceUnavailable
+            }
+            try Self.validateConversationSession(transfer.expectedSessionID, against: source)
+
+            let snapshot = try await fetchPiConversationSnapshot(for: source)
+
+            // Both endpoints and the source session are re-resolved after the
+            // suspension. A pane refresh must not redirect a stale drag.
+            guard let refreshedDestination = pane(id: destinationPaneID),
+                  canControl(machineID: refreshedDestination.machineID) else {
+                throw ConversationContextError.destinationUnavailable
+            }
+            guard refreshedDestination.id != transfer.sourcePaneID else {
+                throw ConversationContextError.samePane
+            }
+            guard let refreshedSource = pane(id: transfer.sourcePaneID),
+                  refreshedSource.supportsPiSemanticChat else {
+                throw ConversationContextError.sourceUnavailable
+            }
+            try Self.validateConversationSession(transfer.expectedSessionID, against: refreshedSource)
+            let reference = try ConversationContextReference.capture(
+                transfer: transfer,
+                currentSourcePane: refreshedSource,
+                snapshot: snapshot
+            )
+            if stageCapturedConversationReference(reference, for: destinationPaneID) {
+                toastMessage = "Added conversation context"
+            } else {
+                toastMessage = "That conversation is already in this prompt"
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @discardableResult
+    func stageCapturedConversationReference(
+        _ reference: ConversationContextReference,
+        for destinationPaneID: String
+    ) -> Bool {
+        var references = stagedConversationReferences[destinationPaneID] ?? []
+        guard !references.contains(where: { $0.deduplicationKey == reference.deduplicationKey }) else {
+            return false
+        }
+        references.append(reference)
+        stagedConversationReferences[destinationPaneID] = references
+        return true
+    }
+
+    func removeConversationReference(_ id: UUID, from destinationPaneID: String) {
+        removeConversationReferences(Set([id]), from: destinationPaneID)
+    }
+
+    func removeConversationReferences(_ ids: Set<UUID>, from destinationPaneID: String) {
+        guard var references = stagedConversationReferences[destinationPaneID] else { return }
+        references.removeAll { ids.contains($0.id) }
+        if references.isEmpty {
+            stagedConversationReferences[destinationPaneID] = nil
+        } else {
+            stagedConversationReferences[destinationPaneID] = references
+        }
+    }
+
+    private static func validateConversationSession(_ expectedSessionID: String?, against pane: HerdrPane) throws {
+        guard let expectedSessionID = expectedSessionID?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !expectedSessionID.isEmpty,
+              let currentSessionID = pane.piSemantic?.sessionID?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !currentSessionID.isEmpty else {
+            throw ConversationContextError.sessionIdentityUnavailable
+        }
+        guard expectedSessionID == currentSessionID else {
+            throw ConversationContextError.sessionChanged
+        }
+    }
+
     func notePaneDetailMode(_ mode: PaneDetailMode, gitIsAvailable: Bool, for paneID: String) {
         currentPaneDetailModeOwner = paneID
         // Observation notifies on write, not change, and the always-mounted
@@ -3736,6 +3843,13 @@ final class HerdrAppModel {
                 return validPaneIDs.contains(paneID)
             }
             if prunedDrafts != composerDrafts { composerDrafts = prunedDrafts }
+            let prunedReferences = stagedConversationReferences.filter { paneID, _ in
+                guard MachineScopedID.split(paneID)?.machineID == machineID else { return true }
+                return validPaneIDs.contains(paneID)
+            }
+            if prunedReferences != stagedConversationReferences {
+                stagedConversationReferences = prunedReferences
+            }
             let prunedDoneEpisodes = lastAckedDoneEpisodeByPaneID.filter { paneID, _ in
                 guard MachineScopedID.split(paneID)?.machineID == machineID else { return true }
                 return validPaneIDs.contains(paneID)
@@ -4013,6 +4127,9 @@ final class HerdrAppModel {
         }
         persistDismissedHudChips()
         composerDrafts = composerDrafts.filter {
+            MachineScopedID.split($0.key)?.machineID != id
+        }
+        stagedConversationReferences = stagedConversationReferences.filter {
             MachineScopedID.split($0.key)?.machineID != id
         }
         lastAckedDoneEpisodeByPaneID = lastAckedDoneEpisodeByPaneID.filter {

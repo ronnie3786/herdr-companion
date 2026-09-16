@@ -7,6 +7,15 @@ struct HerdrHudPlacement: Equatable, Sendable {
 
     static let defaultInset: CGFloat = 8
     static let collapsedSize = CGSize(width: 88, height: 72)
+    static let ultraCompactIndicatorSize: CGFloat = 20
+    static let ultraCompactHitTargetSize: CGFloat = 28
+    /// A compact panel still leaves enough transparent room for the status
+    /// glow, without carrying the ordinary HUD's 40-point shadow margin.
+    static let ultraCompactShadowMargin: CGFloat = 8
+    static let ultraCompactContentSize = CGSize(
+        width: ultraCompactHitTargetSize,
+        height: ultraCompactHitTargetSize
+    )
     /// Reserves the left satellite's half-width, mirroring the right edge.
     static let orbLeadingInset: CGFloat = 16
     static let orbControlScale: CGFloat = 0.8
@@ -173,6 +182,7 @@ struct HerdrHudPlacement: Equatable, Sendable {
 
     static func frame(
         isExpanded: Bool,
+        isUltraCompact: Bool = false,
         visibleFrame: CGRect,
         topRightOffset: CGSize,
         chipCount: Int = 0,
@@ -187,9 +197,14 @@ struct HerdrHudPlacement: Equatable, Sendable {
         measuredContentHeight: CGFloat? = nil,
         expandedChatSize: CGSize = expandedSize
     ) -> CGRect {
-        var contentSize = isExpanded
-            ? expandedChatSize
-            : collapsedContentSize(
+        let panelMargin = isUltraCompact ? ultraCompactShadowMargin : shadowMargin
+        var contentSize: CGSize
+        if isUltraCompact {
+            contentSize = ultraCompactContentSize
+        } else if isExpanded {
+            contentSize = expandedChatSize
+        } else {
+            contentSize = collapsedContentSize(
                 chipCount: chipCount,
                 overflow: overflow,
                 hasResultRail: hasResultRail,
@@ -208,24 +223,27 @@ struct HerdrHudPlacement: Equatable, Sendable {
                 fontScale: fontScale,
                 measuredContentHeight: measuredContentHeight
             )
-        if quickVoiceSize.height > 0 {
-            contentSize.width = max(contentSize.width, quickVoiceSize.width)
-            contentSize.height += chipSpacing + quickVoiceSize.height
         }
-        if voiceReplySize.height > 0 {
-            contentSize.width = max(contentSize.width, voiceReplySize.width)
-            contentSize.height += notesGap + voiceReplySize.height
-        }
-        if notesSize.height > 0 {
-            let availableContentHeight = max(0, visibleFrame.height - shadowMargin * 2)
-            let excess = max(0, contentSize.height + notesGap + notesSize.height - availableContentHeight)
-            let shrunkNotesHeight = max(noteCtaHeight, notesSize.height - excess)
-            contentSize.width = max(contentSize.width, notesSize.width)
-            contentSize.height += notesGap + shrunkNotesHeight
+        if !isUltraCompact {
+            if quickVoiceSize.height > 0 {
+                contentSize.width = max(contentSize.width, quickVoiceSize.width)
+                contentSize.height += chipSpacing + quickVoiceSize.height
+            }
+            if voiceReplySize.height > 0 {
+                contentSize.width = max(contentSize.width, voiceReplySize.width)
+                contentSize.height += notesGap + voiceReplySize.height
+            }
+            if notesSize.height > 0 {
+                let availableContentHeight = max(0, visibleFrame.height - shadowMargin * 2)
+                let excess = max(0, contentSize.height + notesGap + notesSize.height - availableContentHeight)
+                let shrunkNotesHeight = max(noteCtaHeight, notesSize.height - excess)
+                contentSize.width = max(contentSize.width, notesSize.width)
+                contentSize.height += notesGap + shrunkNotesHeight
+            }
         }
         let preferredSize = CGSize(
-            width: contentSize.width + shadowMargin * 2,
-            height: contentSize.height + shadowMargin * 2
+            width: contentSize.width + panelMargin * 2,
+            height: contentSize.height + panelMargin * 2
         )
         // A visible frame smaller than the HUD is unusual, but this keeps the
         // contract true even on extremely constrained displays.
@@ -235,8 +253,8 @@ struct HerdrHudPlacement: Equatable, Sendable {
         )
         let desiredX = visibleFrame.maxX - topRightOffset.width - size.width
         let desiredY = visibleFrame.maxY - topRightOffset.height - size.height
-        let x = min(max(desiredX, visibleFrame.minX - shadowMargin), visibleFrame.maxX - size.width + shadowMargin)
-        let y = min(max(desiredY, visibleFrame.minY - shadowMargin), visibleFrame.maxY - size.height + shadowMargin)
+        let x = min(max(desiredX, visibleFrame.minX - panelMargin), visibleFrame.maxX - size.width + panelMargin)
+        let y = min(max(desiredY, visibleFrame.minY - panelMargin), visibleFrame.maxY - size.height + panelMargin)
         return CGRect(origin: CGPoint(x: x, y: y), size: size)
     }
 
@@ -250,10 +268,12 @@ struct HerdrHudPlacement: Equatable, Sendable {
     static func reclamp(
         topRightOffset: CGSize,
         isExpanded: Bool,
+        isUltraCompact: Bool = false,
         visibleFrame: CGRect
     ) -> CGSize {
         let clampedFrame = frame(
             isExpanded: isExpanded,
+            isUltraCompact: isUltraCompact,
             visibleFrame: visibleFrame,
             topRightOffset: topRightOffset
         )

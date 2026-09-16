@@ -80,6 +80,50 @@ struct HerdrHudPlacementTests {
         #expect(collapsed.size != expanded.size)
     }
 
+    @Test("Ultra-compact placement uses a 20-point visual, Mac hit target, and small panel margin")
+    func ultraCompactGeometryIsGenuinelyCompact() {
+        #expect(HerdrHudPlacement.ultraCompactIndicatorSize == 20)
+        #expect(HerdrHudPlacement.ultraCompactHitTargetSize >= HerdrTheme.minHitTarget)
+        #expect(HerdrHudPlacement.ultraCompactShadowMargin < HerdrHudPlacement.shadowMargin)
+
+        let frame = HerdrHudPlacement.frame(
+            isExpanded: false,
+            isUltraCompact: true,
+            visibleFrame: CGRect(x: 0, y: 0, width: 1_920, height: 1_080),
+            topRightOffset: HerdrHudPlacement.defaultOffset(),
+            chipCount: 12,
+            notesSize: HerdrHudPlacement.noteCardSize,
+            voiceReplySize: HerdrHudPlacement.voiceReplyCardSize,
+            quickVoiceSize: HerdrHudPlacement.quickVoiceCardSize
+        )
+        let expectedSide = HerdrHudPlacement.ultraCompactHitTargetSize
+            + 2 * HerdrHudPlacement.ultraCompactShadowMargin
+        #expect(frame.size == CGSize(width: expectedSide, height: expectedSide))
+    }
+
+    @Test("Ultra-compact and preview frames retain the same top-right anchor")
+    func ultraCompactPreviewKeepsTopRightAnchorFixed() {
+        let visibleFrame = CGRect(x: 100, y: 200, width: 1_920, height: 1_080)
+        let offset = CGSize(width: 24, height: 32)
+        let resting = HerdrHudPlacement.frame(
+            isExpanded: false,
+            isUltraCompact: true,
+            visibleFrame: visibleFrame,
+            topRightOffset: offset
+        )
+        let preview = HerdrHudPlacement.frame(
+            isExpanded: false,
+            visibleFrame: visibleFrame,
+            topRightOffset: offset,
+            chipCount: 3,
+            hasResultRail: true
+        )
+
+        #expect(resting.maxX == preview.maxX)
+        #expect(resting.maxY == preview.maxY)
+        #expect(resting.size != preview.size)
+    }
+
     @Test("Panel frames include transparent room for HUD shadows")
     func frameAddsShadowMarginAroundVisibleContent() {
         let visibleFrame = CGRect(x: 0, y: 0, width: 1_920, height: 1_080)

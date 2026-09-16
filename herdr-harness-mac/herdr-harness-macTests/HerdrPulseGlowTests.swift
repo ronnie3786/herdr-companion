@@ -123,6 +123,76 @@ struct HerdrHudNotificationPresentationTests {
         #expect(HerdrHudNotificationPresentation.tone(for: [], fallbackCount: 0) == nil)
     }
 
+    @Test("Ultra-compact status prioritizes work, alerts, completion, and idle")
+    func ultraCompactTonePriority() {
+        let working = HerdrHudNotificationPresentation.ultraCompactTone(
+            sessionIsRunning: true,
+            workingCount: 0,
+            statuses: [.done, .blocked],
+            isConnected: true
+        )
+        #expect(working == .working)
+        #expect(HerdrHudNotificationPresentation.ultraCompactColor(for: working) == HerdrTheme.working)
+
+        let projectedWorking = HerdrHudNotificationPresentation.ultraCompactTone(
+            sessionIsRunning: false,
+            workingCount: 1,
+            statuses: [.done],
+            isConnected: true
+        )
+        #expect(projectedWorking == .working)
+        #expect(
+            HerdrHudNotificationPresentation.ultraCompactTone(
+                sessionIsRunning: false,
+                workingCount: 0,
+                statuses: [.done, .blocked],
+                isConnected: true
+            ) == .alert
+        )
+        #expect(
+            HerdrHudNotificationPresentation.ultraCompactColor(for: .alert)
+                == HerdrTheme.alert
+        )
+        #expect(
+            HerdrHudNotificationPresentation.ultraCompactTone(
+                sessionIsRunning: false,
+                workingCount: 0,
+                statuses: [.done],
+                isConnected: true
+            ) == .finished
+        )
+        #expect(
+            HerdrHudNotificationPresentation.ultraCompactColor(for: .finished)
+                == HerdrTheme.signal
+        )
+        #expect(
+            HerdrHudNotificationPresentation.ultraCompactTone(
+                sessionIsRunning: false,
+                workingCount: 0,
+                statuses: [],
+                isConnected: true
+            ) == .idle
+        )
+        #expect(HerdrHudNotificationPresentation.ultraCompactColor(for: .idle) == HerdrTheme.accent)
+    }
+
+    @Test("Ultra-compact offline status is muted and explicitly announced")
+    func ultraCompactOfflineAccessibility() {
+        let tone = HerdrHudNotificationPresentation.ultraCompactTone(
+            sessionIsRunning: false,
+            workingCount: 0,
+            statuses: [],
+            isConnected: false
+        )
+        #expect(tone == .offline)
+        #expect(HerdrHudNotificationPresentation.ultraCompactColor(for: tone) == HerdrTheme.muted)
+        #expect(HerdrHudNotificationPresentation.ultraCompactAccessibilityValue(for: tone) == "Offline")
+        #expect(
+            HerdrHudNotificationPresentation.ultraCompactAccessibilityValue(for: .alert)
+                == "Blocked or failed work needs attention"
+        )
+    }
+
     @Test("The hidden visual count remains available to accessibility tools")
     func accessibleCount() {
         #expect(

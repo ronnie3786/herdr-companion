@@ -35,6 +35,7 @@ final class HerdrHudController {
         static let visibleAgentLimit = "herdr.hud.visibleAgentLimit"
         static let chatWidth = "herdr.hud.chatWidth"
         static let chatHeight = "herdr.hud.chatHeight"
+        static let ultraCompactEnabled = "herdr.hud.ultraCompactEnabled"
     }
 
     private let userDefaults: UserDefaults
@@ -61,6 +62,7 @@ final class HerdrHudController {
 
     private(set) var noteCardSize = HerdrHudPlacement.noteCardSize
     private(set) var chatCardSize = HerdrHudPlacement.expandedSize
+    private(set) var isUltraCompactEnabled: Bool
     private var preferredChatCardSize = HerdrHudPlacement.expandedSize
     private(set) var isExpanded = false
     private(set) var isDraggingPanel = false
@@ -86,6 +88,21 @@ final class HerdrHudController {
     /// Orb actions share the HUD-wide hover union and its gap-crossing grace.
     var areOrbControlsVisible: Bool { areAttachmentTitlesExpanded }
     var isCollapsedResultRailVisible: Bool { collapsedResultArtifactCount > 0 }
+    var isHudRunActive: Bool {
+        displayedSession?.isRunning == true
+            || chats?.visibleChats.contains(where: { $0.session.isRunning }) == true
+    }
+    /// Hover previews reuse the ordinary collapsed HUD without opening its
+    /// composer. Explicit cards always win over the persisted resting mode.
+    var isUltraCompactResting: Bool {
+        isUltraCompactEnabled && !areAttachmentTitlesExpanded && !hasExplicitInteractionSurface
+    }
+    private var hasExplicitInteractionSurface: Bool {
+        isExpanded
+            || isVoiceReplyCardVisible
+            || quickVoice?.isExpanded == true
+            || Self.isCardLayout(notes?.layout ?? .hidden)
+    }
     /// Whether the `+N` control has been clicked to reveal the grouped
     /// sessions. Regrouped `chipRegroupDelay` after the pointer leaves them.
     private(set) var isShowingAllChips = false
@@ -109,6 +126,7 @@ final class HerdrHudController {
         attachmentHoverGrace: Duration = .milliseconds(180)
     ) {
         self.userDefaults = userDefaults
+        isUltraCompactEnabled = userDefaults.bool(forKey: DefaultsKey.ultraCompactEnabled)
         let savedLimit = userDefaults.object(forKey: DefaultsKey.visibleAgentLimit) as? Int
         visibleAgentLimit = savedLimit.flatMap { (0...20).contains($0) ? $0 : nil } ?? HerdrHudPlacement.maxChips
         let width = userDefaults.double(forKey: "herdr.hud.noteWidth")
@@ -142,6 +160,17 @@ final class HerdrHudController {
         enabledRevision &+= 1
         notes?.setVisible(visible)
         notesLayoutDidChange()
+    }
+
+    func setUltraCompactEnabled(_ enabled: Bool) {
+        guard isUltraCompactEnabled != enabled else { return }
+        isUltraCompactEnabled = enabled
+        userDefaults.set(enabled, forKey: DefaultsKey.ultraCompactEnabled)
+        applyFrame(animated: true)
+    }
+
+    func toggleUltraCompact() {
+        setUltraCompactEnabled(!isUltraCompactEnabled)
     }
 
     func configure(
@@ -400,6 +429,7 @@ final class HerdrHudController {
             placementOffset = HerdrHudPlacement.reclamp(
                 topRightOffset: offset,
                 isExpanded: isExpanded,
+                isUltraCompact: isUltraCompactResting,
                 visibleFrame: visibleFrame
             )
             savePlacementOffset()
@@ -710,6 +740,7 @@ final class HerdrHudController {
         )
         return HerdrHudPlacement.frame(
             isExpanded: isExpanded,
+            isUltraCompact: isUltraCompactResting,
             visibleFrame: visibleFrame,
             topRightOffset: placementOffset,
             chipCount: isExpanded ? 0 : collapsedChipCount,

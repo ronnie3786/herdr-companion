@@ -58,6 +58,21 @@ struct HerdrHudRootView: View {
         session.voiceReplyTarget.flatMap { model.pane(id: $0) }?.lastActivityAt
     }
 
+    private var unreadAlertStatuses: [AgentStatus] {
+        HerdrHudNotificationFilter.alerts(model.alerts, panes: model.workspaces.flatMap(\.panes))
+            .filter { !$0.isRead }
+            .map(\.status)
+    }
+
+    private var ultraCompactTone: HerdrHudNotificationPresentation.UltraCompactTone {
+        HerdrHudNotificationPresentation.ultraCompactTone(
+            sessionIsRunning: controller.isHudRunActive,
+            workingCount: model.workingCount,
+            statuses: unreadAlertStatuses + attentionChipStatuses,
+            isConnected: model.connectionState == .live || model.isDemoMode
+        )
+    }
+
     var body: some View {
         let chipState = sessionChips
         let orbNotificationStatuses = attentionChipStatuses
@@ -65,7 +80,9 @@ struct HerdrHudRootView: View {
         let collapsedCounts = [chipState.chips.count + hudChatCount, chipState.overflow]
         VStack(alignment: .trailing, spacing: HerdrHudPlacement.notesGap) {
             Group {
-                if controller.isExpanded {
+                if controller.isUltraCompactResting {
+                    HerdrHudUltraCompactIndicator(controller: controller, tone: ultraCompactTone)
+                } else if controller.isExpanded {
                     HerdrHudCardView(model: model, controller: controller,
                                      session: controller.chats?.displayedSession ?? session)
                         .id(ObjectIdentifier(controller.chats?.displayedSession ?? session))
@@ -122,18 +139,20 @@ struct HerdrHudRootView: View {
                     }
                 }
             }
-            if voiceReply.showsCard {
-                HerdrHudVoiceReplyCardView(model: model, voiceReply: voiceReply)
-                    .herdrHudHoverRegion("voice-reply", action: controller.setHoveringHud)
-                    .transition(
-                        reduceMotion
-                            ? .opacity
-                            : .opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing))
-                    )
-            }
-            if notes.layout != .hidden, controller.isExpanded || notes.layout != .icon {
-                HerdrHudNotesStripView(model: model, controller: controller, notes: notes)
-                    .herdrHudHoverRegion("notes", action: controller.setHoveringHud)
+            if !controller.isUltraCompactResting {
+                if voiceReply.showsCard {
+                    HerdrHudVoiceReplyCardView(model: model, voiceReply: voiceReply)
+                        .herdrHudHoverRegion("voice-reply", action: controller.setHoveringHud)
+                        .transition(
+                            reduceMotion
+                                ? .opacity
+                                : .opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing))
+                        )
+                }
+                if notes.layout != .hidden, controller.isExpanded || notes.layout != .icon {
+                    HerdrHudNotesStripView(model: model, controller: controller, notes: notes)
+                        .herdrHudHoverRegion("notes", action: controller.setHoveringHud)
+                }
             }
         }
         .task(id: model.machines.filter { model.canControl(machineID: $0.id) }.map(\.id).sorted()) {
@@ -185,9 +204,14 @@ struct HerdrHudRootView: View {
         // that had already taken its final size overflow above the screen for
         // the whole of every frame animation, which read as the HUD jumping
         // off-screen and sliding back in.
-        .padding(HerdrHudPlacement.shadowMargin)
+        .padding(
+            controller.isUltraCompactResting
+                ? HerdrHudPlacement.ultraCompactShadowMargin
+                : HerdrHudPlacement.shadowMargin
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
         .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: controller.isExpanded)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: controller.isUltraCompactResting)
         .environment(\.herdrFontScale, fontScale.scale)
         .preferredColorScheme(.dark)
         .tint(HerdrTheme.accent)

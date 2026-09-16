@@ -7,6 +7,78 @@ import SwiftUI
 @Suite("Herdr HUD controller", .serialized)
 @MainActor
 struct HerdrHudControllerTests {
+    @Test("Ultra-compact mode defaults off and persists toggles across recreation")
+    func ultraCompactPreferencePersists() {
+        let defaults = makeDefaults()
+        let controller = HerdrHudController(userDefaults: defaults)
+        #expect(!controller.isUltraCompactEnabled)
+        #expect(!controller.isUltraCompactResting)
+
+        controller.setUltraCompactEnabled(true)
+        #expect(controller.isUltraCompactEnabled)
+        #expect(controller.isUltraCompactResting)
+        #expect(HerdrHudController(userDefaults: defaults).isUltraCompactEnabled)
+
+        controller.toggleUltraCompact()
+        #expect(!controller.isUltraCompactEnabled)
+        #expect(!HerdrHudController(userDefaults: defaults).isUltraCompactEnabled)
+    }
+
+    @Test("Ultra-compact hover previews with grace and the HUD region union cancels exit")
+    func ultraCompactHoverPreviewUsesHudUnion() async throws {
+        let controller = HerdrHudController(
+            userDefaults: makeDefaults(),
+            attachmentHoverGrace: .milliseconds(80)
+        )
+        controller.setUltraCompactEnabled(true)
+        #expect(controller.isUltraCompactResting)
+
+        controller.setHoveringHud(true, region: "hud-ultra-compact")
+        #expect(!controller.isUltraCompactResting)
+        #expect(!controller.isExpanded)
+        controller.setHoveringHud(false, region: "hud-ultra-compact")
+        try await Task.sleep(for: .milliseconds(20))
+        controller.setHoveringHud(true, region: "hud-orb")
+        try await Task.sleep(for: .milliseconds(120))
+        #expect(!controller.isUltraCompactResting)
+        #expect(!controller.isExpanded)
+
+        controller.setHoveringHud(false, region: "hud-orb")
+        try await Task.sleep(for: .milliseconds(120))
+        #expect(controller.isUltraCompactResting)
+    }
+
+    @Test("Explicit chat, note, Quick Voice, and voice reply surfaces override ultra-compact rest")
+    func explicitSurfacesStayVisible() throws {
+        let harness = makeHarness(includesVoice: true)
+        harness.controller.setUltraCompactEnabled(true)
+        #expect(harness.controller.isUltraCompactResting)
+
+        harness.controller.summon()
+        #expect(harness.controller.isExpanded)
+        #expect(!harness.controller.isUltraCompactResting)
+        harness.controller.collapse()
+        #expect(harness.controller.isUltraCompactResting)
+
+        let noteID = harness.notes.createNote()
+        harness.controller.openNote(noteID)
+        #expect(!harness.controller.isUltraCompactResting)
+        harness.controller.closeNote()
+        harness.controller.notesLayoutDidChange()
+        #expect(harness.controller.isUltraCompactResting)
+
+        let voice = try #require(harness.controller.quickVoice)
+        voice.showDetails()
+        #expect(!harness.controller.isUltraCompactResting)
+        voice.collapse()
+        #expect(harness.controller.isUltraCompactResting)
+
+        harness.controller.setVoiceReplyCardVisible(true)
+        #expect(!harness.controller.isUltraCompactResting)
+        harness.controller.setVoiceReplyCardVisible(false)
+        #expect(harness.controller.isUltraCompactResting)
+    }
+
     @Test("Resizing notes respects bounds and survives controller recreation")
     func noteResizePersists() throws {
         let name = "NoteResizeTests.\(UUID().uuidString)"
@@ -442,10 +514,11 @@ struct HerdrHudControllerTests {
         #expect(harness.notes.layout == .card)
     }
 
-    @Test("Orb renders separate quick-hide and microphone controls")
-    func rendersQuickHideBesideMicrophone() async throws {
+    @Test("Orb renders compact toggle opposite quick-hide with Notes and microphone below")
+    func rendersFourOrbHoverControls() async throws {
         let harness = makeHarness(includesVoice: true)
-        let result = try await HerdrRenderHarness.render("hud-quick-hide.png", size: CGSize(width: 180, height: 180)) {
+        harness.controller.setHoveringHud(true, region: "render")
+        let result = try await HerdrRenderHarness.render("hud-four-hover-controls.png", size: CGSize(width: 180, height: 180)) {
             HerdrHudOrbResultRow(
                 model: harness.model, controller: harness.controller, session: harness.session,
                 artifacts: [], attentionChipCount: 1
@@ -467,7 +540,11 @@ struct HerdrHudControllerTests {
         let controller: HerdrHudController
     }
 
-    private func makeHarness(chipRegroupDelay: Duration = .seconds(5), includesVoice: Bool = false) -> Harness {
+    private func makeHarness(
+        chipRegroupDelay: Duration = .seconds(5),
+        includesVoice: Bool = false,
+        attachmentHoverGrace: Duration = .milliseconds(180)
+    ) -> Harness {
         HerdrTestAppIcon.install()
         let defaults = makeDefaults()
         let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"], userDefaults: defaults)
@@ -475,7 +552,11 @@ struct HerdrHudControllerTests {
         let promptSettings = HerdrPromptSettingsStore(defaults: defaults)
         let session = HerdrHudSession(userDefaults: defaults, agentSettings: agentSettings, persistenceURL: temporaryURL(named: "hud-thread.json"), promptSettings: promptSettings)
         let notes = HerdrHudNotesState(userDefaults: defaults, agentSettings: agentSettings, promptSettings: promptSettings, persistenceURL: temporaryURL(named: "hud-notes.json"), hoverGrace: .zero, hoverDelay: .zero, saveDelay: .zero)
-        let controller = HerdrHudController(userDefaults: defaults, chipRegroupDelay: chipRegroupDelay)
+        let controller = HerdrHudController(
+            userDefaults: defaults,
+            chipRegroupDelay: chipRegroupDelay,
+            attachmentHoverGrace: attachmentHoverGrace
+        )
         let voice = includesVoice ? QuickVoicePanelController(defaults: defaults) : nil
         voice?.setEnabled(true)
         controller.configure(model: model, session: session, notes: notes, fontScale: HerdrFontScaleStore(), quickVoice: voice)

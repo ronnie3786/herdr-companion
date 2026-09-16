@@ -47,6 +47,31 @@ struct HerdrHudOrbResultRow: View {
 
     @ViewBuilder
     private var orbControls: some View {
+        Button(
+            controller.isUltraCompactEnabled ? "Use standard HUD" : "Use ultra-compact HUD",
+            systemImage: controller.isUltraCompactEnabled
+                ? "arrow.up.left.and.arrow.down.right"
+                : "arrow.down.right.and.arrow.up.left",
+            action: controller.toggleUltraCompact
+        )
+        .labelStyle(.iconOnly)
+        .herdrFont(.callout, weight: .bold)
+        .foregroundStyle(HerdrTheme.text)
+        .frame(width: 32, height: 32)
+        .background(HerdrTheme.elevated, in: .circle)
+        .overlay { Circle().strokeBorder(HerdrTheme.graphite, lineWidth: 3) }
+        .scaleEffect(0.625 * HerdrHudPlacement.orbControlScale)
+        .contentShape(.circle)
+        .buttonStyle(.plain)
+        .offset(y: -4)
+        .help(
+            controller.isUltraCompactEnabled
+                ? "Keep the standard collapsed HUD visible."
+                : "Rest as a 20-point status glow; hover it to preview the HUD."
+        )
+        .accessibilityIdentifier("hud-ultra-compact-toggle")
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
         Button("Hide HUD", systemImage: "xmark") {
             controller.setEnabled(false)
         }

@@ -38,12 +38,16 @@ struct PiConversationStoreReloadGuardTests {
         var cursors: [String?] = []
         var publishedTools: [[ToolState]] = []
         let (requests, requestContinuation) = AsyncStream<Int>.makeStream()
+        let (publishedCosts, publishedCostContinuation) = AsyncStream<Double>.makeStream()
 
         store.snapshotProvider = { _ in
             snapshotCalls += 1
             return try snapshot(cursor: "1", latest: "1", cost: 1, toolCallID: "committed-tool")
         }
-        store.publishObserver = { _, _ in publishedTools.append(toolStates(in: store)) }
+        store.publishObserver = { cost, _ in
+            publishedTools.append(toolStates(in: store))
+            if let totalUSD = cost?.totalUSD { publishedCostContinuation.yield(totalUSD) }
+        }
         store.eventsProvider = { _, cursor in
             cursors.append(cursor)
             requestContinuation.yield(cursors.count)
@@ -69,6 +73,7 @@ struct PiConversationStoreReloadGuardTests {
         defer {
             task.cancel()
             requestContinuation.finish()
+            publishedCostContinuation.finish()
         }
 
         var iterator = requests.makeAsyncIterator()
@@ -76,6 +81,9 @@ struct PiConversationStoreReloadGuardTests {
         #expect(await iterator.next() == 2)
         #expect(await iterator.next() == 3)
         #expect(await iterator.next() == 4)
+        var publishedCostIterator = publishedCosts.makeAsyncIterator()
+        #expect(await publishedCostIterator.next() == 1)
+        #expect(await publishedCostIterator.next() == 2)
         #expect(snapshotCalls == 1)
         #expect(cursors == ["1", "3", "3", "3"])
         #expect(store.sessionCost?.totalUSD == 2)

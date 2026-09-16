@@ -136,7 +136,7 @@ struct PiConversationReducerTests {
         #expect(reducer.phase == .idle)
     }
 
-    @Test("Native compaction and agent settlement clear stale compaction activity")
+    @Test("Agent settlement clears compaction immediately while native compaction defers to its snapshot")
     func lifecycleClearsCompaction() throws {
         var reducer = PiConversationReducer()
         reducer.replace(with: try decodeSnapshot(entries: "[]"))
@@ -152,8 +152,14 @@ struct PiConversationReducerTests {
             3,
             "{\"type\":\"session_before_compact\",\"reason\":\"manual\",\"willRetry\":false}"
         ))
+        #expect(reducer.cursor == "3")
         #expect(reducer.apply(try envelope(4, "{\"type\":\"session_compact\"}")) == .needsSnapshot)
+        #expect(reducer.compactionActivity == PiCompactionActivity(reason: .manual, willRetry: false))
+        #expect(reducer.cursor == "3")
+
+        reducer.replace(with: try decodeSnapshot(entries: "[]", cursor: "4"))
         #expect(reducer.compactionActivity == nil)
+        #expect(reducer.cursor == "4")
     }
 
     @Test("Bridge disconnect and offline ready frames clear stale compaction activity")
@@ -822,7 +828,8 @@ struct PiConversationReducerTests {
     private func decodeSnapshot(
         entries: String,
         state: String = "{\"isStreaming\":false}",
-        connected: Bool = true
+        connected: Bool = true,
+        cursor: String = "0"
     ) throws -> PiConversationSnapshot {
         try JSONDecoder().decode(
             PiConversationSnapshot.self,
@@ -832,7 +839,7 @@ struct PiConversationReducerTests {
                   "protocol":{"name":"herdr.pi.semantic","version":1},
                   "paneId":"p1","available":true,"connected":\(connected),
                   "session":{"id":"s1"},"state":\(state),"entries":\(entries),
-                  "pendingInteractions":[],"cursor":"0","oldestCursor":"0","truncated":false
+                  "pendingInteractions":[],"cursor":"\(cursor)","oldestCursor":"0","truncated":false
                 }
                 """.utf8
             )

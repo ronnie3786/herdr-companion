@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import SwiftUI
 import Testing
 @testable import herdr_harness_ios
@@ -42,7 +43,7 @@ struct RemoteNoteTests {
     }
 }
 
-@Suite("Shared notes store", .serialized)
+@Suite("Shared notes store", .serialized, .timeLimit(.minutes(1)))
 @MainActor
 struct RemoteNotesStoreTests {
     @Test("Each machine owns its own notes even when UUIDs match")
@@ -90,26 +91,44 @@ struct RemoteNotesStoreTests {
         let store = RemoteNotesStore()
         let gate = NotesResponseGate()
         let response = try NotesTestPayload.response(notes: [NotesTestPayload.note()])
+        var publications = Observations { store.notes.map(\.machineID) }.makeAsyncIterator()
+        #expect(await publications.next() == [])
+
         let task = Task {
             await store.refresh(machineIDs: ["work", "slow"]) { id in
-                if id == "slow" { return await gate.wait() }
+                if id == "slow" { return try await gate.wait() }
                 return response
             }
         }
-        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
-        while store.notes.isEmpty, ContinuousClock.now < deadline { await Task.yield() }
+        defer {
+            task.cancel()
+            gate.cancel()
+        }
+
+        await waitUntilStarted(gate)
+        var publishedMachineIDs: [String]?
+        while let machineIDs = await publications.next() {
+            guard !machineIDs.isEmpty else { continue }
+            publishedMachineIDs = machineIDs
+            break
+        }
+
+        #expect(publishedMachineIDs == ["work"])
         #expect(store.notes.map(\.machineID) == ["work"])
+        #expect(!(await gate.isResolved))
         #expect(store.isRefreshing)
+
         await gate.resolve(response)
         await task.value
-        #expect(store.notes.count == 2)
+        #expect(Set(store.notes.map(\.machineID)) == ["work", "slow"])
+        #expect(!store.isRefreshing)
     }
 
     @Test("An older overlapping refresh cannot overwrite a newer result")
     func overlappingRefreshesUseNewest() async throws {
         let store = RemoteNotesStore()
         let gate = NotesResponseGate()
-        let oldTask = Task { await store.refresh(machineIDs: ["work"]) { _ in await gate.wait() } }
+        let oldTask = Task { await store.refresh(machineIDs: ["work"]) { _ in try await gate.wait() } }
         await waitUntilStarted(gate)
         let fresh = try NotesTestPayload.response(notes: [NotesTestPayload.note(body: "New")])
         await store.refresh(machineIDs: ["work"]) { _ in fresh }
@@ -123,7 +142,7 @@ struct RemoteNotesStoreTests {
     func resetInvalidatesRequest() async throws {
         let store = RemoteNotesStore()
         let gate = NotesResponseGate()
-        let task = Task { await store.refresh(machineIDs: ["work"]) { _ in await gate.wait() } }
+        let task = Task { await store.refresh(machineIDs: ["work"]) { _ in try await gate.wait() } }
         await waitUntilStarted(gate)
         store.reset()
         await gate.resolve(try NotesTestPayload.response(notes: [NotesTestPayload.note()]))
@@ -151,7 +170,7 @@ struct RemoteNotesStoreTests {
         await store.refresh(machineIDs: ["work", "home"]) { _ in old }
         let gate = NotesResponseGate()
         let task = Task { await store.refresh(machineIDs: ["work", "home"]) { id in
-            if id == "work" { return await gate.wait() }
+            if id == "work" { return try await gate.wait() }
             return old
         } }
         await waitUntilStarted(gate)
@@ -164,9 +183,7 @@ struct RemoteNotesStoreTests {
     }
 
     private func waitUntilStarted(_ gate: NotesResponseGate) async {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
-        while !(await gate.hasStarted), ContinuousClock.now < deadline { await Task.yield() }
-        #expect(await gate.hasStarted)
+        #expect(await gate.waitUntilStarted())
     }
 }
 
@@ -187,20 +204,50 @@ private enum NotesTestPayload {
 }
 
 private actor NotesResponseGate {
-    private var continuation: CheckedContinuation<RemoteNotesResponse, Never>?
+    private let starts: AsyncStream<Void>
+    private let startContinuation: AsyncStream<Void>.Continuation
+    private let responses: AsyncStream<RemoteNotesResponse>
+    private let responseContinuation: AsyncStream<RemoteNotesResponse>.Continuation
     private var result: RemoteNotesResponse?
     private(set) var hasStarted = false
+    private(set) var isResolved = false
 
-    func wait() async -> RemoteNotesResponse {
+    init() {
+        let startPair = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        starts = startPair.stream
+        startContinuation = startPair.continuation
+        let responsePair = AsyncStream<RemoteNotesResponse>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        responses = responsePair.stream
+        responseContinuation = responsePair.continuation
+    }
+
+    func wait() async throws -> RemoteNotesResponse {
         hasStarted = true
+        startContinuation.yield(())
         if let result { return result }
-        return await withCheckedContinuation { continuation = $0 }
+        var iterator = responses.makeAsyncIterator()
+        guard let response = await iterator.next() else { throw CancellationError() }
+        return response
+    }
+
+    func waitUntilStarted() async -> Bool {
+        if hasStarted { return true }
+        var iterator = starts.makeAsyncIterator()
+        return await iterator.next() != nil
     }
 
     func resolve(_ response: RemoteNotesResponse) {
+        guard !isResolved else { return }
         result = response
-        continuation?.resume(returning: response)
-        continuation = nil
+        isResolved = true
+        responseContinuation.yield(response)
+        responseContinuation.finish()
+        startContinuation.finish()
+    }
+
+    nonisolated func cancel() {
+        startContinuation.finish()
+        responseContinuation.finish()
     }
 }
 

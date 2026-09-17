@@ -185,26 +185,28 @@ struct AgentControlRoutingTests {
 
     @Test("Back and Forward wait for the rendered Git and Chat history destinations")
     func renderedHistoryDestinations() async throws {
-        let fixture = makeFixture()
+        let fixture = try await makeHistoryFixture()
         let panes = fixture.model.workspaces.flatMap(\.panes)
-        let first = try #require(panes.first)
-        let second = try #require(panes.dropFirst().first)
+        let gitPane = try #require(panes.first(where: { $0.paneID == "git-pane" }))
+        let chatPane = try #require(panes.first(where: {
+            $0.paneID == "chat-pane" && $0.supportsPiSemanticChat
+        }))
 
         _ = try await fixture.controller.executeForTesting(
-            command(action: "ui.open", target: target(for: first, serverID: "srv_demo"), parameters: ["view": .string("git")]),
-            serverMapping: ["srv_demo": first.machineID]
+            command(action: "ui.open", target: target(for: gitPane, serverID: "srv_history"), parameters: ["view": .string("git")]),
+            serverMapping: ["srv_history": gitPane.machineID]
         )
         _ = try await fixture.controller.executeForTesting(
-            command(action: "ui.open", target: target(for: second, serverID: "srv_demo"), parameters: ["view": .string("chat")]),
-            serverMapping: ["srv_demo": second.machineID]
+            command(action: "ui.open", target: target(for: chatPane, serverID: "srv_history"), parameters: ["view": .string("chat")]),
+            serverMapping: ["srv_history": chatPane.machineID]
         )
         _ = try await fixture.controller.executeForTesting(command(action: "ui.back"), serverMapping: [:])
-        #expect(fixture.model.isPresentingPane(id: first.id, mode: .git))
-        #expect(fixture.shell.history.current == .git(first.id))
+        #expect(fixture.model.isPresentingPane(id: gitPane.id, mode: .git))
+        #expect(fixture.shell.history.current == .git(gitPane.id))
 
         _ = try await fixture.controller.executeForTesting(command(action: "ui.forward"), serverMapping: [:])
-        #expect(fixture.model.isPresentingPane(id: second.id, mode: .chat))
-        #expect(fixture.shell.history.current == .pane(second.id))
+        #expect(fixture.model.isPresentingPane(id: chatPane.id, mode: .chat))
+        #expect(fixture.shell.history.current == .pane(chatPane.id))
     }
 
     @Test("Same-host First Mate feature navigation preserves cached drafts")
@@ -505,6 +507,65 @@ struct AgentControlRoutingTests {
         #expect(fixture.model.manuallyUnreadPaneIDs.contains(pane.id))
     }
 
+    private func makeHistoryFixture() async throws -> (
+        controller: AgentControlController,
+        model: HerdrAppModel,
+        shell: HerdrShellState
+    ) {
+        let suite = "AgentControlHistoryRoutingTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defaults.set(true, forKey: "herdr.agentControl.enabled.v1")
+        defaults.set(true, forKey: "herdr.completedSetup")
+        let machine = HerdrMachine(
+            id: "history-machine",
+            name: "Synthetic History",
+            urlString: "https://history.example.invalid"
+        )
+        let credentials = TestCredentialStore()
+        credentials.values["api-token.\(machine.id)"] = "synthetic-token"
+        let model = HerdrAppModel(
+            credentials: credentials,
+            arguments: ["HerdrTests"],
+            userDefaults: defaults,
+            configuredMachines: [machine]
+        )
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [HistoryRoutingURLProtocol.self]
+        let client = HerdrAPIClient(
+            configuration: try #require(ServerConfiguration(
+                urlString: machine.urlString,
+                token: "synthetic-token"
+            )),
+            session: URLSession(configuration: sessionConfiguration)
+        )
+        model.clientFactory = { _ in client }
+        model.prepareRuntime(for: machine, generation: model.connectionGeneration)
+        try await model.refreshForAgentControl(machineID: machine.id)
+
+        let shell = HerdrShellState(userDefaults: defaults)
+        let controller = AgentControlController(
+            defaults: defaults,
+            secretStorage: TestAgentControlSecretStorage(),
+            presentationWaiter: { expectation, model, shell in
+                switch expectation {
+                case let .pane(id, mode):
+                    model.notePaneDetailMode(mode, gitIsAvailable: true, for: id)
+                    shell.agentControlPaneModeDidApply(mode, paneID: id)
+                    return model.isPresentingPane(id: id, mode: mode)
+                }
+            }
+        )
+        controller.configure(
+            model: model,
+            shell: shell,
+            hudController: HerdrHudController(userDefaults: defaults),
+            openMainWindow: {},
+            openSettingsWindow: {}
+        )
+        return (controller, model, shell)
+    }
+
     private func makeFixture() -> (controller: AgentControlController, model: HerdrAppModel, shell: HerdrShellState) {
         let suite = "AgentControlRoutingTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -605,6 +666,38 @@ private final class SyntheticFirstMateClient: FirstMateClient, @unchecked Sendab
     func fetchFirstMateSession(_ id: String, before: Int?) async throws -> FirstMateSessionResponse {
         throw APIError.invalidResponse
     }
+}
+
+private final class HistoryRoutingURLProtocol: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+        let response: (status: Int, body: String)
+        switch url.path {
+        case "/api/v1/workspaces":
+            response = (200, #"{"ok":true,"workspaces":[{"workspace_id":"history-workspace","number":1,"label":"Synthetic history","focused":true,"pane_count":2,"tab_count":1,"active_tab_id":"history-tab","agent_status":"idle","panes":[{"pane_id":"git-pane","terminal_id":"git-terminal","workspace_id":"history-workspace","tab_id":"history-tab","focused":true,"agent_status":"idle","revision":1,"cwd":"/tmp/synthetic-history","label":"Synthetic Git pane"},{"pane_id":"chat-pane","terminal_id":"chat-terminal","workspace_id":"history-workspace","tab_id":"history-tab","focused":false,"agent_status":"idle","revision":1,"cwd":"/tmp/synthetic-history","label":"Synthetic Pi pane","agent":"pi","display_agent":"Pi","pi_semantic":{"available":true,"connected":true,"protocol_version":1,"session_id":"synthetic-history-session"}}]}],"alerts":[]}"#)
+        case "/api/v1/panes/git-pane/git":
+            response = (200, #"{"ok":true,"workspace_id":"history-workspace","root_path":"/tmp/synthetic-history","branch":"synthetic/history","staged":[],"unstaged":[],"untracked":[],"commits":[]}"#)
+        default:
+            response = (404, #"{"ok":false,"error":{"code":"not_found","message":"Synthetic route not found"}}"#)
+        }
+        let http = HTTPURLResponse(
+            url: url,
+            statusCode: response.status,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(response.body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }
 
 private final class FirstMateFleetURLProtocol: URLProtocol, @unchecked Sendable {

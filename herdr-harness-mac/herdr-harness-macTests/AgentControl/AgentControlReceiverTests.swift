@@ -192,6 +192,7 @@ struct AgentControlReceiverTests {
             userDefaults: defaults,
             configuredMachines: [machine]
         )
+        model.prepareRuntime(for: machine, generation: model.connectionGeneration)
         model.machineStates[machine.id] = .live
         let oldTransport = ControlledGenerationAgentControlTransport(
             serverID: "srv_before",

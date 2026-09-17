@@ -572,13 +572,20 @@ struct HerdrHudChatsTests {
         #expect(cached.validationError != nil)
         #expect(HudChatsURLProtocol.state.withLock { $0.starts.count } == 1)
         fixture.model.machineStates["synthetic"] = .disconnected
+        let cancellationCount = HudChatsURLProtocol.state.withLock { $0.cancellationCount }
         await #expect(throws: HerdrHudChatEndError.self) {
             try await restored.end(id, model: fixture.model)
         }
         #expect(restored.visibleChats.count == 1)
         #expect(!cached.hasEnded && !cached.isEnding)
+        #expect(cached.draft == "Do not duplicate this run")
+        #expect(HudChatsURLProtocol.state.withLock { $0.cancellationCount } == cancellationCount)
+
         fixture.model.machineStates["synthetic"] = .live
-        await session.stop(model: fixture.model)
+        #expect(try await restored.end(id, model: fixture.model) == false)
+        #expect(restored.visibleChats.isEmpty)
+        #expect(cached.hasEnded)
+        #expect(HudChatsURLProtocol.state.withLock { $0.cancellationCount } == cancellationCount + 1)
         await task.value
     }
 
@@ -827,6 +834,7 @@ private final class HudChatsURLProtocol: URLProtocol {
         var starts: [Start] = []
         var statuses: [String: String] = [:]
         var deleteCount = 0
+        var cancellationCount = 0
         var rejectNextCancellation = false
         var rejectNextStart = false
         var conflictNextStart = false
@@ -893,9 +901,12 @@ private final class HudChatsURLProtocol: URLProtocol {
         gate?.wait()
         let payload = Self.state.withLock { state -> (Int, Data) in
             let path = url.path
-            if path.hasSuffix("/cancel"), state.rejectNextCancellation {
-                state.rejectNextCancellation = false
-                return (503, Data(#"{"ok":false,"error":{"message":"Synthetic stop failure"}}"#.utf8))
+            if path.hasSuffix("/cancel") {
+                state.cancellationCount += 1
+                if state.rejectNextCancellation {
+                    state.rejectNextCancellation = false
+                    return (503, Data(#"{"ok":false,"error":{"message":"Synthetic stop failure"}}"#.utf8))
+                }
             }
             if path == "/api/v1/agent-runs", request.httpMethod == "POST", state.rejectNextStart {
                 state.rejectNextStart = false

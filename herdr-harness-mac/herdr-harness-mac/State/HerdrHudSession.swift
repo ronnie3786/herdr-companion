@@ -819,6 +819,10 @@ final class HerdrHudSession {
             try await Task.sleep(for: .milliseconds(50))
         }
         if controller.isRunning {
+            guard let machineID = controller.machineID,
+                  model.canControl(machineID: machineID) else {
+                throw HerdrHudChatEndError.statusUnavailable
+            }
             await controller.cancel(model: model)
             guard !controller.isRunning else {
                 throw HerdrHudChatEndError.stopFailed(controller.errorMessage ?? "The run is still active.")

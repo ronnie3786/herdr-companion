@@ -125,6 +125,26 @@ struct HerdrAppModelRefreshGatingTests {
         #expect(model.errorMessage == nil)
     }
 
+    @Test("Fleet refresh retains HUD Chats while pruning missing workspace routes")
+    func refreshRetainsHudChatsWhilePruningTopologyRoutes() async throws {
+        let defaults = try #require(UserDefaults(suiteName: "HerdrAppModelRefreshGatingTests.hudNavigation"))
+        defaults.removePersistentDomain(forName: "HerdrAppModelRefreshGatingTests.hudNavigation")
+        defer { defaults.removePersistentDomain(forName: "HerdrAppModelRefreshGatingTests.hudNavigation") }
+
+        let model = HerdrAppModel(arguments: [], userDefaults: defaults)
+        let configuration = try #require(ServerConfiguration(urlString: "http://localhost:9092", token: "test"))
+        let client = HerdrAPIClient(configuration: configuration, session: session(StableFleetURLProtocol.self))
+        model.workspacePath = [
+            .workspace("m1|missing-workspace"),
+            .hudChats,
+            .pane("m1|missing-workspace:missing-pane"),
+        ]
+
+        try await model.refresh(machineID: "m1", using: client, expectedGeneration: model.connectionGeneration)
+
+        #expect(model.workspacePath == [.hudChats])
+    }
+
     @Test("Fleet refresh adopts the server workspace order")
     func refreshAdoptsFreshWorkspaceOrder() async throws {
         let defaults = try #require(UserDefaults(suiteName: "HerdrAppModelRefreshGatingTests.workspaceOrder"))

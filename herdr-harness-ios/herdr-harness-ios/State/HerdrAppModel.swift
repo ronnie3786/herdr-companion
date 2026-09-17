@@ -2084,6 +2084,8 @@ final class HerdrAppModel: HudChatTransport {
             case let .pane(id):
                 guard MachineScopedID.split(id)?.machineID == machineID else { return true }
                 return validPaneIDs.contains(id)
+            case .hudChats:
+                return true
             }
         }
         // Observation fires on any set, equal or not, and `workspacePath` is the

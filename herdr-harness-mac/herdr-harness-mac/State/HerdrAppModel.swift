@@ -69,9 +69,8 @@ final class HerdrAppModel {
     /// pasted and dictated content, and their attachments are security-scoped
     /// URLs that cannot survive a relaunch anyway.
     private(set) var composerDrafts: [String: String] = [:]
-    /// Frozen Pi conversation excerpts staged for each destination composer.
-    /// Like drafts, these live only for this app run. The source can disappear
-    /// after capture without invalidating the destination's quoted context.
+    /// Lightweight Pi conversation locators staged for each destination composer.
+    /// Like drafts, these live only for this app run and contain no transcript.
     private(set) var stagedConversationReferences: [String: [ConversationContextReference]] = [:]
     let promptHistory: PromptHistoryStore
     /// What the mounted pane session is showing, published so the window
@@ -2959,27 +2958,9 @@ final class HerdrAppModel {
                 throw ConversationContextError.sourceUnavailable
             }
             try Self.validateConversationSession(transfer.expectedSessionID, against: source)
-
-            let snapshot = try await fetchPiConversationSnapshot(for: source)
-
-            // Both endpoints and the source session are re-resolved after the
-            // suspension. A pane refresh must not redirect a stale drag.
-            guard let refreshedDestination = pane(id: destinationPaneID),
-                  canControl(machineID: refreshedDestination.machineID) else {
-                throw ConversationContextError.destinationUnavailable
-            }
-            guard refreshedDestination.id != transfer.sourcePaneID else {
-                throw ConversationContextError.samePane
-            }
-            guard let refreshedSource = pane(id: transfer.sourcePaneID),
-                  refreshedSource.supportsPiSemanticChat else {
-                throw ConversationContextError.sourceUnavailable
-            }
-            try Self.validateConversationSession(transfer.expectedSessionID, against: refreshedSource)
             let reference = try ConversationContextReference.capture(
                 transfer: transfer,
-                currentSourcePane: refreshedSource,
-                snapshot: snapshot
+                currentSourcePane: source
             )
             if stageCapturedConversationReference(reference, for: destinationPaneID) {
                 toastMessage = "Added conversation context"

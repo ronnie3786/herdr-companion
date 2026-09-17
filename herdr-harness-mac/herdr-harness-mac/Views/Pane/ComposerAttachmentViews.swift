@@ -58,7 +58,7 @@ struct ConversationContextChip: View {
                     .frame(maxWidth: 180, alignment: .leading)
                 Text(reference.compactSummary)
                     .herdrFont(.caption2)
-                    .foregroundStyle(reference.isPartial ? HerdrTheme.mauve : HerdrTheme.primaryAction)
+                    .foregroundStyle(HerdrTheme.primaryAction)
                     .lineLimit(1)
             }
 

@@ -26,8 +26,10 @@ def main():
             return subprocess.check_output([python, "-I", "-c", code, *arguments], cwd=root, env=env, stderr=subprocess.STDOUT, timeout=30).decode()
         resources = json.loads(run("import json; import herdr_harness; from herdr_harness.resources import pi_extension_path, configuration_example; from pathlib import Path; p=Path(herdr_harness.__file__).parent; print(json.dumps({'installed': 'site-packages' in str(p), 'pi': (pi_extension_path({})/'extensions/send-to-herdr.ts').is_file(), 'sample': configuration_example().is_file(), 'web': (p/'static/herdr-web/index.html').is_file()}))"))
         assert all(resources.values()), resources
-        lineage = run("from herdr_harness.resources import pi_extension_path; p=pi_extension_path({}); assert (p/'lib/session-lineage.ts').is_file(); assert '../lib/session-lineage' in (p/'extensions/pi-semantic-bridge.ts').read_text(); print('ok')")
+        lineage = run("from herdr_harness.resources import pi_extension_path; p=pi_extension_path({}); assert (p/'lib/session-lineage.ts').is_file(); assert '../lib/session-lineage' in (p/'extensions/pi-semantic-bridge.ts').read_text(); assert (p/'extensions/session-context-discovery.ts').is_file(); print('ok')")
         assert lineage.strip() == "ok"
+        session_context_entry = run("from importlib.metadata import distribution; eps=distribution('herdr-companion').entry_points; assert any(e.name == 'herdr-session-context' and e.value == 'herdr_harness.commands:session_context' for e in eps); print('ok')")
+        assert session_context_entry.strip() == "ok"
         first_mate = json.loads(run("""
 import json
 from pathlib import Path
@@ -50,7 +52,7 @@ print(json.dumps({
 store.close()
 """))
         assert all(first_mate.values()), first_mate
-        for module in ("herdr_harness.configuration_cli", "herdr_commands.setup_herdr_demo", "herdr_commands.herdr_active_work_sync", "herdr_commands.herdr_pr_review_watch", "herdr_commands.herdr_hud_chats_cli", "herdr_commands.herdr_first_mate_cli"):
+        for module in ("herdr_harness.configuration_cli", "herdr_commands.setup_herdr_demo", "herdr_commands.herdr_active_work_sync", "herdr_commands.herdr_pr_review_watch", "herdr_commands.herdr_hud_chats_cli", "herdr_commands.herdr_session_context_cli", "herdr_commands.herdr_first_mate_cli"):
             run(f"from {module} import main; raise SystemExit(main())", "--help")
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))

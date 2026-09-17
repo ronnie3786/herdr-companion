@@ -40,5 +40,9 @@ def active_work():
     return _run("herdr_active_work_cli")
 
 
+def session_context():
+    return _run("herdr_session_context_cli")
+
+
 def first_mate():
     return _run("herdr_first_mate_cli")

@@ -4,7 +4,7 @@
 window**. It does not simulate mouse clicks, run AppleScript, or replace the
 upstream `herdr` terminal CLI.
 
-This is an unreleased capability-based update. It requires the matching companion
+This is a capability-based update introduced in 0.19.0 previews. It requires the matching companion
 package/CLI and Mac app. The server advertises `agent-control-v1` and `discovery-v1`.
 Existing clients and endpoints remain compatible. The Mac updater does not install
 the companion package or CLI; update those components separately.

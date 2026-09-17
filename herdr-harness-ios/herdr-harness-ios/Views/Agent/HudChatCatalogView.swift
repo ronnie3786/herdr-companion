@@ -72,13 +72,32 @@ struct HudChatCatalogView: View {
 
     private var controls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Picker("Machine", selection: $selectedMachineID) {
-                ForEach(model.machines) { machine in
-                    Text(machine.name).tag(machine.id)
+            Menu {
+                Picker("Machine", selection: $selectedMachineID) {
+                    ForEach(model.machines) { machine in
+                        Text(machine.name).tag(machine.id)
+                    }
                 }
+            } label: {
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Machine")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(selectedMachineName)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .accessibilityHidden(true)
+                }
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(.rect)
             }
-            .pickerStyle(.menu)
-            .frame(minHeight: 44)
+            .disabled(model.machines.isEmpty)
+            .accessibilityLabel("Machine")
+            .accessibilityValue(selectedMachineName)
             .accessibilityIdentifier("hud-chats-machine")
 
             Button {
@@ -93,6 +112,11 @@ struct HudChatCatalogView: View {
             .disabled(selectedMachineID.isEmpty || store.capabilities?.supportsHudChats != true)
             .accessibilityIdentifier("hud-chat-new")
         }
+    }
+
+    private var selectedMachineName: String {
+        guard !model.machines.isEmpty else { return "No machines available" }
+        return model.machines.first(where: { $0.id == selectedMachineID })?.name ?? "Select a machine"
     }
 
     @ViewBuilder

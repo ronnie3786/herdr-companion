@@ -1,3 +1,4 @@
+import copy
 import threading
 import unittest
 from unittest.mock import patch
@@ -73,9 +74,15 @@ class FakeActiveWork:
         }
 
 
+class FakePanesSeen:
+    def lifecycle_map(self):
+        return {}
+
+
 class FakeDiscoverySource:
     def __init__(self):
         self.agent_runs = object()
+        self.panes_seen = FakePanesSeen()
         self.first_mate_store = FakeFirstMateStore()
         self.active_work = FakeActiveWork()
         self.snapshot = {
@@ -143,20 +150,24 @@ class ControlDiscoveryTests(unittest.TestCase):
         self.hud_catalog = self.hud_patch.start()
         self.addCleanup(self.hud_patch.stop)
 
-    def test_service_snapshot_preserves_cache_timestamp_and_adds_lifecycle_activity(self):
+    def test_discovery_projects_lifecycle_without_changing_raw_snapshot_response(self):
+        raw = {
+            "workspaces": [{"workspace_id": "w1", "label": "Synthetic Project"}],
+            "tabs": [{"tab_id": "t1", "workspace_id": "w1", "label": "Implementation"}],
+            "panes": [
+                {
+                    "pane_id": "p1",
+                    "workspace_id": "w1",
+                    "tab_id": "t1",
+                    "agent_status": "working",
+                }
+            ],
+        }
         service = object.__new__(HerdrService)
-        service._cached_snapshot = lambda: (
-            {"panes": [{"pane_id": "p1", "agent_status": "working"}]},
-            "2026-09-16T11:59:00Z",
-        )
+        service._lock = threading.RLock()
+        service._cached_snapshot = lambda: (raw, "2026-09-16T11:59:00Z")
         service.pi_semantic = type(
-            "Semantic",
-            (),
-            {
-                "enrich_snapshot": staticmethod(
-                    lambda snapshot: {**snapshot, "panes": [dict(snapshot["panes"][0])]}
-                )
-            },
+            "Semantic", (), {"enrich_snapshot": staticmethod(copy.deepcopy)}
         )()
         service.panes_seen = type(
             "Seen",
@@ -173,16 +184,30 @@ class ControlDiscoveryTests(unittest.TestCase):
                 )
             },
         )()
-        service.pane_lifecycle = type("Lifecycle", (), {"enrich": staticmethod(lambda pane: None)})()
-        service.session_labels = type("Labels", (), {"label_for": staticmethod(lambda pane_id: {})})()
+        service._pane_lifecycle = type(
+            "Lifecycle", (), {"enrich": staticmethod(lambda pane: None)}
+        )()
+        service.session_labels = type(
+            "Labels", (), {"label_for": staticmethod(lambda pane_id: {})}
+        )()
         service.agent_activity = type(
             "Activity", (), {"session_activity": staticmethod(lambda pane_id, status: None)}
         )()
+        service._agent_runs = object()
+        service._first_mate_store = FakeFirstMateStore()
+        service.active_work = FakeActiveWork()
+
         response = service.snapshot_response()
-        pane = response["snapshot"]["panes"][0]
         self.assertEqual(response["generatedAt"], "2026-09-16T11:59:00Z")
-        self.assertEqual(pane["last_activity_at"], "2026-09-16T11:58:00Z")
-        self.assertEqual(pane["working_since"], "2026-09-16T11:30:00Z")
+        self.assertEqual(response["snapshot"], raw)
+
+        discovery = DiscoveryService(service, self.discovery.server_id)
+        result = discovery.search(
+            kind="all", query="", ticket="", sort="updated", limit=100, offset=0
+        )
+        pane = next(item for item in result["results"] if item["kind"] == "pane")
+        self.assertEqual(pane["updatedAt"], "2026-09-16T11:58:00Z")
+        self.assertEqual(service.snapshot_response()["snapshot"], raw)
 
     def test_searches_live_pi_saved_hud_and_first_mate_with_explicit_archive_gap(self):
         result = self.discovery.search(
@@ -206,6 +231,21 @@ class ControlDiscoveryTests(unittest.TestCase):
         )
         self.assertEqual(saved["results"][0]["kind"], "hud-chat")
         self.assertEqual(saved["results"][0]["target"]["hudChatId"], "agr_000000000001")
+
+    def test_unknown_snapshot_timestamp_is_not_reported_as_fresh(self):
+        self.source.snapshot_response = lambda: {
+            "ok": True,
+            "snapshot": self.source.snapshot,
+            "generatedAt": "not-a-timestamp",
+        }
+
+        result = self.discovery.search(
+            kind="all", query="", ticket="", sort="updated", limit=100, offset=0
+        )
+
+        self.assertEqual(result["generatedAt"], "")
+        self.assertEqual(result["coverage"]["liveTopology"]["freshness"], "unknown")
+        self.assertNotIn("generatedAt", result["coverage"]["liveTopology"])
 
     def test_ticket_matching_uses_exact_boundaries_and_stored_links(self):
         result = self.discovery.search(
@@ -393,7 +433,30 @@ class ControlDiscoveryTests(unittest.TestCase):
             {"linkedTicket"},
         )
 
-    def test_hud_catalog_exact_ticket_filter_searches_all_turns_and_returns_real_evidence(self):
+    def test_inspect_returns_exact_result_and_rejects_reused_pane_identity(self):
+        target = {
+            "kind": "pane",
+            "serverId": self.discovery.server_id,
+            "workspaceId": "w1",
+            "tabId": "t1",
+            "paneId": "p1",
+            "terminalId": "term-new",
+            "sessionId": CURRENT_SESSION_ID,
+        }
+        result = self.discovery.inspect(target)
+        self.assertEqual(result["target"], target)
+        stale = {**target, "terminalId": "term-old"}
+        with self.assertRaises(ControlError) as raised:
+            self.discovery.inspect(stale)
+        self.assertEqual(raised.exception.code, "stale_target")
+        feature = self.discovery.inspect({"kind": "first-mate", "featureId": "fmf_1"})
+        self.assertEqual(feature["target"]["featureId"], "fmf_1")
+        with self.assertRaises(ControlError):
+            self.discovery.inspect({"kind": "unknown", "paneId": "p1"})
+
+
+class HudCatalogTests(unittest.TestCase):
+    def test_exact_ticket_filter_searches_all_turns_and_returns_real_evidence(self):
         manager = type("Manager", (), {"_lock": threading.RLock()})()
         members = [
             {
@@ -438,24 +501,3 @@ class ControlDiscoveryTests(unittest.TestCase):
         self.assertIn("CONTROL-7", excerpts)
         self.assertIn("genuine phrase", excerpts)
         self.assertNotEqual(excerpts, "CONTROL-7 genuine phrase")
-
-    def test_inspect_returns_exact_result_and_rejects_reused_pane_identity(self):
-        target = {
-            "kind": "pane",
-            "serverId": self.discovery.server_id,
-            "workspaceId": "w1",
-            "tabId": "t1",
-            "paneId": "p1",
-            "terminalId": "term-new",
-            "sessionId": CURRENT_SESSION_ID,
-        }
-        result = self.discovery.inspect(target)
-        self.assertEqual(result["target"], target)
-        stale = {**target, "terminalId": "term-old"}
-        with self.assertRaises(ControlError) as raised:
-            self.discovery.inspect(stale)
-        self.assertEqual(raised.exception.code, "stale_target")
-        feature = self.discovery.inspect({"kind": "first-mate", "featureId": "fmf_1"})
-        self.assertEqual(feature["target"]["featureId"], "fmf_1")
-        with self.assertRaises(ControlError):
-            self.discovery.inspect({"kind": "unknown", "paneId": "p1"})

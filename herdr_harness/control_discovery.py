@@ -7,7 +7,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from .alerts import utc_now
 from .control_validation import ControlError
 
 
@@ -30,6 +29,7 @@ def _timestamp(record: dict) -> Optional[str]:
         "lastActivityAt",
         "updated_at",
         "updatedAt",
+        "generatedAt",
         "finishedAt",
         "created_at",
         "createdAt",
@@ -388,12 +388,26 @@ class DiscoveryService:
             },
             "linkedTickets": {"searched": False, "truncated": False},
         }
-        generated_at = utc_now()
+        generated_at = ""
         try:
             response = self.service.snapshot_response()
-            snapshot = response.get("snapshot") if isinstance(response, dict) else None
-            if not isinstance(snapshot, dict):
-                snapshot = {}
+            raw_snapshot = response.get("snapshot") if isinstance(response, dict) else None
+            snapshot = copy.deepcopy(raw_snapshot) if isinstance(raw_snapshot, dict) else {}
+            lifecycle_by_pane = self.service.panes_seen.lifecycle_map()
+            if not isinstance(lifecycle_by_pane, dict):
+                lifecycle_by_pane = {}
+            for pane in snapshot.get("panes", []):
+                if not isinstance(pane, dict):
+                    continue
+                pane_id = _identifier(pane, "pane_id", "paneId")
+                lifecycle = lifecycle_by_pane.get(pane_id) if pane_id else None
+                if not isinstance(lifecycle, dict):
+                    continue
+                pane["first_seen_at"] = lifecycle.get("firstSeenAt")
+                pane["last_activity_at"] = lifecycle.get("lastActivityAt")
+                working_since = lifecycle.get("workingSince")
+                if working_since is not None:
+                    pane["working_since"] = working_since
             source_generated_at = _timestamp(response) if isinstance(response, dict) else None
             if source_generated_at:
                 generated_at = source_generated_at

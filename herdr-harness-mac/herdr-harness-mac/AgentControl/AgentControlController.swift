@@ -17,6 +17,8 @@ final class AgentControlController {
         let machineID: String
         let serverID: String
         let receiverToken: String
+        let configuration: ServerConfiguration
+        let connectionGeneration: Int
         let transport: any AgentControlTransport
     }
 
@@ -50,10 +52,14 @@ final class AgentControlController {
     private let firstMateClientFactory: FirstMateClientFactory
     private let presentationWaiter: PresentationWaiter
     private let pollInterval: Duration
+    private let allowsReceiverInUnitTests: Bool
     private var pollTask: Task<Void, Never>?
     private var executionTask: Task<Void, Never>?
     private var receiverGeneration = 0
     private var configuredConnectionGeneration: Int?
+    private var connectionObservationToken = 0
+    private var observedConnectionModelID: ObjectIdentifier?
+    private var connectionObservationIsArmed = false
     private var model: HerdrAppModel?
     private var shell: HerdrShellState?
     private var hudController: HerdrHudController?
@@ -61,6 +67,7 @@ final class AgentControlController {
     private var openSettingsWindow: (() -> Void)?
     private var registeredHosts: [String: Host] = [:]
     private var serverToMachines: [String: Set<String>] = [:]
+    private var serverConnectionGenerations: [String: Int] = [:]
     private var executionCaches: [String: AgentControlExecutionCache] = [:]
     private var pendingAcknowledgements: [String: AgentControlCachedReceipt] = [:]
     private var busyServerIDs: Set<String> = []
@@ -81,6 +88,7 @@ final class AgentControlController {
         defaults: UserDefaults = .standard,
         secretStorage: any AgentControlSecretStorage = KeychainAgentControlSecretStorage(),
         pollInterval: Duration = .seconds(2),
+        allowsReceiverInUnitTests: Bool = false,
         transportFactory: @escaping TransportFactory = { LiveAgentControlTransport(configuration: $0) },
         firstMateClientFactory: @escaping FirstMateClientFactory = { HerdrAPIClient(configuration: $0) },
         presentationWaiter: @escaping PresentationWaiter = AgentControlController.waitForPresentation
@@ -89,6 +97,7 @@ final class AgentControlController {
         self.defaults = defaults
         identityStore = identities
         self.pollInterval = pollInterval
+        self.allowsReceiverInUnitTests = allowsReceiverInUnitTests
         self.transportFactory = transportFactory
         self.firstMateClientFactory = firstMateClientFactory
         self.presentationWaiter = presentationWaiter
@@ -113,12 +122,14 @@ final class AgentControlController {
         self.hudController = hudController
         self.openMainWindow = openMainWindow
         self.openSettingsWindow = openSettingsWindow
+        ensureConnectionObservation()
         synchronize()
     }
 
     func setEnabled(_ enabled: Bool) {
         guard enabled != isEnabled else { return }
         defaults.set(enabled, forKey: DefaultsKey.enabled)
+        if enabled { ensureConnectionObservation() }
         synchronize(forceRestart: true)
     }
 
@@ -128,17 +139,53 @@ final class AgentControlController {
             stop(status: "Agent control is off")
             return
         }
+        ensureConnectionObservation()
         guard !model.isDemoMode else {
-            stop(status: "Agent control is unavailable in demo mode")
+            stop(status: "Agent control is unavailable in demo mode", stopObserving: false)
             return
         }
-        guard !Self.isUnitTestProcess else {
-            stop(status: "Agent control networking is disabled in tests")
+        guard !Self.isUnitTestProcess || allowsReceiverInUnitTests else {
+            stop(status: "Agent control networking is disabled in tests", stopObserving: false)
             return
         }
         guard forceRestart || configuredConnectionGeneration != model.connectionGeneration || pollTask == nil else { return }
         configuredConnectionGeneration = model.connectionGeneration
         restart()
+    }
+
+    /// The receiver belongs to the app process, not a window. Observation stays
+    /// armed while control is enabled so Settings edits restart hosts even when
+    /// the main scene is closed. Observation callbacks are one-shot; the token
+    /// makes callbacks from a previous configure/disable operation inert.
+    private func ensureConnectionObservation() {
+        guard isEnabled, let model else {
+            stopConnectionObservation()
+            return
+        }
+        let modelID = ObjectIdentifier(model)
+        if observedConnectionModelID != modelID {
+            stopConnectionObservation()
+            observedConnectionModelID = modelID
+        }
+        guard !connectionObservationIsArmed else { return }
+        connectionObservationToken &+= 1
+        let token = connectionObservationToken
+        connectionObservationIsArmed = true
+        withObservationTracking {
+            _ = model.connectionGeneration
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.connectionObservationToken == token else { return }
+                self.connectionObservationIsArmed = false
+                self.synchronize()
+            }
+        }
+    }
+
+    private func stopConnectionObservation() {
+        connectionObservationToken &+= 1
+        connectionObservationIsArmed = false
+        observedConnectionModelID = nil
     }
 
     func noteWindow(_ window: AgentControlWindow) {
@@ -188,6 +235,9 @@ final class AgentControlController {
         serverMapping: [String: String]
     ) async throws -> AgentControlExecutionResult {
         serverToMachines = serverMapping.mapValues { [$0] }
+        if let model {
+            serverConnectionGenerations = serverMapping.mapValues { _ in model.connectionGeneration }
+        }
         var localCommand = command
         localCommand.clientId = clientID
         localCommand.instanceId = instanceID
@@ -196,13 +246,17 @@ final class AgentControlController {
     }
 
     private func restart() {
+        guard let model else { return }
         pollTask?.cancel()
         executionTask?.cancel()
         executionTask = nil
         receiverGeneration &+= 1
         let generation = receiverGeneration
+        let connectionGeneration = model.connectionGeneration
+        configuredConnectionGeneration = connectionGeneration
         registeredHosts = [:]
         serverToMachines = [:]
+        serverConnectionGenerations = [:]
         // Completed outcomes survive an in-process connection restart. The
         // same instance can retry their frozen acknowledgements after the host
         // is registered again without rerunning the UI action.
@@ -212,11 +266,15 @@ final class AgentControlController {
         lastError = nil
         statusText = "Connecting agent control…"
         pollTask = Task { [weak self] in
-            await self?.run(generation: generation)
+            await self?.run(
+                receiverGeneration: generation,
+                connectionGeneration: connectionGeneration
+            )
         }
     }
 
-    private func stop(status: String) {
+    private func stop(status: String, stopObserving: Bool = true) {
+        if stopObserving { stopConnectionObservation() }
         pollTask?.cancel()
         executionTask?.cancel()
         pollTask = nil
@@ -224,6 +282,7 @@ final class AgentControlController {
         receiverGeneration &+= 1
         registeredHosts = [:]
         serverToMachines = [:]
+        serverConnectionGenerations = [:]
         pendingAcknowledgements = [:]
         busyServerIDs = []
         commandQueue = []
@@ -234,8 +293,9 @@ final class AgentControlController {
     /// One bounded connection loop per configured host prevents an unavailable
     /// companion from delaying heartbeats for healthy companions. UI execution
     /// remains serialized separately by drainCommandQueue().
-    private func run(generation: Int) async {
-        guard let model else { return }
+    private func run(receiverGeneration: Int, connectionGeneration: Int) async {
+        guard let model,
+              receiverIsCurrent(receiverGeneration, connectionGeneration: connectionGeneration) else { return }
         let configured = model.machines.prefix(8).compactMap { machine -> (String, ServerConfiguration)? in
             guard let configuration = model.firstMateConfiguration(machineID: machine.id),
                   !configuration.token.isEmpty else { return nil }
@@ -251,48 +311,70 @@ final class AgentControlController {
         await withTaskGroup(of: Void.self) { group in
             for (machineID, configuration) in configured {
                 group.addTask { [weak self] in
-                    await self?.runHost(machineID: machineID, configuration: configuration, generation: generation)
+                    await self?.runHost(
+                        machineID: machineID,
+                        configuration: configuration,
+                        receiverGeneration: receiverGeneration,
+                        connectionGeneration: connectionGeneration
+                    )
                 }
             }
             await group.waitForAll()
         }
     }
 
-    private func runHost(machineID: String, configuration: ServerConfiguration, generation: Int) async {
+    private func runHost(
+        machineID: String,
+        configuration: ServerConfiguration,
+        receiverGeneration: Int,
+        connectionGeneration: Int
+    ) async {
         var retryDelay = Duration.seconds(1)
-        while receiverIsCurrent(generation) {
+        while receiverIsCurrent(receiverGeneration, connectionGeneration: connectionGeneration) {
             let transport = transportFactory(configuration)
             do {
                 let capability = try await transport.capabilities()
-                try ensureReceiverCurrent(generation)
+                try ensureReceiverCurrent(receiverGeneration, connectionGeneration: connectionGeneration)
                 guard capability.ok, capability.version == 1,
                       capability.capabilities.contains("agent-control-v1"),
                       Self.isSafeServerID(capability.serverId) else {
                     throw AgentControlCommandError.unavailable("The companion does not support agent control v1.")
                 }
                 let token = try identityStore.receiverToken(serverID: capability.serverId, clientID: clientID)
-                let host = Host(machineID: machineID, serverID: capability.serverId, receiverToken: token, transport: transport)
+                let host = Host(
+                    machineID: machineID,
+                    serverID: capability.serverId,
+                    receiverToken: token,
+                    configuration: configuration,
+                    connectionGeneration: connectionGeneration,
+                    transport: transport
+                )
                 serverToMachines[capability.serverId, default: []].insert(machineID)
+                serverConnectionGenerations[capability.serverId] = connectionGeneration
 
                 // Duplicate configured aliases are expected. Exactly one loop
                 // owns polling for a stable serverId; aliases still participate
                 // in exact target resolution.
                 if let owner = registeredHosts[capability.serverId], owner.machineID != machineID {
-                    try await sleepWhileCurrent(for: .seconds(5), generation: generation)
+                    try await sleepWhileCurrent(
+                        for: .seconds(5),
+                        receiverGeneration: receiverGeneration,
+                        connectionGeneration: connectionGeneration
+                    )
                     continue
                 }
                 registeredHosts[capability.serverId] = host
                 let registration = try await transport.register(registrationRequest(for: host))
-                try ensureReceiverCurrent(generation)
+                try ensureReceiverCurrent(receiverGeneration, connectionGeneration: connectionGeneration)
                 guard registration.ok, registration.serverId == capability.serverId else {
                     throw AgentControlCommandError.failed("The companion returned a mismatched server identity.")
                 }
                 noteHostConnected(host)
                 retryDelay = .seconds(1)
 
-                while receiverIsCurrent(generation), registeredHosts[host.serverID]?.machineID == machineID {
+                while hostIsCurrent(host, receiverGeneration: receiverGeneration) {
                     if let pending = pendingAcknowledgements[host.serverID] {
-                        switch await acknowledge(pending, host: host, generation: generation) {
+                        switch await acknowledge(pending, host: host, receiverGeneration: receiverGeneration) {
                         case .accepted:
                             pendingAcknowledgements[host.serverID] = nil
                             busyServerIDs.remove(host.serverID)
@@ -307,7 +389,7 @@ final class AgentControlController {
                         // Registration is also a heartbeat and cannot claim a
                         // second command while this host is queued/executing.
                         let heartbeat = try await transport.register(registrationRequest(for: host))
-                        try ensureReceiverCurrent(generation)
+                        try ensureReceiverCurrent(receiverGeneration, connectionGeneration: connectionGeneration)
                         guard heartbeat.ok, heartbeat.serverId == host.serverID else { throw APIError.invalidResponse }
                     } else {
                         let response = try await host.transport.poll(
@@ -319,23 +401,39 @@ final class AgentControlController {
                                 actions: actions()
                             )
                         )
-                        try ensureReceiverCurrent(generation)
+                        try ensureReceiverCurrent(receiverGeneration, connectionGeneration: connectionGeneration)
                         guard response.ok else { throw APIError.invalidResponse }
                         if let command = response.command {
-                            try receive(command, from: host, generation: generation)
+                            try receive(command, from: host, receiverGeneration: receiverGeneration)
                         }
                     }
-                    try await sleepWhileCurrent(for: pollInterval, generation: generation)
+                    try await sleepWhileCurrent(
+                        for: pollInterval,
+                        receiverGeneration: receiverGeneration,
+                        connectionGeneration: connectionGeneration
+                    )
                 }
             } catch is CancellationError {
-                releaseHost(machineID: machineID, generation: generation)
+                releaseHost(
+                    machineID: machineID,
+                    receiverGeneration: receiverGeneration,
+                    connectionGeneration: connectionGeneration
+                )
                 return
             } catch {
-                guard receiverIsCurrent(generation) else { return }
+                guard receiverIsCurrent(receiverGeneration, connectionGeneration: connectionGeneration) else { return }
                 lastError = error.localizedDescription
-                releaseHost(machineID: machineID, generation: generation)
+                releaseHost(
+                    machineID: machineID,
+                    receiverGeneration: receiverGeneration,
+                    connectionGeneration: connectionGeneration
+                )
                 do {
-                    try await sleepWhileCurrent(for: retryDelay, generation: generation)
+                    try await sleepWhileCurrent(
+                        for: retryDelay,
+                        receiverGeneration: receiverGeneration,
+                        connectionGeneration: connectionGeneration
+                    )
                 } catch {
                     return
                 }
@@ -344,8 +442,14 @@ final class AgentControlController {
         }
     }
 
-    private func receive(_ command: AgentControlCommand, from host: Host, generation: Int) throws {
-        guard command.clientId == clientID,
+    private func receive(
+        _ command: AgentControlCommand,
+        from host: Host,
+        receiverGeneration: Int
+    ) throws {
+        try ensureReceiverCurrent(receiverGeneration, connectionGeneration: host.connectionGeneration)
+        guard hostIsCurrent(host, receiverGeneration: receiverGeneration),
+              command.clientId == clientID,
               command.instanceId == instanceID,
               command.status == "running" else {
             throw AgentControlCommandError.stale("The companion delivered a command for a different receiver state.")
@@ -367,7 +471,7 @@ final class AgentControlController {
         }
         let context: ExecutionContext
         do {
-            context = try executionContext(for: command, receiverGeneration: generation, host: host)
+            context = try executionContext(for: command, receiverGeneration: receiverGeneration, host: host)
         } catch let error as AgentControlCommandError {
             // Poll already claimed this command as running. A stale expected
             // revision is a normal command rejection, not a transport failure:
@@ -385,25 +489,28 @@ final class AgentControlController {
         }
         busyServerIDs.insert(host.serverID)
         commandQueue.append(QueuedCommand(command: command, host: host, context: context))
-        startCommandDrainIfNeeded(generation: generation)
+        startCommandDrainIfNeeded(receiverGeneration: receiverGeneration)
     }
 
-    private func startCommandDrainIfNeeded(generation: Int) {
+    private func startCommandDrainIfNeeded(receiverGeneration: Int) {
         guard executionTask == nil else { return }
         executionTask = Task { [weak self] in
-            await self?.drainCommandQueue(generation: generation)
+            await self?.drainCommandQueue(receiverGeneration: receiverGeneration)
         }
     }
 
-    private func drainCommandQueue(generation: Int) async {
+    private func drainCommandQueue(receiverGeneration: Int) async {
         defer {
-            if generation == receiverGeneration { executionTask = nil }
+            if receiverGeneration == self.receiverGeneration { executionTask = nil }
         }
-        while receiverIsCurrent(generation), !commandQueue.isEmpty {
+        while receiverIsCurrent(receiverGeneration), !commandQueue.isEmpty {
             let queued = commandQueue.removeFirst()
-            guard registeredHosts[queued.host.serverID]?.machineID == queued.host.machineID else {
-                busyServerIDs.remove(queued.host.serverID)
-                continue
+            guard hostIsCurrent(queued.host, receiverGeneration: receiverGeneration) else {
+                // A claimed old-generation command is intentionally abandoned
+                // for the server to classify outcome_unknown. It must never be
+                // replayed against the replacement connection.
+                synchronize()
+                return
             }
             let receipt: AgentControlCachedReceipt
             var cache = executionCaches[queued.host.serverID] ?? AgentControlExecutionCache()
@@ -430,7 +537,7 @@ final class AgentControlController {
                 } else {
                     do {
                         let value = try await execute(queued.command, context: queued.context)
-                        guard receiverIsCurrent(generation) else { return }
+                        guard hostIsCurrent(queued.host, receiverGeneration: receiverGeneration) else { return }
                         receipt = AgentControlCachedReceipt(
                             command: queued.command,
                             status: "completed",
@@ -439,7 +546,7 @@ final class AgentControlController {
                             state: state()
                         )
                     } catch let error as AgentControlCommandError {
-                        guard receiverIsCurrent(generation) else { return }
+                        guard hostIsCurrent(queued.host, receiverGeneration: receiverGeneration) else { return }
                         receipt = AgentControlCachedReceipt(
                             command: queued.command,
                             status: "failed",
@@ -448,7 +555,7 @@ final class AgentControlController {
                             state: state()
                         )
                     } catch {
-                        guard receiverIsCurrent(generation) else { return }
+                        guard hostIsCurrent(queued.host, receiverGeneration: receiverGeneration) else { return }
                         receipt = AgentControlCachedReceipt(
                             command: queued.command,
                             status: "failed",
@@ -461,7 +568,7 @@ final class AgentControlController {
                 cache.store(receipt)
                 executionCaches[queued.host.serverID] = cache
             }
-            guard receiverIsCurrent(generation) else { return }
+            guard hostIsCurrent(queued.host, receiverGeneration: receiverGeneration) else { return }
             pendingAcknowledgements[queued.host.serverID] = receipt
         }
     }
@@ -480,7 +587,7 @@ final class AgentControlController {
     private func acknowledge(
         _ execution: AgentControlCachedReceipt,
         host: Host,
-        generation: Int
+        receiverGeneration: Int
     ) async -> AcknowledgementOutcome {
         do {
             let response = try await host.transport.acknowledge(
@@ -495,7 +602,7 @@ final class AgentControlController {
                     state: execution.state
                 )
             )
-            try ensureReceiverCurrent(generation)
+            try ensureReceiverCurrent(receiverGeneration, connectionGeneration: host.connectionGeneration)
             guard response.ok,
                   response.command.requestId == execution.command.requestId,
                   response.command.clientId == clientID,
@@ -598,9 +705,14 @@ final class AgentControlController {
             guard !machineIDs.isEmpty else { throw AgentControlCommandError.unavailable("No registered companion is available to refresh.") }
             var refreshed = 0
             for machineID in machineIDs.sorted() {
+                guard let host = registeredHost(for: machineID),
+                      modelConnectionMatches(host: host, machineID: machineID, model: model) else { continue }
                 try await model.refreshForAgentControl(machineID: machineID)
                 try validateExecutionContext(context)
                 refreshed += 1
+            }
+            guard refreshed > 0 else {
+                throw AgentControlCommandError.unavailable("The app model has not connected to the current companion configuration yet.")
             }
             stateDidChange()
             return .completed(["refreshed": .bool(true), "liveMachineCount": .number(Double(refreshed))])
@@ -696,6 +808,8 @@ final class AgentControlController {
 
     private func machineIDs(for target: AgentControlTarget) throws -> Set<String> {
         guard let serverID = target.serverId,
+              let model,
+              serverConnectionGenerations[serverID] == model.connectionGeneration,
               let aliases = serverToMachines[serverID],
               !aliases.isEmpty else {
             throw AgentControlCommandError.stale("The target does not identify a registered companion server.")
@@ -794,6 +908,12 @@ final class AgentControlController {
         var finalError: Error?
         for machineID in machineIDs.sorted() {
             do {
+                if let host = registeredHost(for: machineID),
+                   !modelConnectionMatches(host: host, machineID: machineID, model: model) {
+                    throw AgentControlCommandError.stale(
+                        "The app model has not connected to the current companion configuration yet."
+                    )
+                }
                 try await model.refreshForAgentControl(machineID: machineID)
                 try validateExecutionContext(context)
                 refreshed += 1
@@ -1068,7 +1188,7 @@ final class AgentControlController {
         guard let model else { throw AgentControlCommandError.unavailable("The app model is not configured.") }
         return ExecutionContext(
             receiverGeneration: receiverGeneration ?? self.receiverGeneration,
-            connectionGeneration: model.connectionGeneration,
+            connectionGeneration: host?.connectionGeneration ?? model.connectionGeneration,
             expectedRevision: command.expectedRevision,
             serverID: host?.serverID,
             hostMachineID: host?.machineID
@@ -1087,9 +1207,13 @@ final class AgentControlController {
               let model, context.connectionGeneration == model.connectionGeneration else {
             throw AgentControlCommandError.stale("Connections changed while executing the command.")
         }
-        if let serverID = context.serverID, let machineID = context.hostMachineID,
-           registeredHosts[serverID]?.machineID != machineID {
-            throw AgentControlCommandError.stale("The receiving companion disconnected while executing the command.")
+        if let serverID = context.serverID, let machineID = context.hostMachineID {
+            guard let host = registeredHosts[serverID],
+                  host.machineID == machineID,
+                  host.connectionGeneration == context.connectionGeneration,
+                  serverConnectionGenerations[serverID] == context.connectionGeneration else {
+                throw AgentControlCommandError.stale("The receiving companion disconnected while executing the command.")
+            }
         }
         try Task.checkCancellation()
     }
@@ -1136,9 +1260,15 @@ final class AgentControlController {
         statusText = "Listening on \(activeServerCount) companion\(activeServerCount == 1 ? "" : "s")"
     }
 
-    private func releaseHost(machineID: String, generation: Int) {
-        guard generation == receiverGeneration else { return }
-        let serverIDs = registeredHosts.compactMap { $0.value.machineID == machineID ? $0.key : nil }
+    private func releaseHost(
+        machineID: String,
+        receiverGeneration: Int,
+        connectionGeneration: Int
+    ) {
+        guard receiverIsCurrent(receiverGeneration, connectionGeneration: connectionGeneration) else { return }
+        let serverIDs = registeredHosts.compactMap {
+            $0.value.machineID == machineID && $0.value.connectionGeneration == connectionGeneration ? $0.key : nil
+        }
         for serverID in serverIDs {
             registeredHosts[serverID] = nil
             pendingAcknowledgements[serverID] = nil
@@ -1151,22 +1281,47 @@ final class AgentControlController {
             : "Listening on \(activeServerCount) companion\(activeServerCount == 1 ? "" : "s")"
     }
 
-    private func receiverIsCurrent(_ generation: Int) -> Bool {
-        !Task.isCancelled && isEnabled && generation == receiverGeneration
+    private func receiverIsCurrent(
+        _ receiverGeneration: Int,
+        connectionGeneration: Int? = nil
+    ) -> Bool {
+        guard !Task.isCancelled, isEnabled, receiverGeneration == self.receiverGeneration else { return false }
+        guard let connectionGeneration else { return true }
+        return model?.connectionGeneration == connectionGeneration
     }
 
-    private func ensureReceiverCurrent(_ generation: Int) throws {
-        guard receiverIsCurrent(generation) else { throw CancellationError() }
+    private func hostIsCurrent(_ host: Host, receiverGeneration: Int) -> Bool {
+        guard receiverIsCurrent(receiverGeneration, connectionGeneration: host.connectionGeneration),
+              let registered = registeredHosts[host.serverID] else { return false }
+        return registered.machineID == host.machineID
+            && registered.connectionGeneration == host.connectionGeneration
+            && serverConnectionGenerations[host.serverID] == host.connectionGeneration
     }
 
-    private func sleepWhileCurrent(for duration: Duration, generation: Int) async throws {
+    private func ensureReceiverCurrent(
+        _ receiverGeneration: Int,
+        connectionGeneration: Int
+    ) throws {
+        guard receiverIsCurrent(receiverGeneration, connectionGeneration: connectionGeneration) else {
+            throw CancellationError()
+        }
+    }
+
+    private func sleepWhileCurrent(
+        for duration: Duration,
+        receiverGeneration: Int,
+        connectionGeneration: Int
+    ) async throws {
         try await Task.sleep(for: duration)
-        try ensureReceiverCurrent(generation)
+        try ensureReceiverCurrent(receiverGeneration, connectionGeneration: connectionGeneration)
     }
 
     #if DEBUG
     var receiverGenerationForTesting: Int { receiverGeneration }
+    var configuredConnectionGenerationForTesting: Int? { configuredConnectionGeneration }
     var hasPollingTaskForTesting: Bool { pollTask != nil }
+    var hasConnectionObservationForTesting: Bool { connectionObservationIsArmed }
+    func serverIDForTesting(machineID: String) -> String? { serverID(for: machineID) }
     func restartForTesting() { restart() }
     func stopForTesting() { stop(status: "Stopped by test") }
     #endif
@@ -1253,7 +1408,45 @@ final class AgentControlController {
     }
 
     private func serverID(for machineID: String) -> String? {
-        serverToMachines.first(where: { $0.value.contains(machineID) })?.key
+        guard let model else { return nil }
+        let connectionGeneration = model.connectionGeneration
+        guard let mapping = serverToMachines.first(where: {
+            $0.value.contains(machineID)
+                && serverConnectionGenerations[$0.key] == connectionGeneration
+        }) else { return nil }
+        guard let host = registeredHosts[mapping.key] else {
+            return model.isDemoMode ? mapping.key : nil
+        }
+        return modelConnectionMatches(host: host, machineID: machineID, model: model)
+            ? mapping.key
+            : nil
+    }
+
+    private func registeredHost(for machineID: String) -> Host? {
+        guard let serverID = serverToMachines.first(where: { $0.value.contains(machineID) })?.key else {
+            return nil
+        }
+        return registeredHosts[serverID]
+    }
+
+    /// Model snapshots and API clients are rebuilt by the process connection
+    /// driver. Until that runtime carries this generation's exact configuration,
+    /// never refresh or advertise its retained panes through a newly registered
+    /// control host.
+    private func modelConnectionMatches(
+        host: Host,
+        machineID: String,
+        model: HerdrAppModel
+    ) -> Bool {
+        if model.isDemoMode { return true }
+        guard model.canControl(machineID: machineID) else { return false }
+        if let pane = model.workspaces.lazy.flatMap(\.panes).first(where: { $0.machineID == machineID }) {
+            return model.serverConfiguration(for: pane) == host.configuration
+        }
+        if model.machines.first?.id == machineID {
+            return model.activeServerConfiguration == host.configuration
+        }
+        return false
     }
 
     private func effectiveModal(shell: HerdrShellState) -> String? {

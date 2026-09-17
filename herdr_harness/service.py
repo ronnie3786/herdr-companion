@@ -856,7 +856,6 @@ class HerdrService:
     def snapshot_response(self) -> dict:
         snapshot, generated_at = self._cached_snapshot()
         enriched = self.pi_semantic.enrich_snapshot(snapshot)
-        lifecycle_by_pane = self.panes_seen.lifecycle_map()
         for pane in enriched.get("panes", []):
             if isinstance(pane, dict):
                 pane_id = str(pane.get("pane_id") or "")
@@ -867,13 +866,6 @@ class HerdrService:
                 )
                 if activity is not None:
                     pane["session_activity"] = activity
-                lifecycle = lifecycle_by_pane.get(pane_id)
-                if lifecycle is not None:
-                    pane["first_seen_at"] = lifecycle.get("firstSeenAt")
-                    pane["last_activity_at"] = lifecycle.get("lastActivityAt")
-                    working_since = lifecycle.get("workingSince")
-                    if working_since is not None:
-                        pane["working_since"] = working_since
         return {
             "ok": True,
             "snapshot": enriched,

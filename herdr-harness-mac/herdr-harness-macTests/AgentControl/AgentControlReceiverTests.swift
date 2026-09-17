@@ -172,6 +172,139 @@ struct AgentControlReceiverTests {
         #expect(first.state.segment != controller.currentState().segment)
         controller.stopForTesting()
     }
+
+    @Test("A process-owned watcher replaces an edited connection and rejects an old in-flight command")
+    func connectionGenerationWatcherBindsHosts() async throws {
+        let suite = "AgentControlReceiverGenerationWatcherTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defaults.set(true, forKey: "herdr.agentControl.enabled.v1")
+        let machine = HerdrMachine(
+            id: "generation-machine",
+            name: "Before",
+            urlString: "https://before.example.invalid"
+        )
+        let credentials = TestCredentialStore()
+        credentials.values["api-token.\(machine.id)"] = "synthetic-token-before"
+        let model = HerdrAppModel(
+            credentials: credentials,
+            arguments: ["HerdrTests"],
+            userDefaults: defaults,
+            configuredMachines: [machine]
+        )
+        model.machineStates[machine.id] = .live
+        let oldTransport = ControlledGenerationAgentControlTransport(
+            serverID: "srv_before",
+            ignoresPollCancellation: true
+        )
+        let replacementTransport = ControlledGenerationAgentControlTransport(
+            serverID: "srv_after",
+            ignoresPollCancellation: false
+        )
+        let controller = AgentControlController(
+            defaults: defaults,
+            secretStorage: TestAgentControlSecretStorage(),
+            pollInterval: .milliseconds(1),
+            allowsReceiverInUnitTests: true,
+            transportFactory: { configuration in
+                configuration.baseURL.host == "after.example.invalid"
+                    ? replacementTransport
+                    : oldTransport
+            }
+        )
+        controller.configure(
+            model: model,
+            shell: HerdrShellState(userDefaults: defaults),
+            hudController: HerdrHudController(userDefaults: defaults),
+            openMainWindow: {},
+            openSettingsWindow: {}
+        )
+
+        try await oldTransport.waitForPollCount(1)
+        #expect(controller.serverIDForTesting(machineID: machine.id) == "srv_before")
+        let oldGeneration = model.connectionGeneration
+        #expect(model.updateMachine(
+            id: machine.id,
+            name: "After",
+            urlString: "https://after.example.invalid",
+            token: "synthetic-token-after"
+        ))
+
+        // No AppRootView callback is involved. The mapping becomes unusable as
+        // soon as the model generation changes, before the watcher restart has
+        // had an opportunity to run.
+        #expect(model.connectionGeneration == oldGeneration + 1)
+        #expect(controller.serverIDForTesting(machineID: machine.id) == nil)
+        try await oldTransport.waitForCancellationCount(1)
+        try await replacementTransport.waitForPollCount(1)
+        #expect(controller.configuredConnectionGenerationForTesting == model.connectionGeneration)
+        // Registration may recover before the app model's process connection
+        // has rebuilt its API runtime. Do not attribute retained old panes to
+        // the replacement server during that gap.
+        #expect(controller.serverIDForTesting(machineID: machine.id) == nil)
+        let updatedMachine = try #require(model.machines.first(where: { $0.id == machine.id }))
+        model.prepareRuntime(for: updatedMachine, generation: model.connectionGeneration)
+        #expect(controller.serverIDForTesting(machineID: machine.id) == nil)
+        model.machineStates[machine.id] = .live
+        #expect(controller.serverIDForTesting(machineID: machine.id) == "srv_after")
+
+        await oldTransport.deliver(command(
+            requestID: "old-generation-command",
+            controller: controller,
+            query: "must-not-apply"
+        ))
+        try await oldTransport.waitForDeliveredPollCount(1)
+        for _ in 0..<100 { await Task.yield() }
+        #expect(model.searchText.isEmpty)
+        #expect(await oldTransport.acknowledgementCount() == 0)
+
+        await replacementTransport.deliver(command(
+            requestID: "replacement-generation-command",
+            controller: controller,
+            query: "healthy-replacement"
+        ))
+        try await replacementTransport.waitForAcknowledgementCount(1)
+        #expect(model.searchText == "healthy-replacement")
+
+        try await replacementTransport.waitForPollCount(2)
+        controller.setEnabled(false)
+        try await replacementTransport.waitForCancellationCount(1)
+        #expect(!controller.hasPollingTaskForTesting)
+        #expect(!controller.hasConnectionObservationForTesting)
+        let stoppedReceiverGeneration = controller.receiverGenerationForTesting
+        let registrationsAfterDisable = await replacementTransport.registrationCount()
+
+        #expect(model.updateMachine(
+            id: machine.id,
+            name: "Disabled",
+            urlString: "https://disabled.example.invalid",
+            token: "synthetic-token-disabled"
+        ))
+        for _ in 0..<100 { await Task.yield() }
+        #expect(controller.receiverGenerationForTesting == stoppedReceiverGeneration)
+        #expect(await replacementTransport.registrationCount() == registrationsAfterDisable)
+    }
+
+    private func command(
+        requestID: String,
+        controller: AgentControlController,
+        query: String
+    ) -> AgentControlCommand {
+        AgentControlCommand(
+            requestId: requestID,
+            clientId: controller.clientID,
+            instanceId: controller.instanceID,
+            action: "ui.sidebar",
+            target: nil,
+            parameters: ["query": .string(query)],
+            expectedRevision: nil,
+            status: "running",
+            createdAt: "2030-01-01T00:00:00Z",
+            expiresAt: "2030-01-01T00:00:30Z",
+            result: nil,
+            error: nil
+        )
+    }
 }
 
 actor StaleRevisionAgentControlTransport: AgentControlTransport {
@@ -295,6 +428,121 @@ actor RetryingAgentControlTransport: AgentControlTransport {
             try await Task.sleep(for: .milliseconds(1))
         }
         throw SyntheticError.exceededBound
+    }
+}
+
+actor ControlledGenerationAgentControlTransport: AgentControlTransport {
+    enum WaitError: Error { case exceededBound }
+
+    private let serverID: String
+    private let ignoresPollCancellation: Bool
+    private var registerCount = 0
+    private var pollCount = 0
+    private var deliveredPollCount = 0
+    private var cancellationCount = 0
+    private var deliveredCommand: AgentControlCommand?
+    private var pollContinuation: CheckedContinuation<AgentControlPollResponse, Error>?
+    private var cancellationRequested = false
+    private var acknowledgementRequests: [AgentControlResultRequest] = []
+
+    init(serverID: String, ignoresPollCancellation: Bool) {
+        self.serverID = serverID
+        self.ignoresPollCancellation = ignoresPollCancellation
+    }
+
+    func capabilities() async throws -> AgentControlCapabilitiesResponse {
+        AgentControlCapabilitiesResponse(
+            ok: true,
+            version: 1,
+            serverId: serverID,
+            capabilities: ["agent-control-v1", "discovery-v1"]
+        )
+    }
+
+    func register(_ request: AgentControlRegistrationRequest) async throws -> AgentControlRegistrationResponse {
+        registerCount += 1
+        return AgentControlRegistrationResponse(ok: true, serverId: serverID)
+    }
+
+    func poll(clientId: String, request: AgentControlPollRequest) async throws -> AgentControlPollResponse {
+        pollCount += 1
+        let response = try await withTaskCancellationHandler {
+            try await waitForDelivery()
+        } onCancel: {
+            Task { await self.notePollCancellation() }
+        }
+        deliveredPollCount += 1
+        return response
+    }
+
+    private func waitForDelivery() async throws -> AgentControlPollResponse {
+        if cancellationRequested, !ignoresPollCancellation { throw CancellationError() }
+        return try await withCheckedThrowingContinuation { continuation in
+            pollContinuation = continuation
+        }
+    }
+
+    private func notePollCancellation() {
+        cancellationCount += 1
+        cancellationRequested = true
+        guard !ignoresPollCancellation, let continuation = pollContinuation else { return }
+        pollContinuation = nil
+        continuation.resume(throwing: CancellationError())
+    }
+
+    func deliver(_ command: AgentControlCommand) {
+        deliveredCommand = command
+        let continuation = pollContinuation
+        pollContinuation = nil
+        continuation?.resume(returning: AgentControlPollResponse(ok: true, command: command))
+    }
+
+    func acknowledge(
+        clientId: String,
+        requestId: String,
+        request: AgentControlResultRequest
+    ) async throws -> AgentControlResultResponse {
+        acknowledgementRequests.append(request)
+        guard var command = deliveredCommand else { throw WaitError.exceededBound }
+        command.status = request.status
+        command.result = request.result
+        command.error = request.error
+        return AgentControlResultResponse(ok: true, command: command)
+    }
+
+    func acknowledgementCount() -> Int { acknowledgementRequests.count }
+    func registrationCount() -> Int { registerCount }
+
+    func waitForPollCount(_ expected: Int) async throws {
+        for _ in 0..<5_000 {
+            if pollCount >= expected { return }
+            await Task.yield()
+        }
+        throw WaitError.exceededBound
+    }
+
+    func waitForDeliveredPollCount(_ expected: Int) async throws {
+        for _ in 0..<5_000 {
+            if deliveredPollCount >= expected { return }
+            await Task.yield()
+        }
+        throw WaitError.exceededBound
+    }
+
+    func waitForCancellationCount(_ expected: Int) async throws {
+        for _ in 0..<5_000 {
+            if cancellationCount >= expected { return }
+            await Task.yield()
+        }
+        throw WaitError.exceededBound
+    }
+
+    func waitForAcknowledgementCount(_ expected: Int) async throws {
+        for _ in 0..<5_000 {
+            if acknowledgementRequests.count >= expected { return }
+            await Task.yield()
+        }
+        throw WaitError.exceededBound
     }
 }
 

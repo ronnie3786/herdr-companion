@@ -81,8 +81,10 @@ herdr-control --machine desktop --control-machine desktop ui open \
 ```
 
 Search results include names, timestamps, match excerpts, typed targets and source
-coverage. Choose a result deliberately; never treat the first match as the user's
-intent when multiple tickets/features/conversations fit. Natural-language
+coverage. A source `generatedAt` is its cached snapshot time, not the time the
+search command ran; an empty string accompanies `freshness: "unknown"` when that
+time is unavailable. Choose a result deliberately; never treat the first match
+as the user's intent when multiple tickets/features/conversations fit. Natural-language
 interpretation belongs to the calling agent. `--query` is text search, not a claim
 of semantic/embedding search.
 
@@ -206,8 +208,11 @@ young receipts to make space. An older missing receipt is not proof that the
 operation never ran—inspect/reconcile rather than blindly resubmitting it.
 
 - `accepted` / `running`: not completed navigation.
-- `completed`: the stated operation completed; inspect its nested result for
-  asynchronous work such as a summary presentation.
+- `completed`: the control operation or navigation completed. This is not a
+  promise that asynchronous model work finished. Summary presentation reports
+  `operationState: started`; compact/interrupt use Pi's existing dispatch
+  acknowledgement. Inspect the underlying session before reporting compaction,
+  cancellation or summary generation finished.
 - `failed`: inspect the structured error; do not bypass its guard.
 - `expired`: a queued command was not executed before its short TTL.
 - `outcome_unknown`: an effect may have occurred. Inspect/reconcile; do not issue a

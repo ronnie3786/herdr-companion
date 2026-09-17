@@ -111,9 +111,65 @@ class ResponseBriefTests(unittest.TestCase):
             "inserting no separators",
             charter,
         )
-        self.assertIn("splitting the result only on LF", charter)
-        self.assertIn("at or below 140 words", charter)
+        self.assertIn("splitting only on LF", charter)
+        self.assertIn("points must contain zero or one object", charter)
+        self.assertIn("details must contain zero to two objects", charter)
+        self.assertIn("Never turn a table, list, code block, or status inventory into prose", charter)
+        self.assertIn("Do not repeat or repackage the summary", charter)
+        self.assertIn("at most 40 words", charter)
+        self.assertIn("at most 9 non-whitespace Unicode scalars", charter)
         self.assertEqual(argv[argv.index("--name") + 1], "Response brief")
+
+    def test_python_policy_matches_shared_swift_fixture_corpus(self):
+        fixture_path = Path(__file__).parent / "fixtures" / "response_brief_policy.json"
+        fixtures = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+        for fixture in fixtures:
+            with self.subTest(name=fixture["name"]):
+                self.assertEqual(
+                    response_briefs.concision_policy(fixture["source"]),
+                    {
+                        "readableCharacters": fixture["readableCharacters"],
+                        "sourceWords": fixture["sourceWords"],
+                        "maximumVisibleCharacters": fixture["maximumVisibleCharacters"],
+                        "maximumVisibleWords": fixture["maximumVisibleWords"],
+                        "shouldGenerate": fixture["shouldGenerate"],
+                    },
+                )
+
+    def test_visible_output_policy_counts_total_punctuation_emoji_and_word_boundaries(self):
+        source = "a" * 200
+
+        self.assertTrue(response_briefs.visible_content_fits(source, ["b" * 50]))
+        self.assertFalse(response_briefs.visible_content_fits(source, ["b" * 51]))
+        self.assertEqual(response_briefs.word_count("--- 🪻 e\u0301 東京"), 2)
+        self.assertEqual(response_briefs.non_whitespace_scalar_count("--- 🪻 e\u0301 東京"), 8)
+
+    def test_absolute_word_cap_rejects_41_tiny_words_that_fit_character_budget(self):
+        source = " ".join(["source"] * 200)
+        policy = response_briefs.concision_policy(source)
+        rejected = " ".join(["a"] * 41)
+
+        self.assertEqual(policy["maximumVisibleWords"], 40)
+        self.assertLess(response_briefs.non_whitespace_scalar_count(rejected), policy["maximumVisibleCharacters"])
+        self.assertTrue(response_briefs.visible_content_fits(source, [" ".join(["a"] * 40)]))
+        self.assertFalse(response_briefs.visible_content_fits(source, [rejected]))
+
+    def test_trusted_budgets_use_required_source_only(self):
+        context = copy.deepcopy(self.request["context"])
+        context["items"].append({
+            "id": "optional-noise",
+            "kind": "text.v1",
+            "label": "Optional context",
+            "priority": "optional",
+            "text": "hidden " * 1_000,
+        })
+
+        charter = response_briefs.charter_for(context)
+
+        self.assertIn("the source has 7 readable words", charter)
+        self.assertIn("37 readable letter/number scalars", charter)
+        self.assertNotIn("1000", charter)
 
     def test_each_request_uses_a_distinct_fresh_child_with_the_same_source_parent(self):
         first = self.start()

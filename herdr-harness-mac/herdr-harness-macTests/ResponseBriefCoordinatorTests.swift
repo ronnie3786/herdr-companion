@@ -374,6 +374,77 @@ struct ResponseBriefCoordinatorTests {
         #expect(!message.contains("was cancelled"))
     }
 
+    @Test("A short source advances the baseline without starting a model request, including after relaunch")
+    func shortSourceSkipsGenerationAcrossRelaunch() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let source = fixture.source(responseID: "answer-short", text: "Already concise.", expandIfShort: false)
+        var starts = 0
+        let transport = fixture.transport(
+            start: { _ in
+                starts += 1
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
+        )
+        let first = fixture.coordinator()
+        #expect(first.enable(source.chat))
+
+        await first.observeSources([source], transport: transport)
+        await first.waitForIdleForTesting()
+
+        #expect(starts == 0)
+        #expect(first.state(for: source.chat).phase == .alreadyConcise)
+
+        let restored = ResponseBriefCoordinator(
+            defaults: fixture.defaults,
+            persistence: ResponseBriefPersistence(url: fixture.folder.appending(path: "cache.json"))
+        )
+        await restored.observeSources([source], transport: transport)
+        await restored.waitForIdleForTesting()
+
+        #expect(starts == 0)
+        #expect(restored.state(for: source.chat).phase == .alreadyConcise)
+    }
+
+    @Test("An accepted short-source receipt is reconciled instead of stranded")
+    func shortSourceReconcilesAcceptedReceipt() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let source = fixture.source(responseID: "answer-short-pending", text: "Short exact answer", expandIfShort: false)
+        let request = try ResponseBriefRequestBuilder.request(
+            for: source,
+            model: "provider/brief-model",
+            thinkingLevel: nil,
+            clientRequestID: "short-pending-request"
+        )
+        try await fixture.persistence.saveReceipt(.init(
+            id: fixture.generationID(for: source, model: "provider/brief-model", thinkingLevel: nil),
+            source: source,
+            request: request,
+            runID: "agr_synthetic0001",
+            createdAt: .now
+        ))
+        let coordinator = fixture.coordinator()
+        #expect(coordinator.enable(source.chat))
+        var starts = 0
+        var fetches = 0
+        let conciseJSON = #"{"version":1,"title":"T","summary":"OK.","points":[],"details":[]}"#
+        let transport = fixture.transport(
+            start: { _ in starts += 1; return fixture.run(status: .completed, response: conciseJSON) },
+            fetch: { _ in fetches += 1; return fixture.run(status: .completed, response: conciseJSON) }
+        )
+
+        await coordinator.observe(source, transport: transport)
+        await coordinator.waitForIdleForTesting()
+
+        #expect(starts == 0)
+        #expect(fetches == 1)
+        #expect(coordinator.state(for: source.chat).phase == .alreadyConcise)
+        let stored = try await fixture.persistence.snapshot()
+        #expect(stored.receipts.isEmpty)
+    }
+
     @Test("A terminal malformed result is not automatically resubmitted")
     func terminalFailureRequiresExplicitAction() async throws {
         let fixture = try Fixture()
@@ -396,10 +467,281 @@ struct ResponseBriefCoordinatorTests {
         await coordinator.waitForIdleForTesting()
 
         #expect(starts == 1)
-        guard case .failed = coordinator.state(for: source.chat).phase else {
-            Issue.record("Expected malformed-result failure")
+        guard case .regenerateNeeded = coordinator.state(for: source.chat).phase else {
+            Issue.record("Expected explicit-regeneration state")
             return
         }
+    }
+
+    @Test("Explicit regeneration creates a fresh request instead of fetching invalid output again")
+    func regenerationUsesFreshRequest() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let coordinator = fixture.coordinator()
+        let source = fixture.source(responseID: "answer-regenerate", text: "Synthetic long answer")
+        var requestIDs: [String] = []
+        var fetches = 0
+        let transport = fixture.transport(
+            start: { request in
+                requestIDs.append(request.clientRequestId)
+                let response = requestIDs.count == 1 ? #"{"version":2}"# : fixture.validJSON
+                return fixture.run(status: .completed, response: response)
+            },
+            fetch: { _ in
+                fetches += 1
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            }
+        )
+        coordinator.enable(source.chat)
+        await coordinator.observe(source, transport: transport)
+        await coordinator.waitForIdleForTesting()
+
+        await coordinator.regenerate(source, transport: transport)
+        await coordinator.waitForIdleForTesting()
+
+        #expect(requestIDs.count == 2)
+        #expect(Set(requestIDs).count == 2)
+        #expect(fetches == 0)
+        #expect(coordinator.briefs(for: source.chat).count == 1)
+    }
+
+    @Test("Retry prioritizes a newer unresolved regeneration over a settled invalid predecessor")
+    func retryResolvesNewestOwnedRegeneration() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let source = fixture.source(responseID: "answer-regeneration-retry", text: "Synthetic long answer")
+        let first = fixture.coordinator()
+        #expect(first.enable(source.chat))
+        var requestIDs: [String] = []
+        let interruptedTransport = fixture.transport(
+            start: { request in
+                requestIDs.append(request.clientRequestId)
+                if requestIDs.count == 1 {
+                    return fixture.run(status: .completed, response: #"{"version":2}"#)
+                }
+                throw APIError.invalidResponse
+            },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
+        )
+
+        await first.observe(source, transport: interruptedTransport)
+        await first.waitForIdleForTesting()
+        await first.regenerate(source, transport: interruptedTransport)
+        await first.waitForIdleForTesting()
+
+        #expect(requestIDs.count == 2)
+        #expect(Set(requestIDs).count == 2)
+
+        let restored = ResponseBriefCoordinator(
+            defaults: fixture.defaults,
+            persistence: ResponseBriefPersistence(url: fixture.folder.appending(path: "cache.json"))
+        )
+        var fetches = 0
+        let replayTransport = fixture.transport(
+            start: { request in
+                requestIDs.append(request.clientRequestId)
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _ in
+                fetches += 1
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            }
+        )
+
+        await restored.retry(source, transport: replayTransport)
+        await restored.waitForIdleForTesting()
+
+        #expect(requestIDs.count == 3)
+        #expect(requestIDs[2] == requestIDs[1])
+        #expect(requestIDs[2] != requestIDs[0])
+        #expect(Set(requestIDs).count == 2)
+        #expect(fetches == 0)
+        #expect(restored.briefs(for: source.chat).count == 1)
+        let stored = try await ResponseBriefPersistence(
+            url: fixture.folder.appending(path: "cache.json")
+        ).snapshot()
+        #expect(stored.receipts.count == 1)
+        #expect(stored.receipts.first?.status == .settled)
+    }
+
+    @Test("Regenerating a historical short source neither dispatches nor replaces the actual latest source")
+    func historicalShortRegenerationPreservesLatestSource() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let coordinator = fixture.coordinator()
+        let latest = fixture.source(responseID: "answer-latest-long", text: "Synthetic latest answer")
+        let historicalShort = fixture.source(
+            responseID: "answer-prior-short",
+            text: "Concise historical answer.",
+            expandIfShort: false
+        )
+        var starts = 0
+        let transport = fixture.transport(
+            start: { _ in
+                starts += 1
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
+        )
+        #expect(coordinator.enable(latest.chat))
+        await coordinator.observe(latest, transport: transport)
+        await coordinator.waitForIdleForTesting()
+
+        await coordinator.regenerate(historicalShort, transport: transport)
+        await coordinator.waitForIdleForTesting()
+
+        #expect(starts == 1)
+        let state = coordinator.state(for: latest.chat)
+        #expect(state.sourceID == latest.id)
+        #expect(state.phase == .idle)
+    }
+
+    @Test("Regenerating a short source still reconciles its accepted receipt")
+    func shortRegenerationReconcilesAcceptedReceipt() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let source = fixture.source(
+            responseID: "answer-short-regenerate-receipt",
+            text: "Short exact answer.",
+            expandIfShort: false
+        )
+        let request = try ResponseBriefRequestBuilder.request(
+            for: source,
+            model: "provider/brief-model",
+            thinkingLevel: nil,
+            clientRequestID: "short-regenerate-request"
+        )
+        try await fixture.persistence.saveReceipt(.init(
+            id: fixture.generationID(for: source, model: "provider/brief-model", thinkingLevel: nil),
+            source: source,
+            request: request,
+            runID: "agr_synthetic0001",
+            createdAt: .now
+        ))
+        let coordinator = fixture.coordinator()
+        #expect(coordinator.enable(source.chat))
+        var starts = 0
+        var fetches = 0
+        let conciseJSON = #"{"version":1,"title":"T","summary":"OK.","points":[],"details":[]}"#
+        let transport = fixture.transport(
+            start: { _ in starts += 1; return fixture.run(status: .completed, response: conciseJSON) },
+            fetch: { _ in fetches += 1; return fixture.run(status: .completed, response: conciseJSON) }
+        )
+
+        await coordinator.regenerate(source, transport: transport)
+        await coordinator.waitForIdleForTesting()
+
+        #expect(starts == 0)
+        #expect(fetches == 1)
+        let stored = try await fixture.persistence.snapshot()
+        #expect(stored.receipts.isEmpty)
+    }
+
+    @Test("An ambiguous earlier queued source remains exactly retrievable and retryable after latest advances")
+    func queuedAmbiguousSourceRemainsRetryable() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let coordinator = fixture.coordinator()
+        let earlier = fixture.source(responseID: "answer-queued-earlier", text: "Earlier queued answer")
+        let latest = fixture.source(responseID: "answer-queued-latest", text: "Latest queued answer")
+        var releaseFailure: CheckedContinuation<Void, Never>?
+        var didStartContinuation: AsyncStream<Void>.Continuation?
+        let didStart = AsyncStream<Void> { didStartContinuation = $0 }
+        var originalStarts: [String] = []
+        let interruptedTransport = fixture.transport(
+            start: { request in
+                let sourceID = request.context.source.instanceId
+                originalStarts.append(sourceID)
+                if sourceID == earlier.responseID {
+                    didStartContinuation?.yield()
+                    await withCheckedContinuation { releaseFailure = $0 }
+                    throw APIError.invalidResponse
+                }
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
+        )
+        #expect(coordinator.enable(earlier.chat))
+        await coordinator.observe(earlier, transport: interruptedTransport)
+        var startedIterator = didStart.makeAsyncIterator()
+        _ = await startedIterator.next()
+        #expect(!coordinator.canRegenerate(earlier))
+        await coordinator.observe(latest, transport: interruptedTransport)
+        releaseFailure?.resume()
+        await coordinator.waitForIdleForTesting()
+
+        let failedState = coordinator.state(for: earlier.chat)
+        guard case .failed = failedState.phase else {
+            Issue.record("Expected ambiguous submission failure")
+            return
+        }
+        let ownedSource = try #require(coordinator.source(for: failedState, in: earlier.chat))
+        #expect(ownedSource == earlier)
+        #expect(!coordinator.canRegenerate(ownedSource))
+
+        var retryStarts: [String] = []
+        let retryTransport = fixture.transport(
+            start: { request in
+                retryStarts.append(request.context.source.instanceId)
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
+        )
+        await coordinator.retry(ownedSource, transport: retryTransport)
+        await coordinator.waitForIdleForTesting()
+
+        #expect(retryStarts == [earlier.responseID, latest.responseID])
+        #expect(originalStarts == [earlier.responseID])
+        #expect(Set(coordinator.briefs(for: earlier.chat).map(\.source.id)) == Set([earlier.id, latest.id]))
+    }
+
+    @Test("Verbose cached records remain in history but are presentation gated")
+    func verboseCachedRecordIsPresentationGated() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let source = fixture.source(responseID: "answer-cached", text: "Synthetic long answer")
+        let verbose = ResponseBrief(
+            version: 1,
+            title: "Compatibility title",
+            summary: "Direct result.",
+            points: [
+                .init(text: "First repeated point.", startLine: 1, endLine: 1),
+                .init(text: "Second repeated point.", startLine: 1, endLine: 1),
+            ],
+            details: []
+        )
+        try await fixture.persistence.saveRecord(.init(
+            id: fixture.generationID(for: source, model: "provider/brief-model", thinkingLevel: nil),
+            source: source,
+            brief: verbose,
+            model: "provider/brief-model",
+            thinkingLevel: nil,
+            createdAt: .now
+        ))
+        let coordinator = fixture.coordinator()
+        coordinator.selectThinkingLevel("high")
+        #expect(coordinator.enable(source.chat))
+        var starts = 0
+        let transport = fixture.transport(
+            start: { _ in starts += 1; return fixture.run(status: .completed, response: fixture.validJSON) },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
+        )
+        await coordinator.observe(source, transport: transport)
+        await coordinator.waitForIdleForTesting()
+
+        #expect(starts == 0)
+        #expect(coordinator.briefs(for: source.chat).count == 1)
+        #expect(coordinator.briefs(for: source.chat).first?.brief == verbose)
+        #expect(coordinator.hasNonconformingBrief(for: source))
+
+        await coordinator.regenerate(source, transport: transport)
+        await coordinator.waitForIdleForTesting()
+
+        #expect(starts == 1)
+        #expect(coordinator.briefs(for: source.chat).count == 2)
+        #expect(coordinator.briefs(for: source.chat).contains(where: { $0.brief == verbose }))
+        let stored = try await fixture.persistence.snapshot()
+        #expect(stored.records.count == 2)
     }
 }
 
@@ -448,11 +790,21 @@ private final class Fixture {
         return coordinator
     }
 
-    func source(responseID: String, text: String) -> ResponseBriefSource {
-        ResponseBriefSource(
+    func source(
+        responseID: String,
+        text: String,
+        expandIfShort: Bool = true
+    ) -> ResponseBriefSource {
+        let boundedText: String
+        if expandIfShort, !ResponseBriefConcisionPolicy(source: text).metrics.shouldGenerate {
+            boundedText = text + "\n" + Array(repeating: "synthetic", count: 64).joined(separator: " ")
+        } else {
+            boundedText = text
+        }
+        return ResponseBriefSource(
             chat: .init(machineID: "synthetic-machine", paneID: "w1:p2", sessionID: "synthetic-session"),
             responseID: responseID,
-            text: text,
+            text: boundedText,
             currentUserText: "Current question",
             previousUserText: "Previous question",
             previousAssistantText: "Previous answer"

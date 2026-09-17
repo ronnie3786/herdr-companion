@@ -65,10 +65,7 @@ struct ResponseBrief: Codable, Equatable, Identifiable, Sendable {
               details.allSatisfy({ !$0.label.isEmpty && $0.label.count <= 100 })
         else { throw ResponseBriefValidationError.invalidBounds }
 
-        let wordCount = ([title, summary] + points.map(\.text))
-            .flatMap { $0.split(whereSeparator: \.isWhitespace) }
-            .count
-        guard wordCount <= 140 else { throw ResponseBriefValidationError.tooManyWords }
+        try ResponseBriefConcisionPolicy(source: source).validate(self)
 
         let lineCount = ResponseBriefSourceLines.split(source).count
         let ranges = points.map { ($0.startLine, $0.endLine) }
@@ -120,7 +117,7 @@ enum ResponseBriefValidationError: LocalizedError, Equatable {
     case invalidSchema
     case unsupportedVersion
     case invalidBounds
-    case tooManyWords
+    case notConcise
     case invalidLineRange
     case outputTooLarge
 
@@ -130,7 +127,7 @@ enum ResponseBriefValidationError: LocalizedError, Equatable {
         case .invalidSchema: "The brief service returned an unexpected format."
         case .unsupportedVersion: "This brief uses an unsupported format version."
         case .invalidBounds: "The brief exceeded its content limits."
-        case .tooManyWords: "The brief exceeded the 140-word limit."
+        case .notConcise: "The generated brief was not shorter enough to display. Regenerate it for a more concise result."
         case .invalidLineRange: "The brief referred to text outside the original response."
         case .outputTooLarge: "The brief response exceeded 32 KiB."
         }

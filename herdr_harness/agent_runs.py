@@ -1035,8 +1035,8 @@ class AgentRunManager:
                 charter = CHARTER
                 extension_path = None
             elif profile == "response-brief-v1":
-                from .response_briefs import CHARTER
-                charter = CHARTER
+                from .response_briefs import charter_for
+                charter = charter_for(run["context"])
             command = [
                 pi_bin,
                 "-p",

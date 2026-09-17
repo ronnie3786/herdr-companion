@@ -1,6 +1,86 @@
 import SwiftUI
 
 struct ResponseBriefRailView: View {
+    enum SelectedRecordPresentation: Equatable {
+        case card
+        case alreadyConcise
+        case regenerateNeeded
+    }
+
+    static func latestRecord(
+        in records: [ResponseBriefPersistence.Record],
+        for source: ResponseBriefSource?
+    ) -> ResponseBriefPersistence.Record? {
+        guard let source else {
+            return records.max { $0.createdAt < $1.createdAt }
+        }
+        return records
+            .filter { $0.source.id == source.id }
+            .max { $0.createdAt < $1.createdAt }
+    }
+
+    static func selectedRecord(
+        in records: [ResponseBriefPersistence.Record],
+        selectedRecordID: String?,
+        followsLatest: Bool,
+        latestSource: ResponseBriefSource?
+    ) -> ResponseBriefPersistence.Record? {
+        if followsLatest {
+            return latestRecord(in: records, for: latestSource)
+        }
+        guard let selectedRecordID else { return nil }
+        return records.first { $0.id == selectedRecordID }
+    }
+
+    static func shouldShowRecordPicker(
+        records: [ResponseBriefPersistence.Record],
+        latestSource: ResponseBriefSource?
+    ) -> Bool {
+        records.count > 1 || (records.count == 1 && latestRecord(in: records, for: latestSource) == nil)
+    }
+
+    static func selectedRecordPresentation(
+        for record: ResponseBriefPersistence.Record
+    ) -> SelectedRecordPresentation {
+        guard ResponseBriefConcisionPolicy(source: record.source.text).metrics.shouldGenerate else {
+            return .alreadyConcise
+        }
+        return record.brief.conformsToConcisionPolicy(source: record.source.text)
+            ? .card
+            : .regenerateNeeded
+    }
+
+    static func stateNeedsAttention(_ state: ResponseBriefCoordinator.ChatState) -> Bool {
+        switch state.phase {
+        case .idle, .alreadyConcise:
+            false
+        default:
+            true
+        }
+    }
+
+    static func stateTakesPrecedence(
+        _ state: ResponseBriefCoordinator.ChatState,
+        over record: ResponseBriefPersistence.Record
+    ) -> Bool {
+        stateNeedsAttention(state) && state.sourceID == record.source.id
+    }
+
+    static func shouldShowStateAlongside(
+        _ state: ResponseBriefCoordinator.ChatState,
+        record: ResponseBriefPersistence.Record
+    ) -> Bool {
+        stateNeedsAttention(state) && state.sourceID != record.source.id
+    }
+
+    static func selectionFollowsLatest(
+        recordID: String,
+        records: [ResponseBriefPersistence.Record],
+        latestSource: ResponseBriefSource?
+    ) -> Bool {
+        recordID == latestRecord(in: records, for: latestSource)?.id
+    }
+
     @Bindable var coordinator: ResponseBriefCoordinator
     let transport: ResponseBriefTransport
     let chat: ResponseBriefChatIdentity?
@@ -11,6 +91,7 @@ struct ResponseBriefRailView: View {
     @State private var detailSelection: ResponseBriefDetailSelection?
     @State private var cacheError: String?
     @State private var confirmsCacheClear = false
+    @State private var showsSourceInformation = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -38,6 +119,11 @@ struct ResponseBriefRailView: View {
             followsLatest = true
             selectLatestIfNeeded()
         }
+        .alert("Brief source", isPresented: $showsSourceInformation) {
+            Button("OK") {}
+        } message: {
+            Text(sourceInformationText)
+        }
         .confirmationDialog(
             "Clear cached response briefs?",
             isPresented: $confirmsCacheClear,
@@ -63,14 +149,21 @@ struct ResponseBriefRailView: View {
             }
             Spacer()
             Menu("Brief actions", systemImage: "ellipsis.circle") {
-                if let latestSource {
+                if let latestSource,
+                   ResponseBriefConcisionPolicy(source: latestSource.text).metrics.shouldGenerate {
                     Button("Regenerate latest response", systemImage: "arrow.clockwise") {
                         Task { await coordinator.regenerate(latestSource, transport: transport) }
                     }
+                    .disabled(!coordinator.canRegenerate(latestSource))
                 }
                 if let chat {
                     Button("Reload brief support and models", systemImage: "arrow.triangle.2.circlepath") {
                         Task { await coordinator.refreshSupport(machineID: chat.machineID, transport: transport) }
+                    }
+                }
+                if selectedRecord != nil || latestSource != nil {
+                    Button("Source information", systemImage: "info.circle") {
+                        showsSourceInformation = true
                     }
                 }
                 Divider()
@@ -104,10 +197,12 @@ struct ResponseBriefRailView: View {
                     .foregroundStyle(HerdrTheme.muted)
             }
 
-            Text("Opting in sends the latest completed answer and up to two recent exchanges in an additional private Pi model request. It does not change or resume this chat.")
-                .herdrFont(.caption)
-                .foregroundStyle(HerdrTheme.mist)
-                .fixedSize(horizontal: false, vertical: true)
+            if chat.map({ !coordinator.isEnabled($0) }) ?? true {
+                Text("Opting in sends the latest completed answer and up to two recent exchanges in an additional private Pi model request. It does not change or resume this chat.")
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.mist)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             if let contextOmissionNote {
                 Label(contextOmissionNote, systemImage: "info.circle")
@@ -137,59 +232,9 @@ struct ResponseBriefRailView: View {
         }
         if let chat {
             let state = coordinator.state(for: chat)
-            switch state.phase {
-            case .checkingSupport:
-                statusLabel("Checking companion support…", systemImage: "network", color: HerdrTheme.mist)
-            case .generating:
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text(
-                        state.sourceID == latestSource?.id
-                            ? "Creating brief for the latest response…"
-                            : "Creating an earlier queued brief; the latest response is waiting…"
-                    )
-                    .herdrFont(.callout)
-                }
-                .accessibilityLabel(
-                    state.sourceID == latestSource?.id
-                        ? "Creating response brief for the latest response"
-                        : "Creating an earlier queued response brief"
-                )
-            case .unsupported:
-                statusLabel(
-                    "Update this machine’s companion server for response-brief-v1. No generic agent fallback was used.",
-                    systemImage: "arrow.down.circle",
-                    color: HerdrTheme.warning
-                )
-            case .oversized:
-                statusLabel(
-                    "This response cannot fit in the bounded request without truncation. The full original remains available.",
-                    systemImage: "doc.badge.ellipsis",
-                    color: HerdrTheme.warning
-                )
-            case let .failed(message):
-                VStack(alignment: .leading, spacing: 8) {
-                    statusLabel(message, systemImage: "exclamationmark.triangle", color: HerdrTheme.alert)
-                    if let latestSource {
-                        Button("Retry latest brief", systemImage: "arrow.clockwise") {
-                            Task { await coordinator.retry(latestSource, transport: transport) }
-                        }
-                    }
-                }
-            case .idle:
-                EmptyView()
-            }
 
-            if let notice = state.notice {
-                statusLabel(notice, systemImage: "info.circle", color: HerdrTheme.warning)
-            }
-
-            if coordinator.isUnsupported(machineID: chat.machineID), state.phase == .idle {
-                statusLabel(
-                    "Update this machine’s companion server for response-brief-v1. No generic agent fallback is available.",
-                    systemImage: "arrow.down.circle",
-                    color: HerdrTheme.warning
-                )
+            if Self.shouldShowRecordPicker(records: chatRecords, latestSource: latestSource) {
+                recordPicker
             }
 
             if let sourceAssociationLabel {
@@ -199,21 +244,11 @@ struct ResponseBriefRailView: View {
                     .textSelection(.enabled)
             }
 
-            if !chatRecords.isEmpty {
-                recordPicker
-                if let record = selectedRecord {
-                    ScrollView {
-                        ResponseBriefCardView(record: record, openDetail: openDetail)
-                    }
-                }
-            } else if coordinator.isEnabled(chat), state.phase == .idle,
-                      !coordinator.isUnsupported(machineID: chat.machineID) {
-                ContentUnavailableView(
-                    "No completed response yet",
-                    systemImage: "text.bubble",
-                    description: Text("The latest answer will be briefed after Pi finishes. Earlier history is not backfilled.")
-                )
-                .foregroundStyle(HerdrTheme.mist)
+            primaryPresentation(state: state, chat: chat)
+
+            if let notice = state.notice,
+               selectedRecord == nil || Self.stateNeedsAttention(state) {
+                statusLabel(notice, systemImage: "info.circle", color: HerdrTheme.warning)
             }
 
             originalResponseActions
@@ -225,6 +260,137 @@ struct ResponseBriefRailView: View {
             )
             .foregroundStyle(HerdrTheme.mist)
         }
+    }
+
+    @ViewBuilder
+    private func primaryPresentation(
+        state: ResponseBriefCoordinator.ChatState,
+        chat: ResponseBriefChatIdentity
+    ) -> some View {
+        if let record = selectedRecord {
+            if Self.stateTakesPrecedence(state, over: record) {
+                statePresentation(state, chat: chat)
+            } else {
+                switch Self.selectedRecordPresentation(for: record) {
+                case .card:
+                    ScrollView {
+                        ResponseBriefCardView(record: record, openDetail: openDetail)
+                    }
+                case .alreadyConcise:
+                    alreadyConciseLabel
+                case .regenerateNeeded:
+                    regenerateControl(for: record.source)
+                }
+
+                if Self.shouldShowStateAlongside(state, record: record) {
+                    statePresentation(state, chat: chat)
+                }
+            }
+        } else {
+            statePresentation(state, chat: chat)
+        }
+    }
+
+    @ViewBuilder
+    private func statePresentation(
+        _ state: ResponseBriefCoordinator.ChatState,
+        chat: ResponseBriefChatIdentity
+    ) -> some View {
+        switch state.phase {
+        case .checkingSupport:
+            statusLabel("Checking companion support…", systemImage: "network", color: HerdrTheme.mist)
+        case .generating:
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(
+                    state.sourceID == latestSource?.id
+                        ? "Creating brief for the latest response…"
+                        : "Creating an earlier queued brief…"
+                )
+                .herdrFont(.callout)
+            }
+            .accessibilityLabel("Creating response brief")
+        case .alreadyConcise:
+            alreadyConciseLabel
+        case .regenerateNeeded:
+            if let source = source(for: state) {
+                if ResponseBriefConcisionPolicy(source: source.text).metrics.shouldGenerate {
+                    regenerateControl(for: source)
+                } else {
+                    alreadyConciseLabel
+                }
+            } else {
+                statusLabel(
+                    "This brief needs regeneration.",
+                    systemImage: "arrow.clockwise.circle",
+                    color: HerdrTheme.warning
+                )
+            }
+        case .unsupported:
+            statusLabel(
+                "Update the companion for response-brief-v1; no fallback was used.",
+                systemImage: "arrow.down.circle",
+                color: HerdrTheme.warning
+            )
+        case .oversized:
+            statusLabel(
+                "This response exceeds the bounded request; use the full original.",
+                systemImage: "doc.badge.ellipsis",
+                color: HerdrTheme.warning
+            )
+        case let .failed(message):
+            VStack(alignment: .leading, spacing: 8) {
+                statusLabel(message, systemImage: "exclamationmark.triangle", color: HerdrTheme.alert)
+                if let source = source(for: state) {
+                    Button("Retry brief", systemImage: "arrow.clockwise") {
+                        Task { await coordinator.retry(source, transport: transport) }
+                    }
+                }
+            }
+        case .idle:
+            if coordinator.isUnsupported(machineID: chat.machineID) {
+                statusLabel(
+                    "Update the companion for response-brief-v1; no fallback is available.",
+                    systemImage: "arrow.down.circle",
+                    color: HerdrTheme.warning
+                )
+            } else if latestSource == nil, coordinator.isEnabled(chat) {
+                ContentUnavailableView(
+                    "No completed response yet",
+                    systemImage: "text.bubble",
+                    description: Text("The latest answer will be briefed after Pi finishes.")
+                )
+                .foregroundStyle(HerdrTheme.mist)
+            }
+        }
+    }
+
+    private var alreadyConciseLabel: some View {
+        statusLabel(
+            "The original response is already concise.",
+            systemImage: "checkmark.circle",
+            color: HerdrTheme.muted
+        )
+    }
+
+    private func regenerateControl(for source: ResponseBriefSource) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            statusLabel(
+                "This saved brief needs a shorter replacement.",
+                systemImage: "arrow.clockwise.circle",
+                color: HerdrTheme.warning
+            )
+            Button("Regenerate this brief", systemImage: "arrow.clockwise") {
+                Task { await coordinator.regenerate(source, transport: transport) }
+            }
+            .disabled(!coordinator.canRegenerate(source))
+        }
+        .accessibilityIdentifier("response-brief-regenerate-needed")
+    }
+
+    private func source(for state: ResponseBriefCoordinator.ChatState) -> ResponseBriefSource? {
+        guard let chat else { return nil }
+        return coordinator.source(for: state, in: chat)
     }
 
     private var modelMenu: some View {
@@ -287,6 +453,7 @@ struct ResponseBriefRailView: View {
                 .herdrFont(.caption, weight: .bold)
                 .foregroundStyle(HerdrTheme.muted)
             Picker("Generated brief source", selection: selectedRecordBinding) {
+                Text("Select prior brief").tag(Optional<String>.none)
                 ForEach(chatRecords) { record in
                     Text(recordPickerLabel(record))
                         .tag(Optional(record.id))
@@ -328,15 +495,12 @@ struct ResponseBriefRailView: View {
     }
 
     private var selectedRecord: ResponseBriefPersistence.Record? {
-        if let selectedRecordID,
-           let selected = chatRecords.first(where: { $0.id == selectedRecordID }) {
-            return selected
-        }
-        if followsLatest, let latestSource,
-           let latest = chatRecords.first(where: { $0.source.id == latestSource.id }) {
-            return latest
-        }
-        return chatRecords.first
+        Self.selectedRecord(
+            in: chatRecords,
+            selectedRecordID: selectedRecordID,
+            followsLatest: followsLatest,
+            latestSource: latestSource
+        )
     }
 
     private var selectedRecordBinding: Binding<String?> {
@@ -344,25 +508,38 @@ struct ResponseBriefRailView: View {
             get: { selectedRecord?.id },
             set: { value in
                 selectedRecordID = value
-                let sourceID = chatRecords.first(where: { $0.id == value })?.source.id
-                followsLatest = sourceID == latestSource?.id
+                guard let value else {
+                    followsLatest = true
+                    return
+                }
+                followsLatest = Self.selectionFollowsLatest(
+                    recordID: value,
+                    records: chatRecords,
+                    latestSource: latestSource
+                )
             }
         )
     }
 
     private var sourceAssociationLabel: String? {
-        guard let latestSource else { return nil }
-        if let selectedRecord, selectedRecord.source.id != latestSource.id {
-            if followsLatest {
-                return "Latest response \(shortResponseID(latestSource.responseID)) has no generated brief yet; showing prior brief \(shortResponseID(selectedRecord.source.responseID))."
-            }
-            return "Pinned prior brief \(shortResponseID(selectedRecord.source.responseID)); latest response is \(shortResponseID(latestSource.responseID))."
+        guard let latestSource, let selectedRecord,
+              selectedRecord.source.id != latestSource.id
+        else { return nil }
+        if ResponseBriefConcisionPolicy(source: latestSource.text).metrics.shouldGenerate {
+            return "Pinned to a prior response; the latest response needs its own concise brief."
         }
-        return "Latest response \(shortResponseID(latestSource.responseID))"
+        return "Pinned to a prior response; the latest original is already concise."
+    }
+
+    private var sourceInformationText: String {
+        let source = selectedRecord?.source ?? latestSource
+        guard let source else { return "No completed response is selected." }
+        return "Response ID: \(source.responseID)\nPi session ID: \(source.chat.sessionID)"
     }
 
     private var contextOmissionNote: String? {
         guard let latestSource,
+              ResponseBriefConcisionPolicy(source: latestSource.text).metrics.shouldGenerate,
               let request = try? ResponseBriefRequestBuilder.request(
                 for: latestSource,
                 model: coordinator.selectedModel,
@@ -406,23 +583,19 @@ struct ResponseBriefRailView: View {
     }
 
     private func selectLatestIfNeeded() {
-        if followsLatest || selectedRecordID == nil
-            || !chatRecords.contains(where: { $0.id == selectedRecordID }) {
-            selectedRecordID = latestSource.flatMap { source in
-                chatRecords.first(where: { $0.source.id == source.id })?.id
-            } ?? chatRecords.first?.id
+        if followsLatest {
+            selectedRecordID = Self.latestRecord(in: chatRecords, for: latestSource)?.id
+        } else if selectedRecordID == nil
+                    || !chatRecords.contains(where: { $0.id == selectedRecordID }) {
+            selectedRecordID = nil
             followsLatest = true
         }
     }
 
     private func recordPickerLabel(_ record: ResponseBriefPersistence.Record) -> String {
-        let response = shortResponseID(record.source.responseID)
-        if record.source.id == latestSource?.id { return "Latest · \(response)" }
-        return "Prior · \(response)"
-    }
-
-    private func shortResponseID(_ responseID: String) -> String {
-        responseID.count <= 18 ? responseID : "\(responseID.prefix(8))…\(responseID.suffix(6))"
+        let time = record.createdAt.formatted(date: .omitted, time: .shortened)
+        if record.source.id == latestSource?.id { return "Latest · \(time)" }
+        return "Prior · \(time)"
     }
 
     private func openDetail(_ detail: ResponseBrief.Detail, record: ResponseBriefPersistence.Record) {

@@ -1,0 +1,101 @@
+[
+  {
+    "name": "identifier_heavy_ascii",
+    "source": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "readableCharacters": 200,
+    "sourceWords": 1,
+    "maximumVisibleCharacters": 50,
+    "maximumVisibleWords": 40,
+    "shouldGenerate": true
+  },
+  {
+    "name": "short_source_boundary",
+    "source": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "readableCharacters": 160,
+    "sourceWords": 1,
+    "maximumVisibleCharacters": 40,
+    "maximumVisibleWords": 40,
+    "shouldGenerate": false
+  },
+  {
+    "name": "absolute_character_cap",
+    "source": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "readableCharacters": 1000,
+    "sourceWords": 1,
+    "maximumVisibleCharacters": 240,
+    "maximumVisibleWords": 40,
+    "shouldGenerate": true
+  },
+  {
+    "name": "markdown_destinations_and_unicode",
+    "source": "Alpha écho [visible words](https://hidden.example.invalid/DEST123) ![diagram](image.png) <!-- secret letters --> <span>Beta</span>\r\n東京",
+    "readableCharacters": 27,
+    "sourceWords": 6,
+    "maximumVisibleCharacters": 6,
+    "maximumVisibleWords": 40,
+    "shouldGenerate": false
+  },
+  {
+    "name": "punctuation_only",
+    "source": "--- !!! 🪻\r\n<!-- hidden alphabet -->",
+    "readableCharacters": 0,
+    "sourceWords": 0,
+    "maximumVisibleCharacters": 0,
+    "maximumVisibleWords": 40,
+    "shouldGenerate": false
+  },
+  {
+    "name": "unspaced_non_ascii_boundary",
+    "source": "界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界界",
+    "readableCharacters": 161,
+    "sourceWords": 1,
+    "maximumVisibleCharacters": 40,
+    "maximumVisibleWords": 40,
+    "shouldGenerate": true
+  },
+  {
+    "name": "quarter_word_boundary",
+    "source": "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twentyone twentytwo twentythree twentyfour twentyfive twentysix twentyseven twentyeight twentynine thirty thirtyone thirtytwo thirtythree thirtyfour thirtyfive thirtysix thirtyseven thirtyeight thirtynine forty fortyone fortytwo fortythree fortyfour fortyfive fortysix fortyseven fortyeight fortynine fifty fiftyone fiftytwo fiftythree fiftyfour fiftyfive fiftysix fiftyseven fiftyeight fiftynine sixty sixtyone sixtytwo sixtythree sixtyfour sixtyfive sixtysix sixtyseven sixtyeight sixtynine seventy seventone seventytwo seventythree seventyfour seventyfive seventysix seventyseven seventyeight seventynine eighty",
+    "readableCharacters": 667,
+    "sourceWords": 80,
+    "maximumVisibleCharacters": 166,
+    "maximumVisibleWords": 20,
+    "shouldGenerate": true
+  },
+  {
+    "name": "absolute_word_cap_for_long_source",
+    "source": "a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a",
+    "readableCharacters": 200,
+    "sourceWords": 200,
+    "maximumVisibleCharacters": 50,
+    "maximumVisibleWords": 40,
+    "shouldGenerate": true
+  },
+  {
+    "name": "nested_and_escaped_inline_destination",
+    "source": "Visible [Read](https://example.invalid/a(b)LONGTAIL\\(escaped\\)) Tail",
+    "readableCharacters": 15,
+    "sourceWords": 3,
+    "maximumVisibleCharacters": 3,
+    "maximumVisibleWords": 40,
+    "shouldGenerate": false
+  },
+  {
+    "name": "explicit_collapsed_references_and_images",
+    "source": "Alpha [Read][VERY_LONG_ID] [Again][] ![THIS ALT MUST NOT COUNT][IMAGE_ID] ![INLINE ALT](asset.png) Omega",
+    "readableCharacters": 19,
+    "sourceWords": 4,
+    "maximumVisibleCharacters": 4,
+    "maximumVisibleWords": 40,
+    "shouldGenerate": false
+  },
+  {
+    "name": "multiline_html_attributes",
+    "source": "Before <span\n data-secret=\"LONG_ATTRIBUTE_TEXT\">\nInside</span> After",
+    "readableCharacters": 17,
+    "sourceWords": 3,
+    "maximumVisibleCharacters": 4,
+    "maximumVisibleWords": 40,
+    "shouldGenerate": false
+  }
+]

@@ -19,6 +19,8 @@ final class ResponseBriefCoordinator {
         case idle
         case checkingSupport
         case generating
+        case alreadyConcise
+        case regenerateNeeded(String)
         case unsupported
         case oversized
         case failed(String)
@@ -112,8 +114,46 @@ final class ResponseBriefCoordinator {
 
     func briefs(for chat: ResponseBriefChatIdentity) -> [ResponseBriefPersistence.Record] {
         records
-            .filter { $0.source.chat.machineID == chat.machineID && $0.source.chat.sessionID == chat.sessionID }
+            .filter {
+                $0.source.chat.machineID == chat.machineID
+                    && $0.source.chat.sessionID == chat.sessionID
+            }
             .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    func hasNonconformingBrief(for source: ResponseBriefSource) -> Bool {
+        records.contains {
+            $0.source.id == source.id
+                && !$0.brief.conformsToConcisionPolicy(source: $0.source.text)
+        }
+    }
+
+    func source(
+        for state: ChatState,
+        in chat: ResponseBriefChatIdentity
+    ) -> ResponseBriefSource? {
+        guard let sourceID = state.sourceID else { return nil }
+        if let receipt = receipts.values
+            .filter({ $0.source.chat.id == chat.id && $0.source.id == sourceID })
+            .max(by: { $0.createdAt < $1.createdAt }) {
+            return receipt.source
+        }
+        if let record = records
+            .filter({ $0.source.chat.id == chat.id && $0.source.id == sourceID })
+            .max(by: { $0.createdAt < $1.createdAt }) {
+            return record.source
+        }
+        guard latestSources[chat.id]?.id == sourceID else { return nil }
+        return latestSources[chat.id]
+    }
+
+    func canRegenerate(_ source: ResponseBriefSource) -> Bool {
+        isLoaded
+            && ResponseBriefConcisionPolicy(source: source.text).metrics.shouldGenerate
+            && operations[source.chat.id] == nil
+            && !receipts.values.contains {
+                $0.source.chat.id == source.chat.id && $0.status != .settled
+            }
     }
 
     func load() async {
@@ -234,8 +274,8 @@ final class ResponseBriefCoordinator {
         if responseCursorByChatID[source.chat.id] == nil {
             guard await advanceCursor(to: source) else { return }
         }
-        enqueue(source, transport: transport)
         resumePendingReceipt(for: source.chat, transport: transport)
+        enqueue(source, transport: transport)
     }
 
     /// Ingests all eligible final answers in chronological order. The first
@@ -246,6 +286,8 @@ final class ResponseBriefCoordinator {
         guard let latest = sources.last, canDispatch(for: latest.chat) else { return }
         let chat = latest.chat
         latestSources[chat.id] = latest
+        resumePendingReceipt(for: chat, transport: transport)
+        drain(transport: transport)
 
         let candidates: ArraySlice<ResponseBriefSource>
         if let cursor = responseCursorByChatID[chat.id] {
@@ -278,7 +320,7 @@ final class ResponseBriefCoordinator {
         if let lastAccepted = accepted.last {
             guard await advanceCursor(to: lastAccepted) else { return }
         }
-        resumePendingReceipt(for: chat, transport: transport)
+        settleIdlePresentation(for: chat)
         drain(transport: transport)
     }
 
@@ -286,14 +328,27 @@ final class ResponseBriefCoordinator {
         await load()
         guard canDispatch(for: source.chat) else { return }
         let configuredID = generationID(for: source)
-        if let receipt = receipts[configuredID]
-            ?? receipts.values.first(where: { $0.source.id == source.id })
-            ?? receipts.values.first(where: {
-                $0.source.chat.id == source.chat.id && $0.status != .settled
-            }) {
+        let configuredReceipt = receipts[configuredID].flatMap {
+            $0.status == .settled ? nil : $0
+        }
+        let unresolvedSourceReceipt = receipts.values
+            .filter { $0.source.id == source.id && $0.status != .settled }
+            .max { $0.createdAt < $1.createdAt }
+        let unresolvedChatReceipt = receipts.values
+            .filter { $0.source.chat.id == source.chat.id && $0.status != .settled }
+            .max { $0.createdAt < $1.createdAt }
+
+        if let receipt = configuredReceipt ?? unresolvedSourceReceipt ?? unresolvedChatReceipt {
             let job = job(for: receipt, force: true)
-            states[source.chat.id] = ChatState(sourceID: source.id, phase: .idle)
+            states[source.chat.id] = ChatState(sourceID: receipt.source.id, phase: .idle)
             enqueue(job, transport: transport)
+        } else if receipts.values.contains(where: {
+            $0.source.id == source.id && $0.status == .settled
+        }) {
+            states[source.chat.id] = ChatState(
+                sourceID: source.id,
+                phase: .regenerateNeeded("The previous result is settled and cannot be retried. Regenerate to create a fresh request.")
+            )
         } else {
             states[source.chat.id] = ChatState(sourceID: source.id, phase: .idle)
             enqueue(source, transport: transport, force: true)
@@ -303,7 +358,15 @@ final class ResponseBriefCoordinator {
     func regenerate(_ source: ResponseBriefSource, transport: ResponseBriefTransport) async {
         await load()
         guard canDispatch(for: source.chat) else { return }
-        let id = generationID(for: source)
+        guard ResponseBriefConcisionPolicy(source: source.text).metrics.shouldGenerate else {
+            // A selected historical source must not replace the coordinator's
+            // actual latest source. Legacy accepted work still owns its receipt
+            // and must be reconciled before this no-op can settle.
+            resumePendingReceipt(for: source.chat, transport: transport)
+            drain(transport: transport)
+            settleIdlePresentation(for: source.chat)
+            return
+        }
         let hasUnresolvedChatReceipt = receipts.values.contains {
             $0.source.chat.id == source.chat.id && $0.status != .settled
         }
@@ -314,19 +377,16 @@ final class ResponseBriefCoordinator {
             )
             return
         }
-        do {
-            try await persistence.resetAttempt(id: id)
-        } catch {
-            states[source.chat.id] = ChatState(
-                sourceID: source.id,
-                phase: .failed("Couldn't update the private brief cache: \(error.localizedDescription)")
-            )
-            return
-        }
-        receipts.removeValue(forKey: id)
-        records.removeAll { $0.id == id }
-        attemptedGenerationIDs.remove(id)
-        enqueue(source, transport: transport, force: true)
+        let configuration = GenerationConfiguration(model: selectedModel, thinkingLevel: thinkingLevel)
+        let job = Job(
+            source: source,
+            configuration: configuration,
+            generationID: generationID(for: source, configuration: configuration)
+                + ":regenerate:" + UUID().uuidString,
+            force: true,
+            allowsNonPendingReceipt: false
+        )
+        enqueue(job, transport: transport)
     }
 
     func clearCache() async throws {
@@ -449,6 +509,11 @@ final class ResponseBriefCoordinator {
         transport: ResponseBriefTransport,
         force: Bool = false
     ) {
+        guard !hasNonconformingBrief(for: source) else { return }
+        guard ResponseBriefConcisionPolicy(source: source.text).metrics.shouldGenerate else {
+            settleIdlePresentation(for: source.chat)
+            return
+        }
         let configuration = GenerationConfiguration(model: selectedModel, thinkingLevel: thinkingLevel)
         let job = Job(
             source: source,
@@ -531,7 +596,20 @@ final class ResponseBriefCoordinator {
             enqueueCancellationReconciliation(receipt, transport: transport)
         } else {
             drain(transport: transport)
+            settleIdlePresentation(for: latestSources[chatID]?.chat)
         }
+    }
+
+    private func settleIdlePresentation(for chat: ResponseBriefChatIdentity?) {
+        guard let chat,
+              operations[chat.id] == nil,
+              !receipts.values.contains(where: {
+                  $0.source.chat.id == chat.id && $0.status != .settled
+              }),
+              let latest = latestSources[chat.id],
+              !ResponseBriefConcisionPolicy(source: latest.text).metrics.shouldGenerate
+        else { return }
+        states[chat.id] = ChatState(sourceID: latest.id, phase: .alreadyConcise)
     }
 
     private func generate(_ job: Job, token: UUID, transport: ResponseBriefTransport) async {
@@ -731,6 +809,13 @@ final class ResponseBriefCoordinator {
             states[chatID] = ChatState(sourceID: source.id, phase: .idle)
         } catch is CancellationError {
             await reconcileCancellation(receipt: receipt, source: source, transport: transport)
+        } catch let error as ResponseBriefValidationError {
+            if storageError != nil { return }
+            states[chatID] = ChatState(
+                sourceID: source.id,
+                phase: .regenerateNeeded(error.localizedDescription),
+                runID: receipts[job.generationID]?.runID
+            )
         } catch {
             if storageError != nil { return }
             if var saved = receipts[job.generationID], saved.status == .pending {

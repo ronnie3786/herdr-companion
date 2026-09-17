@@ -1,152 +1,108 @@
-# Design: the 30-second response brief
+# Design: response briefs that reduce reading
 
 ## Product intent
 
-Offer an optional, task-aware reading aid beside a completed Pi response. It is a
-second presentation of the answer, not a second agent answering the user's task.
-The original conversation stays intact and authoritative.
+A response brief is an optional reading aid beside a completed Pi answer, not another agent answering the task. The original remains intact and authoritative. Success means the default card is structurally much shorter than the source, gives the direct outcome first, preserves one indispensable qualification when needed, and makes exact evidence easy to open.
 
-Success means someone can understand the answer, important uncertainty, and any
-next decision in about 30 seconds, then inspect the original wording without
-losing their place. Short answers should become no longer, and long answers
-should not become a dense collection of tiny accordions.
+Short answers need no second rendition. Tables, lists, code, and status rows should not be converted into another prose inventory.
 
 ## Chosen interaction
 
 ```text
-Original conversation                         30-second brief · Experimental
-──────────────────────────────────────────    ──────────────────────────────
-User's question                               Short, task-specific title
+Original conversation                         Concise brief · Experimental
+──────────────────────────────────────────    ────────────────────────────
+User's question                               Direct answer or outcome.
 
-Agent's complete response                     One-sentence takeaway.
-…                                             • Important outcome
-…                                             • Caveat or next decision
+Agent's complete response                     • One necessary caveat
 …
-                                              View comparison table  ↗
-                                              Read the caveats       ↗
-                                              See implementation details ↗
+…                                             View comparison table  ↗
+                                              See implementation code ↗
 
                                               Full original response
-──────────────────────────────────────────    ──────────────────────────────
+──────────────────────────────────────────    ────────────────────────────
 Existing composer stays in place.
 ```
 
-- **Opt in per actual chat session.** Explain the additional model request and
-  recent conversation context before enabling. A new Pi session is not silently
-  opted in just because it occupies the same terminal pane.
-- **Use spare horizontal space.** Keep the established reading width; a roughly
-  360–420-point rail uses the right-hand surplus. Narrow windows get an explicit
-  alternate presentation rather than squeezed prose. Responsive refinement is a
-  later experiment, not a reason to compromise the wide-screen version.
-- **Two levels only.** Brief → original detail. No nested summaries, nested
-  popovers, or accordion trees.
-- **Use descriptive actions.** “View comparison table” tells the reader what is
-  behind the link; “More” or “Click here” does not.
-- **Keep the brief stable.** A detail action opens a focused, scrollable native
-  sheet. Tables and long code need more room than a small transient popover.
-  Closing it returns to the same brief, without changing the transcript height.
-- **Show provenance.** Label the brief as AI rewritten, identify the source
-  response, and keep the complete original one action away. Earlier generated
-  briefs remain selectable so a newer completion does not erase older context.
-- **Separate preference from visibility.** Hiding the rail need not disable
-  generation; disabling the experiment stops future scheduling and cancels its
-  owned work. Model settings belong to the experiment, not the main agent.
+- **Opt in per actual Pi session.** A new session in the same pane starts opted out.
+- **Keep model controls available before opt-in.** They belong to the experiment, not the source chat.
+- **Use spare horizontal space.** The rail sits beyond the established reading column. Narrow windows use an explicit sheet.
+- **Two levels only.** Brief → exact original detail. No nested summaries or accordion trees.
+- **One direct takeaway.** The generated title remains in the wire schema but is not repeated in the card.
+- **At most one caveat.** It must add indispensable information rather than rephrase the takeaway.
+- **At most two descriptive links.** Optional evidence, code, and tables can live behind exact-source links; critical qualifications cannot.
+- **Quiet completed state.** Persistent first-use disclosure recedes after opt-in. Raw response identifiers appear only from Source information and accessibility/help text.
+- **Stable prior selection.** A pinned prior brief remains visibly prior. Default-follow-latest does not show an old card as though it summarized a newly skipped answer.
 
-## Content grammar
+## Deterministic reduction contract
 
-A versioned, validated data document drives native SwiftUI components:
+The version-1 JSON shape remains unchanged for compatibility:
 
-1. A short title.
-2. One sentence with the answer or main outcome.
-3. At most four important points, with source references.
-4. At most six optional original-detail destinations, typed as table, code, or
-   general detail.
-5. An unconditional full-original action supplied by the app.
+1. `title`: short compatibility label, retained but not shown.
+2. `summary`: direct answer/outcome, normally one sentence.
+3. `points`: zero or one indispensable caveat/blocker/decision, at most 12 words.
+4. `details`: zero to two source destinations with labels of at most four words and 28 non-whitespace Unicode scalars.
+5. The app's unconditional full-original action.
 
-Target 70–110 words; reject generated title/summary/points exceeding 140 words.
-The target is not a quota: a simple answer may need only one sentence. Important
-blockers, uncertainty, warnings, and requested user decisions must survive the
-summary rather than exist only in optional details.
+Every visible generated string shares one word ceiling. It is 40 words for sources below 40 readable words; otherwise it is `min(40, floor(source words / 4))`. A counted word is a whitespace-delimited token containing at least one Unicode letter or number, so even very long sources can never authorize 41 visible words.
 
-Generated text is plain text, not executable HTML or an unrestricted mini-site.
-The model chooses content and labels; the app owns layout, interactions,
-accessibility, destinations, and validation.
+Visible generated content also shares a hard character ceiling:
+
+```text
+min(240, floor(source readable-character count / 4))
+```
+
+Source readable characters are Unicode letters and numbers after conservative removal of Markdown link destinations and reference IDs, image alt text/destinations, and HTML comments/tags. The scanner handles balanced nested and escaped link parentheses plus multiline tag attributes, so hidden rendered syntax cannot enlarge the allowance. Visible output counts every non-whitespace Unicode scalar, including punctuation and emoji. This prevents hidden source syntax or identifier-heavy/unspaced text from defeating the structural reduction. The implementation normalizes CRLF for policy cleanup and handles combining scalars consistently in Swift and Python. Undercounting source is safer than granting an inflated budget.
+
+The budget is a ceiling, never a target. No truncation, ellipsis, smaller font, or line limit can make failed content pass. A summary may use fewer than the suggested 12–20 words. Repetition between summary, point, and labels is explicitly forbidden by the server charter even though semantic repetition cannot be proven by counting alone.
+
+## Short-source behavior
+
+A source with at most 160 readable characters—including punctuation-only output—does not start a new model request. The rail quietly says the original is already concise and keeps the full original available. The durable response cursor still advances so relaunch does not backfill the answer.
+
+Ownership reconciliation happens first. If an older client already obtained an accepted receipt for a source now considered short, the app fetches/cancels/settles that owned run normally before returning to the quiet state. It never abandons or replays the receipt.
 
 ## Source integrity
 
-The model returns inclusive line references into the captured original response.
-The app resolves those references against its immutable original Markdown. It
-never accepts model-generated text as the contents of an “original detail.”
-Invalid references or malformed output produce a retry/error state, not an
-invented excerpt. Copying the original uses its stored text, not reconstructed
-Markdown from the rendered view.
+The model returns inclusive line references into the captured original response. The app resolves them against immutable local text split only on LF. It never accepts model-generated detail bodies. CR bytes, empty lines, and the exact source remain available for raw display and copying.
 
-This guarantees verbatim source excerpts, **not** a factually infallible summary:
-the model can still choose an unhelpful range or omit nuance. The original remains
-visible and accessible, and the interface must not imply that line references
-independently verify the underlying answer.
+This guarantees verbatim extraction, not factual infallibility. The summary can still omit nuance or choose an unhelpful range, so the original remains one action away.
 
-## Execution and privacy
+## Execution and trust boundary
 
 ```text
-Completed final response in an opted-in chat
-    → immutable source + at most two exchanges of text context
-    → authenticated companion API, response-brief-v1 capability
-    → fresh, tools-disabled Pi session using the chosen model
-    → bounded JSON response validation
-    → native brief + locally resolved source-detail views
+Eligible completed response
+    → exact source + bounded optional conversational context
+    → response-brief-v1 on matching companion
+    → trusted server-computed numeric budgets in system charter
+    → fresh tools-disabled Pi session
+    → strict native schema + source-relative validation
+    → compact native card and exact-source sheets
 ```
 
-The selected model receives the original response and bounded recent user/agent
-text through the existing Pi/provider configuration. Tool traces, hidden
-reasoning, workspace files, and unrelated conversations are not added. Source
-material is untrusted data, not a new instruction to execute.
+Only required source parts contribute to trusted budgets. Source labels, response text, and recent context stay untrusted stdin JSON data. The helper is parent-linked for lineage but never resumes or steers the source conversation.
 
-The companion advertises the new restricted profile explicitly. An older server
-shows an upgrade requirement; it never falls back to a tools-enabled agent run.
-The helper is parent-linked to the source Pi session, but never resumes, steers,
-or modifies that conversation.
+The profile, request envelope, static client prompt, template version, and receipt identity remain unchanged. That preserves old receipts and cached ownership. Older servers can still answer the same profile, but a current client may reject their verbose output. This matching-server requirement is documented rather than hidden behind a fallback or new execution profile.
 
-Jobs are deduplicated using source/session/model/template identity and durable
-request receipts. A detail click makes no model call. Full target responses are
-never silently truncated to fit a request; an oversized response shows a limit
-state with the original still available. Cached text belongs in private,
-bounded Application Support storage, not preferences or operational logs.
+## Cache and recovery
 
-## Evaluation after trying it
+Every newly generated brief is validated before storage. Every cached brief is validated again for presentation, so old verbose cards disappear without deleting their records, exact originals, receipts, or history. No migration automatically spends another model request.
 
-Review a small set of entirely synthetic examples first: a concise answer, a
-long implementation report, a comparison table, a failure with a blocker, a
-recommendation with caveats, and a response containing code. Then evaluate the
-opted-in experiment on real work:
+A completed invalid or overlong result reaches a dedicated regenerate-needed state. Automatic observation does not loop, and retry does not fetch the same settled invalid output. Explicit regeneration uses a fresh client request while leaving predecessor history intact. Uncertain transport receipts retain their existing replay-safe reconciliation path.
 
-- Can the reader state the main answer and next decision after one short scan?
-- Does the brief preserve uncertainty and distinguish planned from completed work?
-- Do link labels predict the content they reveal?
-- Are tables and exact original wording easy to find and copy?
-- Is post-response latency and the extra model cost worth the reading benefit?
-- Does new output remain correctly associated when switching chats or models?
+## Evaluation
 
-Do not infer usefulness just from shorter word counts. Avoid telemetry or capture
-of real conversations unless separately requested.
+Use entirely synthetic examples: a concise answer, long implementation report, fictional comparison table, blocker, recommendation with caveat, code sample, punctuation-only response, identifier-heavy response, and unspaced non-ASCII response.
 
-## Research behind the choices
+Ask:
 
-- [Nielsen Norman Group: Progressive Disclosure](https://www.nngroup.com/articles/progressive-disclosure/)
-  recommends a small primary surface, clearly labeled progression to secondary
-  information, and generally avoiding more than two disclosure levels.
-- [Apple Human Interface Guidelines: Popovers](https://developer.apple.com/design/human-interface-guidelines/popovers)
-  describes popovers as transient surfaces for a small amount of information.
-  This supports using a focused detail sheet for longer original text and tables.
-- [Apple Human Interface Guidelines: Panels](https://developer.apple.com/design/human-interface-guidelines/panels)
-  describes supplementary information tied to the active content or selection.
-  The brief rail follows this inspector-like relationship rather than behaving as
-  an unrelated second conversation.
+- Can the reader state the outcome after one scan?
+- Is the visible generated card at most one quarter of the source by the defined counts?
+- Is every visible point genuinely additional?
+- Are tables/status rows absent from prose and easy to open exactly?
+- Are critical caveats visible rather than hidden in details?
+- Does a short answer remain the shortest reading path?
+- Does explicit regeneration create a fresh request without automatic paid retries?
 
-Apple guidance was consulted through the locally indexed Cupertino HIG catalog;
-the links above are its public counterparts. Research informs these design
-choices; it is not evidence that this particular experiment has been user-tested.
+Structural metrics prevent the previous failure mode but do not replace human judgment about semantic quality. Real-conversation capture or telemetry requires separate authorization.
 
-See [implementation and setup](response-briefs.md) for delivered behavior,
-compatibility, and limits. This source implementation does not itself install an
-app update or deploy the companion server.
+See [implementation, compatibility, and verification](response-briefs.md). This source change does not install the Mac app or deploy/restart a companion server.

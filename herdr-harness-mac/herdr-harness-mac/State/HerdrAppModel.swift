@@ -2948,25 +2948,19 @@ final class HerdrAppModel {
         toDestinationPaneID destinationPaneID: String
     ) async {
         do {
-            guard let destination = pane(id: destinationPaneID),
-                  canControl(machineID: destination.machineID) else {
-                throw ConversationContextError.destinationUnavailable
-            }
-            guard destination.id != transfer.sourcePaneID else {
-                throw ConversationContextError.samePane
-            }
-            guard let source = pane(id: transfer.sourcePaneID), source.supportsPiSemanticChat else {
-                throw ConversationContextError.sourceUnavailable
-            }
-            guard source.machineID == destination.machineID else {
-                throw ConversationContextError.crossMachine
-            }
-            try Self.validateConversationSession(transfer.expectedSessionID, against: source)
-            try await requireConversationContextCapability(on: source.machineID)
+            let initial = try resolvedConversationContextPanes(
+                transfer: transfer,
+                destinationPaneID: destinationPaneID
+            )
+            try await requireConversationContextCapability(on: initial.source.machineID)
+            let current = try resolvedConversationContextPanes(
+                transfer: transfer,
+                destinationPaneID: destinationPaneID
+            )
             let reference = try ConversationContextReference.capture(
                 transfer: transfer,
-                currentSourcePane: source,
-                destinationPane: destination
+                currentSourcePane: current.source,
+                destinationPane: current.destination
             )
             if stageCapturedConversationReference(reference, for: destinationPaneID) {
                 toastMessage = "Added conversation context"
@@ -2983,15 +2977,38 @@ final class HerdrAppModel {
         guard let client = client(forMachine: machineID) else {
             throw ConversationContextError.destinationUnavailable
         }
-        let capabilities: AssistantCapabilities
+        let capabilities: ServerCapabilities
         do {
-            capabilities = try await client.assistantCapabilities()
+            capabilities = try await client.serverCapabilities()
         } catch APIError.server(status: 404, message: _) {
             throw ConversationContextError.unsupportedServer
         }
-        guard capabilities.profiles.contains("pi-session-context-v1") else {
+        guard capabilities.supportsConversationContext else {
             throw ConversationContextError.unsupportedServer
         }
+    }
+
+    private func resolvedConversationContextPanes(
+        transfer: ConversationContextTransfer,
+        destinationPaneID: String
+    ) throws -> (source: HerdrPane, destination: HerdrPane) {
+        guard let destination = pane(id: destinationPaneID),
+              canControl(machineID: destination.machineID) else {
+            throw ConversationContextError.destinationUnavailable
+        }
+        guard destination.id != transfer.sourcePaneID else {
+            throw ConversationContextError.samePane
+        }
+        guard let source = pane(id: transfer.sourcePaneID),
+              source.supportsPiSemanticChat,
+              canControl(machineID: source.machineID) else {
+            throw ConversationContextError.sourceUnavailable
+        }
+        guard source.machineID == destination.machineID else {
+            throw ConversationContextError.crossMachine
+        }
+        try Self.validateConversationSession(transfer.expectedSessionID, against: source)
+        return (source, destination)
     }
 
     @discardableResult

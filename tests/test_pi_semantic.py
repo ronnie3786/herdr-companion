@@ -354,6 +354,40 @@ class PiSemanticTests(unittest.TestCase):
             self.assertNotIn(excluded, serialized)
         journal.close()
 
+    def test_projection_reports_source_and_per_message_truncation(self):
+        for snapshot in (
+            {
+                "session": {"id": "session-1"},
+                "truncated": True,
+                "entries": [{"message": {"role": "user", "content": "visible"}}],
+            },
+            {
+                "session": {"id": "session-1"},
+                "entries": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": "x" * (PI_SESSION_CONTEXT_MAX_MESSAGE_CHARACTERS + 1),
+                    }
+                }],
+            },
+        ):
+            with self.subTest(snapshot_truncated=snapshot.get("truncated", False)):
+                journal = PiSemanticJournal(":memory:")
+                journal.ingest(
+                    "pane-1",
+                    bridge_record(
+                        "pane-1", "snapshot", session_id="session-1", snapshot=snapshot
+                    ),
+                    namespace="socket-one",
+                    workspace_id="workspace-1",
+                )
+                context = journal.session_context(
+                    "socket-one", "workspace-1", "session-1"
+                )
+                self.assertTrue(context["truncated"])
+                self.assertNotIn("earlier visible conversation omitted", context["context"])
+                journal.close()
+
     def test_session_context_persists_and_isolates_workspace_and_socket_namespace(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = str(Path(temporary) / "semantic.sqlite3")
@@ -481,6 +515,54 @@ class PiSemanticTests(unittest.TestCase):
             self.assertEqual(
                 reopened.session_context("socket-one", "workspace-1", "session-2")["status"],
                 "completed",
+            )
+            reopened.ingest(
+                "pane-1",
+                bridge_record(
+                    "pane-1",
+                    "snapshot",
+                    sequence=1,
+                    session_id="session-2",
+                    snapshot={
+                        "session": {"id": "session-2"},
+                        "state": {"idle": True},
+                        "entries": [{"message": {"role": "assistant", "content": "final"}}],
+                    },
+                ),
+                namespace="socket-one",
+                workspace_id="workspace-1",
+            )
+            self.assertEqual(
+                reopened.session_context("socket-one", "workspace-1", "session-2")["status"],
+                "completed",
+            )
+            reopened.ingest(
+                "pane-1",
+                bridge_record(
+                    "pane-1",
+                    "event",
+                    sequence=2,
+                    session_id="session-2",
+                    event={"type": "session_start", "reason": "resume"},
+                ),
+                namespace="socket-one",
+                workspace_id="workspace-1",
+            )
+            self.assertEqual(
+                reopened.session_context("socket-one", "workspace-1", "session-2")["status"],
+                "active",
+            )
+            reopened.ingest(
+                "pane-1",
+                bridge_record(
+                    "pane-1",
+                    "event",
+                    sequence=3,
+                    session_id="session-2",
+                    event={"type": "session_shutdown"},
+                ),
+                namespace="socket-one",
+                workspace_id="workspace-1",
             )
             reopened.ingest(
                 "pane-1",

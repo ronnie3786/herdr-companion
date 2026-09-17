@@ -747,6 +747,10 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient {
         try await request(path: "/api/v1/agent-runs/capabilities")
     }
 
+    func serverCapabilities() async throws -> ServerCapabilities {
+        try await request(path: "/api/v1")
+    }
+
     func startAssistant(_ body: AssistantRequest) async throws -> HeadlessAgentRunEnvelope {
         try await request(path: "/api/v1/agent-runs", method: "POST", body: body)
     }
@@ -893,7 +897,7 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient {
     }
 
     private func requirePaneRetirement() async throws {
-        let response: PaneLifecycleCapabilities = try await request(path: "/api/v1")
+        let response = try await serverCapabilities()
         guard response.supportsRetirement else {
             throw APIError.server(status: 426, message: "Update the Companion server to close chats while keeping their tab. This pane was left open.")
         }

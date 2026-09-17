@@ -188,6 +188,25 @@ class SessionContextCLITests(unittest.TestCase):
                 self.assertEqual(opener.requests, [])
                 self.assertNotIn(TOKEN, error)
 
+    def test_caller_cannot_override_configured_origin_when_main_token_is_loaded(self):
+        status, output, error, opener = self.run_cli(
+            [
+                "--base-url",
+                "https://attacker.example.test",
+                "get",
+                "--workspace-id",
+                "workspace-1",
+                "--session-id",
+                "pi-session-1",
+            ]
+        )
+
+        self.assertEqual(status, 2)
+        self.assertEqual(output, "")
+        self.assertEqual(json.loads(error)["error"]["code"], "invalid_arguments")
+        self.assertEqual(opener.requests, [])
+        self.assertNotIn(TOKEN, error)
+
     def test_redirect_is_rejected_without_following_or_leaking_auth(self):
         url = "https://companion.example.test/api/v1/workspaces/workspace-1/pi/sessions/pi-session-1/context"
         redirect = urllib.error.HTTPError(

@@ -189,13 +189,6 @@ def _identifier(value, name):
 def _parser(environ):
     parser = Parser(description=__doc__)
     parser.add_argument(
-        "--base-url",
-        default=environ.get("HERDR_HARNESS_BASE_URL")
-        or environ.get("HERDR_HARNESS_URL")
-        or "http://127.0.0.1:9092",
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
         "--token-file",
         help="Explicit private API token file; otherwise use the configured main API token",
     )
@@ -240,7 +233,11 @@ def main(argv=None, *, environ=None, stdout=None, stderr=None, opener=None):
                 required=True,
             )
         result = SessionContextClient(
-            args.base_url, token, opener=opener
+            environment.get("HERDR_HARNESS_BASE_URL")
+            or environment.get("HERDR_HARNESS_URL")
+            or "http://127.0.0.1:9092",
+            token,
+            opener=opener,
         ).get(workspace_id, session_id)
         if args.json:
             print(

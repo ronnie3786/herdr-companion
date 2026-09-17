@@ -173,12 +173,12 @@ def valid_pi_session_id(value: object) -> bool:
     return isinstance(value, str) and len(value) <= 256 and _PI_SESSION_ID_PATTERN.fullmatch(value) is not None
 
 
-def _visible_message_text(message: dict) -> Optional[str]:
+def _visible_message_text(message: dict) -> tuple[Optional[str], bool]:
     """Project only user-visible text blocks from a Pi message."""
 
     role = message.get("role")
     if role not in {"user", "assistant"}:
-        return None
+        return None, False
     content = message.get("content")
     if isinstance(content, str):
         text = content
@@ -192,13 +192,14 @@ def _visible_message_text(message: dict) -> Optional[str]:
                 parts.append(value)
         text = "".join(parts)
     else:
-        return None
+        return None, False
     text = text.strip()
     if not text:
-        return None
-    if len(text) > PI_SESSION_CONTEXT_MAX_MESSAGE_CHARACTERS:
+        return None, False
+    clipped = len(text) > PI_SESSION_CONTEXT_MAX_MESSAGE_CHARACTERS
+    if clipped:
         text = text[: PI_SESSION_CONTEXT_MAX_MESSAGE_CHARACTERS - 1] + "…"
-    return text
+    return text, clipped
 
 
 def _visible_context_projection(snapshot: dict) -> tuple[list[dict], str, bool]:
@@ -206,6 +207,7 @@ def _visible_context_projection(snapshot: dict) -> tuple[list[dict], str, bool]:
 
     projected: list[dict] = []
     source_count = 0
+    content_clipped = snapshot.get("truncated") is True
     entries = snapshot.get("entries")
     if not isinstance(entries, list):
         entries = []
@@ -213,9 +215,10 @@ def _visible_context_projection(snapshot: dict) -> tuple[list[dict], str, bool]:
         if not isinstance(entry, dict) or not isinstance(entry.get("message"), dict):
             continue
         message = entry["message"]
-        text = _visible_message_text(message)
+        text, message_clipped = _visible_message_text(message)
         if text is None:
             continue
+        content_clipped = content_clipped or message_clipped
         source_count += 1
         projected.append({"role": message["role"], "text": text})
 
@@ -230,9 +233,10 @@ def _visible_context_projection(snapshot: dict) -> tuple[list[dict], str, bool]:
         if len("\n\n".join(blocks)) > PI_SESSION_CONTEXT_MAX_CHARACTERS:
             break
         selected = candidate
-    clipped = source_count > len(selected)
+    messages_omitted = source_count > len(selected)
+    clipped = content_clipped or messages_omitted
     blocks = [f"{item['role'].capitalize()}:\n{item['text']}" for item in selected]
-    if clipped:
+    if messages_omitted:
         blocks.insert(0, _CONTEXT_OMISSION)
     return selected, "\n\n".join(blocks), clipped
 
@@ -630,6 +634,10 @@ class PiSemanticJournal:
                 self._set_context_status_locked(
                     namespace, pane_id, session_id or previous_session, "completed"
                 )
+            elif str(raw_event.get("type") or "") == "session_start":
+                self._set_context_status_locked(
+                    namespace, pane_id, session_id or previous_session, "active"
+                )
             self._database.execute(
                 """
                 UPDATE pi_semantic_state
@@ -728,7 +736,11 @@ class PiSemanticJournal:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(namespace, workspace_id, session_id) DO UPDATE SET
                 pane_id = excluded.pane_id,
-                status = excluded.status,
+                status = CASE
+                    WHEN pi_session_context.status IN ('completed', 'switched', 'closed')
+                    THEN pi_session_context.status
+                    ELSE excluded.status
+                END,
                 messages_json = excluded.messages_json,
                 context_text = excluded.context_text,
                 message_count = excluded.message_count,

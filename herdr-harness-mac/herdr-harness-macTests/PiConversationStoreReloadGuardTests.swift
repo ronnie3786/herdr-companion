@@ -37,6 +37,7 @@ struct PiConversationStoreReloadGuardTests {
         var snapshotCalls = 0
         var cursors: [String?] = []
         var publishedTools: [[ToolState]] = []
+        var terminalContinuation: AsyncThrowingStream<PiConversationStreamEvent, any Error>.Continuation?
         let (requests, requestContinuation) = AsyncStream<Int>.makeStream()
         let (publishedCosts, publishedCostContinuation) = AsyncStream<Double>.makeStream()
 
@@ -63,7 +64,7 @@ struct PiConversationStoreReloadGuardTests {
             case 3:
                 return AsyncThrowingStream { $0.finish() }
             default:
-                return AsyncThrowingStream { _ in }
+                return AsyncThrowingStream { terminalContinuation = $0 }
             }
         }
 
@@ -72,6 +73,7 @@ struct PiConversationStoreReloadGuardTests {
         }
         defer {
             task.cancel()
+            terminalContinuation?.finish(throwing: CancellationError())
             requestContinuation.finish()
             publishedCostContinuation.finish()
         }
@@ -92,6 +94,7 @@ struct PiConversationStoreReloadGuardTests {
         #expect(toolStates(in: store) == [ToolState(id: "committed-tool", status: .succeeded)])
 
         task.cancel()
+        terminalContinuation?.finish(throwing: CancellationError())
         await task.value
     }
 

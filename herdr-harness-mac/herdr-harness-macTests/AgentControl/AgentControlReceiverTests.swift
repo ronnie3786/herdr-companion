@@ -568,7 +568,7 @@ actor BlockingAgentControlTransport: AgentControlTransport {
     func poll(clientId: String, request: AgentControlPollRequest) async throws -> AgentControlPollResponse {
         pollCount += 1
         do {
-            try await Task.sleep(for: .hours(1))
+            try await Task.sleep(for: .seconds(3_600))
             return AgentControlPollResponse(ok: true, command: nil)
         } catch {
             cancellationCount += 1

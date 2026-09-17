@@ -53,8 +53,8 @@ final class AgentControlController {
     private let presentationWaiter: PresentationWaiter
     private let pollInterval: Duration
     private let allowsReceiverInUnitTests: Bool
-    private var pollTask: Task<Void, Never>?
-    private var executionTask: Task<Void, Never>?
+    @ObservationIgnored private var pollTask: Task<Void, Never>?
+    @ObservationIgnored private var executionTask: Task<Void, Never>?
     private var receiverGeneration = 0
     private var configuredConnectionGeneration: Int?
     private var connectionObservationToken = 0

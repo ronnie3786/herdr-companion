@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import Testing
@@ -130,6 +131,279 @@ struct HerdrHudControllerTests {
         harness.controller.summon()
         #expect(harness.notes.openNoteID == nil)
         #expect(harness.notes.isHudExpanded)
+    }
+
+    @Test("Focused-window capture stages a retained PNG in New chat without sending or replacing its draft")
+    func focusedWindowCaptureTargetsNewComposer() async throws {
+        let source = temporaryURL(named: "focused-window.png")
+        let screenshotData = try writeSyntheticPNG(to: source)
+        let existing = temporaryURL(named: "existing.txt")
+        try Data("Existing synthetic attachment".utf8).write(to: existing)
+        defer { try? FileManager.default.removeItem(at: existing) }
+        let expectedTarget = HerdrFocusedWindowTarget(processID: 321, windowID: 99)
+        let harness = makeHarness(
+            screenshotSelection: { processID in
+                #expect(processID == 321)
+                return expectedTarget
+            },
+            screenshotCapture: { target in
+                #expect(target == expectedTarget)
+                return source
+            }
+        )
+        defer { harness.controller.setEnabled(false) }
+        let chats = try #require(harness.controller.chats)
+        let oldComposer = chats.composer
+        oldComposer.draft = "Previously submitted"
+        chats.submissionStarted(oldComposer)
+        let existingChat = try #require(chats.chats.first)
+        harness.controller.openChat(existingChat.id)
+        let composer = chats.composer
+        composer.draft = "Keep this unsent draft"
+        composer.selectedMachineID = "synthetic-machine"
+        _ = try composer.addCustomWorkingFolder(
+            path: "/synthetic/screenshot-project",
+            machineID: "synthetic-machine"
+        )
+        composer.addAttachments([existing])
+
+        harness.controller.captureFocusedWindow(processID: 321)
+        try await waitUntil { !harness.controller.isCapturingWindowScreenshot }
+
+        #expect(chats.displayedSession === composer)
+        #expect(composer.draft == "Keep this unsent draft")
+        #expect(composer.selectedMachineID == "synthetic-machine")
+        #expect(composer.selectedWorkingFolder.path == "/synthetic/screenshot-project")
+        #expect(composer.pendingAttachments.count == 2)
+        let screenshot = try #require(composer.pendingAttachments.last)
+        #expect(screenshot.isImage)
+        let retainedData = try Data(contentsOf: screenshot.url)
+        #expect(retainedData == screenshotData)
+        #expect(NSBitmapImageRep(data: retainedData) != nil)
+        #expect(composer.exchanges.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: source.path))
+        #expect(harness.controller.isExpanded)
+    }
+
+    @Test("Only one screenshot capture can be pending")
+    func duplicateCaptureWhilePendingIsIgnored() async throws {
+        let barrier = ScreenshotCaptureBarrier()
+        let harness = makeHarness(screenshotCapture: { target in
+            try await barrier.capture(target)
+        })
+        defer {
+            harness.controller.setEnabled(false)
+            barrier.cancelAll()
+        }
+        harness.controller.captureFocusedWindow(processID: 321)
+        try await barrier.waitUntilStarted()
+        harness.controller.captureFocusedWindow(processID: 321)
+        #expect(barrier.invocationCount == 1)
+
+        let source = temporaryURL(named: "single.png")
+        _ = try writeSyntheticPNG(to: source)
+        barrier.succeed(with: source)
+        try await waitUntil { !harness.controller.isCapturingWindowScreenshot }
+        #expect(harness.controller.chats?.composer.pendingAttachments.count == 1)
+    }
+
+    @Test("Navigation during capture keeps selection while staging into the original New chat composer")
+    func navigationDuringCaptureDoesNotStealFocus() async throws {
+        let barrier = ScreenshotCaptureBarrier()
+        let harness = makeHarness(screenshotCapture: { target in
+            try await barrier.capture(target)
+        })
+        defer {
+            harness.controller.setEnabled(false)
+            barrier.cancelAll()
+        }
+        let chats = try #require(harness.controller.chats)
+        let first = chats.composer
+        chats.submissionStarted(first)
+        let firstID = try #require(chats.chats.first?.id)
+        let second = chats.composer
+        chats.submissionStarted(second)
+        let secondID = try #require(chats.chats.first(where: { $0.id != firstID })?.id)
+        let targetComposer = chats.composer
+        harness.controller.openChat(firstID)
+        harness.controller.captureFocusedWindow(processID: 321)
+        try await barrier.waitUntilStarted()
+        harness.controller.openChat(secondID)
+        let focusAfterNavigation = harness.controller.focusRequest
+
+        let source = temporaryURL(named: "navigated.png")
+        _ = try writeSyntheticPNG(to: source)
+        barrier.succeed(with: source)
+        try await waitUntil { !harness.controller.isCapturingWindowScreenshot }
+
+        #expect(chats.selectedID == secondID)
+        #expect(harness.controller.focusRequest == focusAfterNavigation)
+        #expect(targetComposer.pendingAttachments.count == 1)
+        #expect(second.pendingAttachments.isEmpty)
+    }
+
+    @Test("Submitting the target composer while capture is pending discards the image with an actionable fresh-composer error")
+    func submittedComposerRejectsLateCapture() async throws {
+        let barrier = ScreenshotCaptureBarrier()
+        let harness = makeHarness(screenshotCapture: { target in
+            try await barrier.capture(target)
+        })
+        defer {
+            harness.controller.setEnabled(false)
+            barrier.cancelAll()
+        }
+        let chats = try #require(harness.controller.chats)
+        let submitted = chats.composer
+        harness.controller.captureFocusedWindow(processID: 321)
+        try await barrier.waitUntilStarted()
+        chats.submissionStarted(submitted)
+        let fresh = chats.composer
+
+        let source = temporaryURL(named: "submitted.png")
+        _ = try writeSyntheticPNG(to: source)
+        barrier.succeed(with: source)
+        try await waitUntil { !harness.controller.isCapturingWindowScreenshot }
+
+        #expect(submitted.pendingAttachments.isEmpty)
+        #expect(fresh.pendingAttachments.isEmpty)
+        #expect(fresh.validationError?.contains("draft was sent") == true)
+        #expect(!FileManager.default.fileExists(atPath: source.path))
+    }
+
+    @Test("Disabling during capture cancels presentation and deletes a late temporary image")
+    func disableDiscardsLateCapture() async throws {
+        let barrier = ScreenshotCaptureBarrier()
+        let harness = makeHarness(screenshotCapture: { target in
+            try await barrier.capture(target)
+        })
+        defer {
+            harness.controller.setEnabled(false)
+            barrier.cancelAll()
+        }
+        let composer = try #require(harness.controller.chats?.composer)
+        harness.controller.captureFocusedWindow(processID: 321)
+        try await barrier.waitUntilStarted()
+        harness.controller.setEnabled(false)
+
+        let source = temporaryURL(named: "disabled.png")
+        _ = try writeSyntheticPNG(to: source)
+        barrier.succeed(with: source)
+        try await waitUntil { !FileManager.default.fileExists(atPath: source.path) }
+
+        #expect(!harness.controller.isEnabled)
+        #expect(!harness.controller.isExpanded)
+        #expect(composer.pendingAttachments.isEmpty)
+    }
+
+    @Test("Asynchronous screenshot capture failures open New chat with an actionable error")
+    func asynchronousCaptureFailureIsVisible() async throws {
+        let barrier = ScreenshotCaptureBarrier()
+        let harness = makeHarness(screenshotCapture: { target in
+            try await barrier.capture(target)
+        })
+        defer {
+            harness.controller.setEnabled(false)
+            barrier.cancelAll()
+        }
+        let composer = try #require(harness.controller.chats?.composer)
+
+        harness.controller.captureFocusedWindow(processID: 321)
+        try await barrier.waitUntilStarted()
+        barrier.fail(with: HerdrFocusedWindowScreenshotError.captureFailed)
+        try await waitUntil { !harness.controller.isCapturingWindowScreenshot }
+
+        #expect(composer.validationError?.contains("couldn’t capture") == true)
+        #expect(harness.controller.chats?.displayedSession === composer)
+        #expect(harness.controller.isExpanded)
+    }
+
+    @Test("A canceled old capture cannot interfere with a new capture after re-enabling")
+    func reenabledCaptureIgnoresCanceledOldCompletion() async throws {
+        let barrier = ScreenshotCaptureBarrier()
+        let harness = makeHarness(screenshotCapture: { target in
+            try await barrier.capture(target)
+        })
+        defer {
+            harness.controller.setEnabled(false)
+            barrier.cancelAll()
+        }
+        let chats = try #require(harness.controller.chats)
+        let savedSession = chats.composer
+        savedSession.draft = "Synthetic saved chat"
+        chats.submissionStarted(savedSession)
+        let savedID = try #require(chats.chats.first?.id)
+        let targetComposer = chats.composer
+        harness.controller.openChat(savedID)
+
+        harness.controller.captureFocusedWindow(processID: 321)
+        try await barrier.waitUntilStarted(invocation: 1)
+        harness.controller.setEnabled(false)
+        harness.controller.setEnabled(true)
+        harness.controller.captureFocusedWindow(processID: 321)
+        try await barrier.waitUntilStarted(invocation: 2)
+        let focusBeforeOldCompletion = harness.controller.focusRequest
+        let selectionBeforeOldCompletion = chats.selectedID
+
+        let oldSource = temporaryURL(named: "canceled-old.png")
+        _ = try writeSyntheticPNG(to: oldSource)
+        barrier.succeed(with: oldSource, invocation: 1)
+        try await waitUntil { !FileManager.default.fileExists(atPath: oldSource.path) }
+
+        #expect(harness.controller.isCapturingWindowScreenshot)
+        #expect(chats.selectedID == selectionBeforeOldCompletion)
+        #expect(chats.selectedID == savedID)
+        #expect(harness.controller.focusRequest == focusBeforeOldCompletion)
+        #expect(!harness.controller.isExpanded)
+        #expect(targetComposer.pendingAttachments.isEmpty)
+
+        let newSource = temporaryURL(named: "reenabled-new.png")
+        _ = try writeSyntheticPNG(to: newSource)
+        barrier.succeed(with: newSource, invocation: 2)
+        try await waitUntil { !harness.controller.isCapturingWindowScreenshot }
+
+        #expect(targetComposer.pendingAttachments.count == 1)
+        #expect(chats.displayedSession === targetComposer)
+        #expect(harness.controller.isExpanded)
+    }
+
+    @Test("Attachment validation failure removes the screenshot source and preserves existing attachments")
+    func attachmentFailureCleansScreenshotSource() async throws {
+        let source = temporaryURL(named: "over-limit.png")
+        _ = try writeSyntheticPNG(to: source)
+        let harness = makeHarness(screenshotCapture: { _ in source })
+        defer { harness.controller.setEnabled(false) }
+        let composer = try #require(harness.controller.chats?.composer)
+        let existingURLs = (0..<HerdrHudSession.maxAttachments).map {
+            temporaryURL(named: "existing-\($0).txt")
+        }
+        defer { existingURLs.forEach { try? FileManager.default.removeItem(at: $0) } }
+        for url in existingURLs { try Data("Synthetic".utf8).write(to: url) }
+        composer.addAttachments(existingURLs)
+
+        harness.controller.captureFocusedWindow(processID: 321)
+        try await waitUntil { !harness.controller.isCapturingWindowScreenshot }
+
+        #expect(composer.pendingAttachments.count == HerdrHudSession.maxAttachments)
+        #expect(composer.validationError == "You can attach up to 4 files.")
+        #expect(!FileManager.default.fileExists(atPath: source.path))
+    }
+
+    @Test("Focused-window selection failures open New chat with an actionable error")
+    func focusedWindowSelectionFailureIsVisible() throws {
+        let harness = makeHarness(screenshotSelection: { _ in
+            throw HerdrFocusedWindowScreenshotError.noFocusedWindow
+        })
+        defer { harness.controller.setEnabled(false) }
+        let chats = try #require(harness.controller.chats)
+        let prior = chats.composer
+        chats.submissionStarted(prior)
+        harness.controller.openChat(try #require(chats.chats.first?.id))
+
+        harness.controller.captureFocusedWindow(processID: 321)
+
+        #expect(chats.displayedSession === chats.composer)
+        #expect(chats.composer.validationError?.contains("visible app window") == true)
+        #expect(harness.controller.isExpanded)
     }
 
     @Test("handleCancel with a note open closes only the note")
@@ -553,6 +827,55 @@ struct HerdrHudControllerTests {
         #expect(harness.controller.isEnabled)
     }
 
+    @MainActor
+    private final class ScreenshotCaptureBarrier {
+        private var continuations: [Int: CheckedContinuation<URL, any Error>] = [:]
+        private(set) var invocationCount = 0
+
+        func capture(_ target: HerdrFocusedWindowTarget) async throws -> URL {
+            invocationCount += 1
+            let invocation = invocationCount
+            return try await withCheckedThrowingContinuation {
+                continuations[invocation] = $0
+            }
+        }
+
+        func waitUntilStarted(
+            invocation: Int = 1,
+            timeout: Duration = .seconds(2)
+        ) async throws {
+            let clock = ContinuousClock()
+            let deadline = clock.now.advanced(by: timeout)
+            while invocationCount < invocation {
+                guard clock.now < deadline else {
+                    throw AsyncWaitError.timedOut("screenshot capture invocation \(invocation) did not start")
+                }
+                try await clock.sleep(for: .milliseconds(1))
+            }
+        }
+
+        func succeed(with url: URL, invocation: Int? = nil) {
+            takeContinuation(invocation: invocation)?.resume(returning: url)
+        }
+
+        func fail(with error: any Error, invocation: Int? = nil) {
+            takeContinuation(invocation: invocation)?.resume(throwing: error)
+        }
+
+        func cancelAll() {
+            let pending = Array(continuations.values)
+            continuations.removeAll()
+            pending.forEach { $0.resume(throwing: CancellationError()) }
+        }
+
+        private func takeContinuation(
+            invocation: Int?
+        ) -> CheckedContinuation<URL, any Error>? {
+            guard let key = invocation ?? continuations.keys.min() else { return nil }
+            return continuations.removeValue(forKey: key)
+        }
+    }
+
     private struct Harness {
         let defaults: UserDefaults
         let model: HerdrAppModel
@@ -564,7 +887,9 @@ struct HerdrHudControllerTests {
     private func makeHarness(
         chipRegroupDelay: Duration = .seconds(5),
         includesVoice: Bool = false,
-        attachmentHoverGrace: Duration = .milliseconds(180)
+        attachmentHoverGrace: Duration = .milliseconds(180),
+        screenshotSelection: HerdrHudController.FocusedWindowSelection? = nil,
+        screenshotCapture: HerdrHudController.FocusedWindowScreenshotCapture? = nil
     ) -> Harness {
         HerdrTestAppIcon.install()
         let defaults = makeDefaults()
@@ -576,7 +901,14 @@ struct HerdrHudControllerTests {
         let controller = HerdrHudController(
             userDefaults: defaults,
             chipRegroupDelay: chipRegroupDelay,
-            attachmentHoverGrace: attachmentHoverGrace
+            attachmentHoverGrace: attachmentHoverGrace,
+            focusedWindowSelection: screenshotSelection ?? { processID in
+                HerdrFocusedWindowTarget(processID: processID ?? 0, windowID: 99)
+            },
+            focusedWindowScreenshotCapture: screenshotCapture ?? { _ in
+                throw HerdrFocusedWindowScreenshotError.captureFailed
+            },
+            screenshotShortcutFlagsProvider: { 0 }
         )
         let voice = includesVoice ? QuickVoicePanelController(defaults: defaults) : nil
         voice?.setEnabled(true)
@@ -589,6 +921,46 @@ struct HerdrHudControllerTests {
         guard let defaults = UserDefaults(suiteName: suiteName) else { preconditionFailure("Could not create isolated defaults") }
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
+    }
+
+    private enum AsyncWaitError: Error {
+        case timedOut(String)
+    }
+
+    private func waitUntil(
+        timeout: Duration = .seconds(2),
+        _ condition: @MainActor () -> Bool
+    ) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while !condition() {
+            guard clock.now < deadline else {
+                throw AsyncWaitError.timedOut("condition was not met before the deadline")
+            }
+            try await clock.sleep(for: .milliseconds(1))
+        }
+    }
+
+    private func writeSyntheticPNG(to url: URL) throws -> Data {
+        let bitmap = try #require(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 2,
+            pixelsHigh: 2,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 8,
+            bitsPerPixel: 32
+        ))
+        bitmap.setColor(.systemBlue, atX: 0, y: 0)
+        bitmap.setColor(.systemGreen, atX: 1, y: 0)
+        bitmap.setColor(.systemOrange, atX: 0, y: 1)
+        bitmap.setColor(.systemPink, atX: 1, y: 1)
+        let data = try #require(bitmap.representation(using: .png, properties: [:]))
+        try data.write(to: url, options: .atomic)
+        return data
     }
 
     private func temporaryURL(named name: String) -> URL {

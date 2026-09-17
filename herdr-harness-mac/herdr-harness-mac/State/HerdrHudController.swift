@@ -28,6 +28,10 @@ final class HerdrHudPanel: NSPanel {
 @MainActor
 @Observable
 final class HerdrHudController {
+    typealias FocusedWindowSelection = @MainActor (pid_t?) throws -> HerdrFocusedWindowTarget
+    typealias FocusedWindowScreenshotCapture = @MainActor (HerdrFocusedWindowTarget) async throws -> URL
+    typealias ModifierFlagsProvider = @MainActor () -> UInt
+
     private enum DefaultsKey {
         static let enabled = "herdr.hud.enabled"
         static let notesVisible = "herdr.hud.notesVisible"
@@ -39,8 +43,15 @@ final class HerdrHudController {
     }
 
     private let userDefaults: UserDefaults
+    private let focusedWindowSelection: FocusedWindowSelection
+    private let focusedWindowScreenshotCapture: FocusedWindowScreenshotCapture
+    private let screenshotShortcutFlagsProvider: ModifierFlagsProvider
     private var panel: HerdrHudPanel?
     private var hotKey: HerdrGlobalHotKey?
+    private var screenshotShortcut: HerdrDualCommandShortcut?
+    private var screenshotCaptureTask: Task<Void, Never>?
+    private var screenshotCaptureGeneration = 0
+    private var navigationRevision = 0
     private var session: HerdrHudSession?
     private(set) var chats: HerdrHudChats?
     private var displayedSession: HerdrHudSession? { chats?.displayedSession ?? session }
@@ -68,6 +79,7 @@ final class HerdrHudController {
     private(set) var isDraggingPanel = false
     private(set) var focusRequest = 0
     private(set) var noteFocusRequest = 0
+    private(set) var isCapturingWindowScreenshot = false
     /// Zero means Show all; finite limits apply equally to voice and pane agents.
     var visibleAgentLimit: Int {
         didSet {
@@ -123,9 +135,21 @@ final class HerdrHudController {
     init(
         userDefaults: UserDefaults = .standard,
         chipRegroupDelay: Duration = .seconds(5),
-        attachmentHoverGrace: Duration = .milliseconds(180)
+        attachmentHoverGrace: Duration = .milliseconds(180),
+        focusedWindowSelection: @escaping FocusedWindowSelection = {
+            try HerdrFocusedWindowScreenshot.prepare(processID: $0)
+        },
+        focusedWindowScreenshotCapture: @escaping FocusedWindowScreenshotCapture = {
+            try await HerdrFocusedWindowScreenshot.capture(target: $0)
+        },
+        screenshotShortcutFlagsProvider: @escaping ModifierFlagsProvider = {
+            NSEvent.modifierFlags.rawValue
+        }
     ) {
         self.userDefaults = userDefaults
+        self.focusedWindowSelection = focusedWindowSelection
+        self.focusedWindowScreenshotCapture = focusedWindowScreenshotCapture
+        self.screenshotShortcutFlagsProvider = screenshotShortcutFlagsProvider
         isUltraCompactEnabled = userDefaults.bool(forKey: DefaultsKey.ultraCompactEnabled)
         let savedLimit = userDefaults.object(forKey: DefaultsKey.visibleAgentLimit) as? Int
         visibleAgentLimit = savedLimit.flatMap { (0...20).contains($0) ? $0 : nil } ?? HerdrHudPlacement.maxChips
@@ -233,16 +257,19 @@ final class HerdrHudController {
 
         if isEnabled {
             installHotKey()
+            installScreenshotShortcut()
             panel.orderFrontRegardless()
         }
     }
 
     func summon() {
+        navigationRevision &+= 1
         chats?.select(nil)
         showSelectedChat()
     }
 
     func openChat(_ id: String) {
+        navigationRevision &+= 1
         chats?.select(id)
         showSelectedChat()
     }
@@ -283,6 +310,7 @@ final class HerdrHudController {
     }
 
     func collapse() {
+        navigationRevision &+= 1
         guard let panel else { return }
         isExpanded = false
         if notes?.isHudExpanded == true { notes?.isHudExpanded = false }
@@ -315,19 +343,102 @@ final class HerdrHudController {
 
         if enabled {
             installHotKey()
+            installScreenshotShortcut()
             isExpanded = false
             if notes?.isHudExpanded == true { notes?.isHudExpanded = false }
             displayedSession?.isCollapsed = true
             applyFrame(animated: false)
             panel.orderFrontRegardless()
         } else {
+            cancelWindowScreenshotCapture()
             isExpanded = false
             if notes?.isHudExpanded == true { notes?.isHudExpanded = false }
             displayedSession?.isCollapsed = true
             applyFrame(animated: false)
             panel.orderOut(nil)
             hotKey?.unregister()
+            screenshotShortcut?.unregister()
         }
+    }
+
+    /// Captures the frontmost app/window identity before any asynchronous work
+    /// or HUD presentation, then stages the PNG in the separate New chat composer.
+    func captureFocusedWindow(
+        processID: pid_t? = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    ) {
+        guard isEnabled, screenshotCaptureTask == nil, let chats else { return }
+        let targetComposer = chats.composer
+        let startedNavigationRevision = navigationRevision
+        let target: HerdrFocusedWindowTarget
+        do {
+            target = try focusedWindowSelection(processID)
+        } catch {
+            targetComposer.reportAttachmentError(error.localizedDescription)
+            presentNewComposerIfNavigationUnchanged(startedNavigationRevision)
+            return
+        }
+
+        screenshotCaptureGeneration &+= 1
+        let generation = screenshotCaptureGeneration
+        let capture = focusedWindowScreenshotCapture
+        isCapturingWindowScreenshot = true
+        screenshotCaptureTask = Task { @MainActor [weak self, targetComposer] in
+            defer { self?.finishWindowScreenshotCapture(generation: generation) }
+            do {
+                let sourceURL = try await capture(target)
+                defer { try? FileManager.default.removeItem(at: sourceURL) }
+                try Task.checkCancellation()
+                guard let self,
+                      self.screenshotCaptureGeneration == generation,
+                      self.isEnabled,
+                      let currentChats = self.chats
+                else { return }
+                guard currentChats.composer === targetComposer else {
+                    currentChats.composer.reportAttachmentError(
+                        "The screenshot wasn’t added because that New chat draft was sent while capture was in progress. Try again."
+                    )
+                    self.presentNewComposerIfNavigationUnchanged(startedNavigationRevision)
+                    return
+                }
+                targetComposer.addAttachments([sourceURL])
+                self.presentNewComposerIfNavigationUnchanged(startedNavigationRevision)
+            } catch is CancellationError {
+                // Disable and replacement captures intentionally discard late results.
+            } catch {
+                guard let self,
+                      self.screenshotCaptureGeneration == generation,
+                      self.isEnabled,
+                      let currentChats = self.chats
+                else { return }
+                if currentChats.composer === targetComposer {
+                    targetComposer.reportAttachmentError(error.localizedDescription)
+                } else {
+                    currentChats.composer.reportAttachmentError(
+                        "The screenshot wasn’t added because that New chat draft was sent while capture was in progress. Try again."
+                    )
+                }
+                self.presentNewComposerIfNavigationUnchanged(startedNavigationRevision)
+            }
+        }
+    }
+
+    private func presentNewComposerIfNavigationUnchanged(_ revision: Int) {
+        guard navigationRevision == revision else { return }
+        chats?.select(nil)
+        showSelectedChat()
+    }
+
+    private func finishWindowScreenshotCapture(generation: Int) {
+        guard screenshotCaptureGeneration == generation else { return }
+        screenshotCaptureTask = nil
+        isCapturingWindowScreenshot = false
+    }
+
+    private func cancelWindowScreenshotCapture() {
+        screenshotCaptureGeneration &+= 1
+        screenshotCaptureTask?.cancel()
+        screenshotCaptureTask = nil
+        isCapturingWindowScreenshot = false
     }
 
     func setVoiceReplyCardVisible(_ isVisible: Bool) {
@@ -337,6 +448,7 @@ final class HerdrHudController {
     }
 
     func presentQuickVoice() {
+        navigationRevision &+= 1
         if !isEnabled { setEnabled(true) }
         notes?.closeNote()
         isExpanded = false
@@ -575,6 +687,7 @@ final class HerdrHudController {
     }
 
     func openNote(_ id: UUID) {
+        navigationRevision &+= 1
         quickVoice?.collapse()
         guard let panel, let notes else { return }
         if !isEnabled { setEnabled(true) }
@@ -625,6 +738,17 @@ final class HerdrHudController {
             }
         }
         _ = hotKey?.register()
+    }
+
+    private func installScreenshotShortcut() {
+        if screenshotShortcut == nil {
+            screenshotShortcut = HerdrDualCommandShortcut(
+                flagsProvider: screenshotShortcutFlagsProvider
+            ) { [weak self] in
+                self?.captureFocusedWindow()
+            }
+        }
+        _ = screenshotShortcut?.register()
     }
 
     private func installObservers(for panel: HerdrHudPanel) {

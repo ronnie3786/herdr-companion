@@ -1,72 +1,97 @@
+import Carbon.HIToolbox
+import CoreGraphics
 import Testing
 @testable import herdr_harness_mac
 
 @Suite("Dual Command screenshot shortcut")
 @MainActor
 struct HerdrDualCommandShortcutTests {
-    @Test("Left and right Command independently do not fire")
-    func individualCommandKeysDoNotFire() {
+    @Test("Quartz adapter queries combined-session left and right Command independently")
+    func quartzAdapterQueriesBothCommandKeys() {
+        var queries: [(CGEventSourceStateID, CGKeyCode)] = []
+
+        let state = HerdrDualCommandShortcut.state { sourceState, keyCode in
+            queries.append((sourceState, keyCode))
+            return keyCode == HerdrDualCommandShortcut.rightCommandKeyCode
+        }
+
+        #expect(HerdrDualCommandShortcut.leftCommandKeyCode == CGKeyCode(kVK_Command))
+        #expect(HerdrDualCommandShortcut.leftCommandKeyCode == 55)
+        #expect(HerdrDualCommandShortcut.rightCommandKeyCode == CGKeyCode(kVK_RightCommand))
+        #expect(HerdrDualCommandShortcut.rightCommandKeyCode == 54)
+        #expect(queries.count == 2)
+        #expect(queries[0].0 == .combinedSessionState)
+        #expect(queries[0].1 == 55)
+        #expect(queries[1].0 == .combinedSessionState)
+        #expect(queries[1].1 == 54)
+        #expect(!state.isLeftCommandPressed)
+        #expect(state.isRightCommandPressed)
+    }
+
+    @Test("Neither or either Command alone does not fire")
+    func incompleteCommandStatesDoNotFire() {
         var invocations = 0
         let shortcut = HerdrDualCommandShortcut { invocations += 1 }
 
-        shortcut.sample(flags: HerdrDualCommandShortcut.leftCommandMask)
-        shortcut.sample(flags: 0)
-        shortcut.sample(flags: HerdrDualCommandShortcut.rightCommandMask)
+        shortcut.sample(state: state(left: false, right: false))
+        shortcut.sample(state: state(left: true, right: false))
+        shortcut.sample(state: state(left: false, right: true))
 
         #expect(invocations == 0)
     }
 
-    @Test("The chord fires once until either key releases, then can fire again")
+    @Test("Both Commands fire once while held, then rearm after either releases")
     func chordFiresOncePerPhysicalPress() {
         var invocations = 0
         let shortcut = HerdrDualCommandShortcut { invocations += 1 }
-        let chord = HerdrDualCommandShortcut.leftCommandMask
-            | HerdrDualCommandShortcut.rightCommandMask
 
-        shortcut.sample(flags: chord)
-        shortcut.sample(flags: chord)
-        shortcut.sample(flags: HerdrDualCommandShortcut.leftCommandMask)
-        shortcut.sample(flags: chord)
+        shortcut.sample(state: state(left: true, right: true))
+        shortcut.sample(state: state(left: true, right: true))
+        shortcut.sample(state: state(left: true, right: false))
+        shortcut.sample(state: state(left: true, right: true))
 
         #expect(invocations == 2)
     }
 
-    @Test("Unrelated modifier bits do not change chord detection")
-    func ignoresUnrelatedModifiers() {
+    @Test("Registering while held does not fire and stale registrations stay inert after re-register")
+    func registrationPrimingAndGenerationIsolation() {
+        var currentState = state(left: true, right: true)
+        var stateReads = 0
         var invocations = 0
-        let shortcut = HerdrDualCommandShortcut { invocations += 1 }
-        let shiftMask: UInt = 0x0000_0002
-
-        shortcut.sample(flags: shiftMask | HerdrDualCommandShortcut.leftCommandMask)
-        shortcut.sample(flags: shiftMask | HerdrDualCommandShortcut.leftCommandMask
-                        | HerdrDualCommandShortcut.rightCommandMask)
-
-        #expect(invocations == 1)
-    }
-
-    @Test("Registering while held does not refire, and unregister rejects callbacks from the old registration")
-    func unregisterInvalidatesQueuedSampling() {
-        var flagsReads = 0
-        var invocations = 0
-        let chord = HerdrDualCommandShortcut.leftCommandMask
-            | HerdrDualCommandShortcut.rightCommandMask
         let shortcut = HerdrDualCommandShortcut(
-            flagsProvider: {
-                flagsReads += 1
-                return chord
+            stateProvider: {
+                stateReads += 1
+                return currentState
             },
             handler: { invocations += 1 }
         )
+        defer { shortcut.unregister() }
 
         #expect(shortcut.register())
-        let oldGeneration = shortcut.registrationGeneration
+        let staleGeneration = shortcut.registrationGeneration
+        #expect(stateReads == 1)
         #expect(invocations == 0)
-        shortcut.unregister()
-        shortcut.sampleCurrentFlags(ifRegistrationGeneration: oldGeneration)
 
-        #expect(flagsReads == 1)
+        shortcut.unregister()
+        currentState = state(left: false, right: false)
+        #expect(shortcut.register())
+        let currentGeneration = shortcut.registrationGeneration
+        #expect(stateReads == 2)
+
+        currentState = state(left: true, right: true)
+        shortcut.sampleCurrentState(ifRegistrationGeneration: staleGeneration)
+        #expect(stateReads == 2)
         #expect(invocations == 0)
-        shortcut.sample(flags: chord)
+
+        shortcut.sampleCurrentState(ifRegistrationGeneration: currentGeneration)
+        #expect(stateReads == 3)
         #expect(invocations == 1)
+    }
+
+    private func state(left: Bool, right: Bool) -> HerdrDualCommandShortcut.State {
+        HerdrDualCommandShortcut.State(
+            isLeftCommandPressed: left,
+            isRightCommandPressed: right
+        )
     }
 }

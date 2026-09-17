@@ -908,7 +908,12 @@ struct HerdrHudControllerTests {
             focusedWindowScreenshotCapture: screenshotCapture ?? { _ in
                 throw HerdrFocusedWindowScreenshotError.captureFailed
             },
-            screenshotShortcutFlagsProvider: { 0 }
+            screenshotShortcutStateProvider: {
+                HerdrDualCommandShortcut.State(
+                    isLeftCommandPressed: false,
+                    isRightCommandPressed: false
+                )
+            }
         )
         let voice = includesVoice ? QuickVoicePanelController(defaults: defaults) : nil
         voice?.setEnabled(true)

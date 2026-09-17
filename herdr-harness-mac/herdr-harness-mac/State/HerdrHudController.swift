@@ -30,7 +30,7 @@ final class HerdrHudPanel: NSPanel {
 final class HerdrHudController {
     typealias FocusedWindowSelection = @MainActor (pid_t?) throws -> HerdrFocusedWindowTarget
     typealias FocusedWindowScreenshotCapture = @MainActor (HerdrFocusedWindowTarget) async throws -> URL
-    typealias ModifierFlagsProvider = @MainActor () -> UInt
+    typealias ScreenshotShortcutStateProvider = HerdrDualCommandShortcut.StateProvider
 
     private enum DefaultsKey {
         static let enabled = "herdr.hud.enabled"
@@ -45,7 +45,7 @@ final class HerdrHudController {
     private let userDefaults: UserDefaults
     private let focusedWindowSelection: FocusedWindowSelection
     private let focusedWindowScreenshotCapture: FocusedWindowScreenshotCapture
-    private let screenshotShortcutFlagsProvider: ModifierFlagsProvider
+    private let screenshotShortcutStateProvider: ScreenshotShortcutStateProvider
     private var panel: HerdrHudPanel?
     private var hotKey: HerdrGlobalHotKey?
     private var screenshotShortcut: HerdrDualCommandShortcut?
@@ -142,14 +142,13 @@ final class HerdrHudController {
         focusedWindowScreenshotCapture: @escaping FocusedWindowScreenshotCapture = {
             try await HerdrFocusedWindowScreenshot.capture(target: $0)
         },
-        screenshotShortcutFlagsProvider: @escaping ModifierFlagsProvider = {
-            NSEvent.modifierFlags.rawValue
-        }
+        screenshotShortcutStateProvider: ScreenshotShortcutStateProvider? = nil
     ) {
         self.userDefaults = userDefaults
         self.focusedWindowSelection = focusedWindowSelection
         self.focusedWindowScreenshotCapture = focusedWindowScreenshotCapture
-        self.screenshotShortcutFlagsProvider = screenshotShortcutFlagsProvider
+        self.screenshotShortcutStateProvider = screenshotShortcutStateProvider
+            ?? HerdrDualCommandShortcut.systemStateProvider
         isUltraCompactEnabled = userDefaults.bool(forKey: DefaultsKey.ultraCompactEnabled)
         let savedLimit = userDefaults.object(forKey: DefaultsKey.visibleAgentLimit) as? Int
         visibleAgentLimit = savedLimit.flatMap { (0...20).contains($0) ? $0 : nil } ?? HerdrHudPlacement.maxChips
@@ -743,7 +742,7 @@ final class HerdrHudController {
     private func installScreenshotShortcut() {
         if screenshotShortcut == nil {
             screenshotShortcut = HerdrDualCommandShortcut(
-                flagsProvider: screenshotShortcutFlagsProvider
+                stateProvider: screenshotShortcutStateProvider
             ) { [weak self] in
                 self?.captureFocusedWindow()
             }

@@ -1,23 +1,57 @@
 import AppKit
+import Carbon.HIToolbox
+import CoreGraphics
 
-/// Polls device-specific modifier bits so left-Command + right-Command can be
-/// observed without consuming key events or installing an accessibility event tap.
+/// Polls the public Quartz key-state table so left-Command + right-Command can
+/// be observed without consuming key events or installing an accessibility event tap.
 @MainActor
 final class HerdrDualCommandShortcut {
-    static let leftCommandMask: UInt = 0x0000_0008
-    static let rightCommandMask: UInt = 0x0000_0010
+    struct State: Equatable {
+        let isLeftCommandPressed: Bool
+        let isRightCommandPressed: Bool
 
-    private let flagsProvider: @MainActor () -> UInt
+        var isChordPressed: Bool {
+            isLeftCommandPressed && isRightCommandPressed
+        }
+    }
+
+    typealias StateProvider = @MainActor () -> State
+    typealias KeyStateQuery = @MainActor (CGEventSourceStateID, CGKeyCode) -> Bool
+
+    static let leftCommandKeyCode = CGKeyCode(kVK_Command)
+    static let rightCommandKeyCode = CGKeyCode(kVK_RightCommand)
+
+    /// Central production provider shared by the shortcut and its controller.
+    static var systemStateProvider: StateProvider {
+        {
+            state { sourceState, keyCode in
+                CGEventSource.keyState(sourceState, key: keyCode)
+            }
+        }
+    }
+
+    /// Adapter seam for deterministic verification of the Quartz query contract.
+    static func state(queryKeyState: KeyStateQuery) -> State {
+        let leftPressed = queryKeyState(.combinedSessionState, leftCommandKeyCode)
+        // Always query both keys. A false left result must not starve the right read.
+        let rightPressed = queryKeyState(.combinedSessionState, rightCommandKeyCode)
+        return State(
+            isLeftCommandPressed: leftPressed,
+            isRightCommandPressed: rightPressed
+        )
+    }
+
+    private let stateProvider: StateProvider
     private let handler: @MainActor () -> Void
     private var timer: Timer?
     private var wasPressed = false
     private(set) var registrationGeneration = 0
 
     init(
-        flagsProvider: @escaping @MainActor () -> UInt = { NSEvent.modifierFlags.rawValue },
+        stateProvider: StateProvider? = nil,
         handler: @escaping @MainActor () -> Void
     ) {
-        self.flagsProvider = flagsProvider
+        self.stateProvider = stateProvider ?? Self.systemStateProvider
         self.handler = handler
     }
 
@@ -30,14 +64,14 @@ final class HerdrDualCommandShortcut {
             // The timer is installed only on the main run loop. Running the
             // sample inline avoids leaving a sampling task queued at unregister.
             MainActor.assumeIsolated {
-                self?.sampleCurrentFlags(ifRegistrationGeneration: generation)
+                self?.sampleCurrentState(ifRegistrationGeneration: generation)
             }
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
         // Registering while the keys are already held must not turn one
         // physical chord into a second capture after disable/re-enable.
-        wasPressed = Self.isChordPressed(flagsProvider())
+        wasPressed = stateProvider().isChordPressed
         return true
     }
 
@@ -49,8 +83,8 @@ final class HerdrDualCommandShortcut {
     }
 
     /// Kept internal as a deterministic state-machine seam for unit tests.
-    func sample(flags: UInt) {
-        let isPressed = Self.isChordPressed(flags)
+    func sample(state: State) {
+        let isPressed = state.isChordPressed
         if isPressed, !wasPressed {
             handler()
         }
@@ -59,14 +93,9 @@ final class HerdrDualCommandShortcut {
 
     /// Generation-checking makes stale callbacks inert after unregister or a
     /// later registration.
-    func sampleCurrentFlags(ifRegistrationGeneration generation: Int) {
+    func sampleCurrentState(ifRegistrationGeneration generation: Int) {
         guard timer != nil, registrationGeneration == generation else { return }
-        sample(flags: flagsProvider())
-    }
-
-    private static func isChordPressed(_ flags: UInt) -> Bool {
-        let chordMask = leftCommandMask | rightCommandMask
-        return flags & chordMask == chordMask
+        sample(state: stateProvider())
     }
 
     isolated deinit {

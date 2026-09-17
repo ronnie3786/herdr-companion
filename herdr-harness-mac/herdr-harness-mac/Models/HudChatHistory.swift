@@ -7,6 +7,7 @@ struct HudChatSummary: Decodable, Identifiable, Sendable {
     let latestRunId: String
     let turnCount: Int
     let status: HeadlessAgentRunStatus
+    let cwd: String?
     let sessionId: String?
     let promotedPaneId: String?
 }

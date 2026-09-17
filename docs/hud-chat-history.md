@@ -3,7 +3,59 @@
 HUD action conversations use the additive `hud-chat-v1` agent-run profile. They
 stay outside Herdr terminal workspaces until **Continue in agent** promotes their
 actual Pi session, including all turns. Closing the HUD, starting a new chat, or
-restarting the app/server does not expire or delete these conversations.
+restarting the app/server does not expire or delete these conversations. Mac and
+iOS read and continue the same saved conversations on the selected companion.
+
+## Saved HUD chats on iPhone and iPad
+
+Open **Agents → HUD Chats**, then choose the machine that owns the conversation.
+Search the saved catalog, load older results, and open a chat to read its turns,
+working folder, replies, and tool activity. Reply there to continue the same Pi
+session, or create a **New chat** without opening a terminal workspace. Choose the
+machine, model, thinking level, and home folder (`~`) or an absolute folder path
+on that machine before sending a new chat.
+
+Closing a chat, switching screens, or starting another chat does not stop or delete
+it. The companion keeps executing an accepted run while the phone is asleep or
+away; reopening fetches its saved progress without sending the prompt again.
+**Stop** explicitly cancels the active turn and leaves the history available.
+A conversation already promoted to a workspace opens that existing pane instead
+of silently creating another headless thread.
+
+### What sync means
+
+- The selected companion is authoritative for accepted prompts, replies, tool
+  activity, running status, and the conversation's original working folder.
+- Mac **Chat history** and iOS **HUD Chats** show the same catalog when connected
+  to the same machine. New iOS chats are discoverable from Mac history; they do
+  not automatically open a HUD bubble or take keyboard focus.
+- Visible conversations refresh from the server. Refreshing before a reply avoids
+  continuing a stale turn; concurrent writers still receive a conflict rather
+  than forking or resending automatically. Failed sends keep the draft available.
+- Each configured machine owns its own catalog. Choosing another machine does not
+  move a conversation or copy its Pi session to that computer. Both apps must be
+  paired with the machine and able to reach its authenticated companion.
+- Unsent drafts, attachment selections, custom-folder shortcuts, bubble placement,
+  and unread UI preferences remain local. They are not a cross-device draft sync.
+- Offline clients cannot submit a reply. An error or cached transcript is not
+  evidence that a server run has stopped; reconnect to obtain its current state.
+
+## Working folders and compatibility
+
+New chats default to the selected server account's home folder. Custom paths are
+validated and resolved on that server, never against the phone's filesystem or a
+different Mac's home directory. Paths with spaces are ordinary path strings, not
+shell commands. A missing folder or a file in place of a directory is an error;
+Herdr does not create the folder or silently fall back to home. Existing chats
+keep their original canonical folder, including when continued on another device.
+
+Custom-folder submissions require a companion advertising
+`hudChatWorkingDirectory: true` from the agent-run capabilities endpoint. Older
+servers may support saved HUD chats but reject `cwd`; updated clients explain that
+a server update is needed before sending a new custom-folder chat. Home-folder
+chats remain compatible with existing `hud-chat-v1` servers. The Mac updater does
+not install this server fix: update the companion package separately on each
+machine where custom-folder chats should run.
 
 ## Independent one-off chats on Mac
 
@@ -61,8 +113,9 @@ unfinished cached chat cannot reconnect, it says **Reconnect to check status** a
 blocks a stale follow-up until the server confirms its state. Unsent drafts and
 quote chips are retained per chat in memory, not synced or restored after quit.
 
-The UI is Mac-only and uses the existing `hud-chat-v1` contract; it does not require
-a new server, iOS, web, or Pi extension release when that profile is already installed.
+The floating bubbles and their layout remain Mac-only. iOS uses its own saved-chat
+browser with the same `hud-chat-v1` history and continuation contract. Custom
+working folders require the additive server capability described above.
 
 ## Find and resume a chat
 
@@ -78,7 +131,11 @@ machine selects a different catalog. Active runs reopened from history are polle
 without resubmitting their prompts. An active append or handoff blocks another
 writer; stale continuation IDs fail explicitly rather than silently starting a
 fresh conversation. A missing working directory/session produces an error without
-removing saved history. Failed/cancelled turns remain in history.
+removing saved history. Failed/cancelled turns remain in history. On Mac, explicitly
+retrying an accepted failed turn appends the instruction to that same saved thread
+from its latest turn; it does not create an unrelated hidden conversation. A failed
+submission that was never accepted can retry as a new root. If the saved Pi session
+is missing, start an explicit new chat instead of silently forking the old one.
 
 **New chat** switches to the fresh composer without calling DELETE. Each previous
 chat keeps its own draft and unsent quote chips in memory. The local recent-transcript
@@ -144,7 +201,11 @@ Authenticated endpoints:
 
 - `GET /api/v1/agent-runs/capabilities` advertises the profile and retention policy.
 - `POST /api/v1/agent-runs` with `profile: "hud-chat-v1"`, `mode: "act"`, and existing
-  prompt/model/attachment/continuation fields starts or appends a HUD run.
+  prompt/model/attachment/continuation fields starts or appends a HUD run. With
+  `hudChatWorkingDirectory` support, an optional `cwd` chooses a new chat's folder;
+  a continuation cannot change its original folder. Public HUD runs and catalog
+  entries include the canonical `cwd` when supported. Clients decode it optionally
+  for compatibility with existing servers.
 - `GET /api/v1/hud-chats?q=...&offset=0` searches the catalog.
 - `GET /api/v1/hud-chats/{runId}?offset=0` reads ordered history.
 - `POST /api/v1/hud-chats/{runId}` with an empty body saves a still-present legacy
@@ -159,9 +220,11 @@ Install the updated companion server and its matching CLIs/Pi package before usi
 new HUD submissions. See the root README for independent server updates and the Pi
 package README for upgrading running sessions. An old server cannot guarantee
 retention or normal Pi access; the Mac app asks for an upgrade rather than silently
-creating an expiring chat. Other Mac-only UI improvements work with existing servers.
-The iOS and web API contracts are unchanged; contextual questions keep their
-`contextual-question-v1` supplied-context-only/no-tools profile and rolling expiry.
+creating an expiring chat. Saved history on iOS requires `hud-chat-v1`; custom
+folders additionally require `hudChatWorkingDirectory`. The web and Pi contracts
+remain compatible. Contextual questions keep their `contextual-question-v1`
+supplied-context-only/no-tools profile and rolling expiry; HUD path selection does
+not override their scope.
 
 HUD action runs load ordinary Pi tools, configured skills/extensions/prompt templates,
 and AGENTS context. Herdr does not sandbox them or force a read-only tool allowlist.

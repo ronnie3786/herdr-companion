@@ -87,6 +87,131 @@ struct HerdrHudChatsTests {
         #expect(chats.composer.workingDirectory == nil)
     }
 
+    @Test("Older servers reject custom folders without consuming local input")
+    func customFolderRequiresCapabilityAndPreservesInput() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        let customPath = "/synthetic/remote/requires-upgrade"
+        _ = try session.addCustomWorkingFolder(path: customPath, machineID: "synthetic")
+        let attachmentURL = fixture.directory.appendingPathComponent("draft.txt")
+        try FileManager.default.createDirectory(at: fixture.directory, withIntermediateDirectories: true)
+        try Data("Synthetic draft".utf8).write(to: attachmentURL)
+        session.addAttachments([attachmentURL])
+        session.addQuote(ChatQuote(text: "Keep this quote", comment: "Use it", source: "synthetic"))
+        session.draft = "Keep this draft"
+        HudChatsURLProtocol.state.withLock { $0.hudChatWorkingDirectory = false }
+
+        await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) }
+
+        #expect(fixture.chats.composer === session)
+        #expect(fixture.chats.visibleChats.isEmpty)
+        #expect(session.draft == "Keep this draft")
+        #expect(session.pendingAttachments.count == 1)
+        #expect(session.pendingQuotes.count == 1)
+        #expect(session.validationError?.contains("Update") == true)
+        #expect(HudChatsURLProtocol.state.withLock { $0.starts.isEmpty })
+    }
+
+    @Test("Rapid custom-folder sends have one preflight owner and one POST")
+    func rapidDoubleSendDuringCapabilityPreflight() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        _ = try session.addCustomWorkingFolder(path: "/synthetic/remote/serialized", machineID: "synthetic")
+        session.draft = "Send only once"
+        HudChatsURLProtocol.state.withLock { $0.delayNextCapabilities = true }
+
+        let first = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { HudChatsURLProtocol.state.withLock { $0.capabilityRequestCount == 1 } }
+        let second = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        await second.value
+        #expect(HudChatsURLProtocol.state.withLock { $0.capabilityRequestCount } == 1)
+        #expect(HudChatsURLProtocol.state.withLock { $0.starts.isEmpty })
+
+        HudChatsURLProtocol.releaseCapabilities()
+        try await wait { HudChatsURLProtocol.state.withLock { $0.starts.count == 1 } }
+        let runID = try #require(HudChatsURLProtocol.state.withLock { $0.starts.first?.id })
+        HudChatsURLProtocol.finish(runID)
+        await first.value
+        #expect(HudChatsURLProtocol.state.withLock { $0.starts.count } == 1)
+    }
+
+    @Test("Composer edits made during preflight are not consumed")
+    func editDuringCapabilityPreflightIsPreserved() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        _ = try session.addCustomWorkingFolder(path: "/synthetic/remote/edit-safe", machineID: "synthetic")
+        session.draft = "Original snapshot"
+        HudChatsURLProtocol.state.withLock { $0.delayNextCapabilities = true }
+
+        let task = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { HudChatsURLProtocol.state.withLock { $0.capabilityRequestCount == 1 } }
+        let attachmentURL = fixture.directory.appendingPathComponent("added-during-preflight.txt")
+        try FileManager.default.createDirectory(at: fixture.directory, withIntermediateDirectories: true)
+        try Data("Synthetic later attachment".utf8).write(to: attachmentURL)
+        session.draft = "Replacement draft"
+        session.addAttachments([attachmentURL])
+        session.addQuote(ChatQuote(text: "Later quote", comment: "Keep", source: "synthetic"))
+
+        HudChatsURLProtocol.releaseCapabilities()
+        try await wait { HudChatsURLProtocol.state.withLock { $0.starts.count == 1 } }
+        let start = try #require(HudChatsURLProtocol.state.withLock { $0.starts.first })
+        #expect(start.prompt == "Original snapshot")
+        #expect(session.draft == "Replacement draft")
+        #expect(session.pendingAttachments.count == 1)
+        #expect(session.pendingQuotes.count == 1)
+        HudChatsURLProtocol.finish(start.id)
+        await task.value
+    }
+
+    @Test("Cancelling delayed preflight releases ownership without posting")
+    func cancellationReleasesSubmissionOwnership() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        _ = try session.addCustomWorkingFolder(path: "/synthetic/remote/cancel-safe", machineID: "synthetic")
+        session.draft = "Keep after cancellation"
+        HudChatsURLProtocol.state.withLock { $0.delayNextCapabilities = true }
+
+        let task = Task { await session.submit(model: fixture.model) }
+        try await wait { HudChatsURLProtocol.state.withLock { $0.capabilityRequestCount == 1 } }
+        await session.stop(model: fixture.model)
+        HudChatsURLProtocol.releaseCapabilities()
+        await task.value
+
+        #expect(!session.isRunning)
+        #expect(session.draft == "Keep after cancellation")
+        #expect(HudChatsURLProtocol.state.withLock { $0.starts.isEmpty })
+    }
+
+    @Test("Existing custom-folder roots continue without cwd capability or cwd payload")
+    func customFolderContinuationOmitsWorkingDirectory() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        let canonicalPath = "/Users/example/synthetic-project"
+        _ = try session.addCustomWorkingFolder(path: canonicalPath, machineID: "synthetic")
+        session.draft = "Create the saved root"
+        let first = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        let root = try #require(session.thread?.rootRunID)
+        HudChatsURLProtocol.finish(root)
+        await first.value
+
+        HudChatsURLProtocol.state.withLock { $0.hudChatWorkingDirectory = false }
+        session.draft = "Continue on an older compatible server"
+        let continuation = Task { await session.submit(model: fixture.model) }
+        try await wait { HudChatsURLProtocol.state.withLock { $0.starts.count == 2 } }
+        let second = try #require(HudChatsURLProtocol.state.withLock { $0.starts.last })
+        #expect(second.parent == root)
+        #expect(second.cwd == nil)
+        HudChatsURLProtocol.finish(second.id)
+        await continuation.value
+        #expect(session.selectedWorkingFolder.path == canonicalPath)
+    }
+
     @Test("History turns retain their original working folder")
     func historyRetainsWorkingFolder() async throws {
         let fixture = try Fixture()
@@ -127,7 +252,8 @@ struct HerdrHudChatsTests {
         await task.value
 
         let summary = HudChatSummary(id: rootID, title: "Remember this folder", updatedAt: "2026-09-01T12:00:00Z",
-                                     latestRunId: rootID, turnCount: 1, status: .completed, sessionId: nil, promotedPaneId: nil)
+                                     latestRunId: rootID, turnCount: 1, status: .completed, cwd: customPath,
+                                     sessionId: nil, promotedPaneId: nil)
         try await fixture.chats.dismiss(chatID, model: fixture.model)
         let reopenedID = try await fixture.chats.openHistory(summary, machineID: "synthetic", model: fixture.model)
         let reopened = try #require(fixture.chats.chats.first { $0.id == reopenedID })
@@ -145,7 +271,8 @@ struct HerdrHudChatsTests {
         let runID = try #require(submitted.thread?.rootRunID)
         let chatID = try #require(fixture.chats.visibleChats.first?.id)
         let summary = HudChatSummary(id: runID, title: "Reading nook", updatedAt: "2026-09-01T12:00:00Z",
-                                     latestRunId: runID, turnCount: 1, status: .running, sessionId: nil, promotedPaneId: nil)
+                                     latestRunId: runID, turnCount: 1, status: .running, cwd: nil,
+                                     sessionId: nil, promotedPaneId: nil)
         let reopened = try await fixture.chats.openHistory(summary, machineID: "synthetic", model: fixture.model)
         #expect(reopened == chatID)
         #expect(fixture.chats.visibleChats.count == 1)
@@ -171,6 +298,257 @@ struct HerdrHudChatsTests {
         let afterDismiss = HerdrHudChats(legacySession: fixture.prototype, defaults: fixture.defaults)
         await afterDismiss.restore(model: fixture.model)
         #expect(afterDismiss.visibleChats.isEmpty)
+    }
+
+    @Test("Visible and pre-submit refreshes adopt remote turns without replacing local input")
+    func crossDeviceRefreshPreservesComposerAndPreflightsContinuation() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        let initialAttachmentURL = fixture.directory.appendingPathComponent("accepted-local-metadata.txt")
+        try FileManager.default.createDirectory(at: fixture.directory, withIntermediateDirectories: true)
+        try Data("Synthetic accepted metadata".utf8).write(to: initialAttachmentURL)
+        session.addAttachments([initialAttachmentURL])
+        session.draft = "Initial turn"
+        let firstTask = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        let root = try #require(session.thread?.rootRunID)
+        HudChatsURLProtocol.finish(root)
+        await firstTask.value
+        session.isCollapsed = false
+        session.markSeen()
+
+        let attachmentURL = fixture.directory.appendingPathComponent("remote-refresh.txt")
+        try FileManager.default.createDirectory(at: fixture.directory, withIntermediateDirectories: true)
+        try Data("Synthetic attachment".utf8).write(to: attachmentURL)
+        session.addAttachments([attachmentURL])
+        session.addQuote(ChatQuote(text: "Quoted detail", comment: "Preserve", source: "synthetic"))
+        session.draft = "Local unsent reply"
+        let remote = HudChatsURLProtocol.appendExternal(root: root, prompt: "Reply from iPhone")
+
+        #expect(await session.refreshSavedHistory(model: fixture.model))
+        #expect(session.thread?.rootRunID == root)
+        #expect(session.thread?.lastRunID == remote)
+        #expect(session.exchanges.map(\.prompt) == ["Initial turn", "Reply from iPhone"])
+        #expect(session.exchanges.first?.localAttachments.count == 1)
+        #expect(session.draft == "Local unsent reply")
+        #expect(session.pendingAttachments.count == 1)
+        #expect(session.pendingQuotes.count == 1)
+        #expect(!session.hasUnseenAnswer)
+
+        let newerRemote = HudChatsURLProtocol.appendExternal(root: root, prompt: "Another device reply")
+        let localTask = Task { await session.submit(model: fixture.model) }
+        try await wait { HudChatsURLProtocol.state.withLock { $0.starts.count == 4 } }
+        let local = try #require(HudChatsURLProtocol.state.withLock { $0.starts.last })
+        #expect(local.parent == newerRemote)
+        #expect(local.root == root)
+        #expect(session.pendingAttachments.isEmpty)
+        #expect(session.pendingQuotes.isEmpty)
+        HudChatsURLProtocol.finish(local.id)
+        await localTask.value
+    }
+
+    @Test("Unchanged passive refresh preserves client errors and local attachment metadata")
+    func unchangedPassiveRefreshIsNonDestructive() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        let attachmentURL = fixture.directory.appendingPathComponent("local-metadata.txt")
+        try FileManager.default.createDirectory(at: fixture.directory, withIntermediateDirectories: true)
+        try Data("Synthetic metadata".utf8).write(to: attachmentURL)
+        session.addAttachments([attachmentURL])
+        session.draft = "Keep local attachment metadata"
+        let task = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        let root = try #require(session.thread?.rootRunID)
+        HudChatsURLProtocol.finish(root)
+        await task.value
+        let revision = session.exchangesRevision
+        session.reportAttachmentError("Actionable local error")
+
+        #expect(await session.refreshSavedHistoryPassivelyForTesting(model: fixture.model))
+
+        #expect(session.exchangesRevision == revision)
+        #expect(session.validationError == "Actionable local error")
+        #expect(session.exchanges.first?.localAttachments.count == 1)
+        #expect(HudChatsURLProtocol.state.withLock { $0.historyRequestCount } == 1)
+    }
+
+    @Test("End Chat waits for delayed continuation preflight and stops its accepted run")
+    func endDuringHistoryPreflightKeepsExclusiveOwnership() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.draft = "Create root"
+        let first = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        let root = try #require(session.thread?.rootRunID)
+        HudChatsURLProtocol.finish(root)
+        await first.value
+
+        HudChatsURLProtocol.state.withLock { $0.delayNextHistory = true }
+        session.draft = "Continuation under end ownership"
+        let submission = Task { await session.submit(model: fixture.model) }
+        try await wait { HudChatsURLProtocol.state.withLock { $0.historyRequestCount == 1 } }
+        let duplicate = Task { await session.submit(model: fixture.model) }
+        await duplicate.value
+        #expect(HudChatsURLProtocol.state.withLock { $0.starts.count } == 1)
+        let ending = Task { try await session.endChat(model: fixture.model) }
+        HudChatsURLProtocol.releaseHistory()
+
+        try await ending.value
+        await submission.value
+        #expect(session.hasEnded)
+        #expect(HudChatsURLProtocol.state.withLock { $0.starts.count } == 2)
+        #expect(session.exchanges.last?.status == .cancelled)
+    }
+
+    @Test("Retrying an accepted failed turn appends to its freshest saved root")
+    func acceptedFailedRetryContinuesRoot() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.draft = "Accepted request that fails"
+        let first = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        let root = try #require(session.thread?.rootRunID)
+        HudChatsURLProtocol.fail(root)
+        await first.value
+        let failed = try #require(session.exchanges.last)
+        #expect(failed.id == root)
+        #expect(failed.status == .failed)
+
+        let retry = Task { await session.retry(failed, model: fixture.model) }
+        try await wait { HudChatsURLProtocol.state.withLock { $0.starts.count == 2 } }
+        let acceptedRetry = try #require(HudChatsURLProtocol.state.withLock { $0.starts.last })
+        #expect(acceptedRetry.parent == root)
+        #expect(acceptedRetry.cwd == nil)
+        HudChatsURLProtocol.finish(acceptedRetry.id)
+        await retry.value
+        #expect(session.thread?.lastRunID == acceptedRetry.id)
+    }
+
+    @Test("Retry continues the saved root and remains authoritative after passive refresh")
+    func retryContinuesSavedRootAndSurvivesRefresh() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.draft = "Create root"
+        let first = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        let root = try #require(session.thread?.rootRunID)
+        HudChatsURLProtocol.finish(root)
+        await first.value
+
+        session.draft = "Retry this accepted intent"
+        HudChatsURLProtocol.state.withLock { $0.rejectNextStart = true }
+        await session.submit(model: fixture.model)
+        let failed = try #require(session.exchanges.last { $0.id.hasPrefix("hud-pending-") })
+        session.draft = "Unrelated draft"
+        let unrelatedAttachmentURL = fixture.directory.appendingPathComponent("unrelated-retry-draft.txt")
+        try FileManager.default.createDirectory(at: fixture.directory, withIntermediateDirectories: true)
+        try Data("Synthetic unrelated attachment".utf8).write(to: unrelatedAttachmentURL)
+        session.addAttachments([unrelatedAttachmentURL])
+        session.addQuote(ChatQuote(text: "Unrelated quote", comment: "Keep", source: "synthetic"))
+
+        let retry = Task { await session.retry(failed, model: fixture.model) }
+        try await wait { HudChatsURLProtocol.state.withLock { $0.starts.count == 2 } }
+        let retried = try #require(HudChatsURLProtocol.state.withLock { $0.starts.last })
+        #expect(retried.parent == root)
+        #expect(retried.cwd == nil)
+        HudChatsURLProtocol.finish(retried.id)
+        await retry.value
+        #expect(session.draft == "Unrelated draft")
+        #expect(session.pendingAttachments.count == 1)
+        #expect(session.pendingQuotes.count == 1)
+
+        #expect(await session.refreshSavedHistoryPassivelyForTesting(model: fixture.model))
+        #expect(session.thread?.lastRunID == retried.id)
+        #expect(session.exchanges.contains(where: { $0.id == retried.id }))
+
+        session.draft = "Continue after explicit retry"
+        let continuation = Task { await session.submit(model: fixture.model) }
+        try await wait { HudChatsURLProtocol.state.withLock { $0.starts.count == 3 } }
+        let next = try #require(HudChatsURLProtocol.state.withLock { $0.starts.last })
+        #expect(next.parent == retried.id)
+        HudChatsURLProtocol.finish(next.id)
+        await continuation.value
+    }
+
+    @Test("Retrying an unaccepted first turn adopts its returned root")
+    func preAcceptanceRetryAdoptsRoot() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.draft = "Initial start can fail"
+        HudChatsURLProtocol.state.withLock { $0.rejectNextStart = true }
+        await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) }
+        let failed = try #require(session.exchanges.last)
+        #expect(failed.id.hasPrefix("hud-pending-"))
+        #expect(session.thread == nil)
+        session.draft = "Unrelated draft"
+
+        let retry = Task { await session.retry(failed, model: fixture.model) }
+        try await wait { HudChatsURLProtocol.state.withLock { $0.starts.count == 1 } }
+        let accepted = try #require(HudChatsURLProtocol.state.withLock { $0.starts.first })
+        HudChatsURLProtocol.finish(accepted.id)
+        await retry.value
+
+        #expect(session.thread?.rootRunID == accepted.id)
+        #expect(session.thread?.lastRunID == accepted.id)
+        #expect(session.draft == "Unrelated draft")
+        #expect(session.exchanges.contains(where: { $0.id == accepted.id }))
+    }
+
+    @Test("Accepted failed turns without a saved root require New chat")
+    func acceptedRetryWithoutThreadDoesNotFork() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        let accepted = HerdrHudExchange(
+            id: "agr_accepted001",
+            machineID: "synthetic",
+            prompt: "Accepted request",
+            sentPrompt: "Accepted request",
+            response: nil,
+            error: "Synthetic server failure",
+            status: .failed,
+            costUSD: nil,
+            createdAt: .now,
+            promotedPaneID: nil,
+            attachmentFilenames: []
+        )
+        session.seedExchangesForTesting([accepted])
+
+        await session.retry(accepted, model: fixture.model)
+
+        #expect(session.validationError?.contains("Start a new chat") == true)
+        #expect(HudChatsURLProtocol.state.withLock { $0.starts.isEmpty })
+    }
+
+    @Test("A cross-device append conflict refreshes without resubmitting the preserved draft")
+    func appendConflictRefreshesWithoutRetry() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.draft = "Initial turn"
+        let firstTask = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        let root = try #require(session.thread?.rootRunID)
+        HudChatsURLProtocol.finish(root)
+        await firstTask.value
+        session.isCollapsed = false
+        session.draft = "Preserve this continuation"
+        HudChatsURLProtocol.state.withLock { $0.conflictNextStart = true }
+
+        await session.submit(model: fixture.model)
+
+        try await wait { session.thread?.lastRunID != root }
+        #expect(session.exchanges.last?.prompt == "Conflicting device reply")
+        #expect(session.draft == "Preserve this continuation")
+        #expect(session.validationError?.contains("changed on another device") == true)
+        #expect(HudChatsURLProtocol.state.withLock { $0.starts.count } == 2)
+        #expect(!session.isRunning)
     }
 
     @Test("Offline restored runs cannot submit a stale continuation")
@@ -271,7 +649,8 @@ struct HerdrHudChatsTests {
         #expect(HudChatsURLProtocol.state.withLock { $0.starts.count } == 2)
 
         let summary = HudChatSummary(id: root, title: "Plan a picnic", updatedAt: "2026-09-01T12:00:00Z",
-                                     latestRunId: root, turnCount: 1, status: .cancelled, sessionId: nil, promotedPaneId: nil)
+                                     latestRunId: root, turnCount: 1, status: .cancelled, cwd: nil,
+                                     sessionId: nil, promotedPaneId: nil)
         let reopenedID = try await chats.openHistory(summary, machineID: "synthetic", model: fixture.model)
         let reopened = try #require(chats.chats.first { $0.id == reopenedID })
         #expect(reopened.id != firstChat.id)
@@ -439,6 +818,7 @@ private final class HudChatsURLProtocol: URLProtocol {
     struct Start: Sendable {
         let id: String
         let root: String
+        let parent: String?
         let prompt: String
         let cwd: String?
         let profile: String
@@ -449,9 +829,41 @@ private final class HudChatsURLProtocol: URLProtocol {
         var deleteCount = 0
         var rejectNextCancellation = false
         var rejectNextStart = false
+        var conflictNextStart = false
+        var hudChatWorkingDirectory = true
+        var capabilityRequestCount = 0
+        var historyRequestCount = 0
+        var delayNextCapabilities = false
+        var delayNextHistory = false
+        let capabilitiesGate = DispatchSemaphore(value: 0)
+        let historyGate = DispatchSemaphore(value: 0)
     }
     static let state = Mutex(State())
     static func finish(_ id: String) { state.withLock { $0.statuses[id] = "completed" } }
+    static func fail(_ id: String) { state.withLock { $0.statuses[id] = "failed" } }
+    static func releaseCapabilities() {
+        state.withLock { state in
+            state.delayNextCapabilities = false
+            state.capabilitiesGate.signal()
+        }
+    }
+    static func releaseHistory() {
+        state.withLock { state in
+            state.delayNextHistory = false
+            state.historyGate.signal()
+        }
+    }
+    @discardableResult
+    static func appendExternal(root: String, prompt: String, cwd: String? = nil) -> String {
+        state.withLock { state in
+            let id = String(format: "agr_%012d", state.starts.count + 1)
+            let parent = state.starts.last(where: { $0.root == root })?.id
+            state.starts.append(Start(id: id, root: root, parent: parent, prompt: prompt,
+                                      cwd: cwd, profile: "hud-chat-v1"))
+            state.statuses[id] = "completed"
+            return id
+        }
+    }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -460,6 +872,25 @@ private final class HudChatsURLProtocol: URLProtocol {
     override func startLoading() {
         guard let url = request.url else { return }
         let body = requestBody()
+        let gate = Self.state.withLock { state -> DispatchSemaphore? in
+            let path = url.path
+            if path.hasSuffix("/capabilities") {
+                state.capabilityRequestCount += 1
+                if state.delayNextCapabilities {
+                    state.delayNextCapabilities = false
+                    return state.capabilitiesGate
+                }
+            }
+            if path.contains("/hud-chats/"), request.httpMethod == "GET" {
+                state.historyRequestCount += 1
+                if state.delayNextHistory {
+                    state.delayNextHistory = false
+                    return state.historyGate
+                }
+            }
+            return nil
+        }
+        gate?.wait()
         let payload = Self.state.withLock { state -> (Int, Data) in
             let path = url.path
             if path.hasSuffix("/cancel"), state.rejectNextCancellation {
@@ -470,16 +901,30 @@ private final class HudChatsURLProtocol: URLProtocol {
                 state.rejectNextStart = false
                 return (429, Data(#"{"ok":false,"error":{"message":"Synthetic capacity limit"}}"#.utf8))
             }
+            if path == "/api/v1/agent-runs", request.httpMethod == "POST", state.conflictNextStart {
+                state.conflictNextStart = false
+                let input = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
+                let parent = input["continueFromRunId"] as? String
+                let root = state.starts.first(where: { $0.id == parent })?.root ?? parent ?? "agr_000000000001"
+                let id = String(format: "agr_%012d", state.starts.count + 1)
+                state.starts.append(Start(id: id, root: root, parent: parent,
+                                          prompt: "Conflicting device reply", cwd: input["cwd"] as? String,
+                                          profile: "hud-chat-v1"))
+                state.statuses[id] = "completed"
+                return (409, Data(#"{"ok":false,"error":{"message":"This chat has a newer reply."}}"#.utf8))
+            }
             var response: [String: Any] = ["ok": true]
             if request.httpMethod == "DELETE" { state.deleteCount += 1 }
             if path.hasSuffix("/capabilities") {
                 response["profiles"] = ["hud-chat-v1"]
+                response["hudChatWorkingDirectory"] = state.hudChatWorkingDirectory
             } else if path == "/api/v1/agent-runs", request.httpMethod == "POST" {
                 let input = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
                 let id = String(format: "agr_%012d", state.starts.count + 1)
                 let prior = input["continueFromRunId"] as? String
                 let root = state.starts.first { $0.id == prior }?.root ?? id
-                let start = Start(id: id, root: root, prompt: input["prompt"] as? String ?? "",
+                let start = Start(id: id, root: root, parent: prior,
+                                  prompt: input["prompt"] as? String ?? "",
                                   cwd: input["cwd"] as? String, profile: input["profile"] as? String ?? "")
                 state.starts.append(start)
                 state.statuses[id] = "running"
@@ -507,6 +952,7 @@ private final class HudChatsURLProtocol: URLProtocol {
         var run: [String: Any] = ["id": start.id, "status": state.statuses[start.id] ?? "running",
                                   "prompt": start.prompt, "createdAt": "2026-09-01T12:00:00Z",
                                   "threadRootRunId": start.root, "sessionFile": "synthetic.jsonl"]
+        if let cwd = start.cwd { run["cwd"] = cwd }
         if state.statuses[start.id] == "completed" { run["response"] = "Answer for \(start.prompt)" }
         return run
     }

@@ -302,6 +302,39 @@ actor HerdrAPIClient: FirstMateClient {
         )
     }
 
+    func fetchHudChatCapabilities() async throws -> HudChatCapabilities {
+        try await request(path: "/api/v1/agent-runs/capabilities")
+    }
+
+    func fetchHudChats(query: String, offset: Int = 0) async throws -> HudChatCatalog {
+        try await request(
+            path: "/api/v1/hud-chats",
+            query: [
+                URLQueryItem(name: "q", value: query),
+                URLQueryItem(name: "offset", value: String(offset)),
+            ]
+        )
+    }
+
+    func fetchHudChat(id: String, offset: Int = 0) async throws -> HudChatHistory {
+        try await request(
+            path: try hudChatPath(id),
+            query: [URLQueryItem(name: "offset", value: String(offset))]
+        )
+    }
+
+    func startHudChat(_ body: HudChatStartRequest) async throws -> HeadlessAgentRunEnvelope {
+        try await request(path: "/api/v1/agent-runs", method: "POST", body: body)
+    }
+
+    private func hudChatPath(_ id: String) throws -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_.:"))
+        guard !id.isEmpty, id.count <= 256, id.unicodeScalars.allSatisfy(allowed.contains) else {
+            throw APIError.invalidResponse
+        }
+        return "/api/v1/hud-chats/\(id)"
+    }
+
     func fetchHeadlessAgent(id: String) async throws -> HeadlessAgentRunEnvelope {
         try await request(path: "/api/v1/agent-runs/\(id)")
     }
@@ -755,7 +788,8 @@ actor HerdrAPIClient: FirstMateClient {
         if path == "/api/v1/agent-runs", method == "POST" {
             return 90
         }
-        if path == "/api/v1/agent-runs" || path.hasPrefix("/api/v1/agent-runs/") {
+        if path == "/api/v1/agent-runs" || path.hasPrefix("/api/v1/agent-runs/") ||
+            path == "/api/v1/hud-chats" || path.hasPrefix("/api/v1/hud-chats/") {
             return 30
         }
         if method == "GET" && (path.hasSuffix("events") || path.hasSuffix("stream")) {

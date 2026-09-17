@@ -8,16 +8,43 @@ from .agent_runs import AgentRunError, TERMINAL_STATUSES
 PROFILE = "hud-chat-v1"
 
 
-def fail(message: str, code: str = "hud_chat_conflict") -> None:
-    raise AgentRunError(message, code=code, status=409)
+def fail(message: str, code: str = "hud_chat_conflict", status: int = 409) -> None:
+    raise AgentRunError(message, code=code, status=status)
+
+
+def canonical_directory(manager, value: object) -> str:
+    """Resolve a HUD directory on the server without interpreting client paths."""
+    if not isinstance(value, str) or not value or "\x00" in value:
+        fail("HUD chat cwd is invalid.", "invalid_agent_cwd", 400)
+    if value == "~":
+        value = manager.environ.get("HOME") or str(Path.home())
+    elif not Path(value).is_absolute():
+        fail("HUD chat cwd must be an absolute path.", "invalid_agent_cwd", 400)
+    try:
+        directory = Path(value).resolve()
+    except (OSError, RuntimeError, TypeError) as exc:
+        raise AgentRunError(
+            "HUD chat cwd is unavailable.", code="invalid_agent_cwd", status=400
+        ) from exc
+    if not directory.is_dir():
+        fail("HUD chat cwd must be an existing directory.", "invalid_agent_cwd", 400)
+    return str(directory)
 
 
 def start(manager, **arguments) -> dict:
     """Serialize appends with promotion/deletion. Never silently fork a HUD chat."""
     if arguments.get("mode") != "act":
         fail("HUD chats must use action mode.")
+    cwd_explicit = arguments.pop("_cwd_explicit", "cwd" in arguments)
+    parent = arguments.get("continue_from_run_id")
+    requested_cwd = (
+        canonical_directory(manager, arguments.get("cwd"))
+        if cwd_explicit or parent is None
+        else None
+    )
+    if requested_cwd is not None:
+        arguments["cwd"] = requested_cwd
     with manager._lock:
-        parent = arguments.get("continue_from_run_id")
         sequence = 0
         if parent:
             referenced = manager._read(parent)
@@ -32,8 +59,10 @@ def start(manager, **arguments) -> dict:
             latest = max(members, key=sort_key)
             if latest["id"] != parent:
                 fail("This chat has a newer reply. Reopen it from HUD history.")
-            if not Path(root.get("cwd") or "").is_dir():
-                fail("This chat’s working folder is no longer available.")
+            root_cwd = canonical_directory(manager, root.get("cwd"))
+            if cwd_explicit and requested_cwd != root_cwd:
+                fail("This HUD chat must continue in its original working folder.")
+            arguments["cwd"] = root_cwd
             if manager._find_session_file(root) is None:
                 fail("The saved Pi session is missing. History is preserved; start a new chat.")
             sequence = latest.get("hudSequence", 0) + 1
@@ -96,7 +125,7 @@ def catalog(manager, query: str = "", offset: int = 0) -> dict:
                             "updatedAt": latest.get("finishedAt") or latest["createdAt"],
                             "latestRunId": latest["id"], "turnCount": len(members),
                             "status": "promoted" if promoted else latest["status"],
-                            "sessionId": root.get("sessionId"),
+                            "cwd": root.get("cwd"), "sessionId": root.get("sessionId"),
                             "promotedPaneId": promoted.get("promotedPaneId") if promoted else None})
         matches.sort(key=lambda r: (r["updatedAt"], r["id"]), reverse=True)
         return {"ok": True, "chats": matches[offset:offset + 50],

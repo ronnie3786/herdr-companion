@@ -4,7 +4,7 @@ import os
 
 @MainActor
 @Observable
-final class HerdrAppModel {
+final class HerdrAppModel: HudChatTransport {
     struct MachineRuntime {
         var client: HerdrAPIClient?
         var connection: ActiveServerConnection?
@@ -28,6 +28,7 @@ final class HerdrAppModel {
     var connectionState: ConnectionState = .disconnected
     var selectedTab: AppTab = .workspaces
     let firstMate = FirstMateStore()
+    let hudChats = HudChatStore()
     private(set) var firstMateMachineID = ""
     @ObservationIgnored private var firstMateIdentity: FirstMateConnectionIdentity?
     var selectedWorkspaceID: String?
@@ -1328,6 +1329,57 @@ final class HerdrAppModel {
             throw APIError.noActiveConnection(machineID: machineName(machineID))
         }
         return try await client.fetchAgentModels()
+    }
+
+    func fetchHudChatCapabilities(machineID: String) async throws -> HudChatCapabilities {
+        guard canControl(machineID: machineID), let client = client(forMachine: machineID) else {
+            throw APIError.noActiveConnection(machineID: machineName(machineID))
+        }
+        return try await client.fetchHudChatCapabilities()
+    }
+
+    func fetchHudChatCatalog(machineID: String, query: String, offset: Int) async throws -> HudChatCatalog {
+        guard canControl(machineID: machineID), let client = client(forMachine: machineID) else {
+            throw APIError.noActiveConnection(machineID: machineName(machineID))
+        }
+        return try await client.fetchHudChats(query: query, offset: offset)
+    }
+
+    func fetchHudChatHistory(machineID: String, id: String, offset: Int) async throws -> HudChatHistory {
+        guard canControl(machineID: machineID), let client = client(forMachine: machineID) else {
+            throw APIError.noActiveConnection(machineID: machineName(machineID))
+        }
+        return try await client.fetchHudChat(id: id, offset: offset)
+    }
+
+    func startHudChat(
+        machineID: String,
+        prompt: String,
+        cwd: String?,
+        model: String?,
+        thinkingLevel: String?,
+        continueFromRunId: String?
+    ) async throws -> HeadlessAgentRun {
+        guard canControl(machineID: machineID), let client = client(forMachine: machineID) else {
+            throw APIError.noActiveConnection(machineID: machineName(machineID))
+        }
+        return try await client.startHudChat(
+            HudChatStartRequest(
+                prompt: prompt,
+                cwd: cwd,
+                model: model,
+                thinkingLevel: thinkingLevel,
+                continueFromRunId: continueFromRunId
+            )
+        ).run
+    }
+
+    func stopHudChat(machineID: String, runID: String) async throws -> HeadlessAgentRun {
+        try await cancelHeadlessAgent(runID: runID, machineID: machineID)
+    }
+
+    func fetchHudChatModels(machineID: String) async throws -> AgentModelCatalogResponse {
+        try await fetchAgentModels(machineID: machineID)
     }
 
     private func machineName(_ machineID: String) -> String {

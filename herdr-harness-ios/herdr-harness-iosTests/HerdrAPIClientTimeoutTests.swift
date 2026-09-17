@@ -23,6 +23,8 @@ struct HerdrAPIClientTimeoutTests {
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/agent-runs/run-1", method: "GET") == 30)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/agent-runs/run-1/promote", method: "POST") == 30)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/agent-runs/models", method: "GET") == 30)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/hud-chats", method: "GET") == 30)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/hud-chats/agr_root", method: "GET") == 30)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/workspaces", method: "GET") == 15)
     }
 }

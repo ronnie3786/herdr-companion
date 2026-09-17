@@ -335,6 +335,7 @@ class FakeHTTPService:
                 "model": None,
                 "thinkingLevel": None,
                 "prompt": "What changed?",
+                "cwd": "/synthetic/server/home",
                 "response": "An answer" if status in {"completed", "promoted"} else None,
                 "error": None,
                 "createdAt": "2026-08-25T00:00:00Z",
@@ -612,6 +613,14 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(self.request("/api/v1/agent-runs", method="POST", payload={**payload, "context": {}})[0], 400)
         self.assertEqual(self.request("/api/v1/agent-runs", method="POST", payload=payload)[0], 202)
         self.assertTrue(self.service.start_agent_run.call_args.kwargs["hud_chat"])
+        self.assertIsNone(self.service.start_agent_run.call_args.kwargs["cwd"])
+        custom = {**payload, "cwd": "/synthetic/project"}
+        self.assertEqual(self.request("/api/v1/agent-runs", method="POST", payload=custom)[0], 202)
+        self.assertEqual(self.service.start_agent_run.call_args.kwargs["cwd"], "/synthetic/project")
+        self.assertEqual(self.request("/api/v1/agent-runs", method="POST", payload={**payload, "cwd": "relative"})[0], 400)
+        self.assertEqual(self.request("/api/v1/agent-runs", method="POST", payload={"prompt": "Question", "cwd": "/tmp"})[0], 400)
+        contextual = {"prompt": "Explain", "profile": "contextual-question-v1", "cwd": "/tmp"}
+        self.assertEqual(self.request("/api/v1/agent-runs", method="POST", payload=contextual)[0], 400)
         with patch("herdr_harness.hud_chats.catalog", return_value={"ok": True, "chats": [], "nextOffset": None}) as catalog:
             self.assertEqual(self.request("/api/v1/hud-chats", token=None)[0], 401)
             catalog.assert_not_called()
@@ -1053,6 +1062,7 @@ class HerdrHTTPTests(unittest.TestCase):
         status, _, body = self.request("/api/v1/agent-runs/capabilities")
         self.assertEqual(status, 200)
         self.assertEqual(body["tools"], "supplied-context-only")
+        self.assertTrue(body["hudChatWorkingDirectory"])
         status, _, _ = self.request("/api/v1/agent-runs/capabilities", token="wrong")
         self.assertEqual(status, 401)
         self.service.start_contextual_question = Mock(return_value={"ok": True, "run": {"id": "agr_0123456789ab"}})
@@ -1081,6 +1091,7 @@ class HerdrHTTPTests(unittest.TestCase):
                 "model",
                 "thinkingLevel",
                 "prompt",
+                "cwd",
                 "response",
                 "error",
                 "createdAt",

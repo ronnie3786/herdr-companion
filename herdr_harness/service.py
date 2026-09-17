@@ -2756,6 +2756,7 @@ class HerdrService:
         continue_from_run_id: Optional[str] = None,
         pane_id: Optional[str] = None,
         hud_chat: bool = False,
+        cwd: Optional[str] = None,
     ) -> dict:
         display_label = (label or prompt.splitlines()[0].strip() or "One-off Agent")[:120]
         try:
@@ -2764,12 +2765,6 @@ class HerdrService:
             # A recent cached fleet summary is still useful during a brief
             # Herdr reconnect. _agent_topology will retry if no cache exists.
             pass
-        # Inline surfaces (such as the Git workbench) scope the agent to the
-        # pane's working directory instead of the server home.
-        cwd = str(self._server_home())
-        if pane_id is not None:
-            _, pane_root = self._pane_tool_context(pane_id)
-            cwd = str(pane_root)
         from . import hud_chats
         # Old HUD clients can still continue an action thread saved by the
         # migration. Question-mode requests never gain action capabilities.
@@ -2778,11 +2773,36 @@ class HerdrService:
                 hud_chat = self.agent_runs._read(continue_from_run_id).get("profile") == hud_chats.PROFILE
             except AgentRunError:
                 pass
+        if cwd is not None and not hud_chat:
+            raise AgentRunError(
+                "cwd is supported only for saved HUD chats",
+                code="invalid_agent_cwd",
+                status=400,
+            )
+        if cwd is not None and pane_id is not None:
+            raise AgentRunError(
+                "A pane-scoped Agent run cannot change its working folder",
+                code="invalid_agent_cwd",
+                status=400,
+            )
+        # Inline surfaces (such as the Git workbench) scope the agent to the
+        # pane's working directory instead of the server home. An omitted HUD
+        # continuation cwd is resolved from its root by hud_chats.start.
+        run_cwd: Optional[str]
+        if pane_id is not None:
+            _, pane_root = self._pane_tool_context(pane_id)
+            run_cwd = str(pane_root)
+        elif hud_chat and continue_from_run_id is not None and cwd is None:
+            run_cwd = None
+        else:
+            run_cwd = str(self._server_home())
+        if cwd is not None:
+            run_cwd = hud_chats.canonical_directory(self.agent_runs, cwd)
         start_run = (lambda **kwargs: hud_chats.start(self.agent_runs, **kwargs)) if hud_chat else self.agent_runs.start
         return start_run(
             prompt=prompt,
             label=display_label,
-            cwd=cwd,
+            cwd=run_cwd,
             topology=self._agent_topology(),
             mode=mode,
             model=model,
@@ -2790,6 +2810,7 @@ class HerdrService:
             attachments=attachments,
             system_prompt=system_prompt,
             continue_from_run_id=continue_from_run_id,
+            **({"_cwd_explicit": cwd is not None} if hud_chat else {}),
         )
 
     def start_contextual_question(self, request: dict) -> dict:

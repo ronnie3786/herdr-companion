@@ -15,4 +15,5 @@ struct AssistantRequest: Codable, Sendable {
 
 struct AssistantCapabilities: Decodable, Sendable {
     var profiles: [String]
+    var hudChatWorkingDirectory: Bool? = nil
 }

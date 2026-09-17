@@ -1528,6 +1528,38 @@ class AgentRunServiceTests(unittest.TestCase):
                 persisted = json.load(handle)
             self.assertEqual(persisted["cwd"], str(pane_cwd.resolve()))
 
+            home_hud = service.start_agent_run(
+                prompt="Use home", mode="act", hud_chat=True, cwd="~",
+            )["run"]
+            self.assertEqual(home_hud["cwd"], str(home.resolve()))
+            wait_for_status(manager, home_hud["id"], {"completed", "failed"})
+
+            hud_cwd = directory / "projects" / "saved-hud-chat"
+            hud_cwd.mkdir()
+            hud = service.start_agent_run(
+                prompt="Work here", mode="act", hud_chat=True, cwd=str(hud_cwd),
+            )["run"]
+            self.assertEqual(hud["cwd"], str(hud_cwd.resolve()))
+            hud = wait_for_status(manager, hud["id"], {"completed", "failed"})["run"]
+            continued = service.start_agent_run(
+                prompt="Continue here", mode="act", hud_chat=True,
+                continue_from_run_id=hud["id"],
+            )["run"]
+            self.assertEqual(continued["cwd"], str(hud_cwd.resolve()))
+            wait_for_status(manager, continued["id"], {"completed", "failed"})
+            with self.assertRaises(AgentRunError) as changed_cwd:
+                service.start_agent_run(
+                    prompt="Move elsewhere", mode="act", hud_chat=True, cwd=str(pane_cwd),
+                    continue_from_run_id=continued["id"],
+                )
+            self.assertEqual(changed_cwd.exception.status, 409)
+            with self.assertRaises(AgentRunError) as missing_cwd:
+                service.start_agent_run(
+                    prompt="Missing folder", mode="act", hud_chat=True,
+                    cwd=str(directory / "does-not-exist"),
+                )
+            self.assertEqual(missing_cwd.exception.status, 400)
+
             with self.assertRaises(workspace_tools.WorkspaceToolError) as error:
                 service.start_agent_run(prompt="Why?", pane_id="w9:missing")
             self.assertEqual(error.exception.code, "pane_not_found")

@@ -47,17 +47,57 @@ class HudChatTests(unittest.TestCase):
         root = self.complete(self.start())
         reply = self.complete(self.start(root["id"], "Use terracotta pots"))
         self.assertEqual(root["sessionId"], reply["sessionId"])
+        self.assertEqual(root["cwd"], str(self.root.resolve()))
         for run in (root, reply):
             self.manager._set(run["id"], finishedAt="2000-01-01T00:00:00Z")
         self.manager.prune()
         self.manager.stop()
         self.manager = self.make_manager()
-        self.assertEqual(hud_chats.catalog(self.manager, "TERRACOTTA")["chats"][0]["id"], root["id"])
+        catalog_item = hud_chats.catalog(self.manager, "TERRACOTTA")["chats"][0]
+        self.assertEqual(catalog_item["id"], root["id"])
+        self.assertEqual(catalog_item["cwd"], str(self.root.resolve()))
         self.assertEqual(len(hud_chats.catalog(self.manager, "not present")["chats"]), 0)
         turns = hud_chats.history(self.manager, root["id"])["turns"]
         self.assertEqual([r["id"] for r in turns], [root["id"], reply["id"]])
         self.assertTrue(Path(root["sessionFile"]).is_file())
         self.assertIsNotNone(self.complete(self.start(reply["id"]))["response"])
+
+    def test_continuation_rejects_a_changed_or_invalid_working_folder(self):
+        root = self.complete(self.start())
+        alternate = self.root / "alternate"
+        alternate.mkdir()
+        with self.assertRaises(AgentRunError) as changed:
+            hud_chats.start(
+                self.manager, prompt="Move", label="Move", cwd=str(alternate), topology={},
+                mode="act", continue_from_run_id=root["id"],
+            )
+        self.assertEqual(changed.exception.status, 409)
+        with self.assertRaises(AgentRunError) as relative:
+            hud_chats.start(
+                self.manager, prompt="Move", label="Move", cwd="relative", topology={},
+                mode="act", continue_from_run_id=root["id"],
+            )
+        self.assertEqual(relative.exception.status, 400)
+        with self.assertRaises(AgentRunError) as missing:
+            hud_chats.start(
+                self.manager, prompt="Move", label="Move", cwd=str(self.root / "missing"), topology={},
+                mode="act", continue_from_run_id=root["id"],
+            )
+        self.assertEqual(missing.exception.status, 400)
+        regular_file = self.root / "not-a-directory"
+        regular_file.write_text("synthetic")
+        for invalid_cwd in (str(regular_file), str(self.root) + "\x00suffix"):
+            with self.subTest(cwd=repr(invalid_cwd)), self.assertRaises(AgentRunError) as invalid:
+                hud_chats.start(
+                    self.manager, prompt="Move", label="Move", cwd=invalid_cwd, topology={},
+                    mode="act", continue_from_run_id=root["id"],
+                )
+            self.assertEqual(invalid.exception.status, 400)
+        inherited = self.complete(hud_chats.start(
+            self.manager, prompt="Stay", label="Stay", topology={}, mode="act",
+            continue_from_run_id=root["id"],
+        )["run"])
+        self.assertEqual(inherited["cwd"], root["cwd"])
 
     def test_no_silent_fork_stale_append_or_profile_downgrade(self):
         root = self.complete(self.start())

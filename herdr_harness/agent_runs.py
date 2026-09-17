@@ -33,6 +33,7 @@ PUBLIC_RUN_KEYS = (
     "model",
     "thinkingLevel",
     "prompt",
+    "cwd",
     "response",
     "error",
     "createdAt",

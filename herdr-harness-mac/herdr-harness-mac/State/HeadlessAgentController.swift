@@ -9,6 +9,7 @@ final class HeadlessAgentController {
     private(set) var isSubmitting = false
     private(set) var isPromoting = false
     private(set) var errorMessage: String?
+    private(set) var lastErrorStatus: Int?
 
     @ObservationIgnored private var pollingTask: Task<Void, Never>?
 
@@ -44,6 +45,7 @@ final class HeadlessAgentController {
         self.machineID = machineID
         isSubmitting = true
         errorMessage = nil
+        lastErrorStatus = nil
         do {
             let started = try await model.startHeadlessAgent(
                 prompt: normalizedPrompt,
@@ -65,6 +67,9 @@ final class HeadlessAgentController {
         } catch {
             isSubmitting = false
             errorMessage = error.localizedDescription
+            if case let APIError.server(status, _) = error {
+                lastErrorStatus = status
+            }
         }
     }
 
@@ -118,6 +123,7 @@ final class HeadlessAgentController {
         run = nil
         machineID = nil
         errorMessage = nil
+        lastErrorStatus = nil
     }
 
     func discard(model: HerdrAppModel) async {

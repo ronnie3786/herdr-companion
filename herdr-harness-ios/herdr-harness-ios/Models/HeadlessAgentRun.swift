@@ -45,9 +45,12 @@ struct HeadlessAgentRun: Codable, Equatable, Identifiable, Sendable {
     let id: String
     let status: HeadlessAgentRunStatus
     let mode: HeadlessAgentRunMode?
+    let profile: String?
     let model: String?
     let thinkingLevel: String?
     let prompt: String
+    /// Canonical server-side working directory. Older servers omit it.
+    let cwd: String?
     let response: String?
     let error: String?
     let createdAt: String
@@ -67,9 +70,11 @@ struct HeadlessAgentRun: Codable, Equatable, Identifiable, Sendable {
         case id
         case status
         case mode
+        case profile
         case model
         case thinkingLevel
         case prompt
+        case cwd
         case response
         case error
         case createdAt

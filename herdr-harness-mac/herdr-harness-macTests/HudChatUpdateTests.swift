@@ -36,12 +36,30 @@ struct HudChatUpdateTests {
         #expect(legacy?["profile"] == nil)
     }
 
-    @Test("HUD history decodes pagination and the terminal destination")
+    @Test("HUD history decodes pagination, canonical cwd and the terminal destination")
     func historyContract() throws {
-        let data = Data(#"{"chats":[{"id":"agr_0123456789ab","title":"Garden ideas","updatedAt":"2026-09-09T12:00:00Z","latestRunId":"agr_0123456789ab","turnCount":4,"status":"promoted","sessionId":"example-session","promotedPaneId":"example-pane"}],"nextOffset":50}"#.utf8)
+        let data = Data(#"{"chats":[{"id":"agr_0123456789ab","title":"Garden ideas","updatedAt":"2026-09-09T12:00:00Z","latestRunId":"agr_0123456789ab","turnCount":4,"status":"promoted","cwd":"/synthetic/garden","sessionId":"example-session","promotedPaneId":"example-pane"}],"nextOffset":50}"#.utf8)
         let catalog = try JSONDecoder().decode(HudChatCatalog.self, from: data)
         #expect(catalog.nextOffset == 50)
+        #expect(catalog.chats.first?.cwd == "/synthetic/garden")
         #expect(catalog.chats.first?.promotedPaneId == "example-pane")
         #expect(catalog.chats.first?.turnCount == 4)
+
+        let legacy = Data(#"{"chats":[{"id":"agr_0123456789ab","title":"Garden ideas","updatedAt":"2026-09-09T12:00:00Z","latestRunId":"agr_0123456789ab","turnCount":1,"status":"completed"}]}"#.utf8)
+        #expect(try JSONDecoder().decode(HudChatCatalog.self, from: legacy).chats.first?.cwd == nil)
+    }
+
+    @Test("Working-directory capability remains optional for older servers")
+    func workingDirectoryCapabilityContract() throws {
+        let current = try JSONDecoder().decode(
+            AssistantCapabilities.self,
+            from: Data(#"{"profiles":["hud-chat-v1"],"hudChatWorkingDirectory":true}"#.utf8)
+        )
+        #expect(current.hudChatWorkingDirectory == true)
+        let legacy = try JSONDecoder().decode(
+            AssistantCapabilities.self,
+            from: Data(#"{"profiles":["hud-chat-v1"]}"#.utf8)
+        )
+        #expect(legacy.hudChatWorkingDirectory == nil)
     }
 }

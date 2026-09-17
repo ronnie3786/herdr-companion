@@ -82,6 +82,7 @@ struct HeadlessAgentRunTests {
         let envelope = try JSONDecoder().decode(HeadlessAgentRunEnvelope.self, from: data)
 
         #expect(envelope.run.mode == nil)
+        #expect(envelope.run.profile == nil)
         #expect(envelope.run.model == nil)
         #expect(envelope.run.thinkingLevel == nil)
         #expect(envelope.run.attachments == nil)

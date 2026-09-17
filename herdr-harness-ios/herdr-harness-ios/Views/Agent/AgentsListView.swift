@@ -4,6 +4,7 @@ struct AgentsListView: View {
     @Bindable var model: HerdrAppModel
     let selectWorkspace: (HerdrWorkspace) -> Void
     let selectPane: (HerdrPane) -> Void
+    let openHudChats: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @State private var query = ""
     @State private var sessionAction: AgentSessionAction?
@@ -20,6 +21,8 @@ struct AgentsListView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     AgentsHeader(model: model)
+
+                    HudChatsDestinationButton(open: openHudChats)
 
                     WorkspaceSearchField(
                         text: $query,

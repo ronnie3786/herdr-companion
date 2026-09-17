@@ -35,6 +35,37 @@ final class HerdrAgentsUITests: XCTestCase {
     }
 
     @MainActor
+    func testSavedHUDChatsAreDiscoverableFromAgents() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-HerdrDemoMode"]
+        app.launch()
+
+        let destination = app.buttons["hud-chats-destination"]
+        XCTAssertTrue(destination.waitForExistence(timeout: 8))
+        destination.tap()
+        XCTAssertTrue(app.navigationBars["HUD Chats"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["hud-chats-machine"].exists)
+    }
+
+    @MainActor
+    func testSavedHUDChatsDestinationSupportsAccessibilityText() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-HerdrDemoMode",
+            "-UIPreferredContentSizeCategoryName",
+            "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge",
+        ]
+        app.launch()
+
+        let destination = app.buttons["hud-chats-destination"]
+        XCTAssertTrue(destination.waitForExistence(timeout: 8))
+        XCTAssertGreaterThanOrEqual(destination.frame.height, 44)
+        destination.tap()
+        XCTAssertTrue(app.navigationBars["HUD Chats"].waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(app.buttons["hud-chats-machine"].frame.height, 44)
+    }
+
+    @MainActor
     func testLongPressRenameStarAndCloseConfirmation() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-HerdrDemoMode", "-HerdrResetSidebarState"]

@@ -79,6 +79,9 @@ struct HerdrHudCardView: View {
             await session.loadAudioCapabilities(model: model)
             await session.loadModels(model: model)
         }
+        .task(id: session.historyIdentity) {
+            await session.observeSavedHistoryWhileVisible(model: model)
+        }
         .onChange(of: session.exchangesRevision) { _, _ in
             updateResponseAudioAvailability()
         }

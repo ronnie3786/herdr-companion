@@ -195,7 +195,9 @@ final class HerdrHudSession {
     private(set) var lastHeadlessRunForTesting: HeadlessAgentRun?
     #endif
 
-    private var isPreparingSubmission = false
+    @ObservationIgnored private var submissionOwnerID: UUID?
+    @ObservationIgnored private var cancelledSubmissionOwnerID: UUID?
+    private var isPreparingSubmission: Bool { submissionOwnerID != nil }
     var isRunning: Bool { controller.isRunning || isPreparingSubmission }
     var errorMessage: String? { controller.errorMessage }
 
@@ -318,13 +320,65 @@ final class HerdrHudSession {
         return "\(exchange.machineID):\(historyRootRunID ?? exchange.id)"
     }
 
-    func refreshSavedHistory(model: HerdrAppModel) async {
-        guard !hasEnded, !model.isDemoMode, !isRunning, !isLoadingHistory, promotingExchangeIDs.isEmpty,
-              let thread, model.canControl(machineID: thread.machineID) else { return }
+    private enum HistoryRefreshKind {
+        case forced
+        case passive
+    }
+
+    @discardableResult
+    func refreshSavedHistory(model: HerdrAppModel) async -> Bool {
+        await refreshSavedHistory(model: model, kind: .forced, submissionOwnerID: nil)
+    }
+
+    #if DEBUG
+    @discardableResult
+    func refreshSavedHistoryPassivelyForTesting(model: HerdrAppModel) async -> Bool {
+        await refreshSavedHistory(model: model, kind: .passive, submissionOwnerID: nil)
+    }
+    #endif
+
+    private func refreshSavedHistory(
+        model: HerdrAppModel,
+        kind: HistoryRefreshKind,
+        submissionOwnerID ownerID: UUID?
+    ) async -> Bool {
+        let ownsSubmission = ownerID != nil && ownerID == submissionOwnerID
+        guard !hasEnded, !model.isDemoMode, (!isRunning || ownsSubmission), !isLoadingHistory,
+              promotingExchangeIDs.isEmpty, let thread,
+              model.canControl(machineID: thread.machineID) else { return false }
         do {
-            try await openHistory(id: thread.rootRunID, machineID: thread.machineID, model: model)
+            try await openHistory(
+                id: thread.rootRunID,
+                machineID: thread.machineID,
+                model: model,
+                kind: kind,
+                submissionOwnerID: ownerID
+            )
+            if kind == .forced { validationError = nil }
+            return true
         } catch {
-            validationError = "Couldn’t refresh this saved chat: \(error.localizedDescription)"
+            if kind == .forced || validationError == nil {
+                validationError = "Couldn’t refresh this saved chat: \(error.localizedDescription)"
+            }
+            return false
+        }
+    }
+
+    /// A selected HUD card owns this task through SwiftUI. Leaving or switching
+    /// cards cancels it, so saved chats never create a process-wide poller.
+    func observeSavedHistoryWhileVisible(
+        model: HerdrAppModel,
+        interval: Duration = .seconds(5)
+    ) async {
+        guard thread != nil, !model.isDemoMode else { return }
+        while !Task.isCancelled {
+            guard thread != nil, !isEnding, !hasEnded else { return }
+            _ = await refreshSavedHistory(model: model, kind: .passive, submissionOwnerID: nil)
+            do {
+                try await Task.sleep(for: interval)
+            } catch {
+                return
+            }
         }
     }
 
@@ -428,24 +482,18 @@ final class HerdrHudSession {
 
     func submit(model: HerdrAppModel, onStarted: () -> Void = {}) async {
         guard !isEnding, !hasEnded else { return }
-        beginSessionActivity()
-        validationError = nil
-        promoteErrorMessage = nil
-        audioErrorMessage = nil
-
-        guard !needsHistoryRefresh else {
-            validationError = "Reconnect to this chat’s machine to check its previous run before replying."
+        let draftSnapshot = draft
+        let enteredPrompt = draftSnapshot.trimmingCharacters(in: .whitespacesAndNewlines)
+        let attachmentsToSend = pendingAttachments
+        let quotesToSend = pendingQuotes
+        guard !enteredPrompt.isEmpty || !attachmentsToSend.isEmpty || !quotesToSend.isEmpty else { return }
+        guard !isRunning, !isLoadingHistory, promotingExchangeIDs.isEmpty,
+              !exchanges.contains(where: { $0.promotedPaneID != nil }) else {
+            if isRunning, !isPreparingSubmission {
+                validationError = "Wait for this saved chat’s current reply before sending another message."
+            }
             return
         }
-        let enteredPrompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !enteredPrompt.isEmpty || !pendingAttachments.isEmpty || !pendingQuotes.isEmpty,
-              !isRunning, !isLoadingHistory, promotingExchangeIDs.isEmpty,
-              !exchanges.contains(where: { $0.promotedPaneID != nil }) else { return }
-        isPreparingSubmission = true
-        defer { isPreparingSubmission = false }
-        let quotesToSend = pendingQuotes
-        let basePrompt = enteredPrompt.isEmpty && quotesToSend.isEmpty ? "Please review the attached files." : enteredPrompt
-        let prompt = ChatQuote.prompt(basePrompt, quotes: quotesToSend)
         guard let machineID = resolvedMachineID(in: model) else {
             validationError = "No machine is available for the HUD."
             return
@@ -454,16 +502,74 @@ final class HerdrHudSession {
             validationError = "This machine is not connected."
             return
         }
+        let ownerID = UUID()
+        submissionOwnerID = ownerID
+        defer {
+            if submissionOwnerID == ownerID { submissionOwnerID = nil }
+            if cancelledSubmissionOwnerID == ownerID { cancelledSubmissionOwnerID = nil }
+        }
 
-        // A live thread owns the folder of its first turn. The fresh composer
-        // is the only place where a folder can be changed.
+        beginSessionActivity()
+        validationError = nil
+        promoteErrorMessage = nil
+        audioErrorMessage = nil
+
+        var refreshedHistory = false
+        if !model.isDemoMode && (needsHistoryRefresh || thread?.machineID == machineID) {
+            guard await refreshSavedHistory(
+                model: model,
+                kind: .forced,
+                submissionOwnerID: ownerID
+            ) else {
+                validationError = validationError
+                    ?? "Reconnect to this chat’s machine to check its previous run before replying."
+                return
+            }
+            refreshedHistory = true
+            guard !submissionWasCancelled(ownerID) else { return }
+            guard !isLoadingHistory, promotingExchangeIDs.isEmpty,
+                  !exchanges.contains(where: { $0.promotedPaneID != nil }),
+                  controller.isRunning == false else {
+                if controller.isRunning {
+                    validationError = "Another device is already waiting for a reply in this saved chat. Your draft is unchanged."
+                }
+                return
+            }
+        }
+        if needsHistoryRefresh && !refreshedHistory {
+            validationError = "Reconnect to this chat’s machine to check its previous run before replying."
+            return
+        }
+        guard selectedMachineID == machineID else {
+            validationError = "The selected machine changed while preparing this message. Your draft is unchanged."
+            return
+        }
+
+        let isNewRoot = thread?.machineID != machineID
         let workingFolder = submissionWorkingFolder(for: machineID)
-        let attachmentsToSend = pendingAttachments
+        if isNewRoot && !workingFolder.isHome {
+            do {
+                try await model.requireDurableHUD(
+                    machineID: machineID,
+                    requiresWorkingDirectory: true
+                )
+            } catch {
+                if !submissionWasCancelled(ownerID) { validationError = error.localizedDescription }
+                return
+            }
+            guard !submissionWasCancelled(ownerID) else { return }
+            guard selectedMachineID == machineID else {
+                validationError = "The selected machine changed while preparing this message. Your draft is unchanged."
+                return
+            }
+        }
         guard attachmentsToSend.reduce(Int64(0), { $0 + Int64($1.byteCount) }) <= Self.maxCombinedAttachmentBytes else {
             validationError = "Attachments can total up to 21 MB per message."
             return
         }
 
+        let basePrompt = enteredPrompt.isEmpty && quotesToSend.isEmpty ? "Please review the attached files." : enteredPrompt
+        let prompt = ChatQuote.prompt(basePrompt, quotes: quotesToSend)
         let attachmentFilenames = attachmentsToSend.map(\.filename)
         let hasAttachments = !attachmentsToSend.isEmpty
         let hasImageAttachments = attachmentsToSend.contains(where: \.isImage)
@@ -504,11 +610,11 @@ final class HerdrHudSession {
                 modelLabel: label
             )
         )
-        draft = ""
-        pendingAttachments = []
-        pendingQuotes = []
-        // Transfer this conversation to its mini HUD only after local validation.
-        // Upload/server failures stay in that same chat with retryable input.
+        consumeComposerSnapshot(
+            draft: draftSnapshot,
+            attachments: attachmentsToSend,
+            quotes: quotesToSend
+        )
         hasUnseenAnswer = false
         onStarted()
 
@@ -539,6 +645,15 @@ final class HerdrHudSession {
             await schedulePersistenceSave()
             return
         }
+        guard !submissionWasCancelled(ownerID) else {
+            if let index = exchanges.firstIndex(where: { $0.id == pendingID }) {
+                exchanges.remove(at: index)
+                markExchangesChanged()
+            }
+            restoreDraftAfterFailedStart(enteredPrompt, quotes: quotesToSend, attachments: attachmentsToSend)
+            await schedulePersistenceSave()
+            return
+        }
 
         let run = await submitAndWait(
             prompt: prompt,
@@ -548,35 +663,57 @@ final class HerdrHudSession {
             attachments: hasAttachments ? wireAttachments : nil,
             continueFromRunId: continueFromRunId,
             workingFolderPath: workingFolder.path,
+            includesWorkingDirectory: isNewRoot,
+            capabilitiesChecked: isNewRoot && !workingFolder.isHome,
+            submissionOwnerID: ownerID,
             model: model
         )
         guard let index = exchanges.firstIndex(where: { $0.id == pendingID }) else {
             controller.reset()
             return
         }
-        guard let run else {
-            hasUnseenAnswer = isCollapsed
-            exchanges[index] = HerdrHudExchange(
-                id: pendingID,
-                machineID: machineID,
-                prompt: prompt,
-                sentPrompt: prompt,
-                response: nil,
-                error: controller.errorMessage ?? validationError ?? "The run failed to start.",
-                status: .failed,
-                costUSD: nil,
-                createdAt: submittedAt,
-                promotedPaneID: nil,
-                attachmentFilenames: attachmentFilenames,
-                workingFolderPath: workingFolder.path,
-                attachments: wireAttachments,
-                localAttachments: attachmentsToSend,
-                modelLabel: label
-            )
+        if run == nil, submissionWasCancelled(ownerID) {
+            controller.reset()
+            exchanges.remove(at: index)
             markExchangesChanged()
             restoreDraftAfterFailedStart(enteredPrompt, quotes: quotesToSend, attachments: attachmentsToSend)
-            controller.reset()
             await schedulePersistenceSave()
+            return
+        }
+        guard let run else {
+            let submissionStatus = controller.lastErrorStatus
+            let message = controller.errorMessage ?? validationError ?? "The run failed to start."
+            controller.reset()
+            restoreDraftAfterFailedStart(enteredPrompt, quotes: quotesToSend, attachments: attachmentsToSend)
+            if submissionStatus == 409 && continueFromRunId != nil {
+                exchanges.remove(at: index)
+                markExchangesChanged()
+                needsHistoryRefresh = true
+                if await refreshSavedHistory(model: model, kind: .forced, submissionOwnerID: ownerID) {
+                    validationError = "This saved chat changed on another device. Latest messages were loaded and your draft was kept; review it before sending again."
+                }
+            } else {
+                hasUnseenAnswer = isCollapsed
+                exchanges[index] = HerdrHudExchange(
+                    id: pendingID,
+                    machineID: machineID,
+                    prompt: prompt,
+                    sentPrompt: prompt,
+                    response: nil,
+                    error: message,
+                    status: .failed,
+                    costUSD: nil,
+                    createdAt: submittedAt,
+                    promotedPaneID: nil,
+                    attachmentFilenames: attachmentFilenames,
+                    workingFolderPath: workingFolder.path,
+                    attachments: wireAttachments,
+                    localAttachments: attachmentsToSend,
+                    modelLabel: label
+                )
+                markExchangesChanged()
+                await schedulePersistenceSave()
+            }
             return
         }
 
@@ -586,6 +723,8 @@ final class HerdrHudSession {
 
         let isSuccess = run.status == .completed || run.status == .promoted
         let retainedAttachments = isSuccess ? [] : wireAttachments
+        let resolvedWorkingFolderPath = run.cwd.flatMap(HerdrHudWorkingFolder.normalizedPath)
+            ?? workingFolder.path
         exchanges[index] = HerdrHudExchange(
             id: run.id,
             machineID: machineID,
@@ -598,13 +737,14 @@ final class HerdrHudSession {
             createdAt: submittedAt,
             promotedPaneID: run.promotedPaneID,
             attachmentFilenames: attachmentFilenames,
-            workingFolderPath: workingFolder.path,
+            workingFolderPath: resolvedWorkingFolderPath,
             attachments: retainedAttachments,
             localAttachments: attachmentsToSend,
             modelLabel: label,
             steps: Self.hudSteps(from: run.steps ?? []),
             stepsTruncated: run.stepsTruncated == true
         )
+        selectedWorkingFolder = HerdrHudWorkingFolder(path: resolvedWorkingFolderPath)
         markExchangesChanged()
         savedHistoryRunKeys.insert("\(machineID):\(run.id)")
         if run.status != .promoted {
@@ -624,6 +764,13 @@ final class HerdrHudSession {
                 turnCount: turnCount
             )
         }
+        if let root = thread?.rootRunID {
+            workingFolderStore.remember(
+                folder: selectedWorkingFolder,
+                for: machineID,
+                chatID: root
+            )
+        }
         if run.status.isTerminal, isCollapsed {
             hasUnseenAnswer = true
         }
@@ -633,6 +780,10 @@ final class HerdrHudSession {
 
     func stop(model: HerdrAppModel) async {
         guard !isEnding, !hasEnded else { return }
+        if let ownerID = submissionOwnerID, controller.run == nil {
+            cancelledSubmissionOwnerID = ownerID
+            return
+        }
         await controller.cancel(model: model)
     }
 
@@ -640,7 +791,7 @@ final class HerdrHudSession {
     /// server history before the collection removes this chat's local bubble.
     func endChat(model: HerdrAppModel, timeout: Duration = .seconds(30)) async throws {
         guard !hasEnded else { return }
-        guard !isEnding, !isLoadingHistory, promotingExchangeIDs.isEmpty else {
+        guard !isEnding, promotingExchangeIDs.isEmpty else {
             throw HerdrHudChatEndError.busy
         }
         isEnding = true
@@ -655,12 +806,14 @@ final class HerdrHudSession {
     }
 
     private func finishForEndChat(model: HerdrAppModel, timeout: Duration) async throws {
-        if needsHistoryRefresh { await refreshSavedHistory(model: model) }
-        guard !needsHistoryRefresh else { throw HerdrHudChatEndError.statusUnavailable }
-
         let deadline = ContinuousClock.now + timeout
-        // A just-submitted request may still be uploading or waiting for its
-        // accepted run ID. Do not hide it while cancellation cannot address it.
+        while isLoadingHistory && !isPreparingSubmission {
+            guard ContinuousClock.now < deadline else { throw HerdrHudChatEndError.timedOut }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        // Submission owns preflight through acceptance. End Chat waits for an
+        // accepted identity before cancelling, rather than racing a second
+        // history load or letting a late POST escape after the card disappears.
         while isPreparingSubmission && controller.run == nil {
             guard ContinuousClock.now < deadline else { throw HerdrHudChatEndError.timedOut }
             try await Task.sleep(for: .milliseconds(50))
@@ -675,6 +828,8 @@ final class HerdrHudSession {
             guard ContinuousClock.now < deadline else { throw HerdrHudChatEndError.timedOut }
             try await Task.sleep(for: .milliseconds(50))
         }
+        if needsHistoryRefresh { await refreshSavedHistory(model: model) }
+        guard !needsHistoryRefresh else { throw HerdrHudChatEndError.statusUnavailable }
         try Task.checkCancellation()
         try await saveHistory(model: model)
         responseAudioPlayer.stop()
@@ -902,17 +1057,41 @@ final class HerdrHudSession {
     }
 
     func retry(_ exchange: HerdrHudExchange, model: HerdrAppModel) async {
-        beginSessionActivity()
-        // Retry stays a fresh single-turn run: re-appending it would double a turn in the
-        // session file, and doing it properly needs a harness-side fork.
-        guard !isEnding, !hasEnded, !isRunning, !isLoadingHistory, !needsHistoryRefresh, promotingExchangeIDs.isEmpty,
+        guard !isEnding, !hasEnded, !isRunning, !isLoadingHistory, !needsHistoryRefresh,
+              promotingExchangeIDs.isEmpty,
               !exchanges.contains(where: { $0.promotedPaneID != nil }) else { return }
+        let isUnacceptedPlaceholder = exchange.id.hasPrefix("hud-pending-")
+        guard isUnacceptedPlaceholder || thread != nil else {
+            validationError = "This saved chat is no longer attached to its server conversation. Start a new chat instead."
+            return
+        }
+        let ownerID = UUID()
+        submissionOwnerID = ownerID
+        defer {
+            if submissionOwnerID == ownerID { submissionOwnerID = nil }
+            if cancelledSubmissionOwnerID == ownerID { cancelledSubmissionOwnerID = nil }
+        }
+
+        beginSessionActivity()
         hasUnseenAnswer = false
-        isPreparingSubmission = true
-        defer { isPreparingSubmission = false }
         validationError = nil
         promoteErrorMessage = nil
         audioErrorMessage = nil
+
+        if thread != nil, !model.isDemoMode {
+            guard await refreshSavedHistory(
+                model: model,
+                kind: .forced,
+                submissionOwnerID: ownerID
+            ) else { return }
+            guard !submissionWasCancelled(ownerID) else { return }
+            guard thread != nil, !exchanges.contains(where: { $0.promotedPaneID != nil }),
+                  controller.isRunning == false else {
+                validationError = "This saved chat changed before Retry. Latest messages were loaded; review them before trying again."
+                return
+            }
+        }
+
         let retryAttachments: [HeadlessAgentAttachment]
         do {
             if !exchange.attachments.isEmpty {
@@ -927,13 +1106,32 @@ final class HerdrHudSession {
                 }.value
             }
         } catch {
-            validationError = "Couldn't read the saved attachments: \(error.localizedDescription)"
+            if !submissionWasCancelled(ownerID) {
+                validationError = "Couldn't read the saved attachments: \(error.localizedDescription)"
+            }
             return
         }
+        guard !submissionWasCancelled(ownerID) else { return }
+
         let workingFolder = HerdrHudWorkingFolder(
             path: HerdrHudWorkingFolder.normalizedPath(exchange.workingFolderPath)
                 ?? HerdrHudWorkingFolder.homePath
         )
+        let continueFromRunID = thread?.machineID == exchange.machineID ? thread?.lastRunID : nil
+        let startsNewRoot = continueFromRunID == nil
+        if startsNewRoot && !workingFolder.isHome {
+            do {
+                try await model.requireDurableHUD(
+                    machineID: exchange.machineID,
+                    requiresWorkingDirectory: true
+                )
+            } catch {
+                if !submissionWasCancelled(ownerID) { validationError = error.localizedDescription }
+                return
+            }
+            guard !submissionWasCancelled(ownerID) else { return }
+        }
+
         let hasAttachments = !retryAttachments.isEmpty
         let hasImageAttachments = retryAttachments.contains {
             HerdrAttachmentTypes.isImage(URL(fileURLWithPath: $0.filename))
@@ -960,11 +1158,28 @@ final class HerdrHudSession {
             agentModel: agentModel,
             thinkingLevel: thinkingLevel,
             attachments: hasAttachments ? retryAttachments : nil,
+            continueFromRunId: continueFromRunID,
             workingFolderPath: workingFolder.path,
+            includesWorkingDirectory: startsNewRoot,
+            capabilitiesChecked: startsNewRoot && !workingFolder.isHome,
+            submissionOwnerID: ownerID,
             model: model
         ) else {
-            validationError = controller.errorMessage ?? validationError
+            if submissionWasCancelled(ownerID) {
+                controller.reset()
+                return
+            }
+            let status = controller.lastErrorStatus
+            let message = controller.errorMessage ?? validationError
             controller.reset()
+            if status == 409 && continueFromRunID != nil {
+                needsHistoryRefresh = true
+                if await refreshSavedHistory(model: model, kind: .forced, submissionOwnerID: ownerID) {
+                    validationError = "This saved chat changed on another device. Latest messages were loaded; Retry was not sent again."
+                }
+            } else {
+                validationError = message
+            }
             return
         }
         #if DEBUG
@@ -972,6 +1187,8 @@ final class HerdrHudSession {
         #endif
         let isSuccess = run.status == .completed || run.status == .promoted
         let retainedAttachments = isSuccess ? [] : retryAttachments
+        let resolvedWorkingFolderPath = run.cwd.flatMap(HerdrHudWorkingFolder.normalizedPath)
+            ?? workingFolder.path
         append(
             HerdrHudExchange(
                 id: run.id,
@@ -985,7 +1202,7 @@ final class HerdrHudSession {
                 createdAt: .now,
                 promotedPaneID: run.promotedPaneID,
                 attachmentFilenames: exchange.attachmentFilenames,
-                workingFolderPath: workingFolder.path,
+                workingFolderPath: resolvedWorkingFolderPath,
                 attachments: retainedAttachments,
                 localAttachments: exchange.localAttachments,
                 modelLabel: label,
@@ -993,18 +1210,38 @@ final class HerdrHudSession {
                 stepsTruncated: run.stepsTruncated == true
             )
         )
-        if run.status.isTerminal, isCollapsed {
-            hasUnseenAnswer = true
-        }
+        selectedWorkingFolder = HerdrHudWorkingFolder(path: resolvedWorkingFolderPath)
+        savedHistoryRunKeys.insert("\(exchange.machineID):\(run.id)")
+        if run.status.isTerminal, isCollapsed { hasUnseenAnswer = true }
         controller.reset()
         await schedulePersistenceSave()
     }
 
+    private func submissionWasCancelled(_ ownerID: UUID) -> Bool {
+        Task.isCancelled || cancelledSubmissionOwnerID == ownerID
+    }
+
+    private func consumeComposerSnapshot(
+        draft draftSnapshot: String,
+        attachments: [HerdrHudAttachment],
+        quotes: [ChatQuote]
+    ) {
+        if draft == draftSnapshot { draft = "" }
+        let attachmentIDs = Set(attachments.map(\.id))
+        pendingAttachments.removeAll { attachmentIDs.contains($0.id) }
+        let quoteIDs = Set(quotes.map(\.id))
+        pendingQuotes.removeAll { quoteIDs.contains($0.id) }
+    }
+
     private func restoreDraftAfterFailedStart(_ enteredPrompt: String, quotes: [ChatQuote], attachments: [HerdrHudAttachment]) {
         if draft.isEmpty { draft = enteredPrompt }
-        if pendingAttachments.isEmpty { pendingAttachments = attachments }
-        let existingIDs = Set(pendingQuotes.map(\.id))
-        pendingQuotes.insert(contentsOf: quotes.filter { !existingIDs.contains($0.id) }, at: 0)
+        let existingAttachmentIDs = Set(pendingAttachments.map(\.id))
+        pendingAttachments.insert(
+            contentsOf: attachments.filter { !existingAttachmentIDs.contains($0.id) },
+            at: 0
+        )
+        let existingQuoteIDs = Set(pendingQuotes.map(\.id))
+        pendingQuotes.insert(contentsOf: quotes.filter { !existingQuoteIDs.contains($0.id) }, at: 0)
     }
 
     /// Save legacy visible runs as well as the root before detaching the view.
@@ -1022,16 +1259,37 @@ final class HerdrHudSession {
     }
 
     func openHistory(_ chat: HudChatSummary, machineID: String, model: HerdrAppModel) async throws {
-        try await openHistory(id: chat.id, machineID: machineID, model: model)
+        try await openHistory(
+            id: chat.id,
+            machineID: machineID,
+            model: model,
+            kind: .forced,
+            submissionOwnerID: nil
+        )
+        validationError = nil
     }
 
-    private func openHistory(id: String, machineID: String, model: HerdrAppModel) async throws {
-        guard !hasEnded, !isRunning, !isLoadingHistory, promotingExchangeIDs.isEmpty else { return }
+    private func openHistory(
+        id: String,
+        machineID: String,
+        model: HerdrAppModel,
+        kind: HistoryRefreshKind,
+        submissionOwnerID ownerID: UUID?
+    ) async throws {
+        let ownsSubmission = ownerID != nil && ownerID == submissionOwnerID
+        guard !hasEnded, (!isRunning || ownsSubmission), !isLoadingHistory,
+              promotingExchangeIDs.isEmpty else { return }
         isLoadingHistory = true
         defer { isLoadingHistory = false }
-        try await saveHistory(model: model)
+
         let client = try model.hudChatClient(machineID: machineID)
         var page = try await client.hudChat(id: id)
+        try Task.checkCancellation()
+        if kind == .passive, historyResponseIsUnchanged(page, machineID: machineID, rootRunID: id) {
+            return
+        }
+
+        try await saveHistory(model: model)
         var turns = page.turns
         while let offset = page.nextOffset {
             try Task.checkCancellation()
@@ -1039,6 +1297,7 @@ final class HerdrHudSession {
             turns += page.turns
         }
         try Task.checkCancellation()
+
         let isSameConversation = historyIdentity == "\(machineID):\(id)"
         let previousWorkingFolder = selectedWorkingFolder
         let historyWorkingFolder = turns.lazy.compactMap(\.cwd).first.flatMap {
@@ -1047,24 +1306,55 @@ final class HerdrHudSession {
             ?? (isSameConversation ? previousWorkingFolder.path : HerdrHudWorkingFolder.homePath)
         let wasAwaitingAnswer = needsHistoryRefresh || exchanges.last?.id.hasPrefix("hud-") == true
             || exchanges.last?.status.isTerminal == false
+        let localByID = Dictionary(uniqueKeysWithValues: exchanges.map { ($0.id, $0) })
+        let serverRunIDs = Set(turns.map(\.id))
+        let acceptedPendingExchange = isSameConversation && thread?.lastRunID == page.latestRunId
+            ? exchanges.last(where: { local in
+                local.id.hasPrefix("hud-pending-")
+                    && turns.last(where: { $0.id == page.latestRunId })?.prompt == local.sentPrompt
+            })
+            : nil
+        let localPlaceholders = isSameConversation ? exchanges.filter {
+            $0.id.hasPrefix("hud-pending-")
+                && $0.id != acceptedPendingExchange?.id
+                && !serverRunIDs.contains($0.id)
+        } : []
         needsHistoryRefresh = false
         beginSessionActivity()
         exchanges = turns.map { run in
-            HerdrHudExchange(id: run.id, machineID: machineID, prompt: run.prompt, sentPrompt: run.prompt,
-                             response: run.response, error: run.error, status: run.status, costUSD: run.costUSD,
-                             createdAt: HerdrTimestamp.date(from: run.createdAt) ?? .now,
-                             promotedPaneID: page.promotedPaneId, attachmentFilenames: run.attachments ?? [],
-                             workingFolderPath: historyWorkingFolder,
-                             modelLabel: run.model.map(PiModelDisplayName.short(fullID:)) ?? "default",
-                             steps: Self.hudSteps(from: run.steps ?? []), stepsTruncated: run.stepsTruncated == true)
-        }
+            let local = localByID[run.id]
+                ?? (run.id == page.latestRunId ? acceptedPendingExchange : nil)
+            return HerdrHudExchange(
+                id: run.id,
+                machineID: machineID,
+                prompt: run.prompt,
+                sentPrompt: local?.sentPrompt ?? run.prompt,
+                response: run.response,
+                error: run.error,
+                status: run.status,
+                costUSD: run.costUSD,
+                createdAt: HerdrTimestamp.date(from: run.createdAt) ?? local?.createdAt ?? .now,
+                promotedPaneID: run.promotedPaneID ?? page.promotedPaneId,
+                attachmentFilenames: run.attachments ?? local?.attachmentFilenames ?? [],
+                workingFolderPath: historyWorkingFolder,
+                attachments: local?.attachments ?? [],
+                localAttachments: local?.localAttachments ?? [],
+                modelLabel: run.model.map(PiModelDisplayName.short(fullID:)) ?? local?.modelLabel ?? "default",
+                steps: Self.hudSteps(from: run.steps ?? []),
+                stepsTruncated: run.stepsTruncated == true
+            )
+        } + localPlaceholders
         savedHistoryRunKeys.formUnion(turns.map { "\(machineID):\($0.id)" })
         historyRootRunID = page.rootRunId
         if let latest = turns.last, latest.status.isTerminal, isCollapsed, wasAwaitingAnswer {
             hasUnseenAnswer = true
         }
-        thread = page.promotedPaneId == nil ? HerdrHudThread(machineID: machineID, rootRunID: page.rootRunId,
-                                                           lastRunID: page.latestRunId, turnCount: turns.count) : nil
+        thread = page.promotedPaneId == nil ? HerdrHudThread(
+            machineID: machineID,
+            rootRunID: page.rootRunId,
+            lastRunID: page.latestRunId,
+            turnCount: turns.count
+        ) : nil
         selectedMachineID = machineID
         selectedWorkingFolder = HerdrHudWorkingFolder(path: historyWorkingFolder)
         workingFolderStore.remember(
@@ -1073,7 +1363,6 @@ final class HerdrHudSession {
             chatID: id
         )
         if !isSameConversation { pendingQuotes = [] }
-        validationError = nil
         markExchangesChanged()
         await schedulePersistenceSave()
         if let latest = turns.last, !latest.status.isTerminal {
@@ -1083,12 +1372,19 @@ final class HerdrHudSession {
                 while !Task.isCancelled {
                     guard let self, let run = self.controller.run, run.id == latest.id,
                           let index = self.exchanges.firstIndex(where: { $0.id == run.id }) else { return }
-                    self.exchanges[index].response = run.response
-                    self.exchanges[index].error = run.error
-                    self.exchanges[index].status = run.status
-                    self.exchanges[index].costUSD = run.costUSD
-                    self.exchanges[index].steps = Self.hudSteps(from: run.steps ?? [])
-                    self.markExchangesChanged()
+                    let changed = self.exchanges[index].response != run.response
+                        || self.exchanges[index].error != run.error
+                        || self.exchanges[index].status != run.status
+                        || self.exchanges[index].costUSD != run.costUSD
+                        || self.exchanges[index].steps != Self.hudSteps(from: run.steps ?? [])
+                    if changed {
+                        self.exchanges[index].response = run.response
+                        self.exchanges[index].error = run.error
+                        self.exchanges[index].status = run.status
+                        self.exchanges[index].costUSD = run.costUSD
+                        self.exchanges[index].steps = Self.hudSteps(from: run.steps ?? [])
+                        self.markExchangesChanged()
+                    }
                     if run.status.isTerminal {
                         self.hasUnseenAnswer = !self.hasEnded && self.isCollapsed
                         await self.schedulePersistenceSave()
@@ -1099,6 +1395,28 @@ final class HerdrHudSession {
                 }
             }
         }
+    }
+
+    private func historyResponseIsUnchanged(
+        _ page: HudChatHistory,
+        machineID: String,
+        rootRunID: String
+    ) -> Bool {
+        guard historyIdentity == "\(machineID):\(rootRunID)",
+              page.promotedPaneId == nil,
+              let thread,
+              thread.machineID == machineID,
+              thread.rootRunID == page.rootRunId,
+              thread.lastRunID == page.latestRunId,
+              let localLatest = exchanges.first(where: { $0.id == page.latestRunId }),
+              localLatest.status.isTerminal else { return false }
+        if let remoteLatest = page.turns.first(where: { $0.id == page.latestRunId }) {
+            return remoteLatest.status == localLatest.status
+                && remoteLatest.response == localLatest.response
+                && remoteLatest.error == localLatest.error
+                && remoteLatest.promotedPaneID == localLatest.promotedPaneID
+        }
+        return page.nextOffset != nil
     }
 
     func clear(model: HerdrAppModel) async {
@@ -1248,17 +1566,32 @@ final class HerdrHudSession {
         attachments: [HeadlessAgentAttachment]?,
         continueFromRunId: String? = nil,
         workingFolderPath: String = HerdrHudWorkingFolder.homePath,
+        includesWorkingDirectory: Bool = true,
+        capabilitiesChecked: Bool = false,
+        submissionOwnerID ownerID: UUID? = nil,
         model: HerdrAppModel
     ) async -> HeadlessAgentRun? {
         elapsedSeconds = 0
         liveStepCount = 0
         do {
-            try await model.requireDurableHUD(machineID: machineID)
+            if !capabilitiesChecked {
+                try await model.requireDurableHUD(
+                    machineID: machineID,
+                    requiresWorkingDirectory: includesWorkingDirectory
+                        && workingFolderPath != HerdrHudWorkingFolder.homePath
+                )
+            }
             if let continueFromRunId, !model.isDemoMode {
                 try await model.hudChatClient(machineID: machineID).saveHudChat(id: continueFromRunId)
             }
+            if let ownerID {
+                guard !submissionWasCancelled(ownerID) else { return nil }
+            } else {
+                try Task.checkCancellation()
+            }
         } catch {
-            validationError = error.localizedDescription
+            let wasCancelled = ownerID.map { submissionWasCancelled($0) } ?? Task.isCancelled
+            if !wasCancelled { validationError = error.localizedDescription }
             return nil
         }
         var systemPrompt: String?
@@ -1269,11 +1602,18 @@ final class HerdrHudSession {
                 validationError = "Custom instructions skipped — this machine's harness doesn't support them yet."
             }
         }
+        if let ownerID {
+            guard !submissionWasCancelled(ownerID) else { return nil }
+        } else if Task.isCancelled {
+            return nil
+        }
         await controller.submit(
             prompt: prompt,
             machineID: machineID,
             mode: .act,
-            cwd: HerdrHudWorkingFolder(path: workingFolderPath).requestPath,
+            cwd: includesWorkingDirectory
+                ? HerdrHudWorkingFolder(path: workingFolderPath).requestPath
+                : nil,
             agentModel: agentModel,
             thinkingLevel: thinkingLevel,
             attachments: attachments,
@@ -1282,6 +1622,9 @@ final class HerdrHudSession {
             profile: "hud-chat-v1",
             model: model
         )
+        if let ownerID, submissionWasCancelled(ownerID), controller.run != nil {
+            await controller.cancel(model: model)
+        }
         // Persist the accepted durable identity before waiting for completion so
         // a relaunched app can observe the real run rather than resubmit it.
         if let run = controller.run {
@@ -1303,7 +1646,8 @@ final class HerdrHudSession {
             do {
                 try await Task.sleep(for: .milliseconds(100))
             } catch {
-                return nil
+                await controller.cancel(model: model)
+                return controller.run
             }
             let count = controller.run?.steps?.count ?? 0
             if count != liveStepCount {

@@ -1819,7 +1819,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         "continueFromRunId",
                         "systemPrompt",
                         "paneId",
-                        "profile", "context", "scope", "clientRequestId",
+                        "cwd", "profile", "context", "scope", "clientRequestId",
                     }
                     for key in body
                 ):
@@ -1855,6 +1855,15 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 hud_chat = body.get("profile") == "hud-chat-v1"
                 if hud_chat and mode != "act":
                     raise HTTPValidationError("HUD chats must use act mode")
+                if "cwd" in body and not hud_chat:
+                    raise HTTPValidationError("cwd is supported only for saved HUD chats")
+                hud_cwd = None
+                if body.get("cwd") is not None:
+                    hud_cwd = _string(body.get("cwd"), "cwd", maximum=4096)
+                    if hud_cwd != "~" and not os.path.isabs(hud_cwd):
+                        raise HTTPValidationError("cwd must be an absolute path or ~")
+                    if pane_id is not None:
+                        raise HTTPValidationError("A pane-scoped Agent run cannot change cwd")
                 if body.get("profile") is not None and not hud_chat:
                     return service.start_contextual_question(body), 202
                 if any(key in body for key in ("context", "scope", "clientRequestId")):
@@ -1870,7 +1879,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         system_prompt=system_prompt,
                         continue_from_run_id=continue_from_run_id,
                         pane_id=pane_id,
-                        **({"hud_chat": True} if hud_chat else {}),
+                        **({"hud_chat": True, "cwd": hud_cwd} if hud_chat else {}),
                     ),
                     202,
                 )

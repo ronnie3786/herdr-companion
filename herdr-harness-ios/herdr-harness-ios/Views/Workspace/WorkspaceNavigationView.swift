@@ -3,6 +3,7 @@ import SwiftUI
 struct WorkspaceNavigationView: View {
     @Bindable var model: HerdrAppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @State private var showsHudChats = false
 
     var body: some View {
         if horizontalSizeClass == .regular {
@@ -22,6 +23,9 @@ struct WorkspaceNavigationView: View {
                 },
                 selectPane: { pane in
                     model.openPane(id: pane.id)
+                },
+                openHudChats: {
+                    model.workspacePath.append(.hudChats)
                 }
             )
             .navigationDestination(for: WorkspaceRoute.self) { route in
@@ -37,6 +41,10 @@ struct WorkspaceNavigationView: View {
                         PaneSessionView(model: model, pane: pane, hidesAppTabBar: true)
                             .id(pane.id)
                     }
+                case .hudChats:
+                    HudChatsView(model: model) { paneID in
+                        model.openPane(id: paneID)
+                    }
                 }
             }
         }
@@ -47,16 +55,27 @@ struct WorkspaceNavigationView: View {
             AgentsListView(
                 model: model,
                 selectWorkspace: { workspace in
+                    showsHudChats = false
                     model.selectedWorkspaceID = workspace.id
                     model.selectedPaneID = workspace.sortedPanes.first?.id
                 },
                 selectPane: { pane in
+                    showsHudChats = false
                     model.openPane(id: pane.id)
+                },
+                openHudChats: {
+                    showsHudChats = true
                 }
             )
             .navigationSplitViewColumnWidth(min: 330, ideal: 390, max: 460)
         } content: {
-            if let workspace = model.workspace(id: model.selectedWorkspaceID) {
+            if showsHudChats {
+                HudChatsView(model: model) { paneID in
+                    showsHudChats = false
+                    model.openPane(id: paneID)
+                }
+                .navigationSplitViewColumnWidth(min: 420, ideal: 520, max: 680)
+            } else if let workspace = model.workspace(id: model.selectedWorkspaceID) {
                 WorkspacePaneListView(model: model, workspace: workspace) { pane in
                     model.openPane(id: pane.id)
                 }
@@ -69,7 +88,13 @@ struct WorkspaceNavigationView: View {
                 )
             }
         } detail: {
-            if let pane = model.pane(id: model.selectedPaneID) {
+            if showsHudChats {
+                ContentUnavailableView(
+                    "Saved HUD chats",
+                    systemImage: "bubble.left.and.text.bubble.right",
+                    description: Text("Choose or create a conversation in the middle column.")
+                )
+            } else if let pane = model.pane(id: model.selectedPaneID) {
                 PaneSessionView(model: model, pane: pane, hidesAppTabBar: true)
                     .id(pane.id)
             } else {

@@ -2439,17 +2439,24 @@ final class HerdrAppModel {
         return client
     }
 
-    func requireDurableHUD(machineID: String) async throws {
+    func requireDurableHUD(
+        machineID: String,
+        requiresWorkingDirectory: Bool = false
+    ) async throws {
         if isDemoMode { return }
-        let supported: Bool
+        let capabilities: AssistantCapabilities?
         do {
-            supported = try await hudChatClient(machineID: machineID).assistantCapabilities().profiles.contains("hud-chat-v1")
+            capabilities = try await hudChatClient(machineID: machineID).assistantCapabilities()
         } catch APIError.server(status: 404, message: _) {
-            supported = false
+            capabilities = nil
         }
-        guard supported else {
+        guard capabilities?.profiles.contains("hud-chat-v1") == true else {
             throw NSError(domain: "HUD", code: 1, userInfo: [NSLocalizedDescriptionKey:
                 "Update this machine’s companion server to use saved HUD chats with normal Pi access. Your current chat is unchanged."])
+        }
+        guard !requiresWorkingDirectory || capabilities?.hudChatWorkingDirectory == true else {
+            throw NSError(domain: "HUD", code: 2, userInfo: [NSLocalizedDescriptionKey:
+                "Update this machine’s companion server before starting a saved HUD chat in a custom folder. Your draft and attachments are unchanged."])
         }
     }
 

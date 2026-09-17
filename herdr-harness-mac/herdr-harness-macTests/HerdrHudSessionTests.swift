@@ -59,8 +59,8 @@ struct HerdrHudSessionTests {
         #expect(thread.turnCount == 1)
     }
 
-    @Test("Completed follow-ups continue the live HUD thread")
-    func completedFollowUpContinuesThread() async throws {
+    @Test("Demo HUD sends a second turn without saved-history preflight")
+    func demoSecondTurnContinuesThread() async throws {
         let model = makeDemoModel()
         let session = makeSession()
         session.draft = "First turn"
@@ -72,7 +72,10 @@ struct HerdrHudSessionTests {
 
         let secondRun = try #require(session.lastHeadlessRunForTesting)
         let thread = try #require(session.thread)
+        #expect(secondRun.id != firstRun.id)
         #expect(secondRun.threadRootRunId == firstRun.id)
+        #expect(session.exchanges.map(\.prompt) == ["First turn", "Second turn"])
+        #expect(session.validationError == nil)
         #expect(thread.rootRunID == firstRun.id)
         #expect(thread.lastRunID == secondRun.id)
         #expect(thread.turnCount == 2)
@@ -487,6 +490,12 @@ struct HerdrHudSessionTests {
             attachments: [HeadlessAgentAttachment(filename: "original.png", dataBase64: "b3JpZ2luYWw=")]
         )
         session.seedExchangesForTesting([original])
+        session.seedThreadForTesting(.init(
+            machineID: original.machineID,
+            rootRunID: original.id,
+            lastRunID: original.id,
+            turnCount: 1
+        ))
         session.draft = "New draft"
         session.selectedMachineID = "current-composer-machine"
 

@@ -52,7 +52,7 @@ final class HerdrHudChats {
         composer = legacySession.makeIndependentSession(id: id)
     }
 
-    /// Called synchronously after submission validation, before the first await.
+    /// Called after the submission owns preflight and creates its local row.
     /// Keeping the submitted instance alive here lets its task outlive the card.
     func submissionStarted(_ session: HerdrHudSession) {
         if session === composer {

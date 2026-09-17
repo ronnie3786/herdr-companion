@@ -52,6 +52,10 @@ final class FirstMateStore {
 
     var colorScheme: ColorScheme { isDark ? .dark : .light }
     var snapshot: FirstMateSnapshot? { selectedFeatureID.flatMap { snapshots[$0] } }
+    var hasUnsentDrafts: Bool {
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || drafts.values.contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
     var filteredFeatures: [FirstMateFeature] {
         features.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.goal.localizedCaseInsensitiveContains(search) }
     }

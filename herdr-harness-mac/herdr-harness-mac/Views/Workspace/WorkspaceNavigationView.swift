@@ -1,6 +1,13 @@
 import AppKit
 import SwiftUI
 
+private struct FirstMateNavigationRequestIdentity: Equatable {
+    let requestID: UUID?
+    let controlMachineID: String?
+    let controlFeatureID: String?
+    let controlInspector: FirstMateInspector?
+}
+
 /// The Mac shell. This is the iPad-regular `NavigationSplitView` branch of the
 /// iOS `WorkspaceNavigationView`, collapsed to two columns: the persistent
 /// navigator (which the iPhone build showed as an overlay drawer) and a detail
@@ -46,24 +53,32 @@ struct WorkspaceNavigationView: View {
                 .toolbar { detailToolbar }
         }
         .navigationSplitViewStyle(.balanced)
-        .task(id: FirstMateNavigationIdentity(connection: FirstMateConnectionIdentity(configuration: firstMateConfiguration, generation: model.connectionGeneration, isDemo: model.isDemoMode), requestID: shell.firstMateOpenRequest?.id)) {
-            shell.firstMate.configure(
-                client: firstMateConfiguration.map { HerdrAPIClient(configuration: $0) },
-                demo: model.isDemoMode
+        .task(id: FirstMateConnectionIdentity(
+            configuration: firstMateConfiguration,
+            generation: model.connectionGeneration,
+            isDemo: model.isDemoMode
+        )) {
+            // Connection changes own store configuration. The process-owned
+            // guard also makes this safe when closing and recreating the main
+            // window starts a fresh SwiftUI task for the same connection.
+            shell.configureFirstMateIfNeeded(
+                configuration: firstMateConfiguration,
+                connectionGeneration: model.connectionGeneration,
+                isDemo: model.isDemoMode
             )
             await shell.firstMate.refresh()
-            if !Task.isCancelled, let request = shell.firstMateOpenRequest,
-               request.id != shell.firstMateAppliedRequestID,
-               request.serverURL == firstMateConfiguration?.baseURL.absoluteString {
-                shell.firstMate.select(request.featureID)
-                shell.firstMate.inspector = request.graph ? .workflow : request.tab
-                shell.firstMate.graphMode = request.graph
-                shell.firstMateAppliedRequestID = request.id
-                await shell.firstMate.refresh()
-            }
+            await applyFirstMateNavigationRequest()
             if model.isDemoMode, ProcessInfo.processInfo.arguments.contains("-HerdrFirstMateDemo") {
                 shell.show(.firstMate, model: model)
             }
+        }
+        .task(id: FirstMateNavigationRequestIdentity(
+            requestID: shell.firstMateOpenRequest?.id,
+            controlMachineID: shell.pendingFirstMateControlTarget?.machineID,
+            controlFeatureID: shell.pendingFirstMateControlTarget?.featureID,
+            controlInspector: shell.pendingFirstMateControlTarget?.inspector
+        )) {
+            await applyFirstMateNavigationRequest()
         }
         // Revealing a pane in a column the user has hidden would be a silent
         // no-op, so ⇧⌘K brings the navigator back first.
@@ -90,6 +105,31 @@ struct WorkspaceNavigationView: View {
         model.firstMateConfiguration(machineID: shell.firstMateMachineID)
     }
 
+    private func applyFirstMateNavigationRequest() async {
+        if !Task.isCancelled, let request = shell.firstMateOpenRequest,
+           request.id != shell.firstMateAppliedRequestID,
+           request.serverURL == firstMateConfiguration?.baseURL.absoluteString {
+            // A deeplink can race the connection task. Refreshing here is safe:
+            // the connection task also applies the still-pending request after
+            // its own configure/refresh completes.
+            await shell.firstMate.refresh()
+            guard !Task.isCancelled else { return }
+            shell.firstMate.select(request.featureID)
+            shell.firstMate.inspector = request.graph ? .workflow : request.tab
+            shell.firstMate.graphMode = request.graph
+            shell.firstMateAppliedRequestID = request.id
+            await shell.firstMate.refresh()
+        }
+        if !Task.isCancelled, let target = shell.pendingFirstMateControlTarget,
+           target.machineID == shell.firstMateMachineID,
+           shell.firstMate.features.contains(where: { $0.id == target.featureID }) {
+            shell.firstMate.select(target.featureID)
+            shell.firstMate.inspector = target.inspector
+            shell.firstMate.graphMode = target.inspector == .workflow
+            shell.pendingFirstMateControlTarget = nil
+        }
+    }
+
     @ViewBuilder
     private var detail: some View {
         switch shell.resolvedScope(for: model) {
@@ -99,9 +139,12 @@ struct WorkspaceNavigationView: View {
             if let pane = model.pane(id: model.selectedPaneID) {
                 PaneSessionView(
                     model: model, pane: pane, modelFavorites: modelFavorites,
-                    preferredMode: shell.detailScope == .git ? .git
-                        : (pane.supportsPiSemanticChat ? .chat : .terminal),
-                    modeFocusRequest: shell.paneModeFocusRequest
+                    preferredMode: shell.agentControlPaneMode ?? (shell.detailScope == .git ? .git
+                        : (pane.supportsPiSemanticChat ? .chat : .terminal)),
+                    modeFocusRequest: shell.paneModeFocusRequest,
+                    modeApplied: { mode in
+                        shell.agentControlPaneModeDidApply(mode, paneID: pane.id)
+                    }
                 )
                     .id(pane.id)
             } else {
@@ -113,7 +156,12 @@ struct WorkspaceNavigationView: View {
             }
         case .workspace:
             if let workspace = model.workspace(id: model.selectedWorkspaceID) {
-                WorkspacePaneListView(model: model, workspace: workspace, selectPane: openSession)
+                WorkspacePaneListView(
+                    model: model,
+                    workspace: workspace,
+                    highlightedTabID: shell.highlightedOverviewTabID,
+                    selectPane: openSession
+                )
             } else {
                 placeholder(
                     "Choose a workspace",

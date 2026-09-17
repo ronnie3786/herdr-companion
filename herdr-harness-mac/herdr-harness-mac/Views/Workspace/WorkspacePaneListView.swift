@@ -3,6 +3,7 @@ import SwiftUI
 struct WorkspacePaneListView: View {
     @Bindable var model: HerdrAppModel
     let workspace: HerdrWorkspace
+    var highlightedTabID: String? = nil
     let selectPane: (HerdrPane) -> Void
     @State private var isRenamingWorkspace = false
     @State private var isConfirmingWorkspaceClose = false
@@ -13,30 +14,34 @@ struct WorkspacePaneListView: View {
         ZStack {
             HerdrBackground()
 
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
-                    // Orphaned on iOS (the list screen's AttentionStrip took its
-                    // slot). On the Mac this is the fleet readout above the
-                    // space you are actually looking at.
-                    FleetSummaryView(model: model)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 18) {
+                        // Orphaned on iOS (the list screen's AttentionStrip took its
+                        // slot). On the Mac this is the fleet readout above the
+                        // space you are actually looking at.
+                        FleetSummaryView(model: model)
 
-                    WorkspaceHeroView(workspace: workspace)
+                        WorkspaceHeroView(workspace: workspace)
 
-                    ForEach(workspace.tabs) { tab in
-                        tabSection(tab)
+                        ForEach(workspace.tabs) { tab in
+                            tabSection(tab)
+                        }
+
+                        if workspace.tabs.isEmpty {
+                            paneRows(workspace.sortedPanes)
+                        }
                     }
-
-                    if workspace.tabs.isEmpty {
-                        paneRows(workspace.sortedPanes)
-                    }
+                    .frame(maxWidth: Self.contentWidth, alignment: .leading)
+                    .padding(.horizontal, HerdrTheme.pagePadding)
+                    .padding(.vertical, 18)
+                    .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: Self.contentWidth, alignment: .leading)
-                .padding(.horizontal, HerdrTheme.pagePadding)
-                .padding(.vertical, 18)
-                .frame(maxWidth: .infinity)
+                .scrollIndicators(.hidden)
+                .refreshable { await model.refresh() }
+                .onAppear { scrollToHighlightedTab(proxy) }
+                .onChange(of: highlightedTabID) { _, _ in scrollToHighlightedTab(proxy) }
             }
-            .scrollIndicators(.hidden)
-            .refreshable { await model.refresh() }
         }
         .navigationTitle(workspace.label)
         .toolbar {
@@ -103,6 +108,11 @@ struct WorkspacePaneListView: View {
         }
     }
 
+    private func scrollToHighlightedTab(_ proxy: ScrollViewProxy) {
+        guard let highlightedTabID else { return }
+        proxy.scrollTo(highlightedTabID, anchor: .center)
+    }
+
     /// The overview owns the detail column of a wide window; the cards read
     /// better in a capped column than stretched across 1000pt.
     private static let contentWidth = 760.0
@@ -126,6 +136,19 @@ struct WorkspacePaneListView: View {
                 paneRows(panes)
             }
         }
+        .padding(highlightedTabID == tab.id ? 12 : 0)
+        .background(
+            highlightedTabID == tab.id ? HerdrTheme.accent.opacity(0.12) : .clear,
+            in: .rect(cornerRadius: HerdrTheme.cardRadius)
+        )
+        .overlay {
+            if highlightedTabID == tab.id {
+                RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
+                    .strokeBorder(HerdrTheme.accent.opacity(0.7), lineWidth: 1)
+            }
+        }
+        .id(tab.id)
+        .accessibilityValue(highlightedTabID == tab.id ? "Requested tab" : "")
     }
 
     private func paneRows(_ panes: [HerdrPane]) -> some View {

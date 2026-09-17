@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 from .agent_runs import AgentRunError, TERMINAL_STATUSES
 
@@ -110,23 +111,79 @@ def all_threads(manager) -> dict[str, list[dict]]:
     return threads
 
 
-def catalog(manager, query: str = "", offset: int = 0) -> dict:
+def _match_excerpt(text: str, start: int, length: int) -> str:
+    left = max(0, start - 80)
+    right = min(len(text), start + max(1, length) + 120)
+    excerpt = " ".join(text[left:right].split())
+    if left:
+        excerpt = "…" + excerpt
+    if right < len(text):
+        excerpt += "…"
+    return excerpt[:360]
+
+
+def catalog(
+    manager,
+    query: str = "",
+    offset: int = 0,
+    *,
+    ticket: str = "",
+    include_match_evidence: bool = False,
+) -> dict:
     with manager._lock:
         matches = []
         needle = query.strip().casefold()
+        ticket_pattern = (
+            re.compile(r"(?<![A-Z0-9])" + re.escape(ticket) + r"(?![A-Z0-9])", re.IGNORECASE)
+            if ticket
+            else None
+        )
         for root_id, members in all_threads(manager).items():
             members.sort(key=sort_key)
-            if needle and not any(needle in str(r.get(k) or "").casefold()
-                                  for r in members for k in ("prompt", "response", "label", "sessionId")):
+            query_match = not needle
+            ticket_match = ticket_pattern is None
+            evidence = []
+            query_evidence = False
+            ticket_evidence = False
+            for member in members:
+                for key in ("prompt", "response", "label", "sessionId"):
+                    text = str(member.get(key) or "")
+                    if needle:
+                        index = text.casefold().find(needle)
+                        if index >= 0:
+                            query_match = True
+                            if include_match_evidence and not query_evidence:
+                                evidence.append(
+                                    {"field": key, "excerpt": _match_excerpt(text, index, len(query.strip()))}
+                                )
+                                query_evidence = True
+                    if ticket_pattern is not None:
+                        found = ticket_pattern.search(text)
+                        if found:
+                            ticket_match = True
+                            if include_match_evidence and not ticket_evidence:
+                                evidence.append(
+                                    {
+                                        "field": key,
+                                        "excerpt": _match_excerpt(
+                                            text, found.start(), len(found.group(0))
+                                        ),
+                                    }
+                                )
+                                ticket_evidence = True
+            if not query_match or not ticket_match:
                 continue
             root, latest = members[0], members[-1]
             promoted = next((r for r in members if r.get("promotedPaneId")), None)
-            matches.append({"id": root_id, "title": root.get("label") or "HUD chat",
-                            "updatedAt": latest.get("finishedAt") or latest["createdAt"],
-                            "latestRunId": latest["id"], "turnCount": len(members),
-                            "status": "promoted" if promoted else latest["status"],
-                            "cwd": root.get("cwd"), "sessionId": root.get("sessionId"),
-                            "promotedPaneId": promoted.get("promotedPaneId") if promoted else None})
+            chat = {"id": root_id, "title": root.get("label") or "HUD chat",
+                    "updatedAt": latest.get("finishedAt") or latest["createdAt"],
+                    "latestRunId": latest["id"], "turnCount": len(members),
+                    "status": "promoted" if promoted else latest["status"],
+                    "cwd": root.get("cwd"), "sessionId": root.get("sessionId"),
+                    "promotedPaneId": promoted.get("promotedPaneId") if promoted else None}
+            if include_match_evidence:
+                chat["matchEvidence"] = evidence
+            matches.append(chat)
         matches.sort(key=lambda r: (r["updatedAt"], r["id"]), reverse=True)
         return {"ok": True, "chats": matches[offset:offset + 50],
                 "nextOffset": offset + 50 if len(matches) > offset + 50 else None}

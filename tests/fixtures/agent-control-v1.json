@@ -1,0 +1,197 @@
+{
+  "version": 1,
+  "fixedUnixTime": 1893456000,
+  "apiBearer": "synthetic-agent-control-api-bearer-v1-9f4c2d7a6e8b1c3d5f7092846a8c0e2f",
+  "serverId": "srv_33333333-3333-4333-8333-333333333333",
+  "receiverToken": "0123012301230123012301230123012301230123012301230123012301230123",
+  "identifiers": {
+    "clientId": "ui_11111111-1111-4111-8111-111111111111",
+    "instanceId": "22222222-2222-4222-8222-222222222222",
+    "sessionId": "55555555-5555-4555-8555-555555555555",
+    "requestId": "contract-open-1"
+  },
+  "target": {
+    "kind": "pane",
+    "serverId": "srv_33333333-3333-4333-8333-333333333333",
+    "workspaceId": "ws_contract",
+    "tabId": "tab_contract",
+    "paneId": "pane_contract",
+    "terminalId": "term_contract",
+    "sessionId": "55555555-5555-4555-8555-555555555555"
+  },
+  "registration": {
+    "clientId": "ui_11111111-1111-4111-8111-111111111111",
+    "name": "Synthetic Herdr Companion",
+    "receiverToken": "0123012301230123012301230123012301230123012301230123012301230123",
+    "instanceId": "22222222-2222-4222-8222-222222222222",
+    "state": {
+      "revision": 7,
+      "window": "main",
+      "segment": "chat",
+      "selection": {
+        "kind": "pane",
+        "serverId": "srv_33333333-3333-4333-8333-333333333333",
+        "machineId": "native-alias",
+        "workspaceId": "ws_contract",
+        "tabId": "tab_contract",
+        "paneId": "pane_contract",
+        "terminalId": "term_contract",
+        "sessionId": "55555555-5555-4555-8555-555555555555"
+      },
+      "enabled": true
+    },
+    "actions": [
+      {
+        "id": "ui.open",
+        "title": "Open exact target",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "view": {
+              "type": "string",
+              "enum": ["chat", "terminal", "git", "skills"]
+            },
+            "inspector": {
+              "type": "string",
+              "enum": ["overview", "agents", "documents", "workflow"]
+            }
+          },
+          "additionalProperties": false
+        },
+        "targetKinds": ["pane", "workspace", "tab", "first-mate", "hud-chat"],
+        "effect": "navigation",
+        "enabled": true
+      },
+      {
+        "id": "ui.segment",
+        "title": "Open app segment",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "segment": {
+              "type": "string",
+              "enum": [
+                "chat",
+                "terminal",
+                "git",
+                "skills",
+                "workspace",
+                "active-work",
+                "first-mate",
+                "fleet",
+                "attention",
+                "activity"
+              ]
+            }
+          },
+          "required": ["segment"],
+          "additionalProperties": false
+        },
+        "targetKinds": [],
+        "effect": "navigation",
+        "enabled": true
+      }
+    ]
+  },
+  "registrationResponse": {
+    "ok": true,
+    "serverId": "srv_33333333-3333-4333-8333-333333333333"
+  },
+  "poll": {
+    "receiverToken": "0123012301230123012301230123012301230123012301230123012301230123",
+    "instanceId": "22222222-2222-4222-8222-222222222222",
+    "state": {
+      "revision": 7,
+      "window": "main",
+      "segment": "chat",
+      "selection": {
+        "kind": "pane",
+        "serverId": "srv_33333333-3333-4333-8333-333333333333",
+        "machineId": "native-alias",
+        "workspaceId": "ws_contract",
+        "tabId": "tab_contract",
+        "paneId": "pane_contract",
+        "terminalId": "term_contract",
+        "sessionId": "55555555-5555-4555-8555-555555555555"
+      },
+      "enabled": true
+    }
+  },
+  "claimedCommand": {
+    "requestId": "contract-open-1",
+    "clientId": "ui_11111111-1111-4111-8111-111111111111",
+    "instanceId": "22222222-2222-4222-8222-222222222222",
+    "action": "ui.open",
+    "target": {
+      "kind": "pane",
+      "serverId": "srv_33333333-3333-4333-8333-333333333333",
+      "serverURL": "${SERVER_URL}",
+      "machineId": "cli-alias",
+      "workspaceId": "ws_contract",
+      "tabId": "tab_contract",
+      "paneId": "pane_contract",
+      "terminalId": "term_contract",
+      "sessionId": "55555555-5555-4555-8555-555555555555"
+    },
+    "parameters": {
+      "view": "git"
+    },
+    "expectedRevision": 7,
+    "status": "running",
+    "createdAt": "2030-01-01T00:00:00Z",
+    "expiresAt": "2030-01-01T00:00:30Z"
+  },
+  "acknowledgement": {
+    "receiverToken": "0123012301230123012301230123012301230123012301230123012301230123",
+    "instanceId": "22222222-2222-4222-8222-222222222222",
+    "status": "completed",
+    "result": {
+      "presentation": "main",
+      "view": "git"
+    },
+    "state": {
+      "revision": 8,
+      "window": "main",
+      "segment": "git",
+      "selection": {
+        "kind": "pane",
+        "serverId": "srv_33333333-3333-4333-8333-333333333333",
+        "machineId": "native-alias",
+        "workspaceId": "ws_contract",
+        "tabId": "tab_contract",
+        "paneId": "pane_contract",
+        "terminalId": "term_contract",
+        "sessionId": "55555555-5555-4555-8555-555555555555"
+      },
+      "enabled": true
+    }
+  },
+  "completedCommand": {
+    "requestId": "contract-open-1",
+    "clientId": "ui_11111111-1111-4111-8111-111111111111",
+    "instanceId": "22222222-2222-4222-8222-222222222222",
+    "action": "ui.open",
+    "target": {
+      "kind": "pane",
+      "serverId": "srv_33333333-3333-4333-8333-333333333333",
+      "serverURL": "${SERVER_URL}",
+      "machineId": "cli-alias",
+      "workspaceId": "ws_contract",
+      "tabId": "tab_contract",
+      "paneId": "pane_contract",
+      "terminalId": "term_contract",
+      "sessionId": "55555555-5555-4555-8555-555555555555"
+    },
+    "parameters": {
+      "view": "git"
+    },
+    "expectedRevision": 7,
+    "status": "completed",
+    "createdAt": "2030-01-01T00:00:00Z",
+    "expiresAt": "2030-01-01T00:00:30Z",
+    "result": {
+      "presentation": "main",
+      "view": "git"
+    }
+  }
+}

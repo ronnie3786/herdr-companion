@@ -607,6 +607,37 @@ final class HerdrAppModel {
         }
     }
 
+    /// Strict, single-host refresh for agent-control target validation. Unlike
+    /// the user-facing fleet refresh, errors are propagated to the receipt.
+    func refreshForAgentControl(machineID: String) async throws {
+        if isDemoMode {
+            loadDemo()
+            return
+        }
+        guard machines.contains(where: { $0.id == machineID }),
+              let client = client(forMachine: machineID) else {
+            throw APIError.noActiveConnection(machineID: machineID)
+        }
+        let generation = connectionGeneration
+        do {
+            try await refresh(
+                machineID: machineID,
+                using: client,
+                showSpinner: false,
+                expectedGeneration: generation
+            )
+            guard generation == connectionGeneration else { throw CancellationError() }
+            setRuntimeState(.live, for: machineID)
+        } catch {
+            guard generation == connectionGeneration else { throw CancellationError() }
+            setRuntimeState(.failed, for: machineID, error: error.localizedDescription)
+            throw error
+        }
+        guard canControl(machineID: machineID) else {
+            throw APIError.noActiveConnection(machineID: machineID)
+        }
+    }
+
     func fetchOutput(for pane: HerdrPane) async throws -> PaneOutputResponse {
         if isDemoMode {
             return PaneOutputResponse(
@@ -1783,47 +1814,102 @@ final class HerdrAppModel {
         }
     }
 
+    enum SmartRenamePaneOutcome: Equatable {
+        case refreshed(title: String)
+        case renamedNeedsRefresh(title: String, message: String)
+    }
+
     private(set) var smartRenamingPaneIDs: Set<String> = []
     private var paneRenameRevisions: [String: UUID] = [:]
 
     func smartRename(_ pane: HerdrPane, runner: any HerdrNoteAIRunner = HerdrLiveNoteAIRunner()) async {
         guard canControl(machineID: pane.machineID), pane.piSemantic?.sessionID != nil,
-              smartRenamingPaneIDs.insert(pane.id).inserted else { return }
-        defer { smartRenamingPaneIDs.remove(pane.id) }
-        let revision = paneRenameRevisions[pane.id]
+              !smartRenamingPaneIDs.contains(pane.id) else { return }
         toastMessage = "Finding a smart title…"
         do {
-            let snapshot = try await fetchPiConversationSnapshot(for: pane)
-            let context = SmartPaneTitle.context(from: snapshot)
-            guard snapshot.available, !context.isEmpty else {
-                toastMessage = "This Pi session has no conversation to name yet."
-                return
+            switch try await smartRenameForAgentControl(pane, runner: runner) {} {
+            case .refreshed:
+                toastMessage = "Pane renamed"
+            case let .renamedNeedsRefresh(title, message):
+                toastMessage = "Pane renamed to “\(title)”, but the app couldn't refresh it: \(message)"
             }
-            let settings = AgentModelSettings.load(from: userDefaults)
-            let charter = await supportsPromptOverrides(machineID: pane.machineID)
-                ? "You name conversations. Use only supplied text. Never call tools. Return only the requested JSON object."
-                : nil
-            let response = try await runner.run(
-                prompt: SmartPaneTitle.prompt(context: context), machineID: pane.machineID,
-                mode: .ask, model: settings.quickChatModel.isEmpty ? nil : settings.quickChatModel,
-                thinkingLevel: "low", systemPrompt: charter, deadline: .seconds(60),
-                appModel: self, onProgress: { _ in }
-            )
-            try Task.checkCancellation()
-            guard let current = self.pane(id: pane.id),
-                  current.piSemantic?.sessionID == pane.piSemantic?.sessionID,
-                  current.displayTitle == pane.displayTitle,
-                  paneRenameRevisions[pane.id] == revision else {
-                toastMessage = "Chat changed while naming it. Try Smart Rename again."
-                return
-            }
-            guard let title = SmartPaneTitle.parse(response) else {
-                toastMessage = "AI did not return a valid short title. Try Smart Rename again."
-                return
-            }
-            await rename(current, label: title)
+        } catch is CancellationError {
+            // Cancellation before the mutation preserves the existing title.
         } catch {
             toastMessage = "Smart Rename failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// Throwing Smart Rename outcome used by agent control. The validation
+    /// callback runs after AI work and immediately before the server mutation,
+    /// so a stale expected UI revision cannot rename a newer context.
+    func smartRenameForAgentControl(
+        _ pane: HerdrPane,
+        runner: any HerdrNoteAIRunner = HerdrLiveNoteAIRunner(),
+        validateBeforeMutation: @MainActor () throws -> Void
+    ) async throws -> SmartRenamePaneOutcome {
+        guard canControl(machineID: pane.machineID), pane.piSemantic?.sessionID != nil else {
+            throw AgentControlCommandError.unavailable("This pane has no controllable semantic Pi session.")
+        }
+        guard smartRenamingPaneIDs.insert(pane.id).inserted else {
+            throw AgentControlCommandError.conflict("Smart Rename is already running for this pane.")
+        }
+        defer { smartRenamingPaneIDs.remove(pane.id) }
+        let revision = paneRenameRevisions[pane.id]
+        let snapshot = try await fetchPiConversationSnapshot(for: pane)
+        let context = SmartPaneTitle.context(from: snapshot)
+        guard snapshot.available, !context.isEmpty else {
+            throw AgentControlCommandError.unavailable("This Pi session has no conversation to name yet.")
+        }
+        let settings = AgentModelSettings.load(from: userDefaults)
+        let charter = await supportsPromptOverrides(machineID: pane.machineID)
+            ? "You name conversations. Use only supplied text. Never call tools. Return only the requested JSON object."
+            : nil
+        let response = try await runner.run(
+            prompt: SmartPaneTitle.prompt(context: context), machineID: pane.machineID,
+            mode: .ask, model: settings.quickChatModel.isEmpty ? nil : settings.quickChatModel,
+            thinkingLevel: "low", systemPrompt: charter, deadline: .seconds(60),
+            appModel: self, onProgress: { _ in }
+        )
+        try Task.checkCancellation()
+        guard let current = self.pane(id: pane.id),
+              current.piSemantic?.sessionID == pane.piSemantic?.sessionID,
+              current.displayTitle == pane.displayTitle,
+              paneRenameRevisions[pane.id] == revision else {
+            throw AgentControlCommandError.conflict("The chat changed while Smart Rename was running.")
+        }
+        guard let title = SmartPaneTitle.parse(response) else {
+            throw AgentControlCommandError.failed("Smart Rename did not return a valid short title.")
+        }
+        try validateBeforeMutation()
+        noteUserInteraction(machineID: current.machineID)
+        guard let client = client(forMachine: current.machineID), canControl(machineID: current.machineID) else {
+            throw AgentControlCommandError.unavailable("Reconnect before renaming this pane.")
+        }
+        let generation = connectionGeneration
+        try await client.renamePane(id: current.paneID, label: title)
+        paneRenameRevisions[current.id] = UUID()
+
+        // The mutation has succeeded at this point. Refresh exactly once so
+        // both the manual button and agent-control receipt observe model state
+        // with the server's title rather than guessing that SSE will arrive.
+        do {
+            guard generation == connectionGeneration else {
+                return .renamedNeedsRefresh(title: title, message: "The companion connection changed after the rename.")
+            }
+            try await refresh(
+                machineID: current.machineID,
+                using: client,
+                showSpinner: false,
+                expectedGeneration: generation
+            )
+            guard generation == connectionGeneration,
+                  let refreshed = self.pane(id: current.id) else {
+                return .renamedNeedsRefresh(title: title, message: "The renamed pane was not present in the refreshed workspace state.")
+            }
+            return .refreshed(title: refreshed.displayTitle)
+        } catch {
+            return .renamedNeedsRefresh(title: title, message: error.localizedDescription)
         }
     }
 
@@ -3150,6 +3236,16 @@ final class HerdrAppModel {
         currentPaneDetailModeOwner = nil
         currentPaneDetailMode = nil
         currentPaneGitIsAvailable = false
+    }
+
+    /// Narrow presentation acknowledgement for the native receiver. Selection
+    /// alone is insufficient because SwiftUI may still be rendering a mode
+    /// owned by a different pane.
+    func isPresentingPane(id paneID: String, mode: PaneDetailMode?) -> Bool {
+        guard let mode else { return false }
+        return selectedPaneID == paneID
+            && currentPaneDetailModeOwner == paneID
+            && currentPaneDetailMode == mode
     }
 
     func dismissHudChip(_ paneID: String) {

@@ -1273,6 +1273,16 @@ final class HerdrHudSession {
         validationError = nil
     }
 
+    func openHistory(id: String, machineID: String, model: HerdrAppModel) async throws {
+        try await openHistory(
+            id: id,
+            machineID: machineID,
+            model: model,
+            kind: .forced,
+            submissionOwnerID: nil
+        )
+    }
+
     private func openHistory(
         id: String,
         machineID: String,

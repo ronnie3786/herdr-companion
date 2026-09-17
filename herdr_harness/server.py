@@ -23,6 +23,20 @@ from .agent_runs import AgentRunError, MAX_ATTACHMENTS, MODEL_PATTERN, THINKING_
 from .alerts import utc_now
 from .client import HerdrAPIError, HerdrClientError
 from .cleanup import CleanupError
+from .control_validation import (
+    ControlError,
+    action_descriptors,
+    action_id as control_action_id,
+    client_id as control_client_id,
+    instance_id as control_instance_id,
+    receiver_token as control_receiver_token,
+    request_id as control_request_id,
+    require_fields as control_require_fields,
+    short_string as control_string,
+    target as control_target,
+    ui_state as control_ui_state,
+    validate_json as control_validate_json,
+)
 from .fleet import FleetError, FleetManager
 from .network import public_base_url
 from .notes import NotesError, MAX_NOTE_BYTES, MAX_NOTES
@@ -157,6 +171,14 @@ def _pi_session_context_route(method: str, path: str) -> bool:
             r"/api/v1/workspaces/[^/]+/pi/sessions/[^/]+/context",
             path,
         )
+    )
+
+
+def _agent_control_route(path: str) -> bool:
+    return (
+        path == "/api/v1/discovery"
+        or path.startswith("/api/v1/control")
+        or path.startswith("/api/v1/ui/")
     )
 
 
@@ -376,9 +398,19 @@ def api_description() -> dict:
         "ok": True,
         "service": "herdr-harness",
         "version": 1,
-        "capabilities": ["pane-retirement-v1", "first-mate-v1", "pi-session-context-v1"],
+        "capabilities": [
+            "pane-retirement-v1",
+            "first-mate-v1",
+            "pi-session-context-v1",
+            "agent-control-v1",
+            "discovery-v1",
+        ],
         "endpoints": {
             "health": "/api/v1/health",
+            "controlCapabilities": "/api/v1/control/capabilities",
+            "controlActions": "/api/v1/control/actions",
+            "discovery": "/api/v1/discovery",
+            "uiClients": "/api/v1/ui/clients",
             "firstMate": "/api/v1/first-mate/features",
             "firstMateCapabilities": "/api/v1/first-mate/capabilities",
             "network": "/api/v1/network",
@@ -485,6 +517,9 @@ def api_description() -> dict:
             "POST /api/v1/cleanup/runs/{runId}/cancel",
             "POST /api/v1/fleet/sync",
             "POST /api/v1/fleet/items/{itemId}/action",
+            "POST /api/v1/control/actions",
+            "POST /api/v1/ui/clients/register|{clientId}/poll|{clientId}/commands",
+            "POST /api/v1/ui/clients/{clientId}/commands/{requestId}/result",
         ],
         "sseEvents": [
             "notes.changed",
@@ -601,10 +636,11 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 (manage_route and configured_manage_token)
                 or (sync_route and configured_ingest_token)
             )
+            full_bearer_route = _agent_control_route(path)
             # Preserve the explicit loopback development mode: scoped Active
             # Work credentials protect only their routes when no main token is
             # configured, rather than locking unrelated legacy API routes.
-            if not configured_token and not protected_by_scoped_token:
+            if not configured_token and not protected_by_scoped_token and not full_bearer_route:
                 return True
             valid_main = bool(
                 bearer
@@ -781,6 +817,12 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     return
                 if not self._authorized(path=path, method=method):
                     return
+                decoded_control_route = segments[2:3] in (["control"], ["discovery"], ["ui"])
+                if decoded_control_route and self._authorization_scope != "main":
+                    # Routing uses decoded segments, so authorization must guard
+                    # the same canonical route and not only the raw encoded path.
+                    self._error(401, "unauthorized", "A valid bearer token is required")
+                    return
                 if _active_work_api_route(path):
                     self._active_work_actor = self._resolve_active_work_actor()
                 attachment_upload = (
@@ -808,6 +850,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     else:
                         self._json_response(response)
             except HTTPValidationError as exc:
+                self._error(exc.status, exc.code, str(exc))
+            except ControlError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except NotesError as exc:
                 self._json_response({"ok": False, "error": {"code": exc.code, "message": str(exc)},
@@ -1018,6 +1062,213 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 return service.first_mate.session(tail[1], before=before, limit=limit)
             raise HTTPValidationError("First Mate endpoint not found", code="not_found", status=404)
 
+        def _control_route(
+            self,
+            method: str,
+            tail: list[str],
+            query: dict[str, list[str]],
+            body: dict,
+        ) -> Optional[dict]:
+            store = service.control_store
+            server_id = store.server_id
+
+            if method == "GET" and tail == ["control", "capabilities"]:
+                if query:
+                    raise ControlError("Capabilities does not accept query parameters")
+                return {
+                    "ok": True,
+                    "version": 1,
+                    "serverId": server_id,
+                    "capabilities": ["agent-control-v1", "discovery-v1"],
+                }
+            if method == "GET" and tail == ["discovery"]:
+                allowed = {"kind", "q", "ticket", "sort", "limit", "offset"}
+                if set(query) - allowed or any(len(values) != 1 for values in query.values()):
+                    raise ControlError("Discovery query contains an unsupported or repeated parameter")
+                kind = (query.get("kind") or ["all"])[0]
+                search_query = (query.get("q") or [""])[0]
+                ticket = (query.get("ticket") or [""])[0]
+                sort = (query.get("sort") or ["updated"])[0]
+                limit = _query_int(query, "limit", 50, minimum=1, maximum=100)
+                offset = _query_int(query, "offset", 0, minimum=0, maximum=100000)
+                return service.control_discovery.search(
+                    kind=kind,
+                    query=search_query,
+                    ticket=ticket,
+                    sort=sort,
+                    limit=limit,
+                    offset=offset,
+                )
+            if method == "POST" and tail == ["control", "inspect"]:
+                control_require_fields(body, allowed={"target"}, required={"target"}, label="inspect request")
+                inspected = service.control_discovery.inspect(
+                    control_target(body.get("target"), required=True)
+                )
+                return {"ok": True, "result": inspected}
+            if method == "POST" and tail == ["ui", "clients", "register"]:
+                control_require_fields(
+                    body,
+                    allowed={"clientId", "name", "receiverToken", "instanceId", "state", "actions"},
+                    required={"clientId", "name", "receiverToken", "instanceId", "state", "actions"},
+                    label="registration",
+                )
+                client = store.register(
+                    client_id=control_client_id(body.get("clientId")),
+                    name=control_string(body.get("name"), "name", maximum=120),
+                    receiver_token=control_receiver_token(body.get("receiverToken")),
+                    instance_id=control_instance_id(body.get("instanceId")),
+                    state=control_ui_state(body.get("state")),
+                    actions=action_descriptors(body.get("actions")),
+                )
+                return {"ok": True, "serverId": server_id, "client": client}
+            if method == "GET" and tail == ["ui", "clients"]:
+                if query:
+                    raise ControlError("UI clients does not accept query parameters")
+                return {"ok": True, "serverId": server_id, "clients": store.clients()}
+            if len(tail) == 4 and tail[:2] == ["ui", "clients"] and method == "GET":
+                client = store.client(control_client_id(tail[2]))
+                if tail[3] == "state":
+                    return {"ok": True, "serverId": server_id, "client": client}
+                if tail[3] == "actions":
+                    return {"ok": True, "serverId": server_id, "actions": client["actions"]}
+            if len(tail) == 4 and tail[:2] == ["ui", "clients"] and tail[3] == "poll" and method == "POST":
+                control_require_fields(
+                    body,
+                    allowed={"receiverToken", "instanceId", "state", "actions"},
+                    required={"receiverToken", "instanceId", "state"},
+                    label="poll request",
+                )
+                actions = action_descriptors(body["actions"]) if "actions" in body else None
+                command = store.poll(
+                    client_id=control_client_id(tail[2]),
+                    receiver_token=control_receiver_token(body.get("receiverToken")),
+                    instance_id=control_instance_id(body.get("instanceId")),
+                    state=control_ui_state(body.get("state")),
+                    actions=actions,
+                )
+                return {"ok": True, "command": command}
+            if len(tail) == 4 and tail[:2] == ["ui", "clients"] and tail[3] == "commands" and method == "POST":
+                control_require_fields(
+                    body,
+                    allowed={"requestId", "action", "target", "parameters", "expectedRevision", "ttlSeconds"},
+                    required={"requestId", "action", "parameters"},
+                    label="command request",
+                )
+                client_identifier = control_client_id(tail[2])
+                identifier = control_request_id(body.get("requestId"))
+                action = control_action_id(body.get("action"))
+                target = control_target(body.get("target"))
+                parameters = body.get("parameters")
+                if not isinstance(parameters, dict):
+                    raise ControlError("parameters must be an object")
+                control_validate_json(parameters, "parameters")
+                expected_revision = body.get("expectedRevision")
+                if expected_revision is not None and (
+                    not isinstance(expected_revision, int)
+                    or isinstance(expected_revision, bool)
+                    or expected_revision < 0
+                ):
+                    raise ControlError("expectedRevision must be a nonnegative integer")
+                ttl = body.get("ttlSeconds", 30)
+                if not isinstance(ttl, int) or isinstance(ttl, bool) or not 1 <= ttl <= 60:
+                    raise ControlError("ttlSeconds must be between 1 and 60")
+                command = store.enqueue(
+                    client_id=client_identifier,
+                    request_id=identifier,
+                    action=action,
+                    target=target,
+                    parameters=parameters,
+                    expected_revision=expected_revision,
+                    ttl_seconds=ttl,
+                    payload=body,
+                )
+                return {"ok": True, "command": command}
+            if len(tail) == 3 and tail[:2] == ["ui", "commands"] and method == "GET":
+                return {"ok": True, "command": store.command(control_request_id(tail[2]))}
+            if (
+                len(tail) == 6
+                and tail[:2] == ["ui", "clients"]
+                and tail[3] == "commands"
+                and tail[5] == "result"
+                and method == "POST"
+            ):
+                control_require_fields(
+                    body,
+                    allowed={"receiverToken", "instanceId", "status", "result", "error", "state"},
+                    required={"receiverToken", "instanceId", "status", "state"},
+                    label="command result",
+                )
+                status = body.get("status")
+                if status not in {"completed", "failed"}:
+                    raise ControlError("status must be completed or failed")
+                result = body.get("result")
+                if result is not None:
+                    if not isinstance(result, dict):
+                        raise ControlError("result must be an object")
+                    control_validate_json(result, "result")
+                error = body.get("error")
+                if error is not None:
+                    if not isinstance(error, dict):
+                        raise ControlError("error must be an object")
+                    control_require_fields(error, allowed={"code", "message"}, required={"code", "message"}, label="error")
+                    error = {
+                        "code": control_string(error.get("code"), "error.code", maximum=128),
+                        "message": control_string(error.get("message"), "error.message", maximum=1000),
+                    }
+                if status == "failed" and error is None:
+                    raise ControlError("A failed command requires error")
+                acknowledgement = {
+                    "receiverTokenHashBound": True,
+                    "instanceId": body.get("instanceId"),
+                    "status": status,
+                    "state": body.get("state"),
+                    **({"result": result} if result is not None else {}),
+                    **({"error": error} if error is not None else {}),
+                }
+                command = store.acknowledge(
+                    client_id=control_client_id(tail[2]),
+                    request_id=control_request_id(tail[4]),
+                    receiver_token=control_receiver_token(body.get("receiverToken")),
+                    instance_id=control_instance_id(body.get("instanceId")),
+                    status=status,
+                    result=result,
+                    error=error,
+                    state=control_ui_state(body.get("state")),
+                    acknowledgement=acknowledgement,
+                )
+                return {"ok": True, "command": command}
+            if tail == ["control", "actions"] and method == "GET":
+                if query:
+                    raise ControlError("Actions does not accept query parameters")
+                return {"ok": True, "actions": service.control_resources.actions()}
+            if tail == ["control", "actions"] and method == "POST":
+                control_require_fields(
+                    body,
+                    allowed={"requestId", "action", "target", "parameters", "dryRun"},
+                    required={"requestId", "action", "parameters"},
+                    label="resource action request",
+                )
+                dry_run = body.get("dryRun", False)
+                if not isinstance(dry_run, bool):
+                    raise ControlError("dryRun must be a boolean")
+                normalized = {
+                    "requestId": control_request_id(body.get("requestId")),
+                    "action": control_action_id(body.get("action")),
+                    "parameters": body.get("parameters"),
+                }
+                if "dryRun" in body:
+                    normalized["dryRun"] = dry_run
+                if "target" in body:
+                    normalized["target"] = control_target(body.get("target"), required=True)
+                operation = service.control_resources.invoke(normalized)
+                return {"ok": True, "operation": operation}
+            if len(tail) == 3 and tail[:2] == ["control", "operations"] and method == "GET":
+                return {
+                    "ok": True,
+                    "operation": service.control_resources.operation(control_request_id(tail[2])),
+                }
+            return None
+
         def _route(
             self,
             method: str,
@@ -1029,6 +1280,11 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             tail = segments[2:]
             if method == "GET" and not tail:
                 return api_description()
+            if tail[:1] in (["control"], ["discovery"], ["ui"]):
+                response = self._control_route(method, tail, query, body)
+                if response is None:
+                    raise ControlError("Agent control endpoint not found", code="not_found", status=404)
+                return response
             if tail[:1] == ["first-mate"]:
                 return self._first_mate_route(method, tail[1:], query, body)
             if tail == ["notes"]:

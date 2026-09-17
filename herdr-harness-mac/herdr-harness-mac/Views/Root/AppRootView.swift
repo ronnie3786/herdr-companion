@@ -81,7 +81,15 @@ final class HerdrShellState {
     var firstMateMachineID: String?
     var firstMateOpenRequest: FirstMateOpenRequest?
     var firstMateAppliedRequestID: UUID?
+    @ObservationIgnored private var configuredFirstMateConnectionIdentity: FirstMateConnectionIdentity?
     private(set) var paneModeFocusRequest = 0
+    private(set) var agentControlPaneMode: PaneDetailMode?
+    private var agentControlPaneID: String?
+    private var agentControlSelectionPaneID: String?
+    private(set) var highlightedOverviewTabID: String?
+    var agentControlWindow: AgentControlWindow = .main
+    var piSessionSummaryRequest: PiSessionSummaryRequest?
+    var pendingFirstMateControlTarget: (machineID: String, featureID: String, inspector: FirstMateInspector)?
     var isCreatingWorkspace = false
     var isAgentPresented = false
     /// Navigate ▸ Jump to Pane…. A pasted reference, not a picker: the ids
@@ -113,6 +121,34 @@ final class HerdrShellState {
         self.history = NavigationHistory(snapshot: historyStore.load())
     }
 
+    /// First Mate belongs to the process-owned shell, so a newly created main
+    /// window must not treat an unchanged connection as a new store lifetime.
+    /// The identity intentionally stays private and in memory: it can contain
+    /// an authenticated configuration and is never part of agent-control UI state.
+    @discardableResult
+    func configureFirstMateIfNeeded(
+        configuration: ServerConfiguration?,
+        connectionGeneration: Int,
+        isDemo: Bool,
+        client: (any FirstMateClient)? = nil
+    ) -> Bool {
+        let identity = FirstMateConnectionIdentity(
+            configuration: configuration,
+            generation: connectionGeneration,
+            isDemo: isDemo
+        )
+        guard identity != configuredFirstMateConnectionIdentity else { return false }
+        let configuredClient: (any FirstMateClient)?
+        if let client {
+            configuredClient = client
+        } else {
+            configuredClient = configuration.map { HerdrAPIClient(configuration: $0) }
+        }
+        firstMate.configure(client: configuredClient, demo: isDemo)
+        configuredFirstMateConnectionIdentity = identity
+        return true
+    }
+
     /// Present the global pane navigator. Incrementing the request also lets a
     /// repeated ⌘K put keyboard focus back in its search field.
     func presentCommandPalette() {
@@ -132,12 +168,26 @@ final class HerdrShellState {
     /// same ID, so a change observer would never fire and the click would be
     /// dead.
     func showSession() {
+        agentControlPaneMode = nil
+        agentControlPaneID = nil
+        agentControlSelectionPaneID = nil
         detailScope = .session
+        highlightedOverviewTabID = nil
         paneModeFocusRequest &+= 1
     }
 
     func selectedPaneDidChange(model: HerdrAppModel) {
         guard let paneID = model.selectedPaneID else { return }
+        // Consume the exact route's selection observation without issuing a
+        // second default-Chat request after its actual mode was acknowledged.
+        if agentControlSelectionPaneID == paneID {
+            agentControlSelectionPaneID = nil
+            return
+        }
+        agentControlSelectionPaneID = nil
+        // An exact native mode request owns this selection until the mounted
+        // PaneSessionView acknowledges the requested mode.
+        if agentControlPaneID == paneID, agentControlPaneMode != nil { return }
         // Preserve an explicit history replay to Git. External pane routes
         // from every other screen still bring the primary session forward.
         guard detailScope != .git || history.current != .git(paneID) else { return }
@@ -156,17 +206,46 @@ final class HerdrShellState {
     /// Show a workspace's tab/pane overview — what iOS navigated to when you
     /// opened a workspace rather than one of its panes.
     func showWorkspace(id: String, model: HerdrAppModel) {
-        guard model.workspace(id: id) != nil else { return }
+        showWorkspace(id: id, highlightedTabID: nil, model: model)
+    }
+
+    func showWorkspace(id: String, highlightedTabID: String?, model: HerdrAppModel) {
+        guard let workspace = model.workspace(id: id),
+              highlightedTabID == nil || workspace.tabs.contains(where: { $0.id == highlightedTabID })
+        else { return }
         model.selectedWorkspaceID = id
+        agentControlPaneMode = nil
+        agentControlPaneID = nil
+        agentControlSelectionPaneID = nil
         // Deliberately clears the pane: selecting one would bounce the detail
         // back to `.session` through the pane observer below.
         model.selectedPaneID = nil
+        highlightedOverviewTabID = highlightedTabID
         detailScope = .workspace
         recordVisit(for: model)
     }
 
+    func showFirstMate(
+        machineID: String,
+        featureID: String,
+        inspector: FirstMateInspector,
+        model: HerdrAppModel
+    ) {
+        firstMateMachineID = machineID
+        pendingFirstMateControlTarget = (machineID, featureID, inspector)
+        show(.firstMate, model: model)
+    }
+
     /// Scope-only destinations (Active Work, Fleet, Attention, and Activity).
     func show(_ scope: HerdrDetailScope, model: HerdrAppModel) {
+        if scope == .git {
+            agentControlPaneMode = .git
+            agentControlPaneID = model.selectedPaneID
+        } else {
+            agentControlPaneMode = nil
+            agentControlPaneID = nil
+            agentControlSelectionPaneID = nil
+        }
         detailScope = scope
         paneModeFocusRequest &+= 1
         recordVisit(for: model)
@@ -227,12 +306,25 @@ final class HerdrShellState {
     }
 
     func openPane(id paneID: String, model: HerdrAppModel) {
+        agentControlPaneMode = nil
         showSession()
         model.openPane(id: paneID)
         recordVisit(for: model)
     }
 
+    func openPane(id paneID: String, mode: PaneDetailMode, model: HerdrAppModel) {
+        agentControlPaneMode = mode
+        agentControlPaneID = paneID
+        agentControlSelectionPaneID = paneID
+        highlightedOverviewTabID = nil
+        detailScope = mode == .git ? .git : .session
+        paneModeFocusRequest &+= 1
+        model.openPane(id: paneID)
+        recordVisit(for: model)
+    }
+
     func openPane(rawPaneID: String, machineID: String?, model: HerdrAppModel) {
+        agentControlPaneMode = nil
         showSession()
         model.openPane(rawPaneID: rawPaneID, machineID: machineID)
         recordVisit(for: model)
@@ -252,6 +344,7 @@ final class HerdrShellState {
             model.toastMessage = "That doesn't look like a pane id"
             return
         }
+        agentControlPaneMode = nil
         showSession()
         if let scoped = MachineScopedID.split(normalized) {
             model.openPane(rawPaneID: scoped.rawID, machineID: scoped.machineID)
@@ -279,14 +372,21 @@ final class HerdrShellState {
     /// Back would push a new entry and Forward could never be reached.
     private func apply(_ destination: HerdrDestination, model: HerdrAppModel) {
         paneModeFocusRequest &+= 1
+        agentControlPaneMode = nil
+        agentControlPaneID = nil
+        agentControlSelectionPaneID = nil
         switch destination {
         case let .pane(id):
+            agentControlPaneMode = nil
             detailScope = .session
             model.openPane(id: id)          // clears alerts + repairs selectedWorkspaceID
         case let .git(id):
+            agentControlPaneMode = .git
+            agentControlPaneID = id
             model.openPane(id: id)
             detailScope = .git
         case let .workspace(id):
+            agentControlPaneMode = nil
             model.selectedWorkspaceID = id
             model.selectedPaneID = nil      // mirrors showWorkspace(id:model:)
             detailScope = .workspace
@@ -324,6 +424,34 @@ final class HerdrShellState {
     var canGoBack: Bool { history.canGoBack }
     var canGoForward: Bool { history.canGoForward }
 
+    var agentControlBlockingModal: String? {
+        if isCreatingWorkspace { return "create-workspace" }
+        if isAgentPresented { return "agent" }
+        if isJumpToPanePresented { return "jump-to-pane" }
+        if isCommandPalettePresented { return "command-palette" }
+        if piSessionSummaryRequest != nil { return "pi-session-summary" }
+        return nil
+    }
+
+    func agentControlPaneModeDidApply(_ mode: PaneDetailMode, paneID: String) {
+        guard mode == agentControlPaneMode, paneID == agentControlPaneID else { return }
+        agentControlPaneMode = nil
+        agentControlPaneID = nil
+    }
+
+    func agentControlSegment(model: HerdrAppModel) -> String {
+        switch resolvedScope(for: model) {
+        case .session, .git:
+            return model.currentPaneDetailMode?.rawValue ?? "session"
+        case .workspace: return "workspace"
+        case .activeWork: return "active-work"
+        case .firstMate: return "first-mate"
+        case .fleet: return "fleet"
+        case .attention: return "attention"
+        case .activity: return "activity"
+        }
+    }
+
     @discardableResult
     private func mutateHistory<T>(_ mutation: (inout NavigationHistory) -> T) -> T {
         let result = mutation(&history)
@@ -345,7 +473,11 @@ struct AppRootView: View {
     let promptSettings: HerdrPromptSettingsStore
     let modelFavorites: ModelFavoritesStore
     let fontScale: HerdrFontScaleStore
+    let agentControl: AgentControlController
     @Environment(HerdPulseCoordinator.self) private var herdPulse
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
+    @Environment(\.controlActiveState) private var controlActiveState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var statusHapticTracker = AgentStatusHapticTracker()
@@ -390,12 +522,24 @@ struct AppRootView: View {
         // window — see `HerdrConnectionDriver`. The window only nudges them.
         .onChange(of: model.connectionGeneration, initial: true) { _, _ in
             driver.syncConnection(model: model)
+            agentControl.synchronize()
+        }
+        .onChange(of: controlActiveState, initial: true) { _, state in
+            if state == .key { agentControl.noteWindow(.main) }
         }
         .onChange(of: model.hasCompletedSetup) { _, _ in
             driver.syncConnection(model: model)
         }
         .onAppear {
             driver.startPulse(model: model, pulse: herdPulse)
+            agentControl.configure(
+                model: model,
+                shell: shell,
+                hudController: hudController,
+                openMainWindow: { openWindow(id: HerdrWindowID.main) },
+                openSettingsWindow: { openSettings() }
+            )
+            agentControl.noteWindow(.main)
             // The isolated First Mate recording and unit-test host need no floating HUD.
             // Creating it here also asks iconservices for an app icon during layout.
             if !ProcessInfo.processInfo.arguments.contains("-HerdrFirstMateDemo"),
@@ -453,6 +597,9 @@ struct AppRootView: View {
         // then no-ops is worse than one that is greyed out. `repairNavigation`
         // clears the live selection on the same revision — this clears the trail.
         .onChange(of: model.fleetRevision) { shell.pruneHistory(for: model) }
+        .sheet(item: $shell.piSessionSummaryRequest) { request in
+            PiSessionSummaryView(model: model, request: request)
+        }
         .sheet(isPresented: $shell.isCreatingWorkspace) {
             CreateWorkspaceView { label, cwd in
                 let machineID: String?

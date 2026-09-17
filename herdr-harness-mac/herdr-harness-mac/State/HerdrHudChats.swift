@@ -99,21 +99,37 @@ final class HerdrHudChats {
     }
 
     func openHistory(_ summary: HudChatSummary, machineID: String, model: HerdrAppModel) async throws -> String {
+        try await openHistory(id: summary.id, title: summary.title, machineID: machineID, model: model)
+    }
+
+    /// Exact-ID history loading for agent control. This uses the direct
+    /// /hud-chats/{id} loader and never scans the paginated catalog or
+    /// resubmits the saved prompt.
+    func openHistory(id historyID: String, machineID: String, model: HerdrAppModel) async throws -> String {
+        try await openHistory(id: historyID, title: "", machineID: machineID, model: model)
+    }
+
+    private func openHistory(
+        id historyID: String,
+        title: String,
+        machineID: String,
+        model: HerdrAppModel
+    ) async throws -> String {
         // Let startup restoration establish durable IDs before deduplicating.
         for chat in chats { await chat.session.waitForPersistenceRestore() }
         if let existing = chats.first(where: {
-            $0.session.historyIdentity == "\(machineID):\(summary.id)"
+            $0.session.historyIdentity == "\(machineID):\(historyID)"
         }) {
             guard !existing.session.isEnding else { throw HerdrHudChatEndError.busy }
             if !existing.session.isRunning, !existing.session.isLoadingHistory {
-                try await existing.session.openHistory(summary, machineID: machineID, model: model)
+                try await existing.session.openHistory(id: historyID, machineID: machineID, model: model)
             }
             return existing.id
         }
         let id = UUID().uuidString
         let session = prototype.makeIndependentSession(id: id)
-        try await session.openHistory(summary, machineID: machineID, model: model)
-        chats.insert(Chat(id: id, title: summary.title, session: session), at: 0)
+        try await session.openHistory(id: historyID, machineID: machineID, model: model)
+        chats.insert(Chat(id: id, title: title, session: session), at: 0)
         persistIndex()
         return id
     }

@@ -9,6 +9,8 @@ struct SettingsView: View {
     let modelFavorites: ModelFavoritesStore
     let hudController: HerdrHudController
     @Bindable var updates: HerdrUpdateController
+    @Bindable var agentControl: AgentControlController
+    @Environment(\.controlActiveState) private var controlActiveState
     @State private var isPresentingMachines = false
     @State private var isPresentingMachineEditor = false
     @State private var editingMachine: HerdrMachine?
@@ -31,6 +33,7 @@ struct SettingsView: View {
             promptsSection
             cleanupSection
             textSizeSection
+            agentControlSection
             privacySection
             ScreenRecordingSettingsSection()
             updatesSection
@@ -48,6 +51,9 @@ struct SettingsView: View {
         .sheet(isPresented: $isPresentingMachineEditor) {
             MachineEditorView(model: model, machine: editingMachine)
                 .frame(minWidth: 480, minHeight: 420)
+        }
+        .onChange(of: controlActiveState, initial: true) { _, state in
+            if state == .key { agentControl.noteWindow(.settings) }
         }
         .task {
             await loadCleanupModels()
@@ -479,6 +485,37 @@ struct SettingsView: View {
             cleanupModelsError = error.localizedDescription
         }
         isLoadingCleanupModels = false
+    }
+
+    private var agentControlSection: some View {
+        Section {
+            Toggle(
+                "Allow agent control",
+                systemImage: "switch.2",
+                isOn: Binding(
+                    get: { agentControl.isEnabled },
+                    set: { agentControl.setEnabled($0) }
+                )
+            )
+            .tint(HerdrTheme.controlAccent)
+            .accessibilityIdentifier("settings-agent-control-enabled")
+
+            LabeledContent("Receiver") {
+                Text(agentControl.statusText)
+                    .foregroundStyle(agentControl.activeServerCount > 0 ? HerdrTheme.signal : HerdrTheme.mist)
+                    .multilineTextAlignment(.trailing)
+            }
+            if let error = agentControl.lastError {
+                Text(error)
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.alert)
+                    .textSelection(.enabled)
+            }
+        } header: {
+            Label("Agent control", systemImage: "network.badge.shield.half.filled")
+        } footer: {
+            Text("Off by default. When enabled, authenticated companion servers may invoke the listed native actions without a second Mac confirmation. Normal manual confirmations and workflow checkpoints are unchanged. Receiver secrets stay in Keychain.")
+        }
     }
 
     private var privacySection: some View {

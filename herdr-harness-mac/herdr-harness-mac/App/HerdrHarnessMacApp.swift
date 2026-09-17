@@ -30,6 +30,7 @@ struct HerdrHarnessMacApp: App {
     @State private var cleanupSettings = CleanupSettingsStore()
     @State private var hudController = HerdrHudController()
     @State private var quickVoiceController = QuickVoicePanelController()
+    @State private var agentControl = AgentControlController()
     @State private var agentSettings: AgentModelSettingsStore
     @State private var promptSettings: HerdrPromptSettingsStore
     @State private var modelFavorites: ModelFavoritesStore
@@ -64,7 +65,8 @@ struct HerdrHarnessMacApp: App {
                 agentSettings: agentSettings,
                 promptSettings: promptSettings,
                 modelFavorites: modelFavorites,
-                fontScale: fontScale
+                fontScale: fontScale,
+                agentControl: agentControl
             )
                 .safeAreaInset(edge: .top, spacing: 0) {
                     if let version = updates.availableVersion {
@@ -122,7 +124,8 @@ struct HerdrHarnessMacApp: App {
                 promptSettings: promptSettings,
                 modelFavorites: modelFavorites,
                 hudController: hudController,
-                updates: updates
+                updates: updates,
+                agentControl: agentControl
             )
                 .environment(\.herdrFontScale, fontScale.scale)
                 .frame(width: 560, height: 640)

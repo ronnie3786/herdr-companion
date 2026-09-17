@@ -127,6 +127,7 @@ class HerdrService:
         result_artifact_store: Optional[result_artifacts.ResultArtifactStore] = None,
         first_mate_store: Optional[FirstMateStore] = None,
         first_mate_runtime: Optional[Any] = None,
+        control_store: Optional[Any] = None,
     ) -> None:
         production_environment = environ is None
         self.environ = dict(os.environ if production_environment else environ)
@@ -202,6 +203,20 @@ class HerdrService:
         self._first_mate_runtime = first_mate_runtime
         self._first_mate_notifications = None
         self._owns_first_mate_store = first_mate_store is None
+        self._control_store = control_store
+        self._owns_control_store = control_store is None
+        self._control_discovery = None
+        self._control_resources = None
+        state_dir = self.environ.get("HERDR_STATE_DIR")
+        self._control_store_path = (
+            str(Path(state_dir).expanduser() / "control.sqlite3")
+            if state_dir
+            else (
+                str(Path.home() / ".local/share/herdr-companion/control.sqlite3")
+                if production_environment
+                else ":memory:"
+            )
+        )
         self._first_mate_store_path = self.environ.get("HERDR_HARNESS_FIRST_MATE_STORE_PATH") or (
             str(Path(self.environ.get("HERDR_STATE_DIR") or Path.home() / ".local/share/herdr-companion") / "first-mate.sqlite3")
             if production_environment or self.environ.get("HERDR_STATE_DIR") else ":memory:"
@@ -541,8 +556,41 @@ class HerdrService:
             self.active_work.close()
         if self._owns_first_mate_store and self._first_mate_store is not None:
             self._first_mate_store.close()
+        if self._owns_control_store and self._control_store is not None:
+            self._control_store.close()
         if self._first_mate_transient_root is not None:
             self._first_mate_transient_root.cleanup()
+
+    @property
+    def control_store(self):
+        from .control_store import ControlStore
+
+        with self._lock:
+            if self._control_store is None:
+                self._control_store = ControlStore(self._control_store_path)
+            return self._control_store
+
+    @property
+    def control_discovery(self):
+        from .control_discovery import DiscoveryService
+
+        with self._lock:
+            if self._control_discovery is None:
+                self._control_discovery = DiscoveryService(
+                    self, self.control_store.server_id
+                )
+            return self._control_discovery
+
+    @property
+    def control_resources(self):
+        from .control_resources import ResourceActionService
+
+        with self._lock:
+            if self._control_resources is None:
+                self._control_resources = ResourceActionService(
+                    self, self.control_store
+                )
+            return self._control_resources
 
     @property
     def first_mate_store(self) -> FirstMateStore:
@@ -808,15 +856,24 @@ class HerdrService:
     def snapshot_response(self) -> dict:
         snapshot, generated_at = self._cached_snapshot()
         enriched = self.pi_semantic.enrich_snapshot(snapshot)
+        lifecycle_by_pane = self.panes_seen.lifecycle_map()
         for pane in enriched.get("panes", []):
             if isinstance(pane, dict):
+                pane_id = str(pane.get("pane_id") or "")
                 self.pane_lifecycle.enrich(pane)
-                pane.update(self.session_labels.label_for(str(pane.get("pane_id") or "")))
+                pane.update(self.session_labels.label_for(pane_id))
                 activity = self.agent_activity.session_activity(
-                    str(pane.get("pane_id") or ""), status=str(pane.get("agent_status") or "unknown"),
+                    pane_id, status=str(pane.get("agent_status") or "unknown"),
                 )
                 if activity is not None:
                     pane["session_activity"] = activity
+                lifecycle = lifecycle_by_pane.get(pane_id)
+                if lifecycle is not None:
+                    pane["first_seen_at"] = lifecycle.get("firstSeenAt")
+                    pane["last_activity_at"] = lifecycle.get("lastActivityAt")
+                    working_since = lifecycle.get("workingSince")
+                    if working_since is not None:
+                        pane["working_since"] = working_since
         return {
             "ok": True,
             "snapshot": enriched,

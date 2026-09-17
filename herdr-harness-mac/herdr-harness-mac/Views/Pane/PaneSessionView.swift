@@ -48,6 +48,7 @@ struct PaneSessionView: View {
     var hidesAppTabBar = true
     var preferredMode: PaneDetailMode?
     var modeFocusRequest = 0
+    var modeApplied: ((PaneDetailMode) -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.herdrFontScale) private var fontScale
     @FocusState private var isTerminalFocused: Bool
@@ -161,7 +162,13 @@ struct PaneSessionView: View {
             autoSelectChatIfNeeded()
         }
         .onChange(of: modeFocusRequest, initial: true) { _, _ in
-            if let preferredMode { focus(mode: preferredMode) }
+            if let preferredMode {
+                focus(mode: preferredMode)
+                // A repeat request for the already-visible mode does not fire
+                // selectedMode's onChange, so publish the actual owner/mode here too.
+                model.notePaneDetailMode(selectedMode, gitIsAvailable: gitIsAvailable, for: pane.id)
+                if selectedMode == preferredMode { modeApplied?(selectedMode) }
+            }
         }
         .onChange(of: currentPane.supportsPiSemanticChat) { _, supportsChat in
             if supportsChat {
@@ -197,6 +204,7 @@ struct PaneSessionView: View {
         }
         .onChange(of: selectedMode, initial: true) { _, mode in
             model.notePaneDetailMode(mode, gitIsAvailable: gitIsAvailable, for: pane.id)
+            modeApplied?(mode)
         }
         .onChange(of: gitIsAvailable, initial: true) { _, available in
             model.notePaneDetailMode(selectedMode, gitIsAvailable: available, for: pane.id)

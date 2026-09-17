@@ -70,8 +70,8 @@ struct ConversationContextChip: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(HerdrTheme.mist)
-            .accessibilityLabel("Remove conversation context from \(reference.title)")
-            .accessibilityIdentifier("conversation-context-remove-\(reference.id.uuidString)")
+            .accessibilityLabel(reference.removeAccessibilityLabel)
+            .accessibilityIdentifier(reference.removeAccessibilityIdentifier)
         }
         .padding(.leading, 11)
         .padding(.trailing, 2)
@@ -85,7 +85,7 @@ struct ConversationContextChip: View {
         .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(reference.accessibilityLabel)
-        .accessibilityIdentifier("conversation-context-chip-\(reference.id.uuidString)")
+        .accessibilityIdentifier(reference.accessibilityIdentifier)
     }
 }
 

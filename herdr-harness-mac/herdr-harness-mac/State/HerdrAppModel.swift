@@ -2934,6 +2934,7 @@ final class HerdrAppModel {
     func canAddConversationContext(from source: HerdrPane, to destination: HerdrPane?) -> Bool {
         guard let destination else { return false }
         return source.id != destination.id
+            && source.machineID == destination.machineID
             && source.supportsPiSemanticChat
             && source.piSemantic?.sessionID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             && pane(id: source.id) != nil
@@ -2957,10 +2958,15 @@ final class HerdrAppModel {
             guard let source = pane(id: transfer.sourcePaneID), source.supportsPiSemanticChat else {
                 throw ConversationContextError.sourceUnavailable
             }
+            guard source.machineID == destination.machineID else {
+                throw ConversationContextError.crossMachine
+            }
             try Self.validateConversationSession(transfer.expectedSessionID, against: source)
+            try await requireConversationContextCapability(on: source.machineID)
             let reference = try ConversationContextReference.capture(
                 transfer: transfer,
-                currentSourcePane: source
+                currentSourcePane: source,
+                destinationPane: destination
             )
             if stageCapturedConversationReference(reference, for: destinationPaneID) {
                 toastMessage = "Added conversation context"
@@ -2969,6 +2975,22 @@ final class HerdrAppModel {
             }
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func requireConversationContextCapability(on machineID: String) async throws {
+        if isDemoMode { return }
+        guard let client = client(forMachine: machineID) else {
+            throw ConversationContextError.destinationUnavailable
+        }
+        let capabilities: AssistantCapabilities
+        do {
+            capabilities = try await client.assistantCapabilities()
+        } catch APIError.server(status: 404, message: _) {
+            throw ConversationContextError.unsupportedServer
+        }
+        guard capabilities.profiles.contains("pi-session-context-v1") else {
+            throw ConversationContextError.unsupportedServer
         }
     }
 

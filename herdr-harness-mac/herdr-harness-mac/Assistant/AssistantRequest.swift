@@ -11,6 +11,8 @@ struct AssistantRequest: Codable, Sendable {
     var context: AssistantContext
     var continueFromRunId: String?
     var model: String?
+    var thinkingLevel: String?
+    var parentSessionId: String?
 }
 
 struct AssistantCapabilities: Decodable, Sendable {

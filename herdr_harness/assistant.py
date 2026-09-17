@@ -27,9 +27,13 @@ def fail(message: str, code: str = "invalid_assistant_context", status: int = 40
 
 
 def capabilities() -> dict:
-    return {"ok": True, "profiles": [PROFILE, "hud-chat-v1"], "contextVersions": [1],
+    from .response_briefs import MAX_OUTPUT_BYTES, PROFILE as RESPONSE_BRIEF_PROFILE
+
+    return {"ok": True, "profiles": [PROFILE, "hud-chat-v1", RESPONSE_BRIEF_PROFILE], "contextVersions": [1],
             "hudChats": {"retention": "indefinite", "tools": "normal-pi", "history": "/api/v1/hud-chats"},
             "hudChatWorkingDirectory": True,
+            "responseBriefs": {"version": 1, "tools": "none", "oneShot": True,
+                               "maxOutputBytes": MAX_OUTPUT_BYTES, "requiresParentSessionId": True},
             "tools": "supplied-context-only", "strictContinuation": True,
             "idempotency": True, "history": True, "observation": ["poll"],
             "maxContextBytes": MAX_CONTEXT_BYTES, "maxItemBytes": MAX_ITEM_BYTES}
@@ -101,11 +105,21 @@ def _request_path(manager, key: str) -> Path:
 
 def start(manager, *, request: dict, cwd: str, pane_id: str | None, workspace_id: str | None) -> dict:
     """One manager owns this store. Its lock serializes claim, append and promotion."""
-    if request.get("profile") != PROFILE or request.get("mode", "ask") != "ask":
-        fail("Contextual questions must use the question profile.")
-    if request.get("systemPrompt") is not None:
-        fail("Context cannot override the question policy.")
+    profile = request.get("profile")
     context = validate_context(request.get("context"))
+    if profile == PROFILE:
+        if request.get("mode", "ask") != "ask":
+            fail("Contextual questions must use the question profile.")
+        if request.get("systemPrompt") is not None:
+            fail("Context cannot override the question policy.")
+        if "parentSessionId" in request:
+            fail("parentSessionId is only supported by response-brief-v1.")
+    else:
+        from .response_briefs import PROFILE as RESPONSE_BRIEF_PROFILE, validate_request
+
+        if profile != RESPONSE_BRIEF_PROFILE:
+            fail("This restricted Agent run profile is not supported.")
+        validate_request(request, context)
     expected = request.get("scope", {})
     if not isinstance(expected, dict) or set(expected) - {"expectedRootPath"}:
         fail("Question scope is invalid.")
@@ -159,13 +173,21 @@ def start(manager, *, request: dict, cwd: str, pane_id: str | None, workspace_id
             json.dump({"hash": fingerprint, "runId": None}, handle)
             handle.flush()
             os.fsync(handle.fileno())
+        assistant_metadata = {"profile": profile, "context": context, "assistantScope": scope,
+                              "clientRequestId": request["clientRequestId"]}
+        if profile == PROFILE:
+            assistant_metadata["assistantSequence"] = sequence
+            label = (request.get("label") or request["prompt"])[:120]
+        else:
+            # Captured source or prompt data must stay on stdin, never in argv.
+            assistant_metadata["responseBriefParentSessionId"] = request["parentSessionId"]
+            label = "Response brief"
         result = manager.start(
-            prompt=request["prompt"], label=(request.get("label") or request["prompt"])[:120],
+            prompt=request["prompt"], label=label,
             cwd=canonical, topology={}, mode="ask", model=request.get("model"),
             thinking_level=request.get("thinkingLevel"), attachments=request.get("attachments"),
             continue_from_run_id=parent,
-            _assistant={"profile": PROFILE, "context": context, "assistantScope": scope,
-                        "assistantSequence": sequence, "clientRequestId": request["clientRequestId"]},
+            _assistant=assistant_metadata,
         )
         temporary = receipt.with_suffix(".tmp")
         with temporary.open("w") as handle:

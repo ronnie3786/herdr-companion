@@ -17,7 +17,14 @@ struct PiChatView: View {
     @State private var responseAudioPlayer = ResponseAudioPlayer()
 
     var body: some View {
-        VStack(spacing: 0) {
+        let briefSource = responseBriefSource
+        ResponseBriefChatLayout(
+            coordinator: model.responseBriefs,
+            transport: model.responseBriefTransport(),
+            chat: responseBriefChat,
+            latestSource: briefSource
+        ) {
+            VStack(spacing: 0) {
             PiConnectionBanner(
                 connection: store.connection,
                 message: store.lastError,
@@ -132,8 +139,32 @@ struct PiChatView: View {
         .onDisappear {
             responseAudioPlayer.stop()
         }
-        .herdrHaptic(trigger: hapticPulse)
-        .accessibilityIdentifier("pi-chat-view")
+            .herdrHaptic(trigger: hapticPulse)
+            .accessibilityIdentifier("pi-chat-view")
+        }
+        .paneResponseLinks(model: model, sourceMachineID: composerPane.machineID)
+        .task(id: briefSource?.id) {
+            await model.observeResponseBrief(store: store, pane: composerPane)
+        }
+    }
+
+    private var responseBriefChat: ResponseBriefChatIdentity? {
+        guard let sessionID = store.sessionID else { return nil }
+        return ResponseBriefChatIdentity(
+            machineID: composerPane.machineID,
+            paneID: composerPane.paneID,
+            sessionID: sessionID
+        )
+    }
+
+    private var responseBriefSource: ResponseBriefSource? {
+        guard let sessionID = store.sessionID else { return nil }
+        return ResponseBriefSource.latest(
+            turns: store.turns,
+            machineID: composerPane.machineID,
+            paneID: composerPane.paneID,
+            sessionID: sessionID
+        )
     }
 
     private func attachQuote(_ quote: ChatQuote) async throws {

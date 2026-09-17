@@ -10,6 +10,7 @@ struct AssistantContext: Codable, Equatable, Sendable {
         var kind: String
         var label: String
         var text: String
+        var priority: String? = nil
     }
     var version = 1
     var snapshotId = UUID().uuidString

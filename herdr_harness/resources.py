@@ -17,6 +17,22 @@ def pi_extension_path(environ: Mapping[str, str]) -> Path | None:
     return None
 
 
+def pi_lineage_extension_path(_environ: Mapping[str, str]) -> Path | None:
+    """Locate only Herdr's bundled tool-free lineage extension.
+
+    Unlike normal agent runs, response briefs deliberately ignore the operator's
+    full-package override so an arbitrary extension package cannot enter this
+    restricted profile.
+    """
+
+    package = Path(__file__).resolve().parent
+    for root in (package / "_bundled/pi-semantic-bridge", package.parent / "pi-semantic-bridge"):
+        candidate = root / "extensions" / "response-brief-lineage.ts"
+        if (root / "package.json").is_file() and candidate.is_file():
+            return candidate
+    return None
+
+
 def configuration_example() -> Path:
     package = Path(__file__).resolve().parent
     for candidate in (package / "_bundled/config.example.toml", package.parent / "config.example.toml"):

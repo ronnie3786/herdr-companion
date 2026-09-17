@@ -48,6 +48,8 @@ final class HerdrAppModel {
     var selectedTab: AppTab = .workspaces
     var selectedWorkspaceID: String?
     @ObservationIgnored let assistantCoordinator = AssistantCoordinator()
+    let responseBriefs: ResponseBriefCoordinator
+    @ObservationIgnored private let responseBriefNetworkIsolated: Bool
     var selectedPaneID: String?
     var workspacePath: [WorkspaceRoute] = []
     var isSidebarPresented = false
@@ -188,6 +190,10 @@ final class HerdrAppModel {
     /// session no longer exists, so the server starts a fresh thread).
     var demoForcesFreshThreadForTesting = false
 #endif
+    private static var isRunningTests: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
+    }
     private static let connectionFailureGrace: TimeInterval = 10
     private static let paneAlertReadAttempts = 3
     private static let paneAlertReadRetryDelay: Duration = .milliseconds(400)
@@ -225,6 +231,15 @@ final class HerdrAppModel {
     ) {
         self.credentials = credentials
         self.userDefaults = userDefaults
+        let forcedDemo = arguments.contains("-HerdrDemoMode")
+        let isolateResponseBriefs = forcedDemo
+            || Self.isRunningTests
+            || arguments.contains("-HerdrUITestServerURL")
+        responseBriefNetworkIsolated = isolateResponseBriefs
+        responseBriefs = ResponseBriefCoordinator(
+            defaults: userDefaults,
+            persistence: ResponseBriefPersistence(inMemory: isolateResponseBriefs)
+        )
         chatTabColors = ChatTabColorStore(defaults: userDefaults)
         promptHistory = PromptHistoryStore(userDefaults: userDefaults)
         let resultArtifactOpenedLedger = AgentResultArtifactOpenedLedger(userDefaults: userDefaults)
@@ -234,7 +249,6 @@ final class HerdrAppModel {
             ledger: resultArtifactOpenedLedger
         )
         let defaults = userDefaults
-        let forcedDemo = arguments.contains("-HerdrDemoMode")
         #if DEBUG
         let uiTestServerURL = Self.launchArgumentValue("-HerdrUITestServerURL", in: arguments)
         let uiTestToken = Self.launchArgumentValue("-HerdrUITestAPIToken", in: arguments)
@@ -2320,6 +2334,75 @@ final class HerdrAppModel {
             return "\(name): \(message)"
         }
         activityFeedError = failures.isEmpty ? nil : failures.joined(separator: "\n")
+    }
+
+    var responseBriefNetworkingEnabled: Bool {
+        !isDemoMode && !responseBriefNetworkIsolated
+    }
+
+    func responseBriefTransport() -> ResponseBriefTransport {
+        guard responseBriefNetworkingEnabled else {
+            return ResponseBriefTransport(
+                capabilities: { _ in throw ResponseBriefCoordinatorError.networkingDisabled },
+                models: { _ in throw ResponseBriefCoordinatorError.networkingDisabled },
+                fetchSnapshot: { _ in throw ResponseBriefCoordinatorError.networkingDisabled },
+                start: { _, _ in throw ResponseBriefCoordinatorError.networkingDisabled },
+                fetch: { _, _ in throw ResponseBriefCoordinatorError.networkingDisabled },
+                cancel: { _, _ in throw ResponseBriefCoordinatorError.networkingDisabled }
+            )
+        }
+        return ResponseBriefTransport(
+            capabilities: { [weak self] machineID in
+                guard let self, let client = self.client(forMachine: machineID) else {
+                    throw APIError.noActiveConnection(machineID: machineID)
+                }
+                return try await client.assistantCapabilities()
+            },
+            models: { [weak self] machineID in
+                guard let self else { throw APIError.invalidResponse }
+                return try await self.fetchAgentModels(machineID: machineID)
+            },
+            fetchSnapshot: { [weak self] chat in
+                guard let self,
+                      let pane = self.pane(id: MachineScopedID.compose(machineID: chat.machineID, rawID: chat.paneID))
+                else { throw APIError.invalidResponse }
+                return try await self.fetchPiConversationSnapshot(for: pane)
+            },
+            start: { [weak self] machineID, request in
+                guard let self, let client = self.client(forMachine: machineID) else {
+                    throw APIError.noActiveConnection(machineID: machineID)
+                }
+                return try await client.startAssistant(request).run
+            },
+            fetch: { [weak self] machineID, runID in
+                guard let self, let client = self.client(forMachine: machineID) else {
+                    throw APIError.noActiveConnection(machineID: machineID)
+                }
+                return try await client.fetchHeadlessAgent(id: runID).run
+            },
+            cancel: { [weak self] machineID, runID in
+                guard let self, let client = self.client(forMachine: machineID) else {
+                    throw APIError.noActiveConnection(machineID: machineID)
+                }
+                return try await client.cancelHeadlessAgent(id: runID).run
+            }
+        )
+    }
+
+    func observeResponseBrief(store: PiConversationStore, pane: HerdrPane) async {
+        guard responseBriefNetworkingEnabled, let sessionID = store.sessionID else { return }
+        let sources = ResponseBriefSource.completedSources(
+            turns: store.turns,
+            machineID: pane.machineID,
+            paneID: pane.paneID,
+            sessionID: sessionID
+        )
+        await responseBriefs.observeSources(sources, transport: responseBriefTransport())
+    }
+
+    func runResponseBriefPolling() async {
+        guard responseBriefNetworkingEnabled else { return }
+        await responseBriefs.runPolling(transport: responseBriefTransport())
     }
 
     func presentContextualAssistant(machineID preferredMachineID: String? = nil, note: HerdrNote? = nil) {

@@ -54,6 +54,8 @@ def write_fake_pi(directory: Path) -> Path:
                     "herdrPaneId": os.environ.get("HERDR_PANE_ID"),
                     "herdrAgentRunId": os.environ.get("HERDR_AGENT_RUN_ID"),
                     "herdrAgentRunMode": os.environ.get("HERDR_AGENT_RUN_MODE"),
+                    "herdrPiSessionId": os.environ.get("HERDR_PI_SESSION_ID"),
+                    "herdrPiParentSessionId": os.environ.get("HERDR_PI_PARENT_SESSION_ID"),
                 }), encoding="utf-8")
             mode = os.environ.get("FAKE_AGENT_MODE", "success")
             if mode == "hang":
@@ -203,12 +205,23 @@ def write_fake_pi(directory: Path) -> Path:
                     },
                 }}), flush=True)
                 print(json.dumps({"type": "agent_end"}), flush=True)
+            elif mode in {"final-text-error", "final-text-aborted"}:
+                stop_reason = mode.removeprefix("final-text-")
+                message = {
+                    "role": "assistant",
+                    "text": "Partial response brief",
+                    "stopReason": stop_reason,
+                }
+                if stop_reason == "error":
+                    message["errorMessage"] = "provider failed after streaming text"
+                print(json.dumps({"event": {"type": "message_end", "message": message}}), flush=True)
+                print(json.dumps({"type": "agent_end", "messages": [message]}), flush=True)
             else:
                 print(json.dumps({"event": {
                     "type": "message_end",
                     "message": {
                         "role": "assistant",
-                        "text": "Fleet answer",
+                        "text": os.environ.get("FAKE_AGENT_RESPONSE", "Fleet answer"),
                         "usage": {"cost": {"total": 0.0123}},
                     },
                 }}), flush=True)

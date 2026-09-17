@@ -12,11 +12,14 @@ import Foundation
 /// a stale "Live" reading.
 ///
 /// So the tasks live here, held by the `App` for as long as the process runs.
-/// The window only *tells* the driver when something changed; it never owns the
+/// The same lifetime owns bounded polling for explicitly opted-in response
+/// briefs, so switching or closing the window cannot lose a completion. The
+/// window only *tells* the driver when something changed; it never owns the
 /// work.
 @MainActor
 final class HerdrConnectionDriver {
     private var connectionTask: Task<Void, Never>?
+    private var responseBriefTask: Task<Void, Never>?
     private var pulseTask: Task<Void, Never>?
     private var startedGeneration: Int?
 
@@ -26,6 +29,8 @@ final class HerdrConnectionDriver {
         guard model.hasCompletedSetup else {
             connectionTask?.cancel()
             connectionTask = nil
+            responseBriefTask?.cancel()
+            responseBriefTask = Task { await model.responseBriefs.connectionDidChange() }
             startedGeneration = nil
             return
         }
@@ -34,9 +39,23 @@ final class HerdrConnectionDriver {
             return
         }
 
+        if !model.responseBriefNetworkingEnabled {
+            responseBriefTask?.cancel()
+            responseBriefTask = nil
+        }
+
+        let isReplacement = startedGeneration != nil
         startedGeneration = model.connectionGeneration
         connectionTask?.cancel()
         connectionTask = Task { await model.runConnection() }
+        if model.responseBriefNetworkingEnabled {
+            responseBriefTask?.cancel()
+            responseBriefTask = Task {
+                if isReplacement { await model.responseBriefs.connectionDidChange() }
+                guard !Task.isCancelled else { return }
+                await model.runResponseBriefPolling()
+            }
+        }
     }
 
     /// Feeds Herd Pulse from the same fleet snapshot the window renders.

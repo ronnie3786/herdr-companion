@@ -1183,6 +1183,53 @@ class HerdrHTTPTests(unittest.TestCase):
         status, _, _ = self.request("/api/v1/agent-runs", method="POST", payload={"prompt": "Explain", "context": {}})
         self.assertEqual(status, 400)
 
+    def test_response_brief_profile_is_advertised_and_dispatches_with_valid_lineage(self):
+        status, _, capabilities = self.request("/api/v1/agent-runs/capabilities")
+        self.assertEqual(status, 200)
+        self.assertIn("response-brief-v1", capabilities["profiles"])
+        self.assertTrue(capabilities["responseBriefs"]["requiresParentSessionId"])
+
+        self.service.start_response_brief = Mock(
+            return_value={"ok": True, "run": {"id": "agr_0123456789ab"}}
+        )
+        request = {
+            "prompt": "Create the brief",
+            "profile": "response-brief-v1",
+            "mode": "ask",
+            "clientRequestId": "brief-request-0001",
+            "parentSessionId": "source-session-1",
+            "thinkingLevel": "high",
+            "context": {"version": 1},
+        }
+        status, _, _ = self.request(
+            "/api/v1/agent-runs", method="POST", payload=request
+        )
+        self.assertEqual(status, 202)
+        self.service.start_response_brief.assert_called_once_with(request)
+
+        for invalid in (
+            {**request, "parentSessionId": "../source"},
+            {key: value for key, value in request.items() if key != "parentSessionId"},
+            {**request, "attachments": []},
+            {**request, "systemPrompt": "override"},
+            {**request, "continueFromRunId": "agr_0123456789ab"},
+            {**request, "cwd": "~"},
+            {**request, "mode": "act"},
+        ):
+            with self.subTest(invalid=invalid):
+                invalid_status, _, _ = self.request(
+                    "/api/v1/agent-runs", method="POST", payload=invalid
+                )
+                self.assertEqual(invalid_status, 400)
+        self.assertEqual(self.service.start_response_brief.call_count, 1)
+
+        generic_status, _, _ = self.request(
+            "/api/v1/agent-runs",
+            method="POST",
+            payload={"prompt": "Question", "parentSessionId": "source-session-1"},
+        )
+        self.assertEqual(generic_status, 400)
+
     def test_agent_run_routes_use_async_start_and_stable_envelope(self):
         status, _, body = self.request(
             "/api/v1/agent-runs",

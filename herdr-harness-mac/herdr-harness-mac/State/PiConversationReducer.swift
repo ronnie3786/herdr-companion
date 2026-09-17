@@ -376,7 +376,8 @@ struct PiConversationReducer: Sendable {
                     id: id,
                     text: existing?.text ?? "",
                     status: .streaming,
-                    timestamp: existing?.timestamp ?? .now
+                    timestamp: existing?.timestamp ?? .now,
+                    stopReason: existing?.stopReason
                 )
             )
         case "text_delta":
@@ -390,7 +391,8 @@ struct PiConversationReducer: Sendable {
                     id: id,
                     text: assistantEvent?.string(for: "content") ?? existing?.text ?? "",
                     status: .complete,
-                    timestamp: existing?.timestamp
+                    timestamp: existing?.timestamp,
+                    stopReason: existing?.stopReason
                 )
             )
         case "thinking_start":
@@ -503,7 +505,8 @@ struct PiConversationReducer: Sendable {
                         id: id,
                         text: part.string(for: "text") ?? "",
                         status: status,
-                        timestamp: timestamp
+                        timestamp: timestamp,
+                        stopReason: stopReason
                     )
                 )
             case "thinking":

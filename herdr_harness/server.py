@@ -1858,7 +1858,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         "continueFromRunId",
                         "systemPrompt",
                         "paneId",
-                        "cwd", "profile", "context", "scope", "clientRequestId",
+                        "cwd", "profile", "context", "scope", "clientRequestId", "parentSessionId",
                     }
                     for key in body
                 ):
@@ -1891,7 +1891,13 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         continue_from_run_id = _agent_run_id(body.get("continueFromRunId"))
                     except HTTPValidationError as exc:
                         raise HTTPValidationError("continueFromRunId is invalid") from exc
-                hud_chat = body.get("profile") == "hud-chat-v1"
+                profile = body.get("profile")
+                hud_chat = profile == "hud-chat-v1"
+                response_brief = profile == "response-brief-v1"
+                if "parentSessionId" in body and not response_brief:
+                    raise HTTPValidationError("parentSessionId requires response-brief-v1")
+                if response_brief and not valid_pi_session_id(body.get("parentSessionId")):
+                    raise HTTPValidationError("parentSessionId is invalid")
                 if hud_chat and mode != "act":
                     raise HTTPValidationError("HUD chats must use act mode")
                 if "cwd" in body and not hud_chat:
@@ -1903,7 +1909,13 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         raise HTTPValidationError("cwd must be an absolute path or ~")
                     if pane_id is not None:
                         raise HTTPValidationError("A pane-scoped Agent run cannot change cwd")
-                if body.get("profile") is not None and not hud_chat:
+                if response_brief:
+                    if mode != "ask":
+                        raise HTTPValidationError("Response briefs must use ask mode")
+                    if any(key in body for key in ("attachments", "systemPrompt", "continueFromRunId")):
+                        raise HTTPValidationError("Response briefs do not accept attachments, systemPrompt, or continuation")
+                    return service.start_response_brief(body), 202
+                if profile is not None and not hud_chat:
                     return service.start_contextual_question(body), 202
                 if any(key in body for key in ("context", "scope", "clientRequestId")):
                     raise HTTPValidationError("Contextual fields require a question profile")

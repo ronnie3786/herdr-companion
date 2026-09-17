@@ -2831,6 +2831,29 @@ class HerdrService:
         return start(self.agent_runs, request=request, cwd=cwd,
                      pane_id=pane_id, workspace_id=workspace_id)
 
+    def start_response_brief(self, request: dict) -> dict:
+        from .response_briefs import start, validate_request
+        from .assistant import validate_context
+
+        context = validate_context(request.get("context"))
+        # In particular, validate lineage before the shared start path writes
+        # the durable clientRequestId tombstone.
+        validate_request(request, context)
+        pane_id = request.get("paneId")
+        cwd = str(self._server_home())
+        workspace_id = None
+        if pane_id is not None:
+            pane, root = self._pane_tool_context(pane_id)
+            cwd = str(root)
+            workspace_id = pane.get("workspace_id")
+        return start(
+            self.agent_runs,
+            request=request,
+            cwd=cwd,
+            pane_id=pane_id,
+            workspace_id=workspace_id,
+        )
+
     def get_agent_run(self, run_id: str) -> dict:
         return self.agent_runs.get(run_id)
 

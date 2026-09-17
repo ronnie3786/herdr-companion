@@ -48,5 +48,7 @@ struct AssistantSessionTests {
         let decoded = try JSONDecoder().decode(AssistantRequest.self, from: data)
         #expect(decoded.context.items[0].text == "  exact\ntext")
         #expect(decoded.profile == "contextual-question-v1")
+        #expect(decoded.thinkingLevel == nil)
+        #expect(decoded.parentSessionId == nil)
     }
 }

@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>30-second briefs on Mac</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #f6f3ff;
+      --muted: #b8b3c9;
+      --quiet: #8d879f;
+      --lavender: #b8a6ff;
+      --lavender-bright: #d7ceff;
+      --night: #121118;
+      --panel: #1b1923;
+      --panel-raised: #24212f;
+      --line: rgba(201, 189, 255, 0.18);
+      --glow: rgba(135, 106, 255, 0.22);
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      background: var(--night);
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      min-width: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 82% 8%, rgba(119, 89, 237, 0.17), transparent 30rem),
+        radial-gradient(circle at 8% 26%, rgba(89, 69, 150, 0.12), transparent 26rem),
+        var(--night);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 16px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: inherit; }
+
+    .shell {
+      width: min(1180px, calc(100% - 40px));
+      margin: 0 auto;
+    }
+
+    header {
+      padding: clamp(64px, 9vw, 116px) 0 56px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      margin: 0 0 24px;
+      padding: 7px 12px;
+      border: 1px solid rgba(184, 166, 255, 0.35);
+      border-radius: 999px;
+      color: var(--lavender-bright);
+      background: rgba(126, 98, 224, 0.1);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--lavender);
+      box-shadow: 0 0 14px var(--lavender);
+      content: "";
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+
+    h1 {
+      max-width: 840px;
+      margin-bottom: 24px;
+      font-size: clamp(3rem, 8vw, 6.8rem);
+      line-height: 0.96;
+      letter-spacing: -0.065em;
+    }
+
+    .lede {
+      max-width: 760px;
+      margin-bottom: 28px;
+      color: var(--muted);
+      font-size: clamp(1.08rem, 2.2vw, 1.4rem);
+      line-height: 1.5;
+    }
+
+    .facts {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .facts li {
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.025);
+      font-size: 0.88rem;
+    }
+
+    main { padding-bottom: 88px; }
+
+    .section-heading {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(250px, 0.58fr);
+      gap: 32px;
+      align-items: end;
+      margin-bottom: 24px;
+    }
+
+    h2 {
+      margin-bottom: 0;
+      font-size: clamp(1.9rem, 4vw, 3.25rem);
+      line-height: 1.05;
+      letter-spacing: -0.035em;
+    }
+
+    .section-heading p {
+      margin-bottom: 3px;
+      color: var(--muted);
+    }
+
+    .gallery {
+      display: grid;
+      gap: 24px;
+    }
+
+    figure {
+      min-width: 0;
+      margin: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: linear-gradient(145deg, rgba(44, 39, 59, 0.9), rgba(25, 23, 32, 0.96));
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.25);
+    }
+
+    .feature {
+      display: grid;
+      grid-template-columns: minmax(270px, 0.78fr) minmax(0, 1.22fr);
+      align-items: stretch;
+    }
+
+    .feature .image-wrap {
+      min-height: 640px;
+      border-right: 1px solid var(--line);
+      background: #17171f;
+    }
+
+    .feature img {
+      width: 100%;
+      height: 100%;
+      max-height: 820px;
+      object-fit: contain;
+      object-position: center top;
+    }
+
+    .image-link {
+      display: block;
+      min-width: 0;
+      overflow: hidden;
+      background: #1c1c25;
+    }
+
+    .image-link:focus-visible {
+      outline: 3px solid var(--lavender);
+      outline-offset: -3px;
+    }
+
+    img {
+      display: block;
+      max-width: 100%;
+      height: auto;
+    }
+
+    .feature figcaption {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: clamp(28px, 5vw, 70px);
+    }
+
+    .number {
+      margin-bottom: 18px;
+      color: var(--lavender);
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    h3 {
+      margin-bottom: 16px;
+      font-size: clamp(1.6rem, 3vw, 2.65rem);
+      line-height: 1.1;
+      letter-spacing: -0.03em;
+    }
+
+    figcaption p {
+      margin-bottom: 22px;
+      color: var(--muted);
+    }
+
+    .zoom {
+      align-self: flex-start;
+      padding-bottom: 3px;
+      border-bottom: 1px solid var(--lavender);
+      color: var(--lavender-bright);
+      font-size: 0.9rem;
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .pair {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 24px;
+    }
+
+    .pair .image-link {
+      aspect-ratio: 16 / 9;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .pair img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .pair figcaption { padding: 24px 26px 28px; }
+    .pair h3 { margin-bottom: 10px; font-size: 1.35rem; }
+    .pair p { margin-bottom: 14px; font-size: 0.94rem; }
+
+    .notes {
+      display: grid;
+      grid-template-columns: 0.75fr 1.25fr;
+      gap: 24px;
+      margin-top: 64px;
+      padding-top: 40px;
+      border-top: 1px solid var(--line);
+    }
+
+    .notes > p {
+      color: var(--muted);
+      font-size: 1.08rem;
+    }
+
+    details {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.025);
+    }
+
+    summary {
+      padding: 18px 20px;
+      color: var(--lavender-bright);
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    details div {
+      padding: 0 20px 20px;
+      color: var(--muted);
+    }
+
+    details p:last-child { margin-bottom: 0; }
+
+    code {
+      color: var(--lavender-bright);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.88em;
+    }
+
+    footer {
+      padding: 24px 0 48px;
+      color: var(--quiet);
+      font-size: 0.82rem;
+    }
+
+    @media (max-width: 760px) {
+      .shell { width: min(100% - 24px, 1180px); }
+      header { padding-top: 48px; }
+      h1 { font-size: clamp(3rem, 16vw, 4.7rem); }
+      .section-heading,
+      .feature,
+      .pair,
+      .notes { grid-template-columns: minmax(0, 1fr); }
+      .section-heading { gap: 14px; }
+      .feature .image-wrap {
+        min-height: 0;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .feature img { max-height: none; }
+      .feature figcaption { padding: 28px 24px 34px; }
+      .pair .image-link { aspect-ratio: auto; }
+      .pair figcaption { padding: 22px; }
+      figure { border-radius: 16px; }
+      .notes { margin-top: 48px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+    }
+  </style>
+</head>
+<body>
+  <header class="shell">
+    <p class="eyebrow">Native test renders · synthetic data</p>
+    <h1>30-second briefs on Mac</h1>
+    <p class="lede">A focused reading rail that keeps the original conversation in place while an optional model turns the latest answer into a concise, source-linked brief.</p>
+    <ul class="facts" aria-label="Validation facts">
+      <li>Validated feature revision <code>dc5776c</code></li>
+      <li>1,192 Mac tests passed</li>
+      <li>At capture time, app + server rollout had not been performed</li>
+    </ul>
+  </header>
+
+  <main class="shell">
+    <section aria-labelledby="gallery-title">
+      <div class="section-heading">
+        <h2 id="gallery-title">The feature, at a glance</h2>
+        <p>Select the rail, wide layout, or narrow fallback to open its full-resolution image.</p>
+      </div>
+
+      <div class="gallery">
+        <figure class="feature">
+          <a class="image-link image-wrap" href="assets/response-brief-rail-close-up.png" aria-label="Open the full-resolution native brief rail crop">
+            <img src="assets/response-brief-rail-close-up.png" width="804" height="1572" alt="Close-up crop of the native SwiftUI 30-second brief rail, including opt-in controls, model and thinking selectors, a generated brief card, source links, and the full original response button">
+          </a>
+          <figcaption>
+            <span class="number">01 · Native rail close-up</span>
+            <h3>The brief stays beside the conversation.</h3>
+            <p>Show brief → choose model and thinking → opt in. The generated card stays compact, and its links open verbatim source details.</p>
+            <a class="zoom" href="assets/response-brief-rail-close-up.png">Open full-resolution crop ↗</a>
+          </figcaption>
+        </figure>
+
+        <div class="pair">
+          <figure>
+            <a class="image-link" href="assets/response-brief-wide.png" aria-label="Open the full-resolution wide native test render">
+              <img src="assets/response-brief-wide.png" width="4200" height="1640" loading="lazy" alt="Wide native SwiftUI test render with a fixture conversation and composer on the left and the 30-second brief reading rail on the right">
+            </a>
+            <figcaption>
+              <span class="number">02 · Wide layout</span>
+              <h3>Reading room, preserved</h3>
+              <p>The full conversation column remains available while the brief rail sits alongside it.</p>
+              <a class="zoom" href="assets/response-brief-wide.png">Open original ↗</a>
+            </figcaption>
+          </figure>
+
+          <figure>
+            <a class="image-link" href="assets/response-brief-narrow.png" aria-label="Open the full-resolution narrow native test render">
+              <img src="assets/response-brief-narrow.png" width="2200" height="1440" loading="lazy" alt="Narrow large-text native SwiftUI test render showing the original fixture conversation with an Open brief control in the toolbar">
+            </a>
+            <figcaption>
+              <span class="number">03 · Large-text narrow fallback</span>
+              <h3>A clear way back in</h3>
+              <p>At a narrow width and large text size, the rail becomes an explicit “Open brief” action instead of crowding the reading area.</p>
+              <a class="zoom" href="assets/response-brief-narrow.png">Open original ↗</a>
+            </figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="notes" aria-labelledby="render-notes-title">
+      <div>
+        <h2 id="render-notes-title">About these renders</h2>
+      </div>
+      <div>
+        <p>These images show actual SwiftUI feature components from the passing Mac test target. They are not a live Pi run, an installed-app capture, or a full-window capture. The wide render’s left chat and composer are a fixture placeholder.</p>
+        <details>
+          <summary>What is—and is not—shown</summary>
+          <div>
+            <p>The rail close-up is a pixel crop of the wide native render; its interface was not redrawn. No separate detail-sheet screenshot exists, so this gallery does not present one.</p>
+            <p>The test fixtures use entirely synthetic content. At capture time, the app and server rollout had not been performed.</p>
+          </div>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <footer class="shell">Response brief gallery · September 17, 2026</footer>
+</body>
+</html>

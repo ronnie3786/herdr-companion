@@ -8,7 +8,9 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const lineagePath = fileURLToPath(new URL("../lib/session-lineage.ts", import.meta.url));
+const responseBriefLineagePath = fileURLToPath(new URL("../extensions/response-brief-lineage.ts", import.meta.url));
 const lineage = await createJiti(import.meta.url).import(lineagePath);
+const responseBriefLineage = await createJiti(import.meta.url).import(responseBriefLineagePath);
 const metadata = (id, parent) => ({
 	type: "custom", customType: lineage.LINEAGE_ENTRY_TYPE,
 	data: { version: 1, session_id: id, parent_session_id: parent },
@@ -44,6 +46,21 @@ function fixture({ id = "child-session", parentFile, entries = [], environment =
 		prompt: () => handlers.get("before_agent_start")({ systemPrompt: "Original prompt" }, context).systemPrompt,
 	};
 }
+
+test("response brief wrapper registers lineage without adding tools", () => {
+	const events = [], commands = [], flags = [], tools = [];
+	const register = responseBriefLineage.default ?? responseBriefLineage;
+	register({
+		on: (name) => events.push(name),
+		registerCommand: (name) => commands.push(name),
+		registerFlag: (name) => flags.push(name),
+		registerTool: (tool) => tools.push(tool),
+	});
+	assert.deepEqual(events, ["session_start", "before_agent_start"]);
+	assert.deepEqual(commands, ["herdr-parent"]);
+	assert.deepEqual(flags, ["herdr-parent-session-id"]);
+	assert.deepEqual(tools, []);
+});
 
 test("fresh children inherit their parent, while grandchildren inherit the child", () => {
 	const environment = { HERDR_PI_PARENT_SESSION_ID: "parent-session" };

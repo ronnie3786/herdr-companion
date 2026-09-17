@@ -150,6 +150,16 @@ def _active_work_api_route(path: str) -> bool:
     )
 
 
+def _pi_session_context_route(method: str, path: str) -> bool:
+    return bool(
+        method == "GET"
+        and re.fullmatch(
+            r"/api/v1/workspaces/[^/]+/pi/sessions/[^/]+/context",
+            path,
+        )
+    )
+
+
 def _configured_manage_token(environ: Mapping[str, Any]) -> str:
     """Resolve the management token only from explicit operator configuration."""
 
@@ -366,7 +376,7 @@ def api_description() -> dict:
         "ok": True,
         "service": "herdr-harness",
         "version": 1,
-        "capabilities": ["pane-retirement-v1", "first-mate-v1"],
+        "capabilities": ["pane-retirement-v1", "first-mate-v1", "pi-session-context-v1"],
         "endpoints": {
             "health": "/api/v1/health",
             "firstMate": "/api/v1/first-mate/features",
@@ -375,6 +385,7 @@ def api_description() -> dict:
             "snapshot": "/api/v1/snapshot",
             "workspaces": "/api/v1/workspaces",
             "workspace": "/api/v1/workspaces/{workspaceId}",
+            "piSessionContext": "/api/v1/workspaces/{workspaceId}/pi/sessions/{sessionId}/context",
             "workspaceGit": "/api/v1/workspaces/{workspaceId}/git",
             "paneGit": "/api/v1/panes/{paneId}/git",
             "workspaceSkills": "/api/v1/workspaces/{workspaceId}/skills",
@@ -680,7 +691,14 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
         def _parse(self) -> tuple[str, list[str], dict[str, list[str]]]:
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path.rstrip("/") or "/"
-            segments = [urllib.parse.unquote(item) for item in path.split("/") if item]
+            try:
+                segments = [
+                    urllib.parse.unquote_to_bytes(item).decode("utf-8", errors="strict")
+                    for item in path.split("/")
+                    if item
+                ]
+            except UnicodeDecodeError as exc:
+                raise HTTPValidationError("URL path encoding is invalid") from exc
             return path, segments, urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
 
         def _dispatch(self, method: str) -> None:
@@ -752,6 +770,13 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         503,
                         "api_token_required",
                         "Configure HERDR_HARNESS_API_TOKEN before managing push devices",
+                    )
+                    return
+                if _pi_session_context_route(method, path) and not configured_token:
+                    self._error(
+                        503,
+                        "api_token_required",
+                        "Configure HERDR_HARNESS_API_TOKEN before resolving Pi session context",
                     )
                     return
                 if not self._authorized(path=path, method=method):
@@ -1166,6 +1191,20 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 return result
             if len(tail) >= 3 and tail[0] == "workspaces":
                 workspace_id = _identifier(tail[1], "workspace ID")
+                if (
+                    method == "GET"
+                    and len(tail) == 6
+                    and tail[2] == "pi"
+                    and tail[3] == "sessions"
+                    and tail[5] == "context"
+                ):
+                    session_id = tail[4]
+                    if not valid_pi_session_id(session_id):
+                        raise HTTPValidationError(
+                            "Pi session ID is invalid",
+                            code="invalid_pi_session_id",
+                        )
+                    return service.pi_session_context(workspace_id, session_id)
                 if method == "GET" and len(tail) == 3 and tail[2] == "git":
                     return service.workspace_git_status(workspace_id)
                 if method == "GET" and len(tail) == 4 and tail[2:] == ["git", "diff"]:

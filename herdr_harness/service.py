@@ -887,6 +887,9 @@ class HerdrService:
     def pi_snapshot_response(self, pane_id: str) -> dict:
         return self.pi_semantic.snapshot_response(pane_id)
 
+    def pi_session_context(self, workspace_id: str, session_id: str) -> dict:
+        return self.pi_semantic.session_context(workspace_id, session_id)
+
     @property
     def quick_voice(self) -> QuickVoiceManager:
         with self._quick_voice_lock:

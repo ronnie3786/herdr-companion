@@ -13,6 +13,8 @@ from unittest.mock import patch
 
 from herdr_harness.pi_semantic import (
     PI_SEMANTIC_PROTOCOL,
+    PI_SESSION_CONTEXT_MAX_CHARACTERS,
+    PI_SESSION_CONTEXT_MAX_MESSAGE_CHARACTERS,
     PiSemanticError,
     PiSemanticJournal,
     PiSemanticManager,
@@ -283,6 +285,228 @@ class PiSemanticTests(unittest.TestCase):
             link.symlink_to(target)
             with self.assertRaisesRegex(Exception, "unsafe"):
                 PiSemanticJournal(str(link))
+
+    def test_session_context_projects_only_visible_text_and_clips_deterministically(self):
+        journal = PiSemanticJournal(":memory:")
+        long_text = "x" * (PI_SESSION_CONTEXT_MAX_MESSAGE_CHARACTERS + 20)
+        entries = [
+            {
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "visible user"},
+                        {"type": "thinking", "thinking": "private reasoning"},
+                        {"type": "toolCall", "name": "private-tool"},
+                    ],
+                    "providerMetadata": {"secret": "excluded"},
+                },
+                "signature": "excluded-signature",
+            },
+            {"message": {"role": "system", "content": "hidden system prompt"}},
+            {"message": {"role": "tool", "content": "hidden tool result"}},
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "thinking", "thinking": "hidden"},
+                        {"type": "text", "text": "visible answer"},
+                        {"type": "toolResult", "content": "hidden result"},
+                    ],
+                }
+            },
+        ]
+        entries.extend(
+            {"message": {"role": "user", "content": f"{index}:{long_text}"}}
+            for index in range(5)
+        )
+        journal.ingest(
+            "pane-1",
+            bridge_record(
+                "pane-1",
+                "snapshot",
+                session_id="session-1",
+                snapshot={"session": {"id": "session-1"}, "entries": entries},
+            ),
+            namespace="socket-one",
+            workspace_id="workspace-1",
+        )
+
+        context = journal.session_context("socket-one", "workspace-1", "session-1")
+        self.assertTrue(context["truncated"])
+        self.assertLessEqual(len(context["context"]), PI_SESSION_CONTEXT_MAX_CHARACTERS)
+        self.assertTrue(context["context"].startswith("[... earlier visible conversation omitted by Herdr ...]"))
+        self.assertEqual(context["messages"][-1]["role"], "user")
+        self.assertTrue(context["messages"][-1]["text"].endswith("…"))
+        self.assertEqual(
+            len(context["messages"][-1]["text"]),
+            PI_SESSION_CONTEXT_MAX_MESSAGE_CHARACTERS,
+        )
+        serialized = json.dumps(context, ensure_ascii=False)
+        for excluded in (
+            "private reasoning",
+            "private-tool",
+            "excluded-signature",
+            "hidden system prompt",
+            "hidden tool result",
+            "hidden result",
+            "providerMetadata",
+        ):
+            self.assertNotIn(excluded, serialized)
+        journal.close()
+
+    def test_session_context_persists_and_isolates_workspace_and_socket_namespace(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = str(Path(temporary) / "semantic.sqlite3")
+            journal = PiSemanticJournal(path)
+            for namespace, workspace_id, text in (
+                ("socket-one", "workspace-1", "first"),
+                ("socket-one", "workspace-2", "second"),
+                ("socket-two", "workspace-1", "third"),
+            ):
+                journal.ingest(
+                    "pane-1",
+                    bridge_record(
+                        "pane-1",
+                        "snapshot",
+                        session_id="shared-session",
+                        snapshot={
+                            "session": {"id": "shared-session"},
+                            "entries": [{"message": {"role": "user", "content": text}}],
+                        },
+                    ),
+                    namespace=namespace,
+                    workspace_id=workspace_id,
+                )
+            journal.close()
+
+            reopened = PiSemanticJournal(path)
+            self.assertEqual(
+                reopened.session_context("socket-one", "workspace-1", "shared-session")["context"],
+                "User:\nfirst",
+            )
+            self.assertEqual(
+                reopened.session_context("socket-one", "workspace-2", "shared-session")["context"],
+                "User:\nsecond",
+            )
+            self.assertEqual(
+                reopened.session_context("socket-two", "workspace-1", "shared-session")["context"],
+                "User:\nthird",
+            )
+            with self.assertRaises(PiSemanticError) as missing:
+                reopened.session_context("socket-two", "workspace-2", "shared-session")
+            self.assertEqual(missing.exception.code, "pi_session_context_not_found")
+            reopened.close()
+
+    def test_session_context_backfills_durable_snapshot_and_tracks_terminal_states(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = str(Path(temporary) / "semantic.sqlite3")
+            journal = PiSemanticJournal(path)
+            journal.ingest(
+                "pane-1",
+                bridge_record(
+                    "pane-1",
+                    "snapshot",
+                    session_id="session-1",
+                    snapshot={
+                        "session": {"id": "session-1"},
+                        "state": {"idle": False},
+                        "entries": [{"message": {"role": "user", "content": "durable"}}],
+                    },
+                ),
+                namespace="socket-one",
+            )
+            journal.close()
+
+            reopened = PiSemanticJournal(path)
+            reopened.observe_topology("socket-one", {"pane-1": "workspace-1"})
+            self.assertEqual(
+                reopened.session_context("socket-one", "workspace-1", "session-1")["context"],
+                "User:\ndurable",
+            )
+            reopened.ingest(
+                "pane-1",
+                bridge_record(
+                    "pane-1",
+                    "snapshot",
+                    session_id="session-1",
+                    snapshot={
+                        "session": {"id": "session-1"},
+                        "state": {"idle": True},
+                        "entries": [{"message": {"role": "user", "content": "durable"}}],
+                    },
+                ),
+                namespace="socket-one",
+                workspace_id="workspace-1",
+            )
+            self.assertEqual(
+                reopened.session_context("socket-one", "workspace-1", "session-1")["status"],
+                "idle",
+            )
+            reopened.mark_connected("pane-1", False, namespace="socket-one")
+            self.assertEqual(
+                reopened.session_context("socket-one", "workspace-1", "session-1")["status"],
+                "disconnected",
+            )
+            reopened.ingest(
+                "pane-1",
+                bridge_record(
+                    "pane-1",
+                    "snapshot",
+                    session_id="session-2",
+                    snapshot={
+                        "session": {"id": "session-2"},
+                        "state": {"idle": False},
+                        "entries": [{"message": {"role": "assistant", "content": "new"}}],
+                    },
+                ),
+                namespace="socket-one",
+                workspace_id="workspace-1",
+            )
+            self.assertEqual(
+                reopened.session_context("socket-one", "workspace-1", "session-1")["status"],
+                "switched",
+            )
+            reopened.ingest(
+                "pane-1",
+                bridge_record(
+                    "pane-1",
+                    "event",
+                    sequence=1,
+                    session_id="session-2",
+                    event={"type": "session_shutdown"},
+                ),
+                namespace="socket-one",
+                workspace_id="workspace-1",
+            )
+            self.assertEqual(
+                reopened.session_context("socket-one", "workspace-1", "session-2")["status"],
+                "completed",
+            )
+            reopened.ingest(
+                "pane-1",
+                bridge_record(
+                    "pane-1",
+                    "snapshot",
+                    session_id="session-3",
+                    snapshot={
+                        "session": {"id": "session-3"},
+                        "state": {"idle": False},
+                        "entries": [{"message": {"role": "user", "content": "closing"}}],
+                    },
+                ),
+                namespace="socket-one",
+                workspace_id="workspace-1",
+            )
+            reopened.observe_topology("socket-one", {})
+            self.assertEqual(
+                reopened.session_context("socket-one", "workspace-1", "session-2")["status"],
+                "completed",
+            )
+            self.assertEqual(
+                reopened.session_context("socket-one", "workspace-1", "session-3")["status"],
+                "closed",
+            )
+            reopened.close()
 
     def test_current_snapshot_and_cursor_survive_harness_restart(self):
         with tempfile.TemporaryDirectory() as temporary:

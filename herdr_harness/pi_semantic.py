@@ -30,7 +30,12 @@ PI_SEMANTIC_PROTOCOL = {"name": "herdr.pi.semantic", "version": 1}
 PI_SEMANTIC_MAX_LINE_BYTES = 512 * 1024
 PI_SEMANTIC_MAX_COMMAND_BYTES = 256 * 1024
 PI_SEMANTIC_SOCKET_PATH_BYTES = 100
+PI_SESSION_CONTEXT_MAX_MESSAGES = 256
+PI_SESSION_CONTEXT_MAX_MESSAGE_CHARACTERS = 32_000
+PI_SESSION_CONTEXT_MAX_CHARACTERS = 120_000
+PI_SESSION_CONTEXT_MAX_SESSIONS = 4096
 _PI_SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?\Z")
+_CONTEXT_OMISSION = "[... earlier visible conversation omitted by Herdr ...]"
 
 
 @dataclass
@@ -168,6 +173,70 @@ def valid_pi_session_id(value: object) -> bool:
     return isinstance(value, str) and len(value) <= 256 and _PI_SESSION_ID_PATTERN.fullmatch(value) is not None
 
 
+def _visible_message_text(message: dict) -> Optional[str]:
+    """Project only user-visible text blocks from a Pi message."""
+
+    role = message.get("role")
+    if role not in {"user", "assistant"}:
+        return None
+    content = message.get("content")
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        parts = []
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "text":
+                continue
+            value = block.get("text")
+            if isinstance(value, str):
+                parts.append(value)
+        text = "".join(parts)
+    else:
+        return None
+    text = text.strip()
+    if not text:
+        return None
+    if len(text) > PI_SESSION_CONTEXT_MAX_MESSAGE_CHARACTERS:
+        text = text[: PI_SESSION_CONTEXT_MAX_MESSAGE_CHARACTERS - 1] + "…"
+    return text
+
+
+def _visible_context_projection(snapshot: dict) -> tuple[list[dict], str, bool]:
+    """Return a deterministic, bounded projection with no hidden Pi data."""
+
+    projected: list[dict] = []
+    source_count = 0
+    entries = snapshot.get("entries")
+    if not isinstance(entries, list):
+        entries = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("message"), dict):
+            continue
+        message = entry["message"]
+        text = _visible_message_text(message)
+        if text is None:
+            continue
+        source_count += 1
+        projected.append({"role": message["role"], "text": text})
+
+    projected = projected[-PI_SESSION_CONTEXT_MAX_MESSAGES:]
+    selected: list[dict] = []
+    for message in reversed(projected):
+        candidate = [message, *selected]
+        candidate_clipped = source_count > len(candidate)
+        blocks = [f"{item['role'].capitalize()}:\n{item['text']}" for item in candidate]
+        if candidate_clipped:
+            blocks.insert(0, _CONTEXT_OMISSION)
+        if len("\n\n".join(blocks)) > PI_SESSION_CONTEXT_MAX_CHARACTERS:
+            break
+        selected = candidate
+    clipped = source_count > len(selected)
+    blocks = [f"{item['role'].capitalize()}:\n{item['text']}" for item in selected]
+    if clipped:
+        blocks.insert(0, _CONTEXT_OMISSION)
+    return selected, "\n\n".join(blocks), clipped
+
+
 def _record_parent_session_id(record: dict, session_id: Optional[str]) -> tuple[bool, Optional[str]]:
     session = record.get("session")
     for source in (session, record):
@@ -285,6 +354,29 @@ class PiSemanticJournal:
                 self._database.execute("ALTER TABLE pi_semantic_state ADD COLUMN parent_session_id TEXT")
             if "has_content" not in columns:
                 self._database.execute("ALTER TABLE pi_semantic_state ADD COLUMN has_content INTEGER")
+            self._database.execute(
+                """
+                CREATE TABLE IF NOT EXISTS pi_session_context (
+                    namespace TEXT NOT NULL,
+                    workspace_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    pane_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    messages_json TEXT NOT NULL,
+                    context_text TEXT NOT NULL,
+                    message_count INTEGER NOT NULL,
+                    clipped INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (namespace, workspace_id, session_id)
+                )
+                """
+            )
+            self._database.execute(
+                """
+                CREATE INDEX IF NOT EXISTS pi_session_context_pane
+                ON pi_session_context (namespace, pane_id, updated_at)
+                """
+            )
         if path != ":memory:":
             for companion in (path, f"{path}-wal", f"{path}-shm"):
                 try:
@@ -342,6 +434,14 @@ class PiSemanticJournal:
                 "UPDATE pi_semantic_state SET connected = ?, updated_at = ? WHERE pane_id = ?",
                 (1 if connected else 0, utc_now(), storage_pane_id),
             )
+            if not connected:
+                self._database.execute(
+                    """
+                    UPDATE pi_session_context SET status = 'disconnected', updated_at = ?
+                    WHERE namespace = ? AND pane_id = ? AND session_id = ? AND status IN ('active', 'idle')
+                    """,
+                    (utc_now(), namespace, pane_id, str(previous["session_id"] or "") if previous else ""),
+                )
             event = self._append_event_locked(
                 storage_pane_id,
                 {"type": "bridge.connection", "connected": bool(connected)},
@@ -365,7 +465,14 @@ class PiSemanticJournal:
                 return None, 0
             return row["instance_id"], int(row["source_sequence"] or 0)
 
-    def ingest(self, pane_id: str, record: dict, *, namespace: str = "") -> list[dict]:
+    def ingest(
+        self,
+        pane_id: str,
+        record: dict,
+        *,
+        namespace: str = "",
+        workspace_id: Optional[str] = None,
+    ) -> list[dict]:
         """Validate and retain one extension record, returning new HTTP events."""
 
         if not isinstance(record, dict) or not _protocol_valid(record):
@@ -382,6 +489,8 @@ class PiSemanticJournal:
         source_sequence_value = record.get("sequence")
         source_sequence = source_sequence_value if isinstance(source_sequence_value, int) else None
         session_id = _record_session_id(record)
+        if session_id and not valid_pi_session_id(session_id):
+            raise PiSemanticError("Pi session ID was invalid", code="pi_protocol_error", status=502)
         emitted: list[dict] = []
         storage_pane_id = self._storage_pane_id(pane_id, namespace)
 
@@ -430,8 +539,11 @@ class PiSemanticJournal:
                 if not isinstance(payload, dict):
                     raise PiSemanticError("Pi snapshot was not an object", code="pi_protocol_error", status=502)
                 snapshot_session = _record_session_id(payload) or session_id
+                if snapshot_session and not valid_pi_session_id(snapshot_session):
+                    raise PiSemanticError("Pi snapshot session ID was invalid", code="pi_protocol_error", status=502)
                 _, snapshot_parent = _record_parent_session_id(payload, snapshot_session)
                 if previous_session and snapshot_session and previous_session != snapshot_session:
+                    self._set_context_status_locked(namespace, pane_id, previous_session, "switched")
                     reset = {
                         "type": "stream.reset",
                         "reason": "session_changed",
@@ -473,6 +585,10 @@ class PiSemanticJournal:
                         storage_pane_id,
                     ),
                 )
+                if namespace and workspace_id and snapshot_session:
+                    self._project_context_locked(
+                        namespace, workspace_id, pane_id, snapshot_session, payload
+                    )
                 cached_retention = self._retention.get(storage_pane_id)
                 if cached_retention is not None:
                     cached_retention.pinned_snapshot_cursor = None
@@ -508,6 +624,12 @@ class PiSemanticJournal:
             )
             if appended is not None:
                 emitted.append(appended)
+            if previous_session and session_id and previous_session != session_id:
+                self._set_context_status_locked(namespace, pane_id, previous_session, "switched")
+            if str(raw_event.get("type") or "") == "session_shutdown":
+                self._set_context_status_locked(
+                    namespace, pane_id, session_id or previous_session, "completed"
+                )
             self._database.execute(
                 """
                 UPDATE pi_semantic_state
@@ -523,6 +645,8 @@ class PiSemanticJournal:
                 if len(snapshot_json.encode("utf-8")) > PI_SEMANTIC_MAX_LINE_BYTES:
                     raise PiSemanticError("Pi reset snapshot exceeded the size limit", code="pi_payload_too_large", status=502)
                 recovery_session = _record_session_id(recovery_snapshot) or session_id or previous_session
+                if recovery_session and not valid_pi_session_id(recovery_session):
+                    raise PiSemanticError("Pi reset session ID was invalid", code="pi_protocol_error", status=502)
                 _, recovery_parent = _record_parent_session_id(recovery_snapshot, recovery_session)
                 self._database.execute(
                     """
@@ -541,12 +665,189 @@ class PiSemanticJournal:
                         storage_pane_id,
                     ),
                 )
+                if namespace and workspace_id and recovery_session:
+                    self._project_context_locked(
+                        namespace,
+                        workspace_id,
+                        pane_id,
+                        recovery_session,
+                        recovery_snapshot,
+                    )
                 cached_retention = self._retention.get(storage_pane_id)
                 if cached_retention is not None:
                     cached_retention.pinned_snapshot_cursor = None
             self._trim_locked(storage_pane_id)
             self._condition.notify_all()
         return emitted
+
+    def _set_context_status_locked(
+        self,
+        namespace: str,
+        pane_id: str,
+        session_id: Optional[str],
+        status: str,
+    ) -> None:
+        if not namespace or not session_id:
+            return
+        if status in {"switched", "completed"}:
+            self._database.execute(
+                """
+                UPDATE pi_session_context SET status = ?, updated_at = ?
+                WHERE namespace = ? AND pane_id = ? AND session_id = ?
+                  AND status IN ('active', 'idle', 'disconnected')
+                """,
+                (status, utc_now(), namespace, pane_id, session_id),
+            )
+            return
+        self._database.execute(
+            """
+            UPDATE pi_session_context SET status = ?, updated_at = ?
+            WHERE namespace = ? AND pane_id = ? AND session_id = ?
+            """,
+            (status, utc_now(), namespace, pane_id, session_id),
+        )
+
+    def _project_context_locked(
+        self,
+        namespace: str,
+        workspace_id: str,
+        pane_id: str,
+        session_id: str,
+        snapshot: dict,
+    ) -> None:
+        messages, context, clipped = _visible_context_projection(snapshot)
+        state_value = snapshot.get("state")
+        state = state_value if isinstance(state_value, dict) else {}
+        status = "idle" if state.get("idle") is True else "active"
+        updated_at = utc_now()
+        self._database.execute(
+            """
+            INSERT INTO pi_session_context
+            (namespace, workspace_id, session_id, pane_id, status, messages_json,
+             context_text, message_count, clipped, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(namespace, workspace_id, session_id) DO UPDATE SET
+                pane_id = excluded.pane_id,
+                status = excluded.status,
+                messages_json = excluded.messages_json,
+                context_text = excluded.context_text,
+                message_count = excluded.message_count,
+                clipped = excluded.clipped,
+                updated_at = excluded.updated_at
+            """,
+            (
+                namespace,
+                workspace_id,
+                session_id,
+                pane_id,
+                status,
+                json.dumps(messages, separators=(",", ":"), ensure_ascii=False),
+                context,
+                len(messages),
+                1 if clipped else 0,
+                updated_at,
+            ),
+        )
+        self._database.execute(
+            """
+            DELETE FROM pi_session_context
+            WHERE namespace = ? AND rowid NOT IN (
+                SELECT rowid FROM pi_session_context WHERE namespace = ?
+                ORDER BY updated_at DESC, workspace_id DESC, session_id DESC LIMIT ?
+            )
+            """,
+            (namespace, namespace, PI_SESSION_CONTEXT_MAX_SESSIONS),
+        )
+
+    def observe_topology(self, namespace: str, pane_workspaces: Mapping[str, str]) -> None:
+        """Backfill trusted snapshots and persist pane closure without deletion."""
+
+        with self._condition, self._database:
+            for pane_id, workspace_id in pane_workspaces.items():
+                state = self._database.execute(
+                    """
+                    SELECT session_id, snapshot_json, connected
+                    FROM pi_semantic_state WHERE pane_id = ?
+                    """,
+                    (self._storage_pane_id(pane_id, namespace),),
+                ).fetchone()
+                if (
+                    state is None
+                    or not valid_pi_session_id(state["session_id"])
+                    or not state["snapshot_json"]
+                ):
+                    continue
+                exists = self._database.execute(
+                    """
+                    SELECT 1 FROM pi_session_context
+                    WHERE namespace = ? AND workspace_id = ? AND session_id = ?
+                    """,
+                    (namespace, workspace_id, state["session_id"]),
+                ).fetchone()
+                if exists is not None:
+                    continue
+                try:
+                    snapshot = json.loads(state["snapshot_json"])
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if not isinstance(snapshot, dict):
+                    continue
+                self._project_context_locked(
+                    namespace,
+                    workspace_id,
+                    pane_id,
+                    str(state["session_id"]),
+                    snapshot,
+                )
+                if not bool(state["connected"]):
+                    self._set_context_status_locked(
+                        namespace, pane_id, str(state["session_id"]), "disconnected"
+                    )
+            rows = self._database.execute(
+                "SELECT DISTINCT pane_id FROM pi_session_context WHERE namespace = ?",
+                (namespace,),
+            ).fetchall()
+            removed = {str(row["pane_id"]) for row in rows}.difference(pane_workspaces)
+            for pane_id in removed:
+                self._database.execute(
+                    """
+                    UPDATE pi_session_context SET status = 'closed', updated_at = ?
+                    WHERE namespace = ? AND pane_id = ? AND status IN ('active', 'idle', 'disconnected')
+                    """,
+                    (utc_now(), namespace, pane_id),
+                )
+
+    def session_context(self, namespace: str, workspace_id: str, session_id: str) -> dict:
+        """Resolve one exact workspace/session pair from the durable projection."""
+
+        with self._lock:
+            row = self._database.execute(
+                """
+                SELECT status, messages_json, context_text, message_count, clipped, updated_at
+                FROM pi_session_context
+                WHERE namespace = ? AND workspace_id = ? AND session_id = ?
+                """,
+                (namespace, workspace_id, session_id),
+            ).fetchone()
+            if row is None:
+                raise PiSemanticError(
+                    "Pi session context was not found for that workspace",
+                    code="pi_session_context_not_found",
+                    status=404,
+                )
+            messages = json.loads(row["messages_json"])
+            return {
+                "ok": True,
+                "capability": "pi-session-context-v1",
+                "workspaceId": workspace_id,
+                "sessionId": session_id,
+                "status": str(row["status"]),
+                "context": str(row["context_text"]),
+                "messages": messages if isinstance(messages, list) else [],
+                "messageCount": int(row["message_count"]),
+                "truncated": bool(row["clipped"]),
+                "updatedAt": str(row["updated_at"]),
+            }
 
     def _latest_cursor_locked(self, pane_id: str) -> int:
         row = self._database.execute(
@@ -916,6 +1217,7 @@ class PiSemanticManager:
         self._lock = threading.RLock()
         self._started = False
         self._known_pi_panes: set[str] = set()
+        self._pane_workspaces: dict[str, str] = {}
         self._bridge_capabilities: dict[str, dict] = {}
         self._watchers: dict[str, tuple[threading.Event, threading.Thread]] = {}
 
@@ -945,8 +1247,17 @@ class PiSemanticManager:
 
     def sync_snapshot(self, snapshot: dict) -> None:
         panes = _pi_pane_ids(snapshot)
+        pane_workspaces = {
+            str(record["pane_id"]): str(record["workspace_id"])
+            for record in snapshot.get("panes", [])
+            if isinstance(record, dict)
+            and str(record.get("pane_id") or "") in panes
+            and record.get("workspace_id")
+        }
+        self.journal.observe_topology(self.namespace, pane_workspaces)
         with self._lock:
             self._known_pi_panes = panes
+            self._pane_workspaces = pane_workspaces
             started = self._started
             removed = [pane for pane in self._watchers if pane not in panes]
             removed_values = [self._watchers.pop(pane) for pane in removed]
@@ -1052,7 +1363,14 @@ class PiSemanticManager:
                             if changed is not None and self._on_event is not None:
                                 self._on_event(copy.deepcopy(changed))
                             authenticated = True
-                        for event in self.journal.ingest(pane_id, record, namespace=self.namespace):
+                        with self._lock:
+                            workspace_id = self._pane_workspaces.get(pane_id)
+                        for event in self.journal.ingest(
+                            pane_id,
+                            record,
+                            namespace=self.namespace,
+                            workspace_id=workspace_id,
+                        ):
                             if self._on_event is not None:
                                 self._on_event(copy.deepcopy(event))
             except (PiSemanticError, OSError):
@@ -1182,6 +1500,11 @@ class PiSemanticManager:
         response["connected"] = capability["connected"]
         response["capabilities"] = copy.deepcopy(capability["capabilities"])
         return response
+
+    def session_context(self, workspace_id: str, session_id: str) -> dict:
+        if not valid_pi_session_id(session_id):
+            raise PiSemanticError("Pi session ID is invalid", code="invalid_pi_session_id", status=400)
+        return self.journal.session_context(self.namespace, workspace_id, session_id)
 
     def bounds(self, pane_id: str) -> tuple[int, int]:
         return self.journal.bounds(pane_id, namespace=self.namespace)

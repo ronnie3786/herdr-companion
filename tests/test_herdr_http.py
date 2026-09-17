@@ -465,6 +465,32 @@ class FakeHTTPService:
             "generated_at": "now",
         }
 
+    def pi_session_context(self, workspace_id, session_id):
+        self.calls.append(
+            (
+                "pi.session_context",
+                {"workspace_id": workspace_id, "session_id": session_id},
+            )
+        )
+        if session_id == "missing-session":
+            raise PiSemanticError(
+                "Pi session context was not found for that workspace",
+                code="pi_session_context_not_found",
+                status=404,
+            )
+        return {
+            "ok": True,
+            "capability": "pi-session-context-v1",
+            "workspaceId": workspace_id,
+            "sessionId": session_id,
+            "status": "idle",
+            "context": "User:\nhello",
+            "messages": [{"role": "user", "text": "hello"}],
+            "messageCount": 1,
+            "truncated": False,
+            "updatedAt": "2026-09-16T00:00:00Z",
+        }
+
     def pi_command(self, pane_id, command, payload=None):
         self.calls.append((f"pi.{command}", {"pane_id": pane_id, "payload": payload or {}}))
         if self.pi_command_error is not None:
@@ -591,6 +617,90 @@ class HerdrHTTPTests(unittest.TestCase):
             "w1:p1", request_id="synthetic-request", terminal_id="term_1", session_id="synthetic-session",
         )
         self.assertEqual(self.service.calls, [])
+
+    def test_pi_session_context_route_decodes_validates_and_maps_errors(self):
+        description = self.request("/api/v1")[2]
+        self.assertIn("pi-session-context-v1", description["capabilities"])
+        self.assertEqual(
+            description["endpoints"]["piSessionContext"],
+            "/api/v1/workspaces/{workspaceId}/pi/sessions/{sessionId}/context",
+        )
+        path = "/api/v1/workspaces/workspace%2Done/pi/sessions/session%2Done/context"
+        status, _, body = self.request(path)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["workspaceId"], "workspace-one")
+        self.assertEqual(body["sessionId"], "session-one")
+        self.assertEqual(body["context"], "User:\nhello")
+        self.assertIn(
+            (
+                "pi.session_context",
+                {"workspace_id": "workspace-one", "session_id": "session-one"},
+            ),
+            self.service.calls,
+        )
+
+        status, _, body = self.request(
+            "/api/v1/workspaces/workspace-one/pi/sessions/bad%2Fsession/context"
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"]["code"], "invalid_pi_session_id")
+        status, _, body = self.request(
+            "/api/v1/workspaces/workspace-one/pi/sessions/%FF/context"
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"]["code"], "invalid_request")
+        status, _, body = self.request(
+            "/api/v1/workspaces/workspace-one/pi/sessions/missing-session/context"
+        )
+        self.assertEqual(status, 404)
+        self.assertEqual(body["error"]["code"], "pi_session_context_not_found")
+
+    def test_pi_session_context_requires_only_the_configured_main_token(self):
+        path = "/api/v1/workspaces/w1/pi/sessions/session-1/context"
+        status, headers, body = self.request(path, token=None)
+        self.assertEqual(status, 401)
+        self.assertEqual(headers["WWW-Authenticate"], 'Bearer realm="Herdr Harness"')
+        self.assertEqual(body["error"]["code"], "unauthorized")
+
+        service = FakeHTTPService()
+        service.environ = {
+            "HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN": "manage-secret",
+            "HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN": "ingest-secret",
+        }
+        server = make_server(service, host="127.0.0.1", port=0, api_token="main-secret")
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            for token in ("manage-secret", "ingest-secret"):
+                request = urllib.request.Request(
+                    base + path,
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                with self.assertRaises(urllib.error.HTTPError) as context:
+                    urllib.request.urlopen(request, timeout=2)
+                self.assertEqual(context.exception.code, 401)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
+
+        open_server = make_server(FakeHTTPService(), host="127.0.0.1", port=0, api_token="")
+        open_thread = threading.Thread(target=open_server.serve_forever, daemon=True)
+        open_thread.start()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{open_server.server_address[1]}" + path
+            )
+            with self.assertRaises(urllib.error.HTTPError) as context:
+                urllib.request.urlopen(request, timeout=2)
+            body = json.loads(context.exception.read())
+            self.assertEqual(context.exception.code, 503)
+            self.assertEqual(body["error"]["code"], "api_token_required")
+        finally:
+            open_server.shutdown()
+            open_server.server_close()
+            open_thread.join(timeout=1)
 
     def test_reserved_shell_actions_validate_before_dispatch(self):
         path = "/api/v1/panes/w1:p2/reserved-shell"

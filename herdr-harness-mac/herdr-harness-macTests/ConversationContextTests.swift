@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Synchronization
 import Testing
 import UniformTypeIdentifiers
 @testable import herdr_harness_mac

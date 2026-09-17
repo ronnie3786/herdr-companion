@@ -357,19 +357,19 @@ actor StaleRevisionAgentControlTransport: AgentControlTransport {
     func acknowledgements() -> [AgentControlResultRequest] { ackRequests }
 
     func waitForAcknowledgementCount(_ expected: Int) async throws {
-        for _ in 0..<5_000 {
-            if ackRequests.count >= expected { return }
-            try await Task.sleep(for: .milliseconds(1))
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ackRequests.count < expected {
+            if ContinuousClock.now > deadline { throw WaitError.exceededBound }
+            try await Task.sleep(for: .milliseconds(5))
         }
-        throw WaitError.exceededBound
     }
 
     func waitForPollCount(_ expected: Int) async throws {
-        for _ in 0..<5_000 {
-            if pollCount >= expected { return }
-            try await Task.sleep(for: .milliseconds(1))
+        let deadline = ContinuousClock.now + .seconds(10)
+        while pollCount < expected {
+            if ContinuousClock.now > deadline { throw WaitError.exceededBound }
+            try await Task.sleep(for: .milliseconds(5))
         }
-        throw WaitError.exceededBound
     }
 }
 
@@ -424,11 +424,11 @@ actor RetryingAgentControlTransport: AgentControlTransport {
     func acknowledgements() -> [AgentControlResultRequest] { ackRequests }
 
     func waitForAcknowledgementCount(_ expected: Int) async throws {
-        for _ in 0..<5_000 {
-            if ackRequests.count >= expected { return }
-            try await Task.sleep(for: .milliseconds(1))
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ackRequests.count < expected {
+            if ContinuousClock.now > deadline { throw SyntheticError.exceededBound }
+            try await Task.sleep(for: .milliseconds(5))
         }
-        throw SyntheticError.exceededBound
     }
 }
 
@@ -515,35 +515,35 @@ actor ControlledGenerationAgentControlTransport: AgentControlTransport {
     func registrationCount() -> Int { registerCount }
 
     func waitForPollCount(_ expected: Int) async throws {
-        for _ in 0..<5_000 {
-            if pollCount >= expected { return }
-            await Task.yield()
+        let deadline = ContinuousClock.now + .seconds(10)
+        while pollCount < expected {
+            if ContinuousClock.now > deadline { throw WaitError.exceededBound }
+            try await Task.sleep(for: .milliseconds(5))
         }
-        throw WaitError.exceededBound
     }
 
     func waitForDeliveredPollCount(_ expected: Int) async throws {
-        for _ in 0..<5_000 {
-            if deliveredPollCount >= expected { return }
-            await Task.yield()
+        let deadline = ContinuousClock.now + .seconds(10)
+        while deliveredPollCount < expected {
+            if ContinuousClock.now > deadline { throw WaitError.exceededBound }
+            try await Task.sleep(for: .milliseconds(5))
         }
-        throw WaitError.exceededBound
     }
 
     func waitForCancellationCount(_ expected: Int) async throws {
-        for _ in 0..<5_000 {
-            if cancellationCount >= expected { return }
-            await Task.yield()
+        let deadline = ContinuousClock.now + .seconds(10)
+        while cancellationCount < expected {
+            if ContinuousClock.now > deadline { throw WaitError.exceededBound }
+            try await Task.sleep(for: .milliseconds(5))
         }
-        throw WaitError.exceededBound
     }
 
     func waitForAcknowledgementCount(_ expected: Int) async throws {
-        for _ in 0..<5_000 {
-            if acknowledgementRequests.count >= expected { return }
-            await Task.yield()
+        let deadline = ContinuousClock.now + .seconds(10)
+        while acknowledgementRequests.count < expected {
+            if ContinuousClock.now > deadline { throw WaitError.exceededBound }
+            try await Task.sleep(for: .milliseconds(5))
         }
-        throw WaitError.exceededBound
     }
 }
 
@@ -586,18 +586,18 @@ actor BlockingAgentControlTransport: AgentControlTransport {
     }
 
     func waitForPollCount(_ expected: Int) async throws {
-        for _ in 0..<1_000 {
-            if pollCount >= expected { return }
-            await Task.yield()
+        let deadline = ContinuousClock.now + .seconds(10)
+        while pollCount < expected {
+            if ContinuousClock.now > deadline { throw WaitError.exceededBound }
+            try await Task.sleep(for: .milliseconds(5))
         }
-        throw WaitError.exceededBound
     }
 
     func waitForCancellationCount(_ expected: Int) async throws {
-        for _ in 0..<1_000 {
-            if cancellationCount >= expected { return }
-            await Task.yield()
+        let deadline = ContinuousClock.now + .seconds(10)
+        while cancellationCount < expected {
+            if ContinuousClock.now > deadline { throw WaitError.exceededBound }
+            try await Task.sleep(for: .milliseconds(5))
         }
-        throw WaitError.exceededBound
     }
 }

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct SettingsView: View {
@@ -136,6 +137,7 @@ struct SettingsView: View {
             cleanupSection
         case .hud:
             hudSection
+            appShotsSection
         case .alerts:
             alertSection
         case .voice:
@@ -298,6 +300,86 @@ struct SettingsView: View {
         } footer: {
             Text("Show 4 agents by default; additional agents are grouped under +N. Choose Show all to keep every agent in the scrollable list. The HUD can run real commands on the selected machine.")
         }
+    }
+
+    private var appShotsSection: some View {
+        Section {
+            Toggle(
+                "App Shots (both Command keys)",
+                systemImage: "viewfinder",
+                isOn: Binding(
+                    get: { hudController.areAppShotsEnabled },
+                    set: { hudController.setAppShotsEnabled($0) }
+                )
+            )
+            .tint(HerdrTheme.controlAccent)
+            .accessibilityIdentifier("settings-app-shots-enabled")
+
+            Toggle(
+                "Notify when a capture starts or fails",
+                isOn: Binding(
+                    get: { hudController.areAppShotNotificationsEnabled },
+                    set: { enabled in
+                        hudController.setAppShotNotificationsEnabled(enabled)
+                        // Only an explicit user action may ask macOS for permission.
+                        if enabled { Task { _ = await NotificationManager.requestAuthorization() } }
+                    }
+                )
+            )
+            .tint(HerdrTheme.controlAccent)
+            .accessibilityIdentifier("settings-app-shots-notifications")
+
+            LabeledContent("Capture window", value: "⌃⌥C")
+                .accessibilityIdentifier("settings-app-shots-hotkey")
+
+            // Live per-key readout: holding one Command key here is the fastest
+            // way to see whether this Mac reports per-key state at all.
+            TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                LabeledContent("Command keys") {
+                    Text(hudController.commandKeyReadoutText())
+                        .herdrFont(.caption)
+                        .foregroundStyle(HerdrTheme.mist)
+                        .multilineTextAlignment(.trailing)
+                }
+                .accessibilityIdentifier("settings-app-shots-key-readout")
+            }
+
+            if !hudController.isAppShotKeyboardAccessGranted {
+                Button("Grant keyboard access…") {
+                    _ = hudController.requestAppShotKeyboardAccess()
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                .accessibilityIdentifier("settings-app-shots-grant-keyboard")
+            }
+
+            Text(appShotLastTriggerText)
+                .herdrFont(.caption)
+                .foregroundStyle(HerdrTheme.mist)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("settings-app-shots-last-trigger")
+
+            Button("Test capture now") {
+                hudController.captureFrontmostWindow(trigger: .settings)
+            }
+            .accessibilityIdentifier("settings-app-shots-test-capture")
+        } header: {
+            Label("App Shots", systemImage: "viewfinder")
+        } footer: {
+            Text("Press the left and right Command keys together to capture the frontmost app window into a new HUD chat. Herdr reads each Command key independently; if the readout never changes while you hold one, grant keyboard access. ⌃⌥C and File ▸ Capture Frontmost Window always work and need no extra permission. Capturing requires Screen Recording, and nothing is ever sent automatically.")
+        }
+    }
+
+    private var appShotLastTriggerText: String {
+        let diagnostics = hudController.appShotDiagnostics
+        guard let date = diagnostics.lastTriggerDate else {
+            return "No capture yet. Shortcut registered: \(diagnostics.isChordRegistered ? "yes" : "no")."
+        }
+        let time = date.formatted(date: .omitted, time: .standard)
+        let route = diagnostics.lastTrigger?.title ?? "Capture"
+        let outcome = diagnostics.lastOutcome ?? "in progress"
+        return "Last: \(route) at \(time) — \(outcome)"
     }
 
     private var textSizeSection: some View {
@@ -647,6 +729,25 @@ struct SettingsView: View {
             .disabled(!updates.canCheckForUpdates)
             .accessibilityIdentifier("settings-check-for-updates")
 
+            LabeledContent(
+                "Channel",
+                value: updates.includesPreviewUpdates ? "Preview builds included" : "Stable only"
+            )
+            .accessibilityIdentifier("settings-updates-channel")
+
+            LabeledContent("Background checks") {
+                Text(HerdrUpdateController.backgroundCheckDescription(
+                    isConfigured: updates.isConfigured,
+                    lastCheckAt: updates.lastBackgroundCheckAt,
+                    nextCheckAt: updates.nextBackgroundCheckAt,
+                    interval: HerdrUpdateController.backgroundCheckInterval
+                ))
+                .herdrFont(.caption)
+                .foregroundStyle(HerdrTheme.mist)
+                .multilineTextAlignment(.trailing)
+            }
+            .accessibilityIdentifier("settings-updates-cadence")
+
             if let message = updates.statusMessage {
                 Text(message)
                     .herdrFont(.caption)
@@ -663,7 +764,7 @@ struct SettingsView: View {
             Label("App updates", systemImage: "arrow.down.circle")
         } footer: {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Updates come from GitHub Releases. You review an update before choosing to install it. Preview builds include changes that are still being tested.")
+                Text("Updates come from GitHub Releases. You review an update before choosing to install it. Preview builds include changes that are still being tested. A newer release also appears in the window’s top bar, and stays there after you dismiss the banner with Later.")
                 if updates.isUpdateSessionInProgress {
                     Text("Finish or skip the current update before changing release channels.")
                         .accessibilityIdentifier("settings-updates-channel-session-notice")

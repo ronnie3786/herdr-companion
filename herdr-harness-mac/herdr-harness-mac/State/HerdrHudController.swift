@@ -31,6 +31,12 @@ final class HerdrHudController {
     typealias FocusedWindowSelection = @MainActor (pid_t?) throws -> HerdrFocusedWindowTarget
     typealias FocusedWindowScreenshotCapture = @MainActor (HerdrFocusedWindowTarget) async throws -> URL
     typealias ScreenshotShortcutStateProvider = HerdrDualCommandShortcut.StateProvider
+    typealias AppShotNotificationPoster = @MainActor (HerdrAppShotNotification) async -> Void
+    typealias FrontmostProcessProvider = @MainActor () -> pid_t?
+
+    /// Carbon hot-key identifier for the permission-free App Shots shortcut.
+    /// The HUD summon hot key keeps `HerdrGlobalHotKey.summonIdentifier`.
+    static let appShotHotKeyIdentifier: UInt32 = 2
 
     private enum DefaultsKey {
         static let enabled = "herdr.hud.enabled"
@@ -40,12 +46,20 @@ final class HerdrHudController {
         static let chatWidth = "herdr.hud.chatWidth"
         static let chatHeight = "herdr.hud.chatHeight"
         static let ultraCompactEnabled = "herdr.hud.ultraCompactEnabled"
+        static let appShotsEnabled = "herdr.hud.appShotsEnabled"
+        static let appShotsNotifications = "herdr.hud.appShotsNotifications"
     }
 
     private let userDefaults: UserDefaults
     private let focusedWindowSelection: FocusedWindowSelection
     private let focusedWindowScreenshotCapture: FocusedWindowScreenshotCapture
-    private let screenshotShortcutStateProvider: ScreenshotShortcutStateProvider
+    private let screenshotShortcutStateProvider: ScreenshotShortcutStateProvider?
+    private let appShotNotificationPoster: AppShotNotificationPoster
+    private let frontmostProcessProvider: FrontmostProcessProvider
+    @ObservationIgnored private let commandKeyMonitor: HerdrCommandKeyMonitor
+    @ObservationIgnored private var appShotHotKey: HerdrGlobalHotKey?
+    @ObservationIgnored private var appShotStatusClearTask: Task<Void, Never>?
+    @ObservationIgnored private var lastExternalProcessID: pid_t?
     private var panel: HerdrHudPanel?
     private var hotKey: HerdrGlobalHotKey?
     private var screenshotShortcut: HerdrDualCommandShortcut?
@@ -80,6 +94,10 @@ final class HerdrHudController {
     private(set) var focusRequest = 0
     private(set) var noteFocusRequest = 0
     private(set) var isCapturingWindowScreenshot = false
+    /// Visible from the moment a trigger fires, so a silent shortcut can be told
+    /// apart from a failed capture.
+    private(set) var appShotStatus: HerdrAppShotStatus = .idle
+    private(set) var appShotDiagnostics = HerdrAppShotDiagnostics()
     /// Zero means Show all; finite limits apply equally to voice and pane agents.
     var visibleAgentLimit: Int {
         didSet {
@@ -142,13 +160,22 @@ final class HerdrHudController {
         focusedWindowScreenshotCapture: @escaping FocusedWindowScreenshotCapture = {
             try await HerdrFocusedWindowScreenshot.capture(target: $0)
         },
-        screenshotShortcutStateProvider: ScreenshotShortcutStateProvider? = nil
+        screenshotShortcutStateProvider: ScreenshotShortcutStateProvider? = nil,
+        commandKeyMonitor: HerdrCommandKeyMonitor? = nil,
+        frontmostProcessProvider: @escaping FrontmostProcessProvider = {
+            NSWorkspace.shared.frontmostApplication?.processIdentifier
+        },
+        appShotNotificationPoster: @escaping AppShotNotificationPoster = { notification in
+            await NotificationManager.postAppShot(title: notification.title, body: notification.body)
+        }
     ) {
         self.userDefaults = userDefaults
         self.focusedWindowSelection = focusedWindowSelection
         self.focusedWindowScreenshotCapture = focusedWindowScreenshotCapture
         self.screenshotShortcutStateProvider = screenshotShortcutStateProvider
-            ?? HerdrDualCommandShortcut.systemStateProvider
+        self.frontmostProcessProvider = frontmostProcessProvider
+        self.appShotNotificationPoster = appShotNotificationPoster
+        self.commandKeyMonitor = commandKeyMonitor ?? HerdrCommandKeyMonitor()
         isUltraCompactEnabled = userDefaults.bool(forKey: DefaultsKey.ultraCompactEnabled)
         let savedLimit = userDefaults.object(forKey: DefaultsKey.visibleAgentLimit) as? Int
         visibleAgentLimit = savedLimit.flatMap { (0...20).contains($0) ? $0 : nil } ?? HerdrHudPlacement.maxChips
@@ -170,6 +197,68 @@ final class HerdrHudController {
         _ = enabledRevision
         guard userDefaults.object(forKey: DefaultsKey.enabled) != nil else { return true }
         return userDefaults.bool(forKey: DefaultsKey.enabled)
+    }
+
+    /// App Shots is independent of the HUD panel's visibility: a trigger while
+    /// the HUD is hidden enables it, so pressing the shortcut can never fail
+    /// silently. On by default, like the HUD itself.
+    var areAppShotsEnabled: Bool {
+        guard userDefaults.object(forKey: DefaultsKey.appShotsEnabled) != nil else { return true }
+        return userDefaults.bool(forKey: DefaultsKey.appShotsEnabled)
+    }
+
+    func setAppShotsEnabled(_ enabled: Bool) {
+        guard areAppShotsEnabled != enabled else { return }
+        userDefaults.set(enabled, forKey: DefaultsKey.appShotsEnabled)
+        if enabled {
+            installAppShotTriggers()
+        } else {
+            unregisterAppShotTriggers()
+        }
+    }
+
+    /// A macOS notification is posted when a trigger is detected while the HUD
+    /// panel is hidden and for every capture failure. Default on; the capture
+    /// path never prompts for notification permission.
+    var areAppShotNotificationsEnabled: Bool {
+        guard userDefaults.object(forKey: DefaultsKey.appShotsNotifications) != nil else { return true }
+        return userDefaults.bool(forKey: DefaultsKey.appShotsNotifications)
+    }
+
+    func setAppShotNotificationsEnabled(_ enabled: Bool) {
+        userDefaults.set(enabled, forKey: DefaultsKey.appShotsNotifications)
+    }
+
+    var isAppShotKeyboardAccessGranted: Bool { commandKeyMonitor.isKeyboardAccessGranted }
+
+    func currentCommandKeyState() -> HerdrCommandKeyState { commandKeyMonitor.currentState() }
+
+    func commandKeyReadoutText() -> String {
+        HerdrCommandKeyReadout.text(
+            for: commandKeyMonitor.currentState(),
+            keyboardAccessGranted: commandKeyMonitor.isKeyboardAccessGranted
+        )
+    }
+
+    /// User-initiated only. Called by the App Shots settings control, never by
+    /// the capture path or at launch.
+    @discardableResult
+    func requestAppShotKeyboardAccess() -> Bool {
+        let granted = commandKeyMonitor.requestKeyboardAccess()
+        refreshAppShotDiagnostics()
+        return granted
+    }
+
+    func refreshAppShotDiagnostics() {
+        appShotDiagnostics.isKeyboardAccessGranted = commandKeyMonitor.isKeyboardAccessGranted
+        appShotDiagnostics.isScreenRecordingGranted = CGPreflightScreenCaptureAccess()
+    }
+
+    /// Exposed for tests and for dismissing the notice deliberately.
+    func clearAppShotStatus() {
+        appShotStatusClearTask?.cancel()
+        appShotStatusClearTask = nil
+        appShotStatus = .idle
     }
 
     var areNotesVisible: Bool {
@@ -254,9 +343,10 @@ final class HerdrHudController {
         installObservers(for: panel)
         session.isCollapsed = true
 
+        installAppShotTriggers()
+        refreshAppShotDiagnostics()
         if isEnabled {
             installHotKey()
-            installScreenshotShortcut()
             panel.orderFrontRegardless()
         }
     }
@@ -342,7 +432,6 @@ final class HerdrHudController {
 
         if enabled {
             installHotKey()
-            installScreenshotShortcut()
             isExpanded = false
             if notes?.isHudExpanded == true { notes?.isHudExpanded = false }
             displayedSession?.isCollapsed = true
@@ -356,16 +445,33 @@ final class HerdrHudController {
             applyFrame(animated: false)
             panel.orderOut(nil)
             hotKey?.unregister()
-            screenshotShortcut?.unregister()
         }
     }
 
     /// Captures the frontmost app/window identity before any asynchronous work
     /// or HUD presentation, then stages the PNG in the separate New chat composer.
-    func captureFocusedWindow(
-        processID: pid_t? = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    func captureFrontmostWindow(
+        trigger: HerdrAppShotTrigger = .menu,
+        signal: HerdrCommandKeySignal? = nil
     ) {
-        guard isEnabled, screenshotCaptureTask == nil, let chats else { return }
+        let target = HerdrAppShotTarget.processID(
+            frontmostProcessID: frontmostProcessProvider(),
+            lastExternalProcessID: lastExternalProcessID
+        )
+        captureFocusedWindow(processID: target, trigger: trigger, signal: signal)
+    }
+
+    func captureFocusedWindow(
+        processID: pid_t?,
+        trigger: HerdrAppShotTrigger = .menu,
+        signal: HerdrCommandKeySignal? = nil
+    ) {
+        guard screenshotCaptureTask == nil, let chats else { return }
+        let wasPanelVisible = panel?.isVisible == true
+        beginAppShot(trigger: trigger, signal: signal, wasPanelVisible: wasPanelVisible)
+        if !isEnabled {
+            setEnabled(true)
+        }
         let targetComposer = chats.composer
         let startedNavigationRevision = navigationRevision
         let target: HerdrFocusedWindowTarget
@@ -373,6 +479,7 @@ final class HerdrHudController {
             target = try focusedWindowSelection(processID)
         } catch {
             targetComposer.reportAttachmentError(error.localizedDescription)
+            failAppShot(message: error.localizedDescription, notifies: !wasPanelVisible)
             presentNewComposerIfNavigationUnchanged(startedNavigationRevision)
             return
         }
@@ -393,13 +500,16 @@ final class HerdrHudController {
                       let currentChats = self.chats
                 else { return }
                 guard currentChats.composer === targetComposer else {
-                    currentChats.composer.reportAttachmentError(
-                        "The screenshot wasn’t added because that New chat draft was sent while capture was in progress. Try again."
-                    )
+                    let message = "The screenshot wasn’t added because that New chat draft was sent while capture was in progress. Try again."
+                    currentChats.composer.reportAttachmentError(message)
+                    self.failAppShot(message: message, notifies: !wasPanelVisible)
                     self.presentNewComposerIfNavigationUnchanged(startedNavigationRevision)
                     return
                 }
                 targetComposer.addAttachments([sourceURL])
+                self.appShotStatus = .attached(filename: sourceURL.lastPathComponent)
+                self.appShotDiagnostics.lastOutcome = "Attached \(sourceURL.lastPathComponent)"
+                self.scheduleAppShotStatusClear(after: .seconds(3))
                 self.presentNewComposerIfNavigationUnchanged(startedNavigationRevision)
             } catch is CancellationError {
                 // Disable and replacement captures intentionally discard late results.
@@ -409,16 +519,65 @@ final class HerdrHudController {
                       self.isEnabled,
                       let currentChats = self.chats
                 else { return }
+                let message: String
                 if currentChats.composer === targetComposer {
-                    targetComposer.reportAttachmentError(error.localizedDescription)
+                    message = error.localizedDescription
+                    targetComposer.reportAttachmentError(message)
                 } else {
-                    currentChats.composer.reportAttachmentError(
-                        "The screenshot wasn’t added because that New chat draft was sent while capture was in progress. Try again."
-                    )
+                    message = "The screenshot wasn’t added because that New chat draft was sent while capture was in progress. Try again."
+                    currentChats.composer.reportAttachmentError(message)
                 }
+                self.failAppShot(message: message, notifies: !wasPanelVisible)
                 self.presentNewComposerIfNavigationUnchanged(startedNavigationRevision)
             }
         }
+    }
+
+    /// Detection is now observable: the HUD notice, the diagnostics record, and
+    /// - when the panel is not on screen - a macOS notification all fire before
+    /// any capture work starts.
+    private func beginAppShot(
+        trigger: HerdrAppShotTrigger,
+        signal: HerdrCommandKeySignal?,
+        wasPanelVisible: Bool
+    ) {
+        let startedAt = Date()
+        appShotStatus = .capturing(startedAt: startedAt)
+        appShotDiagnostics.lastTriggerDate = startedAt
+        appShotDiagnostics.lastTrigger = trigger
+        if let signal { appShotDiagnostics.lastSignal = signal }
+        appShotDiagnostics.lastOutcome = nil
+        refreshAppShotDiagnostics()
+        if !wasPanelVisible, areAppShotNotificationsEnabled {
+            postAppShotNotification(.detected())
+        }
+    }
+
+    /// The notification decision is made once, when the trigger fires: the HUD
+    /// panel was on screen (its notice carries everything) or it was not (the
+    /// user is told the capture started and how it ended).
+    private func failAppShot(message: String, notifies: Bool) {
+        appShotStatus = .failed(message: message)
+        appShotDiagnostics.lastOutcome = message
+        refreshAppShotDiagnostics()
+        if notifies, areAppShotNotificationsEnabled {
+            postAppShotNotification(.failed(message: message))
+        }
+        scheduleAppShotStatusClear(after: .seconds(8))
+    }
+
+    private func scheduleAppShotStatusClear(after delay: Duration) {
+        appShotStatusClearTask?.cancel()
+        appShotStatusClearTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            self?.clearAppShotStatus()
+        }
+    }
+
+    private func postAppShotNotification(_ notification: HerdrAppShotNotification) {
+        let poster = appShotNotificationPoster
+        Task { @MainActor in await poster(notification) }
     }
 
     private func presentNewComposerIfNavigationUnchanged(_ revision: Int) {
@@ -739,15 +898,43 @@ final class HerdrHudController {
         _ = hotKey?.register()
     }
 
-    private func installScreenshotShortcut() {
+    private func installAppShotTriggers() {
+        guard areAppShotsEnabled else {
+            appShotDiagnostics.isChordRegistered = false
+            appShotDiagnostics.isHotKeyRegistered = false
+            return
+        }
+        commandKeyMonitor.startMonitoring()
         if screenshotShortcut == nil {
-            screenshotShortcut = HerdrDualCommandShortcut(
-                stateProvider: screenshotShortcutStateProvider
-            ) { [weak self] in
-                self?.captureFocusedWindow()
+            let overrideProvider = screenshotShortcutStateProvider
+            let monitor = commandKeyMonitor
+            let stateProvider: HerdrDualCommandShortcut.StateProvider = overrideProvider ?? {
+                monitor.currentState()
+            }
+            screenshotShortcut = HerdrDualCommandShortcut(stateProvider: stateProvider) { [weak self] signal in
+                self?.captureFrontmostWindow(trigger: .chord, signal: signal)
             }
         }
-        _ = screenshotShortcut?.register()
+        appShotDiagnostics.isChordRegistered = screenshotShortcut?.register() ?? false
+
+        if appShotHotKey == nil {
+            appShotHotKey = HerdrGlobalHotKey(
+                keyCode: UInt32(kVK_ANSI_C),
+                modifiers: UInt32(controlKey | optionKey),
+                identifier: Self.appShotHotKeyIdentifier
+            ) { [weak self] in
+                self?.captureFrontmostWindow(trigger: .hotKey)
+            }
+        }
+        appShotDiagnostics.isHotKeyRegistered = appShotHotKey?.register() ?? false
+    }
+
+    private func unregisterAppShotTriggers() {
+        screenshotShortcut?.unregister()
+        appShotHotKey?.unregister()
+        commandKeyMonitor.stopMonitoring()
+        appShotDiagnostics.isChordRegistered = false
+        appShotDiagnostics.isHotKeyRegistered = false
     }
 
     private func installObservers(for panel: HerdrHudPanel) {
@@ -759,6 +946,22 @@ final class HerdrHudController {
                 queue: .main
             ) { [weak self] _ in
                 Task { @MainActor in self?.persistCurrentPlacement() }
+            }
+        )
+        notificationTokens.append(
+            NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didActivateApplicationNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                guard let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
+                    as? NSRunningApplication,
+                    application.bundleIdentifier != Bundle.main.bundleIdentifier,
+                    application.processIdentifier != ProcessInfo.processInfo.processIdentifier
+                else { return }
+                MainActor.assumeIsolated {
+                    self?.lastExternalProcessID = application.processIdentifier
+                }
             }
         )
         notificationTokens.append(

@@ -89,8 +89,23 @@ struct HerdrHudOrbView: View {
                 if accepted { controller.summon() }
                 return accepted
             }
+            // File promises need AppKit: see HerdrHudDropTarget.
+            .background {
+                HerdrHudDropTarget(
+                    onTargetingChanged: { isDropTargeted = $0 },
+                    onDrop: { pasteboard in
+                        let target = controller.chats?.composer ?? session
+                        let accepted = target.acceptPasteboardDrop(pasteboard)
+                        if accepted { controller.summon() }
+                        return accepted
+                    }
+                )
+            }
             .contextMenu {
                 Button("New note", systemImage: "note.text.badge.plus", action: controller.createNote)
+                Button("Capture frontmost window", systemImage: "viewfinder") {
+                    controller.captureFrontmostWindow(trigger: .menu)
+                }
             }
             .accessibilityIdentifier("hud-orb")
             .accessibilityLabel("Herdr HUD")
@@ -109,6 +124,38 @@ struct HerdrHudOrbView: View {
                     .shadow(color: HerdrTheme.ink.opacity(0.5), radius: 10, y: 4)
 
                 stateRing
+
+                if controller.isCapturingWindowScreenshot {
+                    Circle()
+                        .strokeBorder(HerdrTheme.accent, lineWidth: 2.5)
+                        .padding(2)
+                        .accessibilityHidden(true)
+                }
+
+                // The collapsed HUD has no room for the full notice, so the orb
+                // carries a corner badge for the outcome while the notification
+                // and the expanded card carry the words.
+                if let badge = HerdrHudAppShotNotice.badge(for: controller.appShotStatus) {
+                    VStack {
+                        Spacer(minLength: 0)
+                        HStack {
+                            Spacer(minLength: 0)
+                            Image(systemName: badge.symbol)
+                                .herdrFont(.caption2, weight: .bold)
+                                .foregroundStyle(badge.isFailure ? HerdrTheme.alert : HerdrTheme.signal)
+                                .padding(3)
+                                .background(HerdrTheme.graphite, in: .circle)
+                                .overlay {
+                                    Circle().strokeBorder(
+                                        badge.isFailure ? HerdrTheme.alert : HerdrTheme.signal,
+                                        lineWidth: 1
+                                    )
+                                }
+                        }
+                    }
+                    .padding(6)
+                    .accessibilityHidden(true)
+                }
 
                 if isDropTargeted {
                     Circle()

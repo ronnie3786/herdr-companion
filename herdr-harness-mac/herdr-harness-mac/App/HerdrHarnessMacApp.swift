@@ -66,10 +66,11 @@ struct HerdrHarnessMacApp: App {
                 promptSettings: promptSettings,
                 modelFavorites: modelFavorites,
                 fontScale: fontScale,
-                agentControl: agentControl
+                agentControl: agentControl,
+                updates: updates
             )
                 .safeAreaInset(edge: .top, spacing: 0) {
-                    if let version = updates.availableVersion {
+                    if updates.isBannerVisible, let version = updates.availableVersion {
                         HerdrUpdateBanner(version: version, updates: updates)
                     }
                 }
@@ -182,6 +183,14 @@ struct HerdrMacCommands: Commands {
             }
             .keyboardShortcut("a", modifiers: [.command, .option])
             .disabled(!model.canControl)
+
+            // Same capture path as the both-Command chord, but permission-free:
+            // Carbon hot keys need neither Accessibility nor Input Monitoring.
+            Button("Capture Frontmost Window", systemImage: "viewfinder") {
+                hudController.captureFrontmostWindow(trigger: .menu)
+            }
+            .keyboardShortcut("c", modifiers: [.control, .option])
+            .accessibilityIdentifier("menu-capture-frontmost-window")
         }
 
         // View menu, after the system's own "Toggle Sidebar" item.

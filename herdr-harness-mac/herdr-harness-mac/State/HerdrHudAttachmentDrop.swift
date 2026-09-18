@@ -54,4 +54,76 @@ extension HerdrHudSession {
             }
         }
     }
+
+    /// AppKit drop path, used by the HUD's drop target.
+    ///
+    /// A drag out of the system screenshot preview is a file promise, so it is
+    /// resolved through `NSFilePromiseReceiver` before the fallbacks; a file
+    /// already on disk keeps its existing real-file path, and raw image data is
+    /// written to a staging file first.
+    @discardableResult
+    func acceptPasteboardDrop(_ pasteboard: NSPasteboard) -> Bool {
+        let types = pasteboard.types ?? []
+        guard HerdrAttachmentDropPolicy.accepts(pasteboardTypes: types) else { return false }
+
+        if let receivers = pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self], options: nil)
+            as? [NSFilePromiseReceiver], !receivers.isEmpty {
+            acceptPromisedFiles(receivers)
+            return true
+        }
+
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty {
+            addAttachments(urls)
+            return true
+        }
+
+        if let imageURL = Self.stagedImageFile(from: pasteboard) {
+            addAttachments([imageURL])
+            try? FileManager.default.removeItem(at: imageURL)
+            return true
+        }
+        return false
+    }
+
+    /// Materializes promised files. The promise is fulfilled into a staging
+    /// directory owned by this app; `addAttachments` then copies the file into
+    /// the durable attachment store, so the staging copy is removed here.
+    func acceptPromisedFiles(_ receivers: [NSFilePromiseReceiver]) {
+        let directory = HerdrAttachmentDropPolicy.promiseDirectory()
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for receiver in receivers.prefix(Self.maxAttachments) {
+            receiver.receivePromisedFiles(
+                atDestination: directory,
+                options: [:],
+                operationQueue: .main
+            ) { [weak self] url, error in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if let error {
+                        self.reportAttachmentError(
+                            "Couldn’t attach the dropped item: \(error.localizedDescription)"
+                        )
+                        return
+                    }
+                    self.addAttachments([url])
+                    try? FileManager.default.removeItem(at: url)
+                }
+            }
+        }
+    }
+
+    private static func stagedImageFile(from pasteboard: NSPasteboard) -> URL? {
+        let pngData = pasteboard.data(forType: .png)
+        let data = pngData ?? pasteboard.data(forType: .tiff)
+        guard let data, !data.isEmpty, Int64(data.count) <= AttachmentPolicy.maximumFileBytes else { return nil }
+        let ext = pngData == nil ? "tiff" : "png"
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Dropped image \(UUID().uuidString).\(ext)")
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            return nil
+        }
+        return url
+    }
 }

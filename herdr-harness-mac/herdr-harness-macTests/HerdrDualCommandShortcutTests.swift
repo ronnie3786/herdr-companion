@@ -6,32 +6,10 @@ import Testing
 @Suite("Dual Command screenshot shortcut")
 @MainActor
 struct HerdrDualCommandShortcutTests {
-    @Test("Quartz adapter queries combined-session left and right Command independently")
-    func quartzAdapterQueriesBothCommandKeys() {
-        var queries: [(CGEventSourceStateID, CGKeyCode)] = []
-
-        let state = HerdrDualCommandShortcut.state { sourceState, keyCode in
-            queries.append((sourceState, keyCode))
-            return keyCode == HerdrDualCommandShortcut.rightCommandKeyCode
-        }
-
-        #expect(HerdrDualCommandShortcut.leftCommandKeyCode == CGKeyCode(kVK_Command))
-        #expect(HerdrDualCommandShortcut.leftCommandKeyCode == 55)
-        #expect(HerdrDualCommandShortcut.rightCommandKeyCode == CGKeyCode(kVK_RightCommand))
-        #expect(HerdrDualCommandShortcut.rightCommandKeyCode == 54)
-        #expect(queries.count == 2)
-        #expect(queries[0].0 == .combinedSessionState)
-        #expect(queries[0].1 == 55)
-        #expect(queries[1].0 == .combinedSessionState)
-        #expect(queries[1].1 == 54)
-        #expect(!state.isLeftCommandPressed)
-        #expect(state.isRightCommandPressed)
-    }
-
     @Test("Neither or either Command alone does not fire")
     func incompleteCommandStatesDoNotFire() {
         var invocations = 0
-        let shortcut = HerdrDualCommandShortcut { invocations += 1 }
+        let shortcut = HerdrDualCommandShortcut(stateProvider: idling) { _ in invocations += 1 }
 
         shortcut.sample(state: state(left: false, right: false))
         shortcut.sample(state: state(left: true, right: false))
@@ -43,7 +21,7 @@ struct HerdrDualCommandShortcutTests {
     @Test("Both Commands fire once while held, then rearm after either releases")
     func chordFiresOncePerPhysicalPress() {
         var invocations = 0
-        let shortcut = HerdrDualCommandShortcut { invocations += 1 }
+        let shortcut = HerdrDualCommandShortcut(stateProvider: idling) { _ in invocations += 1 }
 
         shortcut.sample(state: state(left: true, right: true))
         shortcut.sample(state: state(left: true, right: true))
@@ -51,6 +29,26 @@ struct HerdrDualCommandShortcutTests {
         shortcut.sample(state: state(left: true, right: true))
 
         #expect(invocations == 2)
+    }
+
+    @Test("The observing signal is reported with the trigger")
+    func triggerReportsSignal() {
+        var signals: [HerdrCommandKeySignal] = []
+        let shortcut = HerdrDualCommandShortcut(stateProvider: idling) { signals.append($0) }
+
+        shortcut.sample(state: HerdrCommandKeyState(
+            isLeftCommandPressed: true,
+            isRightCommandPressed: true,
+            signal: .flagsState
+        ))
+        shortcut.sample(state: state(left: false, right: false))
+        shortcut.sample(state: HerdrCommandKeyState(
+            isLeftCommandPressed: true,
+            isRightCommandPressed: true,
+            signal: .globalMonitor
+        ))
+
+        #expect(signals == [.flagsState, .globalMonitor])
     }
 
     @Test("Registering while held does not fire and stale registrations stay inert after re-register")
@@ -63,7 +61,7 @@ struct HerdrDualCommandShortcutTests {
                 stateReads += 1
                 return currentState
             },
-            handler: { invocations += 1 }
+            handler: { _ in invocations += 1 }
         )
         defer { shortcut.unregister() }
 
@@ -88,10 +86,121 @@ struct HerdrDualCommandShortcutTests {
         #expect(invocations == 1)
     }
 
-    private func state(left: Bool, right: Bool) -> HerdrDualCommandShortcut.State {
-        HerdrDualCommandShortcut.State(
+    private func idling() -> HerdrCommandKeyState {
+        state(left: false, right: false)
+    }
+
+    private func state(left: Bool, right: Bool) -> HerdrCommandKeyState {
+        HerdrCommandKeyState(
             isLeftCommandPressed: left,
-            isRightCommandPressed: right
+            isRightCommandPressed: right,
+            signal: left || right ? .keyState : .unavailable
+        )
+    }
+}
+
+@Suite("Command key monitor")
+@MainActor
+struct HerdrCommandKeyMonitorTests {
+    @Test("Both Command key codes are queried independently, in the combined session")
+    func queriesBothCommandKeys() {
+        var queries: [(CGEventSourceStateID, CGKeyCode)] = []
+        let monitor = makeMonitor { state, keyCode in
+            queries.append((state, keyCode))
+            // Only the right key reports a press; the left read must not be skipped.
+            return keyCode == HerdrCommandKeyMonitor.rightCommandKeyCode
+        }
+
+        let state = monitor.currentState()
+
+        #expect(HerdrCommandKeyMonitor.leftCommandKeyCode == CGKeyCode(kVK_Command))
+        #expect(HerdrCommandKeyMonitor.leftCommandKeyCode == 55)
+        #expect(HerdrCommandKeyMonitor.rightCommandKeyCode == CGKeyCode(kVK_RightCommand))
+        #expect(HerdrCommandKeyMonitor.rightCommandKeyCode == 54)
+        #expect(queries.count == 2)
+        #expect(queries[0].0 == .combinedSessionState)
+        #expect(queries[0].1 == 55)
+        #expect(queries[1].0 == .combinedSessionState)
+        #expect(queries[1].1 == 54)
+        #expect(!state.isLeftCommandPressed)
+        #expect(state.isRightCommandPressed)
+        #expect(state.signal == .keyState)
+    }
+
+    @Test("Device-dependent modifier bits identify each Command key")
+    func decodesDeviceBits() {
+        let both = makeMonitor(keyState: { _, _ in false }, flags: { _ in
+            HerdrCommandKeyMonitor.leftCommandDeviceMask | HerdrCommandKeyMonitor.rightCommandDeviceMask
+        }).currentState()
+        #expect(both.isLeftCommandPressed)
+        #expect(both.isRightCommandPressed)
+        #expect(both.signal == .flagsState)
+
+        let leftOnly = makeMonitor(keyState: { _, _ in false }, flags: { _ in
+            HerdrCommandKeyMonitor.leftCommandDeviceMask
+        }).currentState()
+        #expect(leftOnly.isLeftCommandPressed)
+        #expect(!leftOnly.isRightCommandPressed)
+
+        let rightOnly = makeMonitor(keyState: { _, _ in false }, flags: { _ in
+            HerdrCommandKeyMonitor.rightCommandDeviceMask
+        }).currentState()
+        #expect(!rightOnly.isLeftCommandPressed)
+        #expect(rightOnly.isRightCommandPressed)
+
+        let neither = makeMonitor(keyState: { _, _ in false }, flags: { _ in 0 }).currentState()
+        #expect(!neither.isLeftCommandPressed)
+        #expect(!neither.isRightCommandPressed)
+        #expect(neither.signal == .unavailable)
+    }
+
+    @Test("Either permission-free signal alone can prove a press")
+    func unionsBothPollingSignals() {
+        let fromKeyState = makeMonitor(keyState: { _, keyCode in keyCode == 55 }, flags: { _ in 0 }).currentState()
+        #expect(fromKeyState.isLeftCommandPressed)
+        #expect(fromKeyState.signal == .keyState)
+
+        let fromFlags = makeMonitor(keyState: { _, _ in false }, flags: { _ in
+            HerdrCommandKeyMonitor.rightCommandDeviceMask
+        }).currentState()
+        #expect(fromFlags.isRightCommandPressed)
+        #expect(fromFlags.signal == .flagsState)
+    }
+
+    @Test("Monitoring never requests keyboard access, and stopping clears observed state")
+    func accessIsNeverRequestedImplicitly() {
+        var didRequest = false
+        let monitor = makeMonitor(
+            keyState: { _, _ in false },
+            flags: { _ in 0 },
+            listenEventAccess: { false },
+            requestAccess: {
+                didRequest = true
+                return true
+            }
+        )
+
+        monitor.startMonitoring()
+        #expect(!didRequest)
+        #expect(!monitor.isKeyboardAccessGranted)
+        monitor.stopMonitoring()
+
+        #expect(monitor.currentState().signal == .unavailable)
+        #expect(monitor.requestKeyboardAccess())
+        #expect(didRequest)
+    }
+
+    private func makeMonitor(
+        keyState: @escaping HerdrCommandKeyMonitor.KeyStateQuery = { _, _ in false },
+        flags: @escaping HerdrCommandKeyMonitor.FlagsQuery = { _ in 0 },
+        listenEventAccess: @escaping HerdrCommandKeyMonitor.AccessQuery = { false },
+        requestAccess: @escaping HerdrCommandKeyMonitor.AccessQuery = { false }
+    ) -> HerdrCommandKeyMonitor {
+        HerdrCommandKeyMonitor(
+            keyStateQuery: keyState,
+            flagsQuery: flags,
+            listenEventAccess: listenEventAccess,
+            requestListenEventAccess: requestAccess
         )
     }
 }

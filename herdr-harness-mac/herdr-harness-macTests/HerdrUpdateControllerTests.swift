@@ -20,7 +20,9 @@ struct HerdrUpdateControllerTests {
         #expect(controller.statusMessage == "Herdr 2.1 Preview 1 is available.")
 
         controller.dismissBanner()
-        #expect(controller.availableVersion == nil)
+        // Later hides the banner only; the window's indicator stays actionable.
+        #expect(controller.availableVersion == "2.1 Preview 1")
+        #expect(!controller.isBannerVisible)
         #expect(controller.statusMessage == "Herdr 2.1 Preview 1 is available.")
 
         // A later user-initiated presentation belongs to Sparkle, not a second banner.
@@ -52,23 +54,100 @@ struct HerdrUpdateControllerTests {
         #expect(controller.statusMessage == "Check for Updates for the latest release.")
     }
 
-    @Test("Preview updates require opt-in and the choice survives controller recreation")
+    @Test("Preview updates are included unless the user turns them off, and the choice survives recreation")
     func previewPreference() throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
         let controller = fixture.makeController()
         let updater = unstartedUpdater()
-        #expect(!controller.includesPreviewUpdates)
-        #expect(controller.allowedChannels(for: updater).isEmpty)
+        // Every published Herdr release is on the preview channel, so a build with
+        // no stored preference must include previews or it can never see an update.
+        #expect(controller.includesPreviewUpdates)
+        #expect(controller.allowedChannels(for: updater) == ["preview"])
 
-        controller.includesPreviewUpdates = true
+        controller.includesPreviewUpdates = false
         let restored = fixture.makeController()
-        #expect(restored.includesPreviewUpdates)
-        #expect(restored.allowedChannels(for: updater) == ["preview"])
-
-        restored.includesPreviewUpdates = false
-        #expect(!fixture.makeController().includesPreviewUpdates)
+        #expect(!restored.includesPreviewUpdates)
         #expect(restored.allowedChannels(for: updater).isEmpty)
+
+        restored.includesPreviewUpdates = true
+        #expect(fixture.makeController().includesPreviewUpdates)
+        #expect(restored.allowedChannels(for: updater) == ["preview"])
+    }
+
+    @Test("The background-check gate requires a configured, started, automatic, idle updater")
+    func backgroundCheckPolicy() {
+        #expect(HerdrUpdateCheckPolicy.shouldRunBackgroundCheck(
+            isConfigured: true, runtimeAllowed: true, isStarted: true,
+            automaticallyChecksForUpdates: true, isSessionInProgress: false
+        ))
+        #expect(!HerdrUpdateCheckPolicy.shouldRunBackgroundCheck(
+            isConfigured: false, runtimeAllowed: true, isStarted: true,
+            automaticallyChecksForUpdates: true, isSessionInProgress: false
+        ))
+        #expect(!HerdrUpdateCheckPolicy.shouldRunBackgroundCheck(
+            isConfigured: true, runtimeAllowed: false, isStarted: true,
+            automaticallyChecksForUpdates: true, isSessionInProgress: false
+        ))
+        #expect(!HerdrUpdateCheckPolicy.shouldRunBackgroundCheck(
+            isConfigured: true, runtimeAllowed: true, isStarted: false,
+            automaticallyChecksForUpdates: true, isSessionInProgress: false
+        ))
+        #expect(!HerdrUpdateCheckPolicy.shouldRunBackgroundCheck(
+            isConfigured: true, runtimeAllowed: true, isStarted: true,
+            automaticallyChecksForUpdates: false, isSessionInProgress: false
+        ))
+        #expect(!HerdrUpdateCheckPolicy.shouldRunBackgroundCheck(
+            isConfigured: true, runtimeAllowed: true, isStarted: true,
+            automaticallyChecksForUpdates: true, isSessionInProgress: true
+        ))
+    }
+
+    @Test("Background checks follow the ten-minute cadence and stop when automatic checks are off")
+    func backgroundCheckCadence() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        var checks = 0
+        let controller = fixture.makeController(backgroundCheckRunner: { checks += 1 })
+        controller.startBackgroundChecksForTesting(runtimeAllowed: true, automaticallyChecks: true)
+        let first = Date()
+
+        controller.performBackgroundCheckForTesting(now: first)
+        #expect(checks == 1)
+        #expect(controller.lastBackgroundCheckAt == first)
+        #expect(controller.nextBackgroundCheckAt == first.addingTimeInterval(HerdrUpdateController.backgroundCheckInterval))
+        #expect(HerdrUpdateController.backgroundCheckInterval == 600)
+
+        controller.automaticallyChecksForUpdates = false
+        controller.performBackgroundCheckForTesting(now: first.addingTimeInterval(60))
+        #expect(checks == 1)
+
+        controller.automaticallyChecksForUpdates = true
+        controller.performBackgroundCheckForTesting(now: first.addingTimeInterval(120))
+        #expect(checks == 2)
+    }
+
+    @Test("Settings describes the cadence, the last check, and the next one")
+    func cadenceDescription() {
+        #expect(HerdrUpdateController.backgroundCheckDescription(
+            isConfigured: false, lastCheckAt: nil, nextCheckAt: nil, interval: 600
+        ) == "Not available in this build.")
+
+        let beforeFirst = HerdrUpdateController.backgroundCheckDescription(
+            isConfigured: true, lastCheckAt: nil, nextCheckAt: nil, interval: 600
+        )
+        #expect(beforeFirst.contains("Every 10 minutes"))
+        #expect(beforeFirst.contains("two minutes after launch"))
+
+        let last = Date()
+        let afterFirst = HerdrUpdateController.backgroundCheckDescription(
+            isConfigured: true,
+            lastCheckAt: last,
+            nextCheckAt: last.addingTimeInterval(600),
+            interval: 600
+        )
+        #expect(afterFirst.contains("Last checked"))
+        #expect(afterFirst.contains("next around"))
     }
 
     @Test("A channel with no compatible update does not imply every release is installed")
@@ -185,8 +264,12 @@ struct HerdrUpdateControllerTests {
             bundle = try #require(Bundle(url: directory))
         }
 
-        func makeController() -> HerdrUpdateController {
-            HerdrUpdateController(bundle: bundle, defaults: defaults)
+        func makeController(backgroundCheckRunner: HerdrUpdateController.BackgroundCheckRunner? = nil) -> HerdrUpdateController {
+            HerdrUpdateController(
+                bundle: bundle,
+                defaults: defaults,
+                backgroundCheckRunner: backgroundCheckRunner
+            )
         }
 
         func remove() {

@@ -14,6 +14,16 @@ Use your configured Herdr Mac build with sample sessions. Check off each item af
 
 - [ ] **HUD attachments:** Drop an image and a small text file from Finder into the open HUD. Check the attachment chips, remove one, and send the other. Repeat with a file and no message. Sent files appear in chat; Herdr keeps a copy so attachments survive moving the original and restarting.
 
+- [ ] **Screenshot thumbnail drop:** Take a screenshot with ⇧⌘5 (or ⇧⌘4) and drag the preview thumbnail straight into the open HUD chat or onto the collapsed orb without saving it first. The HUD should highlight while you drag and stage the PNG beside your draft. Drop it on the Desktop first and repeat from there: both routes should end in the same staged attachment.
+
+- [ ] **App Shots is never silent:** Open **Settings → HUD → App Shots** and watch the Command keys readout while you hold the left, then the right Command key. Press both together: the HUD notice should show **Capturing frontmost window…** and then **Screenshot added to New chat**. Repeat with the HUD hidden (turn the HUD off first) and confirm the macOS notification appears, the HUD turns itself back on, and the image is staged. Repeat with Screen Recording denied to confirm the failure is shown and recorded under **Last** in the same section.
+
+- [ ] **Every capture route:** From a frontmost app that is not Herdr, press ⌃⌥C, then use **File → Capture Frontmost Window**, then **Capture frontmost window** in the orb's context menu, then **Test capture now** in Settings. All four should stage the same kind of PNG in a new HUD chat, and **Last** should name the route that fired.
+
+- [ ] **App Shots target:** With Herdr's HUD open and focused, press both Command keys. The capture should be of the app you were using before Herdr, not of the HUD.
+
+- [ ] **Update indicator:** In a signed release build with an update available, the window's top bar shows a version badge. Choose **Later** on the banner: the banner disappears and the badge stays. Click the badge to reopen the update, and confirm **Settings → Updates** reports the channel, the ten-minute cadence, and the last check.
+
 - [ ] **Favorite models and short names:** In a model picker, choose **Favorite [current model]** or **Manage Favorites**. Favorites should appear first in HUD and chat-pane pickers, using consistent short names. Unfavorite one and restart to check persistence. Matching names from different providers remain distinguishable.
 
 - [ ] **Code-block paste:** Copy code and click **Paste Code Block** in each composer. The draft should contain opening triple backticks, your text on the next lines, and closing triple backticks. It waits for you to send. Existing backticks get a longer outer fence so the pasted block stays intact.

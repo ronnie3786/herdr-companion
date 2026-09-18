@@ -12,24 +12,34 @@ binary is already available or that publisher signing credentials are configured
 
 ## Install an available update
 
-In a configured release build, automatic checks use a four-hour interval while
-the app is running. A scheduled check that finds an update shows a banner. Choose
-**Review update…** to open Sparkle's release information, then choose whether to
-install. Sparkle verifies the download and handles installation and relaunch.
-**Later** hides the banner; **Herdr Companion → Check for Updates…** can reopen the pending
-update. Checking automatically does not consent to automatic installation.
+In a configured release build, background checks run every ten minutes while the
+app is running (the first about two minutes after launch), so the window's top bar
+shows a clickable version badge as soon as a release is available.
+**Herdr Companion → Check for Updates…** and **Settings → Updates → Check for Updates…**
+run the same signed check on demand.
+
+Click the top-bar badge or the banner above the window content to open Sparkle's
+release information, then choose whether to install. Sparkle verifies the download
+and handles installation and relaunch. **Later** hides the banner and leaves the
+badge in place until the update is installed or superseded. Checking automatically
+does not consent to automatic installation, and no update is downloaded or
+installed without an explicit choice.
 
 In **Settings → Updates**, you can turn automatic checks on or off, check
-manually, and opt into **Include preview builds**. Stable releases are included
-when previews are enabled. Finish or skip a pending update before changing
-release channels. Builds without a matching feed configuration or application identity leave
-updates unavailable.
+manually, and change **Include preview builds**. Preview builds are included for a
+build with no stored preference, because every published Herdr release is
+currently on the preview channel and a stable-only feed would offer nothing;
+turning the toggle off restricts future checks to stable releases. Finish or skip a
+pending update before changing release channels. The same pane shows the active
+channel, the check cadence, and the last and next check. Builds without a matching
+feed configuration or application identity leave updates unavailable.
 
 The feed's signature and each archive's signature must match the public key
 pinned into the app. Verification happens before archive extraction. The feed
-also separates stable releases from the `preview` channel. A result saying no
-compatible update is available does not imply every preview or incompatible
-release is installed.
+also separates stable releases from the `preview` channel, and an item on the
+default channel — such as a stable release — is offered on both channels. A result
+saying no compatible update is available does not imply every preview or
+incompatible release is installed.
 
 New releases use **Herdr Companion.app**. Its bundle identifier, Keychain identity,
 and signed feed remain unchanged. Sparkle may keep the old installation's on-disk

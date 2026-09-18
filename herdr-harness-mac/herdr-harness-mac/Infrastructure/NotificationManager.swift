@@ -54,6 +54,24 @@ enum NotificationManager {
         )
     }
 
+    /// Whether App Shots may post a notice without prompting. The capture path
+    /// only ever observes the existing authorization.
+    static func isAuthorizedForAppShots() async -> Bool {
+        let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        return status == .authorized || status == .provisional
+    }
+
+    /// App Shots never asks for permission itself: `requestAuthorization()` runs
+    /// only from the settings toggle that the user turns on deliberately.
+    static func postAppShot(title: String, body: String, identifier: String = "herdr-app-shot") async {
+        guard await isAuthorizedForAppShots() else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
+        try? await UNUserNotificationCenter.current().add(request)
+    }
+
     static func removeDelivered(alertIDs: Set<String>) async {
         guard !alertIDs.isEmpty else { return }
         if let removeDeliveredOverride {

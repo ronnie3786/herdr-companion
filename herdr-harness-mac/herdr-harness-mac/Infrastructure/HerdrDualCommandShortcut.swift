@@ -1,57 +1,26 @@
 import AppKit
-import Carbon.HIToolbox
-import CoreGraphics
 
-/// Polls the public Quartz key-state table so left-Command + right-Command can
-/// be observed without consuming key events or installing an accessibility event tap.
+/// Watches the two Command keys so left-Command + right-Command can be a
+/// shortcut without consuming either key from the frontmost app.
+///
+/// Detection itself lives in `HerdrCommandKeyMonitor`; this type owns only the
+/// press/release lifecycle: fire once per physical press, rearm on release, and
+/// ignore samples from a superseded registration.
 @MainActor
 final class HerdrDualCommandShortcut {
-    struct State: Equatable {
-        let isLeftCommandPressed: Bool
-        let isRightCommandPressed: Bool
-
-        var isChordPressed: Bool {
-            isLeftCommandPressed && isRightCommandPressed
-        }
-    }
-
-    typealias StateProvider = @MainActor () -> State
-    typealias KeyStateQuery = @MainActor (CGEventSourceStateID, CGKeyCode) -> Bool
-
-    static let leftCommandKeyCode = CGKeyCode(kVK_Command)
-    static let rightCommandKeyCode = CGKeyCode(kVK_RightCommand)
-
-    /// Central production provider shared by the shortcut and its controller.
-    static var systemStateProvider: StateProvider {
-        {
-            state { sourceState, keyCode in
-                CGEventSource.keyState(sourceState, key: keyCode)
-            }
-        }
-    }
-
-    /// Adapter seam for deterministic verification of the Quartz query contract.
-    static func state(queryKeyState: KeyStateQuery) -> State {
-        let leftPressed = queryKeyState(.combinedSessionState, leftCommandKeyCode)
-        // Always query both keys. A false left result must not starve the right read.
-        let rightPressed = queryKeyState(.combinedSessionState, rightCommandKeyCode)
-        return State(
-            isLeftCommandPressed: leftPressed,
-            isRightCommandPressed: rightPressed
-        )
-    }
+    typealias StateProvider = @MainActor () -> HerdrCommandKeyState
 
     private let stateProvider: StateProvider
-    private let handler: @MainActor () -> Void
+    private let handler: @MainActor (HerdrCommandKeySignal) -> Void
     private var timer: Timer?
     private var wasPressed = false
     private(set) var registrationGeneration = 0
 
     init(
-        stateProvider: StateProvider? = nil,
-        handler: @escaping @MainActor () -> Void
+        stateProvider: @escaping StateProvider,
+        handler: @escaping @MainActor (HerdrCommandKeySignal) -> Void
     ) {
-        self.stateProvider = stateProvider ?? Self.systemStateProvider
+        self.stateProvider = stateProvider
         self.handler = handler
     }
 
@@ -83,10 +52,10 @@ final class HerdrDualCommandShortcut {
     }
 
     /// Kept internal as a deterministic state-machine seam for unit tests.
-    func sample(state: State) {
+    func sample(state: HerdrCommandKeyState) {
         let isPressed = state.isChordPressed
         if isPressed, !wasPressed {
-            handler()
+            handler(state.signal)
         }
         wasPressed = isPressed
     }

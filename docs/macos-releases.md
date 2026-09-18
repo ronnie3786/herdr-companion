@@ -19,7 +19,7 @@ install. Sparkle verifies the download and handles installation and relaunch.
 **Later** hides the banner; **Herdr Companion → Check for Updates…** can reopen the pending
 update. Checking automatically does not consent to automatic installation.
 
-In **Settings → App updates**, you can turn automatic checks on or off, check
+In **Settings → Updates**, you can turn automatic checks on or off, check
 manually, and opt into **Include preview builds**. Stable releases are included
 when previews are enabled. Finish or skip a pending update before changing
 release channels. Builds without a matching feed configuration or application identity leave

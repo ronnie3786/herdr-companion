@@ -21,28 +21,42 @@ struct SettingsView: View {
     @State private var isLoadingAgentModels = false
     @State private var agentModelsError: String?
     @State private var didLoadAgentModels = false
+    @State private var selectedPane: SettingsPane
+
+    init(
+        model: HerdrAppModel,
+        fontScale: HerdrFontScaleStore,
+        cleanupSettings: CleanupSettingsStore,
+        agentSettings: AgentModelSettingsStore,
+        promptSettings: HerdrPromptSettingsStore,
+        modelFavorites: ModelFavoritesStore,
+        hudController: HerdrHudController,
+        updates: HerdrUpdateController,
+        agentControl: AgentControlController,
+        initialPane: SettingsPane = .general
+    ) {
+        self.model = model
+        self.fontScale = fontScale
+        self.cleanupSettings = cleanupSettings
+        self.agentSettings = agentSettings
+        self.promptSettings = promptSettings
+        self.modelFavorites = modelFavorites
+        self.hudController = hudController
+        self.updates = updates
+        self.agentControl = agentControl
+        _selectedPane = State(initialValue: initialPane)
+    }
 
     var body: some View {
-        Form {
-            statusSection
-            machinesSection
-            voiceSection
-            alertSection
-            hudSection
-            agentModelSection
-            promptsSection
-            cleanupSection
-            textSizeSection
-            agentControlSection
-            privacySection
-            ScreenRecordingSettingsSection()
-            updatesSection
-            aboutSection
+        HStack(spacing: 0) {
+            settingsRail
+
+            Divider()
+                .overlay(HerdrTheme.separator)
+
+            settingsDetail
         }
-        .formStyle(.grouped)
         .navigationTitle("Settings")
-        .scrollContentBackground(.hidden)
-        .background(HerdrBackground())
         .foregroundStyle(HerdrTheme.text)
         .sheet(isPresented: $isPresentingMachines) {
             MachinesView(model: model)
@@ -59,6 +73,79 @@ struct SettingsView: View {
             await loadCleanupModels()
             await loadAgentModels()
             await promptSettings.loadHarnessDefaults(model: model)
+        }
+    }
+
+    private var settingsRail: some View {
+        ScrollView {
+            VStack(spacing: 2) {
+                ForEach(SettingsPane.allCases) { pane in
+                    Button {
+                        selectedPane = pane
+                    } label: {
+                        Label(pane.title, systemImage: pane.systemImage)
+                            .foregroundStyle(HerdrTheme.text)
+                            .frame(
+                                maxWidth: .infinity,
+                                minHeight: HerdrTheme.minHitTarget,
+                                alignment: .leading
+                            )
+                            .padding(.horizontal, 10)
+                            .background(
+                                selectedPane == pane ? HerdrTheme.elevated : .clear,
+                                in: RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+                            )
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier(pane.accessibilityIdentifier)
+                    .accessibilityAddTraits(selectedPane == pane ? .isSelected : [])
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(8)
+        }
+        .frame(width: 215)
+        .frame(maxHeight: .infinity)
+        .background(HerdrTheme.ink)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("settings-sidebar")
+    }
+
+    private var settingsDetail: some View {
+        Form {
+            paneSections(for: selectedPane)
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(HerdrBackground())
+    }
+
+    @ViewBuilder
+    private func paneSections(for pane: SettingsPane) -> some View {
+        switch pane {
+        case .general:
+            textSizeSection
+            aboutSection
+        case .machines:
+            statusSection
+            machinesSection
+        case .agents:
+            agentModelSection
+            promptsSection
+            cleanupSection
+        case .hud:
+            hudSection
+        case .alerts:
+            alertSection
+        case .voice:
+            voiceSection
+        case .privacy:
+            privacySection
+            agentControlSection
+            ScreenRecordingSettingsSection()
+        case .updates:
+            updatesSection
         }
     }
 

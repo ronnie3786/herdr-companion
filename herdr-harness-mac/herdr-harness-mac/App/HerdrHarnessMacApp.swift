@@ -128,7 +128,7 @@ struct HerdrHarnessMacApp: App {
                 agentControl: agentControl
             )
                 .environment(\.herdrFontScale, fontScale.scale)
-                .frame(width: 560, height: 640)
+                .frame(minWidth: 860, idealWidth: 920, minHeight: 600, idealHeight: 680)
                 .background(HerdrTheme.ink)
                 .foregroundStyle(HerdrTheme.text)
                 .preferredColorScheme(.dark)

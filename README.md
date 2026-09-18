@@ -243,7 +243,7 @@ for the optional Data Protection backend and the credential deployment probe.
 Configured release builds check their signed GitHub Releases feed every four hours.
 An available update appears in a banner: choose **Review update…**, then use
 Sparkle's confirmation to install and relaunch. You can also choose **Herdr Companion →
-Check for Updates…**. Settings controls automatic checks and optional preview
+Check for Updates…**. **Settings → Updates** controls automatic checks and optional preview
 builds. This updates the Mac app independently of the companion server and uses
 no App Store submission.
 

@@ -513,6 +513,7 @@ struct IssueReportComposerTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let composer = IssueReportComposer(temporaryDirectory: directory.appending(path: "tmp"))
         composer.machineID = "machine-1"
+        composer.capabilities = IssueReportCapabilities(available: true, repository: "owner/repo")
         composer.body = "Body"
 
         let thumbsUp = "👍🏽" // one grapheme cluster, two scalars
@@ -549,6 +550,7 @@ struct IssueReportComposerTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let composer = IssueReportComposer(temporaryDirectory: directory.appending(path: "tmp"))
         composer.machineID = "machine-1"
+        composer.capabilities = IssueReportCapabilities(available: true, repository: "owner/repo")
         composer.body = "Body"
 
         composer.title = "Crash\twhen\u{1B}saving\u{7F}\u{2028}now "
@@ -1254,11 +1256,14 @@ struct IssueReportComposerTests {
         HerdrMachine(id: id, name: name ?? id.uppercased(), urlString: "https://\(id).example.invalid")
     }
 
-    private static func available(repository: String = "owner/repo") -> IssueReportCapabilities {
+    /// Nonisolated so the `@Sendable` capability closures passed to
+    /// `discover(machines:connectedIDs:fetchCapabilities:)` can build their
+    /// canned answers without hopping back to the main actor.
+    nonisolated private static func available(repository: String = "owner/repo") -> IssueReportCapabilities {
         IssueReportCapabilities(available: true, repository: repository)
     }
 
-    private static func unavailable(reason: String? = nil) -> IssueReportCapabilities {
+    nonisolated private static func unavailable(reason: String? = nil) -> IssueReportCapabilities {
         IssueReportCapabilities(available: false, reason: reason)
     }
 

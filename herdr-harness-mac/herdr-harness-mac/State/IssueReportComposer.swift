@@ -381,8 +381,9 @@ final class IssueReportComposer {
     /// injected call; individual failures never discard the other answers.
     /// A provisional selection is shown while the pass runs, but capabilities
     /// are adopted only once the pass settles, so a candidate that answers late
-    /// can never lend its attachment limits to the draft. A pass that has been
-    /// superseded (or whose task was cancelled) leaves state alone.
+    /// can never lend its attachment limits to the draft. A superseded pass
+    /// leaves state alone; a cancelled pass still settles with the answers and
+    /// failures it collected, so no machine stays pinned at "Checking…".
     func discover(
         machines: [HerdrMachine],
         connectedIDs: Set<String>,
@@ -408,8 +409,11 @@ final class IssueReportComposer {
             fetchCapabilities: fetchCapabilities
         )
         guard generation == discoveryGeneration else { return }
+        // A cancelled sweep still settles: every eligible machine already has
+        // an answer (a completed check or a failure caused by the
+        // cancellation). Applying it keeps the picker truthful and leaves
+        // "Check again" reachable instead of pinning machines at "Checking…".
         isDiscoveringReports = false
-        guard !Task.isCancelled else { return }
         machineChecks = checks
         updateSelectedMachine(
             IssueReportMachineSelection.selectMachineID(

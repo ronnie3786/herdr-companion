@@ -1073,6 +1073,44 @@ struct IssueReportComposerTests {
         )))
     }
 
+    @Test("A cancelled sweep settles as a failed check instead of a false verdict")
+    func cancelledDiscoverySettlesAsFailure() async throws {
+        let suite = "IssueReportComposerTests.cancelled.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let composer = IssueReportComposer(
+            temporaryDirectory: directory.appending(path: "tmp"),
+            userDefaults: defaults
+        )
+        let gate = DiscoveryGate()
+        let cancelled = Task {
+            await composer.discover(machines: [Self.machine("alpha")], connectedIDs: ["alpha"]) { _ in
+                await gate.wait()
+                throw CancellationError()
+            }
+        }
+        await gate.waitForRequest()
+        #expect(composer.isDiscoveringReports)
+
+        // Cancelling the sweep and releasing the stub settles every machine as
+        // checked-and-failed: nothing stays at "Checking…", the explanation is
+        // reachable, and submission stays blocked for the selected machine.
+        cancelled.cancel()
+        await gate.release()
+        await cancelled.value
+
+        #expect(!composer.isDiscoveringReports)
+        #expect(composer.machineChecks["alpha"] == .failed(message: IssueReportMachineSelection.unreachableMessage))
+        #expect(composer.machineStatusLabel(for: "alpha") == "Check failed")
+        #expect(composer.selectedMachineReason == IssueReportMachineSelection.unreachableMessage)
+        #expect(composer.noAvailableMachineExplanation != nil)
+        #expect(!composer.canSubmit)
+    }
+
     @Test("A disconnect or removal invalidates the cached answer before submission")
     func refreshInvalidatesStaleSelection() async throws {
         let suite = "IssueReportComposerTests.refresh.\(UUID().uuidString)"

@@ -142,7 +142,7 @@ poll_seconds = 10
 
 [code_factory]
 # Automated issue-to-release pipeline (see docs/code-factory.md). All optional.
-# repository = "YOUR-OWNER/YOUR-REPOSITORY" # Defaults to integrations.github_repository.
+# repository = "YOUR-OWNER/YOUR-REPOSITORY" # Required for issue reports and Code Factory.
 # checkout = "~/projects/your-checkout" # Git checkout whose origin is that repository.
 # worktree_root = "~/.local/share/herdr-companion/code-factory/worktrees"
 # trigger_label = "herdr-autofix"

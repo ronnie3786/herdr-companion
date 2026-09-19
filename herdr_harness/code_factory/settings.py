@@ -132,13 +132,10 @@ def _authors(environ: Mapping[str, str]) -> tuple[str, ...]:
 
 
 def _repository(environ: Mapping[str, str]) -> str:
-    raw = environ.get(ENV_PREFIX + "REPOSITORY") or environ.get("HERDR_REVIEW_REPOSITORY") or ""
+    raw = environ.get(ENV_PREFIX + "REPOSITORY") or ""
     value = raw.strip()
     if not value:
-        raise _invalid(
-            "code_factory.repository is not configured; set [code_factory] repository or "
-            "[integrations] github_repository to OWNER/NAME"
-        )
+        raise _invalid("code_factory.repository is not configured; set [code_factory] repository to OWNER/NAME")
     if len(value) > 200 or not REPOSITORY_PATTERN.match(value) or ".." in value:
         raise _invalid("code_factory.repository must look like OWNER/NAME")
     return value

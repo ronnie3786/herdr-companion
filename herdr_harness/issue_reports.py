@@ -101,7 +101,7 @@ _CLIENT_REPORT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 _PAYLOAD_KEYS = frozenset({"kind", "title", "body", "autofix", "environment", "attachments", "clientReportId"})
 _ATTACHMENT_KEYS = frozenset({"filename", "contentType", "dataBase64"})
 _UNAVAILABLE_REASON = (
-    "Configure code_factory.repository or integrations.github_repository "
+    "Set code_factory.repository in the private configuration "
     "(owner/repo) to file issues from the app"
 )
 _MALFORMED_REASON = "The configured GitHub repository must use the form owner/repo"
@@ -185,7 +185,7 @@ def _default_root(environ: Mapping[str, str]) -> Path:
 
 def _configured_repository(environ: Mapping[str, str]) -> tuple[Optional[str], Optional[str]]:
     """Return ``(repository, reason)``; exactly one of the two is ``None``."""
-    raw = (environ.get("HERDR_CODE_FACTORY_REPOSITORY") or environ.get("HERDR_REVIEW_REPOSITORY") or "").strip()
+    raw = (environ.get("HERDR_CODE_FACTORY_REPOSITORY") or "").strip()
     if not raw:
         return None, _UNAVAILABLE_REASON
     if not _REPOSITORY_RE.fullmatch(raw):

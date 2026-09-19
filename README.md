@@ -183,7 +183,7 @@ Native connection credentials are stored in Keychain.
 | Spoken responses | Set a Kokoro/OpenAI-compatible endpoint under `[providers.tts]`. |
 | Fleet catalogs | Configure a trusted `[fleet]` repository and additional skill destinations. |
 | Active Work automation | Generic board API/CLI; Buzz sync and review polling are optional. |
-| Issue reports and Code Factory | Authenticate `gh` and set the repository under `[integrations]` or `[code_factory]`; the daemon and dashboard are described in [docs/code-factory.md](docs/code-factory.md). |
+| Issue reports and Code Factory | Authenticate `gh` and set the repository under `[code_factory]`; the daemon and dashboard are described in [docs/code-factory.md](docs/code-factory.md). |
 | APNs and universal links | Configure `[push]` and `[apple]` with your own identity/domain. |
 | Remote access | Configure your HTTPS origin. Tailscale Serve is optional. |
 

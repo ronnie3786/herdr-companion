@@ -90,7 +90,7 @@ class IssueReporterTests(unittest.TestCase):
         self.environ = {
             "HOME": self.temp.name,
             "PATH": "/usr/bin:/bin",
-            "HERDR_REVIEW_REPOSITORY": REPOSITORY,
+            "HERDR_CODE_FACTORY_REPOSITORY": REPOSITORY,
             "HERDR_HARNESS_API_TOKEN": "synthetic-control-token",
             "HERDR_STATE_DIR": str(Path(self.temp.name) / "state"),
             "GH_TOKEN": "synthetic-provider-token",
@@ -220,7 +220,11 @@ class IssueReporterTests(unittest.TestCase):
         self.assertEqual(len(self.gh.commands("issue", "create")), 1)
 
     def test_unavailable_without_a_repository(self):
-        for environ in ({"HOME": self.temp.name}, {"HOME": self.temp.name, "HERDR_REVIEW_REPOSITORY": "not a repo"}):
+        for environ in (
+            {"HOME": self.temp.name},
+            {"HOME": self.temp.name, "HERDR_CODE_FACTORY_REPOSITORY": "not a repo"},
+            {"HOME": self.temp.name, "HERDR_REVIEW_REPOSITORY": REPOSITORY},
+        ):
             with self.subTest(environ=environ):
                 reporter = IssueReporter(environ, runner=self.gh, root=self.root)
                 capabilities = reporter.capabilities()
@@ -254,8 +258,16 @@ class IssueReporterTests(unittest.TestCase):
         self.assertEqual(issue_reports.MAX_ISSUE_REPORT_JSON_BYTES, 60 * 1024 * 1024)
         self.assertIs(issue_reports.ALLOWED_EXTENSIONS, agent_runs.ATTACHMENT_EXTENSIONS)
 
-    def test_code_factory_repository_takes_precedence(self):
-        reporter = IssueReporter({**self.environ, "HERDR_CODE_FACTORY_REPOSITORY": "factory-owner/factory-repo"}, runner=self.gh, root=self.root)
+    def test_review_repository_is_never_used_as_a_fallback(self):
+        reporter = IssueReporter(
+            {
+                **self.environ,
+                "HERDR_CODE_FACTORY_REPOSITORY": "factory-owner/factory-repo",
+                "HERDR_REVIEW_REPOSITORY": "other-owner/other-repo",
+            },
+            runner=self.gh,
+            root=self.root,
+        )
         self.assertEqual(reporter.capabilities()["repository"], "factory-owner/factory-repo")
 
     # -- GitHub pipeline -----------------------------------------------------
@@ -534,7 +546,7 @@ class IssueReporterTests(unittest.TestCase):
     def test_default_root_derives_from_state_dir_then_home(self):
         with_state = IssueReporter(self.environ, runner=self.gh)
         self.assertEqual(with_state.root, Path(self.temp.name) / "state" / "issue-reports")
-        without_state = IssueReporter({"HOME": self.temp.name, "HERDR_REVIEW_REPOSITORY": REPOSITORY}, runner=self.gh)
+        without_state = IssueReporter({"HOME": self.temp.name, "HERDR_CODE_FACTORY_REPOSITORY": REPOSITORY}, runner=self.gh)
         self.assertEqual(without_state.root, Path(self.temp.name) / ".local" / "share" / "herdr-companion" / "issue-reports")
         self.assertFalse(with_state.root.exists())
 

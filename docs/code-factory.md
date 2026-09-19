@@ -88,10 +88,8 @@ Add a `[code_factory]` table to the private TOML (see `config.example.toml`). Th
 defaults are sensible for a single-operator repository:
 
 ```toml
-[integrations]
-github_repository = "YOUR-OWNER/YOUR-REPOSITORY"
-
 [code_factory]
+repository = "YOUR-OWNER/YOUR-REPOSITORY"
 checkout = "~/projects/your-checkout"
 allowed_authors = "your-github-login"
 dashboard_host = "tailscale"
@@ -258,7 +256,7 @@ branch history cannot be rebuilt.
 | Symptom | Check |
 | --- | --- |
 | The Mac app says to update the companion server | The running server does not advertise `issue-reports-v1`; install the newer package. |
-| Report fails with `github_failed` | `gh auth status` on the server machine; repository configured under `[integrations]` or `[code_factory]`. |
+| Report fails with `github_failed` | `gh auth status` on the server machine; repository configured under `[code_factory]`. |
 | Issue never leaves **Picked up** | Daemon not running, wrong `allowed_authors`, or missing trigger label. Run `doctor`. |
 | DeepSeek sessions fail immediately | `OLLAMA_API_KEY` is not available to the daemon; add it to `[environment]`. |
 | Planner blocked with a question | Answer on the issue, adjust the description if needed, then **Retry**. |

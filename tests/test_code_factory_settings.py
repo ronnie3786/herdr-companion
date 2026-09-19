@@ -61,11 +61,14 @@ class DefaultsTests(unittest.TestCase):
         self.assertEqual(settings.state_path, Path(HOME) / ".local/share/herdr-companion/code-factory/code-factory.sqlite3")
         self.assertEqual(settings.release_output_root, Path(HOME) / ".local/share/herdr-companion/releases")
 
-    def test_repository_falls_back_to_review_repository(self):
+    def test_review_repository_is_never_used_as_a_fallback(self):
         env = environ()
         del env[PREFIX + "REPOSITORY"]
         env["HERDR_REVIEW_REPOSITORY"] = "other/project"
-        self.assertEqual(CodeFactorySettings.from_environ(env).repository, "other/project")
+        with self.assertRaises(CodeFactoryError) as caught:
+            CodeFactorySettings.from_environ(env)
+        self.assertEqual(caught.exception.code, "invalid_settings")
+        self.assertIn("code_factory.repository", str(caught.exception))
 
     def test_config_and_machine_are_passed_through(self):
         env = environ(HERDR_CONFIG="/etc/herdr/config.toml", HERDR_MACHINE="studio")

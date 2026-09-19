@@ -611,13 +611,20 @@ class CleanupTests(CliTestCase):
 
 
 class DoctorTests(CliTestCase):
+    @staticmethod
+    def model_table(*rows: tuple[str, str]) -> str:
+        lines = ["provider  model  context  max-out  thinking  images"]
+        lines.extend(f"{provider}  {model}  256K  64K  yes  yes" for provider, model in rows)
+        return "\n".join(lines) + "\n"
+
     def script_healthy(self, labels=("herdr-autofix", "herdr-app-report", "released")):
         self.runner.on("gh", "auth", "status", stderr="Logged in to github.com account your-username\n")
         self.runner.on("gh", "label", "list", stdout=json.dumps([{"name": name} for name in labels]))
         self.runner.on("pi", "--version", stdout="pi 0.60.0\n")
-        self.runner.on("pi", "--list-models", "openai-codex/gpt-6-astra", stdout="openai-codex  gpt-6-astra  openai-codex/gpt-6-astra\n")
-        self.runner.on("pi", "--list-models", "ollama-cloud/deepseek-v4.1-flash:cloud",
-                       stdout="ollama-cloud  deepseek-v4.1-flash:cloud  ollama-cloud/deepseek-v4.1-flash:cloud\n")
+        self.runner.on("pi", "--list-models", "gpt-6-astra",
+                       stdout=self.model_table(("openai-codex", "gpt-6-astra")))
+        self.runner.on("pi", "--list-models", "deepseek-v4.1-flash:cloud",
+                       stdout=self.model_table(("ollama-cloud", "deepseek-v4.1-flash:cloud")))
         self.runner.on("tailscale", "ip", "-4", stdout="203.0.113.7\n")
 
     def checks(self):
@@ -667,7 +674,7 @@ class DoctorTests(CliTestCase):
     def test_doctor_reports_failures_and_warnings(self):
         self.script_healthy(labels=("herdr-autofix",))
         self.runner.on("gh", "auth", "status", returncode=1, stderr="You are not logged into any GitHub hosts")
-        self.runner.on("pi", "--list-models", "ollama-cloud/deepseek-v4.1-flash:cloud", stdout="")
+        self.runner.on("pi", "--list-models", "deepseek-v4.1-flash:cloud", stdout=self.model_table())
         self.runner.on("tailscale", "ip", "-4", raise_error=FileNotFoundError("tailscale"))
         self.runner.on("/Applications/Tailscale.app/Contents/MacOS/Tailscale", raise_error=FileNotFoundError("Tailscale"))
         self.runner.on("git", "-C", str(self.checkout), "remote", "get-url", "origin", stdout="git@github.com:someone/else.git\n")
@@ -694,6 +701,41 @@ class DoctorTests(CliTestCase):
         self.assertIn("need at least 5 GiB", checks["worktree_root"]["detail"])
         self.assertEqual(payload["warnings"], 1)
         self.assertEqual(payload["failures"], 7)
+
+    def test_doctor_strips_a_valid_thinking_suffix_from_the_model_probe(self):
+        self.script_healthy()
+        environ = dict(self.environ, HERDR_CODE_FACTORY_PLANNER_MODEL="openai-codex/gpt-6-astra:xhigh")
+        self.assertEqual(self.run_cli("doctor", environ=environ), 0)
+        _, checks = self.checks()
+        self.assertTrue(checks["planner_model"]["ok"])
+        self.assertEqual(checks["planner_model"]["detail"], "openai-codex/gpt-6-astra:xhigh is available")
+        self.assertIn(["pi", "--list-models", "gpt-6-astra"], self.runner.argv_with("pi", "--list-models"))
+
+    def test_doctor_preserves_a_non_thinking_colon_suffix_in_the_model_probe(self):
+        self.script_healthy()
+        self.assertEqual(self.run_cli("doctor"), 0)
+        _, checks = self.checks()
+        self.assertTrue(checks["implementer_model"]["ok"])
+        self.assertIn(["pi", "--list-models", "deepseek-v4.1-flash:cloud"], self.runner.argv_with("pi", "--list-models"))
+
+    def test_doctor_rejects_a_model_table_without_the_configured_model(self):
+        self.script_healthy()
+        self.runner.on("pi", "--list-models", "gpt-6-astra",
+                       stdout=self.model_table(("openai-codex", "another-model")))
+        self.assertEqual(self.run_cli("doctor"), 1)
+        _, checks = self.checks()
+        self.assertFalse(checks["planner_model"]["ok"])
+        self.assertEqual(checks["planner_model"]["detail"],
+                         "openai-codex/gpt-6-astra not found in pi --list-models output")
+
+    def test_doctor_rejects_a_model_table_row_with_a_different_provider(self):
+        self.script_healthy()
+        self.runner.on("pi", "--list-models", "gpt-6-astra",
+                       stdout=self.model_table(("other-provider", "gpt-6-astra")))
+        self.assertEqual(self.run_cli("doctor"), 1)
+        _, checks = self.checks()
+        self.assertFalse(checks["planner_model"]["ok"])
+        self.assertIn("not found in pi --list-models output", checks["planner_model"]["detail"])
 
     def test_doctor_fix_creates_missing_labels(self):
         self.script_healthy(labels=("released",))

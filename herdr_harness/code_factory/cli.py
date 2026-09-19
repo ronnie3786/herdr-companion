@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -45,7 +46,7 @@ from .errors import CodeFactoryError
 from .git import GitRepository
 from .github import GitHubClient
 from .pi import PiRunner
-from .settings import CodeFactorySettings
+from .settings import CodeFactorySettings, THINKING_LEVELS
 from .store import CodeFactoryStore, utc_now
 
 REQUIRED_LABELS: tuple[tuple[str, str, str], ...] = (
@@ -281,6 +282,37 @@ def _last_line(*texts: str, limit: int = 200) -> str:
         if lines:
             return lines[-1][:limit]
     return ""
+
+
+def _split_model_id(configured: str) -> tuple[str | None, str]:
+    """Split ``provider/model[:thinking]`` while preserving model-id colon suffixes."""
+    provider, separator, model_part = configured.partition("/")
+    if not separator:
+        provider = None
+        model_part = configured
+    for level in THINKING_LEVELS:
+        suffix = f":{level}"
+        if model_part.endswith(suffix):
+            model_part = model_part[:-len(suffix)]
+            break
+    return provider, model_part
+
+
+def _model_table_rows(output: str) -> list[tuple[str, str]]:
+    """Extract provider and model columns from Pi's ``--list-models`` table."""
+    rows: list[tuple[str, str]] = []
+    found_header = False
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        fields = re.split(r"\s{2,}", line.strip())
+        if not found_header:
+            if tuple(field.lower() for field in fields[:2]) == ("provider", "model"):
+                found_header = True
+            continue
+        if len(fields) >= 2:
+            rows.append((fields[0], fields[1]))
+    return rows
 
 
 def _issue_labels(issue: Mapping[str, Any]) -> list[str]:
@@ -610,10 +642,16 @@ def doctor_checks(ctx: Context, *, fix: bool = False) -> list[dict[str, Any]]:
     code, out, err = _probe(deps.runner, [settings.pi_binary, "--version"], pi_env)
     add("pi_binary", code == 0, _last_line(out, err) or (f"{settings.pi_binary} answered" if code == 0 else f"exit status {code}"))
 
-    for role, model in (("planner_model", settings.planner_model), ("implementer_model", settings.implementer_model)):
-        code, out, err = _probe(deps.runner, [settings.pi_binary, "--list-models", model], pi_env)
-        listed = code == 0 and model in out
-        add(role, listed, f"{model} is available" if listed else f"{model} not found in pi --list-models output"
+    for role, configured_model in (("planner_model", settings.planner_model),
+                                   ("implementer_model", settings.implementer_model)):
+        configured_provider, model_part = _split_model_id(configured_model)
+        code, out, err = _probe(deps.runner, [settings.pi_binary, "--list-models", model_part], pi_env)
+        listed = code == 0 and any(
+            model_id == model_part and (configured_provider is None or provider == configured_provider)
+            for provider, model_id in _model_table_rows(out)
+        )
+        add(role, listed, f"{configured_model} is available" if listed
+            else f"{configured_model} not found in pi --list-models output"
             + (f" ({_last_line(err)})" if code != 0 and _last_line(err) else ""))
 
     if settings.implementer_model.startswith(OLLAMA_PREFIX):

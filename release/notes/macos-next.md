@@ -3,6 +3,7 @@
 ## Feedback
 
 - Help → **Report a Bug or Request a Feature…** (⌘⌥F) and Settings → General → Feedback open a sheet that files a public GitHub issue with your verbatim description and up to six attachments. Included environment details are listed before sending and never contain machine names or hostnames.
+- With several paired machines the sheet checks every connected companion at once, preselects the one that last filed a report from this Mac (otherwise the first available), and keeps unavailable machines selectable so their reason under the picker explains what to configure. When none can file, the submit button is replaced by an explanation that names the machines checked, calls out disconnected machines that were not checked, links to the Code Factory setup guide, and offers **Check again** without discarding the draft.
 - **Start the automated fix pipeline** labels the issue for the optional Code Factory daemon. Requires a companion server advertising `issue-reports-v1`; older servers show an update message.
 
 ## Sidebar and navigation
@@ -31,3 +32,4 @@ The Mac UI changes require no API contract change. A separate companion update r
 3. Attach multiple images, enter a draft longer than five lines, and scroll inside the editor. Confirm Return sends and modified Return inserts a newline.
 4. Open a conversation with a failed tool call: Clanking should remain collapsed and show the failure count.
 5. Toggle Notes twice, create a note, and close its card. Use New workspace and right-click workspace headings to find New tab.
+6. Pair two synthetic machines, connect only the second, and open the report sheet: it should preselect the connected one, let you select the disconnected one to read its reason while submission stays disabled, and, after disconnecting both, replace File report with the checked-machine explanation and **Check again**. Do not file a real issue for this check.

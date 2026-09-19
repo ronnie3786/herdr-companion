@@ -58,7 +58,7 @@ struct IssueReportComposerTests {
         #expect(long["app_version"]?.count == IssueReportComposer.maxEnvironmentValueLength)
     }
 
-    @Test("canSubmit requires a title, a description, a machine and no submission in flight")
+    @Test("canSubmit requires a title, a description, an available machine and no submission in flight")
     func canSubmitMatrix() throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -75,13 +75,18 @@ struct IssueReportComposerTests {
         composer.body = " \n\t"
         #expect(!composer.canSubmit)
 
+        // A complete draft still waits for capabilities that answered available.
         composer.body = "Something broke"
+        #expect(!composer.canSubmit)
+
+        composer.capabilities = IssueReportCapabilities(available: true, repository: "owner/repo")
         #expect(composer.canSubmit)
 
         composer.machineID = ""
         #expect(!composer.canSubmit)
 
         composer.machineID = "machine-1"
+        composer.capabilities = IssueReportCapabilities(available: true, repository: "owner/repo")
         composer.phase = .submitting
         #expect(!composer.canSubmit)
 
@@ -97,6 +102,11 @@ struct IssueReportComposerTests {
 
         composer.title = "Crash on launch"
         composer.body = String(repeating: "y", count: IssueReportComposer.maxBodyCharacters + 1)
+        #expect(!composer.canSubmit)
+
+        // An unavailable companion can never submit, even with a valid draft.
+        composer.body = "Something broke"
+        composer.capabilities = IssueReportCapabilities(available: false, reason: "No repository is configured.")
         #expect(!composer.canSubmit)
     }
 
@@ -346,8 +356,16 @@ struct IssueReportComposerTests {
     func submitPhases() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let composer = IssueReportComposer(temporaryDirectory: directory.appending(path: "tmp"))
+        let suite = "IssueReportComposerTests.submitPhases.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let composer = IssueReportComposer(
+            temporaryDirectory: directory.appending(path: "tmp"),
+            userDefaults: defaults
+        )
         composer.machineID = "machine-1"
+        composer.capabilities = IssueReportCapabilities(available: true, repository: "owner/repo")
         composer.title = "Title"
         composer.body = "Body"
 
@@ -385,8 +403,16 @@ struct IssueReportComposerTests {
     func clientReportIdLifecycle() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let composer = IssueReportComposer(temporaryDirectory: directory.appending(path: "tmp"))
+        let suite = "IssueReportComposerTests.clientReportId.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let composer = IssueReportComposer(
+            temporaryDirectory: directory.appending(path: "tmp"),
+            userDefaults: defaults
+        )
         composer.machineID = "machine-1"
+        composer.capabilities = IssueReportCapabilities(available: true, repository: "owner/repo")
         composer.title = "Title"
         composer.body = "Body"
 
@@ -396,7 +422,12 @@ struct IssueReportComposerTests {
         #expect(first == first.lowercased())
         #expect(Self.isValidClientReportId(IssueReportComposer.makeClientReportId()))
         #expect(IssueReportComposer.makeClientReportId() != IssueReportComposer.makeClientReportId())
-        #expect(IssueReportComposer(temporaryDirectory: directory.appending(path: "other")).clientReportId != first)
+        #expect(
+            IssueReportComposer(
+                temporaryDirectory: directory.appending(path: "other"),
+                userDefaults: defaults
+            ).clientReportId != first
+        )
         #expect(try composer.makeRequest(environment: [:]).clientReportId == first)
 
         // A timeout means the issue may already exist: "Try again" must repeat
@@ -448,8 +479,16 @@ struct IssueReportComposerTests {
     func ambiguousFailures() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let composer = IssueReportComposer(temporaryDirectory: directory.appending(path: "tmp"))
+        let suite = "IssueReportComposerTests.ambiguous.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let composer = IssueReportComposer(
+            temporaryDirectory: directory.appending(path: "tmp"),
+            userDefaults: defaults
+        )
         composer.machineID = "machine-1"
+        composer.capabilities = IssueReportCapabilities(available: true, repository: "owner/repo")
         composer.title = "Title"
         composer.body = "Body"
 
@@ -713,8 +752,16 @@ struct IssueReportComposerTests {
     func stripsPhotoMetadata() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let composer = IssueReportComposer(temporaryDirectory: directory.appending(path: "tmp"))
+        let suite = "IssueReportComposerTests.metadata.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let composer = IssueReportComposer(
+            temporaryDirectory: directory.appending(path: "tmp"),
+            userDefaults: defaults
+        )
         composer.machineID = "machine-1"
+        composer.capabilities = IssueReportCapabilities(available: true, repository: "owner/repo")
         composer.title = "Title"
         composer.body = "Body"
 
@@ -754,6 +801,441 @@ struct IssueReportComposerTests {
         #expect(IssueReportComposer.strippingImageMetadata(jpeg, filename: "photo.gif") == nil)
     }
 
+    // MARK: - Discovery, selection and persistence
+
+    @Test("Only live machines in a connected app are asked for capabilities")
+    func connectedMachineIDsExcludeDemoAndOffline() {
+        let machines = [Self.machine("alpha"), Self.machine("beta"), Self.machine("gamma")]
+        let states: [String: ConnectionState] = [
+            "alpha": .live,
+            "beta": .connecting,
+            "gamma": .disconnected,
+        ]
+
+        #expect(
+            IssueReportComposer.connectedMachineIDs(
+                machines: machines,
+                isDemoMode: false,
+                connectionState: { states[$0] ?? .disconnected }
+            ) == ["alpha"]
+        )
+        // Demo machines are never queried, even if their state claims live.
+        #expect(
+            IssueReportComposer.connectedMachineIDs(
+                machines: machines,
+                isDemoMode: true,
+                connectionState: { _ in .live }
+            ).isEmpty
+        )
+    }
+
+    @Test("A successful report is remembered for the next composer on this Mac")
+    func successfulSubmissionRemembersMachine() async throws {
+        let suite = "IssueReportComposerTests.remembered.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let machines = [Self.machine("alpha"), Self.machine("beta")]
+        let composer = IssueReportComposer(
+            temporaryDirectory: directory.appending(path: "tmp"),
+            userDefaults: defaults
+        )
+        await composer.discover(machines: machines, connectedIDs: ["alpha", "beta"]) { machineID in
+            machineID == "alpha" ? Self.unavailable(reason: "No repository is configured.") : Self.available()
+        }
+        #expect(composer.machineID == "beta")
+        #expect(composer.selectedMachineAvailable)
+        #expect(composer.capabilities?.repository == "owner/repo")
+        #expect(composer.noAvailableMachineExplanation == nil)
+        #expect(composer.machineStatusLabel(for: "beta") == nil)
+        #expect(composer.machineStatusLabel(for: "alpha") == "Unavailable")
+
+        composer.title = "Title"
+        composer.body = "Body"
+        #expect(composer.canSubmit)
+        await composer.submit(environment: [:]) { _, machineID in
+            #expect(machineID == "beta")
+            return Self.record
+        }
+        #expect(composer.phase == .submitted(Self.record))
+        #expect(defaults.string(forKey: IssueReportComposer.lastSuccessfulMachineIDKey) == "beta")
+
+        // The next sheet on this Mac defaults to the remembered companion even
+        // though another available machine comes first in roster order.
+        let next = IssueReportComposer(
+            temporaryDirectory: directory.appending(path: "tmp-next"),
+            userDefaults: defaults
+        )
+        #expect(next.lastSuccessfulMachineID == "beta")
+        await next.discover(machines: machines, connectedIDs: ["alpha", "beta"]) { machineID in
+            Self.available(repository: "owner/\(machineID)")
+        }
+        #expect(next.machineID == "beta")
+        #expect(next.capabilities?.repository == "owner/beta")
+    }
+
+    @Test("Picking, discovery and failed sends leave the remembered companion alone")
+    func rememberedMachineChangesOnlyAfterSuccess() async throws {
+        let suite = "IssueReportComposerTests.rememberedFailures.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("alpha", forKey: IssueReportComposer.lastSuccessfulMachineIDKey)
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let machines = [Self.machine("alpha"), Self.machine("beta")]
+        let composer = IssueReportComposer(
+            temporaryDirectory: directory.appending(path: "tmp"),
+            userDefaults: defaults
+        )
+        #expect(composer.lastSuccessfulMachineID == "alpha")
+
+        // Alpha is remembered but unavailable now, so the first available peer
+        // wins; neither opening nor picking writes the preference.
+        await composer.discover(machines: machines, connectedIDs: ["alpha", "beta"]) { machineID in
+            machineID == "alpha" ? Self.unavailable() : Self.available()
+        }
+        #expect(composer.machineID == "beta")
+        #expect(defaults.string(forKey: IssueReportComposer.lastSuccessfulMachineIDKey) == "alpha")
+
+        composer.title = "Title"
+        composer.body = "Body"
+        await composer.submit(environment: [:]) { _, _ in
+            throw APIError.server(status: 502, message: "gh issue create failed")
+        }
+        #expect(composer.phase == .failed("gh issue create failed"))
+        #expect(defaults.string(forKey: IssueReportComposer.lastSuccessfulMachineIDKey) == "alpha")
+
+        await composer.submit(environment: [:]) { _, machineID in
+            #expect(machineID == "beta")
+            return Self.record
+        }
+        #expect(defaults.string(forKey: IssueReportComposer.lastSuccessfulMachineIDKey) == "beta")
+    }
+
+    @Test("An unavailable selection cannot submit even when a peer is available")
+    func unavailableSelectionBlocksSubmission() async throws {
+        let suite = "IssueReportComposerTests.gating.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let composer = IssueReportComposer(
+            temporaryDirectory: directory.appending(path: "tmp"),
+            userDefaults: defaults
+        )
+        await composer.discover(
+            machines: [Self.machine("alpha"), Self.machine("beta")],
+            connectedIDs: ["alpha", "beta"]
+        ) { machineID in
+            machineID == "alpha" ? Self.available() : Self.unavailable(reason: "No repository is configured.")
+        }
+        #expect(composer.machineID == "alpha")
+        composer.title = "Title"
+        composer.body = "Body"
+        #expect(composer.canSubmit)
+
+        composer.machineID = "beta"
+        #expect(!composer.canSubmit)
+        #expect(!composer.selectedMachineAvailable)
+        #expect(composer.selectedMachineReason == "No repository is configured.")
+        var sent = false
+        await composer.submit(environment: [:]) { _, _ in
+            sent = true
+            return Self.record
+        }
+        #expect(!sent)
+        #expect(composer.phase == .editing)
+
+        composer.machineID = "alpha"
+        #expect(composer.canSubmit)
+    }
+
+    @Test("Selected capabilities, notices and limits change with the picker")
+    func selectedLimitsFollowPickerSelection() async throws {
+        let suite = "IssueReportComposerTests.limits.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let composer = IssueReportComposer(
+            temporaryDirectory: directory.appending(path: "tmp"),
+            userDefaults: defaults
+        )
+        await composer.discover(
+            machines: [Self.machine("alpha"), Self.machine("beta")],
+            connectedIDs: ["alpha", "beta"]
+        ) { machineID in
+            machineID == "alpha"
+                ? IssueReportCapabilities(
+                    available: true,
+                    repository: "owner/alpha",
+                    maxAttachments: 1,
+                    maxAttachmentBytes: 8,
+                    maxTotalAttachmentBytes: 8
+                )
+                : IssueReportCapabilities(
+                    available: true,
+                    repository: "owner/beta",
+                    maxAttachments: 6,
+                    maxAttachmentBytes: 8,
+                    maxTotalAttachmentBytes: 16
+                )
+        }
+        #expect(composer.machineID == "alpha")
+        #expect(composer.capabilities?.repository == "owner/alpha")
+        #expect(composer.effectiveMaxAttachments == 1)
+
+        composer.machineID = "beta"
+        #expect(composer.capabilities?.repository == "owner/beta")
+        #expect(composer.effectiveMaxAttachments == 6)
+        let first = try write("first.log", Data([0x41]), in: directory)
+        let second = try write("second.log", Data([0x41]), in: directory)
+        composer.addAttachments([first, second])
+        #expect(composer.attachments.count == 2)
+
+        composer.machineID = "alpha"
+        #expect(composer.capabilities?.repository == "owner/alpha")
+        #expect(composer.effectiveMaxAttachments == 1)
+        #expect(composer.attachments.map(\.filename) == ["first.log"])
+        #expect(composer.attachmentError?.contains("no longer fits") == true)
+    }
+
+    @Test("A superseded discovery cannot overwrite newer results or limits")
+    func supersededDiscoveryCannotOverwrite() async throws {
+        let suite = "IssueReportComposerTests.superseded.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let composer = IssueReportComposer(
+            temporaryDirectory: directory.appending(path: "tmp"),
+            userDefaults: defaults
+        )
+        let gate = DiscoveryGate()
+        let stale = Task {
+            await composer.discover(machines: [Self.machine("alpha")], connectedIDs: ["alpha"]) { _ in
+                await gate.wait()
+                return IssueReportCapabilities(
+                    available: true,
+                    repository: "owner/stale",
+                    maxAttachments: 1,
+                    maxAttachmentBytes: 8,
+                    maxTotalAttachmentBytes: 8
+                )
+            }
+        }
+        await gate.waitForRequest()
+
+        // Draft editing stays live while a sweep runs, but submission waits.
+        composer.title = "Title"
+        composer.body = "Body"
+        #expect(composer.isDiscoveringReports)
+        #expect(!composer.canSubmit)
+
+        // A newer pass settles first.
+        await composer.discover(machines: [Self.machine("alpha")], connectedIDs: ["alpha"]) { _ in
+            IssueReportCapabilities(
+                available: true,
+                repository: "owner/fresh",
+                maxAttachments: 5,
+                maxAttachmentBytes: 8,
+                maxTotalAttachmentBytes: 40
+            )
+        }
+        #expect(composer.capabilities?.repository == "owner/fresh")
+        #expect(composer.effectiveMaxAttachments == 5)
+        #expect(!composer.isDiscoveringReports)
+
+        // The stale pass must not overwrite the fresh state when it finally answers.
+        await gate.release()
+        await stale.value
+        #expect(composer.capabilities?.repository == "owner/fresh")
+        #expect(composer.effectiveMaxAttachments == 5)
+        #expect(composer.machineChecks["alpha"] == .loaded(IssueReportCapabilities(
+            available: true,
+            repository: "owner/fresh",
+            maxAttachments: 5,
+            maxAttachmentBytes: 8,
+            maxTotalAttachmentBytes: 40
+        )))
+    }
+
+    @Test("A disconnect or removal invalidates the cached answer before submission")
+    func refreshInvalidatesStaleSelection() async throws {
+        let suite = "IssueReportComposerTests.refresh.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let machines = [Self.machine("alpha"), Self.machine("beta")]
+        let composer = IssueReportComposer(
+            temporaryDirectory: directory.appending(path: "tmp"),
+            userDefaults: defaults
+        )
+        await composer.discover(machines: machines, connectedIDs: ["alpha", "beta"]) { machineID in
+            Self.available(repository: "owner/\(machineID)")
+        }
+        #expect(composer.machineID == "alpha")
+        composer.title = "Title"
+        composer.body = "Body"
+        #expect(composer.canSubmit)
+
+        // Alpha drops off while beta is still live: the explicit alpha pick is
+        // kept, so submission stays blocked and its stale answer is gone.
+        composer.refreshAvailability(machines: machines, connectedIDs: ["beta"])
+        #expect(composer.machineID == "alpha")
+        #expect(!composer.canSubmit)
+        #expect(composer.capabilities == nil)
+        #expect(composer.machineChecks["alpha"] == .disconnected)
+        #expect(composer.selectedMachineReason == IssueReportMachineSelection.disconnectedMessage)
+
+        var sent = false
+        await composer.submit(environment: [:]) { _, _ in
+            sent = true
+            return Self.record
+        }
+        #expect(!sent)
+        #expect(composer.phase == .editing)
+
+        // Alpha is unpaired: the selection falls back to the first paired machine.
+        composer.refreshAvailability(machines: [Self.machine("beta")], connectedIDs: ["beta"])
+        #expect(composer.machineID == "beta")
+        #expect(composer.machineChecks["alpha"] == nil)
+    }
+
+    @Test("An in-flight submission keeps the companion it captured")
+    func submissionKeepsCapturedMachine() async throws {
+        let suite = "IssueReportComposerTests.captured.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let composer = IssueReportComposer(
+            temporaryDirectory: directory.appending(path: "tmp"),
+            userDefaults: defaults
+        )
+        await composer.discover(
+            machines: [Self.machine("alpha"), Self.machine("beta")],
+            connectedIDs: ["alpha", "beta"]
+        ) { machineID in
+            Self.available(repository: "owner/\(machineID)")
+        }
+        #expect(composer.machineID == "alpha")
+        composer.title = "Title"
+        composer.body = "Body"
+
+        await composer.submit(environment: [:]) { _, machineID in
+            // A selection change during the attachment-encoding await must not
+            // redirect the send or the remembered id.
+            composer.machineID = "beta"
+            #expect(machineID == "alpha")
+            return Self.record
+        }
+        #expect(composer.phase == .submitted(Self.record))
+        #expect(composer.machineID == "beta")
+        #expect(defaults.string(forKey: IssueReportComposer.lastSuccessfulMachineIDKey) == "alpha")
+    }
+
+    @Test("The no-available explanation names machines, distinguishes skipped ones and links setup")
+    func noAvailableExplanation() async throws {
+        let suite = "IssueReportComposerTests.explanation.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let machines = [
+            Self.machine("alpha", name: "Alpha"),
+            Self.machine("beta", name: "Beta"),
+            Self.machine("gamma", name: "Gamma"),
+        ]
+        let composer = IssueReportComposer(
+            temporaryDirectory: directory.appending(path: "tmp"),
+            userDefaults: defaults
+        )
+        await composer.discover(machines: machines, connectedIDs: ["alpha", "beta"]) { _ in
+            Self.unavailable(reason: "Set code_factory.repository in the private configuration (owner/repo) to file issues from the app")
+        }
+        #expect(composer.showsMachinePicker)
+        #expect(!composer.hasAvailableMachine)
+        #expect(composer.checkedMachineNames == ["Alpha", "Beta"])
+        #expect(composer.uncheckedMachineNames == ["Gamma"])
+        #expect(composer.machineStatusLabel(for: "alpha") == "Unavailable")
+        #expect(composer.machineStatusLabel(for: "gamma") == "Disconnected")
+        let explanation = try #require(composer.noAvailableMachineExplanation)
+        #expect(explanation.contains("Alpha"))
+        #expect(explanation.contains("Beta"))
+        #expect(explanation.contains("Gamma"))
+        #expect(explanation.contains("not checked"))
+        #expect(explanation.contains("[code_factory]"))
+        #expect(explanation.contains("gh"))
+        #expect(!explanation.contains("still try"))
+        #expect(
+            IssueReportComposer.codeFactoryDocsURL.absoluteString
+                == "https://github.com/ronnie3786/herdr-companion/blob/main/docs/code-factory.md"
+        )
+
+        // An all-disconnected roster explains connection recovery instead of
+        // server configuration, and still names the machines skipped.
+        let offline = IssueReportComposer(
+            temporaryDirectory: directory.appending(path: "tmp-offline"),
+            userDefaults: defaults
+        )
+        await offline.discover(machines: machines, connectedIDs: []) { _ in
+            Issue.record("Disconnected machines must not be queried")
+            return Self.available()
+        }
+        let offlineExplanation = try #require(offline.noAvailableMachineExplanation)
+        #expect(offlineExplanation.contains("not checked"))
+        #expect(offlineExplanation.contains("Alpha"))
+        #expect(offlineExplanation.contains("connect"))
+        #expect(!offlineExplanation.contains("[code_factory]"))
+
+        // One paired machine hides the picker, but its unavailable reason
+        // still shows and its explanation still replaces the submit controls.
+        let single = IssueReportComposer(
+            temporaryDirectory: directory.appending(path: "tmp-single"),
+            userDefaults: defaults
+        )
+        await single.discover(machines: [Self.machine("alpha", name: "Alpha")], connectedIDs: ["alpha"]) { _ in
+            Self.unavailable(reason: "No repository is configured on this server.")
+        }
+        #expect(!single.showsMachinePicker)
+        #expect(single.selectedMachineReason == "No repository is configured on this server.")
+        #expect(single.noAvailableMachineExplanation != nil)
+
+        // An empty roster has no selection, no explanation, and keeps the
+        // Settings guidance to itself.
+        let empty = IssueReportComposer(
+            temporaryDirectory: directory.appending(path: "tmp-empty"),
+            userDefaults: defaults
+        )
+        await empty.discover(machines: [], connectedIDs: []) { _ in
+            Issue.record("An empty roster must not be queried")
+            return Self.available()
+        }
+        #expect(empty.machineID.isEmpty)
+        #expect(empty.hasRunDiscovery)
+        #expect(!empty.showsMachinePicker)
+        #expect(empty.noAvailableMachineExplanation == nil)
+    }
+
     // MARK: - Helpers
 
     private static let record = IssueReportRecord(
@@ -767,6 +1249,18 @@ struct IssueReportComposerTests {
         attachments: [],
         createdAt: "2026-09-18T12:00:00Z"
     )
+
+    private static func machine(_ id: String, name: String? = nil) -> HerdrMachine {
+        HerdrMachine(id: id, name: name ?? id.uppercased(), urlString: "https://\(id).example.invalid")
+    }
+
+    private static func available(repository: String = "owner/repo") -> IssueReportCapabilities {
+        IssueReportCapabilities(available: true, repository: repository)
+    }
+
+    private static func unavailable(reason: String? = nil) -> IssueReportCapabilities {
+        IssueReportCapabilities(available: false, reason: reason)
+    }
 
     private func makeDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
@@ -876,5 +1370,34 @@ struct IssueReportComposerTests {
 
     private static func exifUserComment(in data: Data) -> String? {
         (imageProperties(in: data)?[kCGImagePropertyExifDictionary] as? [CFString: Any])?[kCGImagePropertyExifUserComment] as? String
+    }
+}
+
+/// Holds one injected capabilities request until the test releases it, so a
+/// superseding discovery pass can settle first. No sleeps: the request signals
+/// its arrival and returns as soon as its release is recorded.
+private actor DiscoveryGate {
+    private var requestArrived = false
+    private var requestWaiters: [CheckedContinuation<Void, Never>] = []
+    private var released = false
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        requestArrived = true
+        requestWaiters.forEach { $0.resume() }
+        requestWaiters = []
+        guard !released else { return }
+        await withCheckedContinuation { releaseWaiters.append($0) }
+    }
+
+    func waitForRequest() async {
+        guard !requestArrived else { return }
+        await withCheckedContinuation { requestWaiters.append($0) }
+    }
+
+    func release() {
+        released = true
+        releaseWaiters.forEach { $0.resume() }
+        releaseWaiters = []
     }
 }

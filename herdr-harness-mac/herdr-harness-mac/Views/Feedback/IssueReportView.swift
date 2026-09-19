@@ -13,12 +13,12 @@ struct IssueReportView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var composer = IssueReportComposer()
-    @State private var capabilityNotice: String?
     @State private var serverCapabilityList: [String] = []
     @State private var isDropTargeted = false
     @State private var isDetailsExpanded = false
     @State private var didCopyLink = false
     @State private var submitTask: Task<Void, Never>?
+    @State private var discoveryTask: Task<Void, Never>?
     @FocusState private var focusedField: Field?
 
     private enum Field: Hashable {
@@ -71,17 +71,17 @@ struct IssueReportView: View {
             composer.importItemProviders(providers)
         }
         .task {
-            if composer.machineID.isEmpty {
-                composer.machineID = preferredMachineID ?? ""
-            }
             focusedField = .title
+            await discoverMachines()
         }
         .task(id: composer.machineID) {
-            await loadCapabilities()
+            await loadServerCapabilities()
         }
         .onDisappear {
             submitTask?.cancel()
             submitTask = nil
+            discoveryTask?.cancel()
+            discoveryTask = nil
             composer.discardTemporaryFiles()
         }
     }
@@ -111,19 +111,28 @@ struct IssueReportView: View {
             .labelsHidden()
             .accessibilityIdentifier("issue-report-kind")
 
-            if model.machines.count > 1 {
+            if composer.showsMachinePicker {
                 Picker("File through", selection: $composer.machineID) {
-                    ForEach(model.machines) { machine in
-                        Text(machine.name).tag(machine.id)
+                    ForEach(composer.pairedMachines) { machine in
+                        Text(machinePickerTitle(machine)).tag(machine.id)
                     }
                 }
                 .pickerStyle(.menu)
                 .accessibilityIdentifier("issue-report-machine")
+                .disabled(composer.isDiscoveringReports)
             }
 
-            if composer.machineID.isEmpty {
-                // Reachable during onboarding and in demo mode: nothing can
-                // file the report, so say so instead of greying out the button.
+            if let reason = composer.selectedMachineReason {
+                Label(reason, systemImage: "exclamationmark.triangle.fill")
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("issue-report-machine-reason")
+            }
+
+            if composer.pairedMachines.isEmpty && composer.hasRunDiscovery {
+                // Zero paired machines. Nothing can file the report, so say so
+                // instead of greying out the button.
                 Label("Add a machine in Settings ▸ Machines to file reports through its companion server.", systemImage: "desktopcomputer")
                     .herdrFont(.caption)
                     .foregroundStyle(HerdrTheme.warning)
@@ -255,20 +264,11 @@ struct IssueReportView: View {
     }
 
     private var footerNotice: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label(publicNoticeText, systemImage: "globe")
-                .herdrFont(.caption)
-                .foregroundStyle(HerdrTheme.mist)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("issue-report-notice")
-            if let capabilityNotice {
-                Label(capabilityNotice, systemImage: "exclamationmark.triangle.fill")
-                    .herdrFont(.caption)
-                    .foregroundStyle(HerdrTheme.warning)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("issue-report-capability-notice")
-            }
-        }
+        Label(publicNoticeText, systemImage: "globe")
+            .herdrFont(.caption)
+            .foregroundStyle(HerdrTheme.mist)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("issue-report-notice")
     }
 
     private var submitRow: some View {
@@ -285,24 +285,60 @@ struct IssueReportView: View {
                     .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
                     .accessibilityIdentifier("issue-report-error")
             }
+            if let explanation = composer.noAvailableMachineExplanation {
+                noAvailableMachinesCard(explanation)
+            } else {
+                submissionControls
+            }
+        }
+    }
+
+    /// Shown in place of the submit controls only after a sweep has finished
+    /// with no available companion. The draft stays editable and "Check
+    /// again" retries without discarding it.
+    private func noAvailableMachinesCard(_ explanation: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(explanation, systemImage: "exclamationmark.triangle.fill")
+                .herdrFont(.subheadline)
+                .foregroundStyle(HerdrTheme.warning)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("issue-report-no-available")
+            Link("Code Factory setup instructions", destination: IssueReportComposer.codeFactoryDocsURL)
+                .herdrFont(.caption)
+                .accessibilityIdentifier("issue-report-docs-link")
             HStack(spacing: 12) {
                 Spacer()
-                if composer.isSubmitting {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(HerdrTheme.accent)
-                    Text("Filing…")
-                        .herdrFont(.subheadline)
-                        .foregroundStyle(HerdrTheme.mist)
+                Button("Check again", systemImage: "arrow.clockwise") {
+                    startDiscovery()
                 }
-                Button(composer.failureMessage == nil ? "File report" : "Try again", systemImage: "paperplane.fill") {
-                    submit()
-                }
-                .herdrProminentButton()
-                .disabled(!composer.canSubmit)
-                .keyboardShortcut(.return, modifiers: .command)
-                .accessibilityIdentifier("issue-report-submit")
+                .disabled(composer.isSubmitting)
+                .accessibilityIdentifier("issue-report-check-again")
             }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(HerdrTheme.warning.opacity(0.1))
+        .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+    }
+
+    private var submissionControls: some View {
+        HStack(spacing: 12) {
+            Spacer()
+            if composer.isSubmitting {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(HerdrTheme.accent)
+                Text("Filing…")
+                    .herdrFont(.subheadline)
+                    .foregroundStyle(HerdrTheme.mist)
+            }
+            Button(composer.failureMessage == nil ? "File report" : "Try again", systemImage: "paperplane.fill") {
+                submit()
+            }
+            .herdrProminentButton()
+            .disabled(!composer.canSubmit)
+            .keyboardShortcut(.return, modifiers: .command)
+            .accessibilityIdentifier("issue-report-submit")
         }
     }
 
@@ -393,14 +429,6 @@ struct IssueReportView: View {
         model.machines.first { $0.id == composer.machineID }
     }
 
-    private var preferredMachineID: String? {
-        if case let .machine(id) = model.machineScope, model.canControl(machineID: id) {
-            return id
-        }
-        let controllable = model.machines.first { model.canControl(machineID: $0.id) }
-        return (controllable ?? model.machines.first)?.id
-    }
-
     private var environmentDetails: [String: String] {
         let info = Bundle.main.infoDictionary ?? [:]
         return IssueReportComposer.environmentDetails(
@@ -415,7 +443,11 @@ struct IssueReportView: View {
     // MARK: - Actions
 
     private func submit() {
-        guard composer.canSubmit, submitTask == nil else { return }
+        guard submitTask == nil else { return }
+        // A disconnect or unpairing detected here invalidates the cached
+        // answer before anything is sent.
+        composer.refreshAvailability(machines: model.machines, connectedIDs: connectedMachineIDs())
+        guard composer.canSubmit else { return }
         let environment = environmentDetails
         submitTask = Task {
             await composer.submit(environment: environment) { request, machineID in
@@ -423,6 +455,11 @@ struct IssueReportView: View {
             }
             submitTask = nil
         }
+    }
+
+    private func machinePickerTitle(_ machine: HerdrMachine) -> String {
+        guard let label = composer.machineStatusLabel(for: machine.id) else { return machine.name }
+        return "\(machine.name) — \(label)"
     }
 
     private func presentOpenPanel() {
@@ -453,49 +490,51 @@ struct IssueReportView: View {
         didCopyLink = true
     }
 
-    private func loadCapabilities() async {
-        composer.capabilities = nil
-        capabilityNotice = nil
-        serverCapabilityList = []
-        let machineID = composer.machineID
-        guard !machineID.isEmpty else { return }
-        do {
-            let capabilities = try await model.issueReportCapabilities(machineID: machineID)
-            guard machineID == composer.machineID else { return }
-            composer.capabilities = capabilities
-            if !capabilities.available {
-                capabilityNotice = capabilities.reason
-                    ?? "Reports aren't configured on this machine's companion server yet."
-            }
-        } catch {
-            guard machineID == composer.machineID else { return }
-            capabilityNotice = Self.capabilityNotice(for: error)
-        }
-        let list = await fetchServerCapabilityList(machineID: machineID)
-        if machineID == composer.machineID {
-            serverCapabilityList = list
+    // MARK: - Discovery
+
+    private func connectedMachineIDs() -> Set<String> {
+        IssueReportComposer.connectedMachineIDs(
+            machines: model.machines,
+            isDemoMode: model.isDemoMode,
+            connectionState: { model.connectionState(forMachine: $0) }
+        )
+    }
+
+    private func discoverMachines() async {
+        let model = self.model
+        let machines = model.machines
+        let connectedIDs = connectedMachineIDs()
+        await composer.discover(
+            machines: machines,
+            connectedIDs: connectedIDs
+        ) { [model] machineID in
+            try await model.issueReportCapabilities(machineID: machineID)
         }
     }
 
-    /// The `server_capabilities` environment detail. Read through a
-    /// short-lived client because the app model does not cache the list.
+    private func startDiscovery() {
+        discoveryTask?.cancel()
+        discoveryTask = Task { await discoverMachines() }
+    }
+
+    /// The `server_capabilities` environment detail for the selected machine.
+    /// Cleared and reloaded whenever the selection changes, and a slow answer
+    /// for a previous selection is discarded.
+    private func loadServerCapabilities() async {
+        serverCapabilityList = []
+        let machineID = composer.machineID
+        guard !machineID.isEmpty else { return }
+        let list = await fetchServerCapabilityList(machineID: machineID)
+        guard machineID == composer.machineID else { return }
+        serverCapabilityList = list
+    }
+
+    /// Read through a short-lived client because the app model does not cache
+    /// the list.
     private func fetchServerCapabilityList(machineID: String) async -> [String] {
         guard !model.isDemoMode,
               let configuration = model.firstMateConfiguration(machineID: machineID) else { return [] }
         let client = HerdrAPIClient(configuration: configuration)
         return (try? await client.serverCapabilities())?.capabilities ?? []
-    }
-
-    private static func capabilityNotice(for error: any Error) -> String {
-        if let apiError = error as? APIError, case let .server(status, message) = apiError {
-            if status == 404 || status == 426 {
-                return "This machine's companion server doesn't support reports yet. "
-                    + "Update the companion server to file bug reports and feature requests from the app."
-            }
-            if !message.isEmpty {
-                return message
-            }
-        }
-        return "Couldn't reach this machine's companion server to check report settings. You can still try to file the report."
     }
 }

@@ -108,6 +108,17 @@ final class IssueReportComposer {
     static let temporaryDirectoryPrefix = "herdr-issue-report-"
     static let staleTemporaryDirectoryAge: TimeInterval = 24 * 60 * 60
 
+    /// UserDefaults key for the companion that most recently filed a report
+    /// from this Mac. It is written only after a send succeeds, so opening the
+    /// sheet, picking a machine, and failed attempts never change it.
+    static let lastSuccessfulMachineIDKey = "herdr.issueReports.lastSuccessfulMachineID"
+
+    /// Where the sheet points when no paired companion can file reports: the
+    /// private `[code_factory]` configuration, labels, and daemon setup.
+    static let codeFactoryDocsURL = URL(
+        string: "https://github.com/ronnie3786/herdr-companion/blob/main/docs/code-factory.md"
+    )!
+
     /// Shown when the connection dropped after the request may have reached
     /// the server: the issue can already exist, so a blind retry would file
     /// it twice.
@@ -130,7 +141,34 @@ final class IssueReportComposer {
     var title = ""
     var body = ""
     var autofix = true
-    var machineID = ""
+    /// Which paired companion files the report. Picking another machine
+    /// immediately adopts that machine's cached capabilities, so the
+    /// repository notice and attachment limits always match the selection.
+    var machineID = "" {
+        didSet {
+            guard machineID != oldValue else { return }
+            adoptSelectedMachineCapabilities()
+        }
+    }
+    /// Paired companions from the latest roster snapshot, in app order. The
+    /// picker and the checked/unchecked explanation read this rather than the
+    /// live model, so a pass is always explained by the roster it saw.
+    private(set) var pairedMachines: [HerdrMachine] = []
+    /// One cached answer per paired machine from the latest discovery pass.
+    /// Picking a machine reads this cache instead of re-asking the network.
+    private(set) var machineChecks: [String: IssueReportMachineCheck] = [:]
+    /// True while a discovery pass is asking connected companions. Draft
+    /// editing and cancellation stay usable; selection and submission wait.
+    private(set) var isDiscoveringReports = false
+    /// True once a discovery pass has run, so the empty-roster guidance cannot
+    /// flash before the first roster snapshot.
+    private(set) var hasRunDiscovery = false
+    /// Bumped for every pass; a late answer from a superseded or cancelled
+    /// pass is discarded instead of overwriting newer state.
+    @ObservationIgnored private var discoveryGeneration = 0
+    /// The companion that most recently filed a report from this Mac. Read
+    /// once from UserDefaults and written only after a successful send.
+    private(set) var lastSuccessfulMachineID: String?
     var phase: Phase = .editing
     var attachmentError: String?
     /// Server-advertised limits. Lowering them re-checks the queue: files that
@@ -152,20 +190,31 @@ final class IssueReportComposer {
     @ObservationIgnored private(set) var clientReportId: String
 
     @ObservationIgnored private let fileManager: FileManager
+    @ObservationIgnored private let userDefaults: UserDefaults
     @ObservationIgnored private let temporaryDirectory: URL
     @ObservationIgnored private var pastedImageCount = 0
 
-    /// - Parameter temporaryDirectory: Where pasted images are written. Defaults
-    ///   to a unique folder under the app's temporary directory; tests pass
-    ///   their own so cleanup can be asserted.
-    init(fileManager: FileManager = .default, temporaryDirectory: URL? = nil) {
+    /// - Parameters:
+    ///   - temporaryDirectory: Where pasted images are written. Defaults to a
+    ///     unique folder under the app's temporary directory; tests pass their
+    ///     own so cleanup can be asserted.
+    ///   - userDefaults: Where the last companion that filed a report is
+    ///     remembered. Tests pass an isolated suite so preferences stay clean.
+    init(
+        fileManager: FileManager = .default,
+        temporaryDirectory: URL? = nil,
+        userDefaults: UserDefaults = .standard
+    ) {
         self.fileManager = fileManager
+        self.userDefaults = userDefaults
         self.temporaryDirectory = temporaryDirectory
             ?? fileManager.temporaryDirectory.appending(
                 path: "\(Self.temporaryDirectoryPrefix)\(UUID().uuidString)",
                 directoryHint: .isDirectory
             )
         clientReportId = Self.makeClientReportId()
+        lastSuccessfulMachineID = userDefaults.string(forKey: Self.lastSuccessfulMachineIDKey)
+            .flatMap { $0.isEmpty ? nil : $0 }
     }
 
     /// A fresh `clientReportId`: a lowercase UUID, 36 characters of hex digits
@@ -219,11 +268,185 @@ final class IssueReportComposer {
     }
 
     /// True when the draft is complete enough to send: a non-blank title and
-    /// description within the server's limits, a machine to file through, and
-    /// no submission in flight or already filed.
+    /// description within the server's limits, a machine to file through whose
+    /// capabilities answered `available`, and no submission in flight or
+    /// already filed.
+    ///
+    /// An unavailable or not-yet-checked selection can never submit, even when
+    /// another paired companion is available: the user picked this one, so the
+    /// sheet explains it instead of silently filing somewhere else.
     var canSubmit: Bool {
-        guard !isSubmitting, submittedRecord == nil else { return false }
+        guard !isSubmitting, submittedRecord == nil, !isDiscoveringReports else { return false }
+        guard capabilities?.available == true else { return false }
         return (try? validatedDraft()) != nil
+    }
+
+    // MARK: - Discovery and selection
+
+    /// The paired companions a discovery pass may ask: no demo mode, and only
+    /// machines whose connection is live. Disconnected and demo machines are
+    /// never queried.
+    static func connectedMachineIDs(
+        machines: [HerdrMachine],
+        isDemoMode: Bool,
+        connectionState: (String) -> ConnectionState
+    ) -> Set<String> {
+        guard !isDemoMode else { return [] }
+        return Set(machines.map(\.id).filter { connectionState($0) == .live })
+    }
+
+    /// True when the sheet should show the machine picker: two or more paired
+    /// companions. A single companion is named by its reason or the notice.
+    var showsMachinePicker: Bool { pairedMachines.count > 1 }
+
+    /// The cached check for the selected companion.
+    var selectedMachineCheck: IssueReportMachineCheck? { machineChecks[machineID] }
+
+    /// Why the selected companion cannot file, ready to show beneath the
+    /// picker; nil for available, checking, and unknown selections.
+    var selectedMachineReason: String? {
+        IssueReportMachineSelection.selectedReason(for: selectedMachineCheck)
+    }
+
+    /// The selected companion's name, for guidance that names it.
+    var selectedMachineName: String? {
+        pairedMachines.first { $0.id == machineID }?.name
+    }
+
+    /// Whether the selected companion answered that it can file reports.
+    var selectedMachineAvailable: Bool { capabilities?.available == true }
+
+    /// Whether any paired companion in the latest pass can file reports.
+    var hasAvailableMachine: Bool {
+        pairedMachines.contains { IssueReportMachineSelection.isAvailable(machineChecks[$0.id]) }
+    }
+
+    /// Short suffix shown beside a machine's name in the picker, or nil for an
+    /// available machine, which keeps its plain name.
+    func machineStatusLabel(for machineID: String) -> String? {
+        IssueReportMachineSelection.statusLabel(for: machineChecks[machineID])
+    }
+
+    /// Paired companions, in roster order, whose settings were actually
+    /// checked in the latest pass (they were connected when it started).
+    var checkedMachineNames: [String] {
+        pairedMachines.compactMap { machine in
+            switch machineChecks[machine.id] {
+            case .checking, .loaded, .failed: machine.name
+            case .disconnected, nil: nil
+            }
+        }
+    }
+
+    /// Paired companions, in roster order, skipped because they were
+    /// disconnected when the latest pass started.
+    var uncheckedMachineNames: [String] {
+        pairedMachines.filter { machineChecks[$0.id] == .disconnected }.map(\.name)
+    }
+
+    /// The explanation shown in place of the submit controls once discovery
+    /// has established that no paired companion can file reports.
+    ///
+    /// It names the machines that were checked, distinguishes the disconnected
+    /// machines that were skipped, and points at the server-side setup: the
+    /// repository under `[code_factory]` and a `gh` login with access to it.
+    /// Nil while a pass runs, before any pass, when the roster is empty, or
+    /// when any companion is available.
+    var noAvailableMachineExplanation: String? {
+        guard hasRunDiscovery, !isDiscoveringReports, !pairedMachines.isEmpty, !hasAvailableMachine else {
+            return nil
+        }
+        var sentences: [String] = []
+        if checkedMachineNames.isEmpty {
+            sentences.append("None of your paired machines are connected, so their report settings were not checked.")
+        } else {
+            let owner = selectedMachineName ?? "the selected companion"
+            sentences.append(
+                "Checked \(Self.joinedNames(checkedMachineNames)). No companion can file reports yet: "
+                    + "set the repository under [code_factory] in \(owner)'s private configuration and make sure "
+                    + "gh is signed in with access to that repository."
+            )
+        }
+        if !uncheckedMachineNames.isEmpty {
+            let names = Self.joinedNames(uncheckedMachineNames)
+            let verb = uncheckedMachineNames.count == 1 ? "was" : "were"
+            sentences.append("\(names) \(verb) not checked because disconnected; connect and check again.")
+        }
+        return sentences.joined(separator: " ")
+    }
+
+    /// Runs one discovery pass over a roster snapshot.
+    ///
+    /// Every paired, connected companion is asked at the same time through the
+    /// injected call; individual failures never discard the other answers.
+    /// A provisional selection is shown while the pass runs, but capabilities
+    /// are adopted only once the pass settles, so a candidate that answers late
+    /// can never lend its attachment limits to the draft. A pass that has been
+    /// superseded (or whose task was cancelled) leaves state alone.
+    func discover(
+        machines: [HerdrMachine],
+        connectedIDs: Set<String>,
+        fetchCapabilities: @escaping @Sendable (String) async throws -> IssueReportCapabilities
+    ) async {
+        pairedMachines = machines
+        hasRunDiscovery = true
+        discoveryGeneration += 1
+        let generation = discoveryGeneration
+        isDiscoveringReports = true
+        let initialChecks = IssueReportMachineSelection.initialChecks(roster: machines, connectedIDs: connectedIDs)
+        machineChecks = initialChecks
+        updateSelectedMachine(
+            IssueReportMachineSelection.selectMachineID(
+                roster: machines,
+                checks: initialChecks,
+                lastSuccessfulID: lastSuccessfulMachineID
+            ) ?? ""
+        )
+        let checks = await IssueReportMachineSelection.collect(
+            roster: machines,
+            connectedIDs: connectedIDs,
+            fetchCapabilities: fetchCapabilities
+        )
+        guard generation == discoveryGeneration else { return }
+        isDiscoveringReports = false
+        guard !Task.isCancelled else { return }
+        machineChecks = checks
+        updateSelectedMachine(
+            IssueReportMachineSelection.selectMachineID(
+                roster: machines,
+                checks: checks,
+                lastSuccessfulID: lastSuccessfulMachineID
+            ) ?? ""
+        )
+    }
+
+    /// Refreshes the paired roster and connection snapshot without asking the
+    /// network, so a stale answer cannot survive a disconnect into a submission.
+    ///
+    /// A paired machine that is no longer connected loses its cached answer. A
+    /// selection that is still paired is kept even when it is unavailable, so
+    /// picking an unavailable companion keeps blocking submission; a removed
+    /// selection falls back to the usual rules using the remaining answers.
+    func refreshAvailability(machines: [HerdrMachine], connectedIDs: Set<String>) {
+        pairedMachines = machines
+        let pairedIDs = Set(machines.map(\.id))
+        machineChecks = machineChecks.filter { pairedIDs.contains($0.key) }
+        for pairedID in pairedIDs where !connectedIDs.contains(pairedID) {
+            if machineChecks[pairedID] != nil {
+                machineChecks[pairedID] = .disconnected
+            }
+        }
+        if machineID.isEmpty || !pairedIDs.contains(machineID) {
+            updateSelectedMachine(
+                IssueReportMachineSelection.selectMachineID(
+                    roster: machines,
+                    checks: machineChecks,
+                    lastSuccessfulID: lastSuccessfulMachineID
+                ) ?? ""
+            )
+        } else {
+            adoptSelectedMachineCapabilities()
+        }
     }
 
     // MARK: - Attachments
@@ -430,6 +653,11 @@ final class IssueReportComposer {
         phase = .submitting
         let queued = attachments
         let maximumBytes = effectiveMaxAttachmentBytes
+        // Capture the companion before the attachment-encoding await: a
+        // roster refresh or selection change must never redirect a request
+        // that is already being built, and the id remembered after success
+        // must be this one.
+        let submissionMachineID = machineID
         let bodies: [IssueReportAttachmentBody]
         do {
             // Up to 40 MiB of file I/O plus base64 and image re-encoding: never
@@ -443,8 +671,9 @@ final class IssueReportComposer {
         }
         let request = draft.request(attachments: bodies, environment: Self.boundedEnvironment(environment))
         do {
-            let record = try await send(request, machineID)
+            let record = try await send(request, submissionMachineID)
             phase = .submitted(record)
+            rememberSuccessfulMachine(submissionMachineID)
             // This id now names a filed issue; the next report must not
             // replay it. A failure keeps the id for "Try again".
             clientReportId = Self.makeClientReportId()
@@ -609,6 +838,43 @@ final class IssueReportComposer {
             autofix: autofix,
             clientReportId: clientReportId
         )
+    }
+
+    /// Adopts the cached capabilities of the current selection. A check that
+    /// has not answered (checking, disconnected, failed, absent) clears them,
+    /// so nothing can submit against an unverified or stale answer.
+    private func adoptSelectedMachineCapabilities() {
+        if case let .loaded(capabilities) = machineChecks[machineID] {
+            self.capabilities = capabilities
+        } else {
+            capabilities = nil
+        }
+    }
+
+    private func updateSelectedMachine(_ id: String) {
+        if machineID == id {
+            adoptSelectedMachineCapabilities()
+        } else {
+            machineID = id
+        }
+    }
+
+    /// Remembers the companion only after its send succeeded. Failures,
+    /// selection changes, and discovery outcomes never call this.
+    private func rememberSuccessfulMachine(_ machineID: String) {
+        guard !machineID.isEmpty else { return }
+        lastSuccessfulMachineID = machineID
+        userDefaults.set(machineID, forKey: Self.lastSuccessfulMachineIDKey)
+    }
+
+    /// "Alpha", "Alpha and Beta", or "Alpha, Beta, and Gamma".
+    private static func joinedNames(_ names: [String]) -> String {
+        switch names.count {
+        case 0: return ""
+        case 1: return names[0]
+        case 2: return "\(names[0]) and \(names[1])"
+        default: return names.dropLast().joined(separator: ", ") + ", and " + (names.last ?? "")
+        }
     }
 
     private func reject(_ url: URL, ownership: AttachmentSourceOwnership, message: String) {

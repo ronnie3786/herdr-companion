@@ -39,6 +39,59 @@ struct IssueReportWiringTests {
         }
     }
 
+    @Test("A live paired machine is discovered through the app model and remembered after filing")
+    func discoveryThroughAppModel() async throws {
+        let suite = "IssueReportWiringTests.discovery.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let model = HerdrAppModel(
+            credentials: TestCredentialStore(),
+            arguments: ["HerdrTests"],
+            userDefaults: defaults,
+            configuredMachines: []
+        )
+        let alpha = HerdrMachine(id: "alpha", name: "Alpha", urlString: "https://alpha.example.invalid")
+        let beta = HerdrMachine(id: "beta", name: "Beta", urlString: "https://beta.example.invalid")
+        model.machines = [alpha, beta]
+        model.clientFactory = { configuration in
+            let session = URLSessionConfiguration.ephemeral
+            session.protocolClasses = [WiringReportStubURLProtocol.self]
+            return HerdrAPIClient(configuration: configuration, session: URLSession(configuration: session))
+        }
+        model.prepareRuntime(for: alpha, generation: model.connectionGeneration)
+        model.machineStates[alpha.id] = .live
+        model.machineStates[beta.id] = .disconnected
+
+        let connectedIDs = IssueReportComposer.connectedMachineIDs(
+            machines: model.machines,
+            isDemoMode: model.isDemoMode,
+            connectionState: { model.connectionState(forMachine: $0) }
+        )
+        #expect(connectedIDs == ["alpha"])
+
+        let composer = IssueReportComposer(userDefaults: defaults)
+        await composer.discover(machines: model.machines, connectedIDs: connectedIDs) { machineID in
+            try await model.issueReportCapabilities(machineID: machineID)
+        }
+
+        #expect(composer.machineID == "alpha")
+        #expect(IssueReportMachineSelection.isAvailable(composer.machineChecks["alpha"]))
+        #expect(composer.machineChecks["beta"] == .disconnected)
+        #expect(composer.selectedMachineAvailable)
+        #expect(composer.capabilities?.repository == "owner/repo")
+
+        composer.title = "Crash on launch"
+        composer.body = "It crashed."
+        #expect(composer.canSubmit)
+        await composer.submit(environment: ["client": "herdr-companion-mac"]) { request, machineID in
+            try await model.submitIssueReport(request, machineID: machineID)
+        }
+        #expect(composer.submittedRecord?.issueNumber == 42)
+        #expect(defaults.string(forKey: IssueReportComposer.lastSuccessfulMachineIDKey) == "alpha")
+    }
+
     @Test("The report sheet blocks agent control only while it is presented")
     func shellBlockingModal() throws {
         let suite = "IssueReportWiringTests.shell.\(UUID().uuidString)"
@@ -182,5 +235,62 @@ private final class NotificationCounter: @unchecked Sendable {
     func stop() {
         if let observer { NotificationCenter.default.removeObserver(observer) }
         observer = nil
+    }
+}
+
+/// Serves the capability list, the report-capabilities endpoint and the report
+/// POST from canned replies for the app-model wiring test. The suite is
+/// serialized, so one shared set of replies is enough.
+private final class WiringReportStubURLProtocol: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url else { return }
+        let (status, reply) = reply(for: request, url: url)
+        guard let response = HTTPURLResponse(
+            url: url,
+            statusCode: status,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"]
+        ) else { return }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(reply.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+
+    private func reply(for request: URLRequest, url: URL) -> (Int, String) {
+        drainBody(of: request)
+        switch (request.httpMethod ?? "GET", url.path) {
+        case ("GET", "/api/v1"):
+            return (200, #"{"ok":true,"capabilities":["issue-reports-v1"]}"#)
+        case ("GET", "/api/v1/issue-reports/capabilities"):
+            return (200, """
+            {"ok":true,"available":true,"repository":"owner/repo","reason":null,"maxAttachments":6,
+             "maxAttachmentBytes":20971520,"maxTotalAttachmentBytes":41943040,"publicRepository":true}
+            """)
+        case ("POST", "/api/v1/issue-reports"):
+            return (201, """
+            {"ok":true,"report":{"id":"isr_0123456789ab","kind":"bug","title":"Crash on launch",
+             "autofix":true,"issueNumber":42,"issueUrl":"https://github.com/owner/repo/issues/42",
+             "repository":"owner/repo","attachments":[],"createdAt":"2026-09-18T12:00:00Z"}}
+            """)
+        default:
+            return (404, #"{"ok":false,"error":{"code":"not_found","message":"Not found"}}"#)
+        }
+    }
+
+    /// URLSession hands protocols a body stream, not `httpBody`; drain it so
+    /// nothing in the request machinery waits on an unread body.
+    private func drainBody(of request: URLRequest) {
+        guard let stream = request.httpBodyStream else { return }
+        stream.open()
+        defer { stream.close() }
+        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+        while stream.hasBytesAvailable {
+            guard stream.read(&buffer, maxLength: buffer.count) > 0 else { break }
+        }
     }
 }

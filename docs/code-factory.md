@@ -16,7 +16,13 @@ This is an experimental personal automation. Read the safety section before enab
    description (sent exactly as written), attach screenshots or documents (file picker,
    drag and drop, or ⌘V for an image), and check **Included details** to see the
    environment fields that accompany the report. Leave **Start the automated fix
-   pipeline** on to add the `herdr-autofix` label.
+   pipeline** on to add the `herdr-autofix` label. With more than one paired machine the
+   sheet asks every connected companion for its report settings at the same time, defaults
+   to the companion that last filed a report for this Mac (otherwise the first that
+   answers available), and keeps other machines selectable so their reason stays visible.
+   An unavailable or disconnected machine cannot submit, even when a peer is available;
+   the checked-machine explanation and **Check again** retry the sweep without losing the
+   draft.
 2. **The companion server files the issue.** The app posts to `/api/v1/issue-reports`.
    The server uses your authenticated `gh` CLI to create a public GitHub issue with the
    verbatim text, links to the attachments, and an environment table. Attachments are
@@ -65,7 +71,13 @@ This is an experimental personal automation. Read the safety section before enab
 ### Requirements on the publishing Mac
 
 - The companion server package built from a revision that advertises
-  `issue-reports-v1` (`GET /api/v1` lists it), installed and running as usual.
+  `issue-reports-v1` (`GET /api/v1` lists it), installed and running as usual. No
+  companion change beyond that capability is needed; the Mac app's multi-machine
+  discovery uses the existing capabilities endpoint.
+- The Mac app's discovery trusts the server's `available` flag. The server decides
+  availability from its configured repository, so a machine can answer available while
+  its `gh` login still fails at submission time; the app surfaces that submission error
+  instead of pre-checking `gh`.
 - `gh` authenticated with `repo` and `workflow` scopes for the repository.
 - Pi with the `openai-codex` login (for Astra) and an `ollama-cloud` provider entry for
   DeepSeek. Ollama Cloud reads `OLLAMA_API_KEY`; a login shell may define it, but a
@@ -256,6 +268,9 @@ branch history cannot be rebuilt.
 | Symptom | Check |
 | --- | --- |
 | The Mac app says to update the companion server | The running server does not advertise `issue-reports-v1`; install the newer package. |
+| The sheet says no companion can file reports | Read the reason under the machine picker, then set the repository under `[code_factory]` and check `gh auth status` on that machine's server. Pick another paired machine, or reconnect a machine and choose **Check again**. |
+| Filing through one machine fails while another works | Each companion has its own private configuration and `gh` login; switch the **File through** picker or fix the failing server. |
+| The submit button stays disabled with machines marked Checking… | A discovery sweep is still running; draft editing stays available while it finishes. If it stalls, choose **Check again**. |
 | Report fails with `github_failed` | `gh auth status` on the server machine; repository configured under `[code_factory]`. |
 | Issue never leaves **Picked up** | Daemon not running, wrong `allowed_authors`, or missing trigger label. Run `doctor`. |
 | DeepSeek sessions fail immediately | `OLLAMA_API_KEY` is not available to the daemon; add it to `[environment]`. |
@@ -278,10 +293,28 @@ Mac (from the repository root):
 ```sh
 xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac \
   -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test \
+  -only-testing:herdr-harness-macTests/IssueReportMachineSelectionTests \
   -only-testing:herdr-harness-macTests/IssueReportComposerTests \
+  -only-testing:herdr-harness-macTests/IssueReportWiringTests \
   -only-testing:herdr-harness-macTests/IssueReportModelsTests \
   -only-testing:herdr-harness-macTests/IssueReportClientTests
 ```
+
+Synthetic multi-machine check (no real issue is filed):
+
+1. Pair two machines with synthetic names and connect only the second one. Open the
+   report sheet: it should show both machines, preselect the connected one with a plain
+   name, mark the other **Disconnected**, and show that machine's reason under the picker
+   when it is selected. Submission must be disabled for the unavailable selection even
+   though the connected peer is available.
+2. Disconnect both machines and choose **Check again**: the draft must survive, both
+   machines must be listed as not checked, the submit button must be replaced by the
+   explanation, and the Code Factory setup link must be present.
+3. Reconnect one machine and choose **Check again**: the machine becomes available and
+   **File report** returns. Unpair every machine and reopen the sheet: the Settings ▸
+   Machines pairing guidance appears instead.
+4. File one synthetic report through an available machine, close the sheet, and reopen
+   it: that machine must be preselected before the sweep finishes.
 
 Live check: file a report from the app with one screenshot, confirm the issue renders the
 image and the environment table, watch the dashboard move the issue through the stages,

@@ -478,6 +478,7 @@ struct AppRootView: View {
     let modelFavorites: ModelFavoritesStore
     let fontScale: HerdrFontScaleStore
     let agentControl: AgentControlController
+    let updates: HerdrUpdateController
     @Environment(HerdPulseCoordinator.self) private var herdPulse
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
@@ -516,7 +517,8 @@ struct AppRootView: View {
                     model: model,
                     shell: shell,
                     activeWorkStore: activeWorkStore,
-                    modelFavorites: modelFavorites
+                    modelFavorites: modelFavorites,
+                    updates: updates
                 )
             } else {
                 OnboardingView(model: model)

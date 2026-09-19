@@ -110,6 +110,254 @@ struct PiTurnSegmentationTests {
         }
     }
 
+    @Test("Grouped mode keeps all assistant text hidden until the turn settles")
+    func groupedModeWaitsForTurnSettlement() {
+        let turn = PiConversationTurn(
+            id: "turn:1",
+            user: PiUserMessage(id: "user:1", text: "Prompt", timestamp: nil),
+            items: [
+                assistant("commentary:1"),
+                tool("tool:1"),
+                assistant("answer:1"),
+            ],
+            startedAt: nil,
+            isActive: true
+        )
+
+        let segments = PiTurnSegmentation.segments(for: turn, groupAllActivity: true)
+
+        #expect(segments.count == 1)
+        guard case let .working(group) = segments.first else {
+            Issue.record("Expected one grouped activity disclosure")
+            return
+        }
+        #expect(group.id == "working:turn:turn:1")
+        #expect(group.items.map(\.id) == ["commentary:1", "tool:1", "answer:1"])
+        #expect(group.isLive)
+    }
+
+    @Test("Grouped mode releases only the terminal answer after settlement")
+    func groupedModeReleasesOnlyTerminalAnswer() {
+        let turn = PiConversationTurn(
+            id: "turn:1",
+            user: PiUserMessage(id: "user:1", text: "Prompt", timestamp: nil),
+            items: [
+                assistant("commentary:1"),
+                tool("tool:1"),
+                notice("notice:1", tone: .warning),
+                assistant("answer:1"),
+            ],
+            startedAt: nil,
+            isActive: false
+        )
+
+        let segments = PiTurnSegmentation.segments(for: turn, groupAllActivity: true)
+
+        #expect(segments.map(\.id) == [
+            "working:turn:turn:1",
+            "output:notice:1",
+            "output:answer:1",
+        ])
+        guard case let .working(group) = segments.first else {
+            Issue.record("Expected grouped interim activity")
+            return
+        }
+        #expect(group.items.map(\.id) == ["commentary:1", "tool:1"])
+        #expect(!group.isLive)
+        #expect(group.stepCount == 2)
+    }
+
+    @Test("Grouped identity survives the final answer moving out of activity")
+    func groupedIdentitySurvivesSettlement() {
+        var turn = PiConversationTurn(
+            id: "turn:stable",
+            user: PiUserMessage(id: "user:1", text: "Prompt", timestamp: nil),
+            items: [tool("tool:1"), assistant("answer:1")],
+            startedAt: nil,
+            isActive: true
+        )
+        let active = PiTurnSegmentation.segments(for: turn, groupAllActivity: true)
+        turn.isActive = false
+        let settled = PiTurnSegmentation.segments(for: turn, groupAllActivity: true)
+
+        #expect(active.first?.id == "working:turn:turn:stable")
+        #expect(active.first?.id == settled.first?.id)
+        #expect(settled.last?.id == "output:answer:1")
+    }
+
+    @Test("Grouped failures stay in the disclosure summary")
+    func groupedFailuresStayVisible() {
+        let turn = PiConversationTurn(
+            id: "turn:failed",
+            user: PiUserMessage(id: "user:1", text: "Prompt", timestamp: nil),
+            items: [
+                tool("tool:failed", status: .failed),
+                assistant("assistant:failed", status: .failed("Provider unavailable")),
+                notice("notice:error", tone: .error),
+            ],
+            startedAt: nil,
+            isActive: false
+        )
+
+        let segments = PiTurnSegmentation.segments(for: turn, groupAllActivity: true)
+
+        guard case let .working(group) = segments.first else {
+            Issue.record("Expected failures in one activity disclosure")
+            return
+        }
+        #expect(segments.map(\.id) == [
+            "working:turn:turn:failed",
+            "output:assistant:failed",
+            "output:notice:error",
+        ])
+        #expect(group.failureCount == 1)
+        #expect(group.hasFailure)
+    }
+
+    @Test("Grouped mode releases every text part of the terminal message")
+    func groupedModeReleasesMultipartFinalAnswer() {
+        let turn = PiConversationTurn(
+            id: "turn:multipart",
+            user: PiUserMessage(id: "user:1", text: "Prompt", timestamp: nil),
+            items: [
+                assistant("commentary:text:0", stopReason: "toolUse"),
+                tool("tool:1"),
+                assistant("final:text:0", stopReason: "stop"),
+                assistant("final:text:1", stopReason: "stop"),
+            ],
+            startedAt: nil,
+            isActive: false
+        )
+
+        let segments = PiTurnSegmentation.segments(for: turn, groupAllActivity: true)
+
+        #expect(segments.map(\.id) == [
+            "working:turn:turn:multipart",
+            "output:final:text:0",
+            "output:final:text:1",
+        ])
+        guard case let .working(group) = segments.first else {
+            Issue.record("Expected commentary to remain grouped")
+            return
+        }
+        #expect(group.items.map(\.id) == ["commentary:text:0", "tool:1"])
+    }
+
+    @Test("Tool-use commentary is not promoted when no final answer follows")
+    func toolUseCommentaryIsNotPromoted() {
+        let turn = PiConversationTurn(
+            id: "turn:tool-use",
+            user: PiUserMessage(id: "user:1", text: "Prompt", timestamp: nil),
+            items: [assistant("commentary:text:0", stopReason: "toolUse")],
+            startedAt: nil,
+            isActive: false
+        )
+
+        let segments = PiTurnSegmentation.segments(for: turn, groupAllActivity: true)
+
+        #expect(segments.map(\.id) == ["working:turn:turn:tool-use"])
+        guard case let .working(group) = segments.first else {
+            Issue.record("Expected commentary to remain grouped")
+            return
+        }
+        #expect(group.items.map(\.id) == ["commentary:text:0"])
+    }
+
+    @Test("Neutral notices after an explicit multipart stop do not hide the answer")
+    func neutralNoticeAfterExplicitStopPreservesFinalAnswer() {
+        let turn = PiConversationTurn(
+            id: "turn:notice",
+            user: PiUserMessage(id: "user:1", text: "Prompt", timestamp: nil),
+            items: [
+                assistant("commentary:text:0", stopReason: "toolUse"),
+                tool("tool:1"),
+                assistant("final:text:0", stopReason: "stop"),
+                assistant("final:text:1", stopReason: "stop"),
+                notice("notice:info", tone: .neutral),
+            ],
+            startedAt: nil,
+            isActive: false
+        )
+
+        let segments = PiTurnSegmentation.segments(for: turn, groupAllActivity: true)
+
+        #expect(segments.map(\.id) == [
+            "working:turn:turn:notice",
+            "output:final:text:0",
+            "output:final:text:1",
+            "output:notice:info",
+        ])
+    }
+
+    @Test("A trailing error notice prevents stale answer promotion")
+    func trailingErrorPreventsStaleAnswerPromotion() {
+        let turn = PiConversationTurn(
+            id: "turn:error",
+            user: PiUserMessage(id: "user:1", text: "Prompt", timestamp: nil),
+            items: [
+                assistant("commentary:text:0", stopReason: "toolUse"),
+                tool("tool:1"),
+                assistant("stale:text:0", stopReason: "stop"),
+                notice("notice:error", tone: .error),
+            ],
+            startedAt: nil,
+            isActive: false
+        )
+
+        let segments = PiTurnSegmentation.segments(for: turn, groupAllActivity: true)
+
+        #expect(segments.map(\.id) == [
+            "working:turn:turn:error",
+            "output:notice:error",
+        ])
+        guard case let .working(group) = segments.first else {
+            Issue.record("Expected stale assistant text to remain grouped")
+            return
+        }
+        #expect(group.items.map(\.id) == [
+            "commentary:text:0",
+            "tool:1",
+            "stale:text:0",
+        ])
+    }
+
+    @Test("An interrupted conclusion leaves commentary grouped and errors visible")
+    func interruptedConclusionDoesNotPromoteCommentary() {
+        let turn = PiConversationTurn(
+            id: "turn:aborted",
+            user: PiUserMessage(id: "user:1", text: "Prompt", timestamp: nil),
+            items: [
+                assistant("commentary:text:0", stopReason: "toolUse"),
+                assistant(
+                    "aborted:text:0",
+                    status: .failed("Interrupted"),
+                    stopReason: "aborted"
+                ),
+                notice("aborted:notice", tone: .warning),
+            ],
+            startedAt: nil,
+            isActive: false
+        )
+
+        let segments = PiTurnSegmentation.segments(for: turn, groupAllActivity: true)
+
+        #expect(segments.map(\.id) == [
+            "working:turn:turn:aborted",
+            "output:aborted:text:0",
+            "output:aborted:notice",
+        ])
+        guard case let .working(group) = segments.first else {
+            Issue.record("Expected commentary to remain grouped")
+            return
+        }
+        #expect(group.items.map(\.id) == ["commentary:text:0"])
+    }
+
+    @Test("Whole-turn grouping remains opt-in for compatibility")
+    func wholeTurnGroupingDefaultsOff() {
+        #expect(!ChatActivityPreferences.defaultGroupAllClankingActivity)
+    }
+
     private func workingGroup(_ items: [PiConversationItem]) -> PiWorkingGroup {
         let segments = PiTurnSegmentation.segments(for: items)
         guard case let .working(group) = segments.first else {
@@ -118,8 +366,18 @@ struct PiTurnSegmentationTests {
         return group
     }
 
-    private func assistant(_ id: String, status: PiAssistantBlock.Status = .complete) -> PiConversationItem {
-        .assistant(PiAssistantBlock(id: id, text: "Output", status: status, timestamp: nil))
+    private func assistant(
+        _ id: String,
+        status: PiAssistantBlock.Status = .complete,
+        stopReason: String? = nil
+    ) -> PiConversationItem {
+        .assistant(PiAssistantBlock(
+            id: id,
+            text: "Output",
+            status: status,
+            timestamp: nil,
+            stopReason: stopReason
+        ))
     }
 
     private func thinking(_ id: String, isStreaming: Bool = false) -> PiConversationItem {

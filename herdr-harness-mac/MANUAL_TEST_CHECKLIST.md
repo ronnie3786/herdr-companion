@@ -14,6 +14,16 @@ Use your configured Herdr Mac build with sample sessions. Check off each item af
 
 - [ ] **HUD attachments:** Drop an image and a small text file from Finder into the open HUD. Check the attachment chips, remove one, and send the other. Repeat with a file and no message. Sent files appear in chat; Herdr keeps a copy so attachments survive moving the original and restarting.
 
+- [ ] **Screenshot thumbnail drop:** Take a screenshot with ⇧⌘5 (or ⇧⌘4) and drag the preview thumbnail straight into the open HUD chat or onto the collapsed orb without saving it first. The HUD should highlight while you drag and stage the PNG beside your draft. Drop it on the Desktop first and repeat from there: both routes should end in the same staged attachment.
+
+- [ ] **App Shots is never silent:** Open **Settings → HUD → App Shots** and watch the Command keys readout while you hold the left, then the right Command key. Press both together: the HUD notice should show **Capturing frontmost window…** and then **Screenshot added to New chat**. Repeat with the HUD hidden (turn the HUD off first) and confirm the macOS notification appears, the HUD turns itself back on, and the image is staged. Repeat with Screen Recording denied to confirm the failure is shown and recorded under **Last** in the same section.
+
+- [ ] **Every capture route:** From a frontmost app that is not Herdr, press ⌃⌥C, then use **File → Capture Frontmost Window**, then **Capture frontmost window** in the orb's context menu, then **Test capture now** in Settings. All four should stage the same kind of PNG in a new HUD chat, and **Last** should name the route that fired.
+
+- [ ] **App Shots target:** With Herdr's HUD open and focused, press both Command keys. The capture should be of the app you were using before Herdr, not of the HUD.
+
+- [ ] **Update indicator:** In a signed release build with an update available, the window's top bar shows a version badge. Choose **Later** on the banner: the banner disappears and the badge stays. Click the badge to reopen the update, and confirm **Settings → Updates** reports the channel, the ten-minute cadence, and the last check.
+
 - [ ] **Favorite models and short names:** In a model picker, choose **Favorite [current model]** or **Manage Favorites**. Favorites should appear first in HUD and chat-pane pickers, using consistent short names. Unfavorite one and restart to check persistence. Matching names from different providers remain distinguishable.
 
 - [ ] **Code-block paste:** Copy code and click **Paste Code Block** in each composer. The draft should contain opening triple backticks, your text on the next lines, and closing triple backticks. It waits for you to send. Existing backticks get a longer outer fence so the pasted block stays intact.
@@ -48,3 +58,35 @@ Once Apple push is configured and the updated iOS app is installed with notifica
 - [ ] Let an agent finish while the iPhone app is in the background. Leave the session unread for more than a minute. Expect one notification; tap it and confirm it opens the correct machine and chat.
 - [ ] Repeat, but read the session within the first minute. Expect no delayed push for that result.
 - [ ] With the iOS app connected, verify its local fallback also waits a minute and that reading the session clears matching notifications when read state syncs.
+
+
+## Chat activity, HUD controls, and navigation
+
+Use synthetic demo data or a disposable test conversation for these checks.
+
+- Turn on Settings > General > Chat > Group all Clanking activity. Send a prompt that produces
+  interim text, several tool calls, and a final answer. Confirm one collapsed
+  Clanking row stays between the prompt and final answer. Expand it during work,
+  confirm activity updates without changing the expansion choice, then collapse it.
+- Confirm the final answer stays hidden until the turn finishes. Check an answer
+  with multiple text blocks, a stopped turn, a tool failure, and an input request.
+  Failures and requests must remain discoverable and usable. Turn grouping off and
+  verify the original transcript order returns without losing any text.
+- In a HUD chat, verify Clanking never expands automatically on a tool failure.
+  Run a request and confirm the collapsed bubble and open chat have yellow borders;
+  completion should return to the appropriate completed/idle appearance.
+- Right-click a HUD chat and choose Smart Rename. Verify loading, a short title,
+  persistence after restart and after remove/reopen from history, and an error
+  when naming cannot finish. Switch to another chat while naming and verify the
+  original chat is renamed. Removing/ending a chat must not let a stale result
+  affect a replacement chat.
+- Open Git in a new window, resize it, switch the main chat to another repository,
+  and verify the detached view remains on its original pane and machine. Reopen
+  the same target and verify its existing window is used. Test disconnect/reconnect
+  and a removed pane, and check existing read-only restrictions.
+- Verify All, Today, and Recents range segments. With 0 machines verify the machine
+  selector is hidden. With 1, 2, and 3 machines verify machine segments; with 4
+  verify the menu. All must remain available, and Manage Machines must remain in
+  the sidebar footer. Check long names, a narrow sidebar, VoiceOver labels, and
+  increased app text size. Confirm archived Previous chat sections retain their
+  existing excerpt presentation.

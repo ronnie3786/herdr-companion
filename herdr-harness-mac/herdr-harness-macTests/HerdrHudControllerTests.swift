@@ -827,6 +827,166 @@ struct HerdrHudControllerTests {
         #expect(harness.controller.isEnabled)
     }
 
+    @Test("A detected chord is visible before the capture resolves and records its route and signal")
+    func chordTriggerIsObservable() async throws {
+        let barrier = ScreenshotCaptureBarrier()
+        let recorder = AppShotNotificationRecorder()
+        let harness = makeHarness(
+            screenshotCapture: { try await barrier.capture($0) },
+            notificationRecorder: recorder
+        )
+        defer {
+            harness.controller.setEnabled(false)
+            barrier.cancelAll()
+        }
+
+        harness.controller.captureFrontmostWindow(trigger: .chord, signal: .flagsState)
+        try await barrier.waitUntilStarted()
+
+        #expect(harness.controller.appShotStatus.isCapturing)
+        #expect(harness.controller.appShotDiagnostics.lastTrigger == .chord)
+        #expect(harness.controller.appShotDiagnostics.lastSignal == .flagsState)
+        // The panel is already on screen, so the HUD notice is the feedback.
+        #expect(recorder.notifications.isEmpty)
+
+        let source = temporaryURL(named: "chord.png")
+        _ = try writeSyntheticPNG(to: source)
+        barrier.succeed(with: source)
+        try await waitUntil { !harness.controller.isCapturingWindowScreenshot }
+
+        #expect(harness.controller.appShotStatus == .attached(filename: source.lastPathComponent))
+        #expect(harness.controller.appShotDiagnostics.lastOutcome == "Attached \(source.lastPathComponent)")
+        harness.controller.clearAppShotStatus()
+        #expect(harness.controller.appShotStatus == .idle)
+    }
+
+    @Test("A trigger with the HUD hidden notifies, enables the HUD, and still stages the image")
+    func hiddenHudTriggerNotifiesAndEnables() async throws {
+        let recorder = AppShotNotificationRecorder()
+        let harness = makeHarness(
+            screenshotCapture: { _ in
+                let url = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("\(UUID().uuidString)-hidden.png")
+                _ = try self.writeSyntheticPNG(to: url)
+                return url
+            },
+            notificationRecorder: recorder
+        )
+        defer { harness.controller.setEnabled(false) }
+        harness.controller.setEnabled(false)
+        #expect(!harness.controller.isEnabled)
+
+        harness.controller.captureFrontmostWindow(trigger: .hotKey)
+        try await waitUntil { !harness.controller.isCapturingWindowScreenshot }
+
+        #expect(harness.controller.isEnabled)
+        try await waitUntil { !recorder.notifications.isEmpty }
+        #expect(recorder.notifications.first == .detected())
+        guard case .attached = harness.controller.appShotStatus else {
+            Issue.record("expected the staged attachment, got \(harness.controller.appShotStatus)")
+            return
+        }
+        #expect(harness.controller.appShotDiagnostics.lastTrigger == .hotKey)
+        #expect(harness.controller.chats?.composer.pendingAttachments.count == 1)
+    }
+
+    @Test("A capture failure is visible, notified, and recorded with its route")
+    func failureIsObservable() async throws {
+        struct CaptureFailure: LocalizedError {
+            var errorDescription: String? { "Grant Screen Recording." }
+        }
+        let recorder = AppShotNotificationRecorder()
+        let harness = makeHarness(
+            screenshotCapture: { _ in throw CaptureFailure() },
+            notificationRecorder: recorder
+        )
+        defer { harness.controller.setEnabled(false) }
+        harness.controller.setEnabled(false)
+
+        harness.controller.captureFrontmostWindow(trigger: .menu)
+        try await waitUntil { !harness.controller.isCapturingWindowScreenshot }
+
+        #expect(harness.controller.appShotStatus == .failed(message: "Grant Screen Recording."))
+        #expect(harness.controller.appShotDiagnostics.lastTrigger == .menu)
+        #expect(harness.controller.appShotDiagnostics.lastOutcome == "Grant Screen Recording.")
+        // Notifications are delivered asynchronously; wait for the outcome notice.
+        try await waitUntil { recorder.notifications.count == 2 }
+        #expect(recorder.notifications == [.detected(), .failed(message: "Grant Screen Recording.")])
+    }
+
+    @Test("Turning App Shots notifications off keeps the HUD notice")
+    func notificationsCanBeDisabled() async throws {
+        let recorder = AppShotNotificationRecorder()
+        let harness = makeHarness(notificationRecorder: recorder)
+        defer { harness.controller.setEnabled(false) }
+        harness.controller.setAppShotNotificationsEnabled(false)
+        #expect(!harness.controller.areAppShotNotificationsEnabled)
+        harness.controller.setEnabled(false)
+
+        harness.controller.captureFrontmostWindow(trigger: .settings)
+        try await waitUntil { !harness.controller.isCapturingWindowScreenshot }
+
+        #expect(recorder.notifications.isEmpty)
+        #expect(harness.controller.isEnabled)
+        #expect(harness.controller.appShotDiagnostics.lastTrigger == .settings)
+        #expect(!harness.controller.appShotStatus.isCapturing)
+    }
+
+    @Test("The capture target is the frontmost app reported by the host")
+    func captureTargetComesFromTheProvider() async throws {
+        let targets = TargetRecorder()
+        let harness = makeHarness(
+            screenshotSelection: { processID in
+                targets.record(processID)
+                return HerdrFocusedWindowTarget(processID: processID ?? 0, windowID: 7)
+            },
+            frontmostProcessID: 4242
+        )
+        defer { harness.controller.setEnabled(false) }
+
+        harness.controller.captureFrontmostWindow(trigger: .settings)
+        try await waitUntil { !harness.controller.isCapturingWindowScreenshot }
+
+        #expect(targets.processIDs == [4242])
+    }
+
+    @Test("Turning App Shots off unregisters the shortcut and the diagnostics say so")
+    func disablingAppShotsUnregisters() {
+        let harness = makeHarness()
+        defer { harness.controller.setEnabled(false) }
+        #expect(harness.controller.areAppShotsEnabled)
+        #expect(harness.controller.appShotDiagnostics.isChordRegistered)
+
+        harness.controller.setAppShotsEnabled(false)
+        #expect(!harness.controller.areAppShotsEnabled)
+        #expect(!harness.controller.appShotDiagnostics.isChordRegistered)
+        #expect(!harness.controller.appShotDiagnostics.isHotKeyRegistered)
+
+        harness.controller.setAppShotsEnabled(true)
+        #expect(harness.controller.appShotDiagnostics.isChordRegistered)
+    }
+
+    @Test("The App Shots readout is available to settings without starting a capture")
+    func readoutIsAvailable() {
+        let harness = makeHarness()
+        defer { harness.controller.setEnabled(false) }
+        harness.controller.refreshAppShotDiagnostics()
+
+        #expect(harness.controller.currentCommandKeyState() == .released)
+        #expect(harness.controller.commandKeyReadoutText().contains("Left ⌘ up"))
+        #expect(!harness.controller.isAppShotKeyboardAccessGranted)
+        #expect(!harness.controller.requestAppShotKeyboardAccess())
+    }
+
+    @MainActor
+    private final class TargetRecorder {
+        private(set) var processIDs: [pid_t?] = []
+
+        func record(_ processID: pid_t?) {
+            processIDs.append(processID)
+        }
+    }
+
     @MainActor
     private final class ScreenshotCaptureBarrier {
         private var continuations: [Int: CheckedContinuation<URL, any Error>] = [:]
@@ -884,12 +1044,25 @@ struct HerdrHudControllerTests {
         let controller: HerdrHudController
     }
 
+    /// Records App Shots notifications instead of posting them, so the visible
+    /// feedback contract is deterministic.
+    @MainActor
+    private final class AppShotNotificationRecorder {
+        private(set) var notifications: [HerdrAppShotNotification] = []
+
+        func post(_ notification: HerdrAppShotNotification) async {
+            notifications.append(notification)
+        }
+    }
+
     private func makeHarness(
         chipRegroupDelay: Duration = .seconds(5),
         includesVoice: Bool = false,
         attachmentHoverGrace: Duration = .milliseconds(180),
         screenshotSelection: HerdrHudController.FocusedWindowSelection? = nil,
-        screenshotCapture: HerdrHudController.FocusedWindowScreenshotCapture? = nil
+        screenshotCapture: HerdrHudController.FocusedWindowScreenshotCapture? = nil,
+        frontmostProcessID: pid_t? = 321,
+        notificationRecorder: AppShotNotificationRecorder? = nil
     ) -> Harness {
         HerdrTestAppIcon.install()
         let defaults = makeDefaults()
@@ -908,11 +1081,17 @@ struct HerdrHudControllerTests {
             focusedWindowScreenshotCapture: screenshotCapture ?? { _ in
                 throw HerdrFocusedWindowScreenshotError.captureFailed
             },
-            screenshotShortcutStateProvider: {
-                HerdrDualCommandShortcut.State(
-                    isLeftCommandPressed: false,
-                    isRightCommandPressed: false
-                )
+            // Deterministic idle detector: no test depends on this Mac's keyboard.
+            screenshotShortcutStateProvider: { .released },
+            commandKeyMonitor: HerdrCommandKeyMonitor(
+                keyStateQuery: { _, _ in false },
+                flagsQuery: { _ in 0 },
+                listenEventAccess: { false },
+                requestListenEventAccess: { false }
+            ),
+            frontmostProcessProvider: { frontmostProcessID },
+            appShotNotificationPoster: { [weak notificationRecorder] notification in
+                await notificationRecorder?.post(notification)
             }
         )
         let voice = includesVoice ? QuickVoicePanelController(defaults: defaults) : nil

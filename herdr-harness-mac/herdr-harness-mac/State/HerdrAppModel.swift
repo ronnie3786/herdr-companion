@@ -53,7 +53,9 @@ final class HerdrAppModel {
     var selectedPaneID: String?
     var workspacePath: [WorkspaceRoute] = []
     var isSidebarPresented = false
-    var sidebarRecency: SidebarRecency = .all
+    var sidebarRecency: SidebarRecency {
+        didSet { sidebarRecency.save(to: userDefaults) }
+    }
     var collapsedSidebarWorkspaceIDs: Set<String>
     var collapsedSidebarMachineIDs: Set<String>
     var collapsedSidebarTabIDs: Set<String>
@@ -231,6 +233,7 @@ final class HerdrAppModel {
     ) {
         self.credentials = credentials
         self.userDefaults = userDefaults
+        sidebarRecency = SidebarRecency.load(from: userDefaults)
         let forcedDemo = arguments.contains("-HerdrDemoMode")
         let isolateResponseBriefs = forcedDemo
             || Self.isRunningTests
@@ -259,6 +262,8 @@ final class HerdrAppModel {
             defaults.removeObject(forKey: "herdr.sidebar.collapsedTabs")
             defaults.removeObject(forKey: "herdr.sidebar.collapsedSessions")
             defaults.removeObject(forKey: "herdr.sidebar.starredChats")
+            defaults.removeObject(forKey: SidebarRecency.defaultsKey)
+            sidebarRecency = .all
         }
         #else
         let uiTestServerURL: String? = nil

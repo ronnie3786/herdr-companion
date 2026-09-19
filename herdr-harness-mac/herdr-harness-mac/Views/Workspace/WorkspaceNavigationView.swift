@@ -18,6 +18,7 @@ struct WorkspaceNavigationView: View {
     @Bindable var shell: HerdrShellState
     @Bindable var activeWorkStore: ActiveWorkStore
     let modelFavorites: ModelFavoritesStore
+    let updates: HerdrUpdateController
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @Environment(\.openWindow) private var openWindow
 
@@ -326,6 +327,13 @@ struct WorkspaceNavigationView: View {
             .disabled(!model.canControl)
             .help("Ask a one-off question without creating a chat")
             .accessibilityIdentifier("open-headless-agent")
+        }
+        .sharedBackgroundVisibility(.hidden)
+
+        // Appears only while a check has a newer release to offer, so updating
+        // never requires the menu bar.
+        ToolbarItem(placement: .primaryAction) {
+            HerdrUpdateToolbarItem(updates: updates)
         }
         .sharedBackgroundVisibility(.hidden)
 

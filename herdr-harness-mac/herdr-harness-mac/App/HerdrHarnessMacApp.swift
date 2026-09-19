@@ -9,6 +9,7 @@ import UniformTypeIdentifiers
 enum HerdrWindowID {
     static let main = "herdr-main"
     static let activeWorkBoard = "herdr-active-work-board"
+    static let workspaceGit = "herdr-workspace-git"
 }
 
 enum HerdrExternalEvent {
@@ -66,10 +67,11 @@ struct HerdrHarnessMacApp: App {
                 promptSettings: promptSettings,
                 modelFavorites: modelFavorites,
                 fontScale: fontScale,
-                agentControl: agentControl
+                agentControl: agentControl,
+                updates: updates
             )
                 .safeAreaInset(edge: .top, spacing: 0) {
-                    if let version = updates.availableVersion {
+                    if updates.isBannerVisible, let version = updates.availableVersion {
                         HerdrUpdateBanner(version: version, updates: updates)
                     }
                 }
@@ -113,6 +115,26 @@ struct HerdrHarnessMacApp: App {
                 .tint(HerdrTheme.accent)
         }
         .defaultSize(width: 1280, height: 860)
+
+        WindowGroup("Workspace Git", id: HerdrWindowID.workspaceGit, for: WorkspaceGitWindowTarget.self) { $target in
+            if let target {
+                WorkspaceGitWindowRoot(model: model, driver: connectionDriver, target: target)
+                    .environment(herdPulse)
+                    .environment(\.herdrFontScale, fontScale.scale)
+            } else {
+                ContentUnavailableView(
+                    "Workspace unavailable",
+                    systemImage: PaneDetailMode.git.symbol,
+                    description: Text("Open Git from a workspace session.")
+                )
+                .frame(minWidth: 720, minHeight: 520)
+                .background(HerdrTheme.ink)
+                .foregroundStyle(HerdrTheme.text)
+                .preferredColorScheme(.dark)
+            }
+        }
+        .defaultSize(width: 1120, height: 760)
+        .windowResizability(.contentMinSize)
 
         // ⌘, — replaces the iOS Settings tab.
         Settings {
@@ -183,6 +205,14 @@ struct HerdrMacCommands: Commands {
             }
             .keyboardShortcut("a", modifiers: [.command, .option])
             .disabled(!model.canControl)
+
+            // Same capture path as the both-Command chord, but permission-free:
+            // Carbon hot keys need neither Accessibility nor Input Monitoring.
+            Button("Capture Frontmost Window", systemImage: "viewfinder") {
+                hudController.captureFrontmostWindow(trigger: .menu)
+            }
+            .keyboardShortcut("c", modifiers: [.control, .option])
+            .accessibilityIdentifier("menu-capture-frontmost-window")
         }
 
         // View menu, after the system's own "Toggle Sidebar" item.

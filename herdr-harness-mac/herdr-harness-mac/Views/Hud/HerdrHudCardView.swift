@@ -34,6 +34,14 @@ struct HerdrHudCardView: View {
                 openPaneInMainWindow: openPaneInMainWindow,
                 collapse: controller.collapse
             )
+            // Inside the card, so a capture notice never asks the panel to grow:
+            // the transcript above it absorbs the difference.
+            if HerdrHudAppShotNotice.notice(for: controller.appShotStatus) != nil {
+                HerdrHudAppShotStatusView(controller: controller, showsFullTitle: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, HerdrTheme.cardPadding)
+                    .padding(.top, 8)
+            }
             Divider().overlay { HerdrTheme.separator }
             if session.exchanges.contains(where: { $0.promotedPaneID != nil }) {
                 VStack(spacing: 8) {
@@ -57,7 +65,7 @@ struct HerdrHudCardView: View {
         .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.cardRadius))
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
-                .strokeBorder(HerdrTheme.separator, lineWidth: 1)
+                .strokeBorder(cardOutlineColor, lineWidth: 1)
         }
         .overlay {
             if isDropTargeted {
@@ -69,8 +77,18 @@ struct HerdrHudCardView: View {
         // without the dense, wide halo of a single high-opacity shadow.
         .shadow(color: HerdrTheme.ink.opacity(0.16), radius: 18, y: 6)
         .shadow(color: HerdrTheme.ink.opacity(0.10), radius: 3, y: 2)
+        .shadow(color: cardWorkingShadowColor, radius: 4)
         .onDrop(of: [.fileURL, .image], isTargeted: $isDropTargeted) { providers in
             session.acceptAttachmentDrop(providers)
+        }
+        // The AppKit target accepts file promises (the system screenshot preview),
+        // which SwiftUI's provider-based `onDrop` cannot match. It sits behind the
+        // card so clicks and drag-to-move stay with the content above it.
+        .background {
+            HerdrHudDropTarget(
+                onTargetingChanged: { isDropTargeted = $0 },
+                onDrop: { session.acceptPasteboardDrop($0) }
+            )
         }
         .task(id: session.selectedMachineID) {
             if session.needsHistoryRefresh { await session.refreshSavedHistory(model: model) }
@@ -98,6 +116,16 @@ struct HerdrHudCardView: View {
                 && (exchange.status == .completed || exchange.status == .promoted)
         }) != nil
         session.responseAudioPlayer.responseDidChange(hasResponse: hasResponse)
+    }
+
+    private var cardOutlineColor: Color {
+        session.isRunning
+            ? HerdrHudNotificationPresentation.outlineColor(for: AgentStatus.working).opacity(0.25)
+            : HerdrTheme.separator
+    }
+
+    private var cardWorkingShadowColor: Color {
+        session.isRunning ? AgentStatus.working.color.opacity(0.16) : .clear
     }
 
     private func openPaneInMainWindow(_ paneID: String) {

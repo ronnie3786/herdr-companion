@@ -51,6 +51,7 @@ struct PaneSessionView: View {
     var modeApplied: ((PaneDetailMode) -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.herdrFontScale) private var fontScale
+    @Environment(\.openWindow) private var openWindow
     @FocusState private var isTerminalFocused: Bool
     @State private var keyboardRouter = TerminalKeyboardRouter()
     @State private var output = "Connecting to terminal…"
@@ -110,6 +111,16 @@ struct PaneSessionView: View {
             )
         }
         .toolbar {
+            if selectedMode == .git {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Open Git in New Window", systemImage: "rectangle.on.rectangle") {
+                        openGitWindow()
+                    }
+                    .labelStyle(.iconOnly)
+                    .help("Open Git in a separate window")
+                    .accessibilityIdentifier("pane-git-open-window")
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 PaneActionsMenu(
                     model: model,
@@ -441,6 +452,11 @@ struct PaneSessionView: View {
         } else {
             selectedMode = .git
         }
+    }
+
+    private func openGitWindow() {
+        let target = WorkspaceGitWindowTarget(pane: currentPane)
+        openWindow(id: HerdrWindowID.workspaceGit, value: target)
     }
 
     private func discardComposerState() {

@@ -165,6 +165,8 @@ final class HerdrHudSession {
     private(set) var hasUnseenAnswer = false
     private(set) var elapsedSeconds = 0
     private(set) var liveStepCount = 0
+    private(set) var liveSteps: [HerdrHudStep] = []
+    private(set) var liveResponse: String?
     private(set) var validationError: String?
     private(set) var promoteErrorMessage: String?
     private(set) var audioErrorMessage: String?
@@ -1587,6 +1589,8 @@ final class HerdrHudSession {
     ) async -> HeadlessAgentRun? {
         elapsedSeconds = 0
         liveStepCount = 0
+        liveSteps = []
+        liveResponse = nil
         do {
             if !capabilitiesChecked {
                 try await model.requireDurableHUD(
@@ -1667,6 +1671,9 @@ final class HerdrHudSession {
             if count != liveStepCount {
                 liveStepCount = count
             }
+            let steps = Self.hudSteps(from: controller.run?.steps ?? [])
+            if steps != liveSteps { liveSteps = steps }
+            if controller.run?.response != liveResponse { liveResponse = controller.run?.response }
         }
         return controller.run
     }
@@ -1692,6 +1699,8 @@ final class HerdrHudSession {
         elapsedTask = nil
         elapsedSeconds = 0
         liveStepCount = 0
+        liveSteps = []
+        liveResponse = nil
     }
 
     static func hudSteps(from steps: [HeadlessAgentStep]) -> [HerdrHudStep] {

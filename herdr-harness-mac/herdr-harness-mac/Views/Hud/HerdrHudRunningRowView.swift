@@ -3,6 +3,8 @@ import SwiftUI
 struct HerdrHudRunningRowView: View {
     @Bindable var model: HerdrAppModel
     @Bindable var session: HerdrHudSession
+    @AppStorage(ChatActivityPreferences.groupAllClankingActivityKey)
+    private var groupAllClankingActivity = ChatActivityPreferences.defaultGroupAllClankingActivity
 
     var body: some View {
         HStack(spacing: 8) {
@@ -25,6 +27,9 @@ struct HerdrHudRunningRowView: View {
     }
 
     private var statusText: String {
+        if groupAllClankingActivity {
+            return "Working · \(session.elapsedSeconds)s"
+        }
         guard session.liveStepCount > 0 else {
             return "Thinking… \(session.elapsedSeconds)s"
         }

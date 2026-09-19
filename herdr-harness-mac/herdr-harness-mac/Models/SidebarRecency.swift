@@ -8,6 +8,26 @@ enum SidebarRecency: String, CaseIterable, Identifiable, Sendable {
     case recents
 
     static let recentsLimit = 20
+    static let pickerCases: [SidebarRecency] = [.all, .today, .recents]
+    static let defaultsKey = "herdr.sidebar.recency"
+
+    static func load(from defaults: UserDefaults = .standard) -> SidebarRecency {
+        guard let rawValue = defaults.string(forKey: defaultsKey),
+              let stored = SidebarRecency(rawValue: rawValue)
+        else { return .all }
+
+        switch stored {
+        case .last3Days, .thisWeek:
+            defaults.set(SidebarRecency.all.rawValue, forKey: defaultsKey)
+            return .all
+        case .all, .today, .recents:
+            return stored
+        }
+    }
+
+    func save(to defaults: UserDefaults = .standard) {
+        defaults.set(rawValue, forKey: Self.defaultsKey)
+    }
 
     var id: Self { self }
 

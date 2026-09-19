@@ -109,6 +109,48 @@ struct PiTimelineRowTests {
         #expect(rows.last?.content == .output(.assistant(failed)))
     }
 
+    @Test("Grouped timeline shows one activity row and a settled final answer")
+    func groupedTimelineHasOneActivityRowAndFinalAnswer() {
+        let rows = PiTimelineRow.rows(
+            for: [turn(id: "turn:1", items: [
+                .assistant(assistant(id: "commentary", text: "I’ll inspect that.")),
+                .thinking(thinking(id: "thinking")),
+                .tool(tool(id: "command")),
+                .assistant(assistant(id: "answer", text: "The fix is ready.")),
+            ])],
+            groupAllActivity: true
+        )
+
+        #expect(rows.map(\.id) == [
+            "turn:1|user",
+            "turn:1|working:turn:turn:1",
+            "turn:1|output:answer",
+        ])
+        guard case let .working(group) = rows[1].content else {
+            Issue.record("Expected one grouped activity row")
+            return
+        }
+        #expect(group.items.map(\.id) == ["commentary", "thinking", "tool:command"])
+    }
+
+    @Test("Grouped timeline does not expose a completed text block while its turn is active")
+    func groupedTimelineHidesTextUntilTurnFinishes() {
+        let rows = PiTimelineRow.rows(
+            for: [turn(
+                id: "turn:1",
+                items: [.assistant(assistant(id: "answer", text: "Looks final", status: .complete))],
+                isActive: true
+            )],
+            groupAllActivity: true
+        )
+
+        #expect(rows.map(\.id) == ["turn:1|user", "turn:1|working:turn:turn:1"])
+        #expect(!rows.contains { row in
+            if case .output(.assistant(_)) = row.content { return true }
+            return false
+        })
+    }
+
     @Test("The mounted window keeps only the newest rows until earlier rows are requested")
     func windowBoundsMountedRows() {
         let turns = (1...5).map { index in

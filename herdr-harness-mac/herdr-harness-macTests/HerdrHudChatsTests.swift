@@ -727,6 +727,7 @@ struct HerdrHudChatsTests {
             latestRunId: rootID,
             turnCount: 1,
             status: .completed,
+            cwd: nil,
             sessionId: nil,
             promotedPaneId: nil
         )

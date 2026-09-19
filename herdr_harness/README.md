@@ -84,7 +84,7 @@ sets `PATH`, `/usr/bin/env -u PATH` before the installed command lets that value
 apply instead of an inherited default.
 
 Update wrappers or service definitions for `herdr-notes`, `herdr-active-work`, and
-any enabled `herdr-active-work-sync` or `herdr-pr-review-watch` jobs to the same
+any enabled `herdr-active-work-sync`, `herdr-pr-review-watch`, or `herdr-code-factory` jobs to the same
 runtime. Preserve the workers' existing schedule and flags, and give each the same
 explicit configuration and machine selection. Replace only the matching Herdr
 entry in Pi's package settings, preserving other packages. Resolve its installed

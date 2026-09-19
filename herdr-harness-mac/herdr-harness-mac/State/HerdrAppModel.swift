@@ -1323,6 +1323,26 @@ final class HerdrAppModel {
         return try await client.fetchResponseAudioCapabilities()
     }
 
+    func issueReportCapabilities(machineID: String) async throws -> IssueReportCapabilities {
+        if isDemoMode {
+            throw APIError.server(status: 503, message: "Reports are unavailable in demo mode.")
+        }
+        guard let client = client(forMachine: machineID) else {
+            throw APIError.noActiveConnection(machineID: machineID)
+        }
+        return try await client.issueReportCapabilities()
+    }
+
+    func submitIssueReport(_ request: IssueReportRequest, machineID: String) async throws -> IssueReportRecord {
+        if isDemoMode {
+            throw APIError.server(status: 503, message: "Reports are unavailable in demo mode.")
+        }
+        guard let client = client(forMachine: machineID) else {
+            throw APIError.noActiveConnection(machineID: machineID)
+        }
+        return try await client.submitIssueReport(request)
+    }
+
     func fetchAgentModels(machineID: String? = nil) async throws -> AgentModelCatalogResponse {
         if isDemoMode {
             return AgentModelCatalogResponse(

@@ -271,3 +271,100 @@ class ConfiguredFleetDestinationTests(unittest.TestCase):
         link.symlink_to(target)
         with self.assertRaises(FleetError):
             FleetManager(environ=self.load('[fleet.skill_destinations]\nassistant="linked"').environ)
+
+
+class CodeFactoryConfigurationTests(unittest.TestCase):
+    setUp = ConfigurationTests.setUp
+    write = ConfigurationTests.write
+    load = ConfigurationTests.load
+
+    def test_code_factory_section_resolves_to_environment_names(self):
+        token_file = self.root / 'code-factory-token'
+        token_file.write_text('synthetic-dashboard-token\n')
+        token_file.chmod(0o600)
+        config = self.load(f'''[integrations]
+github_repository = "example-owner/example-repo"
+[code_factory]
+repository = "example-owner/factory-repo"
+checkout = "~/projects/checkout"
+worktree_root = "~/x"
+state_path = "state/code-factory.sqlite3"
+runs_root = "runs"
+release_output_root = "~/releases"
+poll_seconds = 30
+trigger_label = "herdr-autofix"
+allowed_authors = "your-username,teammate"
+planner_model = "openai-codex/gpt-6-astra"
+planner_thinking = "xhigh"
+implementer_model = "ollama-cloud/deepseek-v4.1-flash:cloud"
+implementer_thinking = "max"
+max_parallel_issues = 2
+max_review_rounds = 3
+session_timeout_seconds = 3600
+verify_wait_seconds = 1800
+dashboard_host = "tailscale"
+dashboard_port = 9097
+dashboard_token = {{ file = "{token_file}" }}
+release_enabled = true
+release_channel = "preview"
+comment_on_issues = false
+base_branch = "main"
+pi_binary = "pi"
+python = "python3"
+''')
+        environ = config.environ
+        # Relative paths resolve against the (symlink-resolved) configuration directory.
+        config_dir = self.path.resolve().parent
+        expected = {
+            'HERDR_CODE_FACTORY_REPOSITORY': 'example-owner/factory-repo',
+            'HERDR_REVIEW_REPOSITORY': 'example-owner/example-repo',
+            'HERDR_CODE_FACTORY_CHECKOUT': str(self.root / 'projects' / 'checkout'),
+            'HERDR_CODE_FACTORY_WORKTREE_ROOT': str(self.root / 'x'),
+            'HERDR_CODE_FACTORY_STATE_PATH': str(config_dir / 'state' / 'code-factory.sqlite3'),
+            'HERDR_CODE_FACTORY_RUNS_ROOT': str(config_dir / 'runs'),
+            'HERDR_CODE_FACTORY_RELEASE_OUTPUT_ROOT': str(self.root / 'releases'),
+            'HERDR_CODE_FACTORY_POLL_SECONDS': '30',
+            'HERDR_CODE_FACTORY_TRIGGER_LABEL': 'herdr-autofix',
+            'HERDR_CODE_FACTORY_ALLOWED_AUTHORS': 'your-username,teammate',
+            'HERDR_CODE_FACTORY_PLANNER_MODEL': 'openai-codex/gpt-6-astra',
+            'HERDR_CODE_FACTORY_PLANNER_THINKING': 'xhigh',
+            'HERDR_CODE_FACTORY_IMPLEMENTER_MODEL': 'ollama-cloud/deepseek-v4.1-flash:cloud',
+            'HERDR_CODE_FACTORY_IMPLEMENTER_THINKING': 'max',
+            'HERDR_CODE_FACTORY_MAX_PARALLEL_ISSUES': '2',
+            'HERDR_CODE_FACTORY_MAX_REVIEW_ROUNDS': '3',
+            'HERDR_CODE_FACTORY_SESSION_TIMEOUT_SECONDS': '3600',
+            'HERDR_CODE_FACTORY_VERIFY_WAIT_SECONDS': '1800',
+            'HERDR_CODE_FACTORY_DASHBOARD_HOST': 'tailscale',
+            'HERDR_CODE_FACTORY_DASHBOARD_PORT': '9097',
+            'HERDR_CODE_FACTORY_DASHBOARD_TOKEN': 'synthetic-dashboard-token',
+            'HERDR_CODE_FACTORY_RELEASE_ENABLED': 'true',
+            'HERDR_CODE_FACTORY_RELEASE_CHANNEL': 'preview',
+            'HERDR_CODE_FACTORY_COMMENT_ON_ISSUES': 'false',
+            'HERDR_CODE_FACTORY_BASE_BRANCH': 'main',
+            'HERDR_CODE_FACTORY_PI_BIN': 'pi',
+            'HERDR_CODE_FACTORY_PYTHON': 'python3',
+        }
+        for name, value in expected.items():
+            with self.subTest(name=name):
+                self.assertEqual(environ.get(name), value)
+        self.assertTrue(Path(environ['HERDR_CODE_FACTORY_WORKTREE_ROOT']).is_absolute())
+        self.assertNotIn('~', environ['HERDR_CODE_FACTORY_WORKTREE_ROOT'])
+
+    def test_process_environment_wins_and_section_is_optional(self):
+        path = self.write('[code_factory]\nrepository = "example-owner/example-repo"\npoll_seconds = 30\n')
+        config = load_configuration(path, environ={'HOME': str(self.root), 'HERDR_CODE_FACTORY_POLL_SECONDS': '90'})
+        self.assertEqual(config.environ['HERDR_CODE_FACTORY_POLL_SECONDS'], '90')
+        self.assertEqual(config.environ['HERDR_CODE_FACTORY_REPOSITORY'], 'example-owner/example-repo')
+        without = self.load('[integrations]\ngithub_repository = "example-owner/example-repo"\n')
+        self.assertFalse([name for name in without.environ if name.startswith('HERDR_CODE_FACTORY_')])
+
+    def test_unknown_top_level_section_is_still_rejected(self):
+        with self.assertRaises(ConfigurationError):
+            self.load('[code_factorie]\nrepository = "example-owner/example-repo"\n')
+        with self.assertRaises(ConfigurationError):
+            self.load('[code_factory]\nrepository = "example-owner/example-repo"\n[mystery]\nvalue = 1\n')
+
+    def test_sample_configuration_keeps_code_factory_commented_out(self):
+        config = load_configuration(Path(__file__).resolve().parents[1] / 'config.example.toml', environ={})
+        self.assertFalse([name for name in config.environ if name.startswith('HERDR_CODE_FACTORY_')])
+        self.assertIn('[code_factory]', (Path(__file__).resolve().parents[1] / 'config.example.toml').read_text())

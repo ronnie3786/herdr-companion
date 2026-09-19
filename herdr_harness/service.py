@@ -26,6 +26,7 @@ from .client import DEFAULT_SUBSCRIPTIONS, HerdrClient, HerdrClientError
 from .cleanup import DEFAULT_JUDGE_CHARTER, CleanupManager, _parse_time
 from .events import EventBroker
 from .first_mate_store import FirstMateStore
+from .issue_reports import IssueReporter
 from .network import network_payload
 from .normalization import composite_workspaces, pane_index
 from .notes import NotesStore
@@ -164,6 +165,7 @@ class HerdrService:
             on_event=self._dispatch_pi_event,
         )
         self.response_audio = response_audio_service or response_audio.ResponseAudioService(self.environ)
+        self.issue_reports = IssueReporter(self.environ)
         label_store = self.environ.get("HERDR_HARNESS_SESSION_LABEL_STORE_PATH")
         if not label_store and (production_environment or self.environ.get("HOME")):
             label_store = str(Path(self.environ.get("HOME") or Path.home()) / ".config" / "herdr-harness" / "session-labels.json")

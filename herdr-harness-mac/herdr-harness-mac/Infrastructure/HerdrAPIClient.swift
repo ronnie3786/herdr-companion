@@ -751,6 +751,30 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient {
         try await request(path: "/api/v1")
     }
 
+    func issueReportCapabilities() async throws -> IssueReportCapabilities {
+        try await request(path: "/api/v1/issue-reports/capabilities")
+    }
+
+    /// Files a bug report or feature request as a public GitHub issue.
+    ///
+    /// Checks `issue-reports-v1` first so an older companion server produces a
+    /// clear "update the server" error instead of a 404 after a 40 MB upload.
+    func submitIssueReport(_ report: IssueReportRequest) async throws -> IssueReportRecord {
+        try await requireIssueReports()
+        let response: IssueReportResponse = try await request(
+            path: "/api/v1/issue-reports", method: "POST", body: report
+        )
+        guard response.ok else { throw APIError.invalidResponse }
+        return response.report
+    }
+
+    private func requireIssueReports() async throws {
+        let response = try await serverCapabilities()
+        guard response.supportsIssueReports else {
+            throw APIError.server(status: 426, message: "Update the companion server to file bug reports and feature requests from the app.")
+        }
+    }
+
     func startAssistant(_ body: AssistantRequest) async throws -> HeadlessAgentRunEnvelope {
         try await request(path: "/api/v1/agent-runs", method: "POST", body: body)
     }
@@ -1276,6 +1300,14 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient {
         }
         if path == "/api/v1/agent-runs", method == "POST" {
             return 90
+        }
+        if path == "/api/v1/issue-reports", method == "POST" {
+            // The server uploads every attachment to GitHub and files the
+            // issue before answering: up to five sequential `gh` calls of
+            // 120 s each (labels, release view/create, upload, issue create).
+            // Outlive that worst case — giving up earlier leaves an issue
+            // the client never learns about, and "Try again" files it twice.
+            return 600
         }
         if path == "/api/v1/fleet/sync" || path == "/api/v1/fleet/action" {
             // Sync can clone a missing catalog and action handlers may wait

@@ -151,6 +151,7 @@ struct HerdrMacCommands: Commands {
     let hudController: HerdrHudController
     let quickVoiceController: QuickVoicePanelController
     let updates: HerdrUpdateController
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
         // On macOS ⌘B/⌘I/⌘U are Format ▸ Font key equivalents, not text-view
@@ -343,6 +344,20 @@ struct HerdrMacCommands: Commands {
         }
 
         CommandGroup(after: .help) {
+            Button("Report a Bug or Request a Feature…") {
+                // The sheet is hosted by the main window; with it closed the
+                // flag alone would only block agent control until the window
+                // came back by other means.
+                NSApp.activate()
+                openWindow(id: HerdrWindowID.main)
+                shell.isIssueReportPresented = true
+            }
+            .keyboardShortcut("f", modifiers: [.command, .option])
+            .disabled(!model.hasCompletedSetup)
+            .accessibilityIdentifier("menu-report-issue")
+
+            Divider()
+
             Button("Reveal Diagnostics Folder") {
                 revealDiagnosticsFolder()
             }

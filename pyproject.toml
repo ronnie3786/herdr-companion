@@ -24,12 +24,13 @@ herdr-notes = "herdr_harness.commands:notes"
 herdr-hud-chats = "herdr_harness.commands:hud_chats"
 herdr-session-context = "herdr_harness.commands:session_context"
 herdr-active-work = "herdr_harness.commands:active_work"
+herdr-code-factory = "herdr_harness.code_factory.cli:main"
 herdr-active-work-sync = "herdr_commands.herdr_active_work_sync:main"
 herdr-pr-review-watch = "herdr_commands.herdr_pr_review_watch:main"
 herdr-demo = "herdr_commands.setup_herdr_demo:main"
 
 [tool.setuptools]
-packages = ["herdr_harness", "herdr_commands"]
+packages = ["herdr_harness", "herdr_harness.code_factory", "herdr_commands"]
 py-modules = ["herdr_dashboard"]
 include-package-data = true
 

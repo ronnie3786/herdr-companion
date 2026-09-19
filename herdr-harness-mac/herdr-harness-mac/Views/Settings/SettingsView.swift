@@ -11,6 +11,7 @@ struct SettingsView: View {
     @Bindable var updates: HerdrUpdateController
     @Bindable var agentControl: AgentControlController
     @Environment(\.controlActiveState) private var controlActiveState
+    @Environment(\.openWindow) private var openWindow
     @State private var isPresentingMachines = false
     @State private var isPresentingMachineEditor = false
     @State private var editingMachine: HerdrMachine?
@@ -126,6 +127,7 @@ struct SettingsView: View {
         switch pane {
         case .general:
             textSizeSection
+            feedbackSection
             aboutSection
         case .machines:
             statusSection
@@ -669,6 +671,24 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settings-updates-channel-session-notice")
                 }
             }
+        }
+    }
+
+    private var feedbackSection: some View {
+        Section {
+            Button("Report a bug or request a feature…", systemImage: "ladybug") {
+                // The sheet lives on the main window, which may be closed or
+                // behind Settings: bring it back first, then ask for the sheet.
+                NSApp.activate()
+                openWindow(id: HerdrWindowID.main)
+                HerdrMacAppDelegate.requestIssueReport()
+            }
+            .disabled(!model.hasCompletedSetup)
+            .accessibilityIdentifier("settings-report-issue")
+        } header: {
+            Label("Feedback", systemImage: "bubble.left.and.exclamationmark.bubble.right")
+        } footer: {
+            Text("Files a public GitHub issue with your note and attachments through the companion server. Also in the Help menu (⌘⌥F).")
         }
     }
 

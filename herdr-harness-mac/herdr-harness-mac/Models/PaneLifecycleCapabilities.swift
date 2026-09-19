@@ -10,4 +10,8 @@ struct ServerCapabilities: Decodable, Sendable {
     var supportsConversationContext: Bool {
         capabilities?.contains("pi-session-context-v1") == true
     }
+
+    var supportsIssueReports: Bool {
+        capabilities?.contains("issue-reports-v1") == true
+    }
 }

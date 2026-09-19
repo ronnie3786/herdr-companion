@@ -16,11 +16,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
-from . import attachments, response_audio, result_artifacts, voice
+from . import attachments, issue_reports, response_audio, result_artifacts, voice
 from .active_work import ActiveWorkError
 from .first_mate_store import FirstMateError
 from .agent_runs import AgentRunError, MAX_ATTACHMENTS, MODEL_PATTERN, THINKING_LEVELS
 from .alerts import utc_now
+from .issue_reports import IssueReportError
 from .client import HerdrAPIError, HerdrClientError
 from .cleanup import CleanupError
 from .control_validation import (
@@ -404,6 +405,7 @@ def api_description() -> dict:
             "pi-session-context-v1",
             "agent-control-v1",
             "discovery-v1",
+            "issue-reports-v1",
         ],
         "endpoints": {
             "health": "/api/v1/health",
@@ -413,6 +415,8 @@ def api_description() -> dict:
             "uiClients": "/api/v1/ui/clients",
             "firstMate": "/api/v1/first-mate/features",
             "firstMateCapabilities": "/api/v1/first-mate/capabilities",
+            "issueReports": "/api/v1/issue-reports",
+            "issueReportCapabilities": "/api/v1/issue-reports/capabilities",
             "network": "/api/v1/network",
             "snapshot": "/api/v1/snapshot",
             "workspaces": "/api/v1/workspaces",
@@ -832,9 +836,12 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     and segments[4] == "attachments"
                 )
                 agent_run_create = method == "POST" and segments == ["api", "v1", "agent-runs"]
+                issue_report_create = method == "POST" and segments == ["api", "v1", "issue-reports"]
                 voice_upload = method == "POST" and segments[2:] == ["voice", "transcriptions"]
                 if attachment_upload or agent_run_create:
                     maximum = attachments.MAX_ATTACHMENT_JSON_BYTES
+                elif issue_report_create:
+                    maximum = issue_reports.MAX_ISSUE_REPORT_JSON_BYTES
                 elif voice_upload:
                     maximum = voice.MAX_VOICE_JSON_BYTES
                 elif method == "POST" and segments[2:] == ["notes", "import"]:
@@ -872,6 +879,12 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 self._error(exc.status, exc.code, str(exc))
             except FirstMateError as exc:
                 self._error(exc.status, exc.code, str(exc))
+            except IssueReportError as exc:
+                error: dict[str, Any] = {"code": exc.code, "message": str(exc)}
+                if exc.report_id:
+                    # Lets the operator find report.json (and any orphaned assets).
+                    error["reportId"] = exc.report_id
+                self._json_response({"ok": False, "error": error, "generatedAt": utc_now()}, exc.status)
             except WorkspaceToolError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except attachments.AttachmentError as exc:
@@ -1287,6 +1300,10 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 return response
             if tail[:1] == ["first-mate"]:
                 return self._first_mate_route(method, tail[1:], query, body)
+            if method == "GET" and tail == ["issue-reports", "capabilities"]:
+                return service.issue_reports.capabilities()
+            if method == "POST" and tail == ["issue-reports"]:
+                return service.issue_reports.submit(body), 201
             if tail == ["notes"]:
                 if method == "GET":
                     return service.notes.list((query.get("q") or [""])[0])

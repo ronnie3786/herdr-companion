@@ -92,6 +92,9 @@ final class HerdrShellState {
     var pendingFirstMateControlTarget: (machineID: String, featureID: String, inspector: FirstMateInspector)?
     var isCreatingWorkspace = false
     var isAgentPresented = false
+    /// Help ▸ Report a Bug or Request a Feature… (⌘⌥F), also posted by the
+    /// Settings Feedback section through `.herdrPresentIssueReport`.
+    var isIssueReportPresented = false
     /// Navigate ▸ Jump to Pane…. A pasted reference, not a picker: the ids
     /// come from outside the app — a URL, a log line, a message — which is
     /// exactly the case the ⌘K palette cannot serve.
@@ -427,6 +430,7 @@ final class HerdrShellState {
     var agentControlBlockingModal: String? {
         if isCreatingWorkspace { return "create-workspace" }
         if isAgentPresented { return "agent" }
+        if isIssueReportPresented { return "issue-report" }
         if isJumpToPanePresented { return "jump-to-pane" }
         if isCommandPalettePresented { return "command-palette" }
         if piSessionSummaryRequest != nil { return "pi-session-summary" }
@@ -563,6 +567,19 @@ struct AppRootView: View {
                 openPane(id: paneID)
             }
         }
+        .task {
+            // A request made while this window was closed (Settings ▸ Feedback
+            // after `openWindow` recreated it) is parked on the delegate.
+            if HerdrMacAppDelegate.takePendingIssueReport() {
+                shell.isIssueReportPresented = true
+            }
+            for await _ in NotificationCenter.default.notifications(named: .herdrPresentIssueReport) {
+                // Handled here: it must not replay the next time this window
+                // is re-created.
+                _ = HerdrMacAppDelegate.takePendingIssueReport()
+                shell.isIssueReportPresented = true
+            }
+        }
         .task(id: model.hasCompletedSetup && model.smartAlertsEnabled && !model.isDemoMode) {
             await model.prepareSmartAlerts()
         }
@@ -624,6 +641,9 @@ struct AppRootView: View {
                 openPane(id: pane.id)
             }
             .onDisappear { shell.agentInitialPrompt = nil }
+        }
+        .sheet(isPresented: $shell.isIssueReportPresented) {
+            IssueReportView(model: model)
         }
         .alert("Jump to pane", isPresented: $shell.isJumpToPanePresented) {
             TextField("w1:p2", text: $shell.jumpToPaneInput)

@@ -9,10 +9,26 @@ import UserNotifications
 @MainActor
 final class HerdrMacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private static var pendingPaneID: String?
+    private static var isIssueReportPending = false
 
     static func takePendingPaneID() -> String? {
         defer { pendingPaneID = nil }
         return pendingPaneID
+    }
+
+    /// Settings ▸ Feedback and the Help menu ask for the report sheet from
+    /// outside the main window. The flag survives until a main window drains
+    /// it in its first `.task`, so the request is not lost when the window
+    /// had been closed and `openWindow` is still recreating it; the
+    /// notification covers the window that is already open.
+    static func requestIssueReport() {
+        isIssueReportPending = true
+        NotificationCenter.default.post(name: .herdrPresentIssueReport, object: nil)
+    }
+
+    static func takePendingIssueReport() -> Bool {
+        defer { isIssueReportPending = false }
+        return isIssueReportPending
     }
 
     nonisolated static func resolvedPaneID(fromUserInfo userInfo: [AnyHashable: Any]) -> String? {
@@ -62,6 +78,7 @@ final class HerdrMacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
     func applicationDidFinishLaunching(_ notification: Notification) {
         HerdrPerfDiagnostics.start()
         VoiceRecordingPolicy.removeStaleTemporaryRecordings()
+        IssueReportComposer.removeStaleTemporaryDirectories()
         UNUserNotificationCenter.current().delegate = self
     }
 
@@ -105,4 +122,9 @@ extension Notification.Name {
     /// mounted pane session can switch modes from the menu bar without the
     /// shell owning the pane's mode state.
     static let herdrFocusPaneMode = Notification.Name("HerdrFocusPaneMode")
+
+    /// Mac-only. Posted by Settings ▸ General ▸ Feedback so the main window's
+    /// shell presents the "Report a Bug or Request a Feature" sheet without
+    /// Settings holding a reference to it.
+    static let herdrPresentIssueReport = Notification.Name("HerdrPresentIssueReport")
 }

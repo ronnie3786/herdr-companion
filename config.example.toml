@@ -140,6 +140,25 @@ poll_seconds = 10
 # review_exclude_globs = "*.generated.*,vendor/*" # Optional; default includes every file.
 # review_assessor = "~/.pi/agent/agents/pr-review-assessor.md"
 
+[code_factory]
+# Automated issue-to-release pipeline (see docs/code-factory.md). All optional.
+# repository = "YOUR-OWNER/YOUR-REPOSITORY" # Required for issue reports and Code Factory.
+# checkout = "~/projects/your-checkout" # Git checkout whose origin is that repository.
+# worktree_root = "~/.local/share/herdr-companion/code-factory/worktrees"
+# trigger_label = "herdr-autofix"
+# allowed_authors = "your-github-login" # Comma-separated; defaults to the gh login.
+# planner_model = "openai-codex/gpt-6-astra"
+# planner_thinking = "xhigh"
+# implementer_model = "ollama-cloud/deepseek-v4.1-flash:cloud"
+# implementer_thinking = "max"
+# max_parallel_issues = 2
+# max_review_rounds = 3
+# dashboard_host = "tailscale" # A literal IP/host, or "tailscale" to bind the Tailscale IPv4.
+# dashboard_port = 9097
+# dashboard_token = { file = "~/.config/herdr-companion/secrets/code-factory-token" }
+# release_enabled = true # Requires [deployment.macos_release] on this machine.
+# release_channel = "preview"
+
 [apple]
 # Set an identifier namespace that you own when signing/distributing builds.
 bundle_prefix = "org.herdr.companion"

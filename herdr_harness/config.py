@@ -89,6 +89,34 @@ ENVIRONMENT_FIELDS = {
         "review_model": "HERDR_REVIEW_MODEL", "review_assessor": "HERDR_REVIEW_ASSESSOR",
         "review_state_dir": "HERDR_REVIEW_STATE_DIR", "review_exclude_globs": "HERDR_REVIEW_EXCLUDE_GLOBS",
     },
+    "code_factory": {
+        "repository": "HERDR_CODE_FACTORY_REPOSITORY",
+        "checkout": "HERDR_CODE_FACTORY_CHECKOUT",
+        "worktree_root": "HERDR_CODE_FACTORY_WORKTREE_ROOT",
+        "state_path": "HERDR_CODE_FACTORY_STATE_PATH",
+        "runs_root": "HERDR_CODE_FACTORY_RUNS_ROOT",
+        "release_output_root": "HERDR_CODE_FACTORY_RELEASE_OUTPUT_ROOT",
+        "poll_seconds": "HERDR_CODE_FACTORY_POLL_SECONDS",
+        "trigger_label": "HERDR_CODE_FACTORY_TRIGGER_LABEL",
+        "allowed_authors": "HERDR_CODE_FACTORY_ALLOWED_AUTHORS",
+        "planner_model": "HERDR_CODE_FACTORY_PLANNER_MODEL",
+        "planner_thinking": "HERDR_CODE_FACTORY_PLANNER_THINKING",
+        "implementer_model": "HERDR_CODE_FACTORY_IMPLEMENTER_MODEL",
+        "implementer_thinking": "HERDR_CODE_FACTORY_IMPLEMENTER_THINKING",
+        "max_parallel_issues": "HERDR_CODE_FACTORY_MAX_PARALLEL_ISSUES",
+        "max_review_rounds": "HERDR_CODE_FACTORY_MAX_REVIEW_ROUNDS",
+        "session_timeout_seconds": "HERDR_CODE_FACTORY_SESSION_TIMEOUT_SECONDS",
+        "verify_wait_seconds": "HERDR_CODE_FACTORY_VERIFY_WAIT_SECONDS",
+        "dashboard_host": "HERDR_CODE_FACTORY_DASHBOARD_HOST",
+        "dashboard_port": "HERDR_CODE_FACTORY_DASHBOARD_PORT",
+        "dashboard_token": "HERDR_CODE_FACTORY_DASHBOARD_TOKEN",
+        "release_enabled": "HERDR_CODE_FACTORY_RELEASE_ENABLED",
+        "release_channel": "HERDR_CODE_FACTORY_RELEASE_CHANNEL",
+        "comment_on_issues": "HERDR_CODE_FACTORY_COMMENT_ON_ISSUES",
+        "base_branch": "HERDR_CODE_FACTORY_BASE_BRANCH",
+        "pi_binary": "HERDR_CODE_FACTORY_PI_BIN",
+        "python": "HERDR_CODE_FACTORY_PYTHON",
+    },
     "apple": {"app_ids": "HERDR_HARNESS_APP_IDS"},
     "push": {
         "key_id": "HERDR_APNS_KEY_ID", "team_id": "HERDR_APNS_TEAM_ID", "key_path": "HERDR_APNS_KEY_PATH",
@@ -231,7 +259,7 @@ def load_configuration(
                 data = tomllib.load(handle)
         except (OSError, tomllib.TOMLDecodeError):
             raise ConfigurationError("Herdr configuration could not be read as valid TOML") from None
-        allowed_sections = {"version", "machine", "server", "fleet", "providers", "active_work", "first_mate", "remote_activity", "integrations", "push", "apple", "deployment", "environment", "machines"}
+        allowed_sections = {"version", "machine", "server", "fleet", "providers", "active_work", "first_mate", "remote_activity", "integrations", "code_factory", "push", "apple", "deployment", "environment", "machines"}
         if set(data) - allowed_sections:
             raise ConfigurationError("Unrecognized top-level configuration section; use the Herdr cluster configuration sample")
         if data.get("version", 1) != 1:

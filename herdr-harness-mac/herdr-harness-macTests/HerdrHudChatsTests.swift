@@ -689,6 +689,91 @@ struct HerdrHudChatsTests {
         #expect(session.hasEnded)
     }
 
+    @Test("Smart Rename follows its chat across selection changes and persists for reopened history")
+    func smartRenamePersistsForHistory() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.draft = "Plan a pollinator garden"
+        let task = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        let rootID = try #require(session.thread?.rootRunID)
+        HudChatsURLProtocol.finish(rootID)
+        await task.value
+        let original = try #require(fixture.chats.visibleChats.first)
+        fixture.chats.select(original.id)
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Pollinator Garden Plan"}"#)
+        runner.onRun = { fixture.chats.select(nil) }
+        try await fixture.chats.smartRename(original.id, model: fixture.model, runner: runner)
+
+        let renamed = try #require(fixture.chats.chats.first { $0.id == original.id })
+        #expect(renamed.displayTitle == "Pollinator Garden Plan")
+        #expect(fixture.chats.selectedID == nil)
+        let call = try #require(runner.calls.first)
+        #expect(call.prompt.contains("Plan a pollinator garden"))
+        #expect(call.prompt.contains("Answer for Plan a pollinator garden"))
+        #expect(call.thinkingLevel == "low")
+
+        let relaunched = HerdrHudChats(legacySession: fixture.prototype, defaults: fixture.defaults)
+        #expect(relaunched.chats.first(where: { $0.id == original.id })?.displayTitle == "Pollinator Garden Plan")
+
+        try await fixture.chats.dismiss(original.id, model: fixture.model)
+        let summary = HudChatSummary(
+            id: rootID,
+            title: "Plan a pollinator garden",
+            updatedAt: "2026-09-01T12:00:00Z",
+            latestRunId: rootID,
+            turnCount: 1,
+            status: .completed,
+            sessionId: nil,
+            promotedPaneId: nil
+        )
+        let reopenedID = try await fixture.chats.openHistory(summary, machineID: "synthetic", model: fixture.model)
+        let reopened = try #require(fixture.chats.chats.first { $0.id == reopenedID })
+        #expect(reopened.displayTitle == "Pollinator Garden Plan")
+    }
+
+    @Test("Smart Rename rejects duplicate work, invalid output, and stale results after removal")
+    func smartRenameGuards() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.draft = "Compare synthetic trail maps"
+        let task = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        HudChatsURLProtocol.finish(try #require(session.thread?.lastRunID))
+        await task.value
+        let chat = try #require(fixture.chats.visibleChats.first)
+
+        let invalid = FakeNoteAIRunner()
+        invalid.mode = .succeed("not JSON")
+        var duplicateError: Error?
+        invalid.onRun = {
+            do {
+                try await fixture.chats.smartRename(chat.id, model: fixture.model, runner: invalid)
+            } catch {
+                duplicateError = error
+            }
+        }
+        await #expect(throws: HerdrHudChats.SmartRenameError.invalidTitle) {
+            try await fixture.chats.smartRename(chat.id, model: fixture.model, runner: invalid)
+        }
+        #expect(duplicateError as? HerdrHudChats.SmartRenameError == .busy)
+        #expect(fixture.chats.smartRenamingChatIDs.isEmpty)
+        #expect(fixture.chats.chats.first(where: { $0.id == chat.id })?.displayTitle == chat.displayTitle)
+
+        let stale = FakeNoteAIRunner()
+        stale.mode = .succeed(#"{"title":"Stale Trail Map Title"}"#)
+        stale.onRun = { try? await fixture.chats.dismiss(chat.id, model: fixture.model) }
+        await #expect(throws: HerdrHudChats.SmartRenameError.changed) {
+            try await fixture.chats.smartRename(chat.id, model: fixture.model, runner: stale)
+        }
+        #expect(!fixture.chats.chats.contains(where: { $0.id == chat.id }))
+        #expect(fixture.chats.smartRenamingChatIDs.isEmpty)
+    }
+
     @Test("Ending during submission waits for its accepted identity before stopping it")
     func endDuringSubmission() async throws {
         let fixture = try Fixture()

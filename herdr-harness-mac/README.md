@@ -201,3 +201,28 @@ Restarting the harness resumes monitoring already-dispatched work; ambiguous dis
 flagged for inspection instead of being repeated. A chat that needs input, fails, or has no
 confirmed result after 45 minutes is reported as needing attention. The timeout does not stop
 its Pi session. Audio plays while Herdr is running, including with its main window closed.
+
+## Chat activity and detached Git
+
+Settings → General → Chat offers **Group all Clanking activity**. When enabled, each main chat turn
+collects thinking, tool calls, and interim assistant messages into one collapsed
+Clanking disclosure. The final answer appears after the turn finishes. Expand the
+disclosure to inspect the activity, or turn the setting off to keep intermediate
+messages in the timeline. Errors and requests for input remain available.
+The preference also applies to HUD chat responses. HUD Clanking stays collapsed
+until you expand it, even when a tool fails. Running HUD chats have a yellow border.
+
+Right-click a HUD chat and choose **Smart Rename** to generate a short title from
+its conversation. The title is saved on this Mac and retained when reopening that
+conversation from history.
+
+The Git view offers **Open Git in New Window**. Its separate, resizable window stays
+with the originating pane and machine when you switch chats in the main window.
+It uses the same repository view and permissions as the embedded Git tab.
+
+The sidebar's range selector has **All**, **Today**, and **Recents**. Recents keeps
+the existing list of the 20 most recently active chats. With one to three configured
+machines, the machine selector also uses segments, including **All**. It is hidden
+when no machines are configured. Four or more machines use a menu, and machine
+management remains available in the sidebar footer. Archived **Previous chat**
+sections keep their existing excerpt presentation.

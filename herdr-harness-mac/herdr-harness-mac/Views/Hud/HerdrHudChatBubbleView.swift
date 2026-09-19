@@ -6,10 +6,16 @@ struct HerdrHudChatBubbleView: View {
     let controller: HerdrHudController
     @State private var dismissalError: String?
     @State private var showsDismissalError = false
+    @State private var renameError: String?
+    @State private var showsRenameError = false
 
     private var isReady: Bool {
         chat.session.hasUnseenAnswer && !chat.session.isRunning
             && chat.session.exchanges.last?.status == .completed
+    }
+
+    private var isSmartRenaming: Bool {
+        controller.chats?.smartRenamingChatIDs.contains(chat.id) == true
     }
 
     var body: some View {
@@ -20,9 +26,16 @@ struct HerdrHudChatBubbleView: View {
                         .herdrFont(.caption2, weight: .semibold)
                         .foregroundStyle(HerdrTheme.accent)
                     Spacer(minLength: 4)
-                    Image(systemName: "chevron.down")
-                        .herdrFont(.caption2)
-                        .foregroundStyle(HerdrTheme.muted)
+                    if isSmartRenaming {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(HerdrTheme.accent)
+                            .accessibilityLabel("Renaming HUD chat")
+                    } else {
+                        Image(systemName: "chevron.down")
+                            .herdrFont(.caption2)
+                            .foregroundStyle(HerdrTheme.muted)
+                    }
                 }
                 if model.showSessionTitles {
                     Text(chat.displayTitle)
@@ -47,9 +60,9 @@ struct HerdrHudChatBubbleView: View {
             .background(HerdrTheme.graphite.opacity(0.96), in: .rect(cornerRadius: 12))
             .overlay {
                 RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(isReady ? HerdrTheme.success : HerdrTheme.accent.opacity(0.45), lineWidth: 1)
+                    .strokeBorder(outlineColor, lineWidth: 1)
             }
-            .shadow(color: isReady ? HerdrTheme.success.opacity(0.3) : .clear, radius: 7)
+            .shadow(color: shadowColor, radius: chat.session.isRunning ? 4 : 7)
             .contentShape(.rect(cornerRadius: 12))
         }
         .buttonStyle(.plain)
@@ -57,6 +70,12 @@ struct HerdrHudChatBubbleView: View {
         .accessibilityIdentifier("hud-chat-bubble-\(chat.id)")
         .contextMenu {
             Button("Open chat", systemImage: "bubble.left") { controller.openChat(chat.id) }
+            Button(isSmartRenaming ? "Renaming…" : "Smart Rename", systemImage: "sparkles") {
+                smartRename()
+            }
+            .disabled(isSmartRenaming || chat.session.exchanges.isEmpty || chat.session.isLoadingHistory
+                      || chat.session.needsHistoryRefresh || chat.session.isEnding || chat.session.hasEnded
+                      || chat.session.selectedMachineID == nil)
             Button("Remove from HUD", systemImage: "xmark.circle") {
                 Task {
                     do { try await controller.chats?.dismiss(chat.id, model: model) }
@@ -73,6 +92,36 @@ struct HerdrHudChatBubbleView: View {
             Button("OK") { dismissalError = nil }
         } message: {
             Text(dismissalError ?? "")
+        }
+        .alert("Couldn’t rename chat", isPresented: $showsRenameError) {
+            Button("OK") { renameError = nil }
+        } message: {
+            Text(renameError ?? "")
+        }
+    }
+
+    private var outlineColor: Color {
+        if chat.session.isRunning {
+            return HerdrHudNotificationPresentation.outlineColor(for: AgentStatus.working).opacity(0.25)
+        }
+        return isReady ? HerdrTheme.success : HerdrTheme.accent.opacity(0.45)
+    }
+
+    private var shadowColor: Color {
+        if chat.session.isRunning { return AgentStatus.working.color.opacity(0.16) }
+        return isReady ? HerdrTheme.success.opacity(0.3) : .clear
+    }
+
+    private func smartRename() {
+        Task {
+            do {
+                try await controller.chats?.smartRename(chat.id, model: model)
+            } catch is CancellationError {
+                return
+            } catch {
+                renameError = error.localizedDescription
+                showsRenameError = true
+            }
         }
     }
 }

@@ -9,6 +9,7 @@ import UniformTypeIdentifiers
 enum HerdrWindowID {
     static let main = "herdr-main"
     static let activeWorkBoard = "herdr-active-work-board"
+    static let workspaceGit = "herdr-workspace-git"
 }
 
 enum HerdrExternalEvent {
@@ -114,6 +115,26 @@ struct HerdrHarnessMacApp: App {
                 .tint(HerdrTheme.accent)
         }
         .defaultSize(width: 1280, height: 860)
+
+        WindowGroup("Workspace Git", id: HerdrWindowID.workspaceGit, for: WorkspaceGitWindowTarget.self) { $target in
+            if let target {
+                WorkspaceGitWindowRoot(model: model, driver: connectionDriver, target: target)
+                    .environment(herdPulse)
+                    .environment(\.herdrFontScale, fontScale.scale)
+            } else {
+                ContentUnavailableView(
+                    "Workspace unavailable",
+                    systemImage: PaneDetailMode.git.symbol,
+                    description: Text("Open Git from a workspace session.")
+                )
+                .frame(minWidth: 720, minHeight: 520)
+                .background(HerdrTheme.ink)
+                .foregroundStyle(HerdrTheme.text)
+                .preferredColorScheme(.dark)
+            }
+        }
+        .defaultSize(width: 1120, height: 760)
+        .windowResizability(.contentMinSize)
 
         // ⌘, — replaces the iOS Settings tab.
         Settings {

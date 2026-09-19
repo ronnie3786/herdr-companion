@@ -58,3 +58,35 @@ Once Apple push is configured and the updated iOS app is installed with notifica
 - [ ] Let an agent finish while the iPhone app is in the background. Leave the session unread for more than a minute. Expect one notification; tap it and confirm it opens the correct machine and chat.
 - [ ] Repeat, but read the session within the first minute. Expect no delayed push for that result.
 - [ ] With the iOS app connected, verify its local fallback also waits a minute and that reading the session clears matching notifications when read state syncs.
+
+
+## Chat activity, HUD controls, and navigation
+
+Use synthetic demo data or a disposable test conversation for these checks.
+
+- Turn on Settings > General > Chat > Group all Clanking activity. Send a prompt that produces
+  interim text, several tool calls, and a final answer. Confirm one collapsed
+  Clanking row stays between the prompt and final answer. Expand it during work,
+  confirm activity updates without changing the expansion choice, then collapse it.
+- Confirm the final answer stays hidden until the turn finishes. Check an answer
+  with multiple text blocks, a stopped turn, a tool failure, and an input request.
+  Failures and requests must remain discoverable and usable. Turn grouping off and
+  verify the original transcript order returns without losing any text.
+- In a HUD chat, verify Clanking never expands automatically on a tool failure.
+  Run a request and confirm the collapsed bubble and open chat have yellow borders;
+  completion should return to the appropriate completed/idle appearance.
+- Right-click a HUD chat and choose Smart Rename. Verify loading, a short title,
+  persistence after restart and after remove/reopen from history, and an error
+  when naming cannot finish. Switch to another chat while naming and verify the
+  original chat is renamed. Removing/ending a chat must not let a stale result
+  affect a replacement chat.
+- Open Git in a new window, resize it, switch the main chat to another repository,
+  and verify the detached view remains on its original pane and machine. Reopen
+  the same target and verify its existing window is used. Test disconnect/reconnect
+  and a removed pane, and check existing read-only restrictions.
+- Verify All, Today, and Recents range segments. With 0 machines verify the machine
+  selector is hidden. With 1, 2, and 3 machines verify machine segments; with 4
+  verify the menu. All must remain available, and Manage Machines must remain in
+  the sidebar footer. Check long names, a narrow sidebar, VoiceOver labels, and
+  increased app text size. Confirm archived Previous chat sections retain their
+  existing excerpt presentation.

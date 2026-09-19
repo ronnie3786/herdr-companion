@@ -231,9 +231,7 @@ struct HerdrSidebarView: View {
                     .accessibilityIdentifier("open-first-mate")
             }
 
-            if model.machines.count > 1 {
-                machinePicker
-            }
+            machinePicker
 
             WorkspaceSearchField(text: $query, placeholder: "Filter chats")
             colorLegend(snapshot)
@@ -378,30 +376,24 @@ struct HerdrSidebarView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
-            HerdrBrandMark(size: 24)
-            Text("herdr")
-                .herdrFont(.headline, weight: .semibold)
-                .foregroundStyle(HerdrTheme.text)
-            Spacer()
-            Menu {
-                ForEach(SidebarRecency.allCases) { recency in
-                    Button {
-                        model.sidebarRecency = recency
-                    } label: {
-                        Label(
-                            recency.title,
-                            systemImage: recency == model.sidebarRecency ? "checkmark" : recency.symbolName
-                        )
-                    }
-                }
-            } label: {
-                Image(systemName: model.sidebarRecency.symbolName)
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                HerdrBrandMark(size: 24)
+                Text("herdr")
+                    .herdrFont(.headline, weight: .semibold)
+                    .foregroundStyle(HerdrTheme.text)
+                Spacer(minLength: 0)
             }
-            .foregroundStyle(model.sidebarRecency == .all ? HerdrTheme.mist : HerdrTheme.accent)
-            .buttonStyle(.plain)
+
+            Picker("Chat range", selection: $model.sidebarRecency) {
+                ForEach(SidebarRecency.pickerCases) { recency in
+                    Text(recency.title)
+                        .tag(recency)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .frame(maxWidth: .infinity)
             .accessibilityIdentifier("sidebar-recent-filter")
             .accessibilityLabel("Chat range, \(model.sidebarRecency.title)")
             .help("Show chats from \(model.sidebarRecency.title.lowercased())")
@@ -410,7 +402,41 @@ struct HerdrSidebarView: View {
         .padding(.bottom, 2)
     }
 
+    @ViewBuilder
     private var machinePicker: some View {
+        switch SidebarMachinePickerPresentation.presentation(machineCount: model.machines.count) {
+        case .hidden:
+            EmptyView()
+        case .segmented:
+            segmentedMachinePicker
+        case .menu:
+            machineMenuPicker
+        }
+    }
+
+    private var segmentedMachinePicker: some View {
+        Picker("Machine", selection: machineScopeBinding) {
+            Text("All")
+                .tag(MachineScope.all)
+                .help("All machines")
+                .accessibilityLabel("All machines")
+            ForEach(model.machines) { machine in
+                Text(machine.name)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .tag(MachineScope.machine(machine.id))
+                    .help(machine.name)
+                    .accessibilityLabel(machine.name)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .frame(maxWidth: .infinity)
+        .accessibilityIdentifier("sidebar-machine-picker")
+        .accessibilityValue(scopeTitle)
+    }
+
+    private var machineMenuPicker: some View {
         Menu {
             Button("All Machines") { model.setMachineScope(.all) }
             ForEach(model.machines) { machine in
@@ -420,13 +446,11 @@ struct HerdrSidebarView: View {
                     Label(machine.name, systemImage: "desktopcomputer")
                 }
             }
-            Divider()
-            Button("Manage Machines…", systemImage: "server.rack") {
-                isPresentingMachines = true
-            }
         } label: {
             HStack(spacing: 7) {
                 Text(scopeTitle)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 Spacer()
                 Image(systemName: "chevron.down")
                     .herdrFont(size: 8, weight: .semibold, relativeTo: .caption)
@@ -439,6 +463,8 @@ struct HerdrSidebarView: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("sidebar-machine-picker")
+        .accessibilityLabel("Machine, \(scopeTitle)")
+        .help(scopeTitle)
     }
 
     private var creationControls: some View {
@@ -1035,6 +1061,13 @@ struct HerdrSidebarView: View {
             return machine.name
         }
         return "All machines"
+    }
+
+    private var machineScopeBinding: Binding<MachineScope> {
+        Binding(
+            get: { model.machineScope },
+            set: { model.setMachineScope($0) }
+        )
     }
 
     private var isRenamingWorkspace: Binding<Bool> {

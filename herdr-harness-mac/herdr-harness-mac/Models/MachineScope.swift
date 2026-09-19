@@ -1,6 +1,6 @@
 import Foundation
 
-enum MachineScope: Equatable {
+enum MachineScope: Hashable {
     case all
     case machine(String)
 

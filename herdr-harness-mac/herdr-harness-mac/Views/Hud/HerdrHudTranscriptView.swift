@@ -34,7 +34,8 @@ struct HerdrHudTranscriptView: View {
                                 allowsPromote: session.thread == nil || exchange.id == latestPromotableExchangeID,
                                 openPaneInMainWindow: openPaneInMainWindow,
                                 collapse: collapse,
-                                allowsQuote: ChatQuoteEligibility.hudExchangeIDs(in: session.exchanges).contains(exchange.id)
+                                allowsQuote: ChatQuoteEligibility.hudExchangeIDs(in: session.exchanges).contains(exchange.id),
+                                isActiveExchange: session.isRunning && exchange.id == session.exchanges.last?.id
                             )
                             .id(exchange.id)
                         }
@@ -45,7 +46,7 @@ struct HerdrHudTranscriptView: View {
                         }
 
                         HerdrHudTranscriptErrorsView(
-                            errorMessage: session.isRunning ? nil : (session.errorMessage ?? session.validationError),
+                            errorMessage: session.errorMessage ?? session.validationError,
                             promoteErrorMessage: session.promoteErrorMessage,
                             audioErrorMessage: session.audioErrorMessage
                         )

@@ -9,6 +9,8 @@ struct PiChatTimelineView: View {
     let respond: (PiPendingInteraction, PiInteractionResponseBody) async -> Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.saveChatQuote) private var saveQuote
+    @AppStorage(ChatActivityPreferences.groupAllClankingActivityKey)
+    private var groupAllClankingActivity = ChatActivityPreferences.defaultGroupAllClankingActivity
     @State private var scrollPosition = ScrollPosition(edge: .bottom)
     @State private var isNearBottom = true
     @State private var lastStructureRevision: Int?
@@ -77,7 +79,11 @@ struct PiChatTimelineView: View {
 
                     if store.hasContent {
                         let window = PiTimelineWindow(
-                            rows: PiTimelineRow.rows(for: store.turns, artifactsByTurnID: responseArtifacts.byTurnID),
+                            rows: PiTimelineRow.rows(
+                                for: store.turns,
+                                artifactsByTurnID: responseArtifacts.byTurnID,
+                                groupAllActivity: groupAllClankingActivity
+                            ),
                             showsEarlierRows: showsEarlierRows,
                             limit: mountedLimit
                         )

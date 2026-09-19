@@ -41,7 +41,8 @@ struct PiTimelineRow: Identifiable, Equatable {
     /// had as turn children (expansion state survives the flattening).
     static func rows(
         for turns: [PiConversationTurn],
-        artifactsByTurnID: [String: [AgentResultArtifact]] = [:]
+        artifactsByTurnID: [String: [AgentResultArtifact]] = [:],
+        groupAllActivity: Bool = ChatActivityPreferences.defaultGroupAllClankingActivity
     ) -> [PiTimelineRow] {
         var rows: [PiTimelineRow] = []
         rows.reserveCapacity(turns.reduce(0) { $0 + $1.items.count + 2 })
@@ -52,7 +53,10 @@ struct PiTimelineRow: Identifiable, Equatable {
             if let user = turn.user {
                 contents.append(("\(turn.id)|user", .user(user)))
             }
-            for segment in PiTurnSegmentation.segments(for: turn.items) {
+            for segment in PiTurnSegmentation.segments(
+                for: turn,
+                groupAllActivity: groupAllActivity
+            ) {
                 switch segment {
                 case let .output(item):
                     contents.append(("\(turn.id)|\(segment.id)", .output(item)))

@@ -12,6 +12,8 @@ struct SettingsView: View {
     @Bindable var updates: HerdrUpdateController
     @Bindable var agentControl: AgentControlController
     @Environment(\.controlActiveState) private var controlActiveState
+    @AppStorage(ChatActivityPreferences.groupAllClankingActivityKey)
+    private var groupAllClankingActivity = ChatActivityPreferences.defaultGroupAllClankingActivity
     @State private var isPresentingMachines = false
     @State private var isPresentingMachineEditor = false
     @State private var editingMachine: HerdrMachine?
@@ -127,6 +129,7 @@ struct SettingsView: View {
         switch pane {
         case .general:
             textSizeSection
+            chatSection
             aboutSection
         case .machines:
             statusSection
@@ -380,6 +383,22 @@ struct SettingsView: View {
         let route = diagnostics.lastTrigger?.title ?? "Capture"
         let outcome = diagnostics.lastOutcome ?? "in progress"
         return "Last: \(route) at \(time) — \(outcome)"
+    }
+
+    private var chatSection: some View {
+        Section {
+            Toggle(
+                "Group all Clanking activity",
+                systemImage: "terminal",
+                isOn: $groupAllClankingActivity
+            )
+            .tint(HerdrTheme.controlAccent)
+            .accessibilityIdentifier("settings-group-all-clanking-activity")
+        } header: {
+            Text("Chat")
+        } footer: {
+            Text("Keep thinking, tool use, and interim Pi commentary in one collapsed Clanking group for each turn. The final answer appears when the turn finishes.")
+        }
     }
 
     private var textSizeSection: some View {

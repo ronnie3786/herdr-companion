@@ -9,20 +9,33 @@ struct HerdrHudTranscriptRowView: View {
     let openPaneInMainWindow: (String) -> Void
     let collapse: () -> Void
     var allowsQuote = false
+    var isActiveExchange = false
+    @AppStorage(ChatActivityPreferences.groupAllClankingActivityKey)
+    private var groupAllClankingActivity = ChatActivityPreferences.defaultGroupAllClankingActivity
     @Environment(\.herdrFontScale) private var fontScale
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             promptBubble
-            if !exchange.steps.isEmpty {
-                HerdrHudWorkingGroupView(exchange: exchange)
+            if showsWorkingGroup {
+                HerdrHudWorkingGroupView(
+                    exchange: exchange,
+                    stepsOverride: activitySteps,
+                    interimResponse: groupAllClankingActivity ? activityResponse : nil,
+                    isLive: isActiveExchange
+                )
             }
-            answer
-                .environment(\.saveChatQuote, quoteAction)
-                .paneResponseLinks(model: model, sourceMachineID: exchange.machineID) { paneID in
-                    collapse()
-                    openPaneInMainWindow(paneID)
-                }
+            if HerdrHudTranscriptPresentation.showsResponse(
+                status: exchange.status,
+                groupAllClankingActivity: groupAllClankingActivity
+            ) {
+                answer
+                    .environment(\.saveChatQuote, quoteAction)
+                    .paneResponseLinks(model: model, sourceMachineID: exchange.machineID) { paneID in
+                        collapse()
+                        openPaneInMainWindow(paneID)
+                    }
+            }
             HerdrHudInlineResultArtifactsView(model: model, exchange: exchange)
             if isCompletedResponse {
                 footer
@@ -31,6 +44,20 @@ struct HerdrHudTranscriptRowView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityIdentifier("hud-transcript-row-\(exchange.id)")
         .environment(\.chatQuoteSource, "HUD exchange \(exchange.id)")
+    }
+
+    private var activitySteps: [HerdrHudStep] {
+        if isActiveExchange, !session.liveSteps.isEmpty { return session.liveSteps }
+        return exchange.steps
+    }
+
+    private var activityResponse: String? {
+        guard isActiveExchange else { return nil }
+        return session.liveResponse ?? exchange.response
+    }
+
+    private var showsWorkingGroup: Bool {
+        !activitySteps.isEmpty || (groupAllClankingActivity && isActiveExchange)
     }
 
     private var quoteAction: (@MainActor (ChatQuote) async throws -> Void)? {
@@ -92,7 +119,7 @@ struct HerdrHudTranscriptRowView: View {
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.compactRadius))
-        } else {
+        } else if exchange.status.isTerminal {
             Text("No response")
                 .herdrFont(.callout)
                 .foregroundStyle(HerdrTheme.muted)

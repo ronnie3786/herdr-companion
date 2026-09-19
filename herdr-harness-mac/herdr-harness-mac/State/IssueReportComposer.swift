@@ -88,6 +88,11 @@ enum IssueReportComposerError: LocalizedError, Equatable, Sendable {
 final class IssueReportComposer {
     typealias Phase = IssueReportPhase
 
+    /// Reads and encodes queued attachments for a submission. The default does
+    /// the real file I/O; tests inject their own so a selection change can be
+    /// applied deterministically while the encoding await is in flight.
+    typealias AttachmentEncoder = @Sendable ([IssueReportAttachment], Int64) async throws -> [IssueReportAttachmentBody]
+
     /// Client-side ceilings. The server's capabilities can lower them but never
     /// raise them; the server performs the authoritative check on submit.
     static let maxAttachments = 6
@@ -192,6 +197,7 @@ final class IssueReportComposer {
     @ObservationIgnored private let fileManager: FileManager
     @ObservationIgnored private let userDefaults: UserDefaults
     @ObservationIgnored private let temporaryDirectory: URL
+    @ObservationIgnored private let encodeAttachments: AttachmentEncoder
     @ObservationIgnored private var pastedImageCount = 0
 
     /// - Parameters:
@@ -200,10 +206,16 @@ final class IssueReportComposer {
     ///     own so cleanup can be asserted.
     ///   - userDefaults: Where the last companion that filed a report is
     ///     remembered. Tests pass an isolated suite so preferences stay clean.
+    ///   - encodeAttachments: Reads and encodes the queued files when a
+    ///     report is sent. Defaults to the real file I/O; tests inject a gate
+    ///     so a selection change lands deterministically during encoding.
     init(
         fileManager: FileManager = .default,
         temporaryDirectory: URL? = nil,
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        encodeAttachments: @escaping AttachmentEncoder = { attachments, maximumBytes in
+            try IssueReportComposer.attachmentBodies(for: attachments, maximumBytes: maximumBytes)
+        }
     ) {
         self.fileManager = fileManager
         self.userDefaults = userDefaults
@@ -212,6 +224,7 @@ final class IssueReportComposer {
                 path: "\(Self.temporaryDirectoryPrefix)\(UUID().uuidString)",
                 directoryHint: .isDirectory
             )
+        self.encodeAttachments = encodeAttachments
         clientReportId = Self.makeClientReportId()
         lastSuccessfulMachineID = userDefaults.string(forKey: Self.lastSuccessfulMachineIDKey)
             .flatMap { $0.isEmpty ? nil : $0 }
@@ -279,6 +292,14 @@ final class IssueReportComposer {
         guard !isSubmitting, submittedRecord == nil, !isDiscoveringReports else { return false }
         guard capabilities?.available == true else { return false }
         return (try? validatedDraft()) != nil
+    }
+
+    /// True whenever the sheet may ask the paired companions for their report
+    /// settings again: a sweep has run, nothing is being filed, and nothing has
+    /// been filed. While a sweep is in flight the same control starts a fresh
+    /// pass that supersedes it.
+    var canCheckAgain: Bool {
+        hasRunDiscovery && !isSubmitting && submittedRecord == nil
     }
 
     // MARK: - Discovery and selection
@@ -451,6 +472,22 @@ final class IssueReportComposer {
         } else {
             adoptSelectedMachineCapabilities()
         }
+    }
+
+    /// The pre-submission refresh. Captures the selected companion, re-checks
+    /// the roster and live connection snapshot, and reports whether that same
+    /// companion can still receive the draft right now.
+    ///
+    /// `refreshAvailability` can drop a removed selection and fall back to
+    /// another available companion, and it can invalidate the selection when it
+    /// went offline. Filing after such a fallback would publish through a
+    /// repository the user never reviewed, so this returns `false`; the sheet
+    /// shows the updated machine and repository notice and only an explicit
+    /// second submission proceeds.
+    func prepareSubmission(machines: [HerdrMachine], connectedIDs: Set<String>) -> Bool {
+        let reviewedMachineID = machineID
+        refreshAvailability(machines: machines, connectedIDs: connectedIDs)
+        return machineID == reviewedMachineID && canSubmit
     }
 
     // MARK: - Attachments
@@ -662,12 +699,13 @@ final class IssueReportComposer {
         // that is already being built, and the id remembered after success
         // must be this one.
         let submissionMachineID = machineID
+        let encodeAttachments = self.encodeAttachments
         let bodies: [IssueReportAttachmentBody]
         do {
             // Up to 40 MiB of file I/O plus base64 and image re-encoding: never
             // on the main thread while the sheet shows "Filing…".
             bodies = try await Task.detached(priority: .userInitiated) {
-                try Self.attachmentBodies(for: queued, maximumBytes: maximumBytes)
+                try await encodeAttachments(queued, maximumBytes)
             }.value
         } catch {
             phase = .failed(error.localizedDescription)

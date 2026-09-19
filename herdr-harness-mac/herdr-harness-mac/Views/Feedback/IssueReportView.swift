@@ -72,7 +72,7 @@ struct IssueReportView: View {
         }
         .task {
             focusedField = .title
-            await discoverMachines()
+            startDiscovery()
         }
         .task(id: composer.machineID) {
             await loadServerCapabilities()
@@ -308,11 +308,7 @@ struct IssueReportView: View {
                 .accessibilityIdentifier("issue-report-docs-link")
             HStack(spacing: 12) {
                 Spacer()
-                Button("Check again", systemImage: "arrow.clockwise") {
-                    startDiscovery()
-                }
-                .disabled(composer.isSubmitting)
-                .accessibilityIdentifier("issue-report-check-again")
+                recheckButton
             }
         }
         .padding(12)
@@ -321,9 +317,24 @@ struct IssueReportView: View {
         .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
     }
 
+    /// Asks every connected companion for its report settings again without
+    /// touching the draft. Kept outside the no-available card so it stays
+    /// reachable whenever an unavailable companion is selected among available
+    /// ones, and while a sweep runs, where it supersedes that sweep.
+    private var recheckButton: some View {
+        Button("Check again", systemImage: "arrow.clockwise") {
+            startDiscovery()
+        }
+        .disabled(composer.isSubmitting)
+        .accessibilityIdentifier("issue-report-check-again")
+    }
+
     private var submissionControls: some View {
         HStack(spacing: 12) {
             Spacer()
+            if composer.canCheckAgain {
+                recheckButton
+            }
             if composer.isSubmitting {
                 ProgressView()
                     .controlSize(.small)
@@ -444,10 +455,12 @@ struct IssueReportView: View {
 
     private func submit() {
         guard submitTask == nil else { return }
-        // A disconnect or unpairing detected here invalidates the cached
-        // answer before anything is sent.
-        composer.refreshAvailability(machines: model.machines, connectedIDs: connectedMachineIDs())
-        guard composer.canSubmit else { return }
+        // The refresh can invalidate the cached answer or replace a removed
+        // companion with another available one. In both cases this click must
+        // not file through a destination the user has not seen:
+        // `prepareSubmission` stops the attempt and leaves the updated machine
+        // and repository notice on screen for an explicit second submission.
+        guard composer.prepareSubmission(machines: model.machines, connectedIDs: connectedMachineIDs()) else { return }
         let environment = environmentDetails
         submitTask = Task {
             await composer.submit(environment: environment) { request, machineID in
@@ -513,6 +526,7 @@ struct IssueReportView: View {
     }
 
     private func startDiscovery() {
+        guard !composer.isSubmitting else { return }
         discoveryTask?.cancel()
         discoveryTask = Task { await discoverMachines() }
     }

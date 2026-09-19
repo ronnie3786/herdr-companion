@@ -18,11 +18,13 @@ This is an experimental personal automation. Read the safety section before enab
    environment fields that accompany the report. Leave **Start the automated fix
    pipeline** on to add the `herdr-autofix` label. With more than one paired machine the
    sheet asks every connected companion for its report settings at the same time, defaults
-   to the companion that last filed a report for this Mac (otherwise the first that
-   answers available), and keeps other machines selectable so their reason stays visible.
+   to the companion that last filed a report for this Mac (otherwise the first available in
+   machine order), and keeps other machines selectable so their reason stays visible.
    An unavailable or disconnected machine cannot submit, even when a peer is available;
-   the checked-machine explanation and **Check again** retry the sweep without losing the
-   draft.
+   its reason stays visible and **Check again** rechecks every connected companion without
+   losing the draft. When none can file, the explanation naming the checked machines
+   replaces the submit button, and a report is never silently filed through a replacement
+   companion when the one the user reviewed disappears from Settings.
 2. **The companion server files the issue.** The app posts to `/api/v1/issue-reports`.
    The server uses your authenticated `gh` CLI to create a public GitHub issue with the
    verbatim text, links to the attachments, and an environment table. Attachments are

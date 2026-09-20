@@ -16,7 +16,8 @@ This is an experimental personal automation. Read the safety section before enab
    description (sent exactly as written), attach screenshots or documents (file picker,
    drag and drop, or ⌘V for an image), and check **Included details** to see the
    environment fields that accompany the report. Leave **Start the automated fix
-   pipeline** on to add the `herdr-autofix` label.
+   pipeline** on to add the `herdr-autofix` label. The report files through this Mac's
+   companion, or the first connected companion if this Mac's is unavailable.
 2. **The companion server files the issue.** The app posts to `/api/v1/issue-reports`.
    The server uses your authenticated `gh` CLI to create a public GitHub issue with the
    verbatim text, links to the attachments, and an environment table. Attachments are

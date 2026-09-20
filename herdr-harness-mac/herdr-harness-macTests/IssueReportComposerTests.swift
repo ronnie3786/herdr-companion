@@ -11,6 +11,74 @@ import UniformTypeIdentifiers
 struct IssueReportComposerTests {
     private static let pngBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D])
 
+    @Test("Default report machine prefers an eligible local machine")
+    func defaultMachinePrefersLocalMachine() {
+        let machines = [
+            HerdrMachine(id: "remote", name: "Remote", urlString: "https://remote.invalid"),
+            HerdrMachine(id: "local", name: "Local", urlString: "https://local.invalid", role: "local"),
+        ]
+
+        let machineID = IssueReportComposer.defaultMachineID(
+            machines: machines,
+            isConnected: { _ in true },
+            canControl: { _ in true }
+        )
+
+        #expect(machineID == "local")
+    }
+
+    @Test("Default report machine falls back to the first eligible roster entry")
+    func defaultMachineFallsBackToFirstEligibleMachine() {
+        let machines = [
+            HerdrMachine(id: "first", name: "First", urlString: "https://first.invalid"),
+            HerdrMachine(id: "local", name: "Local", urlString: "https://local.invalid", role: "local"),
+            HerdrMachine(id: "second", name: "Second", urlString: "https://second.invalid"),
+        ]
+
+        let machineID = IssueReportComposer.defaultMachineID(
+            machines: machines,
+            isConnected: { $0 != "local" },
+            canControl: { _ in true }
+        )
+
+        #expect(machineID == "first")
+    }
+
+    @Test("Default report machine ignores disconnected and uncontrollable machines")
+    func defaultMachineIgnoresIneligibleMachines() {
+        let machines = [
+            HerdrMachine(id: "local", name: "Local", urlString: "https://local.invalid", role: "local"),
+            HerdrMachine(id: "uncontrollable", name: "Uncontrollable", urlString: "https://uncontrollable.invalid"),
+            HerdrMachine(id: "eligible", name: "Eligible", urlString: "https://eligible.invalid"),
+        ]
+
+        let machineID = IssueReportComposer.defaultMachineID(
+            machines: machines,
+            isConnected: { $0 != "local" },
+            canControl: { $0 != "uncontrollable" }
+        )
+
+        #expect(machineID == "eligible")
+    }
+
+    @Test("Default report machine is nil without an eligible companion")
+    func defaultMachineIsNilWithoutEligibleMachine() {
+        #expect(IssueReportComposer.defaultMachineID(
+            machines: [],
+            isConnected: { _ in true },
+            canControl: { _ in true }
+        ) == nil)
+
+        let machines = [
+            HerdrMachine(id: "local", name: "Local", urlString: "https://local.invalid", role: "local"),
+        ]
+        #expect(IssueReportComposer.defaultMachineID(
+            machines: machines,
+            isConnected: { _ in false },
+            canControl: { _ in true }
+        ) == nil)
+    }
+
     @Test("Environment details contain exactly the allowed keys")
     func environmentDetailsKeys() {
         let details = IssueReportComposer.environmentDetails(

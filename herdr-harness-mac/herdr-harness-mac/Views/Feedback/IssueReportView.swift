@@ -5,9 +5,9 @@ import UniformTypeIdentifiers
 /// Help ▸ Report a Bug or Request a Feature… (⌘⌥F).
 ///
 /// Collects a verbatim note plus optional screenshots or documents and files
-/// them as a public GitHub issue through the selected machine's companion
-/// server. The sheet never sends machine names, URLs or tokens; the
-/// "Included details" group shows exactly what goes out.
+/// them as a public GitHub issue through this Mac's companion or the first
+/// connected companion in the roster. The sheet never sends machine names,
+/// URLs or tokens; the "Included details" group shows exactly what goes out.
 struct IssueReportView: View {
     @Bindable var model: HerdrAppModel
 
@@ -71,13 +71,17 @@ struct IssueReportView: View {
             composer.importItemProviders(providers)
         }
         .task {
-            if composer.machineID.isEmpty {
-                composer.machineID = preferredMachineID ?? ""
-            }
+            selectDefaultMachine()
             focusedField = .title
         }
         .task(id: composer.machineID) {
             await loadCapabilities()
+        }
+        .onChange(of: model.machines) { _, _ in
+            selectDefaultMachine()
+        }
+        .onChange(of: model.machineStates) { _, _ in
+            selectDefaultMachine()
         }
         .onDisappear {
             submitTask?.cancel()
@@ -111,20 +115,8 @@ struct IssueReportView: View {
             .labelsHidden()
             .accessibilityIdentifier("issue-report-kind")
 
-            if model.machines.count > 1 {
-                Picker("File through", selection: $composer.machineID) {
-                    ForEach(model.machines) { machine in
-                        Text(machine.name).tag(machine.id)
-                    }
-                }
-                .pickerStyle(.menu)
-                .accessibilityIdentifier("issue-report-machine")
-            }
-
             if composer.machineID.isEmpty {
-                // Reachable during onboarding and in demo mode: nothing can
-                // file the report, so say so instead of greying out the button.
-                Label("Add a machine in Settings ▸ Machines to file reports through its companion server.", systemImage: "desktopcomputer")
+                Label("Connect a companion to file reports.", systemImage: "desktopcomputer")
                     .herdrFont(.caption)
                     .foregroundStyle(HerdrTheme.warning)
                     .fixedSize(horizontal: false, vertical: true)
@@ -256,11 +248,13 @@ struct IssueReportView: View {
 
     private var footerNotice: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label(publicNoticeText, systemImage: "globe")
-                .herdrFont(.caption)
-                .foregroundStyle(HerdrTheme.mist)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("issue-report-notice")
+            if !composer.machineID.isEmpty {
+                Label(publicNoticeText, systemImage: "globe")
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.mist)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("issue-report-notice")
+            }
             if let capabilityNotice {
                 Label(capabilityNotice, systemImage: "exclamationmark.triangle.fill")
                     .herdrFont(.caption)
@@ -299,7 +293,7 @@ struct IssueReportView: View {
                     submit()
                 }
                 .herdrProminentButton()
-                .disabled(!composer.canSubmit)
+                .disabled(!composer.canSubmit || composer.capabilities?.available == false)
                 .keyboardShortcut(.return, modifiers: .command)
                 .accessibilityIdentifier("issue-report-submit")
             }
@@ -385,20 +379,13 @@ struct IssueReportView: View {
     private var publicNoticeText: String {
         let repository = composer.capabilities?.repository.flatMap { $0.isEmpty ? nil : $0 }
             ?? "the configured repository"
-        return "Filed as a public GitHub issue in \(repository). Attachments are uploaded to that repository too; "
+        let machineName = selectedMachine?.name ?? "this Mac's companion"
+        return "Filed through \(machineName) as a public GitHub issue in \(repository). Attachments are uploaded to that repository too; "
             + "location and camera metadata are removed from photos first."
     }
 
     private var selectedMachine: HerdrMachine? {
         model.machines.first { $0.id == composer.machineID }
-    }
-
-    private var preferredMachineID: String? {
-        if case let .machine(id) = model.machineScope, model.canControl(machineID: id) {
-            return id
-        }
-        let controllable = model.machines.first { model.canControl(machineID: $0.id) }
-        return (controllable ?? model.machines.first)?.id
     }
 
     private var environmentDetails: [String: String] {
@@ -413,6 +400,17 @@ struct IssueReportView: View {
     }
 
     // MARK: - Actions
+
+    private func selectDefaultMachine() {
+        composer.machineID = IssueReportComposer.defaultMachineID(
+            machines: model.machines,
+            isConnected: { machineID in
+                let state = model.connectionState(forMachine: machineID)
+                return state == .live || state == .demo
+            },
+            canControl: { model.canControl(machineID: $0) }
+        ) ?? ""
+    }
 
     private func submit() {
         guard composer.canSubmit, submitTask == nil else { return }

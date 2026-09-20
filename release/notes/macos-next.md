@@ -12,6 +12,7 @@
 - Sidebar titles and status read live pane data so Smart Rename and agent completion stay aligned with the chat header and HUD.
 - Back and Forward remember Chat/Git segment switches on the same pane, including returning to Git after visiting another pane or screen.
 - New workspace is a labeled sidebar action. Hover a machine row for a folder-plus button that opens creation directly on that machine, without another machine selection. Workspace headings in Unread and Starred expose the same right-click menu as the workspace tree, including New tab.
+- Workspace folders are easier to pick out of the sidebar: 14-point semibold titles in the brighter text color, 14-point mist folder icons, and taller folder rows while tabs, chats, machines, and group labels keep their compact styling. Long names still truncate at the tail with their counts, chevrons, tooltips, and accessibility information intact. This visibility change needs no server update and adds no new setting.
 
 ## Chat and HUD
 
@@ -31,3 +32,4 @@ The Mac UI changes require no API contract change. A separate companion update r
 3. Attach multiple images, enter a draft longer than five lines, and scroll inside the editor. Confirm Return sends and modified Return inserts a newline.
 4. Open a conversation with a failed tool call: Clanking should remain collapsed and show the failure count.
 5. Toggle Notes twice, create a note, and close its card. Use New workspace and right-click workspace headings to find New tab.
+6. Narrow the sidebar and enlarge the text size: workspace folder titles should stay visibly larger and brighter than the tabs and chats beneath them, with long names truncating at the tail and their counts and chevrons still visible. No server update or new setting is needed.

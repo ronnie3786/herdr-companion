@@ -153,6 +153,7 @@ poll_seconds = 10
 # implementer_thinking = "max"
 # max_parallel_issues = 2
 # max_review_rounds = 3
+# max_ci_failures = 3
 # dashboard_host = "tailscale" # A literal IP/host, or "tailscale" to bind the Tailscale IPv4.
 # dashboard_port = 9097
 # dashboard_token = { file = "~/.config/herdr-companion/secrets/code-factory-token" }

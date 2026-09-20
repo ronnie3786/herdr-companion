@@ -123,6 +123,7 @@ class FakeGitHub:
         self.reviews: list[dict[str, Any]] = []
         self.verify_script: list[str] = []
         self.default_verify = "success"
+        self.reruns: list[int] = []
         self.downloads: list[tuple[str, Path]] = []
         self.failing_downloads: set[str] = set()
         self.download_bytes: dict[str, bytes] = {}
@@ -228,6 +229,15 @@ class FakeGitHub:
         if isinstance(value, Exception):
             raise value
         return value
+
+    def list_runs(self, sha: str) -> list[dict[str, Any]]:
+        self.calls.append(("list_runs", (sha,)))
+        return [{"status": "completed", "conclusion": "failure", "databaseId": 77,
+                 "url": "https://github.com/owner/repo/actions/runs/77"}]
+
+    def rerun_failed(self, run_id: int) -> None:
+        self.calls.append(("rerun_failed", (run_id,)))
+        self.reruns.append(run_id)
 
     def failed_run_log(self, sha: str) -> str:
         self.calls.append(("failed_run_log", (sha,)))
@@ -563,7 +573,8 @@ class HappyPathTests(PipelineTestCase):
         self.assertEqual(issue["stage"], "release")
         self.assertEqual(issue["kind"], "bug")
         self.assertEqual(issue["attempts"], 1)
-        self.assertEqual(issue["reviewRound"], 3, "CI failure + request_changes + approve")
+        self.assertEqual(issue["reviewRound"], 2, "request_changes + approve")
+        self.assertEqual(issue["ciFailures"], 1)
         self.assertEqual(issue["ciStatus"], "success")
         self.assertEqual(issue["prNumber"], 100)
         self.assertTrue(issue["worktreeCleaned"])
@@ -574,7 +585,7 @@ class HappyPathTests(PipelineTestCase):
         self.assertFalse(worktree.exists(), "worktree removed right after merge")
         self.assertFalse(self.repo.branch_exists("codefactory/issue-12"))
         self.assertEqual(len(self.repo.list_worktrees()), 1)
-        self.assertEqual(self.sessions(12), ["planner", "implementer", "implementer", "reviser", "reviewer", "reviser", "reviewer"])
+        self.assertEqual(self.sessions(12), ["planner", "implementer", "implementer", "reviewer", "reviser", "reviewer"])
         for session in self.store.list_sessions(12):
             self.assertEqual(session["exitCode"], 0)
             self.assertEqual(session["costUSD"], 0.01)
@@ -599,22 +610,21 @@ class HappyPathTests(PipelineTestCase):
         self.assertEqual(implementer["tools"], "read,bash,edit,write,grep,find,ls")
         self.assertEqual(implementer["name"], "issue-12 t1")
         self.assertIn("Implemented t1", self.pi.calls[2]["prompt"], "task 2 sees the first summary")
-        first_reviser = self.pi.calls[3]
-        self.assertIn("Failed CI run", first_reviser["prompt"])
-        self.assertIn("AssertionError: boom", first_reviser["prompt"])
-        self.assertEqual(first_reviser["name"], "issue-12 revise 1")
-        second_reviser = self.pi.calls[5]
-        self.assertIn("- Missing nil guard", second_reviser["prompt"])
-        self.assertIn("`app/task_t1.py:1`", second_reviser["prompt"])
+        reviser = self.pi.calls[4]
+        self.assertIn("- Missing nil guard", reviser["prompt"])
+        self.assertIn("`app/task_t1.py:1`", reviser["prompt"])
         events = self.events(12)
+        failed_head = next(args[0] for name, args in self.github.calls if name == "list_runs")
+        self.assertEqual(issue["ciRerunRequested"], failed_head)
         self.assertIn("Skipped attachment 03-evil.png: host not allowed", events)
         self.assertTrue(any(message.startswith("Attachment 02-notes.md not downloaded") for message in events))
         self.assertIn("Picked up; 1 attachment(s) downloaded", events)
         self.assertIn("Plan ready: 2 task(s), risk low", events)
         self.assertIn("Task t1 finished: Guard the nil window", events)
         self.assertIn("Opened PR #100", events)
-        self.assertIn("Review round 2: request_changes", events)
-        self.assertIn("Review round 3: approve", events)
+        self.assertIn(f"Verify failed on {failed_head[:12]}; re-running failed jobs once", events)
+        self.assertIn("Review round 1: request_changes", events)
+        self.assertIn("Review round 2: approve", events)
         self.assertIn("Squash-merged PR #100", events)
         self.assertIn("Worktree cleaned up", events)
         self.assertIn("Queued for the next release batch", events)
@@ -628,8 +638,8 @@ class HappyPathTests(PipelineTestCase):
         self.assertIn("Filed automatically by the Herdr Code Factory.", pr["body"])
         self.assert_public(pr["body"])
         self.assertEqual(len(self.github.reviews), 2)
-        self.assertTrue(self.github.reviews[0]["body"].startswith("### Astra review (round 2): request_changes"))
-        self.assertTrue(self.github.reviews[1]["body"].startswith("### Astra review (round 3): approve"))
+        self.assertTrue(self.github.reviews[0]["body"].startswith("### Astra review (round 1): request_changes"))
+        self.assertTrue(self.github.reviews[1]["body"].startswith("### Astra review (round 2): approve"))
         self.assertEqual(self.github.reviews[0]["comments"][0]["path"], "app/task_t1.py")
         self.assertIn("<local>", self.github.reviews[0]["comments"][0]["body"])
         self.assertIn("<local>", self.github.reviews[1]["body"])
@@ -654,7 +664,7 @@ class HappyPathTests(PipelineTestCase):
         self.assertIn("Refs #12", self.git(["log", "-1", "--format=%B", "main"], cwd=self.remote))
         self.assertEqual(self.remote_subjects(), ["Guard the HUD window against a nil controller.", "Initial"])
         tree = self.git(["ls-tree", "--name-only", "-r", "main"], cwd=self.remote).splitlines()
-        for name in ("app/task_t1.py", "app/task_t2.py", "app/revision_1.txt", "app/revision_2.txt"):
+        for name in ("app/task_t1.py", "app/task_t2.py", "app/revision_1.txt"):
             self.assertIn(name, tree)
         self.assertEqual(self.checks.calls[0][0], [sys.executable, "scripts/check-public-source.py"])
         self.assertEqual(self.checks.calls[0][1]["cwd"], str(worktree))
@@ -752,15 +762,43 @@ class BlockingAndActionTests(PipelineTestCase):
         self.assertTrue(Path(issue["worktreePath"]).is_dir())
         self.assertIn("Blocked (review_rounds_exhausted): 1 review round(s) used", self.events(12))
 
-    def test_ci_failures_count_as_rounds(self):
-        self.factory = self.make_factory(max_review_rounds="1")
+    def test_ci_failures_are_bounded_separately_from_review_rounds(self):
+        self.factory = self.make_factory(max_ci_failures="1")
         self.github.add_issue(12, "Crash when opening the HUD")
         self.github.verify_script = ["failure", "failure"]
         self.factory.poll_once()
         issue = self.factory.run_issue(12)
-        self.assertEqual((issue["status"], issue["stage"], issue["blockedReason"]), ("blocked", "verify", "review_rounds_exhausted"))
+        self.assertEqual((issue["status"], issue["stage"], issue["blockedReason"]), ("blocked", "verify", "ci_failures_exhausted"))
         self.assertEqual(issue["ciStatus"], "failure")
-        self.assertEqual(self.sessions(12).count("reviser"), 1)
+        self.assertEqual(issue["reviewRound"], 0)
+        self.assertEqual(issue["ciFailures"], 1)
+        self.assertEqual(self.sessions(12).count("reviser"), 0)
+        self.assertEqual(sum(1 for call in self.github.calls if call[0] == "rerun_failed"), 1)
+
+    def test_ci_rerun_that_passes_needs_no_revision(self):
+        self.github.add_issue(12, "Crash when opening the HUD")
+        self.github.verify_script = ["failure", "success"]
+        self.factory.poll_once()
+        issue = self.factory.run_issue(12)
+        self.assertEqual((issue["status"], issue["stage"]), ("active", "release"))
+        self.assertEqual(issue["ciFailures"], 1)
+        self.assertEqual(issue["reviewRound"], 1, "the only round is Astra's approval")
+        self.assertNotIn("reviser", self.sessions(12))
+        self.assertEqual(self.github.reruns, [77])
+
+    def test_second_ci_failure_goes_to_revise_without_a_review_round(self):
+        self.github.add_issue(12, "Crash when opening the HUD")
+        self.github.verify_script = ["failure", "failure"]
+        self.github.default_verify = "pending"
+        self.factory.poll_once()
+        issue = self.factory.run_issue(12)
+        self.assertEqual((issue["status"], issue["stage"], issue["blockedReason"]), ("blocked", "verify", "ci_timeout"))
+        self.assertEqual(issue["reviewRound"], 0)
+        self.assertEqual(issue["ciFailures"], 2)
+        self.assertIn("reviser", self.sessions(12))
+        events = self.events(12)
+        self.assertEqual(sum("re-running failed jobs once" in message for message in events), 1)
+        self.assertTrue(any("(CI failure 2)" in message for message in events))
 
     def test_ci_timeout_blocks(self):
         self.github.add_issue(12, "Crash when opening the HUD")
@@ -839,22 +877,25 @@ class BlockingAndActionTests(PipelineTestCase):
         with self.assertRaises(CodeFactoryError):
             self.factory.action(12, "retry")
 
-    def test_verify_failure_bound_does_not_inflate_the_round_counter(self):
-        self.factory = self.make_factory(max_review_rounds="1")
+    def test_verify_failure_bound_does_not_inflate_the_ci_counter(self):
+        self.factory = self.make_factory(max_ci_failures="1")
         self.github.add_issue(12, "Crash when opening the HUD")
         self.github.default_verify = "failure"
         self.factory.poll_once()
         issue = self.factory.run_issue(12)
-        self.assertEqual((issue["status"], issue["stage"], issue["blockedReason"]), ("blocked", "verify", "review_rounds_exhausted"))
-        self.assertEqual(issue["reviewRound"], 1)
+        self.assertEqual((issue["status"], issue["stage"], issue["blockedReason"]), ("blocked", "verify", "ci_failures_exhausted"))
+        self.assertEqual(issue["reviewRound"], 0)
+        self.assertEqual(issue["ciFailures"], 1)
         for attempt in range(2):
             self.factory.action(12, "retry")
             issue = self.factory.run_issue(12)
-            self.assertEqual((issue["status"], issue["blockedReason"]), ("blocked", "review_rounds_exhausted"))
-            self.assertEqual(issue["reviewRound"], 1, "a retry on the same failing head never exceeds the configured maximum")
-        self.assertEqual(sum(1 for call in self.github.calls if call[0] == "failed_run_log"), 1,
-                         "no log is fetched for a round that is not going to happen")
-        self.assertIn("Blocked (review_rounds_exhausted): 1 round(s) used; CI still failing", self.events(12))
+            self.assertEqual((issue["status"], issue["blockedReason"]), ("blocked", "ci_failures_exhausted"))
+            self.assertEqual(issue["reviewRound"], 0)
+            self.assertEqual(issue["ciFailures"], 1, "a retry on the same failing head never exceeds the configured maximum")
+        self.assertEqual(self.github.reruns, [77])
+        self.assertEqual(sum(1 for call in self.github.calls if call[0] == "failed_run_log"), 0,
+                         "no log is fetched for a CI failure that is going to block")
+        self.assertIn("Blocked (ci_failures_exhausted): 1 CI failure(s) used; CI still failing", self.events(12))
 
     def test_session_row_is_finished_when_the_runner_raises(self):
         self.pi.raise_for["planner"] = CodeFactoryError("cwd must be an existing directory", code="invalid_request")
@@ -928,7 +969,7 @@ class BlockingAndActionTests(PipelineTestCase):
 
     def test_cleanup_then_retry_at_revise_keeps_the_pushed_commits(self):
         self.github.add_issue(12, "Crash when opening the HUD")
-        self.github.verify_script = ["failure"]
+        self.github.verify_script = ["failure", "failure"]
         self.pi.error_once["reviser"] = "timeout"
         self.factory.poll_once()
         issue = self.factory.run_issue(12)
@@ -941,7 +982,7 @@ class BlockingAndActionTests(PipelineTestCase):
         self.assertEqual(self.sessions(12).count("implementer"), 2, "the pushed task commits are reused, not re-done")
         self.assertIn("Worktree created on codefactory/issue-12 from origin/codefactory/issue-12", self.events(12))
         tree = self.git(["ls-tree", "--name-only", "-r", "main"], cwd=self.remote)
-        for name in ("app/task_t1.py", "app/task_t2.py", "app/revision_1.txt"):
+        for name in ("app/task_t1.py", "app/task_t2.py", "app/revision_0.txt"):
             self.assertIn(name, tree)
 
     def test_missing_worktree_directory_is_recreated_on_retry(self):

@@ -1087,7 +1087,10 @@ class CodeFactory:
             pr = self._github.create_pull_request(branch, self._settings.base_branch, title, body)
             self._store.add_event(number, "pull_request", "success", f"Opened PR #{pr['number']}", {"url": pr.get("url")})
         head = self._git.head(cwd)
-        self._store.update_issue(number, prNumber=int(pr["number"]), prUrl=str(pr.get("url") or "")[:500], headSha=head, ciStatus=None)
+        self._store.update_issue(
+            number, prNumber=int(pr["number"]), prUrl=str(pr.get("url") or "")[:500], headSha=head,
+            ciStatus=None,
+        )
         return "verify"
 
     def _stage_verify(self, issue: dict[str, Any]) -> str | None:
@@ -1106,19 +1109,30 @@ class CodeFactory:
             self._store.add_event(number, "verify", "success", f"Verify passed on {head[:12]}")
             return "review"
         if status == "failure":
-            round_number = int(issue["reviewRound"] or 0) + 1
-            if round_number > self._settings.max_review_rounds:
+            attempt = int(issue.get("ciFailures") or 0) + 1
+            if attempt > self._settings.max_ci_failures:
                 # Checked before anything is persisted, so a retry on the same failing head
-                # re-blocks without inflating the round counter past the configured maximum.
-                self._store.add_event(number, "verify", "warning", f"Verify failed on {head[:12]}; no review rounds left")
-                self._block(number, "verify", "review_rounds_exhausted", f"{round_number - 1} round(s) used; CI still failing")
+                # re-blocks without inflating the CI-failure counter past its configured maximum.
+                self._store.add_event(number, "verify", "warning", f"Verify failed on {head[:12]}; no CI failures left")
+                self._block(number, "verify", "ci_failures_exhausted", f"{attempt - 1} CI failure(s) used; CI still failing")
                 return None
+            if issue.get("ciRerunRequested") != head:
+                failed = [
+                    run for run in self._github.list_runs(head)
+                    if run.get("status") == "completed" and run.get("conclusion") != "success"
+                    and isinstance(run.get("databaseId"), int)
+                ]
+                for run in failed:
+                    self._github.rerun_failed(run["databaseId"])
+                self._store.update_issue(number, ciFailures=attempt, ciRerunRequested=head, ciStatus="pending")
+                self._store.add_event(number, "verify", "warning", f"Verify failed on {head[:12]}; re-running failed jobs once")
+                return "verify"
             log = self._github.failed_run_log(head)
             plan = self._plan_for(issue)
             plan["ci_log"] = log[-prompts.MAX_LOG_CHARS:]
             plan["last_review"] = None
-            self._store.update_issue(number, planJson=plan, reviewRound=round_number)
-            self._store.add_event(number, "verify", "warning", f"Verify failed on {head[:12]} (round {round_number})")
+            self._store.update_issue(number, planJson=plan, ciFailures=attempt)
+            self._store.add_event(number, "verify", "warning", f"Verify failed on {head[:12]} (CI failure {attempt})")
             return "revise"
         self._block(number, "verify", "ci_timeout", f"Verify did not finish within {self._settings.verify_wait_seconds} s")
         return None

@@ -4,6 +4,7 @@ from __future__ import annotations
 import tempfile
 import threading
 import unittest
+import sqlite3
 from pathlib import Path
 
 from herdr_harness.code_factory.errors import CodeFactoryError
@@ -12,7 +13,7 @@ from herdr_harness.code_factory.store import STAGE_LABELS, STAGE_ORDER, CodeFact
 SNAPSHOT_KEYS = {"ok", "generatedAt", "stats", "issues", "releases", "daemon"}
 ISSUE_KEYS = {
     "number", "title", "kind", "author", "url", "labels", "status", "stage", "stageLabel", "stageIndex",
-    "attempts", "reviewRound", "branch", "worktreePath", "worktreeCleaned", "prNumber", "prUrl", "headSha",
+    "attempts", "reviewRound", "ciFailures", "ciRerunRequested", "branch", "worktreePath", "worktreeCleaned", "prNumber", "prUrl", "headSha",
     "ciStatus", "mergeSha", "releaseTag", "releaseVersion", "releaseUrl", "error", "blockedReason",
     "planSummary", "createdAt", "updatedAt", "claimedAt", "finishedAt", "sessions", "events",
 }
@@ -61,6 +62,8 @@ class IssueTests(StoreTestCase):
         self.assertEqual(issue["labels"], ["bug", "herdr-autofix"])
         self.assertEqual(issue["attempts"], 0)
         self.assertEqual(issue["reviewRound"], 0)
+        self.assertEqual(issue["ciFailures"], 0)
+        self.assertIsNone(issue["ciRerunRequested"])
         self.assertFalse(issue["worktreeCleaned"])
         self.assertIsNone(issue["prNumber"])
         self.assertIsNone(issue["planJson"])
@@ -94,7 +97,7 @@ class IssueTests(StoreTestCase):
         updated = self.store.update_issue(
             12, prNumber=34, pr_url="https://github.com/owner/repo/pull/34", headSha="abc123", ciStatus="success",
             worktreeCleaned=True, planJson={"summary": "Fix", "progress": {"t1": "done"}}, labels=["bug"],
-            stage="review", reviewRound=1, status="active", planSummary="Fix the crash",
+            stage="review", reviewRound=1, ciFailures=2, ci_rerun_requested="abcdef1234", status="active", planSummary="Fix the crash",
         )
         self.assertEqual(updated["prNumber"], 34)
         self.assertEqual(updated["prUrl"], "https://github.com/owner/repo/pull/34")
@@ -106,6 +109,8 @@ class IssueTests(StoreTestCase):
         self.assertEqual(updated["stageLabel"], STAGE_LABELS["review"])
         self.assertEqual(updated["stageIndex"], STAGE_ORDER.index("review"))
         self.assertEqual(updated["reviewRound"], 1)
+        self.assertEqual(updated["ciFailures"], 2)
+        self.assertEqual(updated["ciRerunRequested"], "abcdef1234")
         self.assertEqual(self.store.get_issue(12)["planSummary"], "Fix the crash")
 
     def test_update_validation(self):
@@ -114,7 +119,8 @@ class IssueTests(StoreTestCase):
             self.store.update_issue(99, title="x")
         self.assertEqual(caught.exception.code, "not_found")
         for fields in ({"bogus": 1}, {"status": "weird"}, {"stage": "nowhere"}, {"kind": "chore"},
-                       {"prNumber": "34"}, {"worktreeCleaned": "yes"}, {"planJson": "text"}, {"attempts": -1}):
+                       {"prNumber": "34"}, {"worktreeCleaned": "yes"}, {"planJson": "text"}, {"attempts": -1},
+                       {"ciFailures": -1}):
             with self.subTest(fields=fields), self.assertRaises(CodeFactoryError) as caught:
                 self.store.update_issue(12, **fields)
             self.assertEqual(caught.exception.code, "invalid_request")
@@ -316,6 +322,31 @@ class DurabilityTests(StoreTestCase):
         self.addCleanup(store.close)
         store.upsert_issue({"number": 1, "title": "x"})
         self.assertEqual(store.stats()["active"], 1)
+
+    def test_reopen_migrates_legacy_issue_columns(self):
+        legacy_path = Path(self.temp.name) / "legacy.sqlite3"
+        legacy = sqlite3.connect(legacy_path)
+        legacy.executescript("""
+            CREATE TABLE issues(
+             number INTEGER PRIMARY KEY, title TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT 'bug',
+             author TEXT, url TEXT, labels_json TEXT NOT NULL DEFAULT '[]',
+             status TEXT NOT NULL DEFAULT 'active', stage TEXT NOT NULL DEFAULT 'intake',
+             attempts INTEGER NOT NULL DEFAULT 0, review_round INTEGER NOT NULL DEFAULT 0,
+             branch TEXT, worktree_path TEXT, worktree_cleaned INTEGER NOT NULL DEFAULT 0,
+             pr_number INTEGER, pr_url TEXT, head_sha TEXT, ci_status TEXT, merge_sha TEXT,
+             release_tag TEXT, release_version TEXT, release_url TEXT, error TEXT, blocked_reason TEXT,
+             plan_summary TEXT, plan_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+             claimed_at TEXT, finished_at TEXT);
+        """)
+        legacy.execute("INSERT INTO issues(number, title, created_at, updated_at) VALUES(?, ?, ?, ?)",
+                       (12, "Legacy issue", "2026-09-18T12:00:00Z", "2026-09-18T12:00:00Z"))
+        legacy.commit()
+        legacy.close()
+        migrated = CodeFactoryStore(legacy_path)
+        self.addCleanup(migrated.close)
+        updated = migrated.update_issue(12, ciFailures=1)
+        self.assertEqual(updated["ciFailures"], 1)
+        self.assertIsNone(updated["ciRerunRequested"])
 
 
 if __name__ == "__main__":

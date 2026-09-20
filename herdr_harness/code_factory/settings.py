@@ -33,6 +33,7 @@ INTEGER_RANGES: dict[str, tuple[int, int]] = {
     "poll_seconds": (10, 3600),
     "max_parallel_issues": (1, 8),
     "max_review_rounds": (0, 10),
+    "max_ci_failures": (0, 10),
     "session_timeout_seconds": (60, 86400),
     "verify_wait_seconds": (60, 86400),
     "dashboard_port": (1, 65535),
@@ -167,6 +168,7 @@ class CodeFactorySettings:
     implementer_thinking: str = "max"
     max_parallel_issues: int = 2
     max_review_rounds: int = 3
+    max_ci_failures: int = 3
     session_timeout_seconds: int = 3600
     verify_wait_seconds: int = 3600
     dashboard_host: str = "tailscale"
@@ -223,6 +225,7 @@ class CodeFactorySettings:
             implementer_thinking=implementer_thinking,
             max_parallel_issues=_integer(environ, "MAX_PARALLEL_ISSUES", cls.max_parallel_issues),
             max_review_rounds=_integer(environ, "MAX_REVIEW_ROUNDS", cls.max_review_rounds),
+            max_ci_failures=_integer(environ, "MAX_CI_FAILURES", cls.max_ci_failures),
             session_timeout_seconds=_integer(environ, "SESSION_TIMEOUT_SECONDS", cls.session_timeout_seconds),
             verify_wait_seconds=_integer(environ, "VERIFY_WAIT_SECONDS", cls.verify_wait_seconds),
             dashboard_host=_string(environ, "DASHBOARD_HOST", cls.dashboard_host, maximum=253),
@@ -269,6 +272,7 @@ class CodeFactorySettings:
             "release_enabled": self.release_enabled,
             "release_channel": self.release_channel,
             "max_review_rounds": self.max_review_rounds,
+            "max_ci_failures": self.max_ci_failures,
             "max_parallel_issues": self.max_parallel_issues,
             "poll_seconds": self.poll_seconds,
             "base_branch": self.base_branch,

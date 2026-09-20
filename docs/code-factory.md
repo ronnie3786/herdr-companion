@@ -47,9 +47,13 @@ This is an experimental personal automation. Read the safety section before enab
    comments. Because the same GitHub account authors and reviews the PR, the review is
    posted as a comment-type review with an explicit **approve** or **request changes**
    verdict in its text.
-9. **Fresh revisions.** Requested changes (or a red CI run) go to a new DeepSeek session,
-   which commits and pushes; the daemon waits for CI again and Astra rechecks. The loop is
-   bounded by `max_review_rounds`; exhaustion marks the issue blocked for a human.
+9. **Fresh revisions.** A red CI run first gets one automatic re-run of only its failed
+   jobs for that head commit. A second failure on the same head goes to a new DeepSeek
+   revision session, which commits and pushes; Astra requested changes always go directly
+   to a revision session. Astra's requested-change loop is bounded by
+   `max_review_rounds`, while repeated CI failures are bounded separately by
+   `max_ci_failures`. Exhausting either blocks the issue for a human with
+   `review_rounds_exhausted` or `ci_failures_exhausted`, respectively.
 10. **Merge and cleanup.** On approval the PR is squash-merged with its remote branch
     deleted, and the worktree and local branch are removed immediately. The dashboard
     shows a checkmark once the worktree is gone.
@@ -208,8 +212,10 @@ branch history cannot be rebuilt.
   instructions. Planner and reviewer sessions are read-only; the daemon resets the
   worktree if one of them leaves changes behind.
 - **Bounded automation.** At most four tasks per plan, a bounded number of review
-  rounds, one release at a time, session timeouts, and a CI wait limit. Anything outside
-  those bounds stops as **blocked** with the reason on the issue and the dashboard.
+  rounds and, separately, a bounded number of CI failures (each head commit gets one
+  automatic re-run of its failed jobs before a CI failure counts against that bound), one
+  release at a time, session timeouts, and a CI wait limit. Anything outside those bounds
+  stops as **blocked** with the reason on the issue and the dashboard.
 - **Sessions run as the operator.** Pi sessions are not sandboxed: they run with the
   daemon's user and environment (minus `HERDR_*` settings and GitHub tokens such as
   `GH_TOKEN`/`GITHUB_TOKEN`) and, for implementer roles, a shell tool. The daemon

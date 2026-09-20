@@ -39,6 +39,7 @@ class DefaultsTests(unittest.TestCase):
         self.assertEqual(settings.implementer_thinking, "max")
         self.assertEqual(settings.max_parallel_issues, 2)
         self.assertEqual(settings.max_review_rounds, 3)
+        self.assertEqual(settings.max_ci_failures, 3)
         self.assertEqual(settings.session_timeout_seconds, 3600)
         self.assertEqual(settings.verify_wait_seconds, 3600)
         self.assertEqual(settings.dashboard_host, "tailscale")
@@ -94,6 +95,7 @@ class OverrideTests(unittest.TestCase):
             implementer_thinking="low",
             max_parallel_issues="4",
             max_review_rounds="0",
+            max_ci_failures="5",
             session_timeout_seconds="600",
             verify_wait_seconds="900",
             dashboard_host="127.0.0.1",
@@ -122,6 +124,7 @@ class OverrideTests(unittest.TestCase):
         self.assertEqual(settings.implementer_thinking, "low")
         self.assertEqual(settings.max_parallel_issues, 4)
         self.assertEqual(settings.max_review_rounds, 0)
+        self.assertEqual(settings.max_ci_failures, 5)
         self.assertEqual(settings.session_timeout_seconds, 600)
         self.assertEqual(settings.verify_wait_seconds, 900)
         self.assertEqual(settings.dashboard_host, "127.0.0.1")
@@ -152,6 +155,7 @@ class OverrideTests(unittest.TestCase):
         self.assertEqual(settings.as_dict()["allowed_authors"], [])
         self.assertIsInstance(settings.as_dict()["state_path"], str)
         self.assertEqual(settings.public_summary()["repository"], "owner/repo")
+        self.assertEqual(settings.public_summary()["max_ci_failures"], 3)
 
 
 class ValidationTests(unittest.TestCase):
@@ -174,6 +178,7 @@ class ValidationTests(unittest.TestCase):
             "poll_seconds": ("9", "3601"),
             "max_parallel_issues": ("0", "9"),
             "max_review_rounds": ("-1", "11"),
+            "max_ci_failures": ("-1", "11"),
             "session_timeout_seconds": ("59", "86401"),
             "verify_wait_seconds": ("10", "100000"),
             "dashboard_port": ("0", "65536"),

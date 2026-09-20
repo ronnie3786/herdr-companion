@@ -48,12 +48,13 @@ MAX_JSON_BYTES = 2 * 1024 * 1024
 
 ISSUE_COLUMNS = (
     "number", "title", "kind", "author", "url", "labels_json", "status", "stage",
-    "attempts", "review_round", "branch", "worktree_path", "worktree_cleaned",
+    "attempts", "review_round", "ci_failures", "ci_rerun_requested", "branch", "worktree_path",
+    "worktree_cleaned",
     "pr_number", "pr_url", "head_sha", "ci_status", "merge_sha", "release_tag",
     "release_version", "release_url", "error", "blocked_reason", "plan_summary",
     "plan_json", "created_at", "updated_at", "claimed_at", "finished_at",
 )
-ISSUE_INTEGER_COLUMNS = frozenset({"number", "attempts", "review_round", "pr_number"})
+ISSUE_INTEGER_COLUMNS = frozenset({"number", "attempts", "review_round", "ci_failures", "pr_number"})
 RELEASE_COLUMNS = (
     "tag", "version", "channel", "status", "source_sha", "url", "notes_path",
     "output_dir", "issues_json", "error", "started_at", "finished_at",
@@ -71,6 +72,7 @@ CREATE TABLE IF NOT EXISTS issues(
  author TEXT, url TEXT, labels_json TEXT NOT NULL DEFAULT '[]',
  status TEXT NOT NULL DEFAULT 'active', stage TEXT NOT NULL DEFAULT 'intake',
  attempts INTEGER NOT NULL DEFAULT 0, review_round INTEGER NOT NULL DEFAULT 0,
+ ci_failures INTEGER NOT NULL DEFAULT 0, ci_rerun_requested TEXT,
  branch TEXT, worktree_path TEXT, worktree_cleaned INTEGER NOT NULL DEFAULT 0,
  pr_number INTEGER, pr_url TEXT, head_sha TEXT, ci_status TEXT, merge_sha TEXT,
  release_tag TEXT, release_version TEXT, release_url TEXT, error TEXT, blocked_reason TEXT,
@@ -194,7 +196,19 @@ class CodeFactoryStore:
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA synchronous=NORMAL")
         self._db.executescript(SCHEMA)
+        self._migrate_issue_columns()
         self._db.execute("INSERT OR IGNORE INTO cf_schema VALUES(?, ?)", (SCHEMA_VERSION, self._clock()))
+
+    def _migrate_issue_columns(self) -> None:
+        """Add issue fields introduced after the original ledger schema."""
+        columns = {str(row["name"]) for row in self._db.execute("PRAGMA table_info(issues)")}
+        migrations = (
+            ("ci_failures", "ALTER TABLE issues ADD COLUMN ci_failures INTEGER NOT NULL DEFAULT 0"),
+            ("ci_rerun_requested", "ALTER TABLE issues ADD COLUMN ci_rerun_requested TEXT"),
+        )
+        for name, statement in migrations:
+            if name not in columns:
+                self._db.execute(statement)
 
     # -- infrastructure -----------------------------------------------------------
 

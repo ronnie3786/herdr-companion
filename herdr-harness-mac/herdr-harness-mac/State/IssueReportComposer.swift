@@ -54,7 +54,7 @@ enum IssueReportComposerError: LocalizedError, Equatable, Sendable {
         case .descriptionHasControlCharacters:
             "The description contains non-printable characters (such as terminal colour codes). Remove them to file the report."
         case .noMachineSelected:
-            "Choose which machine's companion server should file the report."
+            "Connect a companion server before filing the report."
         case .emptyImage:
             "The image is empty and cannot be attached."
         case let .imageTooLarge(maximumBytes):
@@ -397,6 +397,19 @@ final class IssueReportComposer {
             details["machine_role"] = sanitizedEnvironmentValue(role)
         }
         return details
+    }
+
+    /// The connected companion that should file a report, preferring this
+    /// Mac's local machine over the first eligible roster entry.
+    static func defaultMachineID(
+        machines: [HerdrMachine],
+        isConnected: (String) -> Bool,
+        canControl: (String) -> Bool
+    ) -> String? {
+        let eligible = machines.filter { machine in
+            isConnected(machine.id) && canControl(machine.id)
+        }
+        return eligible.first(where: { $0.role == "local" })?.id ?? eligible.first?.id
     }
 
     /// Builds the wire payload synchronously: the title folded to one line,

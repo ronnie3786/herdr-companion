@@ -51,18 +51,19 @@ struct SidebarProjectRow: View {
                     .animation(.snappy, value: isExpanded)
 
                 Image(systemName: "folder")
-                    .herdrFont(size: SidebarMetrics.hierarchyIconSize, relativeTo: .caption)
-                    .foregroundStyle(HerdrTheme.muted)
+                    .herdrFont(size: SidebarMetrics.workspaceIconSize, relativeTo: .caption)
+                    .foregroundStyle(folderIconColor)
                     .accessibilityHidden(true)
 
                 Text(workspace.label)
                     .herdrFont(
-                        size: SidebarMetrics.projectLabelSize,
+                        size: SidebarMetrics.workspaceLabelSize,
                         weight: .semibold,
                         relativeTo: .subheadline
                     )
-                    .foregroundStyle(HerdrTheme.mist)
+                    .foregroundStyle(titleColor)
                     .lineLimit(1)
+                    .truncationMode(.tail)
 
                 Spacer(minLength: 4)
 
@@ -70,6 +71,7 @@ struct SidebarProjectRow: View {
                     Text("\(workspace.attentionCount)")
                         .herdrFont(.caption2, monospacedDigit: true)
                         .foregroundStyle(HerdrTheme.alert)
+                        .fixedSize()
                         .accessibilityLabel("\(workspace.attentionCount) needing attention")
                 } else if !isExpanded, workingCount > 0 {
                     Text("\(workingCount) working")
@@ -85,7 +87,7 @@ struct SidebarProjectRow: View {
             }
             .padding(.leading, SidebarMetrics.workspaceRowLeadingPadding)
             .padding(.trailing, SidebarMetrics.rowTrailingPadding)
-            .frame(minHeight: SidebarMetrics.projectRowHeight)
+            .frame(minHeight: SidebarMetrics.workspaceRowHeight)
             .contentShape(Rectangle())
             .background(isHovering ? HerdrTheme.elevated.opacity(0.6) : .clear, in: .rect(cornerRadius: 6))
         }
@@ -97,6 +99,11 @@ struct SidebarProjectRow: View {
         .accessibilityValue(accessibilityValue(workingCount: workingCount))
         .accessibilityHint("Collapses or expands this workspace's chats")
     }
+
+    /// Exposed so the workspace-folder hierarchy tests pin the contrast step
+    /// without re-parsing the view body.
+    var titleColor: Color { HerdrTheme.text }
+    var folderIconColor: Color { HerdrTheme.mist }
 
     /// The tooltip retains the full status without repeating it beside every title.
     private func tooltip(workingCount: Int) -> String {

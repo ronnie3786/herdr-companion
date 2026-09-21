@@ -273,7 +273,7 @@ private actor FirstMateFleetResponseGate {
 
     func waitForRequest() async throws {
         let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(1))
+        let deadline = clock.now.advanced(by: .seconds(5))
         while response == nil {
             try Task.checkCancellation()
             guard clock.now < deadline else { throw FirstMateFleetGateError.requestTimedOut }

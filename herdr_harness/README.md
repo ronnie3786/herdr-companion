@@ -36,6 +36,8 @@ protected Documents/Desktop/Downloads folders, for example under
 `~/Library/Application Support/Herdr/Backend/<revision>/`. A checkout update alone
 does not update an installed runtime. Keep your existing private TOML and state
 paths, including Fleet ownership/quarantine records and referenced attachments.
+After several updates accumulate, `herdr-prune-runtimes` can report old runtimes in a
+dry run and `herdr-prune-runtimes --apply` can delete them.
 
 Set `runtime_python` below to the new environment's absolute Python path. Run the
 packaged-install smoke test from the matching source checkout; it starts a temporary

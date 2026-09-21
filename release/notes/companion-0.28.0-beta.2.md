@@ -1,8 +1,8 @@
 # Companion 0.28.0b2
 
-First Mate and its spawned agents can use the normal Pi shell tool to run installed CLIs. This includes research and review assignments, nested agents, and bounded advisor lookups. The coordinator keeps short replies and delegates substantive work; CLI access is no longer removed to enforce that workflow.
+First Mate and its spawned agents use the normal Pi tool environment, including Bash, file tools, skills, project context, and configured extensions. This includes research and review assignments, nested agents, and internal advisors. The coordinator keeps short replies and delegates substantive work through instructions rather than a reduced tool profile. It can also use the feature's bounded document and session readers.
 
-Inspection assignments preserve their shared checkout by instruction, while implementation assignments keep their isolated worktrees. Shell commands use the assigned working directory and host permissions. Existing workflow authorization, handoff acknowledgement, assignment tracking, and authenticated API checks remain in place.
+Inspection assignments preserve their shared checkout by instruction, while implementation assignments keep their isolated worktrees. Commands and tools use the assigned working directory, normal Pi configuration, and host permissions. Existing workflow authorization, handoff acknowledgement, assignment tracking, and authenticated API checks remain in place. Agent-spawning skills use tracked First Mate delegation so work stays visible beside the main conversation.
 
 ## Installation and compatibility
 

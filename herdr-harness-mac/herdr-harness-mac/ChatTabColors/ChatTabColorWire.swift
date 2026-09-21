@@ -26,8 +26,10 @@ enum ChatTabColorContract {
 
     private static func isIdentifierStart(_ scalar: Unicode.Scalar) -> Bool {
         switch scalar.value {
-        case 48...57, 65...90, 97...122: true
-        default: false
+        case 48...57, 65...90, 97...122:
+            return true
+        default:
+            return false
         }
     }
 
@@ -35,8 +37,10 @@ enum ChatTabColorContract {
         if isIdentifierStart(scalar) { return true }
         // `:`, `.`, `_`, `-`
         switch scalar.value {
-        case 58, 46, 95, 45: true
-        default: false
+        case 58, 46, 95, 45:
+            return true
+        default:
+            return false
         }
     }
 }

@@ -90,6 +90,10 @@ struct ChatTabColorWireContractTests {
     func identifierContract() {
         #expect(ChatTabColorContract.isValidIdentifier("w1:t1"))
         #expect(ChatTabColorContract.isValidIdentifier("ws_mixed_alpha:t2"))
+        #expect(ChatTabColorContract.isValidIdentifier("a:b"))
+        #expect(ChatTabColorContract.isValidIdentifier("a.b"))
+        #expect(ChatTabColorContract.isValidIdentifier("a_b"))
+        #expect(ChatTabColorContract.isValidIdentifier("a-b"))
         #expect(ChatTabColorContract.isValidIdentifier("a"))
         #expect(ChatTabColorContract.isValidIdentifier(String(repeating: "a", count: 256)))
         #expect(!ChatTabColorContract.isValidIdentifier(String(repeating: "a", count: 257)))

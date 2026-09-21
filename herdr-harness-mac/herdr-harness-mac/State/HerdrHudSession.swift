@@ -109,6 +109,12 @@ final class HerdrHudSession {
     @ObservationIgnored private var restoreTask: Task<Void, Never>?
     @ObservationIgnored private var historyObservationTask: Task<Void, Never>?
     @ObservationIgnored private var hasStartedSessionActivity = false
+    /// Fires after an accepted run or a history load establishes this session's
+    /// durable conversation identity. The owning HUD collection uses it to
+    /// attach a title that was created while the first turn was still an
+    /// unaccepted placeholder. This is a notification seam only: it cannot
+    /// change what the session does.
+    @ObservationIgnored var onHistoryIdentityEstablished: (() -> Void)?
 
     let responseAudioPlayer = ResponseAudioPlayer()
     private(set) var exchanges: [HerdrHudExchange] = []
@@ -1371,6 +1377,7 @@ final class HerdrHudSession {
             lastRunID: page.latestRunId,
             turnCount: turns.count
         ) : nil
+        onHistoryIdentityEstablished?()
         selectedMachineID = machineID
         selectedWorkingFolder = HerdrHudWorkingFolder(path: historyWorkingFolder)
         workingFolderStore.remember(
@@ -1651,6 +1658,7 @@ final class HerdrHudSession {
             let count = thread?.rootRunID == root ? (thread?.turnCount ?? 0) + 1 : 1
             thread = HerdrHudThread(machineID: machineID, rootRunID: root,
                                    lastRunID: run.id, turnCount: count)
+            onHistoryIdentityEstablished?()
             workingFolderStore.remember(
                 folder: HerdrHudWorkingFolder(path: workingFolderPath),
                 for: machineID,

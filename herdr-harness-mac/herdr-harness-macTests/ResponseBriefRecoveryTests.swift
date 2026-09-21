@@ -1081,6 +1081,216 @@ struct ResponseBriefRecoveryTests {
         #expect(stored.pendingRegenerations.isEmpty)
         #expect(stored.receipts.isEmpty)
     }
+
+    @Test("A newer length selection during the recovery fetch supersedes latest-only recovery")
+    func newerSelectionDuringRecoveryFetchSupersedesRecovery() async throws {
+        let fixture = try RecoveryFixture()
+        defer { fixture.cleanup() }
+        let older = fixture.source(responseID: "entry-fetch-older")
+        let latest = fixture.source(
+            responseID: "entry-fetch-latest",
+            text: "A distinct later synthetic answer.",
+            responseTimestamp: Date(timeIntervalSince1970: 1_800_000_300),
+            userTimestamp: Date(timeIntervalSince1970: 1_800_000_200)
+        )
+        try await fixture.persistence.advanceCursor(
+            chatID: older.chat.id,
+            responseID: "missing-answer"
+        )
+        // Accepted ownership for an earlier answer must keep reconciling even
+        // though the recovery ordering is superseded.
+        let accepted = fixture.source(
+            responseID: "entry-fetch-accepted",
+            identity: false,
+            responseTimestamp: nil
+        )
+        let acceptedRequest = try ResponseBriefRequestBuilder.request(
+            for: accepted,
+            model: "provider/brief-model",
+            thinkingLevel: nil
+        )
+        try await fixture.persistence.saveReceipt(.init(
+            id: fixture.legacyGenerationID(for: accepted, model: "provider/brief-model", thinkingLevel: nil),
+            source: accepted,
+            request: acceptedRequest,
+            runID: "agr_synthetic0001",
+            createdAt: .now
+        ))
+
+        let coordinator = fixture.coordinator()
+        coordinator.runPollDelay = .zero
+        #expect(coordinator.enable(older.chat))
+        var starts: [AssistantRequest] = []
+        var fetches = 0
+        var snapshotContinuation: CheckedContinuation<Void, Never>?
+        var snapshotStarted: AsyncStream<Void>.Continuation?
+        let snapshotStartedStream = AsyncStream<Void> { snapshotStarted = $0 }
+        let snapshot = fixture.snapshot(for: [older, latest])
+        let transport = ResponseBriefTransport(
+            capabilities: { _ in fixture.capabilities() },
+            models: { _ in
+                AgentModelCatalogResponse(ok: true, models: [fixture.briefModel], defaultModel: nil)
+            },
+            fetchSnapshot: { _ in
+                snapshotStarted?.yield()
+                await withCheckedContinuation { snapshotContinuation = $0 }
+                return snapshot
+            },
+            start: { _, request in
+                starts.append(request)
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _, _ in
+                fetches += 1
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            cancel: { _, id in
+                fixture.run(status: .cancelled, response: nil, error: "cancelled \(id)")
+            }
+        )
+
+        let recovery = Task { @MainActor in
+            await coordinator.restartBriefsFromLatest(older.chat, transport: transport)
+        }
+        var iterator = snapshotStartedStream.makeAsyncIterator()
+        _ = await iterator.next()
+
+        // While the recovery snapshot is suspended, the user deliberately
+        // selects a new length for the latest answer. The newer selection
+        // supersedes the older latest-only recovery.
+        await coordinator.changeLength(
+            .long,
+            chat: older.chat,
+            selectedSource: latest,
+            transport: transport
+        )
+        await coordinator.waitForIdleForTesting()
+        #expect(starts.count == 1)
+        #expect(starts.first?.responseBriefLength == .long)
+        #expect(starts.first?.context.source.instanceId == latest.responseID)
+
+        snapshotContinuation?.resume()
+        await recovery.value
+        await coordinator.waitForIdleForTesting()
+
+        // The obsolete recovery never replaced the newer selection with
+        // latest-only work, never moved the unmatched baseline, and never
+        // created a second paid submission. Accepted ownership still
+        // reconciled exactly once.
+        #expect(starts.count == 1)
+        #expect(fetches == 1)
+        let stored = try await fixture.persistence.snapshot()
+        #expect(stored.pendingRegenerations.isEmpty)
+        #expect(stored.receipts.isEmpty)
+        #expect(stored.responseCursorByChatID[older.chat.id] == "missing-answer")
+        #expect(stored.baselineAnchors[older.chat.id] == nil)
+        let responseIDs = Set(coordinator.briefs(for: older.chat).map(\.source.responseID))
+        #expect(responseIDs == [accepted.responseID, latest.responseID])
+    }
+
+    @Test("A disable and re-enable during the recovery fetch supersedes obsolete recovery")
+    func disableDuringRecoveryFetchSupersedesRecovery() async throws {
+        let fixture = try RecoveryFixture()
+        defer { fixture.cleanup() }
+        let older = fixture.source(responseID: "entry-disable-fetch-older")
+        let latest = fixture.source(
+            responseID: "entry-disable-fetch-latest",
+            text: "A distinct later synthetic answer.",
+            responseTimestamp: Date(timeIntervalSince1970: 1_800_000_300),
+            userTimestamp: Date(timeIntervalSince1970: 1_800_000_200)
+        )
+        try await fixture.persistence.advanceCursor(
+            chatID: older.chat.id,
+            responseID: "missing-answer"
+        )
+        let accepted = fixture.source(
+            responseID: "entry-disable-fetch-accepted",
+            identity: false,
+            responseTimestamp: nil
+        )
+        let acceptedRequest = try ResponseBriefRequestBuilder.request(
+            for: accepted,
+            model: "provider/brief-model",
+            thinkingLevel: nil
+        )
+        try await fixture.persistence.saveReceipt(.init(
+            id: fixture.legacyGenerationID(for: accepted, model: "provider/brief-model", thinkingLevel: nil),
+            source: accepted,
+            request: acceptedRequest,
+            runID: "agr_synthetic0001",
+            createdAt: .now
+        ))
+
+        let coordinator = fixture.coordinator()
+        coordinator.runPollDelay = .zero
+        #expect(coordinator.enable(older.chat))
+        var starts: [AssistantRequest] = []
+        var fetches = 0
+        var snapshotContinuation: CheckedContinuation<Void, Never>?
+        var snapshotStarted: AsyncStream<Void>.Continuation?
+        let snapshotStartedStream = AsyncStream<Void> { snapshotStarted = $0 }
+        let snapshot = fixture.snapshot(for: [older, latest])
+        let transport = ResponseBriefTransport(
+            capabilities: { _ in fixture.capabilities() },
+            models: { _ in
+                AgentModelCatalogResponse(ok: true, models: [fixture.briefModel], defaultModel: nil)
+            },
+            fetchSnapshot: { _ in
+                snapshotStarted?.yield()
+                await withCheckedContinuation { snapshotContinuation = $0 }
+                return snapshot
+            },
+            start: { _, request in
+                starts.append(request)
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _, _ in
+                fetches += 1
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            cancel: { _, id in
+                fixture.run(status: .cancelled, response: nil, error: "cancelled \(id)")
+            }
+        )
+
+        let recovery = Task { @MainActor in
+            await coordinator.restartBriefsFromLatest(older.chat, transport: transport)
+        }
+        var iterator = snapshotStartedStream.makeAsyncIterator()
+        _ = await iterator.next()
+
+        // The accepted receipt reconciles while the recovery fetch is
+        // suspended, then the chat is disabled and re-enabled. The obsolete
+        // recovery must not become authorized again.
+        await coordinator.waitForIdleForTesting()
+        #expect(fetches == 1)
+        await coordinator.disable(older.chat, transport: transport)
+        #expect(coordinator.enable(older.chat))
+
+        snapshotContinuation?.resume()
+        await recovery.value
+        await coordinator.waitForIdleForTesting()
+
+        #expect(starts.isEmpty)
+        let stored = try await fixture.persistence.snapshot()
+        #expect(stored.pendingRegenerations.isEmpty)
+        #expect(stored.receipts.isEmpty)
+        #expect(stored.responseCursorByChatID[older.chat.id] == "missing-answer")
+        #expect(stored.baselineAnchors[older.chat.id] == nil)
+        #expect(coordinator.briefs(for: older.chat).map(\.source.responseID) == [accepted.responseID])
+
+        // A later observation of the latest answer generates it under the
+        // current preference instead of resurrecting the obsolete recovery.
+        await coordinator.observe(latest, transport: transport)
+        await coordinator.waitForIdleForTesting()
+        #expect(starts.count == 1)
+        #expect(starts.first?.responseBriefLength == .minimal)
+        #expect(starts.first?.context.source.instanceId == latest.responseID)
+        #expect(coordinator.state(for: older.chat).phase == .idle)
+        let final = try await fixture.persistence.snapshot()
+        #expect(final.pendingRegenerations.isEmpty)
+        #expect(final.receipts.isEmpty)
+    }
 }
 
 @MainActor

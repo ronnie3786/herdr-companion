@@ -326,6 +326,38 @@ actor ResponseBriefPersistence {
         }
     }
 
+    /// Atomically advances a chat's baseline high-watermark and records the
+    /// identity evidence for that exact response. A crash between two separate
+    /// writes could otherwise strand the baseline after a live-to-persisted
+    /// identifier change. When `expectingRevision` is supplied, the move is
+    /// admitted only while that revision is still the chat's newest admitted
+    /// selection/cancellation revision; a superseded recovery whose snapshot
+    /// fetch raced a newer selection returns false without touching the
+    /// baseline. Returns whether the baseline moved.
+    @discardableResult
+    func advanceCursor(
+        chatID: String,
+        responseID: String,
+        anchorIdentity: ResponseBriefIdentityEvidence?,
+        recordedAt: Date,
+        expectingRevision revision: Int
+    ) throws -> Bool {
+        var accepted = false
+        try mutateAtomically {
+            guard (regenerationRevisions[chatID] ?? 0) <= revision else { return }
+            responseCursorByChatID[chatID] = responseID
+            baselineAnchors[chatID] = BaselineAnchor(
+                chatID: chatID,
+                responseID: responseID,
+                identity: anchorIdentity,
+                recordedAt: recordedAt
+            )
+            try trimEvictableContentToLimits()
+            accepted = true
+        }
+        return accepted
+    }
+
     /// Records the durable identity anchor for a chat's saved baseline. The
     /// newest anchor for a chat replaces the older one.
     func recordBaselineAnchor(
@@ -465,21 +497,30 @@ actor ResponseBriefPersistence {
     /// Converts the coalescible replacement intent into a durable receipt in
     /// one atomic write. Returns false without saving anything when a newer
     /// selection replaced the intent while asynchronous preflight was running,
-    /// so a superseded selection can never create a paid submission.
+    /// so a superseded selection can never create a paid submission. Revision
+    /// admission is serialized with the conversion: the receipt commits only
+    /// while `revision` is still both the stored intent's revision and the
+    /// chat's newest admitted selection revision.
     func commitReplacementReceipt(
         _ receipt: Receipt,
-        expecting intentKey: String
+        expecting intentKey: String,
+        revision: Int
     ) throws -> Bool {
         var committed = false
         try mutateAtomically {
-            guard pendingRegenerations[receipt.source.chat.id]?.replacementKey == intentKey else {
+            let chatID = receipt.source.chat.id
+            guard let intent = pendingRegenerations[chatID],
+                  intent.replacementKey == intentKey,
+                  intent.revision == revision,
+                  (regenerationRevisions[chatID] ?? 0) == revision
+            else {
                 return
             }
             if !receipts.contains(where: { $0.id == receipt.id }),
                receipts.count(where: { $0.status != .settled }) >= maximumOutstandingReceipts {
                 throw ResponseBriefPersistenceError.tooManyOutstandingRuns
             }
-            pendingRegenerations.removeValue(forKey: receipt.source.chat.id)
+            pendingRegenerations.removeValue(forKey: chatID)
             receipts.removeAll { $0.id == receipt.id }
             receipts.append(receipt)
             attemptedGenerationIDs.insert(receipt.id)

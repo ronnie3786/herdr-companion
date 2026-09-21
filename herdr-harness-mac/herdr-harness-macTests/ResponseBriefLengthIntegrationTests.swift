@@ -560,6 +560,107 @@ struct ResponseBriefLengthIntegrationTests {
         #expect(stored.receipts.isEmpty)
     }
 
+    @Test("A newer selection awaiting persistence supersedes an older replacement finishing preflight")
+    func newerSelectionAwaitingPersistenceSupersedesOlderPreflight() async throws {
+        let fixture = try LengthFixture()
+        defer { fixture.cleanup() }
+        let coordinator = fixture.coordinator()
+        coordinator.runPollDelay = .zero
+        let source = fixture.source(responseID: "entry-intent-race")
+        var requests: [AssistantRequest] = []
+
+        // Medium's first capability preflight suspends so Long can be selected
+        // while Medium is still unowned.
+        var capabilitiesContinuation: CheckedContinuation<Void, Never>?
+        var capabilitiesStarted: AsyncStream<Void>.Continuation?
+        let preflightStarted = AsyncStream<Void> { capabilitiesStarted = $0 }
+
+        // Long's intent write then suspends at the persistence barrier, so
+        // Medium resumes while the newer selection is durable but not yet
+        // published.
+        var barrierCalls = 0
+        var releaseLong: CheckedContinuation<Void, Never>?
+        var longBarrierStarted: AsyncStream<Void>.Continuation?
+        let intentHeld = AsyncStream<Void> { longBarrierStarted = $0 }
+
+        let transport = ResponseBriefTransport(
+            capabilities: { _ in
+                capabilitiesStarted?.yield()
+                await withCheckedContinuation { capabilitiesContinuation = $0 }
+                return fixture.capabilities()
+            },
+            models: { _ in
+                AgentModelCatalogResponse(
+                    ok: true,
+                    models: [fixture.briefModel, fixture.otherModel],
+                    defaultModel: nil
+                )
+            },
+            fetchSnapshot: { _ in throw APIError.invalidResponse },
+            start: { _, request in
+                requests.append(request)
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _, _ in fixture.run(status: .completed, response: fixture.validJSON) },
+            cancel: { _, _ in fixture.run(status: .cancelled, response: nil, error: "cancelled") }
+        )
+        #expect(coordinator.enable(source.chat))
+        coordinator.intentPersistenceBarrier = {
+            barrierCalls += 1
+            guard barrierCalls >= 2 else { return }
+            longBarrierStarted?.yield()
+            await withCheckedContinuation { releaseLong = $0 }
+        }
+
+        let mediumChange = Task { @MainActor in
+            await coordinator.changeLength(
+                .medium,
+                chat: source.chat,
+                selectedSource: source,
+                transport: transport
+            )
+        }
+        var preflightIterator = preflightStarted.makeAsyncIterator()
+        _ = await preflightIterator.next()
+        #expect(requests.isEmpty)
+
+        let longChange = Task { @MainActor in
+            await coordinator.changeLength(
+                .long,
+                chat: source.chat,
+                selectedSource: source,
+                transport: transport
+            )
+        }
+        var heldIterator = intentHeld.makeAsyncIterator()
+        _ = await heldIterator.next()
+
+        // Medium revalidates after preflight while Long is suspended before
+        // its own durable write. The captured Medium revision is already
+        // superseded even though the stored intent is still Medium's.
+        capabilitiesContinuation?.resume()
+        await mediumChange.value
+        await coordinator.waitForIdleForTesting()
+        #expect(requests.isEmpty)
+        let held = try await fixture.persistence.snapshot()
+        #expect(held.pendingRegenerations[source.chat.id]?.length == .medium)
+
+        releaseLong?.resume()
+        await longChange.value
+        coordinator.intentPersistenceBarrier = nil
+        await coordinator.waitForIdleForTesting()
+
+        // Only the newest selection reaches the paid endpoint.
+        #expect(requests.map(\.responseBriefLength) == [.long])
+        #expect(coordinator.briefs(for: source.chat).count == 1)
+        let record = try #require(coordinator.briefs(for: source.chat).first)
+        #expect(record.responseBriefLength == .long)
+        #expect(record.briefConformsToCapturedPolicy)
+        let stored = try await fixture.persistence.snapshot()
+        #expect(stored.pendingRegenerations.isEmpty)
+        #expect(stored.receipts.isEmpty)
+    }
+
     @Test("A length change keeps a transport-uncertain receipt actionable and retryable after relaunch")
     func relaunchPresentsUncertainReceiptBeforeReplacement() async throws {
         let fixture = try LengthFixture()

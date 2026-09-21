@@ -431,7 +431,8 @@ struct ResponseBriefPersistenceTests {
 
         let supersededCommit = try await persistence.commitReplacementReceipt(
             receipt,
-            expecting: mediumIntent.replacementKey
+            expecting: mediumIntent.replacementKey,
+            revision: mediumIntent.revision
         )
         #expect(!supersededCommit)
         var state = try await persistence.snapshot()
@@ -441,7 +442,8 @@ struct ResponseBriefPersistenceTests {
 
         let currentCommit = try await persistence.commitReplacementReceipt(
             receipt,
-            expecting: longIntent.replacementKey
+            expecting: longIntent.replacementKey,
+            revision: longIntent.revision
         )
         #expect(currentCommit)
         state = try await persistence.snapshot()
@@ -570,6 +572,49 @@ struct ResponseBriefPersistenceTests {
         #expect(state.pendingRegenerations[chatID]?.length == .long)
         #expect(state.responseCursorByChatID[chatID] == newerSource.responseID)
         #expect(state.baselineAnchors[chatID]?.responseID == newerSource.responseID)
+    }
+
+    @Test("A superseded recovery cursor move is rejected after a newer selection is admitted")
+    func supersededRecoveryCursorMoveIsRejected() async throws {
+        let persistence = ResponseBriefPersistence(inMemory: true)
+        let source = makeSource(responseID: "entry-recovery-cursor")
+        let chatID = source.chat.id
+        // The confirmed recovery reserved revision 1 before its snapshot fetch
+        // suspended, and a newer length selection was durably admitted while
+        // that fetch was in flight.
+        #expect(try await persistence.savePendingRegeneration(.init(
+            chatID: chatID,
+            source: source,
+            length: .long,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_600),
+            revision: 2
+        )))
+
+        let moved = try await persistence.advanceCursor(
+            chatID: chatID,
+            responseID: source.responseID,
+            anchorIdentity: nil,
+            recordedAt: Date(timeIntervalSince1970: 1_800_000_601),
+            expectingRevision: 1
+        )
+        #expect(!moved)
+        let state = try await persistence.snapshot()
+        #expect(state.responseCursorByChatID[chatID] == nil)
+        #expect(state.baselineAnchors[chatID] == nil)
+        #expect(state.pendingRegenerations[chatID]?.length == .long)
+
+        // The current revision can still establish the baseline.
+        let currentMove = try await persistence.advanceCursor(
+            chatID: chatID,
+            responseID: source.responseID,
+            anchorIdentity: nil,
+            recordedAt: Date(timeIntervalSince1970: 1_800_000_602),
+            expectingRevision: 2
+        )
+        #expect(currentMove)
+        let updated = try await persistence.snapshot()
+        #expect(updated.responseCursorByChatID[chatID] == source.responseID)
+        #expect(updated.baselineAnchors[chatID]?.responseID == source.responseID)
     }
 
     @Test("A rejected stale write cannot survive immediate restoration and a tombstone survives relaunch")

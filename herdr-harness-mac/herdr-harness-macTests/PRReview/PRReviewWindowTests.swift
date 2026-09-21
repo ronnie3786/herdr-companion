@@ -476,6 +476,92 @@ struct PRReviewWindowTests {
         #expect(markdown == PRReviewDocumentWindow.reuseKey(kind: "markdown", document: document, store: firstHost))
     }
 
+    @Test("A document window session owns an independent store pinned to the opening host")
+    func documentWindowSessionPinsHost() async throws {
+        let firstHost = SyntheticPRReviewWindowClient()
+        let secondHost = SyntheticPRReviewWindowClient()
+        let store = PRReviewStore(documentCache: temporaryDocumentCache())
+        store.configure(client: firstHost, machineID: "machine-a", demo: false)
+        store.select(PRReviewDemo.reviewID)
+        let document = PRReviewDemo.snapshot().documents[0]
+
+        let session = try #require(PRReviewDocumentWindow.makeSession(kind: "markdown", document: document, store: store))
+        #expect(session.store !== store)
+        #expect(session.store.currentMachineID == "machine-a")
+        #expect(session.store.selectedReviewID == document.reviewID)
+        #expect(session.reuseKey == PRReviewDocumentWindow.reuseKey(kind: "markdown", document: document, store: store))
+
+        // The first download fails; then the main store switches to another
+        // configured host. The retained window still downloads host A's
+        // document in a retry instead of host B's copies of the same ids.
+        await #expect(throws: (any Error).self) {
+            try await session.store.localURL(for: document)
+        }
+        store.configure(client: secondHost, machineID: "machine-b", demo: false)
+        await #expect(throws: (any Error).self) {
+            try await session.store.localURL(for: document)
+        }
+
+        #expect(await firstHost.downloadRequests == [document.id, document.id])
+        #expect(await secondHost.downloadRequests.isEmpty)
+        #expect(session.store.currentMachineID == "machine-a")
+    }
+
+    @Test("A retained document window retries after its originating review closes")
+    func documentWindowRetriesAfterOriginatingReviewCloses() async throws {
+        let attempts = SyntheticDownloadAttempts()
+        let client = SyntheticPRReviewWindowClient(downloadHandler: { _, _, destination in
+            if await attempts.next() == 1 {
+                throw APIError.invalidResponse
+            }
+            try Data("synthetic review report".utf8).write(to: destination, options: .atomic)
+        })
+        let cache = temporaryDocumentCache()
+        let session = PRReviewWindowSession(
+            target: PRReviewWindowTarget(machineID: "machine-a", reviewID: PRReviewDemo.reviewID),
+            store: PRReviewStore(documentCache: cache)
+        )
+        await session.activate(identity: "machine-a", hostState: .available, client: client, seed: nil)
+        let document = PRReviewDemo.snapshot().documents[0]
+        let windowSession = try #require(PRReviewDocumentWindow.makeSession(kind: "html", document: document, store: session.store))
+
+        await #expect(throws: (any Error).self) {
+            try await windowSession.store.localURL(for: document)
+        }
+
+        // Closing the pop-out invalidates its presentation store, but the
+        // retained document window keeps its own pinned transport and can
+        // still retry the download.
+        session.stop()
+        #expect(session.store.documentTransport(for: document) == nil)
+
+        let url = try await windowSession.store.localURL(for: document)
+        let contents = try String(contentsOf: url, encoding: .utf8)
+        #expect(contents == "synthetic review report")
+        #expect(await client.downloadRequests == [document.id, document.id])
+    }
+
+    @Test("An unconfigured or invalidated store cannot open a document window")
+    func documentWindowRequiresPinnedHost() {
+        let document = PRReviewDemo.snapshot().documents[0]
+        let store = PRReviewStore(documentCache: temporaryDocumentCache())
+        #expect(PRReviewDocumentWindow.makeSession(kind: "html", document: document, store: store) == nil)
+
+        store.configure(client: SyntheticPRReviewWindowClient(), machineID: "machine-a", demo: false)
+        store.select(PRReviewDemo.reviewID)
+        #expect(PRReviewDocumentWindow.makeSession(kind: "html", document: document, store: store) != nil)
+
+        store.invalidateConnection()
+        #expect(PRReviewDocumentWindow.makeSession(kind: "html", document: document, store: store) == nil)
+    }
+
+    private func temporaryDocumentCache() -> PRReviewDocumentCache {
+        PRReviewDocumentCache(
+            rootURL: FileManager.default.temporaryDirectory
+                .appending(path: "PRReviewWindowTests-\(UUID().uuidString)")
+        )
+    }
+
     // MARK: Mounted files view helpers
 
     private func mountFilesView(_ store: PRReviewStore) async throws -> NSWindow {
@@ -535,6 +621,17 @@ actor SyntheticPRReviewGate {
     }
 }
 
+/// Counts document download attempts so a retry can be distinguished from
+/// the first failed download without inspecting private cache state.
+actor SyntheticDownloadAttempts {
+    private var count = 0
+
+    func next() -> Int {
+        count += 1
+        return count
+    }
+}
+
 /// A synthetic PR Review client with demo-backed responses and observable call
 /// counts. Counts are read from tests with `await`.
 actor SyntheticPRReviewWindowClient: PRReviewClient {
@@ -545,18 +642,21 @@ actor SyntheticPRReviewWindowClient: PRReviewClient {
     private let reviewGate: SyntheticPRReviewGate?
     private let capabilitiesError: APIError?
     private let reviewError: APIError?
+    private let downloadHandler: (@Sendable (String, String, URL) async throws -> Void)?
     private(set) var downloadRequests: [String] = []
 
     init(
         capabilitiesGate: SyntheticPRReviewGate? = nil,
         reviewGate: SyntheticPRReviewGate? = nil,
         capabilitiesError: APIError? = nil,
-        reviewError: APIError? = nil
+        reviewError: APIError? = nil,
+        downloadHandler: (@Sendable (String, String, URL) async throws -> Void)? = nil
     ) {
         self.capabilitiesGate = capabilitiesGate
         self.reviewGate = reviewGate
         self.capabilitiesError = capabilitiesError
         self.reviewError = reviewError
+        self.downloadHandler = downloadHandler
     }
 
     func prReviewCapabilities() async throws -> PRReviewCapabilities {
@@ -647,6 +747,10 @@ actor SyntheticPRReviewWindowClient: PRReviewClient {
         to destinationURL: URL
     ) async throws {
         downloadRequests.append(documentID)
+        if let downloadHandler {
+            try await downloadHandler(reviewID, documentID, destinationURL)
+            return
+        }
         throw APIError.invalidResponse
     }
     func prReviewEvents(id: String, after: Int?) async throws -> [PRReviewEvent] { [] }

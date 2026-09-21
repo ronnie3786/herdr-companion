@@ -651,6 +651,30 @@ class CodeFactory:
             raise CodeFactoryError("the plan is missing; retry from the plan stage", code="invalid_request")
         return dict(plan)
 
+    def _ready_plan(
+        self, issue: Mapping[str, Any], paths: RunPaths, stage: str,
+    ) -> dict[str, Any] | None:
+        """Return a fully validated implementation-ready plan, or route stale data to replanning."""
+        raw = issue.get("planJson")
+        try:
+            plan = self._plan_for(issue)
+            normalized = prompts.validate_plan(plan)
+            if normalized["needs_human"]:
+                raise CodeFactoryError("the stored plan still needs human input", code="model_output_invalid")
+        except CodeFactoryError as exc:
+            if isinstance(raw, dict):
+                stale = dict(raw)
+                stale.pop("progress", None)
+                self._save_plan(issue, stale, paths)
+            self._store.add_event(
+                issue["number"], stage, "warning",
+                f"The stored plan is not implementation-ready ({_error_text(exc)}); returning to planning",
+            )
+            return None
+        ready = dict(plan)
+        ready.update(normalized)
+        return ready
+
     def _session(
         self,
         *,
@@ -1003,17 +1027,28 @@ class CodeFactory:
             f"Verification commands are listed in README.md; Python tests run with `python3 -m unittest tests.test_x`.",
             f"Base branch: {self._settings.base_branch}; the worktree branch is {self._branch(number)}.",
         ]
+        previous = issue.get("planJson") if isinstance(issue.get("planJson"), dict) else None
+        prior_review = previous.get("last_review") if isinstance(previous, dict) else None
+        if isinstance(prior_review, dict) and prior_review:
+            self._store.add_event(
+                number, "plan", "info", "Prior review evidence retained for corrective planning",
+                {
+                    "reviewRound": int(issue.get("reviewRound") or 0),
+                    "requirementsAssessment": prior_review.get("requirements_assessment"),
+                    "planAdjustmentAssessment": prior_review.get("plan_adjustment_assessment"),
+                    "blocking": prior_review.get("blocking"),
+                    "needsHuman": prior_review.get("needs_human"),
+                    "humanQuestion": prior_review.get("human_question"),
+                },
+            )
         result = self._session(
             issue_number=number, role="planner", model=self._settings.planner_model,
             thinking=self._settings.planner_thinking,
-            prompt=prompts.planner_prompt(view, descriptors, hints), cwd=cwd, name=f"issue-{number} plan",
+            prompt=prompts.planner_prompt(view, descriptors, hints, previous), cwd=cwd, name=f"issue-{number} plan",
             charter=prompts.PLANNER_CHARTER, tools=prompts.PLANNER_TOOLS, paths=paths, attachments=images,
         )
         self._restore_clean_worktree(number, "plan", cwd, "planner")
         plan = prompts.validate_plan(prompts.extract_json_block(result.text))
-        previous = issue.get("planJson") if isinstance(issue.get("planJson"), dict) else None
-        if previous and isinstance(previous.get("progress"), dict):
-            plan["progress"] = previous["progress"]
         self._save_plan(issue, plan, paths)
         self._store.update_issue(number, planSummary=plan["summary"][:4000])
         if plan["needs_human"]:
@@ -1022,7 +1057,7 @@ class CodeFactory:
             self._block(number, "plan", "human_question", question)
             return None
         self._store.add_event(number, "plan", "success", f"Plan ready: {len(plan['tasks'])} task(s), risk {plan['risk']}")
-        self._comment(number, "plan", prompts.plan_digest(plan))
+        self._comment(number, "plan", prompts.plan_digest(plan, corrected=previous is not None))
         return "implement"
 
     def _stage_implement(self, issue: dict[str, Any]) -> str | None:
@@ -1030,7 +1065,9 @@ class CodeFactory:
         paths = self._paths(number)
         cwd = self._ensure_worktree(issue)
         issue = self._store.get_issue(number) or issue  # progress may have been reset while recreating the worktree
-        plan = self._plan_for(issue)
+        plan = self._ready_plan(issue, paths, "implement")
+        if plan is None:
+            return "plan"
         view = self._issue_view(issue, paths)
         progress: dict[str, Any] = dict(plan.get("progress") or {})
         summaries: list[str] = [
@@ -1189,18 +1226,8 @@ class CodeFactory:
             return "verify"
         paths = self._paths(number)
         cwd = self._ensure_worktree(issue)
-        plan = self._plan_for(issue)
-        if not (
-            isinstance(plan.get("requirements_traceability"), list)
-            and plan.get("requirements_traceability")
-            and isinstance(plan.get("assumptions"), list)
-        ):
-            plan.pop("progress", None)
-            self._save_plan(issue, plan, paths)
-            self._store.add_event(
-                number, "review", "warning",
-                "The stored plan predates requirement traceability; returning to planning",
-            )
+        plan = self._ready_plan(issue, paths, "review")
+        if plan is None:
             return "plan"
         review = self._pending_review(plan, head)
         if review is not None:
@@ -1262,7 +1289,9 @@ class CodeFactory:
         number = issue["number"]
         paths = self._paths(number)
         cwd = self._ensure_worktree(issue)
-        plan = self._plan_for(issue)
+        plan = self._ready_plan(issue, paths, "revise")
+        if plan is None:
+            return "plan"
         view = self._issue_view(issue, paths)
         round_number = int(issue["reviewRound"] or 0)
         branch = issue.get("branch") or self._branch(number)
@@ -1291,7 +1320,10 @@ class CodeFactory:
         head = issue.get("headSha") or ""
         if self._head_moved(number, "merge", pr_number, head):
             return "verify"
-        plan = self._plan_for(issue)
+        paths = self._paths(number)
+        plan = self._ready_plan(issue, paths, "merge")
+        if plan is None:
+            return "plan"
         stored_review = plan.get("last_review")
         try:
             review = prompts.validate_review(stored_review, plan)
@@ -1341,9 +1373,39 @@ class CodeFactory:
         if action == "retry":
             if issue["status"] not in ("blocked", "failed"):
                 raise CodeFactoryError(f"issue #{number} is {issue['status']}; only blocked or failed issues can be retried", code="invalid_request")
-            self._store.update_issue(number, status="active", error=None, blockedReason=None)
-            self._store.add_event(number, issue["stage"], "info", f"Retry requested at {STAGE_LABELS.get(issue['stage'], issue['stage'])}")
-            queued = self._start_release() if issue["stage"] == "release" else self._submit(number)
+            retry_stage = issue["stage"]
+            if issue.get("blockedReason") == "human_question":
+                paths = self._paths(number)
+                try:
+                    remote = self._github.get_issue(number)
+                except CodeFactoryError as exc:
+                    message = f"Retry could not refresh the issue from GitHub; it remains blocked: {_error_text(exc)}"
+                    self._store.add_event(number, retry_stage, "warning", message)
+                    raise CodeFactoryError(message, code=exc.code) from exc
+                self._write_json(paths.issue_json, remote)
+                labels = _label_names(remote) or list(issue.get("labels") or [])
+                marker = issue_reports.parse_report_marker(remote.get("body"))
+                self._store.update_issue(
+                    number,
+                    title=prompts.single_line(remote.get("title"))[:500] or issue["title"],
+                    url=str(remote.get("url") or issue.get("url") or "")[:500],
+                    author=_author_login(remote)[:100] or issue.get("author") or "",
+                    labels=labels,
+                    kind=_kind_from(labels, marker) if (labels or marker) else issue["kind"],
+                )
+                prior = issue.get("planJson")
+                if isinstance(prior, dict):
+                    prior = dict(prior)
+                    prior.pop("progress", None)
+                    self._save_plan(self._store.get_issue(number) or issue, prior, paths)
+                retry_stage = "plan"
+                self._store.add_event(
+                    number, issue["stage"], "info",
+                    "Human-decision retry refreshed the issue description and will create a fresh plan; prior feedback is context, not approval",
+                )
+            self._store.update_issue(number, status="active", stage=retry_stage, error=None, blockedReason=None)
+            self._store.add_event(number, retry_stage, "info", f"Retry requested at {STAGE_LABELS.get(retry_stage, retry_stage)}")
+            queued = self._start_release() if retry_stage == "release" else self._submit(number)
         elif action == "skip":
             if issue["status"] == "done":
                 raise CodeFactoryError(f"issue #{number} is already done", code="invalid_request")

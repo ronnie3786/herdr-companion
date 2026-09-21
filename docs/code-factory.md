@@ -37,7 +37,9 @@ This is an experimental personal automation. Read the safety section before enab
    unresolved assumptions, plus acceptance criteria, at most four sequential tasks with
    owned paths and tests, documentation obligations, and attachment descriptions. An
    unresolved behavior assumption cannot enter implementation: Astra asks a specific
-   question, the issue is marked **blocked**, and the question is posted on it.
+   question, the issue is marked **blocked**, and the question is posted on it. Record the
+   answer in the issue description before retrying; comments are not consumed as planning
+   instructions.
 6. **DeepSeek implements.** For each task a fresh Pi session on
    `ollama-cloud/deepseek-v4.1-flash:cloud` with thinking `max` implements the task in the
    worktree, writes tests without running incremental suites, and commits. The complete
@@ -53,13 +55,21 @@ This is an experimental personal automation. Read the safety section before enab
    the request and a counterexample using another valid configuration (or a justified
    not-applicable result). CI/plan agreement alone is not evidence, and code/test evidence
    is not described as installed or deployed UI verification. Missing, unmet, unverified,
-   narrowed, unresolved, stale, or unposted approval data blocks merge. Because the same
-   GitHub account authors and reviews the PR, the review is posted as a comment-type review
+   narrowed, unresolved, stale, or unposted approval data blocks merge. A narrowing finding
+   starts a fresh plan with the original request and bounded prior review evidence (requirement
+   assessments, narrowing explanation, blocking findings, and human question) as explicitly
+   delimited untrusted context. The planner must account for rejected assumptions and any
+   existing branch implementation; completed task progress and prior approval are not reused,
+   while the review-round ledger remains intact. The corrected plan is posted through the
+   existing issue-comment mechanism. Because the same GitHub account authors and reviews the PR,
+   the review is posted as a comment-type review
    with an explicit **approve** or **request changes** verdict in its text.
 9. **Fresh revisions.** A red CI run first gets one automatic re-run of only its failed
    jobs for that head commit. A second failure on the same head goes to a new DeepSeek
-   revision session, which commits and pushes; Astra requested changes always go directly
-   to a revision session. Astra's requested-change loop is bounded by
+   revision session, which commits and pushes. Astra implementation findings go to a
+   revision session; a rejected/narrowed plan returns to planning, and unresolved behavior
+   questions block for the issue-description decision instead of asking a reviser to guess.
+   Astra's requested-change loop is bounded by
    `max_review_rounds`, while repeated CI failures are bounded separately by
    `max_ci_failures`. Exhausting either blocks the issue for a human with
    `review_rounds_exhausted` or `ci_failures_exhausted`, respectively.
@@ -197,7 +207,9 @@ machine's tailnet address. Either way it shows:
   (role, model, thinking level, duration, cost), and the full event log;
 - the release log with included issues and links.
 
-Actions: **Retry** a blocked or failed issue at its current stage, **Skip** it (removes
+Actions: **Retry** a blocked or failed issue at its current stage. A retry blocked on a
+human question first refreshes the GitHub issue snapshot and returns to fresh planning; if the
+refresh fails, the issue stays blocked. Other retries resume their current stage. **Skip** it (removes
 the worktree and the trigger label; a running issue has its session cancelled first and
 its worktree removed once the worker has stopped), **Clean up** a leftover worktree, and
 **Release now** to start a batch immediately. The same operations exist on the command
@@ -231,7 +243,10 @@ branch history cannot be rebuilt.
   and review, but charters forbid following embedded instructions. Plans retain stable
   requirement IDs, source excerpts, outcomes, evidence, and explicit assumptions. Reviewer
   sessions also receive downloaded images and must compare the original request
-  independently with the plan. Planner and reviewer sessions are read-only; the daemon
+  independently with the plan. Stored plans are fully revalidated before implementation,
+  revision, review approval, and merge; legacy or malformed plans return to planning before
+  an implementation worker runs, with obsolete task progress cleared. Planner and reviewer
+  sessions are read-only; the daemon
   resets the worktree if one leaves changes behind.
 - **Bounded automation.** At most four tasks per plan, a bounded number of review
   rounds and, separately, a bounded number of CI failures (each head commit gets one
@@ -322,7 +337,7 @@ reported unused runtimes.
 | Report fails with `github_failed` | `gh auth status` on the server machine; repository configured under `[code_factory]`. |
 | Issue never leaves **Picked up** | Daemon not running, wrong `allowed_authors`, or missing trigger label. Run `doctor`. |
 | DeepSeek sessions fail immediately | `OLLAMA_API_KEY` is not available to the daemon; add it to `[environment]`. |
-| Planner blocked with a question | Answer on the issue, adjust the description if needed, then **Retry**. |
+| Planner blocked with a question | Record the decision in the issue description, then **Retry**. Issue comments are not consumed as planning instructions. |
 | Release stays **failed** | Read the error in the release card; a red Verify run or a Keychain prompt are the usual causes. Fix, then **Release now**. |
 
 ## Verification

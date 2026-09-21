@@ -189,8 +189,10 @@ reconnect/relaunch). The app matches only already-paired machines with unique,
 exact HTTP(S) origins; it does not add connections or match names and roles.
 Runtime synchronization requires both an updated companion and an updated Mac
 app. A Mac-only app update does not install or reconfigure companion servers.
-Older clients safely ignore the additive fields, and older/offline servers leave
-the Mac's last synchronized labels available.
+Older clients safely ignore the additive fields. If the roster endpoint is offline
+or unavailable, the Mac keeps its last synchronized labels. A successful roster
+response from a legacy server that omits the optional presentation fields instead
+clears that metadata and restores complete machine names in default roster order.
 
 ## Optional integrations
 

@@ -134,7 +134,9 @@ computers with unique exact HTTP(S) origins. It never imports connections or
 credentials. After editing the authoritative private TOML, restart that
 companion and refresh or reconnect the Mac app. This workflow requires updated
 companion and Mac software; updating the Mac app alone does not update a server.
-If the endpoint is unavailable, cached labels remain usable offline. Four or more
+If the endpoint is offline or unavailable, cached labels remain usable. A successful
+legacy roster response with the optional presentation fields absent clears that
+metadata and restores complete saved names in default roster order. Four or more
 computers continue to use the existing full-name menu.
 
 See [Apple configuration](APPLE_CONFIGURATION.md) for signing, universal links, and

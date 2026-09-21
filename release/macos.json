@@ -1,6 +1,6 @@
 {
-  "build": 55,
+  "build": 56,
   "channel": "preview",
-  "preview": 2,
-  "version": "0.27.1"
+  "preview": 1,
+  "version": "0.28.0"
 }

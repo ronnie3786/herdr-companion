@@ -81,7 +81,7 @@ def palette_color(value: Any, *, label: str = "color") -> Optional[str]:
         return None
     if not isinstance(value, str) or value not in CHAT_TAB_PALETTE:
         raise ControlError(
-            f"{label} must be null or one of {', '.join(CHAT_TAB_PALETTE)}"
+            f"{label} must be null or one of the palette values {', '.join(CHAT_TAB_PALETTE)}"
         )
     return value
 

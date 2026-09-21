@@ -701,14 +701,12 @@ class ChatTabColorIntegrationTests(unittest.TestCase):
             ["ws_synthetic_alpha:p1", "ws_synthetic_alpha:p2", "ws_synthetic_beta:p3"],
         )
         self.assertEqual(len(combined), len(set(combined)))
-        self.assertEqual(
-            [
-                request["query"]["offset"]
-                for request in second_opener.requests
-                if request["path"].endswith("/discovery")
-            ],
-            ["2"],
-        )
+        offsets = [
+            request["query"].get("offset", [None])[0]
+            for request in second_opener.requests
+            if request["path"].endswith("/discovery")
+        ]
+        self.assertEqual(offsets, ["2"])
 
         # The HUD CLI filters before its offset page too.
         status, output, error, opener = self.run_hud([

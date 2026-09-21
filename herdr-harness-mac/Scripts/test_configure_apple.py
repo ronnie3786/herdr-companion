@@ -32,6 +32,8 @@ associated_domains = ["applinks:app.example.test"]
 label = "Desktop"
 url = "https://desktop.example.test"
 role = "local"
+sidebar_label = "Build"
+sidebar_order = 4
 ssh_host = "private-ssh.example.test"
 ssh_user = "private-user"
 ''' + tail)
@@ -45,7 +47,11 @@ ssh_user = "private-user"
             for platform in ("mac", "ios"):
                 project = root / f"herdr-harness-{platform}"
                 roster = project / f"herdr-harness-{platform}" / "HerdrBootstrap.plist"
-                self.assertEqual(plistlib.loads(roster.read_bytes()), [{"id": "desktop", "name": "Desktop", "urlString": "https://desktop.example.test", "role": "local"}])
+                self.assertEqual(plistlib.loads(roster.read_bytes()), [{
+                    "id": "desktop", "name": "Desktop",
+                    "urlString": "https://desktop.example.test", "role": "local",
+                    "sidebarLabel": "Build", "sidebarOrder": 4,
+                }])
                 for output in (roster, project / "Local.xcconfig", project / "Local.entitlements"):
                     text = output.read_text()
                     self.assertNotIn("test-secret", text)

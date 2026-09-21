@@ -5,6 +5,28 @@ import WebKit
 @Suite("Embedded Mac reading theme", .serialized)
 @MainActor
 struct HerdrWebThemeTests {
+    @Test("Report styling is installed separately from the embedded web theme")
+    func installsReportStyle() async throws {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.userContentController.addUserScript(HerdrWebTheme.reportUserScript())
+        let view = WKWebView(frame: .zero, configuration: configuration)
+        defer { view.stopLoading() }
+        view.loadHTMLString("<html><body>Fictional report</body></html>", baseURL: nil)
+
+        var installed = false
+        for _ in 0..<200 {
+            if (try? await view.evaluateJavaScript(
+                "!!document.getElementById('herdr-pr-review-report')"
+            )) as? Bool == true {
+                installed = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(installed)
+    }
+
     @Test("Mac palette overrides page styles and reaches dynamic diff shadow content")
     func appliesToPageAndShadowContent() async throws {
         let configuration = WKWebViewConfiguration()

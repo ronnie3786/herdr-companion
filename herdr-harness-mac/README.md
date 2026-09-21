@@ -14,6 +14,7 @@ Swift 6 · SwiftUI + Observation · strict concurrency · zero third-party depen
 
 ## September Mac improvements
 
+- **PR Review:** A navigator entry under First Mate turns a pasted GitHub pull request link into a review workspace prepared on the development-role companion: ranked files, a native diff with Ask AI, a context library, and Agents/Skills tabs. Requires a companion advertising `pr-review-v1`. See [PR Review](../docs/pr-review.md).
 - **Quote & comment:** Available on the last three completed, text-bearing agent messages, including code blocks—not user messages or closed-session history. Tool calls and empty assistant messages do not displace eligible replies. The popup follows the visible selection endpoint. Save creates a previewable chip; sending embeds **Quoted response segments:** and each **User’s message:** directly in the prompt, without Markdown file attachments. See [details, proof, and lifecycle limits](../docs/mac-chat-quotes.md).
 - **Session chapters:** New Pi chat captures history before reset, shows progress, and confirms the changed session even without an SSE reset. The previous chat and its copyable ID remain above a visible new-conversation divider, including when the new transcript is empty. Local archives survive relaunch. Compact Chat and Reload Pi extensions now live in the prompt's … More popover. No server update is needed.
 - **Saved HUD chats:** Open the HUD clock button to search saved chats on the selected machine. New chat preserves history; Continue in agent promotes the full Pi conversation only when you choose. Updated servers retain HUD chats indefinitely and restore normal Pi tools, skills, extensions, and project context while respecting Pi trust settings. See [setup and limits](../docs/hud-chat-history.md).
@@ -120,6 +121,31 @@ load the canned fleet — 3 workspaces, 6 panes, alerts, git, skills — with no
 3. Launch the app. Use a configured machine or enter `http://localhost:9092` for this
    Mac, or an HTTPS address for another machine. Enter its bearer token in onboarding
    or Settings. Tokens are stored only in Keychain. A failed secure save is reported.
+
+For one to three saved computers, optional `sidebar_label` and `sidebar_order`
+values under each private `[machines.<id>]` table configure the segment titles
+and partial ordering. Ordered computers appear first; equal orders and computers
+without an order keep the saved roster order. Missing labels show the complete
+saved name. Names, IDs, and roles have no built-in aliases.
+
+At runtime, the first saved connection is the sole configuration authority. The
+Mac asks that companion's authenticated `/api/v1/config/machines` endpoint on
+connection and explicit Refresh. The response identifies the companion's unique
+selected roster record, so its presentation applies only to the already-saved
+first connection even when that connection uses localhost or another origin
+alias. This configured server ID never replaces the app's saved ID or URL and is
+never used to identify another paired computer. Remaining computers match only
+by unique exact HTTP(S) origin. Duplicate or unknown self IDs fall back to those
+safe origin rules, and ambiguous self-origin pairings retain cached presentation
+rather than assigning the primary record elsewhere. The app never imports
+connections or credentials. After editing the authoritative private TOML,
+restart that companion and refresh or reconnect the Mac app. This workflow
+requires updated companion and Mac software; updating the Mac app alone does not
+update a server. Older server responses without a self ID continue to use origin
+matching. If the endpoint is offline or unavailable, cached labels remain usable.
+A successful response with absent presentation fields clears safely matched
+metadata and restores complete saved names in default roster order. Four or more
+computers continue to use the existing full-name menu.
 
 See [Apple configuration](APPLE_CONFIGURATION.md) for signing, universal links, and
 private upgrade compatibility.
@@ -268,7 +294,9 @@ It uses the same repository view and permissions as the embedded Git tab.
 
 The sidebar's range selector has **All**, **Today**, and **Recents**. Recents keeps
 the existing list of the 20 most recently active chats. With one to three configured
-machines, the machine selector also uses segments, including **All**. It is hidden
-when no machines are configured. Four or more machines use a menu, and machine
+machines, the machine selector also uses segments, including **All**. Optional
+private roster labels and partial ordering control those segments; otherwise the
+full saved names and roster order are used. It is hidden when no machines are
+configured. Four or more machines use the unchanged full-name menu, and machine
 management remains available in the sidebar footer. Archived **Previous chat**
 sections keep their existing excerpt presentation.

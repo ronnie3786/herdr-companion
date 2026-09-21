@@ -339,20 +339,33 @@ struct ResponseBriefCoordinatorTests {
         #expect(message.contains("blocked"))
     }
 
-    @Test("Finite deadline cancels the owned remote run")
+    @Test("Finite deadline cancels the owned remote run", .timeLimit(.minutes(1)))
     func deadlineCancelsRemoteRun() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
-        let coordinator = fixture.coordinator()
-        coordinator.generationTimeout = .milliseconds(5)
+        var generationNow = ContinuousClock.now
+        let generationTimeout = Duration.seconds(1_000)
+        let coordinator = ResponseBriefCoordinator(
+            defaults: fixture.defaults,
+            persistence: fixture.persistence,
+            generationDeadlineNow: { generationNow }
+        )
+        coordinator.selectModel("provider/brief-model")
+        coordinator.generationTimeout = generationTimeout
         coordinator.runPollDelay = .seconds(100)
         let source = fixture.source(responseID: "answer-timeout", text: "line one\nline two")
+        var starts = 0
         var cancellations = 0
         let transport = ResponseBriefTransport(
             capabilities: { _ in AssistantCapabilities(profiles: ["response-brief-v1"]) },
             models: { _ in AgentModelCatalogResponse(ok: true, models: [fixture.briefModel], defaultModel: nil) },
             fetchSnapshot: { _ in throw APIError.invalidResponse },
-            start: { _, _ in fixture.run(status: .queued, response: nil) },
+            start: { _, _ in
+                starts += 1
+                let run = fixture.run(status: .queued, response: nil)
+                generationNow = generationNow.advanced(by: generationTimeout + .seconds(1))
+                return run
+            },
             fetch: { _, _ in fixture.run(status: .queued, response: nil) },
             cancel: { _, _ in
                 cancellations += 1
@@ -364,6 +377,7 @@ struct ResponseBriefCoordinatorTests {
         await coordinator.observe(source, transport: transport)
         await coordinator.waitForIdleForTesting()
 
+        #expect(starts == 1)
         #expect(cancellations == 1)
         guard case let .failed(message) = coordinator.state(for: source.chat).phase else {
             Issue.record("Expected deadline failure")

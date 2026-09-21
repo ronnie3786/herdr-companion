@@ -2,6 +2,11 @@
 
 Status: Initial implementation, 2026-09-07.
 
+Update 2026-09-21: PR Review adds `pr-review-question-v1`, the first profile with scoped
+read-only tools (`read`, `grep`, `find`, `ls`) inside a server-resolved checkout selected by
+`scope.reviewId`; scoping is working directory plus charter, not a Pi extension. See
+[pr-review.md](pr-review.md).
+
 The Git, Mac HUD, and Notes entry points now use reusable contextual conversation
 components over a versioned agent-run profile. This initial delivery implements
 supplied-context-only questions (`--no-tools`), frozen context, explicit refresh,

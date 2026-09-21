@@ -1511,12 +1511,12 @@ def _parser() -> JSONArgumentParser:
     segment.add_argument(
         "segment",
         nargs="?",
-        choices=("chat", "terminal", "git", "skills", "workspace", "active-work", "first-mate", "fleet", "attention", "activity"),
+        choices=("chat", "terminal", "git", "skills", "workspace", "active-work", "pr-review", "first-mate", "fleet", "attention", "activity"),
     )
     segment.add_argument(
         "--segment",
         dest="segment_option",
-        choices=("chat", "terminal", "git", "skills", "workspace", "active-work", "first-mate", "fleet", "attention", "activity"),
+        choices=("chat", "terminal", "git", "skills", "workspace", "active-work", "pr-review", "first-mate", "fleet", "attention", "activity"),
     )
     for name in ("back", "forward"):
         command = ui_commands.add_parser(name)

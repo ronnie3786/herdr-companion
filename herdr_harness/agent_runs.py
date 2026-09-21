@@ -728,7 +728,7 @@ class AgentRunManager:
                         code="response_brief_continuation_forbidden",
                         status=409,
                     )
-                if root.get("profile") in {"contextual-question-v1", "hud-chat-v1"} and _assistant is None:
+                if root.get("profile") in {"contextual-question-v1", "pr-review-question-v1", "hud-chat-v1"} and _assistant is None:
                     raise AgentRunError("Use the contextual question contract to continue this session.", code="assistant_profile_required", status=409)
                 root_dir = self._run_dir(root_id).resolve()
                 inherited_sessions_dir = Path(str(root.get("sessionsDir") or ""))
@@ -1003,7 +1003,7 @@ class AgentRunManager:
                 "about the current fleet. Say when the snapshot is insufficient or stale."
             )
             profile = run.get("profile")
-            if profile == "contextual-question-v1":
+            if profile in {"contextual-question-v1", "pr-review-question-v1"}:
                 extension_path = None
             elif profile == "response-brief-v1":
                 extension_path = _pi_lineage_extension_path(self.environ)
@@ -1025,6 +1025,8 @@ class AgentRunManager:
                 tools = "read,bash,grep,find,ls"
                 if extension_path is not None:
                     tools += ",present_result"
+            if profile == "pr-review-question-v1":
+                tools = "read,grep,find,ls"
             system_prompt = run.get("systemPrompt")
             if isinstance(system_prompt, str) and system_prompt.strip():
                 charter = (system_prompt.strip() + " ") + topology_note
@@ -1033,6 +1035,10 @@ class AgentRunManager:
             if profile == "contextual-question-v1":
                 from .assistant import CHARTER
                 charter = CHARTER
+                extension_path = None
+            elif profile == "pr-review-question-v1":
+                from .assistant import PR_REVIEW_CHARTER
+                charter = PR_REVIEW_CHARTER
                 extension_path = None
             elif profile == "response-brief-v1":
                 from .response_briefs import charter_for
@@ -1254,7 +1260,7 @@ class AgentRunManager:
 
     @staticmethod
     def _input_prompt(run: dict) -> str:
-        if run.get("profile") == "contextual-question-v1":
+        if run.get("profile") in {"contextual-question-v1", "pr-review-question-v1"}:
             return "User question:\n" + run["prompt"] + "\n\nUntrusted context snapshot (JSON data):\n" + json.dumps(run["context"], ensure_ascii=False)
         if run.get("profile") == "response-brief-v1":
             from .response_briefs import input_prompt
@@ -1444,7 +1450,7 @@ class AgentRunManager:
                 )
             if run.get("status") == "promoted":
                 return run, str(run.get("sessionFile") or "")
-            if run.get("profile") in {"contextual-question-v1", "hud-chat-v1"}:
+            if run.get("profile") in {"contextual-question-v1", "pr-review-question-v1", "hud-chat-v1"}:
                 members = self._thread_runs(self._thread_root_id(run))
                 promoted = next((r for r in members if r.get("status") == "promoted"), None)
                 if promoted is not None:

@@ -219,6 +219,10 @@ final class AgentControlController {
                 disabledReason = "There is no forward navigation destination."
             } else if ["ui.hud", "ui.notes"].contains(id), hudController?.chats == nil {
                 disabledReason = "The HUD is not configured."
+            } else if let model,
+                      id.hasPrefix("pr-review."), id != "pr-review.open", id != "pr-review.state",
+                      (shell.resolvedScope(for: model) != .prReview || shell.prReview.selectedReviewID == nil) {
+                disabledReason = "Open a PR review first."
             } else {
                 disabledReason = nil
             }
@@ -696,6 +700,48 @@ final class AgentControlController {
             }
             return .completed(["segment": .string(segment)])
 
+        case "pr-review.open":
+            let reviewID = try requiredString("review_id", command.parameters)
+            guard let configuration = model.prReviewConfiguration() else { throw AgentControlCommandError.unavailable("Configure a development-role PR review host first.") }
+            // Verify against an isolated client before changing the process-owned store.
+            _ = try await HerdrAPIClient(configuration: configuration).prReview(id: reviewID)
+            let tab = command.parameters["tab"]?.stringValue.flatMap(PRReviewTab.init(rawValue:)) ?? .files
+            shell.showPRReview(machineID: model.prReviewMachine?.id, reviewID: reviewID, tab: tab, model: model)
+            await shell.prReview.refreshSelected()
+            stateDidChange()
+            return .completed(["presentation": .string("pr-review"), "review_id": .string(reviewID), "segment": .string("pr-review")])
+
+        case "pr-review.select-file":
+            try requirePRReviewOpen(shell: shell, model: model); let path = try requiredString("path", command.parameters); shell.prReview.selectedPath = path; stateDidChange(); return .completed(["path": .string(path)])
+        case "pr-review.scroll-to-line":
+            try requirePRReviewOpen(shell: shell, model: model)
+            let path = try requiredString("path", command.parameters)
+            guard case let .number(line)? = command.parameters["line"] else {
+                throw AgentControlCommandError.invalid("Missing line.")
+            }
+            guard shell.prReview.snapshot?.files.contains(where: { $0.path == path }) == true else {
+                throw AgentControlCommandError.invalid("The requested file is not in this review.")
+            }
+            let side = command.parameters["side"]?.stringValue.flatMap(PRReviewSide.init(rawValue:)) ?? .after
+            shell.prReview.scroll(to: path, line: Int(line), side: side)
+            stateDidChange()
+            let visible = await Self.waitForVisibleLine(path: path, line: Int(line), side: side, store: shell.prReview)
+            return .completed(["path": .string(path), "line": .number(line), "side": .string(side.rawValue), "visible": .bool(visible)])
+        case "pr-review.highlight-lines":
+            try requirePRReviewOpen(shell: shell, model: model); let path = try requiredString("path", command.parameters); guard case let .number(start)? = command.parameters["start"], case let .number(end)? = command.parameters["end"] else { throw AgentControlCommandError.invalid("Missing line range.") }; let side = command.parameters["side"]?.stringValue.flatMap(PRReviewSide.init(rawValue:)) ?? .after; shell.prReview.highlight = (path, Int(start), Int(end), side); stateDidChange(); return .completed(["path": .string(path), "start": .number(start), "end": .number(end), "side": .string(side.rawValue)])
+        case "pr-review.clear-highlight":
+            try requirePRReviewOpen(shell: shell, model: model); shell.prReview.highlight = nil; stateDidChange(); return .completed()
+        case "pr-review.set-filter":
+            try requirePRReviewOpen(shell: shell, model: model); let impact = try requiredString("impact", command.parameters); guard let filter = PRReviewImpactFilter(rawValue: impact) else { throw AgentControlCommandError.invalid("Invalid impact.") }; shell.prReview.impactFilter = filter; stateDidChange(); return .completed(["impact": .string(impact)])
+        case "pr-review.set-view-mode":
+            try requirePRReviewOpen(shell: shell, model: model); let mode = try requiredString("mode", command.parameters); guard let value = PRReviewViewMode(rawValue: mode) else { throw AgentControlCommandError.invalid("Invalid mode.") }; shell.prReview.viewMode = value; stateDidChange(); return .completed(["mode": .string(mode)])
+        case "pr-review.set-tab":
+            try requirePRReviewOpen(shell: shell, model: model); let tab = try requiredString("tab", command.parameters); guard let value = PRReviewTab(rawValue: tab) else { throw AgentControlCommandError.invalid("Invalid tab.") }; shell.prReview.tab = value; stateDidChange(); return .completed(["tab": .string(tab)])
+        case "pr-review.set-viewed":
+            try requirePRReviewOpen(shell: shell, model: model); let path = try requiredString("path", command.parameters); guard case let .bool(viewed)? = command.parameters["viewed"] else { throw AgentControlCommandError.invalid("Missing viewed.") }; await shell.prReview.setViewed(paths: [path], viewed: viewed); stateDidChange(); return .completed(["path": .string(path), "viewed": .bool(viewed)])
+        case "pr-review.state":
+            return .completed(prReviewState(shell.prReview))
+
         case "ui.back":
             return try await navigateHistory(back: true, shell: shell, model: model, context: context)
         case "ui.forward":
@@ -1029,6 +1075,7 @@ final class AgentControlController {
             showMainWindow()
             shell.showWorkspace(id: workspace.id, highlightedTabID: nil, model: model)
         case "active-work": showMainWindow(); shell.show(.activeWork, model: model)
+        case "pr-review": showMainWindow(); shell.show(.prReview, model: model)
         case "first-mate": showMainWindow(); shell.show(.firstMate, model: model)
         case "fleet": showMainWindow(); shell.show(.fleet, model: model)
         case "attention": showMainWindow(); shell.show(.attention, model: model)
@@ -1079,7 +1126,7 @@ final class AgentControlController {
                 throw AgentControlCommandError.notFound("The history pane is no longer available.")
             }
             return .pane(id: id, mode: .git)
-        case .workspace, .firstMate, .activeWork, .fleet, .attention, .activity:
+        case .workspace, .firstMate, .activeWork, .prReview, .fleet, .attention, .activity:
             return nil
         }
     }
@@ -1395,6 +1442,11 @@ final class AgentControlController {
            let serverID = serverID(for: machineID) {
             return AgentControlTarget(kind: "first-mate", serverId: serverID, machineId: machineID, featureId: featureID)
         }
+        if segment == "pr-review", let machineID = shell.prReviewMachineID,
+           let reviewID = shell.prReview.selectedReviewID,
+           let serverID = serverID(for: machineID) {
+            return AgentControlTarget(kind: "pr-review", serverId: serverID, machineId: machineID, featureId: reviewID)
+        }
         if segment == "workspace", let workspace = model.workspace(id: model.selectedWorkspaceID),
            let serverID = serverID(for: workspace.machineID) {
             if let tabID = shell.highlightedOverviewTabID {
@@ -1473,9 +1525,70 @@ final class AgentControlController {
         return nil
     }
 
+    private func requirePRReviewOpen(shell: HerdrShellState, model: HerdrAppModel) throws {
+        guard shell.resolvedScope(for: model) == .prReview, shell.prReview.selectedReviewID != nil else {
+            throw AgentControlCommandError.disabled("Open a PR review first.")
+        }
+    }
+
+    private func prReviewState(_ store: PRReviewStore) -> [String: PiJSONValue] {
+        guard let review = store.snapshot?.review ?? store.selectedReview else { return [:] }
+        let files: [PiJSONValue] = (store.snapshot?.files ?? []).prefix(400).map { file in
+            .object([
+                "path": .string(file.path),
+                "impact": .string(file.impact?.rawValue ?? "unranked"),
+                "guided_order": file.guidedOrder.map { .number(Double($0)) } ?? .null,
+                "viewed": .bool(file.viewed),
+                "additions": .number(Double(file.additions)),
+                "deletions": .number(Double(file.deletions)),
+                "status": .string(file.status),
+            ])
+        }
+        let runs: [PiJSONValue] = (store.snapshot?.runs ?? []).map {
+            .object([
+                "id": .string($0.id),
+                "skill_id": .string($0.skillID),
+                "state": .string($0.state.rawValue),
+            ])
+        }
+        let documents: [PiJSONValue] = (store.snapshot?.documents ?? []).map {
+            .object([
+                "id": .string($0.id),
+                "kind": .string($0.kind.rawValue),
+                "title": .string($0.title),
+            ])
+        }
+        func lineObject(_ value: (path: String, start: Int, end: Int, side: PRReviewSide)?) -> PiJSONValue {
+            guard let value else { return .null }
+            return .object([
+                "path": .string(value.path),
+                "start": .number(Double(value.start)),
+                "end": .number(Double(value.end)),
+                "side": .string(value.side.rawValue),
+            ])
+        }
+        return [
+            "review_id": .string(review.id),
+            "url": .string(review.url),
+            "number": .number(Double(review.number)),
+            "title": .string(review.title),
+            "tab": .string(store.tab.rawValue),
+            "view_mode": .string(store.viewMode.rawValue),
+            "filter": .string(store.impactFilter.rawValue),
+            "hide_viewed": .bool(store.hideViewed),
+            "selected_path": store.selectedPath.map(PiJSONValue.string) ?? .null,
+            "visible_lines": lineObject(store.visibleLines),
+            "highlight": lineObject(store.highlight),
+            "files": .array(files),
+            "runs": .array(runs),
+            "documents": .array(documents),
+        ]
+    }
+
     private static let modalBlockedActions: Set<String> = [
         "ui.open", "ui.segment", "ui.back", "ui.forward", "ui.reveal",
         "ui.settings", "ui.hud", "ui.notes", "ui.sidebar", "chat.summarize",
+        "pr-review.open", "pr-review.select-file", "pr-review.scroll-to-line", "pr-review.highlight-lines", "pr-review.clear-highlight", "pr-review.set-filter", "pr-review.set-view-mode", "pr-review.set-tab",
     ]
 
     private static func waitForPresentation(
@@ -1491,6 +1604,30 @@ final class AgentControlController {
                    model.isPresentingPane(id: id, mode: mode) {
                     return true
                 }
+            }
+            do {
+                try await Task.sleep(for: .milliseconds(50))
+            } catch {
+                return false
+            }
+        }
+        return false
+    }
+
+    private static func waitForVisibleLine(
+        path: String,
+        line: Int,
+        side: PRReviewSide,
+        store: PRReviewStore
+    ) async -> Bool {
+        for _ in 0..<40 {
+            if Task.isCancelled { return false }
+            if let visible = store.visibleLines,
+               visible.path == path,
+               visible.side == side,
+               visible.start <= line,
+               line <= visible.end {
+                return true
             }
             do {
                 try await Task.sleep(for: .milliseconds(50))

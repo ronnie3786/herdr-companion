@@ -118,7 +118,7 @@ herdr-control --control-machine desktop ui back --wait 30
 herdr-control --control-machine desktop ui forward --wait 30
 ```
 
-Other segments are `terminal`, `skills`, `first-mate`, `attention` and `activity`.
+Other segments are `terminal`, `skills`, `first-mate`, `pr-review`, `attention` and `activity`.
 Chat/Git/Terminal/Skills require an appropriate selected pane; unavailable modes
 fail instead of silently selecting another view. Explicit tab navigation opens
 its workspace overview and highlights that tab, not an arbitrary pane in it.
@@ -164,6 +164,7 @@ control from the [long-term plan](agent-control-plan.md).
 | Chat | Chat/Terminal/Git/Skills modes, summary presentation, Smart Rename, exact model selection, local unread marking, tab color |
 | Sidebar | Supported query/category/recency filters through a typed action |
 | Other native surfaces | Settings window, HUD, HUD notes, saved HUD chat history, First Mate feature/inspector |
+| PR Review | `pr-review` segment plus parameter-only `pr-review.open`, `select-file`, `scroll-to-line`, `highlight-lines`, `clear-highlight`, `set-filter`, `set-view-mode`, `set-tab`, `set-viewed` and the `pr-review.state` read; see [PR Review](pr-review.md) |
 | Workspace resources | Create workspace, tab and Pi chat; rename workspace/tab/pane |
 | Pane resources | Set star, split, close, end Pi while preserving the tab, compact, interrupt |
 | Upstream terminal | Explicit focus and zoom operations, separate from Companion navigation |

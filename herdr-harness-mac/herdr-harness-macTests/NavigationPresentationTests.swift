@@ -21,7 +21,7 @@ struct NavigationPresentationTests {
         #expect(defaults.string(forKey: SidebarRecency.defaultsKey) == SidebarRecency.all.rawValue)
     }
 
-    @Test("Picker boundaries stay hidden, segmented, then menu from zero through four machines")
+    @Test("Picker boundaries stay hidden, segmented, then full-name menu from zero through four machines")
     func machinePickerBoundary() {
         #expect(SidebarMachinePickerPresentation.presentation(machineCount: 0) == .hidden)
         #expect(SidebarMachinePickerPresentation.presentation(machineCount: 1) == .segmented)
@@ -30,123 +30,86 @@ struct NavigationPresentationTests {
         #expect(SidebarMachinePickerPresentation.presentation(machineCount: 4) == .menu)
     }
 
-    @Test("Every reported roster order projects Work, Dev, Studio", arguments: reportedRosterPermutations())
-    func reportedRosterOrdering(roster: [(id: String, name: String)]) {
-        let machines = roster.map { machine(id: $0.id, name: $0.name) }
-        let segments = SidebarMachineSegmentPresentation.segments(for: machines)
-
-        #expect(segments.count == roster.count)
-        #expect(segments.map(\.title) == ["Work", "Dev", "Studio"])
-        #expect(segments.map(\.id) == ["work-mac", "devbox", "local-mac"])
-        #expect(segments.map(\.name) == ["Work Mac", "DevBox", "Local Mac"])
-    }
-
-    @Test("Canonical short labels match whole names case-insensitively after trimming", arguments: [
-        ("Work Mac", "Work"),
-        ("work mac", "Work"),
-        ("  Work Mac  ", "Work"),
-        ("Work", "Work"),
-        ("WORK", "Work"),
-        ("DevBox", "Dev"),
-        ("devbox", "Dev"),
-        ("  Dev  ", "Dev"),
-        ("Local Mac", "Studio"),
-        ("local mac", "Studio"),
-        ("STUDIO", "Studio"),
-    ])
-    func canonicalShortLabels(name: String, expectedTitle: String) {
-        let segments = SidebarMachineSegmentPresentation.segments(for: [machine(id: "only", name: name)])
-
-        #expect(segments.map(\.title) == [expectedTitle])
-        #expect(segments.map(\.name) == [name])
-        #expect(segments.map(\.id) == ["only"])
-    }
-
-    @Test("Nil roles and unrelated role values do not affect the presentation order")
-    func rolesDoNotAffectPresentation() {
+    @Test("Configured labels and partial orders are independent of names roles and IDs")
+    func configuredPresentation() {
         let machines = [
-            machine(id: "work", name: "Work Mac", role: "local"),
-            machine(id: "dev", name: "DevBox", role: "work"),
-            machine(id: "studio", name: "Local Mac", role: nil),
+            machine(id: UUID().uuidString, name: "Arbitrary One", role: "work", label: nil, order: nil),
+            machine(id: "not-a-config-id", name: "Other Computer", role: "local", label: "Build", order: 8),
+            machine(id: "third", name: "Completely Different", role: "development", label: "Lab", order: 2),
         ]
         let segments = SidebarMachineSegmentPresentation.segments(for: machines)
 
-        #expect(segments.map(\.title) == ["Work", "Dev", "Studio"])
-        #expect(segments.map(\.id) == ["work", "dev", "studio"])
+        #expect(segments.map(\.title) == ["Lab", "Build", "Arbitrary One"])
+        #expect(segments.map(\.id) == [machines[2].id, machines[1].id, machines[0].id])
+        #expect(segments.map(\.name) == [machines[2].name, machines[1].name, machines[0].name])
     }
 
-    @Test("Unknown names stay unchanged after the recognized segments")
-    func unknownNamesRemainUnchanged() {
+    @Test("Absent labels preserve full configured names and roster order")
+    func absentPresentationMetadata() {
         let machines = [
-            machine(id: "build", name: "Build Mac"),
-            machine(id: "work", name: "Work Mac"),
-            machine(id: "lab", name: "Lab Mac"),
-            machine(id: "dev", name: "DevBox"),
+            machine(id: "z", name: "Zulu Computer"),
+            machine(id: "a", name: "Alpha Computer"),
         ]
         let segments = SidebarMachineSegmentPresentation.segments(for: machines)
 
-        #expect(segments.map(\.title) == ["Work", "Dev", "Build Mac", "Lab Mac"])
-        #expect(segments.map(\.name) == ["Work Mac", "DevBox", "Build Mac", "Lab Mac"])
-        #expect(segments.map(\.id) == ["work", "dev", "build", "lab"])
+        #expect(segments.map(\.title) == ["Zulu Computer", "Alpha Computer"])
+        #expect(segments.map(\.id) == ["z", "a"])
     }
 
-    @Test("Partial rosters produce one segment per configured machine and no invented ones")
-    func partialRostersProduceOnlyConfiguredSegments() {
-        let devOnly = SidebarMachineSegmentPresentation.segments(for: [machine(id: "dev", name: "DevBox")])
-        #expect(devOnly.count == 1)
-        #expect(devOnly.map(\.title) == ["Dev"])
+    @Test("Equal orders and unordered machines retain saved roster order")
+    func tiesAndPartialOrdersAreStable() {
+        let machines = [
+            machine(id: "unordered-a", name: "First"),
+            machine(id: "ordered-a", name: "Second", label: "Build", order: 4),
+            machine(id: "ordered-b", name: "Third", label: "Lab", order: 4),
+            machine(id: "unordered-b", name: "Fourth"),
+            machine(id: "first", name: "Fifth", order: 0),
+        ]
+        let segments = SidebarMachineSegmentPresentation.segments(for: machines)
 
-        let pair = SidebarMachineSegmentPresentation.segments(for: [
-            machine(id: "studio", name: "Local Mac"),
-            machine(id: "work", name: "Work"),
-        ])
-        #expect(pair.map(\.title) == ["Work", "Studio"])
-        #expect(pair.map(\.id) == ["work", "studio"])
-
-        #expect(SidebarMachineSegmentPresentation.segments(for: []).isEmpty)
+        #expect(segments.map(\.id) == ["first", "ordered-a", "ordered-b", "unordered-a", "unordered-b"])
+        #expect(segments.map(\.title) == ["Fifth", "Build", "Lab", "First", "Fourth"])
     }
 
     @Test("Duplicate display labels stay separate segments with distinct IDs")
     func duplicateLabelsAreNeverDeduplicated() {
         let machines = [
-            machine(id: "work-a", name: "Work"),
-            machine(id: "work-b", name: "Work Mac"),
-            machine(id: "dev-a", name: "Dev"),
+            machine(id: "build-a", name: "One", label: "Build", order: 1),
+            machine(id: "build-b", name: "Two", label: "Build", order: 1),
         ]
         let segments = SidebarMachineSegmentPresentation.segments(for: machines)
 
-        #expect(segments.map(\.title) == ["Work", "Work", "Dev"])
-        #expect(segments.map(\.id) == ["work-a", "work-b", "dev-a"])
-        #expect(segments.map(\.name) == ["Work", "Work Mac", "Dev"])
+        #expect(segments.map(\.title) == ["Build", "Build"])
+        #expect(segments.map(\.id) == ["build-a", "build-b"])
+        #expect(segments.map(\.name) == ["One", "Two"])
     }
 
-    @Test("Equal-ranked and unrecognized choices keep their original roster order")
-    func equalRanksKeepRosterOrder() {
-        let machines = [
-            machine(id: "zulu", name: "Zulu Mac"),
-            machine(id: "studio-a", name: "Studio"),
-            machine(id: "alpha", name: "Alpha Mac"),
-            machine(id: "studio-b", name: "Local Mac"),
-        ]
-        let segments = SidebarMachineSegmentPresentation.segments(for: machines)
-
-        #expect(segments.map(\.title) == ["Studio", "Studio", "Zulu Mac", "Alpha Mac"])
-        #expect(segments.map(\.id) == ["studio-a", "studio-b", "zulu", "alpha"])
-    }
-
-    @Test("Projection leaves the source machine records unchanged")
+    @Test("Projection leaves source records and connection identity unchanged")
     func projectionDoesNotMutateRecords() {
         let source = [
-            machine(id: "work", name: "Work Mac", role: nil),
-            machine(id: "dev", name: "DevBox", role: nil),
-            machine(id: "local", name: "Local Mac", role: nil),
+            machine(id: "uuid-a", name: "Long Computer A", role: "unexpected", label: "Lab", order: 2),
+            machine(id: "uuid-b", name: "Long Computer B", role: nil, label: "Build", order: 1),
         ]
         let snapshot = source
         let segments = SidebarMachineSegmentPresentation.segments(for: source)
 
         #expect(source == snapshot)
-        #expect(segments.map(\.id) == ["work", "dev", "local"])
-        #expect(segments.map(\.name) == source.map(\.name))
+        #expect(segments.map(\.id) == ["uuid-b", "uuid-a"])
+        #expect(source.map(\.urlString) == snapshot.map(\.urlString))
+    }
+
+    @Test("Four-machine menu inputs keep complete names and saved order")
+    func fullNameMenuInputsAreUnchanged() {
+        let machines = [
+            machine(id: "one", name: "Complete One", label: "A", order: 4),
+            machine(id: "two", name: "Complete Two", label: "B", order: 3),
+            machine(id: "three", name: "Complete Three", label: "C", order: 2),
+            machine(id: "four", name: "Complete Four", label: "D", order: 1),
+        ]
+
+        #expect(SidebarMachinePickerPresentation.presentation(machineCount: machines.count) == .menu)
+        #expect(machines.map(\.name) == ["Complete One", "Complete Two", "Complete Three", "Complete Four"])
+        #expect(machines.map(\.id) == ["one", "two", "three", "four"])
     }
 
     @Test("Persisted machine scope keeps the original machine ID across presentation")
@@ -155,22 +118,17 @@ struct NavigationPresentationTests {
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        #expect(MachineScope.load(from: defaults) == .all)
-
         let machines = [
-            machine(id: "work-id", name: "Work Mac"),
-            machine(id: "dev-id", name: "DevBox"),
-            machine(id: "studio-id", name: "Local Mac"),
+            machine(id: "uuid-build", name: "Computer One", label: "Build", order: 1),
+            machine(id: "uuid-lab", name: "Computer Two", label: "Lab", order: 0),
         ]
-        MachineScope.machine("dev-id").save(to: defaults)
+        MachineScope.machine("uuid-build").save(to: defaults)
 
-        let segments = SidebarMachineSegmentPresentation.segments(for: machines)
-        let devSegment = try #require(segments.first(where: { $0.title == "Dev" }))
-        #expect(devSegment.id == "dev-id")
-        #expect(MachineScope.load(from: defaults) == .machine(devSegment.id))
-
-        MachineScope.all.save(to: defaults)
-        #expect(MachineScope.load(from: defaults) == .all)
+        let build = try #require(
+            SidebarMachineSegmentPresentation.segments(for: machines).first { $0.title == "Build" }
+        )
+        #expect(build.id == "uuid-build")
+        #expect(MachineScope.load(from: defaults) == .machine(build.id))
     }
 
     @Test("Git window identity includes machine, workspace, and pane")
@@ -207,23 +165,19 @@ struct NavigationPresentationTests {
     }
 }
 
-private func machine(id: String, name: String, role: String? = nil) -> HerdrMachine {
-    HerdrMachine(id: id, name: name, urlString: "https://machine.example.invalid", role: role)
-}
-
-private func reportedRosterPermutations() -> [[(id: String, name: String)]] {
-    let roster: [(id: String, name: String)] = [
-        ("work-mac", "Work Mac"),
-        ("devbox", "DevBox"),
-        ("local-mac", "Local Mac"),
-    ]
-    var permutations: [[(id: String, name: String)]] = []
-    for first in roster.indices {
-        for second in roster.indices where second != first {
-            for third in roster.indices where third != first && third != second {
-                permutations.append([roster[first], roster[second], roster[third]])
-            }
-        }
-    }
-    return permutations
+private func machine(
+    id: String,
+    name: String,
+    role: String? = nil,
+    label: String? = nil,
+    order: Int? = nil
+) -> HerdrMachine {
+    HerdrMachine(
+        id: id,
+        name: name,
+        urlString: "https://\(id).example.invalid",
+        role: role,
+        sidebarLabel: label,
+        sidebarOrder: order
+    )
 }

@@ -68,6 +68,18 @@ def good_plan(**overrides) -> dict[str, Any]:
     plan = {
         "summary": "Guard the HUD window against a nil controller. Also add a regression test.",
         "kind": "bug",
+        "requirements_traceability": [
+            {"id": "R1", "source_excerpt": "The HUD crashes when I open it.",
+             "observable_outcome": "Opening the HUD does not crash.",
+             "acceptance_evidence": "A deterministic test exercises the missing-window path."},
+            {"id": "R2", "source_excerpt": "Screenshot of the crash",
+             "observable_outcome": "The crash path has regression coverage.",
+             "acceptance_evidence": "The regression test asserts a safe missing-window result."},
+        ],
+        "assumptions": [
+            {"id": "A1", "assumption": "A nil window causes the crash.",
+             "evidence": "The inspected controller force-unwraps its window.", "status": "confirmed"},
+        ],
         "acceptance_criteria": ["HUD opens without crashing", "Regression test exists"],
         "attachment_notes": "The screenshot shows a crash dialog.",
         "tasks": [
@@ -83,6 +95,36 @@ def good_plan(**overrides) -> dict[str, Any]:
     }
     plan.update(overrides)
     return plan
+
+
+def good_review(**overrides) -> dict[str, Any]:
+    verdict = str(overrides.get("verdict", "approve")).lower().replace(" ", "_")
+    status = "satisfied" if verdict == "approve" else "unmet"
+    review = {
+        "verdict": verdict,
+        "summary": "The implementation was checked against the original issue.",
+        "requirements_assessment": [
+            {"id": item["id"], "status": status,
+             "evidence": f"tests/test_task_t1.py and the branch diff provide concrete evidence for {item['id']}."}
+            for item in good_plan()["requirements_traceability"]
+        ],
+        "plan_adjustment_assessment": {
+            "narrows_request": False,
+            "explanation": "The original issue outcomes and traced plan requirements have the same scope.",
+        },
+        "configuration_variation": {
+            "status": "considered",
+            "counterexample": "A valid configuration with different labels and ordering.",
+            "evidence": "The implementation does not use presentation labels as canonical keys.",
+        },
+        "needs_human": False,
+        "human_question": None,
+        "comments": [],
+        "blocking": [] if verdict == "approve" else ["A requirement remains unmet."],
+        "non_blocking": [],
+    }
+    review.update(overrides)
+    return review
 
 
 def json_reply(payload: dict[str, Any], prose: str = "Here is the result.") -> str:
@@ -335,7 +377,7 @@ class FakePi:
         if role == "planner":
             text = self._scripted(self.plans, good_plan())
         elif role == "reviewer":
-            default = {"verdict": "approve", "summary": f"Reviewed in {cwd}. Looks good."}
+            default = good_review(summary=f"Reviewed in {cwd}. Looks good with concrete branch and test evidence.")
             text = self._scripted(self.reviews, default)
         elif role == "reviser":
             (cwd / "app").mkdir(exist_ok=True)
@@ -555,11 +597,13 @@ class HappyPathTests(PipelineTestCase):
         self.github.failing_downloads.add("https://github.com/user-attachments/assets/notes.md")
         self.github.verify_script = ["pending", "failure", "success", "success"]
         self.pi.reviews = [
-            {"verdict": "request_changes", "summary": "Needs a nil guard.",
-             "comments": [{"path": "app/task_t1.py", "line": 1,
+            good_review(
+                verdict="request_changes", summary="Needs a nil guard.",
+                comments=[{"path": "app/task_t1.py", "line": 1,
                            "body": f"Guard nil here (seen in {self.settings.worktree_root / 'issue-12'})."}],
-             "blocking": ["Missing nil guard"], "non_blocking": []},
-            {"verdict": "approve", "summary": f"All criteria met (checked in {self.settings.worktree_root / 'issue-12'})."},
+                blocking=["Missing nil guard"], non_blocking=[],
+            ),
+            good_review(summary=f"All criteria met with concrete diff evidence (checked in {self.settings.worktree_root / 'issue-12'})."),
         ]
         self.store.set_daemon("dashboard_url", "http://127.0.0.1:9097/")
 
@@ -611,7 +655,12 @@ class HappyPathTests(PipelineTestCase):
         self.assertEqual(implementer["tools"], "read,bash,edit,write,grep,find,ls")
         self.assertEqual(implementer["name"], "issue-12 t1")
         self.assertIn("Implemented t1", self.pi.calls[2]["prompt"], "task 2 sees the first summary")
+        first_reviewer = self.pi.calls[3]
+        self.assertIn("<<<ISSUE_BODY\n" + ISSUE_BODY + "\nISSUE_BODY>>>", first_reviewer["prompt"])
+        self.assertEqual(first_reviewer["attachments"], [str(runs / "attachments" / "01-shot.png")])
+        self.assertIn("inspect it independently of the planner's notes", first_reviewer["prompt"])
         reviser = self.pi.calls[4]
+        self.assertIn("<<<ISSUE_BODY\n" + ISSUE_BODY + "\nISSUE_BODY>>>", reviser["prompt"])
         self.assertIn("- Missing nil guard", reviser["prompt"])
         self.assertIn("`app/task_t1.py:1`", reviser["prompt"])
         events = self.events(12)
@@ -731,6 +780,8 @@ class BlockingAndActionTests(PipelineTestCase):
         self.assertEqual((issue["status"], issue["stage"], issue["blockedReason"]), ("blocked", "plan", "human_question"))
         self.assertIsNone(issue["error"])
         self.assertIn("Which window crashes?", self.github.comments[12][-1])
+        self.assertIn("Record the decision in the issue description", self.github.comments[12][-1])
+        self.assertIn("does not consume issue comments", self.github.comments[12][-1])
         self.assertTrue(Path(issue["worktreePath"]).is_dir(), "the worktree is kept for the retry")
         with self.assertRaises(CodeFactoryError) as caught:
             self.factory.action(12, "cleanup_everything")
@@ -739,6 +790,8 @@ class BlockingAndActionTests(PipelineTestCase):
             self.factory.action(99, "retry")
         self.assertEqual(caught.exception.code, "not_found")
 
+        amended = "The HUD crash is in the compact window. Use the stable window identifier, not its display title."
+        self.github.issues[12]["body"] = amended
         result = self.factory.action(12, "retry")
         self.assertEqual((result["issue"]["status"], result["issue"]["stage"]), ("active", "plan"))
         self.assertIsNone(result["issue"]["blockedReason"])
@@ -749,11 +802,29 @@ class BlockingAndActionTests(PipelineTestCase):
         self.assertEqual((issue["status"], issue["stage"]), ("active", "release"))
         self.assertEqual(issue["attempts"], 2)
         self.assertEqual(self.sessions(12), ["planner", "planner", "implementer", "implementer", "reviewer"])
+        second_planner = [call for call in self.pi.calls if call["charter"] == prompts.PLANNER_CHARTER][1]
+        self.assertIn("<<<ISSUE_BODY\n" + amended + "\nISSUE_BODY>>>", second_planner["prompt"])
+        self.assertIn("Which window crashes?", second_planner["prompt"], "the prior human question remains bounded context")
+        self.assertIn("<<<PRIOR_REVIEW_CONTEXT\n", second_planner["prompt"])
+        snapshot = json.loads((self.settings.runs_root / "issue-12" / "issue.json").read_text())
+        self.assertEqual(snapshot["body"], amended)
+        self.assertTrue(any("refreshed the issue description" in message for message in self.events(12)))
+
+    def test_human_question_retry_stays_blocked_when_issue_refresh_fails(self):
+        issue = self.run_to_block()
+        del self.github.issues[12]
+        with self.assertRaises(CodeFactoryError) as caught:
+            self.factory.action(12, "retry")
+        self.assertIn("remains blocked", str(caught.exception))
+        unchanged = self.store.get_issue(12)
+        self.assertEqual((unchanged["status"], unchanged["stage"], unchanged["blockedReason"]),
+                         ("blocked", issue["stage"], "human_question"))
+        self.assertTrue(any("Retry could not refresh the issue" in message for message in self.events(12)))
 
     def test_review_rounds_exhausted(self):
         self.factory = self.make_factory(max_review_rounds="1")
         self.github.add_issue(12, "Crash when opening the HUD")
-        self.pi.reviews = [{"verdict": "request_changes", "summary": "No.", "blocking": ["x"]}] * 2
+        self.pi.reviews = [good_review(verdict="request_changes", summary="No.", blocking=["x"])] * 2
         self.factory.poll_once()
         issue = self.factory.run_issue(12)
         self.assertEqual((issue["status"], issue["stage"], issue["blockedReason"]), ("blocked", "review", "review_rounds_exhausted"))
@@ -927,6 +998,177 @@ class BlockingAndActionTests(PipelineTestCase):
         self.assertEqual(len(self.github.reviews), 1)
         self.assertIn("Posting the stored review for round 1; the earlier post failed", self.events(12))
         self.assertIs(self.store.get_issue(12)["planJson"]["last_review_posted"], True)
+
+    def test_pending_legacy_review_is_revalidated_instead_of_reposted(self):
+        self.github.add_issue(12, "Crash when opening the HUD")
+        self.github.post_review_errors = [CodeFactoryError("gh api failed: HTTP 502 bad gateway", code="github_failed")]
+        self.factory.poll_once()
+        issue = self.factory.run_issue(12)
+        self.assertEqual((issue["status"], issue["stage"]), ("failed", "review"))
+        plan = dict(issue["planJson"])
+        plan["last_review"] = {"verdict": "approve", "summary": "legacy approval without evidence"}
+        self.store.update_issue(12, planJson=plan)
+        self.factory.action(12, "retry")
+        issue = self.factory.run_issue(12)
+        self.assertEqual((issue["status"], issue["stage"]), ("active", "release"))
+        self.assertEqual(self.sessions(12).count("reviewer"), 2, "an incomplete pending review is replaced")
+        self.assertEqual(len(self.github.reviews), 1)
+
+    def test_merge_revalidates_and_rejects_a_legacy_stored_approval(self):
+        self.github.add_issue(12, "Crash when opening the HUD")
+        self.factory.poll_once()
+        original_post = self.github.post_review
+
+        def post_then_pause(number, body, comments=None):
+            result = original_post(number, body, comments)
+            self.factory._stop_event.set()
+            return result
+
+        self.github.post_review = post_then_pause
+        issue = self.factory.run_issue(12)
+        self.assertEqual((issue["status"], issue["stage"]), ("active", "merge"))
+        plan = dict(issue["planJson"])
+        plan["last_review"] = {"verdict": "approve", "summary": "legacy approval without assessment"}
+        self.store.update_issue(12, planJson=plan)
+        self.github.post_review = original_post
+        self.factory._stop_event.clear()
+        issue = self.factory.run_issue(12)
+        self.assertEqual((issue["status"], issue["stage"]), ("active", "release"))
+        self.assertEqual(self.sessions(12).count("reviewer"), 2)
+        self.assertTrue(any("Stored approval is no longer valid" in message for message in self.events(12)))
+
+    def test_narrowed_plan_cannot_be_approved_and_returns_to_planning(self):
+        exact_request = "Show every configured segment in exactly the requested order, including labels not shown in examples."
+        self.github.add_issue(12, "Show every configured segment in the requested order", body=exact_request)
+        self.pi.reviews = [good_review(
+            verdict="request_changes",
+            summary="The plan narrowed the exact request to the screenshot examples.",
+            plan_adjustment_assessment={
+                "narrows_request": True,
+                "explanation": "The issue requests every configured segment, but the plan limits output to screenshot labels.",
+            },
+        )]
+        observed: dict[str, Any] = {}
+
+        def inspect_second_plan(call: dict[str, Any]) -> None:
+            if call["charter"] != prompts.PLANNER_CHARTER:
+                return
+            if sum(item["charter"] == prompts.PLANNER_CHARTER for item in self.pi.calls) != 2:
+                return
+            stored = self.store.get_issue(12)
+            observed["progress"] = stored["planJson"].get("progress")
+            observed["reviewRound"] = stored["reviewRound"]
+
+        self.pi.on_call = inspect_second_plan
+        self.factory.poll_once()
+        issue = self.factory.run_issue(12)
+        self.assertEqual((issue["status"], issue["stage"]), ("active", "release"))
+        self.assertEqual(self.sessions(12).count("planner"), 2)
+        self.assertEqual(self.sessions(12).count("reviewer"), 2)
+        reviewer_prompts = [call["prompt"] for call in self.pi.calls if call["charter"] == prompts.REVIEWER_CHARTER]
+        self.assertTrue(all("<<<ISSUE_BODY\n" + exact_request + "\nISSUE_BODY>>>" in text for text in reviewer_prompts))
+        planner_prompts = [call["prompt"] for call in self.pi.calls if call["charter"] == prompts.PLANNER_CHARTER]
+        replan = planner_prompts[1]
+        self.assertIn("<<<ISSUE_BODY\n" + exact_request + "\nISSUE_BODY>>>", replan)
+        self.assertIn("<<<PRIOR_REVIEW_CONTEXT\n", replan)
+        self.assertIn("The plan narrowed the exact request to the screenshot examples.", replan)
+        self.assertIn("The issue requests every configured segment, but the plan limits output to screenshot labels.", replan)
+        self.assertIn("A requirement remains unmet.", replan)
+        self.assertIn('"requirements_assessment"', replan)
+        self.assertIn('"human_question": null', replan)
+        self.assertIn("address rejected assumptions", replan)
+        self.assertIn("prior approval as current", replan)
+        self.assertIsNone(observed["progress"], "completed progress is cleared before the corrective planner runs")
+        self.assertEqual(observed["reviewRound"], 1, "replanning does not reset the review-round ledger")
+        self.assertEqual(issue["reviewRound"], 2)
+        self.assertTrue(any(comment.startswith("🧭 Corrected plan (Astra)") for comment in self.github.comments[12]))
+        retained = self.event_detail(12, "Prior review evidence retained")
+        self.assertTrue(retained["planAdjustmentAssessment"]["narrows_request"])
+        self.assertEqual(retained["reviewRound"], 1)
+        self.assertEqual(retained["blocking"], ["A requirement remains unmet."])
+        self.assertTrue(retained["requirementsAssessment"])
+        self.assertTrue(any("plan narrowed the original request" in message for message in self.events(12)))
+
+    def test_legacy_plan_at_implement_replans_before_any_implementer_runs(self):
+        self.github.add_issue(12, "Crash when opening the HUD")
+
+        def pause_after_plan(call: dict[str, Any]) -> None:
+            if call["charter"] == prompts.PLANNER_CHARTER and len(self.pi.calls) == 1:
+                self.factory._stop_event.set()
+
+        self.pi.on_call = pause_after_plan
+        self.factory.poll_once()
+        issue = self.factory.run_issue(12)
+        self.assertEqual(issue["stage"], "implement")
+        legacy = dict(issue["planJson"])
+        legacy.pop("requirements_traceability")
+        legacy["progress"] = {"t1": {"done": True, "summary": "obsolete"}}
+        self.store.update_issue(12, planJson=legacy)
+        self.pi.plans = [good_plan(needs_human=True, human_question="Restate the exact requirement.",
+                                   tasks=[], acceptance_criteria=[])]
+        self.factory._stop_event.clear()
+        issue = self.factory.run_issue(12)
+        self.assertEqual((issue["status"], issue["stage"], issue["blockedReason"]),
+                         ("blocked", "plan", "human_question"))
+        self.assertEqual(self.sessions(12), ["planner", "planner"])
+        self.assertNotIn("progress", issue["planJson"])
+        self.assertTrue(any("not implementation-ready" in message for message in self.events(12)))
+
+    def test_legacy_plan_at_revise_replans_before_any_reviser_runs(self):
+        self.github.add_issue(12, "Crash when opening the HUD")
+        self.pi.reviews = [good_review(verdict="request_changes", summary="Correct the implementation.")]
+        original_post = self.github.post_review
+
+        def post_then_pause(number, body, comments=None):
+            result = original_post(number, body, comments)
+            self.factory._stop_event.set()
+            return result
+
+        self.github.post_review = post_then_pause
+        self.factory.poll_once()
+        issue = self.factory.run_issue(12)
+        self.assertEqual(issue["stage"], "revise")
+        legacy = dict(issue["planJson"])
+        legacy.pop("assumptions")
+        legacy["progress"] = {"t1": {"done": True, "summary": "obsolete"}}
+        self.store.update_issue(12, planJson=legacy)
+        self.pi.plans = [good_plan(needs_human=True, human_question="Clarify the rejected assumption.",
+                                   tasks=[], acceptance_criteria=[])]
+        self.github.post_review = original_post
+        self.factory._stop_event.clear()
+        issue = self.factory.run_issue(12)
+        self.assertEqual((issue["status"], issue["stage"], issue["blockedReason"]),
+                         ("blocked", "plan", "human_question"))
+        self.assertEqual(self.sessions(12).count("reviser"), 0)
+        self.assertNotIn("progress", issue["planJson"])
+
+    def test_merge_revalidates_the_full_plan_before_using_approval(self):
+        self.github.add_issue(12, "Crash when opening the HUD")
+        original_post = self.github.post_review
+
+        def post_then_pause(number, body, comments=None):
+            result = original_post(number, body, comments)
+            self.factory._stop_event.set()
+            return result
+
+        self.github.post_review = post_then_pause
+        self.factory.poll_once()
+        issue = self.factory.run_issue(12)
+        self.assertEqual(issue["stage"], "merge")
+        malformed = dict(issue["planJson"])
+        malformed.pop("assumptions")
+        malformed["progress"] = {"t1": {"done": True}}
+        self.store.update_issue(12, planJson=malformed)
+        self.pi.plans = [good_plan(needs_human=True, human_question="Confirm the required behavior.",
+                                   tasks=[], acceptance_criteria=[])]
+        self.github.post_review = original_post
+        self.factory._stop_event.clear()
+        issue = self.factory.run_issue(12)
+        self.assertEqual((issue["status"], issue["stage"], issue["blockedReason"]),
+                         ("blocked", "plan", "human_question"))
+        self.assertEqual(self.github.merges, [], "a posted approval cannot bypass malformed current plan data")
+        self.assertEqual(issue["reviewRound"], 1)
+        self.assertNotIn("progress", issue["planJson"])
 
     def test_transient_verify_errors_are_tolerated_up_to_a_cap(self):
         blip = CodeFactoryError("gh run list failed: HTTP 403 rate limit exceeded", code="github_failed")

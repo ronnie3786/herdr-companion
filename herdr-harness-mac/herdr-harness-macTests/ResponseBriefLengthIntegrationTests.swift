@@ -322,7 +322,11 @@ struct ResponseBriefLengthIntegrationTests {
         #expect(receipt.request.responseBriefLength == .medium)
         #expect(interrupted.pendingRegenerations.isEmpty)
 
-        // Relaunch against an old server: the saved receipt still reconciles.
+        // Relaunch against an old server: the saved receipt keeps reconciling
+        // without a fresh length-capability check. The interrupted POST never
+        // returned a run ID, so retry replays the exact captured request (the
+        // server deduplicates by clientRequestId) and then polls that run to a
+        // terminal reconciled state.
         let relaunchedPersistence = ResponseBriefPersistence(url: fixture.folder.appending(path: "cache.json"))
         let relaunched = ResponseBriefCoordinator(
             defaults: fixture.defaults,
@@ -331,11 +335,12 @@ struct ResponseBriefLengthIntegrationTests {
         relaunched.selectModel("provider/brief-model")
         relaunched.runPollDelay = .zero
         #expect(relaunched.enable(source.chat))
+        var replayedRequests: [AssistantRequest] = []
         var fetches = 0
         let oldTransport = fixture.oldServerTransport(
-            start: { _ in
-                Issue.record("An accepted receipt must reconcile without a new submission")
-                throw APIError.invalidResponse
+            start: { request in
+                replayedRequests.append(request)
+                return fixture.run(status: .queued, response: nil)
             },
             fetch: { _ in
                 fetches += 1
@@ -345,7 +350,16 @@ struct ResponseBriefLengthIntegrationTests {
         await relaunched.retry(source, transport: oldTransport)
         await relaunched.waitForIdleForTesting()
 
+        #expect(replayedRequests.count == 1)
+        let replay = try #require(replayedRequests.first)
+        #expect(replay.clientRequestId == receipt.request.clientRequestId)
+        #expect(replay.prompt == receipt.request.prompt)
+        #expect(replay.model == receipt.request.model)
+        #expect(replay.thinkingLevel == receipt.request.thinkingLevel)
+        #expect(replay.responseBriefLength == .medium)
+        #expect(replay.context == receipt.request.context)
         #expect(fetches == 1)
+        #expect(relaunched.state(for: source.chat).phase == .idle)
         let record = try #require(
             relaunched.briefs(for: source.chat).first { $0.responseBriefLength == .medium }
         )

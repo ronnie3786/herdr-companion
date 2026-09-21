@@ -53,6 +53,18 @@ struct ResponseBriefValidationTests {
         }
     }
 
+    @Test("A short single-line source accepts a line-1 reference and rejects a second line")
+    func shortSourceLineBoundary() throws {
+        let accepted = #"{"version":1,"title":"T","summary":"Done.","points":[{"text":"Read it.","startLine":1,"endLine":1}],"details":[]}"#
+        let rejected = #"{"version":1,"title":"T","summary":"Done.","points":[{"text":"Read it.","startLine":1,"endLine":2}],"details":[]}"#
+
+        let brief = try ResponseBrief.decodeValidated(Data(accepted.utf8), source: "Already concise.", length: .minimal)
+        #expect(brief.points.first?.endLine == 1)
+        #expect(throws: ResponseBriefValidationError.invalidLineRange) {
+            try ResponseBrief.decodeValidated(Data(rejected.utf8), source: "Already concise.", length: .minimal)
+        }
+    }
+
     @Test("Visible point and detail grammar is tightly bounded", arguments: [
         #"{"version":1,"title":"T","summary":"Direct result.","points":[{"text":"First caveat.","startLine":1,"endLine":1},{"text":"Second caveat.","startLine":1,"endLine":1}],"details":[]}"#,
         #"{"version":1,"title":"T","summary":"Direct result.","points":[],"details":[{"label":"First detail","kind":"detail","startLine":1,"endLine":1},{"label":"Second detail","kind":"detail","startLine":1,"endLine":1},{"label":"Third detail","kind":"detail","startLine":1,"endLine":1}]}"#,

@@ -397,9 +397,9 @@ struct ResponseBriefCoordinatorTests {
         let transport = fixture.transport(
             start: { _ in
                 starts += 1
-                return fixture.run(status: .completed, response: fixture.validJSON)
+                return fixture.run(status: .completed, response: fixture.oneLineValidJSON)
             },
-            fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
+            fetch: { _ in fixture.run(status: .completed, response: fixture.oneLineValidJSON) }
         )
         let first = fixture.coordinator()
         #expect(first.enable(source.chat))
@@ -595,7 +595,10 @@ struct ResponseBriefCoordinatorTests {
         let transport = fixture.transport(
             start: { request in
                 starts.append(request.context.source.instanceId)
-                return fixture.run(status: .completed, response: fixture.validJSON)
+                let response = request.context.source.instanceId == historicalShort.responseID
+                    ? fixture.oneLineValidJSON
+                    : fixture.validJSON
+                return fixture.run(status: .completed, response: response)
             },
             fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
         )
@@ -790,6 +793,10 @@ private final class Fixture {
         contextWindow: 64_000
     )
     let validJSON = #"{"version":1,"title":"Synthetic result","summary":"The answer has two lines.","points":[{"text":"Read both lines.","startLine":1,"endLine":2}],"details":[{"label":"Read exact answer","kind":"detail","startLine":1,"endLine":2}]}"#
+    /// A valid brief for a genuinely short single-line answer. Unlike
+    /// `validJSON`, its point stays inside line 1, so range validation accepts
+    /// it for sources the legacy threshold used to skip.
+    let oneLineValidJSON = #"{"version":1,"title":"Synthetic short result","summary":"Already concise.","points":[{"text":"Read the line.","startLine":1,"endLine":1}],"details":[]}"#
 
     init() throws {
         let newFolder = FileManager.default.temporaryDirectory.appending(path: "response-brief-tests-\(UUID().uuidString)", directoryHint: .isDirectory)

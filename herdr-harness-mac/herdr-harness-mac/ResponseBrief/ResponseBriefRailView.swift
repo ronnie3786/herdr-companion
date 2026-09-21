@@ -69,18 +69,53 @@ struct ResponseBriefRailView: View {
         }
     }
 
+    /// Whether an active state belongs to the same completed answer as a
+    /// record. Callers that can resolve the captured source pass it so a
+    /// verified live-to-persisted alias counts as the same answer; otherwise
+    /// the captured identifier is compared directly.
     static func stateTakesPrecedence(
         _ state: ResponseBriefCoordinator.ChatState,
-        over record: ResponseBriefPersistence.Record
+        over record: ResponseBriefPersistence.Record,
+        resolvedSource: ResponseBriefSource? = nil,
+        matching isEquivalent: @MainActor (ResponseBriefSource, ResponseBriefSource) -> Bool
+            = ResponseBriefIdentity.equivalentByVerifiedIdentity
     ) -> Bool {
-        stateNeedsAttention(state) && state.sourceID == record.source.id
+        guard stateNeedsAttention(state) else { return false }
+        if let resolvedSource {
+            return isEquivalent(resolvedSource, record.source)
+        }
+        return state.sourceID == record.source.id
     }
 
     static func shouldShowStateAlongside(
         _ state: ResponseBriefCoordinator.ChatState,
-        record: ResponseBriefPersistence.Record
+        record: ResponseBriefPersistence.Record,
+        resolvedSource: ResponseBriefSource? = nil,
+        matching isEquivalent: @MainActor (ResponseBriefSource, ResponseBriefSource) -> Bool
+            = ResponseBriefIdentity.equivalentByVerifiedIdentity
     ) -> Bool {
-        stateNeedsAttention(state) && state.sourceID != record.source.id
+        guard stateNeedsAttention(state) else { return false }
+        if let resolvedSource {
+            return !isEquivalent(resolvedSource, record.source)
+        }
+        return state.sourceID != record.source.id
+    }
+
+    /// Whether an active state belongs to the verified latest answer. Used so
+    /// a reconciled live projection still reads as the latest response while
+    /// generation is in flight instead of being labeled an earlier queued run.
+    static func stateTracksLatestSource(
+        _ state: ResponseBriefCoordinator.ChatState,
+        latestSource: ResponseBriefSource?,
+        resolvedSource: ResponseBriefSource?,
+        matching isEquivalent: @MainActor (ResponseBriefSource, ResponseBriefSource) -> Bool
+            = ResponseBriefIdentity.equivalentByVerifiedIdentity
+    ) -> Bool {
+        guard let latestSource else { return false }
+        if let resolvedSource {
+            return isEquivalent(resolvedSource, latestSource)
+        }
+        return state.sourceID == latestSource.id
     }
 
     static func selectionFollowsLatest(
@@ -336,7 +371,13 @@ struct ResponseBriefRailView: View {
         chat: ResponseBriefChatIdentity
     ) -> some View {
         if let record = selectedRecord {
-            if Self.stateTakesPrecedence(state, over: record) {
+            let stateSource = source(for: state)
+            if Self.stateTakesPrecedence(
+                state,
+                over: record,
+                resolvedSource: stateSource,
+                matching: coordinator.areEquivalent
+            ) {
                 statePresentation(state, chat: chat)
             } else {
                 switch Self.selectedRecordPresentation(for: record) {
@@ -348,7 +389,12 @@ struct ResponseBriefRailView: View {
                     regenerateControl(for: record.source)
                 }
 
-                if Self.shouldShowStateAlongside(state, record: record) {
+                if Self.shouldShowStateAlongside(
+                    state,
+                    record: record,
+                    resolvedSource: stateSource,
+                    matching: coordinator.areEquivalent
+                ) {
                     statePresentation(state, chat: chat)
                 }
             }
@@ -369,7 +415,12 @@ struct ResponseBriefRailView: View {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Text(
-                    state.sourceID == latestSource?.id
+                    Self.stateTracksLatestSource(
+                        state,
+                        latestSource: latestSource,
+                        resolvedSource: source(for: state),
+                        matching: coordinator.areEquivalent
+                    )
                         ? "Creating brief for the latest response…"
                         : "Creating an earlier queued brief…"
                 )

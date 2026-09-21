@@ -159,7 +159,105 @@ struct ResponseBriefRecoveryTests {
             latestSource: persisted,
             matching: matching
         ))
+        // An active state for the live projection still reads as the latest
+        // answer and replaces its own card instead of stacking a duplicate.
+        let generating = ResponseBriefCoordinator.ChatState(sourceID: live.id, phase: .generating)
+        #expect(ResponseBriefRailView.stateTracksLatestSource(
+            generating,
+            latestSource: persisted,
+            resolvedSource: record.source,
+            matching: matching
+        ))
+        #expect(ResponseBriefRailView.stateTakesPrecedence(
+            generating,
+            over: record,
+            resolvedSource: record.source,
+            matching: matching
+        ))
+        #expect(!ResponseBriefRailView.shouldShowStateAlongside(
+            generating,
+            record: record,
+            resolvedSource: record.source,
+            matching: matching
+        ))
         #expect(coordinator.state(for: live.chat).phase == .idle)
+    }
+
+    @Test("Presentation state association uses durable verified aliases, not raw identifiers")
+    func presentationStateAssociationUsesVerifiedAliases() async throws {
+        let fixture = try RecoveryFixture()
+        defer { fixture.cleanup() }
+        let canonical = fixture.source(responseID: "entry-alias-canonical", identity: false)
+        let alias = fixture.source(
+            responseID: "live:synthetic:alias",
+            text: canonical.text,
+            identity: false
+        )
+        try await fixture.persistence.recordVerifiedAlias(
+            chatID: alias.chat.id,
+            aliasID: alias.responseID,
+            canonicalID: canonical.responseID,
+            identity: nil,
+            verifiedAt: Date(timeIntervalSince1970: 1_800_000_700)
+        )
+        let record = ResponseBriefPersistence.Record(
+            id: "alias-presentation-record",
+            source: canonical,
+            brief: fixture.validBrief,
+            model: nil,
+            thinkingLevel: nil,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_700)
+        )
+        let coordinator = fixture.coordinator()
+        await coordinator.load()
+        #expect(coordinator.areEquivalent(alias, canonical))
+        #expect(!ResponseBriefIdentity.equivalentByVerifiedIdentity(alias, canonical))
+        let matching: @MainActor (ResponseBriefSource, ResponseBriefSource) -> Bool = {
+            coordinator.areEquivalent($0, $1)
+        }
+
+        let generating = ResponseBriefCoordinator.ChatState(sourceID: alias.id, phase: .generating)
+        #expect(ResponseBriefRailView.stateTracksLatestSource(
+            generating,
+            latestSource: canonical,
+            resolvedSource: alias,
+            matching: matching
+        ))
+        #expect(!ResponseBriefRailView.stateTracksLatestSource(
+            generating,
+            latestSource: nil,
+            resolvedSource: alias,
+            matching: matching
+        ))
+        #expect(ResponseBriefRailView.stateTakesPrecedence(
+            generating,
+            over: record,
+            resolvedSource: alias,
+            matching: matching
+        ))
+        #expect(!ResponseBriefRailView.shouldShowStateAlongside(
+            generating,
+            record: record,
+            resolvedSource: alias,
+            matching: matching
+        ))
+        // A matcher without durable alias state stays conservative: distinct
+        // identifiers are never equated by content alone.
+        #expect(!ResponseBriefRailView.stateTracksLatestSource(
+            generating,
+            latestSource: canonical,
+            resolvedSource: alias
+        ))
+        #expect(!ResponseBriefRailView.stateTakesPrecedence(
+            generating,
+            over: record,
+            resolvedSource: alias
+        ))
+        #expect(ResponseBriefRailView.shouldShowStateAlongside(
+            generating,
+            record: record,
+            resolvedSource: alias
+        ))
     }
 
     @Test("A pending intent for a disabled chat is tombstoned when state loads")

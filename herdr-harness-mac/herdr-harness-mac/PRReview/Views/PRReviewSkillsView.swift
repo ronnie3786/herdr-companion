@@ -63,8 +63,8 @@ private struct PRReviewSkillRow: View {
             VStack(alignment: .trailing, spacing: 6) {
                 Button("Run") { Task { await store.runSkill(skill.id) } }
                     .disabled(skill.running)
-                Button(skill.runCount > 0 ? "Mark as not run" : "Mark as ran") {
-                    Task { await store.markSkill(skill.id, state: skill.runCount > 0 ? "not_run" : "ran") }
+                Button(skill.state == "ran" ? "Mark as not run" : "Mark as ran") {
+                    Task { await store.markSkill(skill.id, state: skill.state == "ran" ? "not_run" : "ran") }
                 }
                 if !skill.builtin {
                     Button("Remove", role: .destructive) { Task { await store.removeSkill(id: skill.id) } }
@@ -78,9 +78,10 @@ private struct PRReviewSkillRow: View {
     }
 
     private var stateCaption: String {
-        guard skill.runCount > 0 else { return "Not run" }
-        let date = skill.lastRunAt.map { " · last \($0.prefix(10))" } ?? ""
-        return "✓ Ran · \(skill.runCount) runs\(date)"
+        guard skill.state == "ran" else { return "Not run" }
+        let note = skill.mark?.note.map { " · \($0)" } ?? ""
+        let date = skill.mark?.markedAt.map { " · \($0.prefix(10))" } ?? skill.lastRunAt.map { " · last \($0.prefix(10))" } ?? ""
+        return "✓ Ran · \(skill.runCount) runs\(note)\(date)"
     }
 }
 

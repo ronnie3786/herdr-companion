@@ -84,6 +84,8 @@ final class HerdrShellState {
     let prReview = PRReviewStore()
     var firstMateMachineID: String?
     var prReviewMachineID: String?
+    var prReviewOpenRequest: PRReviewOpenRequest?
+    var prReviewAppliedRequestID: UUID?
     var firstMateOpenRequest: FirstMateOpenRequest?
     var firstMateAppliedRequestID: UUID?
     @ObservationIgnored private var configuredFirstMateConnectionIdentity: FirstMateConnectionIdentity?
@@ -165,17 +167,25 @@ final class HerdrShellState {
     func configurePRReviewIfNeeded(configuration: ServerConfiguration?, machineID: String?, connectionGeneration: Int, isDemo: Bool, client: (any PRReviewClient)? = nil) -> Bool {
         let identity = PRReviewConnectionIdentity(configuration: configuration, generation: connectionGeneration, isDemo: isDemo, machineRevision: machineID?.hashValue ?? 0)
         guard identity != configuredPRReviewConnectionIdentity else { return false }
-        prReviewMachineID = machineID
+        prReviewMachineID = machineID ?? (isDemo ? "demo" : nil)
         prReview.configure(client: client ?? configuration.map { HerdrAPIClient(configuration: $0) }, machineID: machineID, demo: isDemo)
         configuredPRReviewConnectionIdentity = identity
         return true
     }
 
     func showPRReview(machineID: String?, reviewID: String?, file: String? = nil, line: Int? = nil, side: PRReviewSide = .after, tab: PRReviewTab = .files, model: HerdrAppModel) {
-        prReviewMachineID = machineID ?? model.prReviewMachine?.id
-        prReview.tab = tab
-        prReview.select(reviewID)
-        if let file { prReview.selectedPath = file; if let line { prReview.scroll(to: file, line: line, side: side) } }
+        let resolvedMachineID = machineID ?? (model.isDemoMode ? "demo" : model.prReviewMachine?.id)
+        prReviewMachineID = resolvedMachineID
+        if let reviewID {
+            prReviewOpenRequest = PRReviewOpenRequest(
+                reviewID: reviewID,
+                serverURL: model.prReviewConfiguration(machineID: resolvedMachineID)?.baseURL.absoluteString ?? "demo",
+                file: file,
+                line: line,
+                side: side,
+                tab: tab
+            )
+        }
         show(.prReview, model: model)
     }
 

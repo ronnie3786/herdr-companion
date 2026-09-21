@@ -54,9 +54,9 @@ struct PRReviewDocumentCache: Sendable {
         let directory = rootURL
             .appending(path: token(machineID), directoryHint: .isDirectory)
             .appending(path: token(reviewID), directoryHint: .isDirectory)
-            .appending(path: "\(token(document.id))-\(token(document.contentHash))", directoryHint: .isDirectory)
+            .appending(path: "\(token(document.id))-\(token(document.contentHash ?? ""))", directoryHint: .isDirectory)
         let destination = directory
-            .appending(path: safeFilename(document.filename.isEmpty ? document.title : document.filename))
+            .appending(path: safeFilename((document.filename?.isEmpty == false) ? document.filename! : document.title))
             .standardizedFileURL
         let rootPath = rootURL.path.hasSuffix("/") ? rootURL.path : rootURL.path + "/"
         guard destination.path.hasPrefix(rootPath) else { throw CacheError.unsafeDestination }

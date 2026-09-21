@@ -514,8 +514,10 @@ final class HerdrAppModel {
         if let id, !id.isEmpty { userDefaults.set(id, forKey: "herdr.prReview.machineID") } else { userDefaults.removeObject(forKey: "herdr.prReview.machineID") }
         prReviewMachineRevision &+= 1
     }
-    func prReviewConfiguration() -> ServerConfiguration? {
-        guard !isDemoMode, let machine = prReviewMachine else { return nil }
+    func prReviewConfiguration(machineID: String? = nil) -> ServerConfiguration? {
+        guard !isDemoMode,
+              let machine = machines.first(where: { $0.id == machineID }) ?? prReviewMachine
+        else { return nil }
         let token = machine.id == "ui-test" ? runtimes[machine.id]?.connection?.configuration.token ?? "" : credentials.value(for: "api-token.\(machine.id)")
         return ServerConfiguration(urlString: machine.urlString, token: token)
     }
@@ -2614,10 +2616,14 @@ final class HerdrAppModel {
         question: String? = nil,
         anchor: (view: NSView, rect: CGRect)?
     ) async {
-        guard let machineID = prReviewMachine?.id,
-              let checkoutPath = review.checkoutPath,
-              !checkoutPath.isEmpty
+        let checkoutPath = review.checkoutPath?.nonEmpty ?? (isDemoMode ? "/path/to/project" : nil)
+        guard let checkoutPath
         else {
+            toastMessage = "Connect the development machine before asking about this review."
+            return
+        }
+        let machineID = isDemoMode ? "demo" : prReviewMachine?.id
+        guard let machineID else {
             toastMessage = "Connect the development machine before asking about this review."
             return
         }
@@ -2638,7 +2644,7 @@ final class HerdrAppModel {
                     section: side == .before ? "pr-base" : "pr-head",
                     revision: side == .before ? review.baseSHA : review.headSHA,
                     spans: selection.spans.map {
-                        .init(side: $0.side.rawValue, startLine: $0.start, endLine: $0.end)
+                        .init(side: $0.side.wireSide, startLine: $0.start, endLine: $0.end)
                     }
                 )
             ),

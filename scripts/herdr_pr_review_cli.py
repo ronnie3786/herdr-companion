@@ -14,6 +14,8 @@ import urllib.parse
 import urllib.request
 import uuid
 
+MAX_DOCUMENT_BYTES = 2 * 1024 * 1024 * 1024
+
 try:
     from .herdr_notes_cli import CLIError, NotesClient, Parser as BaseParser, _read_file
 except ImportError:
@@ -112,7 +114,6 @@ def parser(environ):
     mark.add_argument("--skill", required=True)
     mark.add_argument("--state", required=True, choices=("ran", "not-run"))
     mark.add_argument("--note")
-    mark.add_argument("--expected-revision", type=int)
     mark.add_argument("--request-id")
 
     rankings = commands.add_parser("set-rankings", help="Set file rankings from JSON")
@@ -192,6 +193,13 @@ def _download_document(client, path, output):
         with client.opener(request, timeout=20) as response:
             if response.geturl() != request.full_url:
                 raise CLIError("Herdr redirects are not allowed", "redirect_not_allowed")
+            content_length = response.headers.get("Content-Length") if hasattr(response, "headers") else None
+            if content_length is not None:
+                try:
+                    if not 0 <= int(content_length) <= MAX_DOCUMENT_BYTES:
+                        raise CLIError("Herdr response is too large", "response_too_large")
+                except ValueError as exc:
+                    raise CLIError("Herdr response has an invalid length", "invalid_response") from exc
             destination.parent.mkdir(parents=True, exist_ok=True)
             total = 0
             with destination.open("xb") as stream:
@@ -200,7 +208,7 @@ def _download_document(client, path, output):
                     if not chunk:
                         break
                     total += len(chunk)
-                    if total > 32 * 1024 * 1024:
+                    if total > MAX_DOCUMENT_BYTES:
                         raise CLIError("Herdr response is too large", "response_too_large")
                     stream.write(chunk)
     except CLIError:
@@ -317,8 +325,6 @@ def execute(args, client, *, stdin, launch, environ):
     if args.command == "mark":
         state = "not_run" if args.state == "not-run" else args.state
         body = {"state": state, "note": args.note or "", "request_id": _request_id(args)}
-        if args.expected_revision is not None:
-            body["expected_revision"] = args.expected_revision
         return client.request("POST", path + "/skills/" + _quote(args.skill) + "/mark", body)
     if args.command == "set-rankings":
         return client.request("PUT", path + "/rankings", {"files": json.loads(_read_file(args.file, stdin)), "request_id": _request_id(args)})
@@ -328,6 +334,7 @@ def execute(args, client, *, stdin, launch, environ):
         body = {"title": args.title or "", "request_id": _request_id(args)}
         if args.link:
             body["url"] = args.link
+            body["title"] = args.title or args.link
         elif args.file:
             body["path"] = str(Path(args.file).expanduser().absolute())
         else:

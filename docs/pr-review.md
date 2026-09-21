@@ -1,6 +1,6 @@
 # PR Review
 
-Status: first implementation, macOS 0.25.0-beta.1 with companion 0.25.0b1 (2026-09-21).
+Status: first implementation, macOS 0.27.0-beta.1 with companion 0.27.0b1 (2026-09-21).
 Product intent lives in [pr-review-assistant.md](pr-review-assistant.md).
 
 PR Review turns a GitHub pull request link into an AI-assisted review workspace inside the
@@ -12,7 +12,7 @@ client of that companion. Nothing in a review is ever deleted; finished reviews 
 
 On the review host:
 
-1. Install companion 0.25.0b1 or newer. `GET /api/v1` advertises `pr-review-v1` and the
+1. Install companion 0.27.0b1 or newer. `GET /api/v1` advertises `pr-review-v1` and the
    `pr-review-question-v1` question profile.
 2. Authenticate `gh` for the GitHub account that can read the pull requests you review, and
    install the `gh autoview` extension if you use the mark-viewed utility.

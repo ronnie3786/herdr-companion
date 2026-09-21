@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, BinaryIO, Callable, Iterator, Mapping
 from urllib.parse import urlsplit
 
-from .agent_runs import _child_path
+from .agent_runs import _assistant_text, _child_path
 from .child_environment import agent_environment
 from .normalization import pane_index
 from .pr_review_diff import line_window, parse_unified_diff
@@ -35,6 +35,7 @@ MAX_DIFF_BYTES = 8 * 1024 * 1024
 MAX_FILE_BYTES = 512 * 1024
 MAX_DOCUMENT_BYTES = 2 * 1024 * 1024 * 1024
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+MAX_FINDINGS_DOCUMENT_BYTES = 4 * 1024 * 1024
 ALLOWED_EXTENSIONS = frozenset({".md", ".markdown", ".txt", ".html", ".htm", ".json", ".pdf", ".mp3", ".wav", ".m4a", ".aac", ".mp4", ".mov", ".m4v", ".webm", ".png", ".jpg", ".jpeg", ".gif", ".svg"})
 _PR_PATH = re.compile(r"^/([^/]+)/([^/]+)/pull/(\d+)(?:/.*)?$")
 
@@ -127,6 +128,7 @@ class PRReviewRuntime:
         self._manager_lock: Any = None
         self._lock = threading.RLock()
         self._processes: dict[str, tuple[Any, Any]] = {}
+        self._preparing_reviews: set[str] = set()
         self._last_heavy_scan = 0.0
 
     def start(self) -> None:
@@ -174,14 +176,20 @@ class PRReviewRuntime:
     def _run(self, argv: list[str], *, cwd: Path | None = None, timeout: int | None = None, kind: str = "git", input: str | None = None) -> Any:
         timeout = self.gh_timeout_seconds if timeout is None and kind == "gh" else timeout or 120
         try:
-            result = self.runner(argv, capture_output=True, text=True, timeout=timeout, cwd=str(cwd) if cwd else None, env=self._child_environment(), input=input)
+            result = self.runner(argv, capture_output=True, text=False, timeout=timeout, cwd=str(cwd) if cwd else None, env=self._child_environment(), input=input.encode("utf-8") if input is not None else None)
         except (OSError, subprocess.TimeoutExpired) as exc:
             code = "github_failed" if kind == "gh" else "git_failed"
             raise PRReviewError(f"{kind} command failed", code=code, status=502) from exc
+        result.stdout = self._decode_output(getattr(result, "stdout", ""))
+        result.stderr = self._decode_output(getattr(result, "stderr", ""))
         if getattr(result, "returncode", 0):
             code = "github_failed" if kind == "gh" else "git_failed"
             raise PRReviewError(_trim_error(getattr(result, "stderr", ""), f"{kind} command failed"), code=code, status=502)
         return result
+
+    @staticmethod
+    def _decode_output(value: str | bytes | None) -> str:
+        return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value or "")
 
     def capabilities(self) -> dict[str, Any]:
         runner = self.environ.get("HERDR_PR_REVIEW_RUNNER", "claude")
@@ -210,8 +218,21 @@ class PRReviewRuntime:
                 self.start_run(review["id"], skill_id, f"{request_id}:{skill_id}", actor)
             elif not any(run["skill_id"] == skill_id for run in self.store.runs_for_review(review["id"])):
                 self.store.queue_run(review["id"], skill_id, f"{request_id}:{skill_id}", actor)
-        threading.Thread(target=self.prepare, args=(review["id"],), daemon=True).start()
+        if review["status"] == "preparing" and review.get("prepared_at") is None:
+            with self._lock:
+                should_prepare = review["id"] not in self._preparing_reviews
+                if should_prepare:
+                    self._preparing_reviews.add(review["id"])
+            if should_prepare:
+                threading.Thread(target=self._prepare_once, args=(review["id"],), daemon=True).start()
         return review
+
+    def _prepare_once(self, review_id: str) -> None:
+        try:
+            self.prepare(review_id)
+        finally:
+            with self._lock:
+                self._preparing_reviews.discard(review_id)
 
     def _write_json(self, path: Path, value: Any) -> None:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -238,7 +259,7 @@ class PRReviewRuntime:
         head_sha = str(metadata.get("headRefOid") or review.get("head_sha") or "")
         if not base_ref or not head_sha:
             raise PRReviewError("GitHub PR metadata is incomplete", code="github_failed", status=502)
-        self._run(["git", "-C", str(clone), "fetch", "--quiet", "origin", f"pull/{review['number']}/head:refs/herdr-pr/{review['number']}", f"origin/{base_ref}"], kind="git")
+        self._run(["git", "-C", str(clone), "fetch", "--quiet", "origin", f"pull/{review['number']}/head:refs/herdr-pr/{review['number']}"], kind="git")
         worktree = self._review_worktree(str(review["id"]))
         worktree.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         if worktree.exists():
@@ -296,8 +317,10 @@ class PRReviewRuntime:
         viewed: list[str] = []
         query = "query($owner:String!,$repo:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$number){files(first:100,after:$cursor){nodes{path viewerViewedState} pageInfo{hasNextPage endCursor}}}}}"
         while True:
-            variables = {"owner": review["owner"], "repo": review["repo"], "number": review["number"], "cursor": cursor}
-            result = self._run(["gh", "api", "graphql", "-f", f"query={query}", "-f", f"variables={json.dumps(variables, separators=(',', ':'))}"], kind="gh")
+            command = ["gh", "api", "graphql", "-f", f"query={query}", "-f", f"owner={review['owner']}", "-f", f"repo={review['repo']}", "-F", f"number={review['number']}"]
+            if cursor is not None:
+                command.extend(["-f", f"cursor={cursor}"])
+            result = self._run(command, kind="gh")
             try:
                 payload = json.loads(result.stdout)
                 files = payload["data"]["repository"]["pullRequest"]["files"]
@@ -345,9 +368,15 @@ class PRReviewRuntime:
             self._changed(review_id)
 
     def refresh_review(self, review_id: str, request_id: str) -> dict[str, Any]:
+        scope = f"refresh:{review_id}"
+        cached = self.store.receipt(scope, request_id, {})
+        if cached is not None:
+            return cached
         self.store.get_review(review_id)
         threading.Thread(target=self.prepare, args=(review_id,), kwargs={"refresh": True}, daemon=True).start()
-        return self.store.get_review(review_id, True)
+        result = self.store.get_review(review_id, True)
+        self.store.save_receipt(scope, request_id, {}, result)
+        return result
 
     def _render(self, template: str, review: Mapping[str, Any], run_id: str) -> str:
         return template.format(number=review["number"], url=review["url"], owner=review["owner"], repo=review["repo"], review_id=review["id"], run_id=run_id, checkout=review.get("checkout_path") or "")
@@ -371,6 +400,8 @@ class PRReviewRuntime:
     def _launch_existing_run(self, review_id: str, run_id: str) -> None:
         review = self.store.get_review(review_id, True)
         run = self.store.run(review_id, run_id)
+        if run["state"] != "queued" or run.get("started_at") is not None:
+            return
         skill = self.store.skill(run["skill_id"])
         worktree = Path(str(review.get("checkout_path") or self._review_worktree(review_id)))
         outputs = list(skill.get("outputs") or [])
@@ -490,15 +521,20 @@ class PRReviewRuntime:
             raw = self.runner(["git", "-C", str(worktree), "ls-files", "--error-unmatch", "--", relative], capture_output=True, text=True, timeout=30, cwd=str(worktree), env=self._child_environment())
             if raw.returncode == 0:
                 continue
-            digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
+            byte_size = candidate.stat().st_size
+            if byte_size > MAX_DOCUMENT_BYTES:
+                continue
+            digest = self._file_hash(candidate)
+            if self.store.document_for_hash(review_id, digest) is not None:
+                continue
             docs_dir = self._review_dir(review_id) / "documents"
             docs_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
             document_id = f"prdoc_{os.urandom(6).hex()}"
             destination = docs_dir / f"{document_id}-{self._safe_name(relative)}"
-            destination.write_bytes(candidate.read_bytes())
+            shutil.copyfile(candidate, destination)
             os.chmod(destination, 0o600)
             kind, media_type = self._document_kind(candidate.name)
-            document = self.store.add_document(review_id, {"id": document_id, "run_id": run_id, "kind": kind, "title": candidate.name, "media_type": media_type, "filename": candidate.name, "stored_path": str(destination), "byte_size": candidate.stat().st_size, "content_hash": digest, "origin": "skill", "origin_path": relative})
+            document = self.store.add_document(review_id, {"id": document_id, "run_id": run_id, "kind": kind, "title": candidate.name, "media_type": media_type, "filename": candidate.name, "stored_path": str(destination), "byte_size": byte_size, "content_hash": digest, "origin": "skill", "origin_path": relative})
             if document["id"] == document_id:
                 changed = True
         return changed
@@ -549,6 +585,11 @@ class PRReviewRuntime:
                 self._changed(review["id"])
 
     def finish_run(self, review_id: str, run_id: str, state: str, note: str, request_id: str) -> dict[str, Any]:
+        scope = f"finish:{review_id}:{run_id}"
+        payload = {"state": state, "note": note}
+        cached = self.store.receipt(scope, request_id, payload)
+        if cached is not None:
+            return cached
         if state not in {"finished", "failed"}:
             raise PRReviewError("Invalid run state", code="invalid_request", status=400)
         run = self.store.run(review_id, run_id)
@@ -558,6 +599,7 @@ class PRReviewRuntime:
         result = self.store.update_run(review_id, run_id, state=state, note=note, finished_at=_now())
         self.store.add_event(review_id, "run.finished", "Skill run finished", {"run_id": run_id, "state": state})
         self._changed(review_id)
+        self.store.save_receipt(scope, request_id, payload, result)
         return result
 
     def diff(self, review_id: str, path: str | None = None) -> dict[str, Any]:
@@ -583,8 +625,10 @@ class PRReviewRuntime:
         for document in self.store.documents(review_id):
             if document["kind"] not in {"markdown", "html"} or not document["downloadable"]:
                 continue
+            if int(document.get("byte_size") or 0) > MAX_FINDINGS_DOCUMENT_BYTES:
+                continue
             with self.open_document(review_id, document["id"]) as content:
-                text = content.handle.read().decode("utf-8", "ignore")
+                text = content.handle.read(MAX_FINDINGS_DOCUMENT_BYTES).decode("utf-8", "ignore")
             if document["kind"] == "html":
                 text = re.sub(r"<[^>]+>", " ", html.unescape(text))
             matching = [block.strip() for block in re.split(r"\n\s*\n|\n(?=[*-]\s)|\n(?=\|)", text) if any(needle in block.casefold() for needle in needles)]
@@ -616,9 +660,28 @@ class PRReviewRuntime:
 
     def add_document_path(self, review_id: str, path: str, title: str, origin: str, request_id: str) -> dict[str, Any]:
         candidate = Path(path)
-        if not candidate.is_absolute() or not candidate.is_file() or candidate.suffix.lower() not in ALLOWED_EXTENSIONS or candidate.stat().st_size > MAX_DOCUMENT_BYTES:
+        if not candidate.is_absolute() or not candidate.is_file() or candidate.suffix.lower() not in ALLOWED_EXTENSIONS or not 0 < candidate.stat().st_size <= MAX_DOCUMENT_BYTES:
             raise PRReviewError("Invalid document path", code="invalid_request", status=400)
-        return self._save_document(review_id, candidate.name, candidate.read_bytes(), None, title, origin, request_id, origin_path=str(candidate))
+        digest = self._file_hash(candidate)
+        existing = self.store.document_for_hash(review_id, digest)
+        if existing is not None:
+            return existing
+        document_id = f"prdoc_{os.urandom(6).hex()}"
+        directory = self._review_dir(review_id) / "documents"
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        stored = directory / f"{document_id}-{self._safe_name(candidate.name)}"
+        shutil.copyfile(candidate, stored)
+        os.chmod(stored, 0o600)
+        kind, media_type = self._document_kind(candidate.name)
+        return self.store.add_document(review_id, {"id": document_id, "kind": kind, "title": title or candidate.name, "media_type": media_type, "filename": candidate.name, "stored_path": str(stored), "byte_size": candidate.stat().st_size, "content_hash": digest, "origin": origin, "origin_path": str(candidate), "request_id": request_id})
+
+    @staticmethod
+    def _file_hash(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
 
     def add_document_link(self, review_id: str, url: str, title: str, origin: str, request_id: str) -> dict[str, Any]:
         if urlsplit(url).scheme not in {"http", "https"}:
@@ -659,8 +722,9 @@ class PRReviewRuntime:
         return {"run_id": run_id, "lines": [], "source": "none"}
 
     def rank_review(self, review_id: str, request_id: str) -> dict[str, Any]:
-        review = self.store.set_ranking_state(review_id, "running")
-        threading.Thread(target=self._rank_worker, args=(review_id, request_id), daemon=True).start()
+        review, should_launch = self.store.start_ranking(review_id, request_id)
+        if should_launch:
+            threading.Thread(target=self._rank_worker, args=(review_id, request_id), daemon=True).start()
         self._changed(review_id)
         return review
 
@@ -681,13 +745,21 @@ class PRReviewRuntime:
             thinking = self.environ.get("HERDR_PR_REVIEW_THINKING", "medium")
             if thinking:
                 command.extend(["--thinking", thinking])
-            result = self.runner(command, capture_output=True, text=True, input=prompt, timeout=600, cwd=str(self._review_dir(review_id)), env=self._child_environment(pi_bin=pi_bin))
+            result = self.runner(command, capture_output=True, text=False, input=prompt.encode("utf-8"), timeout=600, cwd=str(self._review_dir(review_id)), env=self._child_environment(pi_bin=pi_bin))
             if result.returncode:
-                raise PRReviewError(_trim_error(result.stderr, "Pi ranking failed"), code="github_failed", status=502)
-            match = re.search(r"\{.*\}", result.stdout or "", re.DOTALL)
-            if not match:
+                raise PRReviewError(_trim_error(self._decode_output(result.stderr), "Pi ranking failed"), code="github_failed", status=502)
+            assistant = ""
+            for line in self._decode_output(result.stdout).splitlines():
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event, dict) and event.get("type") == "message_end":
+                    assistant = _assistant_text(event.get("message")) or _assistant_text(event.get("data", {}).get("message") if isinstance(event.get("data"), dict) else None)
+            start = assistant.find("{")
+            if start < 0:
                 raise PRReviewError("Pi ranking returned no JSON", code="invalid_request", status=400)
-            ranking = json.loads(match.group(0))
+            ranking, _ = json.JSONDecoder().raw_decode(assistant[start:])
             ranked = ranking.get("files")
             guided = {item["path"]: item.get("reason") for item in ranking.get("guided", []) if isinstance(item, dict) and isinstance(item.get("path"), str)}
             if not isinstance(ranked, list):
@@ -718,8 +790,7 @@ class PRReviewRuntime:
                 metadata = json.loads((self._review_dir(review_id) / "pr.json").read_text(encoding="utf-8"))
                 mutation = "mutation($pullRequestId:ID!,$path:String!){" + ("markFileAsViewed" if viewed else "unmarkFileAsViewed") + "(input:{pullRequestId:$pullRequestId,path:$path}){clientMutationId}}"
                 for path in paths:
-                    variables = {"pullRequestId": metadata["id"], "path": path}
-                    self._run(["gh", "api", "graphql", "-f", f"query={mutation}", "-f", f"variables={json.dumps(variables, separators=(',', ':'))}"], kind="gh")
+                    self._run(["gh", "api", "graphql", "-f", f"query={mutation}", "-f", f"pullRequestId={metadata['id']}", "-f", f"path={path}"], kind="gh")
             except (OSError, KeyError, json.JSONDecodeError, PRReviewError) as exc:
                 self.store.add_event(review_id, "github.viewed_push_failed", "Could not sync viewed files to GitHub", {"error": _trim_error(exc, "GitHub sync failed")})
         self._changed(review_id)

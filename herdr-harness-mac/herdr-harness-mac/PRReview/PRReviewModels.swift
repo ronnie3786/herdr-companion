@@ -82,6 +82,15 @@ enum PRReviewSkillKind: String, Codable, Equatable, Sendable {
 enum PRReviewSide: String, Codable, Equatable, Sendable {
     case before
     case after
+
+    /// The diff UI uses before/after, while the Companion file-text endpoint
+    /// intentionally exposes the stable old/new vocabulary.
+    var wireSide: String {
+        switch self {
+        case .before: "old"
+        case .after: "new"
+        }
+    }
 }
 
 struct PRReviewSelection: Equatable, Sendable {
@@ -509,10 +518,10 @@ struct PRReviewDocument: Codable, Equatable, Identifiable, Sendable {
     var kind: PRReviewDocumentKind
     var title: String
     var mediaType: String
-    var filename: String
+    var filename: String?
     var url: String?
     var byteSize: Int64
-    var contentHash: String
+    var contentHash: String?
     var origin: String
     var originPath: String?
     var createdAt: String?
@@ -688,7 +697,7 @@ struct PRReviewDiff: Codable, Equatable, Sendable {
 
 struct PRReviewDiffFile: Codable, Equatable, Sendable {
     var path: String
-    var oldPath: String
+    var oldPath: String?
     var status: String
     var additions: Int
     var deletions: Int

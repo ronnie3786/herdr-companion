@@ -36,6 +36,7 @@ class FakeRunner:
         if argv[:3] == ["gh", "pr", "view"]:
             return _Result(json.dumps({"number": 42, "url": "https://github.com/example-owner/garden/pull/42", "state": "OPEN", "title": "Garden update", "body": "Synthetic body", "author": {"login": "example-author"}, "baseRefName": "main", "headRefName": "feature", "headRefOid": "head", "baseRefOid": "base", "isDraft": False, "additions": 4, "deletions": 1, "changedFiles": 1, "files": [], "id": "PR_node"}))
         if argv[:3] == ["gh", "api", "graphql"]:
+            self._assert_graphql_fields(argv)
             return _Result(json.dumps({
                 "data": {
                     "repository": {
@@ -55,6 +56,16 @@ class FakeRunner:
         if "show" in argv:
             return _Result("one\ntwo\nthree\n")
         return _Result()
+
+    @staticmethod
+    def _assert_graphql_fields(argv):
+        fields = dict(zip(argv[4::2], argv[5::2]))
+        assert "variables" not in " ".join(argv)
+        assert fields.get("-f") is not None or "-f" in argv
+        if "number=" in " ".join(argv):
+            assert ["-f", "owner=example-owner", "-f", "repo=garden", "-F", "number=42"] == argv[5:11]
+        else:
+            assert argv[-4:] == ["-f", "pullRequestId=PR_node", "-f", "path=Sources/Garden.swift"]
 
     @staticmethod
     def assert_safe_environment(environment):
@@ -204,6 +215,8 @@ class PRReviewRuntimeTests(unittest.TestCase):
         self.assertEqual(self.store.files(review["id"])[0]["path"], "Sources/Garden.swift")
         self.assertTrue(self.store.files(review["id"])[0]["viewed"])
         self.assertIn("tab.create", [name for name, _ in self.service.calls])
+        fetches = [argv for argv, _ in self.runner.calls if argv[:5] == ["git", "-C", str(self.runtime.checkout_root / "repos" / "example-owner__garden"), "fetch", "--quiet"]]
+        self.assertEqual(fetches[1], ["git", "-C", str(self.runtime.checkout_root / "repos" / "example-owner__garden"), "fetch", "--quiet", "origin", "pull/42/head:refs/herdr-pr/42"])
 
     def test_file_text_clamps_window(self):
         review = self._review()
@@ -219,6 +232,33 @@ class PRReviewRuntimeTests(unittest.TestCase):
         findings = self.runtime.findings_for_path(review["id"], "Sources/Garden.swift")
         self.assertIn("needs a test", findings["text"])
         self.assertEqual(findings["document_ids"], [document["id"]])
+
+    def test_findings_skips_documents_larger_than_four_megabytes(self):
+        review = self._review()
+        self.runtime._save_document(review["id"], "large.md", b"Sources/Garden.swift\n" + b"x" * (4 * 1024 * 1024), "text/markdown", "Large", "user", "large")
+        self.assertEqual(self.runtime.findings_for_path(review["id"], "Sources/Garden.swift"), {"path": "Sources/Garden.swift", "text": "", "document_ids": []})
+
+    def test_create_review_prepares_once_for_replays(self):
+        calls = []
+        started = threading.Event()
+        release = threading.Event()
+        self.runtime.prepare = lambda review_id: (calls.append(review_id), started.set(), release.wait(1))
+        first = self.runtime.create_review("https://github.com/example-owner/garden/pull/42", "create-once")
+        self.assertTrue(started.wait(1))
+        replay = self.runtime.create_review("https://github.com/example-owner/garden/pull/42", "create-replay")
+        release.set()
+        self._until(lambda: not self.runtime._preparing_reviews)
+        self.assertEqual(first["id"], replay["id"])
+        self.assertEqual(calls, [first["id"]])
+
+    def test_start_run_replay_launches_once(self):
+        review, _ = self._ready_review(workspace_id="workspace", tab_id="tab", anchor_pane_id="anchor")
+        service = LaunchService()
+        runtime = PRReviewRuntime(service, self.store, environ={"HERDR_PR_REVIEW_AUTO_RANK": "false"}, runtime_root=self.temp.name, runner=self.runner)
+        first = runtime.start_run(review["id"], "comprehensive-pr-review", "same-run")
+        replay = runtime.start_run(review["id"], "comprehensive-pr-review", "same-run")
+        self.assertEqual(first["id"], replay["id"])
+        self.assertEqual([name for name, _ in service.calls].count("pane.split"), 1)
 
     def test_existing_run_split_uses_native_contract_and_falls_back_when_unrecoverable(self):
         review = self._review()
@@ -385,6 +425,10 @@ class PRReviewRuntimeTests(unittest.TestCase):
         self.assertEqual(documents[0]["origin"], "skill")
         self.assertEqual(documents[0]["run_id"], run["id"])
         self.assertEqual(documents[0]["origin_path"], "review.md")
+        (worktree / "duplicate.md").write_text("synthetic review", encoding="utf-8")
+        self.assertFalse(self.runtime._register_output_documents(review["id"], run["id"]))
+        stored = list((Path(self.temp.name) / "reviews" / review["id"] / "documents").iterdir())
+        self.assertEqual(len(stored), 1)
 
     def test_reconcile_ends_or_finishes_agent_and_shell_runs(self):
         review, _ = self._ready_review()
@@ -421,7 +465,7 @@ class PRReviewRuntimeTests(unittest.TestCase):
 
         def pi_result(argv, _kwargs):
             if argv[0] == pi_bin:
-                return _Result("leading prose\n{\"files\":[{\"path\":\"Sources/Garden.swift\",\"impact\":\"high\",\"reason\":\"storage change\"}],\"guided\":[{\"path\":\"Sources/Garden.swift\",\"reason\":\"read first\"}]}\n")
+                return _Result('{"type":"message_start"}\n{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"leading prose {\\"files\\":[{\\"path\\":\\"Sources/Garden.swift\\",\\"impact\\":\\"high\\",\\"reason\\":\\"storage change\\"}],\\"guided\\":[{\\"path\\":\\"Sources/Garden.swift\\",\\"reason\\":\\"read first\\"}]} trailing"}]}}\n')
             return None
 
         self.runner.on_call = pi_result
@@ -456,7 +500,7 @@ class PRReviewRuntimeTests(unittest.TestCase):
         syncing.set_viewed(review["id"], ["Sources/Garden.swift"], True, True, "push")
         graphql = [argv for argv, _ in self.runner.calls if argv[:3] == ["gh", "api", "graphql"]]
         self.assertEqual(len(graphql), 1)
-        self.assertIn("PR_node", graphql[0][-1])
+        self.assertEqual(graphql[0][-4:], ["-f", "pullRequestId=PR_node", "-f", "path=Sources/Garden.swift"])
         self.runner.calls.clear()
         syncing.set_viewed(review["id"], ["Sources/Garden.swift"], False, False, "no-push")
         disabled = PRReviewRuntime(self.service, self.store, environ={"HERDR_PR_REVIEW_AUTO_RANK": "false", "HERDR_PR_REVIEW_SYNC_VIEWED": "false"}, runtime_root=self.temp.name, runner=self.runner)
@@ -488,6 +532,38 @@ class PRReviewRuntimeTests(unittest.TestCase):
         with self.assertRaises(PRReviewError) as raised:
             self.runtime.open_document(review["id"], document["id"]).__enter__()
         self.assertEqual(raised.exception.code, "document_not_downloadable")
+
+    def test_document_path_uses_streaming_copy_and_run_mutations_are_idempotent(self):
+        review, _ = self._ready_review()
+        source = Path(self.temp.name) / "large-note.md"
+        source.write_bytes(b"synthetic\n" * (1024 * 700))
+        document = self.runtime.add_document_path(review["id"], str(source), "", "user", "large-path")
+        self.assertEqual(document["byte_size"], source.stat().st_size)
+        self.assertNotEqual(self.store.document(review["id"], document["id"], include_storage=True)["stored_path"], str(source))
+        run = self.store.create_run(review["id"], "comprehensive-pr-review", "finish-source")
+        self.store.update_run(review["id"], run["id"], state="running")
+        finished = self.runtime.finish_run(review["id"], run["id"], "finished", "", "finish-once")
+        self.assertEqual(finished, self.runtime.finish_run(review["id"], run["id"], "finished", "", "finish-once"))
+
+    def test_rank_and_refresh_replays_are_idempotent(self):
+        review, _ = self._ready_review()
+        workers = []
+        self.runtime._rank_worker = lambda review_id, request_id: workers.append((review_id, request_id))
+        self.assertEqual(self.runtime.rank_review(review["id"], "rank-once"), self.runtime.rank_review(review["id"], "rank-once"))
+        self.runtime.rank_review(review["id"], "rank-concurrent")
+        self._until(lambda: workers)
+        self.assertEqual(len(workers), 1)
+        self.assertEqual(self.runtime.rank_review(review["id"], "rank-concurrent")["ranking_state"], "running")
+        prepares = []
+        self.runtime.prepare = lambda review_id, refresh=False: prepares.append((review_id, refresh))
+        self.runtime.refresh_review(review["id"], "refresh-once")
+        self.runtime.refresh_review(review["id"], "refresh-once")
+        self._until(lambda: prepares)
+        self.assertEqual(prepares, [(review["id"], True)])
+
+    def test_run_decodes_non_utf8_subprocess_output(self):
+        self.runner.on_call = lambda _argv, _kwargs: _Result(b"\xff", stderr=b"\xfe")
+        self.assertEqual(self.runtime._run(["git", "status"]).stdout, "�")
 
     def test_run_output_reads_pane_or_log_tail(self):
         review, _ = self._ready_review()

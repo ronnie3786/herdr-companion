@@ -150,6 +150,7 @@ struct PRReviewDiffView: View {
                 } else if let diffFile {
                     PRReviewDiffText(
                         file: diffFile,
+                        headSHA: store.diff?.headSHA ?? "",
                         highlight: highlight,
                         scrollRequest: scrollRequest,
                         askAI: askAI,

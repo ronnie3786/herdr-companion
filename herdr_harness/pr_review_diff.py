@@ -30,8 +30,9 @@ def parse_unified_diff(text: str, *, truncated: bool = False) -> list[dict]:
     for raw in text.splitlines():
         if raw.startswith("diff --git "):
             finish()
-            parts = raw.split(" ", 3)
-            old, new = (_path(parts[2]), _path(parts[3])) if len(parts) == 4 else (None, None)
+            header = raw[len("diff --git "):]
+            old_text, separator, new_text = header.partition(" b/")
+            old, new = (_path(old_text), _path("b/" + new_text)) if separator else (None, None)
             current = {
                 "path": new or old or "unknown",
                 "old_path": old,

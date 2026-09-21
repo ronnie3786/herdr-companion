@@ -53,7 +53,7 @@ struct WorkspaceNavigationView: View {
                         PRReviewSidebarView(
                             store: shell.prReview,
                             back: { shell.show(.session, model: model) },
-                            canControl: model.isDemoMode || model.prReviewConfiguration() != nil,
+                            canControl: model.isDemoMode || prReviewConfiguration != nil,
                             openURL: { url in Task { try? await ActiveWorkLinkOpener.open(url) } },
                             setCreating: { shell.isCreatingPRReview = $0 }
                         )
@@ -96,12 +96,17 @@ struct WorkspaceNavigationView: View {
                 shell.show(.firstMate, model: model)
             }
         }
-        .task(id: PRReviewConnectionIdentity(configuration: model.prReviewConfiguration(), generation: model.connectionGeneration, isDemo: model.isDemoMode, machineRevision: model.prReviewMachineRevision)) {
-            shell.configurePRReviewIfNeeded(configuration: model.prReviewConfiguration(), machineID: shell.prReviewMachineID ?? model.prReviewMachine?.id, connectionGeneration: model.connectionGeneration, isDemo: model.isDemoMode)
+        .task(id: PRReviewConnectionIdentity(configuration: prReviewConfiguration, generation: model.connectionGeneration, isDemo: model.isDemoMode, machineRevision: prReviewMachineID?.hashValue ?? model.prReviewMachineRevision)) {
+            shell.configurePRReviewIfNeeded(configuration: prReviewConfiguration, machineID: prReviewMachineID, connectionGeneration: model.connectionGeneration, isDemo: model.isDemoMode)
             await shell.prReview.refresh()
+            await applyPRReviewNavigationRequest()
+        }
+        .task(id: shell.prReviewOpenRequest?.id) {
+            await applyPRReviewNavigationRequest()
         }
         .task(id: model.prReviewRefreshTick) {
             guard shell.prReview.hasLoaded else { return }
+            await shell.prReview.refresh()
             await shell.prReview.refreshSelected()
         }
         .task(id: PRReviewPollingIdentity(
@@ -151,6 +156,34 @@ struct WorkspaceNavigationView: View {
 
     private var firstMateConfiguration: ServerConfiguration? {
         model.firstMateConfiguration(machineID: shell.firstMateMachineID)
+    }
+
+    private var prReviewMachineID: String? {
+        shell.prReviewMachineID ?? (model.isDemoMode ? "demo" : model.prReviewMachine?.id)
+    }
+
+    private var prReviewConfiguration: ServerConfiguration? {
+        model.prReviewConfiguration(machineID: prReviewMachineID)
+    }
+
+    private func applyPRReviewNavigationRequest() async {
+        guard !Task.isCancelled,
+              let request = shell.prReviewOpenRequest,
+              request.id != shell.prReviewAppliedRequestID,
+              model.isDemoMode || request.serverURL == prReviewConfiguration?.baseURL.absoluteString
+        else { return }
+
+        shell.prReview.tab = request.tab
+        shell.prReview.select(request.reviewID)
+        await shell.prReview.refreshSelected()
+        guard !Task.isCancelled else { return }
+        if let file = request.file {
+            shell.prReview.selectedPath = file
+            if let line = request.line {
+                shell.prReview.scroll(to: file, line: line, side: request.side)
+            }
+        }
+        shell.prReviewAppliedRequestID = request.id
     }
 
     private func applyFirstMateNavigationRequest() async {
@@ -222,7 +255,7 @@ struct WorkspaceNavigationView: View {
         case .prReview:
             PRReviewContainerView(
                 store: shell.prReview,
-                canControl: model.isDemoMode || model.prReviewConfiguration() != nil,
+                canControl: model.isDemoMode || prReviewConfiguration != nil,
                 openURL: { url in Task { try? await ActiveWorkLinkOpener.open(url) } },
                 askAI: { selection, view, rect in
                     guard let review = shell.prReview.selectedReview else { return }

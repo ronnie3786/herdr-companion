@@ -14,6 +14,7 @@ class Reply:
         self.value = value
         self.raw = raw
         self.read_once = False
+        self.headers = {}
 
     def __enter__(self):
         return self
@@ -73,11 +74,11 @@ class PRReviewCLITests(unittest.TestCase):
             "request_id": "create-one",
         })
 
-        code, _ = self.run_cli(["mark", "prr_sample", "--skill", "comprehensive-pr-review", "--state", "not-run", "--expected-revision", "7", "--request-id", "mark-one"])
+        code, _ = self.run_cli(["mark", "prr_sample", "--skill", "comprehensive-pr-review", "--state", "not-run", "--request-id", "mark-one"])
         self.assertEqual(code, 0)
         self.assertEqual(len(self.requests), 1)
         self.assertEqual(json.loads(self.requests[0].data), {
-            "state": "not_run", "note": "", "expected_revision": 7, "request_id": "mark-one",
+            "state": "not_run", "note": "", "request_id": "mark-one",
         })
 
     def test_rankings_viewed_and_run_defaults(self):
@@ -124,6 +125,18 @@ class PRReviewCLITests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(destination.read_bytes(), b"exact synthetic bytes")
             self.assertEqual(result["bytes"], len(b"exact synthetic bytes"))
+
+            code, _ = self.run_cli(["add-document", "prr_sample", "--link", "https://example.test/reference", "--request-id", "link"])
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(self.requests[0].data)["title"], "https://example.test/reference")
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "large-findings.md"
+            large = b"x" * (33 * 1024 * 1024)
+            code, result = self.run_cli(["document", "prr_sample", "prdoc_sample", "--out", str(destination)], replies=[large])
+            self.assertEqual(code, 0)
+            self.assertEqual(result["bytes"], len(large))
+            self.assertEqual(destination.stat().st_size, len(large))
 
         replies = [
             {"ok": True, "clients": [{"clientId": "ui-sample", "online": True, "actions": [{"id": "pr-review.state", "enabled": True}]}]},

@@ -198,6 +198,17 @@ class PRReviewHTTPTests(unittest.TestCase):
         _, later, _ = self.request(f"/api/v1/pr-reviews/{review_id}/events?after={events['cursor']}")
         self.assertEqual(later["events"], [])
 
+    def test_document_upload_limit_link_title_and_content_type_validation(self):
+        review_id = self.create("upload-limit")
+        payload = base64.b64encode(b"x" * (1024 * 1024 + 32)).decode()
+        status, document, _ = self.request(f"/api/v1/pr-reviews/{review_id}/documents", {"filename": "large.md", "content_type": "text/markdown", "data_base64": payload, "request_id": "large-upload"}, method="POST")
+        self.assertEqual(status, 201)
+        self.assertGreater(document["document"]["byte_size"], 1024 * 1024)
+        status, link, _ = self.request(f"/api/v1/pr-reviews/{review_id}/documents", {"url": "https://example.test/no-title", "request_id": "empty-title"}, method="POST")
+        self.assertEqual(status, 201)
+        self.assertEqual(link["document"]["title"], "https://example.test/no-title")
+        self.assertEqual(self.request(f"/api/v1/pr-reviews/{review_id}/documents", {"filename": "bad.md", "content_type": "text/plain\r\nX-Test: injected", "data_base64": base64.b64encode(b"x").decode(), "request_id": "unsafe-type"}, method="POST")[0], 400)
+
 
 if __name__ == "__main__":
     unittest.main()

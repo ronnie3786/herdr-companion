@@ -35,6 +35,9 @@ struct PRReviewContainerView: View {
                 } else if !store.hasLoaded || store.isRefreshing {
                     ContentUnavailableView("Loading PR reviews", systemImage: "arrow.triangle.2.circlepath")
                         .accessibilityIdentifier("pr-review-loading")
+                } else if let error = store.error {
+                    ContentUnavailableView(error, systemImage: "exclamationmark.triangle")
+                        .accessibilityIdentifier("pr-review-error")
                 } else {
                     ContentUnavailableView("Choose a PR review", systemImage: "arrow.triangle.pull")
                         .accessibilityIdentifier("pr-review-empty")

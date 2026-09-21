@@ -133,6 +133,55 @@ struct PRReviewDecodingTests {
         #expect(findings.documentIDs == ["prdoc_0123456789ab"])
     }
 
+    @Test("Added-file diffs and link documents accept null server fields")
+    func nullableDiffAndLinkFieldsDecode() throws {
+        let diff = try decode(
+            PRReviewDiff.self,
+            """
+            {"ok":true,"review_id":"prr_0123456789ab","base_sha":"base","head_sha":"head","truncated":false,"files":[{"path":"Sources/NewGarden.swift","old_path":null,"status":"added","additions":4,"deletions":0,"binary":false,"truncated":false,"hunks":[]}]}
+            """
+        )
+        let link = try decode(
+            PRReviewDocument.self,
+            """
+            {"id":"prdoc_0123456789ab","review_id":"prr_0123456789ab","run_id":null,"kind":"link","title":"Fictional reference","media_type":"text/uri-list","filename":null,"url":"https://example.invalid/reference","byte_size":0,"content_hash":null,"origin":"user","origin_path":null,"created_at":"2026-01-15T14:30:00Z","downloadable":false}
+            """
+        )
+
+        #expect(diff.files.first?.oldPath == nil)
+        #expect(link.filename == nil)
+        #expect(link.contentHash == nil)
+    }
+
+    @Test("Selection spans use the Companion old and new wire vocabulary")
+    func selectionSpanWireSides() throws {
+        let context = AssistantContext(
+            source: .init(feature: "pr-review.diff", instanceId: "prr_0123456789ab"),
+            items: [
+                .init(
+                    id: "selection",
+                    kind: "text-selection.v1",
+                    label: "Fictional selection",
+                    text: "garden",
+                    priority: "required",
+                    locator: .init(
+                        path: "Sources/Garden.swift",
+                        spans: [
+                            .init(side: PRReviewSide.before.wireSide, startLine: 4, endLine: 4),
+                            .init(side: PRReviewSide.after.wireSide, startLine: 5, endLine: 5),
+                        ]
+                    )
+                ),
+            ]
+        )
+        let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(context)) as? [String: Any]
+        let items = try #require(encoded?["items"] as? [[String: Any]])
+        let locator = try #require(items[0]["locator"] as? [String: Any])
+        let spans = try #require(locator["spans"] as? [[String: Any]])
+
+        #expect(spans.map { $0["side"] as? String } == ["old", "new"])
+    }
+
     private func decode<T: Decodable>(_ type: T.Type, _ string: String) throws -> T {
         try JSONDecoder().decode(type, from: Data(string.utf8))
     }

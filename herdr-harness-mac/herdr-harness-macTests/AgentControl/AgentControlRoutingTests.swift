@@ -17,6 +17,34 @@ struct AgentControlRoutingTests {
         #expect(fixture.shell.detailScope == .prReview)
     }
 
+    @Test("PR Review scrolling validates files and reports applied visibility")
+    func prReviewScrollWaitsForVisibleLine() async throws {
+        let fixture = makeFixture()
+        fixture.shell.configurePRReviewIfNeeded(
+            configuration: nil,
+            machineID: "demo",
+            connectionGeneration: fixture.model.connectionGeneration,
+            isDemo: true
+        )
+        await fixture.shell.prReview.refresh()
+        fixture.shell.show(.prReview, model: fixture.model)
+        let path = try #require(fixture.shell.prReview.snapshot?.files.first?.path)
+        fixture.shell.prReview.visibleLines = (path, 1, 100, .after)
+
+        let result = try await fixture.controller.executeForTesting(
+            command(action: "pr-review.scroll-to-line", parameters: ["path": .string(path), "line": .number(5)]),
+            serverMapping: [:]
+        )
+
+        #expect(result.values["visible"] == .bool(true))
+        await #expect(throws: AgentControlCommandError.self) {
+            try await fixture.controller.executeForTesting(
+                command(action: "pr-review.scroll-to-line", parameters: ["path": .string("Sources/Missing.swift"), "line": .number(5)]),
+                serverMapping: [:]
+            )
+        }
+    }
+
     @Test("Exact pane routing rejects stale terminal, session, and server identities while accepting CLI aliases")
     func staleIdentityRejection() async throws {
         let fixture = makeFixture()

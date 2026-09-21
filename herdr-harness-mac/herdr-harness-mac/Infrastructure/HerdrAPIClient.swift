@@ -136,7 +136,15 @@ private struct PRReviewRunResponse: Decodable, Sendable {
 }
 
 private struct PRReviewOutputResponse: Decodable, Sendable {
-    let output: String
+    let runID: String
+    let lines: [String]
+    let source: String
+
+    enum CodingKeys: String, CodingKey {
+        case runID = "run_id"
+        case lines
+        case source
+    }
 }
 
 private struct PRReviewReviewResponse: Decodable, Sendable {
@@ -261,7 +269,7 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient {
     func createPRReviewRun(id:String,skillID:String,requestID:String) async throws -> PRReviewRun { let r:PRReviewRunResponse=try await request(path:try prReviewPath(id:id)+"/runs",method:"POST",body:PRReviewRunBody(skillID:skillID,requestID:requestID));return r.run }
     func prReviewRun(reviewID:String,runID:String) async throws -> PRReviewRun { let r:PRReviewRunResponse=try await request(path:try prReviewPath(id:reviewID)+"/runs/"+validatedPRReviewID(runID));return r.run }
     func finishPRReviewRun(reviewID:String,runID:String,state:PRReviewRunState,note:String?,requestID:String) async throws -> PRReviewRun { let r:PRReviewRunResponse=try await request(path:try prReviewPath(id:reviewID)+"/runs/"+validatedPRReviewID(runID)+"/finish",method:"POST",body:PRReviewFinishBody(state:state.rawValue,note:note,requestID:requestID));return r.run }
-    func prReviewRunOutput(reviewID:String,runID:String,lines:Int) async throws -> String { let r:PRReviewOutputResponse=try await request(path:try prReviewPath(id:reviewID)+"/runs/"+validatedPRReviewID(runID)+"/output",query:[.init(name:"lines",value:String(lines))]);return r.output }
+    func prReviewRunOutput(reviewID:String,runID:String,lines:Int) async throws -> String { let r:PRReviewOutputResponse=try await request(path:try prReviewPath(id:reviewID)+"/runs/"+validatedPRReviewID(runID)+"/output",query:[.init(name:"lines",value:String(lines))]);return r.lines.joined(separator:"\n") }
     func markPRReviewSkill(reviewID:String,skillID:String,state:String,note:String?,requestID:String) async throws -> PRReviewSkillState { let r:PRReviewSkillStateResponse=try await request(path:try prReviewPath(id:reviewID)+"/skills/"+validatedPRReviewID(skillID)+"/mark",method:"POST",body:PRReviewMarkBody(state:state,note:note,requestID:requestID));return r.skill }
     func rankPRReview(id:String,requestID:String) async throws -> PRReviewSummary { let r:PRReviewReviewResponse=try await request(path:try prReviewPath(id:id)+"/rank",method:"POST",body:PRReviewRequestID(requestID:requestID));return r.review }
     func setPRReviewRankings(id:String,files:[[String:String]],requestID:String) async throws -> [PRReviewFile] { let r:PRReviewFilesResponse=try await request(path:try prReviewPath(id:id)+"/rankings",method:"PUT",body:PRReviewRankingsBody(files:files,requestID:requestID));return r.files }

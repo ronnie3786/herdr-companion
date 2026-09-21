@@ -81,6 +81,12 @@ class PRReviewStoreTests(unittest.TestCase):
         self.assertIn(skill["id"], [item["id"] for item in self.store.skills()])
         self.store.disable_skill(skill["id"], "disable-custom")
         self.assertNotIn(skill["id"], [item["id"] for item in self.store.skills()])
+        restored = self.store.add_skill({"id": skill["id"], "title": "Restored synthetic skill", "kind": "review", "description": "", "command_template": "", "request_id": "restore-custom"})
+        self.assertTrue(restored["enabled"])
+        for key in ("kind", "description", "command_template"):
+            with self.subTest(key=key), self.assertRaises(PRReviewError) as raised:
+                self.store.add_skill({"id": "other-skill", "title": "Synthetic", key: 1, "request_id": "invalid-" + key})
+            self.assertEqual(raised.exception.code, "invalid_request")
 
     def test_events_cursor_pagination_and_snapshot_event_tail(self):
         review = self.store.create_review(self.body())

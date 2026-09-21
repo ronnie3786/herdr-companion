@@ -109,6 +109,15 @@ class PRReviewStore:
         self._db.execute("INSERT INTO prr_receipts VALUES(?,?,?,?,?)", (scope, request_id, hashlib.sha256(_json(payload).encode()).hexdigest(), _json(result), _now()))
         return result
 
+    def receipt(self, scope: str, request_id: str, payload: Any) -> Any | None:
+        with self._lock:
+            return self._receipt(scope, request_id, payload)
+
+    def save_receipt(self, scope: str, request_id: str, payload: Any, result: Any) -> Any:
+        with self._transaction():
+            cached = self._receipt(scope, request_id, payload)
+            return cached if cached is not None else self._save(scope, request_id, payload, result)
+
     def _event(self, review_id: str, kind: str, summary: str, payload: Mapping[str, Any] | None = None) -> None:
         self._db.execute("INSERT INTO prr_events(id,review_id,type,summary,payload_json,created_at) VALUES(?,?,?,?,?,?)", (_id("prev"), review_id, kind, summary, _json(dict(payload or {})), _now()))
 
@@ -297,7 +306,7 @@ class PRReviewStore:
 
     def add_skill(self, body: Mapping[str, Any]) -> dict[str, Any]:
         skill_id = _text(body.get("id"), "id", 64)
-        if not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", skill_id) or any(item[0] == skill_id for item in BUILTIN_SKILLS):
+        if not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", skill_id):
             raise PRReviewError("Invalid custom skill id", code="invalid_request", status=400)
         request_id = _text(body.get("request_id"), "request_id", 200)
         with self._transaction():
@@ -307,8 +316,37 @@ class PRReviewStore:
             outputs = body.get("outputs") or ["*.md", "*.html", "*.mp3", "*.wav", "*.m4a", "*.mp4", "*.mov", "*.pdf"]
             if not isinstance(outputs, list) or not all(isinstance(item, str) for item in outputs):
                 raise PRReviewError("Invalid outputs", code="invalid_request", status=400)
-            self._db.execute("INSERT INTO prr_skills VALUES(?,?,?,?,?,?,?,?,?,?,?)", (skill_id, _text(body.get("title"), "title", 300), body.get("kind", "custom"), "agent", body.get("prompt_template") or f"/{skill_id} {{number}}", body.get("command_template"), _json(outputs), body.get("description", ""), 0, 1, _now()))
+            kind = _text(body.get("kind", "custom"), "kind", 100, optional=True)
+            description = _text(body.get("description", ""), "description", 20_000, optional=True)
+            command = _text(body.get("command_template"), "command_template", 20_000, optional=True) if "command_template" in body else None
+            existing = self._db.execute("SELECT * FROM prr_skills WHERE id=?", (skill_id,)).fetchone()
+            if existing is not None:
+                if existing["builtin"]:
+                    raise PRReviewError("Built-in skills cannot be replaced", code="invalid_request", status=400)
+                self._db.execute("UPDATE prr_skills SET title=?,kind=?,runner=?,prompt_template=?,command_template=?,outputs_json=?,description=?,enabled=1 WHERE id=?", (_text(body.get("title"), "title", 300), kind, "agent", body.get("prompt_template") or f"/{skill_id} {{number}}", command, _json(outputs), description, skill_id))
+            else:
+                self._db.execute("INSERT INTO prr_skills VALUES(?,?,?,?,?,?,?,?,?,?,?)", (skill_id, _text(body.get("title"), "title", 300), kind, "agent", body.get("prompt_template") or f"/{skill_id} {{number}}", command, _json(outputs), description, 0, 1, _now()))
             return self._save("add_skill", request_id, dict(body), self.skill(skill_id))
+
+    def document_for_hash(self, review_id: str, content_hash: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._db.execute("SELECT * FROM prr_documents WHERE review_id=? AND content_hash=?", (review_id, content_hash)).fetchone()
+            return self._document(dict(row)) if row is not None else None
+
+    def start_ranking(self, review_id: str, request_id: str) -> tuple[dict[str, Any], bool]:
+        scope = f"rank:{review_id}"
+        with self._transaction():
+            cached = self._receipt(scope, request_id, {})
+            if cached is not None:
+                return cached, False
+            review = self.get_review(review_id, True)
+            if review["ranking_state"] == "running":
+                return self._save(scope, request_id, {}, review), False
+            self._db.execute("UPDATE prr_reviews SET ranking_state=?,ranking_error=? WHERE id=?", ("running", None, review_id))
+            self._touch(review_id)
+            result = self.get_review(review_id, True)
+            self._save(scope, request_id, {}, result)
+            return result, True
 
     def disable_skill(self, skill_id: str, request_id: str) -> list[dict[str, Any]]:
         with self._transaction():

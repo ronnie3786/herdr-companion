@@ -270,6 +270,12 @@ def _string(
     return text
 
 
+def _pr_review_media_type(value: str) -> str:
+    if len(value) > 255 or any(ord(character) < 32 or ord(character) == 127 for character in value) or not re.fullmatch(r"[A-Za-z0-9!#$&^_.+\-]+/[A-Za-z0-9!#$&^_.+\-]+", value):
+        raise HTTPValidationError("content_type is invalid")
+    return value
+
+
 def _optional_cwd(body: dict) -> Optional[str]:
     if "cwd" not in body or body.get("cwd") is None:
         return None
@@ -845,7 +851,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 agent_run_create = method == "POST" and segments == ["api", "v1", "agent-runs"]
                 issue_report_create = method == "POST" and segments == ["api", "v1", "issue-reports"]
                 voice_upload = method == "POST" and segments[2:] == ["voice", "transcriptions"]
-                pr_review_upload = method == "POST" and len(segments) >= 6 and segments[:3] == ["api", "v1", "pr-reviews"] and segments[-1] == "documents"
+                pr_review_upload = method == "POST" and len(segments) == 5 and segments[:3] == ["api", "v1", "pr-reviews"] and segments[4] == "documents"
                 if attachment_upload or agent_run_create or pr_review_upload:
                     maximum = attachments.MAX_ATTACHMENT_JSON_BYTES
                 elif issue_report_create:
@@ -1096,7 +1102,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     else "attachment"
                 )
                 self.send_response(200)
-                self.send_header("Content-Type", content.media_type)
+                self.send_header("Content-Type", _pr_review_media_type(content.media_type))
                 self.send_header("Content-Length", str(content.byte_size))
                 self.send_header("Content-Disposition", f'{disposition}; filename="{fallback[:160]}"')
                 self._common_headers()
@@ -1208,9 +1214,9 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         raise HTTPValidationError("Document contains an unsupported field")
                     request_id = _string(body.get("request_id"), "request_id", maximum=200)
                     if "data_base64" in body:
-                        document = runtime.add_document_upload(review_id, _string(body.get("filename"), "filename", maximum=512), _string(body.get("content_type"), "content_type", maximum=256), _string(body.get("data_base64"), "data_base64", maximum=attachments.MAX_ATTACHMENT_JSON_BYTES), body.get("title") or "", "user", request_id)
+                        document = runtime.add_document_upload(review_id, _string(body.get("filename"), "filename", maximum=512), _pr_review_media_type(_string(body.get("content_type"), "content_type", maximum=256)), _string(body.get("data_base64"), "data_base64", maximum=attachments.MAX_ATTACHMENT_JSON_BYTES), body.get("title") or "", "user", request_id)
                     elif "url" in body:
-                        document = runtime.add_document_link(review_id, _string(body["url"], "url", maximum=4096), _string(body.get("title"), "title", maximum=512), "user", request_id)
+                        document = runtime.add_document_link(review_id, _string(body.get("url"), "url", maximum=4096), _string(body.get("title", ""), "title", maximum=512, allow_empty=True), "user", request_id)
                     else:
                         document = runtime.add_document_path(review_id, _string(body.get("path"), "path", maximum=4096), body.get("title") or "", "cli", request_id)
                     return {"ok": True, "document": document}, 201

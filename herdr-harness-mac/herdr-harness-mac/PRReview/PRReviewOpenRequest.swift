@@ -11,6 +11,15 @@ struct PRReviewOpenRequest: Equatable {
     let side: PRReviewSide
     let tab: PRReviewTab
 
+    init(reviewID: String, serverURL: String, file: String?, line: Int?, side: PRReviewSide, tab: PRReviewTab) {
+        self.reviewID = reviewID
+        self.serverURL = serverURL
+        self.file = file
+        self.line = line
+        self.side = side
+        self.tab = tab
+    }
+
     init?(url: URL) {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               components.scheme == "herdr",

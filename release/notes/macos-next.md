@@ -25,7 +25,7 @@
 ## PR Review
 
 - A new **PR Review** section under First Mate in the left navigator (⌘8): paste a GitHub pull request link, choose which review, explainer-video and utility skills to run, and get a GitHub-style workspace prepared on the development-role companion: ranked files with a single-category filter, Hide viewed and a Guided reading order; a native diff with **Ask AI** on any selection; a context library for findings, reports, audio, video and links; Agents and Skills tabs; archive instead of delete.
-- `herdr-pr-review` CLI and `pr-review.*` agent-control actions drive the same workspace. Requires companion 0.25.0b1 (`pr-review-v1`) on the review host.
+- `herdr-pr-review` CLI and `pr-review.*` agent-control actions drive the same workspace. Requires companion 0.27.0b1 (`pr-review-v1`) on the review host.
 
 ## Companion compatibility
 

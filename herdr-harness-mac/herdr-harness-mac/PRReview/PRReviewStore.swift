@@ -106,6 +106,7 @@ final class PRReviewStore {
         snapshot = nil
         diff = nil
         selectedPath = nil
+        error = nil
     }
 
     var currentMachineID: String? { machineID }
@@ -173,6 +174,7 @@ final class PRReviewStore {
         if isDemo {
             hasLoaded = true
             snapshot = PRReviewDemo.snapshot()
+            error = nil
             return
         }
 
@@ -203,6 +205,7 @@ final class PRReviewStore {
             reviews = activeReviews
             archivedReviews = archived
             hasLoaded = true
+            error = nil
 
             if let selectedReviewID {
                 let value = try await client.prReview(id: selectedReviewID)
@@ -215,7 +218,13 @@ final class PRReviewStore {
             guard refreshGeneration == generation else {
                 return
             }
-            record(error)
+            hasLoaded = true
+            if case let APIError.server(status, _) = error, status == 404 || status == 501 {
+                unsupported = true
+                self.error = "This companion server needs PR Review support. Update the server to a version with pr-review-v1."
+            } else if !HerdrCancellation.isCancellation(error) {
+                self.error = error.localizedDescription
+            }
         }
     }
 
@@ -234,11 +243,12 @@ final class PRReviewStore {
                 return
             }
             receive(value)
+            error = nil
         } catch {
             guard refreshGeneration == generation else {
                 return
             }
-            record(error)
+            if !HerdrCancellation.isCancellation(error) { record(error) }
         }
     }
 
@@ -249,10 +259,14 @@ final class PRReviewStore {
             return
         }
         guard let client else { return }
+        let loadReviewID = selectedReviewID
         do {
-            diff = try await client.prReviewDiff(id: selectedReviewID, path: path)
+            let value = try await client.prReviewDiff(id: selectedReviewID, path: path)
+            guard selectedReviewID == loadReviewID else { return }
+            diff = value
+            error = nil
         } catch {
-            record(error)
+            if !HerdrCancellation.isCancellation(error) { record(error) }
         }
     }
 
@@ -267,7 +281,13 @@ final class PRReviewStore {
 
         snapshot = value
         selectedReviewID = value.review.id
-        replaceReview(value.review)
+        if reviews.contains(where: { $0.id == value.review.id }) || archivedReviews.contains(where: { $0.id == value.review.id }) {
+            replaceReview(value.review)
+        } else if value.review.archivedAt == nil {
+            reviews.insert(value.review, at: 0)
+        } else {
+            archivedReviews.insert(value.review, at: 0)
+        }
     }
 
     func setViewed(paths: [String], viewed: Bool) async {
@@ -324,6 +344,7 @@ final class PRReviewStore {
             if !reviews.contains(where: { $0.id == value.review.id }) {
                 reviews.insert(value.review, at: 0)
             }
+            select(value.review.id)
         } catch {
             record(error)
         }
@@ -530,14 +551,16 @@ final class PRReviewStore {
         guard !urls.isEmpty else { return }
 
         for url in urls {
-            documentUploads[url.path] = .init(url: url, status: .uploading)
+            let reviewID = selectedReviewID
+            let uploadKey = documentUploadKey(reviewID: reviewID, url: url)
+            documentUploads[uploadKey] = .init(url: url, status: .uploading)
             do {
                 let document = try await uploadDocument(url: url)
                 appendDocument(document)
-                documentUploads[url.path] = .init(url: url, status: .uploaded)
+                documentUploads[uploadKey] = .init(url: url, status: .uploaded)
             } catch {
                 let message = error.localizedDescription
-                documentUploads[url.path] = .init(url: url, status: .failed(message))
+                documentUploads[uploadKey] = .init(url: url, status: .failed(message))
                 contextImportError = message
             }
         }
@@ -675,7 +698,7 @@ final class PRReviewStore {
     }
 
     private func appendDocument(_ document: PRReviewDocument) {
-        guard var snapshot else { return }
+        guard var snapshot, snapshot.review.id == document.reviewID else { return }
         snapshot.documents.removeAll { $0.id == document.id }
         snapshot.documents.append(document)
         snapshot.review.documentCount = snapshot.documents.count
@@ -795,12 +818,10 @@ final class PRReviewStore {
     }
 
     private func record(_ failure: Error) {
-        if case let APIError.server(status, _) = failure,
-           status == 404 || status == 501 {
-            unsupported = true
-            error = "This companion server needs PR Review support. Update the server to a version with pr-review-v1."
-        } else {
-            error = failure.localizedDescription
-        }
+        error = failure.localizedDescription
+    }
+
+    private func documentUploadKey(reviewID: String?, url: URL) -> String {
+        "\(reviewID ?? "unselected")|\(url.path)"
     }
 }

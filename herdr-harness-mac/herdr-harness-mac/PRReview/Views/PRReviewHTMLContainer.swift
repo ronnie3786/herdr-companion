@@ -3,6 +3,7 @@ import SwiftUI
 import WebKit
 
 struct PRReviewHTMLContainer: NSViewRepresentable {
+    static let contentSecurityPolicy = "default-src 'none'; img-src file: data:; style-src 'unsafe-inline' file:"
     let document: PRReviewHTMLDocument
     @Binding var phase: PaneGitWebLoadPhase
     let openExternal: (URL) -> Void
@@ -12,11 +13,7 @@ struct PRReviewHTMLContainer: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> WKWebView {
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .nonPersistent()
-        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
-        configuration.userContentController.addUserScript(HerdrWebTheme.userScript())
-        configuration.userContentController.addUserScript(HerdrWebTheme.reportUserScript())
+        let configuration = Self.webConfiguration()
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = false
@@ -29,8 +26,7 @@ struct PRReviewHTMLContainer: NSViewRepresentable {
     func updateNSView(_ webView: WKWebView, context: Context) {
         if context.coordinator.loadedDocument != document {
             webView.configuration.userContentController.removeAllUserScripts()
-            webView.configuration.userContentController.addUserScript(HerdrWebTheme.userScript())
-            webView.configuration.userContentController.addUserScript(HerdrWebTheme.reportUserScript())
+            webView.configuration.userContentController.addUserScript(Self.contentSecurityPolicyUserScript())
         }
         context.coordinator.load(document, in: webView)
     }
@@ -39,6 +35,27 @@ struct PRReviewHTMLContainer: NSViewRepresentable {
         webView.stopLoading()
         webView.navigationDelegate = nil
         webView.configuration.userContentController.removeAllUserScripts()
+    }
+
+    static func webConfiguration() -> WKWebViewConfiguration {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        configuration.userContentController.addUserScript(contentSecurityPolicyUserScript())
+        return configuration
+    }
+
+    private static func contentSecurityPolicyUserScript() -> WKUserScript {
+        WKUserScript(
+            source: """
+            const meta = document.createElement('meta');
+            meta.httpEquiv = 'Content-Security-Policy';
+            meta.content = \"\(Self.contentSecurityPolicy)\";
+            (document.head || document.documentElement).appendChild(meta);
+            """,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
     }
 }
 

@@ -269,6 +269,7 @@ final class PRReviewDiffTextView: NSTextView, NSPopoverDelegate {
 
 struct PRReviewDiffText: NSViewRepresentable {
     let file: PRReviewDiffFile
+    var headSHA = ""
     @Environment(\.herdrFontScale) private var fontScale
     var highlight: (start: Int, end: Int, side: PRReviewSide)?
     var scrollRequest: (path: String, line: Int, side: PRReviewSide, token: Int)?
@@ -302,11 +303,20 @@ struct PRReviewDiffText: NSViewRepresentable {
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let textView = scroll.documentView as? PRReviewDiffTextView else { return }
-        let rendered = PRReviewDiffRenderer.render(file: file, fontScale: fontScale)
-        textView.textStorage?.setAttributedString(rendered.text)
-        textView.lineIndex = rendered.index
+        let identity = Coordinator.RenderIdentity(
+            path: file.path,
+            oldPath: file.oldPath,
+            headSHA: headSHA,
+            fontScale: fontScale
+        )
+        if context.coordinator.shouldSetAttributedString(for: identity) {
+            let rendered = PRReviewDiffRenderer.render(file: file, fontScale: fontScale)
+            textView.textStorage?.setAttributedString(rendered.text)
+            textView.lineIndex = rendered.index
+            context.coordinator.lastRenderedIdentity = identity
+        }
         textView.selectionPath = file.path
-        textView.selectionOldPath = file.oldPath
+        textView.selectionOldPath = file.oldPath ?? ""
         textView.highlight = highlight
         textView.askAI = askAI
         textView.questionDraftChanged = questionDraftChanged
@@ -329,13 +339,25 @@ struct PRReviewDiffText: NSViewRepresentable {
 
     @MainActor
     final class Coordinator: NSObject {
+        struct RenderIdentity: Equatable {
+            let path: String
+            let oldPath: String?
+            let headSHA: String
+            let fontScale: HerdrFontScale
+        }
+
         var lastScrollToken: Int?
+        var lastRenderedIdentity: RenderIdentity?
         private weak var scrollView: NSScrollView?
         private weak var textView: PRReviewDiffTextView?
         private var boundsObserver: NSObjectProtocol?
         private var visibilityTask: Task<Void, Never>?
         private var path = ""
         private var onVisibleLinesChange: ((String, Int, Int, PRReviewSide) -> Void)?
+
+        func shouldSetAttributedString(for identity: RenderIdentity) -> Bool {
+            lastRenderedIdentity != identity
+        }
 
         func install(on scrollView: NSScrollView, textView: PRReviewDiffTextView) {
             self.scrollView = scrollView

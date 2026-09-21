@@ -1067,7 +1067,7 @@ final class ResponseBriefCoordinator {
     /// cancellation ordering. A newer selection, disable/re-enable, or
     /// cancellation advances the epoch while the snapshot fetch is suspended,
     /// and an obsolete recovery must not move the baseline or publish work.
-    private func isCurrentRecovery(_ chat: ResponseBriefChatIdentity, epoch: Int) -> Bool {
+    private func isCurrentRecovery(chat: ResponseBriefChatIdentity, epoch: Int) -> Bool {
         chatEpochs[chat.id] == epoch && isEnabled(chat)
     }
 

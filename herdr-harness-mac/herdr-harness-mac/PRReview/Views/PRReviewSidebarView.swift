@@ -7,6 +7,7 @@ struct PRReviewSidebarView: View {
     var canControl = false
     var openURL: (URL) -> Void = { _ in }
     var setCreating: (Bool) -> Void = { _ in }
+    var popOut: ((PRReviewWindowTarget) -> Void)?
     @State private var pastedURL = ""
     @State private var validationError: String?
 
@@ -111,6 +112,11 @@ struct PRReviewSidebarView: View {
         .accessibilityIdentifier("pr-review-review-\(review.id)")
         .accessibilityAddTraits(store.selectedReviewID == review.id ? .isSelected : [])
         .contextMenu {
+            if let popOut, review.archivedAt == nil, let machineID = store.currentMachineID {
+                let target = PRReviewWindowTarget(machineID: machineID, reviewID: review.id)
+                Button("Pop Out into Window") { popOut(target) }
+                    .accessibilityIdentifier(target.popOutActionAccessibilityIdentifier)
+            }
             Button("Open on GitHub") { if let url = URL(string: review.url) { openURL(url) } }
             Button("Copy link") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(review.url, forType: .string) }
             Button("Refresh") { Task { await store.refreshReview() } }

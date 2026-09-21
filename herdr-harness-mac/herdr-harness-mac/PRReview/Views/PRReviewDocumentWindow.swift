@@ -27,7 +27,7 @@ final class PRReviewDocumentWindow: NSWindowController, NSWindowDelegate {
     }
 
     static func showMarkdown(document: PRReviewDocument, store: PRReviewStore) {
-        let key = "markdown-\(document.id)"
+        let key = reuseKey(kind: "markdown", document: document, store: store)
         if let existing = windows[key] {
             existing.showWindow(nil)
             existing.window?.makeKeyAndOrderFront(nil)
@@ -43,7 +43,7 @@ final class PRReviewDocumentWindow: NSWindowController, NSWindowDelegate {
     }
 
     static func showHTML(document: PRReviewDocument, store: PRReviewStore) {
-        let key = "html-\(document.id)"
+        let key = reuseKey(kind: "html", document: document, store: store)
         if let existing = windows[key] {
             existing.showWindow(nil)
             existing.window?.makeKeyAndOrderFront(nil)
@@ -56,6 +56,14 @@ final class PRReviewDocumentWindow: NSWindowController, NSWindowDelegate {
         )
         windows[key] = controller
         controller.showWindow(nil)
+    }
+
+    /// Document identity is scoped by machine, review, document, and kind:
+    /// server-local document ids can repeat (even for the same review id) on
+    /// two configured hosts.
+    static func reuseKey(kind: String, document: PRReviewDocument, store: PRReviewStore) -> String {
+        let machine = store.currentMachineID ?? "unconfigured"
+        return "\(kind)|\(machine)|\(document.reviewID)|\(document.id)"
     }
 
     func windowWillClose(_ notification: Notification) {

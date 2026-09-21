@@ -194,7 +194,7 @@ final class PRReviewStore {
 
         if isDemo {
             hasLoaded = true
-            snapshot = PRReviewDemo.snapshot()
+            snapshot = PRReviewDemo.snapshot(for: selectedReviewID ?? PRReviewDemo.reviewID)
             error = nil
             return
         }
@@ -311,7 +311,7 @@ final class PRReviewStore {
         }
         if isDemo {
             guard currentDiffRequestIdentity == identity else { return }
-            diff = PRReviewDemo.diff()
+            diff = PRReviewDemo.diff(for: selectedReviewID)
             completedDiffIdentity = identity
             return
         }

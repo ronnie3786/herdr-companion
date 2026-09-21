@@ -10,6 +10,8 @@ struct PRReviewContainerView: View {
     var setCreating: (Bool) -> Void = { _ in }
     var openPane: (String, String?) -> Void = { _, _ in }
     var setAddingSkill: (Bool) -> Void = { _ in }
+    var popOut: ((PRReviewWindowTarget) -> Void)?
+    var navigationTitle = "PR Review"
 
     var body: some View {
         ZStack {
@@ -49,7 +51,7 @@ struct PRReviewContainerView: View {
                 }
             }
         }
-        .navigationTitle("PR Review")
+        .navigationTitle(navigationTitle)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("pr-review-container")
         .sheet(isPresented: $store.isPresentingStartSheet, onDismiss: { setCreating(false) }) {
@@ -98,6 +100,13 @@ struct PRReviewContainerView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .fixedSize(horizontal: false, vertical: true)
+        .contextMenu {
+            if let popOut, review.archivedAt == nil, let machineID = store.currentMachineID {
+                let target = PRReviewWindowTarget(machineID: machineID, reviewID: review.id)
+                Button("Pop Out into Window") { popOut(target) }
+                    .accessibilityIdentifier(target.popOutActionAccessibilityIdentifier)
+            }
+        }
     }
 
     private func rankingChip(_ review: PRReviewSummary) -> some View {

@@ -55,7 +55,8 @@ struct WorkspaceNavigationView: View {
                             back: { shell.show(.session, model: model) },
                             canControl: model.isDemoMode || prReviewConfiguration != nil,
                             openURL: { url in Task { try? await ActiveWorkLinkOpener.open(url) } },
-                            setCreating: { shell.isCreatingPRReview = $0 }
+                            setCreating: { shell.isCreatingPRReview = $0 },
+                            popOut: { openWindow(id: HerdrWindowID.prReview, value: $0) }
                         )
                     }
                 } else {
@@ -258,15 +259,17 @@ struct WorkspaceNavigationView: View {
                 canControl: model.isDemoMode || prReviewConfiguration != nil,
                 openURL: { url in Task { try? await ActiveWorkLinkOpener.open(url) } },
                 askAI: { selection, view, rect in
-                    guard let review = shell.prReview.selectedReview else { return }
-                    Task { await model.presentPRReviewQuestion(review: review, selection: selection, anchor: (view, rect)) }
+                    guard let review = shell.prReview.selectedReview,
+                          let machineID = shell.prReview.currentMachineID else { return }
+                    Task { await model.presentPRReviewQuestion(machineID: machineID, review: review, selection: selection, anchor: (view, rect)) }
                 },
                 questionDraftChanged: { shell.hasPRReviewQuestionDraft = $0 },
                 setCreating: { shell.isCreatingPRReview = $0 },
                 openPane: { paneID, machineID in
                     shell.openPane(rawPaneID: paneID, machineID: machineID, model: model)
                 },
-                setAddingSkill: { shell.isAddingPRReviewSkill = $0 }
+                setAddingSkill: { shell.isAddingPRReviewSkill = $0 },
+                popOut: { openWindow(id: HerdrWindowID.prReview, value: $0) }
             )
         case .activeWork:
             Group {

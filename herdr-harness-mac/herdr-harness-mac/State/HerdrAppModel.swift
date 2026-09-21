@@ -515,9 +515,26 @@ final class HerdrAppModel {
         prReviewMachineRevision &+= 1
     }
     func prReviewConfiguration(machineID: String? = nil) -> ServerConfiguration? {
-        guard !isDemoMode,
-              let machine = machines.first(where: { $0.id == machineID }) ?? prReviewMachine
-        else { return nil }
+        let machine: HerdrMachine?
+        if let machineID {
+            // An explicit machine that is no longer configured is unavailable;
+            // it never borrows the default review host.
+            machine = machines.first { $0.id == machineID }
+        } else {
+            machine = prReviewMachine
+        }
+        return configuration(forReviewMachine: machine)
+    }
+
+    /// A popped-out window stays on the machine it was opened from. An explicit
+    /// machine id that is no longer configured returns nil instead of silently
+    /// falling back to the current default review host.
+    func prReviewConfiguration(pinnedMachineID machineID: String) -> ServerConfiguration? {
+        configuration(forReviewMachine: machines.first { $0.id == machineID })
+    }
+
+    private func configuration(forReviewMachine machine: HerdrMachine?) -> ServerConfiguration? {
+        guard !isDemoMode, let machine else { return nil }
         let token = machine.id == "ui-test" ? runtimes[machine.id]?.connection?.configuration.token ?? "" : credentials.value(for: "api-token.\(machine.id)")
         return ServerConfiguration(urlString: machine.urlString, token: token)
     }
@@ -2610,22 +2627,27 @@ final class HerdrAppModel {
     }
 
     /// PR review questions deliberately pin both transport and scope to the review host.
-    func presentPRReviewQuestion(
+    struct PRReviewQuestionPlan {
+        let machineID: String
+        let checkoutPath: String
+        let context: AssistantContext
+    }
+
+    /// Builds the host-scoped context for a PR review question.
+    ///
+    /// The machine is always explicit: a popped-out review passes its pinned
+    /// host so excerpts and findings come from that companion, never from the
+    /// machine the main window happens to have selected as the review host.
+    func prReviewQuestionPlan(
+        machineID: String,
         review: PRReviewSummary,
-        selection: PRReviewSelection,
-        question: String? = nil,
-        anchor: (view: NSView, rect: CGRect)?
-    ) async {
+        selection: PRReviewSelection
+    ) async -> PRReviewQuestionPlan? {
         let checkoutPath = review.checkoutPath?.nonEmpty ?? (isDemoMode ? "/path/to/project" : nil)
         guard let checkoutPath
         else {
             toastMessage = "Connect the development machine before asking about this review."
-            return
-        }
-        let machineID = isDemoMode ? "demo" : prReviewMachine?.id
-        guard let machineID else {
-            toastMessage = "Connect the development machine before asking about this review."
-            return
+            return nil
         }
 
         let firstSpan = selection.spans.first
@@ -2680,15 +2702,31 @@ final class HerdrAppModel {
             if let index = items.lastIndex(where: { $0.priority == "optional" }) { items.remove(at: index) } else { break }
         }
         let context = AssistantContext(source: .init(feature: "pr-review.diff", instanceId: review.id), items: items)
+        return PRReviewQuestionPlan(machineID: machineID, checkoutPath: checkoutPath, context: context)
+    }
+
+    func presentPRReviewQuestion(
+        machineID: String,
+        review: PRReviewSummary,
+        selection: PRReviewSelection,
+        question: String? = nil,
+        anchor: (view: NSView, rect: CGRect)?
+    ) async {
+        guard let plan = await prReviewQuestionPlan(
+            machineID: machineID,
+            review: review,
+            selection: selection
+        ) else { return }
+
         let submittedQuestion = question ?? selection.question ?? ""
         #if DEBUG
         if isDemoMode {
             let session = assistantCoordinator.present(
                 title: "PR #\(review.number) · \(selection.path)",
-                machineID: "demo-\(machineID)",
+                machineID: "demo-\(plan.machineID)",
                 paneID: nil,
-                rootPath: checkoutPath,
-                context: context,
+                rootPath: plan.checkoutPath,
+                context: plan.context,
                 transport: AssistantDemo().transport,
                 profile: "pr-review-question-v1",
                 reviewId: review.id,
@@ -2698,7 +2736,7 @@ final class HerdrAppModel {
             return
         }
         #endif
-        guard let client = client(forMachine: machineID) else {
+        guard let client = client(forMachine: plan.machineID) else {
             toastMessage = "Connect the development machine before asking about this review."
             return
         }
@@ -2709,14 +2747,14 @@ final class HerdrAppModel {
             stop: { try await client.cancelHeadlessAgent(id: $0).run },
             models: { try await client.fetchAgentModels() },
             promote: { try await client.promoteHeadlessAgent(id: $0, workspaceID: nil).run },
-            openAgent: { HerdrMacAppDelegate.openPaneURLWithFallback(MachineScopedID.compose(machineID: machineID, rawID: $0)) }
+            openAgent: { HerdrMacAppDelegate.openPaneURLWithFallback(MachineScopedID.compose(machineID: plan.machineID, rawID: $0)) }
         )
         let session = assistantCoordinator.present(
             title: "PR #\(review.number) · \(selection.path)",
-            machineID: machineID,
+            machineID: plan.machineID,
             paneID: nil,
-            rootPath: checkoutPath,
-            context: context,
+            rootPath: plan.checkoutPath,
+            context: plan.context,
             transport: transport,
             profile: "pr-review-question-v1",
             reviewId: review.id,

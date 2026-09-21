@@ -485,6 +485,194 @@ struct ResponseBriefPersistenceTests {
         #expect(state.pendingRegenerations.isEmpty)
     }
 
+    @Test("A delayed stale intent write cannot replace the newest intent")
+    func staleIntentWritesAreRejectedAtomically() async throws {
+        let persistence = ResponseBriefPersistence(inMemory: true)
+        let source = makeSource(responseID: "entry-stale-write")
+        let chatID = source.chat.id
+        let medium = ResponseBriefPersistence.PendingRegeneration(
+            chatID: chatID,
+            source: source,
+            length: .medium,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_500),
+            revision: 1
+        )
+        let long = ResponseBriefPersistence.PendingRegeneration(
+            chatID: chatID,
+            source: source,
+            length: .long,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_600),
+            revision: 2
+        )
+
+        #expect(try await persistence.savePendingRegeneration(medium))
+        #expect(try await persistence.savePendingRegeneration(long))
+        // The delayed Medium write lands after Long and must be rejected inside
+        // the same atomic mutation instead of replacing it.
+        #expect(try await persistence.savePendingRegeneration(medium) == false)
+        var state = try await persistence.snapshot()
+        #expect(state.pendingRegenerations[chatID]?.length == .long)
+        #expect(state.regenerationRevisions[chatID] == 2)
+
+        try await persistence.cancelPendingRegeneration(chatID: chatID, revision: 2)
+        state = try await persistence.snapshot()
+        #expect(state.pendingRegenerations.isEmpty)
+        #expect(state.regenerationRevisions[chatID] == 2)
+
+        // The cancellation tombstone keeps rejecting older writes while a
+        // genuinely newer selection still lands.
+        #expect(try await persistence.savePendingRegeneration(medium) == false)
+        let newer = ResponseBriefPersistence.PendingRegeneration(
+            chatID: chatID,
+            source: source,
+            length: .minimal,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_700),
+            revision: 3
+        )
+        #expect(try await persistence.savePendingRegeneration(newer))
+        state = try await persistence.snapshot()
+        #expect(state.pendingRegenerations[chatID]?.length == .minimal)
+        #expect(state.pendingRegenerations[chatID]?.revision == 3)
+    }
+
+    @Test("A stale recovery intent is rejected without touching its baseline")
+    func staleRecoveryIntentIsRejected() async throws {
+        let persistence = ResponseBriefPersistence(inMemory: true)
+        let newerSource = makeSource(responseID: "entry-recovery-newer")
+        let olderSource = makeSource(responseID: "entry-recovery-older")
+        let chatID = newerSource.chat.id
+        let current = ResponseBriefPersistence.PendingRegeneration(
+            chatID: chatID,
+            source: newerSource,
+            length: .long,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_600),
+            revision: 2
+        )
+        #expect(try await persistence.saveRecoveryIntent(
+            current,
+            recordedAt: Date(timeIntervalSince1970: 1_800_000_601)
+        ))
+
+        let stale = ResponseBriefPersistence.PendingRegeneration(
+            chatID: chatID,
+            source: olderSource,
+            length: .medium,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_500),
+            revision: 1
+        )
+        #expect(try await persistence.saveRecoveryIntent(
+            stale,
+            recordedAt: Date(timeIntervalSince1970: 1_800_000_602)
+        ) == false)
+
+        let state = try await persistence.snapshot()
+        #expect(state.pendingRegenerations[chatID]?.source.responseID == newerSource.responseID)
+        #expect(state.pendingRegenerations[chatID]?.length == .long)
+        #expect(state.responseCursorByChatID[chatID] == newerSource.responseID)
+        #expect(state.baselineAnchors[chatID]?.responseID == newerSource.responseID)
+    }
+
+    @Test("A rejected stale write cannot survive immediate restoration and a tombstone survives relaunch")
+    func staleIntentRejectionSurvivesRestoration() async throws {
+        let folder = temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appending(path: "cache.json")
+        let persistence = ResponseBriefPersistence(url: url)
+        let source = makeSource(responseID: "entry-stale-restore")
+        let chatID = source.chat.id
+        let long = ResponseBriefPersistence.PendingRegeneration(
+            chatID: chatID,
+            source: source,
+            length: .long,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_600),
+            revision: 2
+        )
+        #expect(try await persistence.savePendingRegeneration(long))
+        let staleMedium = ResponseBriefPersistence.PendingRegeneration(
+            chatID: chatID,
+            source: source,
+            length: .medium,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_500),
+            revision: 1
+        )
+        // The stale write is rejected before any coordinator cleanup can run.
+        #expect(try await persistence.savePendingRegeneration(staleMedium) == false)
+
+        // Restore immediately from disk, exactly as a relaunch would.
+        let restored = try await ResponseBriefPersistence(url: url).snapshot()
+        #expect(restored.pendingRegenerations[chatID]?.length == .long)
+        #expect(restored.regenerationRevisions[chatID] == 2)
+
+        try await persistence.cancelPendingRegeneration(chatID: chatID, revision: 2)
+        let cancelled = try await ResponseBriefPersistence(url: url).snapshot()
+        #expect(cancelled.pendingRegenerations.isEmpty)
+        #expect(cancelled.regenerationRevisions[chatID] == 2)
+
+        // The tombstone is durable: an older write stays rejected even after
+        // another relaunch, and a newer selection can still be resumed.
+        #expect(try await persistence.savePendingRegeneration(staleMedium) == false)
+        #expect(try await ResponseBriefPersistence(url: url).snapshot().pendingRegenerations.isEmpty)
+        let newer = ResponseBriefPersistence.PendingRegeneration(
+            chatID: chatID,
+            source: source,
+            length: .medium,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_700),
+            revision: 3
+        )
+        #expect(try await persistence.savePendingRegeneration(newer))
+        let resumed = try await ResponseBriefPersistence(url: url).snapshot()
+        #expect(resumed.pendingRegenerations[chatID]?.length == .medium)
+        #expect(resumed.pendingRegenerations[chatID]?.revision == 3)
+    }
+
+    @Test("Legacy intent JSON without a revision decodes as unordered")
+    func legacyIntentWithoutRevisionDecodes() throws {
+        let intent = ResponseBriefPersistence.PendingRegeneration(
+            chatID: "synthetic-chat",
+            source: makeSource(responseID: "entry-a1"),
+            length: .medium,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_500)
+        )
+        var object = try #require(
+            try JSONSerialization.jsonObject(with: JSONEncoder().encode(intent)) as? [String: Any]
+        )
+        object.removeValue(forKey: "revision")
+        let data = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try JSONDecoder().decode(
+            ResponseBriefPersistence.PendingRegeneration.self,
+            from: data
+        )
+        #expect(decoded.revision == 0)
+        #expect(decoded == intent)
+    }
+
+    @Test("An intent revision ahead of its durable watermark blocks restoration")
+    func intentRevisionAheadOfWatermarkBlocksLoad() async throws {
+        let folder = temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appending(path: "cache.json")
+        let source = makeSource(responseID: "entry-a1")
+        let chatID = source.chat.id
+        let intent = ResponseBriefPersistence.PendingRegeneration(
+            chatID: chatID,
+            source: source,
+            length: .long,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_500),
+            revision: 3
+        )
+        try writeSnapshot(
+            pendingRegenerations: [chatID: intent],
+            regenerationRevisions: [chatID: 1],
+            to: url
+        )
+
+        await #expect(throws: ResponseBriefPersistenceError.corruptOrOversized) {
+            _ = try await ResponseBriefPersistence(url: url).snapshot()
+        }
+    }
+
     @Test("Verified aliases are bounded per chat with the oldest evicted")
     func verifiedAliasesAreBounded() async throws {
         let persistence = ResponseBriefPersistence(inMemory: true)
@@ -825,6 +1013,7 @@ struct ResponseBriefPersistenceTests {
         baselineAnchors: [String: ResponseBriefPersistence.BaselineAnchor]? = nil,
         verifiedAliases: [String: [ResponseBriefPersistence.VerifiedAlias]]? = nil,
         pendingRegenerations: [String: ResponseBriefPersistence.PendingRegeneration]? = nil,
+        regenerationRevisions: [String: Int]? = nil,
         to url: URL
     ) throws {
         let snapshot = StoredSnapshot(
@@ -832,7 +1021,8 @@ struct ResponseBriefPersistenceTests {
             receipts: receipts,
             baselineAnchors: baselineAnchors,
             verifiedAliases: verifiedAliases,
-            pendingRegenerations: pendingRegenerations
+            pendingRegenerations: pendingRegenerations,
+            regenerationRevisions: regenerationRevisions
         )
         try JSONEncoder().encode(snapshot).write(to: url)
     }
@@ -859,4 +1049,5 @@ private struct StoredSnapshot: Encodable {
     var baselineAnchors: [String: ResponseBriefPersistence.BaselineAnchor]? = nil
     var verifiedAliases: [String: [ResponseBriefPersistence.VerifiedAlias]]? = nil
     var pendingRegenerations: [String: ResponseBriefPersistence.PendingRegeneration]? = nil
+    var regenerationRevisions: [String: Int]? = nil
 }

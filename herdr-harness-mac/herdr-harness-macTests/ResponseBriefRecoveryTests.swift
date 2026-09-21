@@ -49,6 +49,157 @@ struct ResponseBriefRecoveryTests {
         #expect(coordinator.state(for: live.chat).phase == .idle)
     }
 
+    @Test("A reconciled live projection stays the Latest card without a prior action")
+    func reconciledLiveProjectionStaysLatestInPresentation() async throws {
+        let fixture = try RecoveryFixture()
+        defer { fixture.cleanup() }
+        let coordinator = fixture.coordinator()
+        coordinator.runPollDelay = .zero
+        let text = fixture.text
+        let userTimestampMilliseconds = 1_800_000_000_000
+        let responseTimestampMilliseconds = 1_800_000_100_000
+
+        // Live projection: no entry identifier exists yet, so the reducer
+        // synthesizes the live identifier exactly as the app does.
+        var liveReducer = PiConversationReducer()
+        liveReducer.replace(with: fixture.streamingSnapshot())
+        _ = liveReducer.apply(fixture.liveEnvelope(1, [
+            "type": "message_end",
+            "message": ["role": "user", "content": "Synthetic question", "timestamp": userTimestampMilliseconds],
+        ]))
+        _ = liveReducer.apply(fixture.liveEnvelope(2, [
+            "type": "message_start",
+            "message": ["role": "assistant", "timestamp": responseTimestampMilliseconds, "content": []],
+        ]))
+        _ = liveReducer.apply(fixture.liveEnvelope(3, [
+            "type": "message_update",
+            "assistantMessageEvent": ["type": "text_end", "contentIndex": 0, "content": text],
+        ]))
+        _ = liveReducer.apply(fixture.liveEnvelope(4, [
+            "type": "message_end",
+            "message": [
+                "role": "assistant",
+                "timestamp": responseTimestampMilliseconds,
+                "stopReason": "stop",
+                "content": [["type": "text", "text": text]],
+            ],
+        ]))
+        _ = liveReducer.apply(fixture.liveEnvelope(5, ["type": "agent_settled"]))
+        let live = try #require(ResponseBriefSource.latest(
+            turns: liveReducer.turns,
+            machineID: "synthetic-machine",
+            paneID: "w1:p2",
+            sessionID: "synthetic-session"
+        ))
+        #expect(live.responseID.hasPrefix("live:"))
+
+        // The persisted snapshot carries the durable entry identifier and the
+        // same observed timestamps.
+        let persistedSeed = fixture.source(
+            responseID: "entry-presentation",
+            text: text,
+            responseTimestamp: Date(timeIntervalSince1970: 1_800_000_100),
+            userTimestamp: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+        let persisted = try #require(fixture.reducedSources(for: [persistedSeed]).last)
+        #expect(persisted.responseID == "entry-presentation")
+        #expect(ResponseBriefIdentity.match(live, persisted) == .verifiedContinuation)
+
+        var starts = 0
+        let transport = fixture.transport(
+            start: { _ in
+                starts += 1
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
+        )
+
+        #expect(coordinator.enable(live.chat))
+        await coordinator.observe(live, transport: transport)
+        await coordinator.waitForIdleForTesting()
+        #expect(starts == 1)
+
+        await coordinator.observeSources([persisted], transport: transport)
+        await coordinator.waitForIdleForTesting()
+
+        // Reconciliation must not pay for a duplicate, and every presentation
+        // decision must agree with the coordinator's verified relationship.
+        #expect(starts == 1)
+        let records = coordinator.briefs(for: live.chat)
+        #expect(records.count == 1)
+        let record = try #require(records.first)
+        #expect(record.source.responseID == live.responseID)
+        let matching: @MainActor (ResponseBriefSource, ResponseBriefSource) -> Bool = {
+            coordinator.areEquivalent($0, $1)
+        }
+        #expect(coordinator.areEquivalent(record.source, persisted))
+        #expect(ResponseBriefRailView.latestRecord(
+            in: records,
+            for: persisted,
+            matching: matching
+        )?.id == record.id)
+        #expect(ResponseBriefRailView.recordPickerRole(
+            for: record,
+            latestSource: persisted,
+            matching: matching
+        ) == .latest)
+        #expect(ResponseBriefRailView.sourceAssociationLabel(
+            selectedRecord: record,
+            latestSource: persisted,
+            matching: matching
+        ) == nil)
+        #expect(!ResponseBriefRailView.showsSelectedPriorOriginal(
+            selectedRecord: record,
+            latestSource: persisted,
+            matching: matching
+        ))
+        #expect(ResponseBriefRailView.selectionFollowsLatest(
+            recordID: record.id,
+            records: records,
+            latestSource: persisted,
+            matching: matching
+        ))
+        #expect(coordinator.state(for: live.chat).phase == .idle)
+    }
+
+    @Test("A pending intent for a disabled chat is tombstoned when state loads")
+    func disabledChatIntentIsTombstonedOnLoad() async throws {
+        let fixture = try RecoveryFixture()
+        defer { fixture.cleanup() }
+        let source = fixture.source(responseID: "entry-disabled-intent")
+        try await fixture.persistence.savePendingRegeneration(.init(
+            chatID: source.chat.id,
+            source: source,
+            length: .long,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_500),
+            revision: 1
+        ))
+
+        let coordinator = fixture.coordinator()
+        #expect(!coordinator.isEnabled(source.chat))
+        await coordinator.load()
+
+        let stored = try await fixture.persistence.snapshot()
+        #expect(stored.pendingRegenerations.isEmpty)
+        #expect(stored.regenerationRevisions[source.chat.id] == 1)
+
+        // Re-enabling does not resume the discarded selection: a later ordinary
+        // observation uses the app-wide preference instead.
+        #expect(coordinator.enable(source.chat))
+        var requests: [AssistantRequest] = []
+        let transport = fixture.transport(
+            start: { request in
+                requests.append(request)
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
+        )
+        await coordinator.observe(source, transport: transport)
+        await coordinator.waitForIdleForTesting()
+        #expect(requests.count == 1)
+        #expect(requests.first?.responseBriefLength == .minimal)
+    }
+
     @Test("A persisted baseline never duplicates when the live projection is observed later")
     func persistedBaselineThenLiveProjection() async throws {
         let fixture = try RecoveryFixture()
@@ -988,6 +1139,36 @@ private final class RecoveryFixture {
         // serialization failure would be a test-authoring error.
         let data = try! JSONSerialization.data(withJSONObject: root)
         return try! JSONDecoder().decode(PiConversationSnapshot.self, from: data)
+    }
+
+    /// An empty, streaming snapshot so live reducer events can synthesize the
+    /// same live identifiers the app sees before persistence.
+    func streamingSnapshot() -> PiConversationSnapshot {
+        let root: [String: Any] = [
+            "protocol": ["name": "herdr.pi.semantic", "version": 1],
+            "paneId": "w1:p2",
+            "available": true,
+            "connected": true,
+            "session": ["id": "synthetic-session"],
+            "state": ["isStreaming": true],
+            "entries": [],
+            "pendingInteractions": [],
+            "cursor": "0",
+            "oldestCursor": "0",
+            "truncated": false,
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: root)
+        return try! JSONDecoder().decode(PiConversationSnapshot.self, from: data)
+    }
+
+    func liveEnvelope(_ cursor: Int, _ event: [String: Any]) -> PiConversationEnvelope {
+        let data = try! JSONSerialization.data(withJSONObject: event)
+        return PiConversationEnvelope(
+            paneID: "w1:p2",
+            sessionID: "synthetic-session",
+            cursor: String(cursor),
+            event: try! JSONDecoder().decode(PiJSONValue.self, from: data)
+        )
     }
 
     func run(

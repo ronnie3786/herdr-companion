@@ -48,6 +48,17 @@ enum ResponseBriefIdentity {
         return verifiesContinuity(left, right) ? .verifiedContinuation : nil
     }
 
+    /// Default presentation equivalence for a comparison that has no durable
+    /// alias state: exact identifiers or verified identity evidence. The
+    /// coordinator's `areEquivalent` adds previously verified aliases and is
+    /// the authority used by the rail whenever it is available.
+    static func equivalentByVerifiedIdentity(
+        _ lhs: ResponseBriefSource,
+        _ rhs: ResponseBriefSource
+    ) -> Bool {
+        match(lhs, rhs) != nil
+    }
+
     /// Verified continuity needs the exact content hash plus both real
     /// completed-message timestamps, corroborated by the user turn. Content-only
     /// agreement, missing timestamps, or conflicting evidence is rejected.

@@ -81,11 +81,44 @@ actor ResponseBriefPersistence {
 
     /// The single coalescible regeneration intent for a chat. A newer length
     /// selection replaces the older intent instead of growing a queue.
+    ///
+    /// `revision` is a strictly increasing per-chat ordering value. A newer
+    /// selection or cancellation has a greater revision, so a delayed older
+    /// write can never replace or resurrect current work. Legacy snapshots
+    /// decode the field as zero.
     struct PendingRegeneration: Codable, Equatable, Sendable {
         let chatID: String
         let source: ResponseBriefSource
         let length: ResponseBriefLength
         let createdAt: Date
+        var revision: Int
+
+        init(
+            chatID: String,
+            source: ResponseBriefSource,
+            length: ResponseBriefLength,
+            createdAt: Date,
+            revision: Int = 0
+        ) {
+            self.chatID = chatID
+            self.source = source
+            self.length = length
+            self.createdAt = createdAt
+            self.revision = revision
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case chatID, source, length, createdAt, revision
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            chatID = try container.decode(String.self, forKey: .chatID)
+            source = try container.decode(ResponseBriefSource.self, forKey: .source)
+            length = try container.decode(ResponseBriefLength.self, forKey: .length)
+            createdAt = try container.decode(Date.self, forKey: .createdAt)
+            revision = try container.decodeIfPresent(Int.self, forKey: .revision) ?? 0
+        }
     }
 
     struct State: Sendable {
@@ -96,6 +129,8 @@ actor ResponseBriefPersistence {
         var baselineAnchors: [String: BaselineAnchor] = [:]
         var verifiedAliases: [String: [VerifiedAlias]] = [:]
         var pendingRegenerations: [String: PendingRegeneration] = [:]
+        /// Highest selection/cancellation revision durably observed per chat.
+        var regenerationRevisions: [String: Int] = [:]
     }
 
     private struct Snapshot: Codable, Sendable {
@@ -106,10 +141,11 @@ actor ResponseBriefPersistence {
         var baselineAnchors: [String: BaselineAnchor]
         var verifiedAliases: [String: [VerifiedAlias]]
         var pendingRegenerations: [String: PendingRegeneration]
+        var regenerationRevisions: [String: Int]
 
         private enum CodingKeys: String, CodingKey {
             case records, receipts, attemptedGenerationIDs, responseCursorByChatID
-            case baselineAnchors, verifiedAliases, pendingRegenerations
+            case baselineAnchors, verifiedAliases, pendingRegenerations, regenerationRevisions
         }
 
         init(
@@ -119,7 +155,8 @@ actor ResponseBriefPersistence {
             responseCursorByChatID: [String: String],
             baselineAnchors: [String: BaselineAnchor] = [:],
             verifiedAliases: [String: [VerifiedAlias]] = [:],
-            pendingRegenerations: [String: PendingRegeneration] = [:]
+            pendingRegenerations: [String: PendingRegeneration] = [:],
+            regenerationRevisions: [String: Int] = [:]
         ) {
             self.records = records
             self.receipts = receipts
@@ -128,6 +165,7 @@ actor ResponseBriefPersistence {
             self.baselineAnchors = baselineAnchors
             self.verifiedAliases = verifiedAliases
             self.pendingRegenerations = pendingRegenerations
+            self.regenerationRevisions = regenerationRevisions
         }
 
         init(from decoder: Decoder) throws {
@@ -143,6 +181,7 @@ actor ResponseBriefPersistence {
             baselineAnchors = try container.decodeIfPresent([String: BaselineAnchor].self, forKey: .baselineAnchors) ?? [:]
             verifiedAliases = try container.decodeIfPresent([String: [VerifiedAlias]].self, forKey: .verifiedAliases) ?? [:]
             pendingRegenerations = try container.decodeIfPresent([String: PendingRegeneration].self, forKey: .pendingRegenerations) ?? [:]
+            regenerationRevisions = try container.decodeIfPresent([String: Int].self, forKey: .regenerationRevisions) ?? [:]
         }
     }
 
@@ -154,6 +193,7 @@ actor ResponseBriefPersistence {
         var baselineAnchors: [String: BaselineAnchor]
         var verifiedAliases: [String: [VerifiedAlias]]
         var pendingRegenerations: [String: PendingRegeneration]
+        var regenerationRevisions: [String: Int]
     }
 
     private let url: URL?
@@ -173,6 +213,7 @@ actor ResponseBriefPersistence {
     private var baselineAnchors: [String: BaselineAnchor] = [:]
     private var verifiedAliases: [String: [VerifiedAlias]] = [:]
     private var pendingRegenerations: [String: PendingRegeneration] = [:]
+    private var regenerationRevisions: [String: Int] = [:]
 
     init(
         url: URL? = nil,
@@ -199,7 +240,8 @@ actor ResponseBriefPersistence {
             responseCursorByChatID: responseCursorByChatID,
             baselineAnchors: baselineAnchors,
             verifiedAliases: verifiedAliases,
-            pendingRegenerations: pendingRegenerations
+            pendingRegenerations: pendingRegenerations,
+            regenerationRevisions: regenerationRevisions
         )
     }
 
@@ -343,29 +385,49 @@ actor ResponseBriefPersistence {
     }
 
     /// Stores the single coalescible regeneration intent for a chat. A newer
-    /// selection for the same chat replaces the older intent.
-    func savePendingRegeneration(_ intent: PendingRegeneration) throws {
+    /// selection for the same chat replaces the older intent. The write is
+    /// rejected atomically when a newer revision already owns the slot, so a
+    /// delayed stale save can never replace the current intent or resurrect a
+    /// cancelled one. Returns whether this revision became the durable state.
+    @discardableResult
+    func savePendingRegeneration(_ intent: PendingRegeneration) throws -> Bool {
+        var accepted = false
         try mutateAtomically {
+            guard intent.revision >= (regenerationRevisions[intent.chatID] ?? 0) else { return }
             if pendingRegenerations[intent.chatID] == nil,
                pendingRegenerations.count >= maximumPendingRegenerations {
                 throw ResponseBriefPersistenceError.tooManyPendingRegenerations
             }
+            regenerationRevisions[intent.chatID] = max(
+                regenerationRevisions[intent.chatID] ?? 0,
+                intent.revision
+            )
             pendingRegenerations[intent.chatID] = intent
             try trimEvictableContentToLimits()
+            accepted = true
         }
+        return accepted
     }
 
     /// Records the confirmed latest-only recovery intent together with the new
     /// baseline high-watermark and identity anchor in one atomic write. The
     /// intent is the same single coalescible slot as a length replacement, so
     /// recovery work survives a relaunch behind accepted ownership and a later
-    /// selection replaces it instead of accumulating.
-    func saveRecoveryIntent(_ intent: PendingRegeneration, recordedAt: Date) throws {
+    /// selection replaces it instead of accumulating. A stale recovery revision
+    /// is rejected without touching the intent or the baseline.
+    @discardableResult
+    func saveRecoveryIntent(_ intent: PendingRegeneration, recordedAt: Date) throws -> Bool {
+        var accepted = false
         try mutateAtomically {
+            guard intent.revision >= (regenerationRevisions[intent.chatID] ?? 0) else { return }
             if pendingRegenerations[intent.chatID] == nil,
                pendingRegenerations.count >= maximumPendingRegenerations {
                 throw ResponseBriefPersistenceError.tooManyPendingRegenerations
             }
+            regenerationRevisions[intent.chatID] = max(
+                regenerationRevisions[intent.chatID] ?? 0,
+                intent.revision
+            )
             pendingRegenerations[intent.chatID] = intent
             responseCursorByChatID[intent.chatID] = intent.source.responseID
             baselineAnchors[intent.chatID] = BaselineAnchor(
@@ -374,6 +436,28 @@ actor ResponseBriefPersistence {
                 identity: intent.source.identity,
                 recordedAt: recordedAt
             )
+            try trimEvictableContentToLimits()
+            accepted = true
+        }
+        return accepted
+    }
+
+    /// Durably records a selection or cancellation at `revision`. The revision
+    /// watermark makes every delayed save at or below it a no-op, and the
+    /// stored intent is removed only when its own revision is at or below the
+    /// cancellation, so a newer selection that already has a greater revision
+    /// survives. Keeping the watermark after removal is the cancellation
+    /// tombstone: a relaunch cannot resume the intent and an older delayed
+    /// write cannot resurrect it.
+    func cancelPendingRegeneration(chatID: String, revision: Int) throws {
+        try mutateAtomically {
+            let watermark = regenerationRevisions[chatID] ?? 0
+            if revision > watermark {
+                regenerationRevisions[chatID] = revision
+            }
+            if let stored = pendingRegenerations[chatID], stored.revision <= revision {
+                pendingRegenerations.removeValue(forKey: chatID)
+            }
             try trimEvictableContentToLimits()
         }
     }
@@ -466,6 +550,7 @@ actor ResponseBriefPersistence {
         baselineAnchors = snapshot.baselineAnchors
         verifiedAliases = snapshot.verifiedAliases
         pendingRegenerations = snapshot.pendingRegenerations
+        regenerationRevisions = snapshot.regenerationRevisions
         loaded = true
         try trimEvictableContentToLimits()
     }
@@ -519,9 +604,15 @@ actor ResponseBriefPersistence {
                 && entry.key == entry.value.chatID
                 && entry.value.source.chat.id == entry.key
                 && !entry.value.source.responseID.isEmpty
+                && entry.value.revision >= 0
+                && (snapshot.regenerationRevisions[entry.key] ?? 0) >= entry.value.revision
                 && (entry.value.source.identity.map(Self.isWellFormedEvidence) ?? true)
         }
-        guard anchorsAreValid, aliasesAreValid, intentsAreValid else {
+        let revisionsAreValid = snapshot.regenerationRevisions.count <= maximumDecodedCollectionCount
+            && snapshot.regenerationRevisions.allSatisfy { entry in
+                !entry.key.isEmpty && entry.value >= 0
+            }
+        guard anchorsAreValid, aliasesAreValid, intentsAreValid, revisionsAreValid else {
             throw ResponseBriefPersistenceError.corruptOrOversized
         }
 
@@ -604,7 +695,8 @@ actor ResponseBriefPersistence {
             responseCursorByChatID: responseCursorByChatID,
             baselineAnchors: baselineAnchors,
             verifiedAliases: verifiedAliases,
-            pendingRegenerations: pendingRegenerations
+            pendingRegenerations: pendingRegenerations,
+            regenerationRevisions: regenerationRevisions
         )
         do {
             try mutation()
@@ -617,6 +709,7 @@ actor ResponseBriefPersistence {
             baselineAnchors = old.baselineAnchors
             verifiedAliases = old.verifiedAliases
             pendingRegenerations = old.pendingRegenerations
+            regenerationRevisions = old.regenerationRevisions
             throw error
         }
     }
@@ -627,6 +720,7 @@ actor ResponseBriefPersistence {
             records.removeFirst(records.count - maximumRecords)
         }
         trimIdentityMetadata()
+        trimRegenerationRevisions()
 
         // Settled receipts are only explicit-retry conveniences. Pending and
         // ambiguous receipts, and pending regeneration intents, are ownership
@@ -677,6 +771,20 @@ actor ResponseBriefPersistence {
         }
     }
 
+    private func trimRegenerationRevisions() {
+        // Cancellation tombstones bound the map; enabled chats are capped far
+        // below this, so an in-process delayed write can never outlive its
+        // watermark through eviction. Entries with a pending intent are kept.
+        let limit = maximumPendingRegenerations * 2
+        guard regenerationRevisions.count > limit else { return }
+        let removable = regenerationRevisions
+            .filter { pendingRegenerations[$0.key] == nil }
+            .sorted { $0.value < $1.value }
+        for entry in removable.prefix(regenerationRevisions.count - limit) {
+            regenerationRevisions.removeValue(forKey: entry.key)
+        }
+    }
+
     private func evictOldestVerifiedAlias() -> Bool {
         var oldestChatID: String?
         var oldestAlias: VerifiedAlias?
@@ -713,7 +821,8 @@ actor ResponseBriefPersistence {
             responseCursorByChatID: responseCursorByChatID,
             baselineAnchors: baselineAnchors,
             verifiedAliases: verifiedAliases,
-            pendingRegenerations: pendingRegenerations
+            pendingRegenerations: pendingRegenerations,
+            regenerationRevisions: regenerationRevisions
         )
     }
 
@@ -766,6 +875,7 @@ extension ResponseBriefPersistence.PendingRegeneration {
             chatID,
             source.id,
             length.rawValue,
+            String(revision),
             String(createdAt.timeIntervalSinceReferenceDate.bitPattern, radix: 16),
         ].joined(separator: "|")
     }

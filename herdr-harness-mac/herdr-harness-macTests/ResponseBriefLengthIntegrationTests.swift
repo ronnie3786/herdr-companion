@@ -412,7 +412,7 @@ struct ResponseBriefLengthIntegrationTests {
         await coordinator.waitForIdleForTesting()
         #expect(requests.isEmpty)
 
-        coordinator.disable(source.chat, transport: transport)
+        await coordinator.disable(source.chat, transport: transport)
         #expect(coordinator.length == .long)
         #expect(requests.isEmpty)
 
@@ -887,7 +887,7 @@ struct ResponseBriefLengthIntegrationTests {
         // The durable write is still suspended when the chat is disabled and
         // immediately re-enabled, so the captured selection is obsolete and
         // must never be published or resumed.
-        coordinator.disable(selected.chat, transport: transport)
+        await coordinator.disable(selected.chat, transport: transport)
         #expect(coordinator.enable(selected.chat))
         release?.resume()
         await change.value
@@ -921,6 +921,89 @@ struct ResponseBriefLengthIntegrationTests {
         #expect(requests.count == 1)
         #expect(relaunched.briefs(for: selected.chat).count == 1)
         #expect(relaunched.briefs(for: selected.chat).first?.source.responseID == latest.responseID)
+    }
+
+    @Test("A rejected stale intent write cannot be resumed by an immediate relaunch")
+    func staleIntentWriteCannotSurviveRelaunch() async throws {
+        let fixture = try LengthFixture()
+        defer { fixture.cleanup() }
+        let coordinator = fixture.coordinator()
+        coordinator.runPollDelay = .zero
+        let source = fixture.source(responseID: "entry-stale-relaunch")
+        var requests: [AssistantRequest] = []
+        // The old companion blocks the newest selection in preflight, so this
+        // regression isolates durable intent ordering instead of submissions.
+        let oldTransport = fixture.oldServerTransport(
+            start: { request in
+                requests.append(request)
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
+        )
+        #expect(coordinator.enable(source.chat))
+
+        var releaseMedium: CheckedContinuation<Void, Never>?
+        var barrierStarted: AsyncStream<Void>.Continuation?
+        let started = AsyncStream<Void> { barrierStarted = $0 }
+        var suspendFirstWrite = true
+        coordinator.intentPersistenceBarrier = {
+            guard suspendFirstWrite else { return }
+            suspendFirstWrite = false
+            barrierStarted?.yield()
+            await withCheckedContinuation { releaseMedium = $0 }
+        }
+
+        let mediumChange = Task { @MainActor in
+            await coordinator.changeLength(
+                .medium,
+                chat: source.chat,
+                selectedSource: source,
+                transport: oldTransport
+            )
+        }
+        var iterator = started.makeAsyncIterator()
+        _ = await iterator.next()
+
+        // The newer Long selection lands first while the older Medium write is
+        // still suspended.
+        await coordinator.changeLength(
+            .long,
+            chat: source.chat,
+            selectedSource: source,
+            transport: oldTransport
+        )
+        let newest = try await fixture.persistence.snapshot()
+        #expect(newest.pendingRegenerations[source.chat.id]?.length == .long)
+        #expect((newest.pendingRegenerations[source.chat.id]?.revision ?? 0) > 0)
+
+        // The delayed older write resumes and must be rejected atomically
+        // before any coordinator cleanup could run.
+        releaseMedium?.resume()
+        await mediumChange.value
+        coordinator.intentPersistenceBarrier = nil
+
+        // Restore immediately from disk, exactly as a relaunch would, and
+        // verify only the newest selection survives.
+        let relaunchedPersistence = ResponseBriefPersistence(
+            url: fixture.folder.appending(path: "cache.json")
+        )
+        let relaunched = ResponseBriefCoordinator(
+            defaults: fixture.defaults,
+            persistence: relaunchedPersistence
+        )
+        relaunched.selectModel("provider/brief-model")
+        relaunched.runPollDelay = .zero
+        #expect(relaunched.enable(source.chat))
+        #expect(relaunched.length == .long)
+        let restored = try await relaunchedPersistence.snapshot()
+        #expect(restored.pendingRegenerations[source.chat.id]?.length == .long)
+
+        await relaunched.observe(source, transport: oldTransport)
+        await relaunched.waitForIdleForTesting()
+        #expect(requests.isEmpty)
+        let final = try await relaunchedPersistence.snapshot()
+        #expect(final.pendingRegenerations[source.chat.id]?.length == .long)
+        #expect(final.pendingRegenerations[source.chat.id]?.revision == restored.pendingRegenerations[source.chat.id]?.revision)
     }
 }
 

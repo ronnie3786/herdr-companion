@@ -153,7 +153,7 @@ struct ResponseBriefCoordinatorTests {
         var startIterator = didStart.makeAsyncIterator()
         _ = await startIterator.next()
         #expect(await waitUntil { coordinator.state(for: source.chat).runID != nil })
-        coordinator.disable(source.chat, transport: transport)
+        await coordinator.disable(source.chat, transport: transport)
         var cancelIterator = didCancel.makeAsyncIterator()
         let cancelledID = await cancelIterator.next()
 
@@ -255,7 +255,7 @@ struct ResponseBriefCoordinatorTests {
         await coordinator.observe(first, transport: transport)
         var startedIterator = didStart.makeAsyncIterator()
         _ = await startedIterator.next()
-        coordinator.disable(first.chat, transport: transport)
+        await coordinator.disable(first.chat, transport: transport)
         #expect(coordinator.enable(first.chat))
         await coordinator.observe(second, transport: transport)
         #expect(starts == ["answer-old"])
@@ -922,7 +922,7 @@ struct ResponseBriefCoordinatorTests {
             await coordinator.observe(source, transport: transport)
             await coordinator.waitForIdleForTesting()
             #expect(coordinator.briefs(for: source.chat).isEmpty)
-            coordinator.disable(source.chat, transport: transport)
+            await coordinator.disable(source.chat, transport: transport)
         }
         #expect(starts == 0)
     }

@@ -200,6 +200,29 @@ final class ResponseBriefCoordinator {
             baselineAnchors = snapshot.baselineAnchors
             verifiedAliases = snapshot.verifiedAliases
             pendingRegenerations = snapshot.pendingRegenerations
+            // Selection revisions are only comparable across processes when
+            // the durable watermark seeds the local counter. Otherwise a
+            // post-relaunch selection could allocate a lower revision than an
+            // intent this cache already rejected or cancelled.
+            for (chatID, revision) in snapshot.regenerationRevisions {
+                chatEpochs[chatID] = max(chatEpochs[chatID] ?? 0, revision)
+            }
+            for (chatID, intent) in snapshot.pendingRegenerations {
+                chatEpochs[chatID] = max(chatEpochs[chatID] ?? 0, intent.revision)
+            }
+            // An intent owned by a chat that is not enabled cannot become
+            // current work: new selections are only accepted while enabled and
+            // disabling tombstones them. This is upgrade residue or a disable
+            // whose tombstone write failed, so remove it durably before a later
+            // re-enable could resume obsolete work.
+            let enabledChatIDs = Set(preferences.enabledChats.map(\.id))
+            for (chatID, intent) in snapshot.pendingRegenerations where !enabledChatIDs.contains(chatID) {
+                try await persistence.cancelPendingRegeneration(
+                    chatID: chatID,
+                    revision: intent.revision
+                )
+                pendingRegenerations.removeValue(forKey: chatID)
+            }
         } catch {
             storageError = error.localizedDescription
         }
@@ -222,32 +245,41 @@ final class ResponseBriefCoordinator {
         return enabled
     }
 
-    func disable(_ chat: ResponseBriefChatIdentity, transport: ResponseBriefTransport) {
+    func disable(_ chat: ResponseBriefChatIdentity, transport: ResponseBriefTransport) async {
+        // Load first so the local revision counter starts from the durable
+        // watermark; otherwise a disable before the first load could allocate a
+        // revision an existing intent already superseded.
+        await load()
         preferences.disable(chat)
         preferencesRevision &+= 1
         // Disabling supersedes any replacement work that is waiting to be
         // published or resumed for this chat.
-        _ = advanceChatEpoch(for: chat.id)
+        let epoch = advanceChatEpoch(for: chat.id)
         latestSources.removeValue(forKey: chat.id)
         pollFailureCounts[chat.id] = nil
         nextPollAt[chat.id] = nil
         pending.removeAll { $0.source.chat.id == chat.id }
-        if let intent = pendingRegenerations.removeValue(forKey: chat.id) {
-            // Remove only the exact durable intent this chat owned. A newer
-            // selection must survive an older delayed cleanup.
-            let key = intent.replacementKey
-            Task { try? await persistence.removePendingRegeneration(chatID: chat.id, expectingKey: key) }
+        pendingRegenerations.removeValue(forKey: chat.id)
+        // Cancel any owned run, then durably tombstone the cancellation before
+        // returning so a delayed older intent write can never be resumed after
+        // a relaunch.
+        if let operation = operations[chat.id] {
+            operation.task.cancel()
+        }
+        do {
+            try await persistence.cancelPendingRegeneration(chatID: chat.id, revision: epoch)
+        } catch {
+            noteStorageFailure(error, chat: chat, sourceID: nil)
         }
 
         // Keep the slot until the operation has either learned the run ID and
         // cancelled it, or durably recorded that ownership is ambiguous.
-        if let operation = operations[chat.id] {
-            operation.task.cancel()
-        } else if let receipt = receipts.values.first(where: {
-            $0.source.chat.id == chat.id && $0.status != .settled
-        }) {
+        if operations[chat.id] == nil,
+           let receipt = receipts.values.first(where: {
+               $0.source.chat.id == chat.id && $0.status != .settled
+           }) {
             enqueueCancellationReconciliation(receipt, transport: transport)
-        } else {
+        } else if operations[chat.id] == nil {
             states[chat.id] = ChatState()
         }
     }
@@ -473,28 +505,33 @@ final class ResponseBriefCoordinator {
             && !hasOwnedGeneration(for: latest, configuration: configuration, includeAttempts: true)
         if needsBrief {
             let now = Date.now
+            // A confirmed recovery supersedes any older intent publication
+            // that is still suspended for this chat, and a newer revision
+            // supersedes this recovery.
+            let epoch = advanceChatEpoch(for: chat.id)
             let intent = ResponseBriefPersistence.PendingRegeneration(
                 chatID: chat.id,
                 source: latest,
                 length: length,
-                createdAt: now
+                createdAt: now,
+                revision: epoch
             )
-            // A confirmed recovery supersedes any older intent publication
-            // that is still suspended for this chat.
-            let epoch = advanceChatEpoch(for: chat.id)
+            let accepted: Bool
             do {
                 // Retain the latest-only recovery work together with its new
                 // baseline so a relaunch behind accepted ownership still
                 // performs exactly one latest submission.
                 await awaitIntentPersistenceBarrier()
-                try await persistence.saveRecoveryIntent(intent, recordedAt: now)
+                accepted = try await persistence.saveRecoveryIntent(intent, recordedAt: now)
             } catch {
                 noteStorageFailure(error, chat: chat, sourceID: latest.id)
                 return
             }
-            // Disabling the chat or starting a newer selection while the save
-            // was suspended supersedes this recovery work; publishing it would
-            // resume an obsolete request after re-enabling.
+            // Rejected atomically because a newer revision already owns the
+            // slot. Disabling the chat or starting a newer selection while the
+            // save was suspended supersedes this recovery work; publishing it
+            // would resume an obsolete request after re-enabling.
+            guard accepted else { return }
             guard chatEpochs[chat.id] == epoch, isEnabled(chat) else {
                 await discardSupersededIntent(intent)
                 return
@@ -664,7 +701,7 @@ final class ResponseBriefCoordinator {
                     var reducer = PiConversationReducer()
                     reducer.replace(with: snapshot)
                     guard reducer.sessionID == chat.sessionID else {
-                        disable(chat, transport: transport)
+                        await disable(chat, transport: transport)
                         continue
                     }
                     resumePendingReceipt(for: chat, transport: transport)
@@ -829,8 +866,11 @@ final class ResponseBriefCoordinator {
 
     /// Equates two projections of one completed answer without ever using
     /// text alone. Exact identifiers and verified identity evidence are the
-    /// only accepted relationships, plus durable aliases proven earlier.
-    private func areEquivalent(_ lhs: ResponseBriefSource, _ rhs: ResponseBriefSource) -> Bool {
+    /// only accepted relationships, plus durable aliases proven earlier. This
+    /// is shared by generation ownership and the rail's selection, labeling,
+    /// and original-response presentation so a reconciled live-to-persisted
+    /// answer keeps one identity everywhere.
+    func areEquivalent(_ lhs: ResponseBriefSource, _ rhs: ResponseBriefSource) -> Bool {
         guard lhs.chat == rhs.chat else { return false }
         if lhs.responseID == rhs.responseID { return true }
         if ResponseBriefIdentity.match(lhs, rhs) != nil { return true }
@@ -889,20 +929,26 @@ final class ResponseBriefCoordinator {
             chatID: source.chat.id,
             source: source,
             length: length,
-            createdAt: .now
+            createdAt: .now,
+            revision: epoch
         )
+        let accepted: Bool
         do {
             await awaitIntentPersistenceBarrier()
-            try await persistence.savePendingRegeneration(intent)
+            accepted = try await persistence.savePendingRegeneration(intent)
         } catch {
             noteStorageFailure(error, chat: source.chat, sourceID: source.id)
             return
         }
-        // Disabling the chat or selecting a newer length while the save was
-        // suspended supersedes this intent. Publishing it anyway would let a
-        // later re-enable resume obsolete work.
-        guard chatEpochs[source.chat.id] == epoch, isEnabled(source.chat) else {
-            await discardSupersededIntent(intent)
+        // A newer revision already owns the slot when the atomic save was
+        // rejected, so this selection never publishes over it. Disabling the
+        // chat or selecting a newer length while the save was suspended
+        // supersedes this intent too. Publishing it anyway would let a later
+        // re-enable resume obsolete work.
+        guard accepted, chatEpochs[source.chat.id] == epoch, isEnabled(source.chat) else {
+            if accepted {
+                await discardSupersededIntent(intent)
+            }
             return
         }
         pendingRegenerations[source.chat.id] = intent
@@ -927,25 +973,24 @@ final class ResponseBriefCoordinator {
     }
 
     /// Removes a durable intent that lost a race with a disable or a newer
-    /// selection. Only the exact captured intent is removed; a newer selection
-    /// is preserved and, when the older write landed last, rewritten so it
-    /// stays durable across relaunch.
+    /// selection and durably records the cancellation tombstone for its exact
+    /// revision. A newer selection with a greater revision is preserved, and a
+    /// delayed stale write for the discarded revision stays rejected instead of
+    /// being restored by a post-hoc rewrite.
     private func discardSupersededIntent(
         _ intent: ResponseBriefPersistence.PendingRegeneration
     ) async {
         do {
-            try await persistence.removePendingRegeneration(
+            try await persistence.cancelPendingRegeneration(
                 chatID: intent.chatID,
-                expectingKey: intent.replacementKey
+                revision: intent.revision
             )
         } catch {
             return
         }
-        guard let current = pendingRegenerations[intent.chatID],
-              current.replacementKey != intent.replacementKey,
-              isEnabled(current.source.chat)
-        else { return }
-        try? await persistence.savePendingRegeneration(current)
+        if pendingRegenerations[intent.chatID]?.replacementKey == intent.replacementKey {
+            pendingRegenerations.removeValue(forKey: intent.chatID)
+        }
     }
 
     /// Test-only suspension point around durable intent writes.

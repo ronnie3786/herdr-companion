@@ -46,3 +46,6 @@ def session_context():
 
 def first_mate():
     return _run("herdr_first_mate_cli")
+
+def pr_review():
+    return _run("herdr_pr_review_cli")

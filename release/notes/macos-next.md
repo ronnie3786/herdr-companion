@@ -22,6 +22,11 @@
 - Grouped tool calls are labeled Clanking. Failures remain indicated in the collapsed header and no longer expand the group automatically.
 - The HUD notes list starts as one Notes icon. Click to expand; click again to minimize. Creating or opening a note still opens its editable card.
 
+## PR Review
+
+- A new **PR Review** section under First Mate in the left navigator (⌘8): paste a GitHub pull request link, choose which review, explainer-video and utility skills to run, and get a GitHub-style workspace prepared on the development-role companion: ranked files with a single-category filter, Hide viewed and a Guided reading order; a native diff with **Ask AI** on any selection; a context library for findings, reports, audio, video and links; Agents and Skills tabs; archive instead of delete.
+- `herdr-pr-review` CLI and `pr-review.*` agent-control actions drive the same workspace. Requires companion 0.25.0b1 (`pr-review-v1`) on the review host.
+
 ## Companion compatibility
 
 The configurable computer segments add optional presentation fields and a validated `localMachineId` to the authenticated machine-roster response. Existing clients ignore them. The Mac uses the self ID only for its already-saved first connection, including localhost or another origin alias; nonprimary machines still match by unique exact origin. Missing self identity preserves older-server origin fallback, while duplicate, unknown, or ambiguous claims are not guessed. The app never imports machines or credentials or rewrites saved identity. Both the companion and Mac app must be updated for self-identity synchronization, and a Mac-only update does not install companion code.

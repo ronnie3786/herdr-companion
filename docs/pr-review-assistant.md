@@ -1,6 +1,25 @@
 # PR Review Assistant
 
-Status: Draft feature guideline, 2026-09-20. Product and feature description only.
+Status: Implemented in macOS 0.25.0-beta.1 with companion 0.25.0b1 (2026-09-21); see
+[pr-review.md](pr-review.md) for setup, behaviour, the CLI and the agent-control actions.
+Originally a draft feature guideline (2026-09-20).
+
+## Implementation notes
+
+- Skill names confirmed on the development machine: `ios-review-remote-pr`,
+  `comprehensive-pr-review`, `github-pr-explainer-video`, `github-pr-explainer-video-v2`,
+  `tech-explainer-video`, `pr-explainer-dev-manager`, and the mark-viewed utility
+  `mark-generated-and-test-viewed-in-pull-request` (`gh autoview`).
+- Reviews run on the companion whose machine role is `development`; the Mac app resolves that
+  machine (Settings → Machines → PR review host overrides it). Runs are panes in a dedicated
+  PR Reviews workspace, one tab per review.
+- Files from the review host reach the Mac through the companion's authenticated document
+  endpoint and a local cache, the same pattern as agent result artifacts; no separate sync.
+- Ask AI reuses the contextual assistant with a new `pr-review-question-v1` profile that keeps
+  read-only tools inside the checkout so it can verify findings rather than repeat them.
+- Delivered in one release: workspace and context library, ranking and the diff UI, Ask AI,
+  and the CLI plus agent-control actions that Clicky can drive. Nothing is deleted; archiving is manual.
+
 
 This is a guideline, not a spec. It captures the intent, the workflow behind it, and the
 behavior we want. It is expected to change once implementation starts, and the implementation

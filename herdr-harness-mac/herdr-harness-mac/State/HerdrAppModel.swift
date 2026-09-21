@@ -107,6 +107,9 @@ final class HerdrAppModel {
     var fleetRevision = 0
     var refreshTick = 0
     var activeWorkRefreshTick = 0
+    /// Changes whenever a companion publishes PR Review activity.
+    var prReviewRefreshTick = 0
+    var prReviewMachineRevision = 0
     var isRefreshing = false
     var isSending = false
     private(set) var quickPiSessionMachineIDs: Set<String> = []
@@ -271,7 +274,13 @@ final class HerdrAppModel {
         #endif
         Self.migrateMachinesIfNeeded(defaults: defaults, credentials: credentials, configuredMachines: configuredMachines)
         let bundledURL = Bundle.main.object(forInfoDictionaryKey: "HerdrDemoServerURL") as? String
-        let persistedMachines = Self.loadMachines(defaults: defaults)
+        // Bootstrap metadata can learn a machine's role after the user first
+        // saved it. Preserve all user-owned fields and backfill only the role
+        // for the same stable machine id.
+        let persistedMachines = Self.backfillingRoles(
+            in: Self.loadMachines(defaults: defaults),
+            from: configuredMachines
+        )
         machines = uiTestServerURL.map {
             [HerdrMachine(id: "ui-test", name: Self.machineName(for: $0), urlString: $0)]
         } ?? persistedMachines
@@ -490,6 +499,23 @@ final class HerdrAppModel {
 
     func firstMateConfiguration(machineID: String?) -> ServerConfiguration? {
         guard !isDemoMode, let machine = machines.first(where: { $0.id == machineID }) ?? machines.first else { return nil }
+        let token = machine.id == "ui-test" ? runtimes[machine.id]?.connection?.configuration.token ?? "" : credentials.value(for: "api-token.\(machine.id)")
+        return ServerConfiguration(urlString: machine.urlString, token: token)
+    }
+
+    /// The review host is deliberate: an unconfigured role is safer than
+    /// silently sending a review request to the primary companion.
+    var prReviewMachineOverrideID: String? { userDefaults.string(forKey: "herdr.prReview.machineID")?.nonEmpty }
+    var prReviewMachine: HerdrMachine? {
+        if let override = prReviewMachineOverrideID { return machines.first { $0.id == override } }
+        return machines.first { $0.role == "development" }
+    }
+    func setPRReviewMachineOverride(_ id: String?) {
+        if let id, !id.isEmpty { userDefaults.set(id, forKey: "herdr.prReview.machineID") } else { userDefaults.removeObject(forKey: "herdr.prReview.machineID") }
+        prReviewMachineRevision &+= 1
+    }
+    func prReviewConfiguration() -> ServerConfiguration? {
+        guard !isDemoMode, let machine = prReviewMachine else { return nil }
         let token = machine.id == "ui-test" ? runtimes[machine.id]?.connection?.configuration.token ?? "" : credentials.value(for: "api-token.\(machine.id)")
         return ServerConfiguration(urlString: machine.urlString, token: token)
     }
@@ -2557,9 +2583,9 @@ final class HerdrAppModel {
         }
         #if DEBUG
         if isDemoMode {
-            assistantCoordinator.present(title: title, machineID: "demo-" + machineID, paneID: originPane?.paneID,
-                                         rootPath: originPane?.foregroundCWD ?? originPane?.cwd, context: context,
-                                         transport: AssistantDemo().transport)
+            _ = assistantCoordinator.present(title: title, machineID: "demo-" + machineID, paneID: originPane?.paneID,
+                                             rootPath: originPane?.foregroundCWD ?? originPane?.cwd, context: context,
+                                             transport: AssistantDemo().transport)
             return
         }
         #endif
@@ -2576,9 +2602,137 @@ final class HerdrAppModel {
             promote: { try await client.promoteHeadlessAgent(id: $0, workspaceID: nil).run },
             openAgent: { HerdrMacAppDelegate.openPaneURLWithFallback(MachineScopedID.compose(machineID: machineID, rawID: $0)) }
         )
-        assistantCoordinator.present(title: title, machineID: machineID, paneID: originPane?.paneID,
-                                     rootPath: originPane?.foregroundCWD ?? originPane?.cwd,
-                                     context: context, transport: transport)
+        _ = assistantCoordinator.present(title: title, machineID: machineID, paneID: originPane?.paneID,
+                                         rootPath: originPane?.foregroundCWD ?? originPane?.cwd,
+                                         context: context, transport: transport)
+    }
+
+    /// PR review questions deliberately pin both transport and scope to the review host.
+    func presentPRReviewQuestion(
+        review: PRReviewSummary,
+        selection: PRReviewSelection,
+        question: String? = nil,
+        anchor: (view: NSView, rect: CGRect)?
+    ) async {
+        guard let machineID = prReviewMachine?.id,
+              let checkoutPath = review.checkoutPath,
+              !checkoutPath.isEmpty
+        else {
+            toastMessage = "Connect the development machine before asking about this review."
+            return
+        }
+
+        let firstSpan = selection.spans.first
+        let side = firstSpan?.side ?? .after
+        let line = firstSpan?.start ?? 1
+        var items: [AssistantContext.Item] = [
+            .init(
+                id: "selection",
+                kind: "text-selection.v1",
+                label: "\(selection.path), \(side.rawValue) lines \(line)–\(firstSpan?.end ?? line)",
+                text: selection.text,
+                priority: "required",
+                locator: .init(
+                    path: selection.path,
+                    oldPath: selection.oldPath.isEmpty ? nil : selection.oldPath,
+                    section: side == .before ? "pr-base" : "pr-head",
+                    revision: side == .before ? review.baseSHA : review.headSHA,
+                    spans: selection.spans.map {
+                        .init(side: $0.side.rawValue, startLine: $0.start, endLine: $0.end)
+                    }
+                )
+            ),
+        ]
+
+        if let client = client(forMachine: machineID) {
+            if let text = try? await client.prReviewFileText(
+                id: review.id,
+                path: selection.path,
+                side: side,
+                start: max(1, line - 40),
+                end: line + 40
+            ) {
+                items.append(.init(id: "excerpt", kind: "text.v1", label: "Surrounding excerpt (\(side.rawValue))",
+                                   text: Self.byteLimited(text.text, maximum: 12 * 1024), priority: "optional"))
+            }
+            if let findings = try? await client.prReviewFindings(id: review.id, path: selection.path),
+               !findings.text.isEmpty {
+                items.append(.init(id: "findings", kind: "text.v1",
+                                   label: "Review findings for \(selection.path) (reference only; may be wrong)",
+                                   text: Self.byteLimited(findings.text, maximum: 12 * 1024), priority: "optional"))
+            }
+        }
+        items.append(.init(
+            id: "review",
+            kind: "view.v1",
+            label: "PR review context",
+            text: "PR #\(review.number) \(review.title)\nRepo: \(review.owner)/\(review.repo)\nBase: \(review.baseSHA) → Head: \(review.headSHA)\nChecked out at: \(checkoutPath)\nReview id: \(review.id)\nFiles changed: \(review.changedFiles)",
+            priority: "optional"
+        ))
+        while items.count > 1,
+              Self.encodedContextSize(items: items, reviewID: review.id) > 64 * 1024 {
+            if let index = items.lastIndex(where: { $0.priority == "optional" }) { items.remove(at: index) } else { break }
+        }
+        let context = AssistantContext(source: .init(feature: "pr-review.diff", instanceId: review.id), items: items)
+        let submittedQuestion = question ?? selection.question ?? ""
+        #if DEBUG
+        if isDemoMode {
+            let session = assistantCoordinator.present(
+                title: "PR #\(review.number) · \(selection.path)",
+                machineID: "demo-\(machineID)",
+                paneID: nil,
+                rootPath: checkoutPath,
+                context: context,
+                transport: AssistantDemo().transport,
+                profile: "pr-review-question-v1",
+                reviewId: review.id,
+                anchor: anchor
+            )
+            session.submitDraftWhenReady(submittedQuestion)
+            return
+        }
+        #endif
+        guard let client = client(forMachine: machineID) else {
+            toastMessage = "Connect the development machine before asking about this review."
+            return
+        }
+        let transport = AssistantTransport(
+            capabilities: { try await client.assistantCapabilities() },
+            start: { try await client.startAssistant($0).run },
+            fetch: { try await client.fetchHeadlessAgent(id: $0).run },
+            stop: { try await client.cancelHeadlessAgent(id: $0).run },
+            models: { try await client.fetchAgentModels() },
+            promote: { try await client.promoteHeadlessAgent(id: $0, workspaceID: nil).run },
+            openAgent: { HerdrMacAppDelegate.openPaneURLWithFallback(MachineScopedID.compose(machineID: machineID, rawID: $0)) }
+        )
+        let session = assistantCoordinator.present(
+            title: "PR #\(review.number) · \(selection.path)",
+            machineID: machineID,
+            paneID: nil,
+            rootPath: checkoutPath,
+            context: context,
+            transport: transport,
+            profile: "pr-review-question-v1",
+            reviewId: review.id,
+            anchor: anchor
+        )
+        session.submitDraftWhenReady(submittedQuestion)
+    }
+
+    private static func byteLimited(_ text: String, maximum: Int) -> String {
+        guard text.utf8.count > maximum else { return text }
+        var result = ""
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let next = result + line + "\n"
+            guard next.utf8.count <= maximum - 12 else { break }
+            result = next
+        }
+        return result + "[truncated]"
+    }
+
+    private static func encodedContextSize(items: [AssistantContext.Item], reviewID: String) -> Int {
+        let context = AssistantContext(source: .init(feature: "pr-review.diff", instanceId: reviewID), items: items)
+        return (try? JSONEncoder().encode(context).count) ?? .max
     }
 
     func startHeadlessAgent(
@@ -4566,6 +4720,8 @@ final class HerdrAppModel {
                         )
                     } else if event.event == "active_work.updated" {
                         activeWorkRefreshTick &+= 1
+                    } else if event.event == "pr_review.updated" {
+                        prReviewRefreshTick &+= 1
                     } else if event.event == "snapshot.updated" || event.event == "alert.created" ||
                         event.event == "alert.updated" || event.event == "alerts.read_state_changed" ||
                         event.event == "stars.changed" || event.event == "stream.reset" ||
@@ -4809,6 +4965,21 @@ final class HerdrAppModel {
         guard let data = defaults.data(forKey: "herdr.machines"),
               let machines = try? JSONDecoder().decode([HerdrMachine].self, from: data) else { return [] }
         return machines
+    }
+
+    private static func backfillingRoles(
+        in machines: [HerdrMachine],
+        from configuredMachines: [HerdrMachine]
+    ) -> [HerdrMachine] {
+        let rolesByID = Dictionary(uniqueKeysWithValues: configuredMachines.compactMap { machine in
+            machine.role.map { (machine.id, $0) }
+        })
+        return machines.map { machine in
+            guard machine.role == nil, let role = rolesByID[machine.id] else { return machine }
+            var updated = machine
+            updated.role = role
+            return updated
+        }
     }
 
     private static func migrateMachinesIfNeeded(defaults: UserDefaults, credentials: any HerdrCredentialStore, configuredMachines: [HerdrMachine]) {

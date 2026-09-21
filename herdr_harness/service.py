@@ -26,6 +26,7 @@ from .client import DEFAULT_SUBSCRIPTIONS, HerdrClient, HerdrClientError
 from .cleanup import DEFAULT_JUDGE_CHARTER, CleanupManager, _parse_time
 from .events import EventBroker
 from .first_mate_store import FirstMateStore
+from .pr_review_store import PRReviewStore, PRReviewError
 from .issue_reports import IssueReporter
 from .network import network_payload
 from .normalization import composite_workspaces, pane_index
@@ -128,6 +129,8 @@ class HerdrService:
         result_artifact_store: Optional[result_artifacts.ResultArtifactStore] = None,
         first_mate_store: Optional[FirstMateStore] = None,
         first_mate_runtime: Optional[Any] = None,
+        pr_review_store: Optional[PRReviewStore] = None,
+        pr_review_runtime: Optional[Any] = None,
         control_store: Optional[Any] = None,
     ) -> None:
         production_environment = environ is None
@@ -204,6 +207,9 @@ class HerdrService:
         self._first_mate_store = first_mate_store
         self._first_mate_runtime = first_mate_runtime
         self._first_mate_notifications = None
+        self._pr_review_store = pr_review_store
+        self._pr_review_runtime = pr_review_runtime
+        self._owns_pr_review_store = pr_review_store is None
         self._owns_first_mate_store = first_mate_store is None
         self._control_store = control_store
         self._owns_control_store = control_store is None
@@ -225,6 +231,9 @@ class HerdrService:
         )
         self._first_mate_execution_enabled = first_mate_runtime is not None or self._first_mate_store_path != ":memory:"
         self._first_mate_transient_root = None
+        self._pr_review_store_path = self.environ.get("HERDR_HARNESS_PR_REVIEW_STORE_PATH") or (str(Path(self.environ.get("HERDR_STATE_DIR") or Path.home() / ".local/share/herdr-companion") / "pr-review.sqlite3") if production_environment or self.environ.get("HERDR_STATE_DIR") else ":memory:")
+        self._pr_review_execution_enabled = pr_review_runtime is not None or self._pr_review_store_path != ":memory:"
+        self._pr_review_transient_root = None
         self._quick_voice = None
         self._quick_voice_recovery_enabled = production_environment or "HERDR_QUICK_VOICE_STORE_PATH" in self.environ
         self._quick_voice_lock = threading.Lock()
@@ -514,6 +523,8 @@ class HerdrService:
         if self._first_mate_execution_enabled:
             self.first_mate.start()
             self.first_mate_notifications.start()
+        if self._pr_review_execution_enabled:
+            self.pr_review.start()
         if self._quick_voice_recovery_enabled:
             self.quick_voice.recover()
 
@@ -522,6 +533,8 @@ class HerdrService:
             self._first_mate_notifications.stop()
         if self._first_mate_runtime is not None:
             self._first_mate_runtime.stop()
+        if self._pr_review_runtime is not None:
+            self._pr_review_runtime.stop()
         self.notes.close()
         self.unread_notifications.stop()
         self.session_labels.stop()
@@ -558,10 +571,14 @@ class HerdrService:
             self.active_work.close()
         if self._owns_first_mate_store and self._first_mate_store is not None:
             self._first_mate_store.close()
+        if self._owns_pr_review_store and self._pr_review_store is not None:
+            self._pr_review_store.close()
         if self._owns_control_store and self._control_store is not None:
             self._control_store.close()
         if self._first_mate_transient_root is not None:
             self._first_mate_transient_root.cleanup()
+        if self._pr_review_transient_root is not None:
+            self._pr_review_transient_root.cleanup()
 
     @property
     def control_store(self):
@@ -619,6 +636,35 @@ class HerdrService:
         if self._first_mate_execution_enabled:
             self.first_mate.wake()
         self.broker.publish("first_mate.updated", {"feature_id": feature_id, "generatedAt": utc_now()})
+
+    @property
+    def pr_review_store(self) -> PRReviewStore:
+        with self._lock:
+            if self._pr_review_store is None:
+                self._pr_review_store = PRReviewStore(self._pr_review_store_path)
+            return self._pr_review_store
+
+    @property
+    def pr_review(self):
+        from .pr_review_runtime import PRReviewRuntime
+        with self._lock:
+            if self._pr_review_runtime is None:
+                root = None
+                if not self._pr_review_execution_enabled:
+                    self._pr_review_transient_root = tempfile.TemporaryDirectory(prefix="herdr-pr-review-")
+                    root = self._pr_review_transient_root.name
+                self._pr_review_runtime = PRReviewRuntime(self, self.pr_review_store, environ=self.environ, runtime_root=root)
+            return self._pr_review_runtime
+
+    @property
+    def pr_reviews(self):
+        """Compatibility alias used by contextual-question routing."""
+        return self.pr_review_store
+
+    def pr_review_changed(self, review_id: str) -> None:
+        if self._pr_review_execution_enabled:
+            self.pr_review.wake()
+        self.broker.publish("pr_review.updated", {"review_id": review_id, "generatedAt": utc_now()})
 
     @property
     def first_mate_notifications(self):
@@ -2868,8 +2914,21 @@ class HerdrService:
         )
 
     def start_contextual_question(self, request: dict) -> dict:
-        from .assistant import start, validate_context
+        from .assistant import PR_REVIEW_PROFILE, start, validate_context
         validate_context(request.get("context"))
+        if request.get("profile") == PR_REVIEW_PROFILE:
+            scope = request.get("scope") or {}
+            review_id = scope.get("reviewId")
+            if not isinstance(review_id, str):
+                raise AgentRunError("reviewId is required for PR review questions.", code="invalid_assistant_scope", status=400)
+            try:
+                review = self.pr_review_store.get_review(review_id, True)
+            except PRReviewError as exc:
+                raise AgentRunError(str(exc), code=exc.code, status=exc.status) from None
+            checkout = review.get("checkout_path")
+            if not isinstance(checkout, str) or not Path(checkout).is_dir():
+                raise AgentRunError("PR review checkout is unavailable.", code="invalid_assistant_scope", status=400)
+            return start(self.agent_runs, request=request, cwd=str(Path(checkout).resolve()), pane_id=None, workspace_id=review.get("workspace_id"))
         pane_id = request.get("paneId")
         cwd = str(self._server_home())
         workspace_id = None

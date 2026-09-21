@@ -8,6 +8,13 @@ private struct FirstMateNavigationRequestIdentity: Equatable {
     let controlInspector: FirstMateInspector?
 }
 
+private struct PRReviewPollingIdentity: Equatable {
+    let machineID: String?
+    let reviewID: String?
+    let generation: Int
+    let isDemo: Bool
+}
+
 /// The Mac shell. This is the iPad-regular `NavigationSplitView` branch of the
 /// iOS `WorkspaceNavigationView`, collapsed to two columns: the persistent
 /// navigator (which the iPhone build showed as an overlay drawer) and a detail
@@ -36,17 +43,33 @@ struct WorkspaceNavigationView: View {
                         }
                         FirstMateSidebarView(store: shell.firstMate, back: { shell.show(.session, model: model) }, canControl: model.isDemoMode || firstMateConfiguration != nil, leaveDemo: model.leaveDemo)
                     }
+                } else if shell.detailScope == .prReview {
+                    VStack(spacing: 0) {
+                        if !model.isDemoMode {
+                            Picker("PR review host", selection: Binding(get: { shell.prReviewMachineID ?? model.prReviewMachine?.id ?? "" }, set: { shell.prReviewMachineID = $0 })) {
+                                ForEach(model.machines) { machine in Text(machine.name).tag(machine.id) }
+                            }.padding(12).accessibilityIdentifier("pr-review-host")
+                        }
+                        PRReviewSidebarView(
+                            store: shell.prReview,
+                            back: { shell.show(.session, model: model) },
+                            canControl: model.isDemoMode || model.prReviewConfiguration() != nil,
+                            openURL: { url in Task { try? await ActiveWorkLinkOpener.open(url) } },
+                            setCreating: { shell.isCreatingPRReview = $0 }
+                        )
+                    }
                 } else {
                     HerdrSidebarView(
                         model: model,
                         openPane: openSession,
                         openWorkspace: { shell.showWorkspace(id: $0.id, model: model) },
-                        openFirstMate: { shell.show(.firstMate, model: model) }
+                        openFirstMate: { shell.show(.firstMate, model: model) },
+                        openPRReview: { shell.show(.prReview, model: model) }
                     )
                     .background(HerdrTheme.ink)
                 }
             }
-            .navigationSplitViewColumnWidth(min: shell.detailScope == .firstMate ? 210 : 240, ideal: shell.detailScope == .firstMate ? 235 : 280, max: 480)
+            .navigationSplitViewColumnWidth(min: shell.detailScope == .firstMate || shell.detailScope == .prReview ? 210 : 240, ideal: shell.detailScope == .firstMate || shell.detailScope == .prReview ? 235 : 280, max: 480)
         } detail: {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -71,6 +94,30 @@ struct WorkspaceNavigationView: View {
             await applyFirstMateNavigationRequest()
             if model.isDemoMode, ProcessInfo.processInfo.arguments.contains("-HerdrFirstMateDemo") {
                 shell.show(.firstMate, model: model)
+            }
+        }
+        .task(id: PRReviewConnectionIdentity(configuration: model.prReviewConfiguration(), generation: model.connectionGeneration, isDemo: model.isDemoMode, machineRevision: model.prReviewMachineRevision)) {
+            shell.configurePRReviewIfNeeded(configuration: model.prReviewConfiguration(), machineID: shell.prReviewMachineID ?? model.prReviewMachine?.id, connectionGeneration: model.connectionGeneration, isDemo: model.isDemoMode)
+            await shell.prReview.refresh()
+        }
+        .task(id: model.prReviewRefreshTick) {
+            guard shell.prReview.hasLoaded else { return }
+            await shell.prReview.refreshSelected()
+        }
+        .task(id: PRReviewPollingIdentity(
+            machineID: shell.prReviewMachineID ?? model.prReviewMachine?.id,
+            reviewID: shell.prReview.selectedReviewID,
+            generation: model.connectionGeneration,
+            isDemo: model.isDemoMode
+        )) {
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: shell.prReview.pollingInterval)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                await shell.prReview.refreshSelected()
             }
         }
         .task(id: FirstMateNavigationRequestIdentity(
@@ -172,6 +219,22 @@ struct WorkspaceNavigationView: View {
             }
         case .firstMate:
             FirstMateWorkspaceView(store: shell.firstMate, canControl: model.isDemoMode || firstMateConfiguration != nil)
+        case .prReview:
+            PRReviewContainerView(
+                store: shell.prReview,
+                canControl: model.isDemoMode || model.prReviewConfiguration() != nil,
+                openURL: { url in Task { try? await ActiveWorkLinkOpener.open(url) } },
+                askAI: { selection, view, rect in
+                    guard let review = shell.prReview.selectedReview else { return }
+                    Task { await model.presentPRReviewQuestion(review: review, selection: selection, anchor: (view, rect)) }
+                },
+                questionDraftChanged: { shell.hasPRReviewQuestionDraft = $0 },
+                setCreating: { shell.isCreatingPRReview = $0 },
+                openPane: { paneID, machineID in
+                    shell.openPane(rawPaneID: paneID, machineID: machineID, model: model)
+                },
+                setAddingSkill: { shell.isAddingPRReviewSkill = $0 }
+            )
         case .activeWork:
             Group {
                 if model.isDemoMode || model.activeWorkLegacyUI {
@@ -305,6 +368,9 @@ struct WorkspaceNavigationView: View {
         ToolbarItem(placement: .principal) {
             if shell.detailScope == .firstMate {
                 Label("First Mate", systemImage: "sailboat")
+                    .foregroundStyle(.primary)
+            } else if shell.detailScope == .prReview {
+                Label("PR Review", systemImage: HerdrDetailScope.prReview.symbol)
                     .foregroundStyle(.primary)
             } else {
                 WorkspaceScopePicker(

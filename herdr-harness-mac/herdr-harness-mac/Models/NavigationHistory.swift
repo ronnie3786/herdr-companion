@@ -13,6 +13,7 @@ enum HerdrDestination: Hashable, Sendable {
     case git(String)
     case workspace(String)   // scoped workspace id
     case activeWork
+    case prReview
     case firstMate
     case fleet
     case attention
@@ -127,6 +128,9 @@ extension HerdrDestinationRecord {
         case .activeWork:
             kind = "activeWork"
             id = nil
+        case .prReview:
+            kind = "prReview"
+            id = nil
         case .fleet:
             kind = "fleet"
             id = nil
@@ -152,6 +156,7 @@ extension HerdrDestinationRecord {
             return .workspace(id)
         case "firstMate": return .firstMate
         case "activeWork": return .activeWork
+        case "prReview": return .prReview
         case "fleet": return .fleet
         case "attention": return .attention
         case "activity": return .activity

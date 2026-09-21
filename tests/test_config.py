@@ -75,6 +75,42 @@ message_hub_url = "https://messages.example.invalid/api/v1/messages"
         self.assertEqual(config.environ['HERDR_HARNESS_FIRST_MATE_RUNS_ROOT'], str(self.root.resolve() / 'state/first-mate-runs'))
         self.assertNotIn('HERDR_FIRST_MATE_MESSAGE_HUB_TOKEN', config.environ)
 
+    def test_pr_review_settings_resolve_paths_defaults_and_environment_precedence(self):
+        config = self.load('''[server]
+state_dir = "state"
+[pr_review]
+workspace_label = "Synthetic Reviews"
+workspace_root = "workspace"
+checkout_root = "~/checkouts"
+store_path = "review/store.sqlite3"
+runs_root = "review/runs"
+runner = "synthetic-runner"
+auto_rank = false
+sync_viewed_to_github = true
+gh_timeout_seconds = 45
+pi_binary = "synthetic-pi"
+claude_binary = "synthetic-claude"
+''')
+        self.assertEqual(config.environ['HERDR_PR_REVIEW_WORKSPACE_LABEL'], 'Synthetic Reviews')
+        self.assertEqual(config.environ['HERDR_PR_REVIEW_WORKSPACE_ROOT'], str((self.root / 'workspace').resolve()))
+        self.assertEqual(config.environ['HERDR_PR_REVIEW_CHECKOUT_ROOT'], str(self.root / 'checkouts'))
+        self.assertEqual(config.environ['HERDR_HARNESS_PR_REVIEW_STORE_PATH'], str((self.root / 'review/store.sqlite3').resolve()))
+        self.assertEqual(config.environ['HERDR_HARNESS_PR_REVIEW_RUNS_ROOT'], str((self.root / 'review/runs').resolve()))
+        self.assertEqual(config.environ['HERDR_PR_REVIEW_RUNNER'], 'synthetic-runner')
+        self.assertEqual(config.environ['HERDR_PR_REVIEW_AUTO_RANK'], 'false')
+        defaulted = self.load('[server]\nstate_dir = "state"')
+        self.assertEqual(defaulted.environ['HERDR_HARNESS_PR_REVIEW_STORE_PATH'], str((self.root / 'state/pr-review.sqlite3').resolve()))
+        self.assertEqual(defaulted.environ['HERDR_HARNESS_PR_REVIEW_RUNS_ROOT'], str((self.root / 'state/pr-review-runs').resolve()))
+        override = load_configuration(self.path, environ={'HERDR_PR_REVIEW_RUNNER': 'process-runner'})
+        self.assertEqual(override.environ['HERDR_PR_REVIEW_RUNNER'], 'process-runner')
+
+    def test_pr_review_section_typo_and_commented_example_are_safe(self):
+        with self.assertRaises(ConfigurationError):
+            self.load('[pr_reviews]\nrunner = "synthetic"')
+        config = load_configuration(Path(__file__).resolve().parents[1] / 'config.example.toml', environ={})
+        self.assertEqual(config.section('pr_review'), {})
+        self.assertFalse(any(name.startswith('HERDR_PR_REVIEW_') for name in config.environ))
+
     def test_terminal_configuration_is_not_treated_as_cluster_configuration(self):
         directory = self.root / '.config/herdr'
         directory.mkdir(parents=True)

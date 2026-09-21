@@ -1241,6 +1241,25 @@ class HerdrHTTPTests(unittest.TestCase):
         status, _, _ = self.request("/api/v1/agent-runs", method="POST", payload={"prompt": "Explain", "context": {}})
         self.assertEqual(status, 400)
 
+    def test_pr_review_question_capabilities_and_dispatch(self):
+        status, _, capabilities = self.request("/api/v1/agent-runs/capabilities")
+        self.assertEqual(status, 200)
+        self.assertIn("pr-review-question-v1", capabilities["profiles"])
+        self.assertIn("prReviewQuestions", capabilities)
+        self.service.start_contextual_question = Mock(return_value={"ok": True, "run": {"id": "agr_0123456789ab"}})
+        request = {
+            "prompt": "Explain",
+            "profile": "pr-review-question-v1",
+            "clientRequestId": "fixture-pr-review-0001",
+            "scope": {"reviewId": "prr_0123456789ab"},
+            "context": {"version": 1},
+        }
+        status, _, _ = self.request("/api/v1/agent-runs", method="POST", payload=request)
+        self.assertEqual(status, 202)
+        self.service.start_contextual_question.assert_called_once_with(request)
+        invalid = {**request, "clientRequestId": "fixture-pr-review-0002", "cwd": "/synthetic/checkout"}
+        self.assertEqual(self.request("/api/v1/agent-runs", method="POST", payload=invalid)[0], 400)
+
     def test_response_brief_profile_is_advertised_and_dispatches_with_valid_lineage(self):
         status, _, capabilities = self.request("/api/v1/agent-runs/capabilities")
         self.assertEqual(status, 200)

@@ -146,6 +146,23 @@ poll_seconds = 10
 # review_exclude_globs = "*.generated.*,vendor/*" # Optional; default includes every file.
 # review_assessor = "~/.pi/agent/agents/pr-review-assessor.md"
 
+# [pr_review]
+# PR Review workspace (see docs/pr-review.md). Runs on the machine whose role is "development";
+# the Mac app picks that machine (Settings → Machines → PR review host overrides it). All optional.
+# workspace_label = "PR Reviews" # Dedicated Herdr workspace holding one tab per review.
+# workspace_root = "~/projects" # Working directory used only when that workspace has to be created.
+# checkout_root = "~/.local/share/herdr-companion/pr-review-runs/checkouts" # Shared clones and per-review worktrees.
+# store_path = "~/.local/share/herdr-companion/pr-review.sqlite3" # Ledger of reviews, runs, documents, events.
+# runs_root = "~/.local/share/herdr-companion/pr-review-runs" # PR metadata, diffs, documents, run logs.
+# runner = "claude" # Agent launched for skill runs: claude or pi.
+# model = "your-provider/your-model" # Pi model for impact ranking and Ask AI; omit for Pi's default.
+# thinking_level = "medium"
+# auto_rank = true # Rank files by impact after a review is prepared.
+# sync_viewed_to_github = true # Push viewed toggles to GitHub through gh.
+# gh_timeout_seconds = 120 # 10–900.
+# pi_binary = "/path/to/pi" # Optional explicit binaries when the service PATH differs.
+# claude_binary = "/path/to/claude"
+
 [code_factory]
 # Automated issue-to-release pipeline (see docs/code-factory.md). All optional.
 # repository = "YOUR-OWNER/YOUR-REPOSITORY" # Required for issue reports and Code Factory.

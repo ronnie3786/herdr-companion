@@ -10,6 +10,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
     case git
     case workspace
     case activeWork
+    case prReview
     case firstMate
     case fleet
     case attention
@@ -19,7 +20,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
 
     /// Destinations represented by the central segmented picker.
     ///
-    /// First Mate has its own feature sidebar and a dedicated entry from the navigator.
+    /// First Mate and PR Review have dedicated rails reached from the navigator.
     static let pickerCases: [HerdrDetailScope] = [
         .session,
         .git,
@@ -50,6 +51,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .workspace: "Workspace"
         case .firstMate: "First Mate"
         case .activeWork: "Active Work"
+        case .prReview: "PR Review"
         case .fleet: "Fleet"
         case .attention: "Attention"
         case .activity: "Activity"
@@ -63,6 +65,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .workspace: "rectangle.3.group"
         case .firstMate: "sailboat"
         case .activeWork: "square.grid.2x2"
+        case .prReview: "arrow.triangle.pull"
         case .fleet: "desktopcomputer"
         case .attention: "bell"
         case .activity: "clock.arrow.circlepath"
@@ -78,10 +81,13 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
 final class HerdrShellState {
     var detailScope: HerdrDetailScope = .session
     let firstMate = FirstMateStore()
+    let prReview = PRReviewStore()
     var firstMateMachineID: String?
+    var prReviewMachineID: String?
     var firstMateOpenRequest: FirstMateOpenRequest?
     var firstMateAppliedRequestID: UUID?
     @ObservationIgnored private var configuredFirstMateConnectionIdentity: FirstMateConnectionIdentity?
+    @ObservationIgnored private var configuredPRReviewConnectionIdentity: PRReviewConnectionIdentity?
     private(set) var paneModeFocusRequest = 0
     private(set) var agentControlPaneMode: PaneDetailMode?
     private var agentControlPaneID: String?
@@ -91,6 +97,9 @@ final class HerdrShellState {
     var piSessionSummaryRequest: PiSessionSummaryRequest?
     var pendingFirstMateControlTarget: (machineID: String, featureID: String, inspector: FirstMateInspector)?
     var isCreatingWorkspace = false
+    var isCreatingPRReview = false
+    var isAddingPRReviewSkill = false
+    var hasPRReviewQuestionDraft = false
     var isAgentPresented = false
     /// Help ▸ Report a Bug or Request a Feature… (⌘⌥F), also posted by the
     /// Settings Feedback section through `.herdrPresentIssueReport`.
@@ -150,6 +159,24 @@ final class HerdrShellState {
         firstMate.configure(client: configuredClient, demo: isDemo)
         configuredFirstMateConnectionIdentity = identity
         return true
+    }
+
+    @discardableResult
+    func configurePRReviewIfNeeded(configuration: ServerConfiguration?, machineID: String?, connectionGeneration: Int, isDemo: Bool, client: (any PRReviewClient)? = nil) -> Bool {
+        let identity = PRReviewConnectionIdentity(configuration: configuration, generation: connectionGeneration, isDemo: isDemo, machineRevision: machineID?.hashValue ?? 0)
+        guard identity != configuredPRReviewConnectionIdentity else { return false }
+        prReviewMachineID = machineID
+        prReview.configure(client: client ?? configuration.map { HerdrAPIClient(configuration: $0) }, machineID: machineID, demo: isDemo)
+        configuredPRReviewConnectionIdentity = identity
+        return true
+    }
+
+    func showPRReview(machineID: String?, reviewID: String?, file: String? = nil, line: Int? = nil, side: PRReviewSide = .after, tab: PRReviewTab = .files, model: HerdrAppModel) {
+        prReviewMachineID = machineID ?? model.prReviewMachine?.id
+        prReview.tab = tab
+        prReview.select(reviewID)
+        if let file { prReview.selectedPath = file; if let line { prReview.scroll(to: file, line: line, side: side) } }
+        show(.prReview, model: model)
     }
 
     /// Present the global pane navigator. Incrementing the request also lets a
@@ -269,6 +296,8 @@ final class HerdrShellState {
             return .firstMate
         case .activeWork:
             return .activeWork
+        case .prReview:
+            return .prReview
         case .fleet:
             return .fleet
         case .attention:
@@ -290,6 +319,7 @@ final class HerdrShellState {
         case .workspace: model.selectedWorkspaceID.map(HerdrDestination.workspace)
         case .firstMate: .firstMate
         case .activeWork: .activeWork
+        case .prReview: .prReview
         case .fleet: .fleet
         case .attention: .attention
         case .activity: .activity
@@ -395,6 +425,7 @@ final class HerdrShellState {
             detailScope = .workspace
         case .firstMate: detailScope = .firstMate
         case .activeWork: detailScope = .activeWork
+        case .prReview: detailScope = .prReview
         case .fleet: detailScope = .fleet
         case .attention: detailScope = .attention
         case .activity: detailScope = .activity
@@ -406,7 +437,7 @@ final class HerdrShellState {
         switch destination {
         case let .pane(id), let .git(id): model.pane(id: id) != nil
         case let .workspace(id): model.workspace(id: id) != nil
-        case .firstMate, .activeWork, .fleet, .attention, .activity: true
+        case .firstMate, .activeWork, .prReview, .fleet, .attention, .activity: true
         }
     }
 
@@ -429,6 +460,9 @@ final class HerdrShellState {
 
     var agentControlBlockingModal: String? {
         if isCreatingWorkspace { return "create-workspace" }
+        if isCreatingPRReview { return "pr-review-create" }
+        if isAddingPRReviewSkill { return "pr-review-add-skill" }
+        if hasPRReviewQuestionDraft { return "pr-review-question" }
         if isAgentPresented { return "agent" }
         if isIssueReportPresented { return "issue-report" }
         if isJumpToPanePresented { return "jump-to-pane" }
@@ -449,6 +483,7 @@ final class HerdrShellState {
             return model.currentPaneDetailMode?.rawValue ?? "session"
         case .workspace: return "workspace"
         case .activeWork: return "active-work"
+        case .prReview: return "pr-review"
         case .firstMate: return "first-mate"
         case .fleet: return "fleet"
         case .attention: return "attention"
@@ -683,6 +718,13 @@ struct AppRootView: View {
     }
 
     private func openURL(_ url: URL) {
+        if url.scheme == "herdr", url.host == "pr-review" {
+            guard let request = PRReviewOpenRequest(url: url) else { externalPiError = "Invalid PR Review navigation link."; isShowingExternalPiError = true; return }
+            if model.isDemoMode { model.leaveDemo() }
+            guard let machine = model.machines.first(where: { ServerConfiguration(urlString: $0.urlString, token: "route-validation")?.baseURL.absoluteString == request.serverURL }) else { externalPiError = "Add this review companion server in Settings → Machines, then open the link again."; isShowingExternalPiError = true; return }
+            shell.showPRReview(machineID: machine.id, reviewID: request.reviewID, file: request.file, line: request.line, side: request.side, tab: request.tab, model: model)
+            return
+        }
         if url.scheme == "herdr", url.host == "first-mate" {
             guard let request = FirstMateOpenRequest(url: url) else {
                 externalPiError = "Invalid First Mate navigation link."

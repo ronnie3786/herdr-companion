@@ -3,7 +3,163 @@ import os
 
 private let piStreamLog = OSLog(subsystem: HerdrAppIdentity.bundleIdentifier, category: "pi-stream")
 
-actor HerdrAPIClient: HerdrNotesClient, FirstMateClient {
+private struct PRReviewRequestID: Codable, Sendable {
+    let requestID: String
+
+    enum CodingKeys: String, CodingKey {
+        case requestID = "request_id"
+    }
+}
+
+private struct PRReviewCreateBody: Codable, Sendable {
+    let url: String
+    let skillIDs: [String]
+    let requestID: String
+
+    enum CodingKeys: String, CodingKey {
+        case url
+        case skillIDs = "skill_ids"
+        case requestID = "request_id"
+    }
+}
+
+private struct PRReviewRunBody: Codable, Sendable {
+    let skillID: String
+    let requestID: String
+
+    enum CodingKeys: String, CodingKey {
+        case skillID = "skill_id"
+        case requestID = "request_id"
+    }
+}
+
+private struct PRReviewFinishBody: Codable, Sendable {
+    let state: String
+    let note: String?
+    let requestID: String
+
+    enum CodingKeys: String, CodingKey {
+        case state
+        case note
+        case requestID = "request_id"
+    }
+}
+
+private struct PRReviewMarkBody: Codable, Sendable {
+    let state: String
+    let note: String?
+    let requestID: String
+
+    enum CodingKeys: String, CodingKey {
+        case state
+        case note
+        case requestID = "request_id"
+    }
+}
+
+private struct PRReviewRankingsBody: Codable, Sendable {
+    let files: [[String: String]]
+    let requestID: String
+
+    enum CodingKeys: String, CodingKey {
+        case files
+        case requestID = "request_id"
+    }
+}
+
+private struct PRReviewViewedBody: Codable, Sendable {
+    let paths: [String]
+    let viewed: Bool
+    let requestID: String
+
+    enum CodingKeys: String, CodingKey {
+        case paths
+        case viewed
+        case requestID = "request_id"
+    }
+}
+
+private struct PRReviewUploadDocumentBody: Codable, Sendable {
+    let filename: String
+    let contentType: String
+    let dataBase64: String
+    let title: String?
+    let requestID: String
+
+    enum CodingKeys: String, CodingKey {
+        case filename
+        case contentType = "content_type"
+        case dataBase64 = "data_base64"
+        case title
+        case requestID = "request_id"
+    }
+}
+
+private struct PRReviewLinkDocumentBody: Codable, Sendable {
+    let url: String
+    let title: String
+    let requestID: String
+
+    enum CodingKeys: String, CodingKey {
+        case url
+        case title
+        case requestID = "request_id"
+    }
+}
+
+private struct PRReviewPathDocumentBody: Codable, Sendable {
+    let path: String
+    let title: String?
+    let requestID: String
+
+    enum CodingKeys: String, CodingKey {
+        case path
+        case title
+        case requestID = "request_id"
+    }
+}
+
+private struct PRReviewSkillsResponse: Decodable, Sendable {
+    let skills: [PRReviewSkill]
+}
+
+private struct PRReviewSkillResponse: Decodable, Sendable {
+    let skill: PRReviewSkill
+}
+
+private struct PRReviewSkillStateResponse: Decodable, Sendable {
+    let skill: PRReviewSkillState
+}
+
+private struct PRReviewRunResponse: Decodable, Sendable {
+    let run: PRReviewRun
+}
+
+private struct PRReviewOutputResponse: Decodable, Sendable {
+    let output: String
+}
+
+private struct PRReviewReviewResponse: Decodable, Sendable {
+    let review: PRReviewSummary
+}
+
+private struct PRReviewFilesResponse: Decodable, Sendable {
+    let files: [PRReviewFile]
+}
+
+private struct PRReviewDocumentsResponse: Decodable, Sendable {
+    let documents: [PRReviewDocument]
+}
+
+private struct PRReviewDocumentResponse: Decodable, Sendable {
+    let document: PRReviewDocument
+}
+
+private struct PRReviewEventsResponse: Decodable, Sendable {
+    let events: [PRReviewEvent]
+}
+
+actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient {
     private let configuration: ServerConfiguration
     private let session: URLSession
     private let cleanupApplyPollInterval: Duration
@@ -77,6 +233,103 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient {
               id.unicodeScalars.allSatisfy(allowed.contains) else { throw APIError.invalidResponse }
         return "/api/v1/first-mate/\(collection)/\(id)"
     }
+
+    // PR Review ids are server-issued opaque tokens. Validate them before they
+    // become URL path components, just as First Mate ids are validated above.
+    private func prReviewPath(_ collection: String = "", id: String? = nil) throws -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_ .").subtracting(CharacterSet(charactersIn: " ")))
+        if let id {
+            guard !id.isEmpty, id != ".", id != "..", id.count <= 256,
+                  id.unicodeScalars.allSatisfy(allowed.contains) else { throw APIError.invalidResponse }
+        }
+        let suffix = [collection, id].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "/")
+        return "/api/v1/pr-reviews" + (suffix.isEmpty ? "" : "/" + suffix)
+    }
+
+    func prReviewCapabilities() async throws -> PRReviewCapabilities { try await request(path: try prReviewPath("capabilities")) }
+    func prReviewSkills() async throws -> [PRReviewSkill] { let r: PRReviewSkillsResponse = try await request(path: try prReviewPath("skills")); return r.skills }
+    func addPRReviewSkill(_ body: PRReviewSkillCreateRequest) async throws -> PRReviewSkill { let r: PRReviewSkillResponse = try await request(path: try prReviewPath("skills"), method: "POST", body: body); return r.skill }
+    func removePRReviewSkill(id: String, requestID: String) async throws -> [PRReviewSkill] { let r: PRReviewSkillsResponse = try await request(path: try prReviewPath("skills", id: id), method: "DELETE", body: PRReviewRequestID(requestID: requestID)); return r.skills }
+    func prReviews(scope: String = "active") async throws -> [PRReviewSummary] { let r: PRReviewListResponse = try await request(path: try prReviewPath(), query: [.init(name: "scope", value: scope)]); return r.reviews }
+    func createPRReview(url: String, skillIDs: [String], requestID: String) async throws -> PRReviewSnapshot { try await request(path: try prReviewPath(), method: "POST", body: PRReviewCreateBody(url: url, skillIDs: skillIDs, requestID: requestID)) }
+    func prReview(id: String) async throws -> PRReviewSnapshot { try await request(path: try prReviewPath(id: id)) }
+    func refreshPRReview(id: String, requestID: String) async throws -> PRReviewSnapshot { try await request(path: try prReviewPath(id: id) + "/refresh", method: "POST", body: PRReviewRequestID(requestID: requestID)) }
+    func archivePRReview(id: String, archived: Bool, requestID: String) async throws -> PRReviewSnapshot { try await request(path: try prReviewPath(id: id) + (archived ? "/archive" : "/unarchive"), method: "POST", body: PRReviewRequestID(requestID: requestID)) }
+    func prReviewDiff(id: String, path: String? = nil) async throws -> PRReviewDiff { try await request(path: try prReviewPath(id: id) + "/diff", query: path.map { [.init(name: "path", value: $0)] } ?? []) }
+    func prReviewFileText(id: String, path: String, side: PRReviewSide, start: Int?, end: Int?) async throws -> PRReviewFileText { var q=[URLQueryItem(name:"path",value:path),.init(name:"side",value:side.rawValue)]; if let start { q.append(.init(name:"start",value:String(start))) }; if let end { q.append(.init(name:"end",value:String(end))) }; return try await request(path: try prReviewPath(id:id)+"/file",query:q) }
+    func prReviewFindings(id: String, path: String) async throws -> PRReviewFindings { try await request(path: try prReviewPath(id:id)+"/findings",query:[.init(name:"path",value:path)]) }
+    func createPRReviewRun(id:String,skillID:String,requestID:String) async throws -> PRReviewRun { let r:PRReviewRunResponse=try await request(path:try prReviewPath(id:id)+"/runs",method:"POST",body:PRReviewRunBody(skillID:skillID,requestID:requestID));return r.run }
+    func prReviewRun(reviewID:String,runID:String) async throws -> PRReviewRun { let r:PRReviewRunResponse=try await request(path:try prReviewPath(id:reviewID)+"/runs/"+validatedPRReviewID(runID));return r.run }
+    func finishPRReviewRun(reviewID:String,runID:String,state:PRReviewRunState,note:String?,requestID:String) async throws -> PRReviewRun { let r:PRReviewRunResponse=try await request(path:try prReviewPath(id:reviewID)+"/runs/"+validatedPRReviewID(runID)+"/finish",method:"POST",body:PRReviewFinishBody(state:state.rawValue,note:note,requestID:requestID));return r.run }
+    func prReviewRunOutput(reviewID:String,runID:String,lines:Int) async throws -> String { let r:PRReviewOutputResponse=try await request(path:try prReviewPath(id:reviewID)+"/runs/"+validatedPRReviewID(runID)+"/output",query:[.init(name:"lines",value:String(lines))]);return r.output }
+    func markPRReviewSkill(reviewID:String,skillID:String,state:String,note:String?,requestID:String) async throws -> PRReviewSkillState { let r:PRReviewSkillStateResponse=try await request(path:try prReviewPath(id:reviewID)+"/skills/"+validatedPRReviewID(skillID)+"/mark",method:"POST",body:PRReviewMarkBody(state:state,note:note,requestID:requestID));return r.skill }
+    func rankPRReview(id:String,requestID:String) async throws -> PRReviewSummary { let r:PRReviewReviewResponse=try await request(path:try prReviewPath(id:id)+"/rank",method:"POST",body:PRReviewRequestID(requestID:requestID));return r.review }
+    func setPRReviewRankings(id:String,files:[[String:String]],requestID:String) async throws -> [PRReviewFile] { let r:PRReviewFilesResponse=try await request(path:try prReviewPath(id:id)+"/rankings",method:"PUT",body:PRReviewRankingsBody(files:files,requestID:requestID));return r.files }
+    func setPRReviewViewed(id:String,paths:[String],viewed:Bool,requestID:String) async throws -> [PRReviewFile] { let r:PRReviewFilesResponse=try await request(path:try prReviewPath(id:id)+"/viewed",method:"POST",body:PRReviewViewedBody(paths:paths,viewed:viewed,requestID:requestID));return r.files }
+    func syncPRReviewViewed(id:String,requestID:String) async throws -> [PRReviewFile] { let r:PRReviewFilesResponse=try await request(path:try prReviewPath(id:id)+"/viewed/sync",method:"POST",body:PRReviewRequestID(requestID:requestID));return r.files }
+    func prReviewDocuments(id:String) async throws -> [PRReviewDocument] { let r:PRReviewDocumentsResponse=try await request(path:try prReviewPath(id:id)+"/documents");return r.documents }
+    func addPRReviewDocument(
+        id: String,
+        payload: PRReviewDocumentPayload,
+        requestID: String
+    ) async throws -> PRReviewDocument {
+        let path = try prReviewPath(id: id) + "/documents"
+        let response: PRReviewDocumentResponse
+
+        switch payload {
+        case let .upload(filename, contentType, dataBase64, title):
+            let body = PRReviewUploadDocumentBody(
+                filename: filename,
+                contentType: contentType,
+                dataBase64: dataBase64,
+                title: title,
+                requestID: requestID
+            )
+            response = try await request(path: path, method: "POST", body: body)
+        case let .link(url, title):
+            let body = PRReviewLinkDocumentBody(
+                url: url,
+                title: title,
+                requestID: requestID
+            )
+            response = try await request(path: path, method: "POST", body: body)
+        case let .path(filePath, title):
+            let body = PRReviewPathDocumentBody(
+                path: filePath,
+                title: title,
+                requestID: requestID
+            )
+            response = try await request(path: path, method: "POST", body: body)
+        }
+
+        return response.document
+    }
+    func prReviewDocument(reviewID:String,documentID:String) async throws -> PRReviewDocument { let r:PRReviewDocumentResponse=try await request(path:try prReviewPath(id:reviewID)+"/documents/"+validatedPRReviewID(documentID));return r.document }
+    func downloadPRReviewDocument(reviewID: String, documentID: String, expectedByteSize: Int64, to destinationURL: URL) async throws {
+        guard destinationURL.isFileURL, (0...2 * 1024 * 1024 * 1024).contains(expectedByteSize) else { throw APIError.invalidResponse }
+        let request = makeRequest(path: try prReviewPath(id: reviewID) + "/documents/" + validatedPRReviewID(documentID) + "/content", method: "GET")
+        let limiter = ResultArtifactDownloadLimiter(maximumByteCount: expectedByteSize)
+        let (temporary, response): (URL, URLResponse)
+        do {
+            (temporary, response) = try await session.download(for: request, delegate: limiter)
+        } catch {
+            if limiter.exceededLimit { throw APIError.invalidResponse }
+            throw error
+        }
+        try Self.validate(response: response)
+        try Task.checkCancellation()
+        guard response.expectedContentLength == expectedByteSize else { throw APIError.invalidResponse }
+        let values = try temporary.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+        guard values.isRegularFile == true, values.fileSize == Int(expectedByteSize) else { throw APIError.invalidResponse }
+        let fm = FileManager.default; try fm.createDirectory(at: destinationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let staging = destinationURL.deletingLastPathComponent().appending(path: ".\(destinationURL.lastPathComponent).\(UUID().uuidString).partial")
+        defer { try? fm.removeItem(at: staging) }
+        try fm.copyItem(at: temporary, to: staging)
+        if !fm.fileExists(atPath: destinationURL.path) { try fm.moveItem(at: staging, to: destinationURL) }
+    }
+    func prReviewEvents(id:String,after:Int?) async throws -> [PRReviewEvent] { let r:PRReviewEventsResponse=try await request(path:try prReviewPath(id:id)+"/events",query:after.map{[.init(name:"after",value:String($0))]} ?? []);return r.events }
+
+    private func validatedPRReviewID(_ id: String) -> String { id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id }
 
     func fetchNotes() async throws -> HerdrNotesCollection {
         try await request(path: "/api/v1/notes")
@@ -1287,6 +1540,9 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient {
     }
 
     static func timeoutInterval(path: String, method: String) -> TimeInterval {
+        if path.hasPrefix("/api/v1/pr-reviews/") && path.hasSuffix("/content") { return 600 }
+        if path.hasPrefix("/api/v1/pr-reviews/") && path.hasSuffix("/documents") && method == "POST" { return 90 }
+        if path.hasPrefix("/api/v1/pr-reviews") { return 30 }
         if path == "/api/v1/health" || path == "/api/v1/network" || path == "/api/v1/config/machines" {
             return 8
         }

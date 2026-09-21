@@ -33,6 +33,20 @@ struct MachinesView: View {
                     }
                 }
 
+                Section("PR review") {
+                    Picker("PR review host", selection: prReviewMachineBinding) {
+                        Text("Automatic (development role)").tag("")
+                        ForEach(model.machines) { machine in
+                            Text(prReviewMachineLabel(for: machine))
+                                .tag(machine.id)
+                        }
+                    }
+                    .accessibilityIdentifier("settings-pr-review-host")
+                    Text(prReviewMachineResolution)
+                        .herdrFont(.caption)
+                        .foregroundStyle(HerdrTheme.muted)
+                }
+
                 Section {
                     Button {
                         editingMachine = nil
@@ -68,6 +82,26 @@ struct MachinesView: View {
             MachineEditorView(model: model, machine: editingMachine)
                 .frame(minWidth: 480, minHeight: 420)
         }
+    }
+
+    private var prReviewMachineBinding: Binding<String> {
+        Binding(
+            get: { model.prReviewMachineOverrideID ?? "" },
+            set: { model.setPRReviewMachineOverride($0.isEmpty ? nil : $0) }
+        )
+    }
+
+    private var prReviewMachineResolution: String {
+        model.prReviewMachine.map { "Resolved host: \($0.name)" }
+            ?? "No development-role machine is configured."
+    }
+
+    private func prReviewMachineLabel(for machine: HerdrMachine) -> String {
+        guard let role = machine.role else {
+            return machine.name
+        }
+
+        return "\(machine.name) · \(role)"
     }
 }
 

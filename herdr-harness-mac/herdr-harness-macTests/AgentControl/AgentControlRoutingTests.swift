@@ -5,6 +5,18 @@ import Testing
 
 @MainActor
 struct AgentControlRoutingTests {
+    @Test("PR Review agent-control segment routes to its dedicated destination")
+    func prReviewSegmentRoutesToDedicatedDestination() async throws {
+        let fixture = makeFixture()
+
+        _ = try await fixture.controller.executeForTesting(
+            command(action: "ui.segment", parameters: ["segment": .string("pr-review")]),
+            serverMapping: [:]
+        )
+
+        #expect(fixture.shell.detailScope == .prReview)
+    }
+
     @Test("Exact pane routing rejects stale terminal, session, and server identities while accepting CLI aliases")
     func staleIdentityRejection() async throws {
         let fixture = makeFixture()

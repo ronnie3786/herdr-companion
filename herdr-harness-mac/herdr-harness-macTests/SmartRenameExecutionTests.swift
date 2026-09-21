@@ -90,7 +90,7 @@ struct SmartRenameExecutionTests {
         #expect(toast.contains("Settings"))
     }
 
-    @Test("A failed run carrying partial title text never mutates the pane and reports once")
+    @Test("A failed run carrying valid title JSON never mutates the pane and reports once")
     func advertisedModelRunFailureCarriesNoPartialTitle() async throws {
         var configuration = SmartRenameExecutionFixture()
         configuration.startBehavior = .failRun
@@ -369,7 +369,10 @@ private final class SmartRenameExecutionURLProtocol: URLProtocol, @unchecked Sen
                     200,
                     Self.runEnvelope(
                         status: "failed",
-                        response: #"{"title":"Partial synthetic title"#,
+                        // Valid title JSON on a failed run must still be ignored:
+                        // the companion marks provider errors and aborts failed
+                        // before any client can apply this text.
+                        response: #"{"title":"Partial synthetic title"}"#,
                         error: "Synthetic provider failure"
                     )
                 )

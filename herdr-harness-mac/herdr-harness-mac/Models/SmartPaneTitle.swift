@@ -49,14 +49,28 @@ enum SmartPaneTitle {
         snapshot.session?.string(for: "id", "sessionId", "session_id") ?? snapshot.session?.stringValue
     }
 
-    /// Whether a submitted prompt already appears in the projected context.
-    /// Bridge snapshots can lag a just-accepted submission, so the newest
-    /// prompt is merged in only when the snapshot has not caught up yet.
+    /// Whether the projected context already contains the submitted prompt as
+    /// its exact user turn. A prefix or substring match is not enough:
+    /// different template-based prompts can share a long prefix, and assistant
+    /// text can repeat the same words. Anything short of a complete `User:`
+    /// turn is treated as absent, so the newest prompt is prepended rather
+    /// than risking omission.
     static func contextContains(prompt: String, in context: String) -> Bool {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return true }
-        let signature = String(trimmed.prefix(120))
-        return context.contains(signature)
+        let turn = "User: \(trimmed)"
+        var searchStart = context.startIndex
+        while let range = context.range(of: turn, range: searchStart..<context.endIndex) {
+            let startsTurn = range.lowerBound == context.startIndex
+                || context[context.index(before: range.lowerBound)] == "\n"
+            let endsTurn = range.upperBound == context.endIndex
+                || context[range.upperBound] == "\n"
+            if startsTurn && endsTurn {
+                return true
+            }
+            searchStart = range.upperBound
+        }
+        return false
     }
 
     /// Merges an acknowledged submission ahead of the snapshot conversation

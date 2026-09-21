@@ -75,6 +75,43 @@ struct SmartPaneTitleTests {
         #expect(merged.hasPrefix("User: \(followUp)"))
         #expect(merged.contains(conversation))
         #expect(merged.components(separatedBy: followUp).count == 2)
+
+        // An exact turn anywhere in the projection still counts as present.
+        let midConversation = "Assistant: Earlier answer\nUser: Fix garden irrigation\nAssistant: Done"
+        #expect(SmartPaneTitle.contextContains(prompt: "Fix garden irrigation", in: midConversation))
+    }
+
+    @Test func treatsPromptsSharingALongPrefixAsDistinctTurns() throws {
+        let sharedPrefix = String(repeating: "synthetic template context ", count: 5)
+        #expect(sharedPrefix.count > 120)
+        let older = sharedPrefix + "alpha task"
+        let newer = sharedPrefix + "beta task"
+        let snapshot = try JSONDecoder().decode(PiConversationSnapshot.self, from: Data(#"""
+        {"entries":[
+          {"type":"message","id":"a","message":{"role":"user","content":[{"type":"text","text":"\#(older)"}]}}
+        ]}
+        """#.utf8))
+        let conversation = SmartPaneTitle.context(from: snapshot)
+        #expect(SmartPaneTitle.contextContains(prompt: older, in: conversation))
+        #expect(!SmartPaneTitle.contextContains(prompt: newer, in: conversation))
+
+        // The newest prompt is preserved instead of being dropped because an
+        // older prompt shares its first 120 characters.
+        let merged = SmartPaneTitle.mergedContext(conversation: conversation, acceptedPrompt: newer)
+        #expect(merged.hasPrefix("User: \(newer)"))
+        #expect(merged.contains("User: \(older)"))
+    }
+
+    @Test func doesNotTreatAssistantTextOrPartialTurnsAsTheAcceptedPrompt() {
+        let prompt = "Synthetic prompt that assistant text happens to quote"
+        let conversation = "User: Some earlier task\nAssistant: As requested, use: \(prompt)"
+        #expect(!SmartPaneTitle.contextContains(prompt: prompt, in: conversation))
+        let merged = SmartPaneTitle.mergedContext(conversation: conversation, acceptedPrompt: prompt)
+        #expect(merged.hasPrefix("User: \(prompt)"))
+
+        // A user line that only starts with the prompt is not the exact turn.
+        let extended = "User: \(prompt) with a suffix the submitter never sent"
+        #expect(!SmartPaneTitle.contextContains(prompt: prompt, in: extended))
     }
 
     @Test func boundsMergedContextAndConversation() throws {

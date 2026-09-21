@@ -1,17 +1,21 @@
 import http.client
 import json
+import tempfile
 import threading
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 import urllib.error
 import urllib.parse
 import urllib.request
 
+from herdr_harness.agent_runs import SMART_RENAME_PROFILE
 from herdr_harness.events import EventBroker
 from herdr_harness.pi_semantic import PiSemanticError
 from herdr_harness.server import make_server
 from herdr_harness.service import HerdrService
 from herdr_harness.workspace_tools import WorkspaceToolError
+from tests.test_agent_runs import wait_for_status, write_fake_pi
 from tests.test_herdr_service import FakeClient, snapshot_with_status
 
 
@@ -1281,6 +1285,77 @@ class HerdrHTTPTests(unittest.TestCase):
                     self.request("/api/v1/agent-runs", method="POST", payload=invalid)[0], 400
                 )
         self.assertEqual(self.service.start_smart_rename.call_count, 2)
+
+    def test_smart_rename_runs_cannot_be_continued_or_promoted_over_http(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            home = directory / "home"
+            home.mkdir()
+            fake_pi = write_fake_pi(directory)
+            service = HerdrService(
+                FakeClient([snapshot_with_status("done")]),
+                environ={
+                    "HOME": str(home),
+                    "HERDR_HARNESS_AGENT_RUNS_ROOT": str(directory / "runs"),
+                    "HERDR_HARNESS_AGENT_PI_BIN": str(fake_pi),
+                },
+            )
+            manager = service.agent_runs
+            naming = manager.start(
+                prompt="Name this synthetic chat",
+                label="Smart Rename",
+                cwd=str(home),
+                topology={},
+                _assistant={"profile": SMART_RENAME_PROFILE},
+            )["run"]
+            wait_for_status(manager, naming["id"], {"completed"})
+
+            server = make_server(service, host="127.0.0.1", port=0, api_token="test-secret")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            base = f"http://127.0.0.1:{server.server_address[1]}"
+
+            def post(path, payload):
+                request = urllib.request.Request(
+                    base + path,
+                    method="POST",
+                    data=json.dumps(payload).encode(),
+                    headers={
+                        "Authorization": "Bearer test-secret",
+                        "Content-Type": "application/json",
+                    },
+                )
+                try:
+                    with urllib.request.urlopen(request, timeout=5) as response:
+                        return response.status, json.loads(response.read())
+                except urllib.error.HTTPError as exc:
+                    return exc.code, json.loads(exc.read())
+
+            try:
+                # A generic request must not continue a completed naming run
+                # even when it omits the naming profile.
+                status, body = post(
+                    "/api/v1/agent-runs",
+                    {"prompt": "Continue generically", "continueFromRunId": naming["id"]},
+                )
+                self.assertEqual(status, 409)
+                self.assertEqual(body["error"]["code"], "smart_rename_continuation_forbidden")
+
+                # Promotion would expose the one-shot naming session as a chat.
+                status, body = post(f"/api/v1/agent-runs/{naming['id']}/promote", {})
+                self.assertEqual(status, 409)
+                self.assertEqual(body["error"]["code"], "smart_rename_promotion_forbidden")
+
+                # Neither rejected call created a run or changed the naming run.
+                self.assertEqual(len(list((directory / "runs").glob("agr_*"))), 1)
+                unchanged = manager.get(naming["id"])["run"]
+                self.assertEqual(unchanged["status"], "completed")
+                self.assertIsNone(unchanged.get("promotedPaneId"))
+            finally:
+                service.stop()
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=1)
 
     def test_pr_review_question_capabilities_and_dispatch(self):
         status, _, capabilities = self.request("/api/v1/agent-runs/capabilities")

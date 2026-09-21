@@ -77,7 +77,9 @@ Smart Rename never relies on prompt wording to prevent tool use:
    companion executes with `--no-tools`, no explicit extension, and a
    server-owned naming charter. A naming run accepts only a prompt, model, and
    thinking level; it refuses attachments, continuation, a custom system
-   prompt, a working-folder change, or supplied context.
+   prompt, a working-folder change, or supplied context. The companion also
+   refuses to continue or promote the stored naming run itself, so its one-shot
+   session can never be reused as a tool-enabled chat.
 2. Before dispatching, the app reads that companion's `/agent-runs/capabilities`
    and requires the advertised profile. A companion that does not advertise it
    is never sent the naming ask — an older companion would route the unknown
@@ -120,7 +122,11 @@ conversation:
    ahead of a lagging snapshot, so a pane or HUD chat can be named from the
    prompt alone before any assistant response. Failed submissions are never
    used, and a cached prompt is only considered for the same machine, pane,
-   terminal, workspace, tab, session, and connection generation.
+   terminal, workspace, tab, session, and connection generation. The prompt is
+   only skipped when the snapshot already contains that complete `User:` turn:
+   a shared prefix, a partial line, or the same words inside assistant text are
+   not treated as the same turn, so the newest prompt is preserved instead of
+   risking omission.
 3. **Bounded terminal output** for shell or other nonsemantic panes — the last
    160 lines within the final 128,000 characters of output, with ANSI/CSI/OSC
    escape sequences and control characters stripped. It is labeled as untrusted
@@ -165,6 +171,12 @@ conversation or assistant reply.
   revision, and submission revision before the model, context, and AI work,
   rechecks them immediately before the server mutation, and reports a conflict
   if anything changed.
+- Color-group naming captures each sampled pane's identity, connection
+  generation, rename revision, and submission revision before loading that
+  pane's context, then rechecks all of them together with the shared label
+  revision and current membership before applying the label. A prompt accepted,
+  a manual rename, or a connection change while context is loading discards the
+  stale result.
 - Invalid output (not a JSON `title` object, empty after trimming, longer than
   80 characters, or containing control characters) performs no mutation and
   reports the failure through the actionable execution-error formatter, naming
@@ -262,7 +274,49 @@ Node suites, the standalone-install check, the gitleaks history scan, and
 `python3 scripts/check-public-source.py` (run with `--staged` inside Verify).
 The complete manual matrix and smoke-check procedure below are handed to that
 single final validation owner; tests are authored alongside the code but are not
-run incrementally or duplicated locally by habit.
+run incrementally or duplicated locally by habit. A passing Verify run proves
+the fixture-backed suites only: it is not evidence that an installed build
+shows the behavior or that any real provider works. Those records come from the
+private installed-UI matrix and per-companion execution checks below, and
+delivery stays gated until they exist for the delivered revision.
+
+### Installed-UI evidence
+
+The single final validation owner runs the synthetic matrix on the exact built
+revision of the Mac app paired with the tested companion revision, using only
+disposable synthetic machines and data. One private report outside Git records,
+for every scenario, the app/source revision, the companion revision, whether the
+companion advertises the tool-free `smart-rename-v1` profile, the effective
+model and thinking level, the observed result, and any failure. The record must
+cover at least:
+
+1. **Settings controls** — the Smart Rename model and thinking controls appear,
+   an empty model inherits the Agent model then the execution machine's Pi
+   default, thinking defaults to Low, and the choices survive a relaunch.
+2. **Prompt-only pane naming** — submit a prompt to a fresh disposable Pi pane
+   and rename it before any reply appears; the submitted prompt alone produces a
+   title, and a reply arriving during naming does not discard it.
+3. **Shell naming** — a controllable disposable shell pane without a Pi session
+   is named from bounded terminal output and pane/workspace metadata, with no
+   input submitted to the shell.
+4. **HUD naming** — the same prompt-only check, plus title persistence after
+   relaunch, removal, and reopening from history.
+5. **Color-group naming** — a color group with readable synthetic context is
+   named on the machine of the first successfully sampled controllable pane.
+6. **Strict failures** — a missing explicit or inherited model, an unreadable
+   or empty catalog, a non-reasoning model paired with an effort above Off,
+   and a companion that does not advertise the profile each stop before
+   dispatch, keep the existing title or label, leave the saved selection
+   unchanged, and show the actionable error.
+
+A green exact-SHA Verify run is not a substitute for this record. A companion
+that is inaccessible remains **unverified**, and a check that was not performed
+stays explicitly **unperformed**; neither may be reported as passing, fixed, or
+working. Delivery — release notes, upload, or companion publication — stays
+gated until both this private installed-UI matrix and the per-companion
+smoke-check results below are recorded for the delivered revision. Do not
+change credentials or providers, and do not deploy companion servers, merely
+to produce this evidence.
 
 ### Synthetic manual matrix
 

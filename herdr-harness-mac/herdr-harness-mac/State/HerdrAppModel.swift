@@ -2307,13 +2307,24 @@ final class HerdrAppModel {
             var seenTabs: Set<String> = []
             let representatives = controllable.filter { seenTabs.insert($0.scopedTabID).inserted }
             let extra = controllable.filter { pane in !representatives.contains(where: { $0.id == pane.id }) }
-            var loaded: [(pane: HerdrPane, submissionRevision: UUID?)] = []
+            var loaded: [(pane: HerdrPane, identity: PaneMutationIdentity)] = []
             for pane in (representatives + extra).prefix(6) {
                 try Task.checkCancellation()
+                // Context loading reads the accepted submission synchronously
+                // and then awaits the snapshot. Capture this pane's identity
+                // first so a prompt accepted, a manual rename, or a connection
+                // change during that await cannot be paired with the older
+                // context and pass the final guard.
+                let identity = PaneMutationIdentity(
+                    pane: pane,
+                    connectionGeneration: connectionGeneration,
+                    renameRevision: paneRenameRevisions[pane.id],
+                    submissionRevision: paneSubmissionRevisions[pane.id]
+                )
                 do {
                     guard let text = try await smartRenameContext(for: pane), !text.isEmpty else { continue }
                     context += "\nChat \(pane.displayTitle.prefix(80)):\n\(SmartChatColorTitle.compact(text))"
-                    loaded.append((pane, paneSubmissionRevisions[pane.id]))
+                    loaded.append((pane, identity))
                 } catch is CancellationError { throw CancellationError() }
                 catch { continue } // One unavailable sibling must not hide the others.
             }
@@ -2349,11 +2360,12 @@ final class HerdrAppModel {
                   currentIDs == Set(panes.map(\.id)),
                   loaded.allSatisfy({ entry in
                       guard let current = pane(id: entry.pane.id) else { return false }
-                      return current.terminalID == entry.pane.terminalID
-                          && current.piSemantic?.sessionID == entry.pane.piSemantic?.sessionID
-                          && current.label == entry.pane.label
-                          && current.title == entry.pane.title
-                          && paneSubmissionRevisions[current.id] == entry.submissionRevision
+                      return entry.identity.matches(
+                          current,
+                          connectionGeneration: connectionGeneration,
+                          renameRevision: paneRenameRevisions[current.id],
+                          submissionRevision: paneSubmissionRevisions[current.id]
+                      )
                   }) else {
                 toastMessage = "Color group changed while naming it. Your changes were kept."
                 return

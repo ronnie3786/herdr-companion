@@ -60,6 +60,33 @@ struct SmartPaneRenameTests {
         #expect(SmartRenameFixtureURLProtocol.counts().renames == 1)
     }
 
+    @Test("A prompt sharing a long prefix with a lagging snapshot is still merged")
+    func sharedPrefixPromptIsStillMerged() async throws {
+        let sharedPrefix = String(repeating: "synthetic template context ", count: 5)
+        let older = sharedPrefix + "alpha task"
+        let newer = sharedPrefix + "beta task"
+        var configuration = SmartRenameFixtureConfiguration()
+        configuration.paneLabel = "Prefix pane"
+        configuration.snapshotBody = """
+        {"available":true,"session":{"id":"synthetic-session"},"entries":[
+          {"type":"message","id":"a","message":{"role":"user","content":[{"type":"text","text":"\(older)"}]}}
+        ]}
+        """
+        let fixture = try makeFixture(configuration)
+        defer { tearDown(fixture) }
+
+        try await fixture.model.sendPiConversationPrompt(newer, disposition: .prompt, to: fixture.pane)
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Synthetic prefix naming"}"#)
+        await fixture.model.smartRename(fixture.pane, runner: runner)
+
+        let call = try #require(runner.calls.first)
+        #expect(call.prompt.contains("User: \(newer)"))
+        #expect(call.prompt.contains("User: \(older)"))
+        #expect(SmartRenameFixtureURLProtocol.counts().renames == 1)
+    }
+
     @Test("A controllable shell pane is named from bounded terminal output")
     func shellPaneUsesTerminalOutput() async throws {
         var configuration = SmartRenameFixtureConfiguration()

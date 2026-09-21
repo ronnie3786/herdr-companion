@@ -255,6 +255,55 @@ struct SmartChatColorRenameTests {
         #expect(fixture.model.toastMessage?.contains("changed") == true)
     }
 
+    @Test("A prompt accepted while color context loads invalidates the late label")
+    func submissionDuringContextLoadInvalidatesLateLabel() async throws {
+        let fixture = try makeFixture()
+        defer { tearDown(fixture) }
+        let sampledPane = try #require(fixture.model.workspaces.first?.panes.first)
+
+        // Park the snapshot response so the newer prompt is accepted between
+        // the accepted-prompt capture and the identity recheck.
+        ChatColorFixtureURLProtocol.delayNextSnapshot()
+        defer { ChatColorFixtureURLProtocol.releaseSnapshot() }
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Stale group title"}"#)
+        let rename = Task { await fixture.model.smartRenameChatColor(.sage, runner: runner) }
+        try await wait { ChatColorFixtureURLProtocol.snapshotStarts() == 1 }
+        try await fixture.model.sendPiConversationPrompt(
+            "Newer synthetic instruction accepted during context loading",
+            disposition: .prompt,
+            to: sampledPane
+        )
+        ChatColorFixtureURLProtocol.releaseSnapshot()
+        await rename.value
+
+        #expect(runner.calls.count == 1)
+        #expect(fixture.model.chatTabColors.label(for: .sage) == "Sage")
+        #expect(fixture.model.chatTabColors.smartRenaming.isEmpty)
+        #expect(fixture.model.toastMessage?.contains("changed") == true)
+    }
+
+    @Test("A connection change while color context loads invalidates the late label")
+    func connectionChangeDuringContextLoadInvalidatesLateLabel() async throws {
+        let fixture = try makeFixture()
+        defer { tearDown(fixture) }
+
+        ChatColorFixtureURLProtocol.delayNextSnapshot()
+        defer { ChatColorFixtureURLProtocol.releaseSnapshot() }
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Stale group title"}"#)
+        let rename = Task { await fixture.model.smartRenameChatColor(.sage, runner: runner) }
+        try await wait { ChatColorFixtureURLProtocol.snapshotStarts() == 1 }
+        fixture.model.connectionGeneration += 1
+        ChatColorFixtureURLProtocol.releaseSnapshot()
+        await rename.value
+
+        #expect(runner.calls.count == 1)
+        #expect(fixture.model.chatTabColors.label(for: .sage) == "Sage")
+        #expect(fixture.model.chatTabColors.smartRenaming.isEmpty)
+        #expect(fixture.model.toastMessage?.contains("changed") == true)
+    }
+
     @Test("Invalid color-label output reports the selection without echoing the raw response")
     func invalidOutputReportsSelection() async throws {
         let responses = [
@@ -352,6 +401,16 @@ struct SmartChatColorRenameTests {
         fixture.defaults.removePersistentDomain(forName: fixture.suite)
         ChatColorFixtureURLProtocol.reset()
     }
+
+    private func wait(_ condition: () -> Bool) async throws {
+        for _ in 0..<300 {
+            if condition() { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw WaitError.timedOut
+    }
+
+    private enum WaitError: Error { case timedOut }
 }
 
 private struct ChatColorFixtureError: LocalizedError {
@@ -443,8 +502,11 @@ private final class ChatColorFixtureURLProtocol: URLProtocol, @unchecked Sendabl
         var configuration = ChatColorFixtureConfiguration()
         var submissions = 0
         var snapshots = 0
+        var snapshotStarts = 0
         var outputs = 0
         var catalogFetches: [Int: Int] = [:]
+        var delayNextSnapshot = false
+        let snapshotGate = DispatchSemaphore(value: 0)
     }
 
     private static let state = Mutex(State())
@@ -455,6 +517,23 @@ private final class ChatColorFixtureURLProtocol: URLProtocol, @unchecked Sendabl
 
     static func reset() {
         state.withLock { $0 = State() }
+    }
+
+    /// Parks the next snapshot response so a test can interleave an accepted
+    /// prompt or a connection change with context loading.
+    static func delayNextSnapshot() {
+        state.withLock { $0.delayNextSnapshot = true }
+    }
+
+    static func snapshotStarts() -> Int {
+        state.withLock { $0.snapshotStarts }
+    }
+
+    static func releaseSnapshot() {
+        state.withLock { state in
+            state.delayNextSnapshot = false
+            state.snapshotGate.signal()
+        }
     }
 
     static func counts() -> (submissions: Int, snapshots: Int, outputs: Int) {
@@ -473,6 +552,24 @@ private final class ChatColorFixtureURLProtocol: URLProtocol, @unchecked Sendabl
             client?.urlProtocol(self, didFailWithError: URLError(.badURL))
             return
         }
+        let path = url.path
+        if (request.httpMethod ?? "GET") == "GET", path.hasSuffix("/pi/snapshot"),
+           let gate = Self.state.withLock({ state -> DispatchSemaphore? in
+               guard state.delayNextSnapshot else { return nil }
+               state.delayNextSnapshot = false
+               state.snapshotStarts += 1
+               return state.snapshotGate
+           }) {
+            DispatchQueue.global().async { [self] in
+                gate.wait()
+                completeLoading(url: url)
+            }
+            return
+        }
+        completeLoading(url: url)
+    }
+
+    private func completeLoading(url: URL) {
         let configuration = Self.state.withLock { $0.configuration }
         let method = request.httpMethod ?? "GET"
         let path = url.path

@@ -60,6 +60,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
           BEFORE: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -eu
           range=""
@@ -68,6 +69,10 @@ jobs:
             range="origin/$BASE_REF...HEAD"
           elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
             range="$BEFORE..HEAD"
+          elif [ "$EVENT_NAME" = "push" ] && [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then
+            # First push of a new branch: compare against the default branch.
+            git fetch --quiet origin "$DEFAULT_BRANCH"
+            range="origin/$DEFAULT_BRANCH...HEAD"
           fi
           ios=true
           if [ -n "$range" ]; then

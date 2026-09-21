@@ -291,13 +291,16 @@ struct PRReviewDiffText: NSViewRepresentable {
         textView.textContainerInset = NSSize(width: 12, height: 12)
         textView.textContainer?.lineFragmentPadding = 8
         textView.minSize = .zero
-        textView.maxSize = NSSize(width: .greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+        textView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
         textView.isHorizontallyResizable = true
         textView.isVerticallyResizable = true
         textView.autoresizingMask = []
         textView.textContainer?.containerSize = NSSize(
-            width: .greatestFiniteMagnitude,
-            height: .greatestFiniteMagnitude
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
         )
         textView.textContainer?.widthTracksTextView = false
         textView.textContainer?.heightTracksTextView = false

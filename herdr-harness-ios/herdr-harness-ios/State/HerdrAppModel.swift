@@ -35,6 +35,8 @@ final class HerdrAppModel: HudChatTransport {
     var selectedPaneID: String?
     var workspacePath: [WorkspaceRoute] = []
     var isSidebarPresented = false
+    /// Car mode is a full-screen driving surface with its own voice-only input.
+    var isCarModePresented = false
     var agentRequest: HeadlessAgentRequest?
     var sidebarRecency: SidebarRecency = .recents
     var sidebarQuery = ""
@@ -92,6 +94,7 @@ final class HerdrAppModel: HudChatTransport {
     var smartAlertsEnabled: Bool
     var preferPrivateTranscription: Bool
     var showSessionTitles: Bool
+    var carModePreferences: CarModePreferences
     /// Preferred model for headless agent runs. Empty means "send no model and
     /// let the machine's own default win". Same defaults key the Mac's quick
     /// chat uses, so the two apps agree on the shape of the value.
@@ -191,6 +194,7 @@ final class HerdrAppModel: HudChatTransport {
         preferPrivateTranscription = defaults.object(forKey: "herdr.preferPrivateTranscription") as? Bool ?? true
         showSessionTitles = defaults.object(forKey: "herdr.herdPulse.showSessionTitles") as? Bool ?? true
         agentModel = defaults.string(forKey: "herdr.agent.model") ?? ""
+        carModePreferences = CarModePreferences.load(from: defaults)
         collapsedSidebarWorkspaceIDs = Set(
             defaults.stringArray(forKey: "herdr.sidebar.collapsedWorkspaces") ?? []
         )
@@ -705,6 +709,34 @@ final class HerdrAppModel: HudChatTransport {
     func setAgentModel(_ modelID: String) {
         agentModel = modelID
         userDefaults.set(modelID, forKey: "herdr.agent.model")
+    }
+
+    // MARK: - Car mode
+
+    func openCarMode() {
+        noteUserInteraction()
+        isSidebarPresented = false
+        isCarModePresented = true
+    }
+
+    func updateCarModePreferences(_ preferences: CarModePreferences) {
+        let normalized = preferences.normalized()
+        guard normalized != carModePreferences else { return }
+        carModePreferences = normalized
+        normalized.save(to: userDefaults)
+    }
+
+    /// `herdr://car` opens the driving surface from a Shortcut, a quick action,
+    /// or any other link the operator controls. An explicit `car=0` wins over
+    /// the host form so a link can opt out.
+    nonisolated static func opensCarMode(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "herdr" else { return false }
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        if let flag = items.first(where: { $0.name == "car" }) {
+            return (flag.value ?? "1") != "0"
+        }
+        let host = url.host?.lowercased()
+        return host == "car" || host == "car-mode"
     }
 
     func transcribeVoiceNote(at fileURL: URL) async throws -> VoiceTranscription {
@@ -1618,17 +1650,11 @@ final class HerdrAppModel: HudChatTransport {
         Task { try? await client.setPaneStar(id: rawID, starred: starred) }
     }
 
-    func openWorkspace(id: String) {
-        noteUserInteraction()
-        guard let workspace = workspace(id: id) else { return }
-        isSidebarPresented = false
-        selectedTab = .workspaces
-        selectedWorkspaceID = id
-        selectedPaneID = workspace.sortedPanes.first?.id
-        workspacePath = [.workspace(id)]
-    }
-
     func open(url: URL) {
+        if Self.opensCarMode(url) {
+            openCarMode()
+            return
+        }
         if let paneID = Self.paneID(from: url) {
             openPane(id: paneID)
         }
@@ -2078,9 +2104,6 @@ final class HerdrAppModel: HudChatTransport {
         let validPaneIDs = Set(freshWorkspaces.flatMap(\.panes).map(\.id))
         let repairedPath = workspacePath.filter { route in
             switch route {
-            case let .workspace(id):
-                guard MachineScopedID.split(id)?.machineID == machineID else { return true }
-                return validWorkspaceIDs.contains(id)
             case let .pane(id):
                 guard MachineScopedID.split(id)?.machineID == machineID else { return true }
                 return validPaneIDs.contains(id)
@@ -2134,7 +2157,7 @@ final class HerdrAppModel: HudChatTransport {
         selectedTab = .workspaces
         selectedWorkspaceID = workspace(containing: pane)?.id
         selectedPaneID = pane.id
-        workspacePath = selectedWorkspaceID.map { [.workspace($0), .pane(pane.id)] } ?? [.pane(pane.id)]
+        workspacePath = [.pane(pane.id)]
         clearAlertsForPaneOnOpen(pane)
     }
 

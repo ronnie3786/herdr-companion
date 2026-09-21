@@ -18,6 +18,24 @@ struct AgentsHeader: View {
 
                 Spacer()
 
+                Button("Car mode", systemImage: "car.fill") {
+                    model.openCarMode()
+                }
+                .labelStyle(.iconOnly)
+                .font(.headline.bold())
+                .foregroundStyle(HerdrTheme.accent)
+                .frame(width: 44, height: 44)
+                .background(HerdrTheme.elevated)
+                .overlay {
+                    RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+                        .strokeBorder(HerdrTheme.surface, lineWidth: 1)
+                }
+                .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("car-mode-open")
+                .accessibilityLabel("Car mode")
+                .accessibilityHint("Opens a distraction-free driving view with voice-only replies")
+
                 Button("Open navigator", systemImage: "sidebar.leading") {
                     model.isSidebarPresented = true
                 }

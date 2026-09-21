@@ -54,6 +54,17 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Connect to your Herdr server and control your private agent sessions.</string>
+	<key>UIApplicationShortcutItems</key>
+	<array>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>herdr.car-mode</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Car mode</string>
+			<key>UIApplicationShortcutItemIconSymbolName</key>
+			<string>car.fill</string>
+		</dict>
+	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Record long-form voice notes to turn into editable Herdr prompts.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

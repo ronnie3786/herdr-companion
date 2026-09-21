@@ -70,7 +70,7 @@ struct HerdrModelTests {
     }
 
     @MainActor
-    @Test("Sidebar navigation persists collapsed sections and opens workspaces")
+    @Test("Sidebar navigation persists collapsed sections and routes panes to the Agents list")
     func sidebarNavigation() {
         UserDefaults.standard.removeObject(forKey: "herdr.sidebar.collapsedWorkspaces")
         UserDefaults.standard.removeObject(forKey: "herdr.sidebar.collapsedTabs")
@@ -86,15 +86,15 @@ struct HerdrModelTests {
         model.toggleSidebarTabSection("demo1|w1:t1")
         #expect(!model.collapsedSidebarTabIDs.contains("demo1|w1:t1"))
 
-        model.openWorkspace(id: "demo1|w1")
+        model.openPane(id: "demo1|w1:p2")
         let selectedWorkspaceID = model.selectedWorkspaceID
         let selectedPaneID = model.selectedPaneID
         let workspacePath = model.workspacePath
         #expect(selectedWorkspaceID == "demo1|w1")
-        #expect(selectedPaneID == model.workspace(id: "demo1|w1")?.sortedPanes.first?.id)
-        #expect(workspacePath == [.workspace("demo1|w1")])
+        #expect(selectedPaneID == "demo1|w1:p2")
+        #expect(workspacePath == [.pane("demo1|w1:p2")])
 
-        model.openWorkspace(id: "does-not-exist")
+        model.openPane(id: "does-not-exist")
         #expect(model.selectedWorkspaceID == selectedWorkspaceID)
         #expect(model.selectedPaneID == selectedPaneID)
         #expect(model.workspacePath == workspacePath)

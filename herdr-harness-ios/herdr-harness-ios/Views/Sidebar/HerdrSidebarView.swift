@@ -374,14 +374,6 @@ struct HerdrSidebarView: View {
             action: { open(pane) }
         )
         .contextMenu {
-            if recentContext != nil, let workspace = model.workspace(containing: pane) {
-                Button("Open \(workspace.label) workspace", systemImage: "folder") {
-                    model.openWorkspace(id: workspace.id)
-                    dismiss()
-                }
-                Divider()
-            }
-
             Button(
                 model.starredChatIDs.contains(pane.id) ? "Unstar chat" : "Star chat",
                 systemImage: model.starredChatIDs.contains(pane.id) ? "star.slash" : "star"
@@ -460,10 +452,6 @@ struct HerdrSidebarView: View {
 
     @ViewBuilder
     private func workspaceMenu(_ workspace: HerdrWorkspace) -> some View {
-        Button("Open workspace", systemImage: "arrow.right.square") {
-            model.openWorkspace(id: workspace.id)
-            dismiss()
-        }
         Button("Focus on Mac", systemImage: "scope") {
             Task { await model.focus(workspace) }
         }

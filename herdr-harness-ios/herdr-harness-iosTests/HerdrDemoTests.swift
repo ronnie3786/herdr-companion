@@ -137,13 +137,13 @@ struct HerdrDemoTests {
         #expect(model.unreadAlertCount == 1)
     }
 
-    @Test("Opening a demo pane from the workspace tab selects its scoped workspace id")
-    func openingPaneFromWorkspaceTabSelectsScopedWorkspaceID() throws {
+    @Test("Opening a demo pane routes straight to the pane from the Agents list")
+    func openingPaneFromAgentsTabSelectsScopedWorkspaceID() throws {
         let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"])
 
         model.openPane(id: "demo1|w1:p2")
 
         #expect(model.selectedWorkspaceID == "demo1|w1")
-        #expect(model.workspacePath == [.workspace("demo1|w1"), .pane("demo1|w1:p2")])
+        #expect(model.workspacePath == [.pane("demo1|w1:p2")])
     }
 }

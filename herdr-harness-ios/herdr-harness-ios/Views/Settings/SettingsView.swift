@@ -8,6 +8,7 @@ struct SettingsView: View {
             Form {
                 statusSection
                 machinesSection
+                carModeSection
                 voiceSection
                 alertSection
                 privacySection
@@ -88,6 +89,37 @@ struct SettingsView: View {
 
     private var liveMachineCount: Int {
         model.machines.count(where: { model.connectionState(forMachine: $0.id) == .live })
+    }
+
+    private var carModeSection: some View {
+        Section {
+            Button("Open Car mode", systemImage: "car.fill") {
+                model.openCarMode()
+            }
+            .accessibilityIdentifier("settings-open-car-mode")
+
+            Picker("Agents shown", selection: carModeBinding.agentLimit) {
+                ForEach(CarModePreferences.allowedAgentLimits, id: \.self) { limit in
+                    Text("\(limit)").tag(limit)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Toggle("Confirm spoken replies", isOn: carModeBinding.confirmsVoiceTranscripts)
+
+            Toggle("Keep screen awake", isOn: carModeBinding.keepsScreenAwake)
+        } header: {
+            Label("Car mode", systemImage: "car.fill")
+        } footer: {
+            Text("Car mode shows the agents that need you or are working now, with one line of status each and large summary-audio and voice-reply buttons. Replies are spoken only: Car mode has no keyboard, and a transcript is confirmed before it is sent unless you turn that off. The agents shown are chosen from the newest twenty chats.")
+        }
+    }
+
+    private var carModeBinding: Binding<CarModePreferences> {
+        Binding(
+            get: { model.carModePreferences },
+            set: { model.updateCarModePreferences($0) }
+        )
     }
 
     private var alertSection: some View {

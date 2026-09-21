@@ -25,9 +25,17 @@ struct AppRootView: View {
             if let paneID = HerdrAppDelegate.takePendingPaneID() {
                 model.openPane(id: paneID)
             }
+            if HerdrAppDelegate.takePendingCarMode() {
+                model.openCarMode()
+            }
             for await notification in NotificationCenter.default.notifications(named: .herdrOpenPane) {
                 guard let paneID = notification.object as? String else { continue }
                 model.openPane(id: paneID)
+            }
+        }
+        .task {
+            for await _ in NotificationCenter.default.notifications(named: .herdrOpenCarMode) {
+                model.openCarMode()
             }
         }
         .task {
@@ -65,6 +73,11 @@ struct AppRootView: View {
         // pane, and the sheet has to outlive that.
         .sheet(item: $model.agentRequest) { request in
             HeadlessAgentSheet(model: model, machineID: request.machineID)
+        }
+        .fullScreenCover(isPresented: $model.isCarModePresented) {
+            CarModeView(model: model) {
+                model.isCarModePresented = false
+            }
         }
         .alert(
             "Connection issue",

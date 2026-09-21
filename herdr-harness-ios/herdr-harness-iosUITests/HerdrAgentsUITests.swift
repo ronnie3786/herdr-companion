@@ -32,6 +32,14 @@ final class HerdrAgentsUITests: XCTestCase {
         let title = app.buttons["pane-session-title"]
         XCTAssertTrue(title.waitForExistence(timeout: 5))
         XCTAssertTrue(title.label.contains("Sample reading list export"))
+
+        // Back leaves the pane for the Agents list, not a workspace layout screen.
+        let back = app.navigationBars.buttons.element(boundBy: 0)
+        XCTAssertTrue(back.waitForExistence(timeout: 3))
+        back.tap()
+        let agentsSearch = app.textFields["Search agents"]
+        XCTAssertTrue(agentsSearch.waitForExistence(timeout: 5))
+        XCTAssertTrue(agentsSearch.isHittable, "Back should return to the Agents list")
     }
 
     @MainActor
@@ -75,7 +83,7 @@ final class HerdrAgentsUITests: XCTestCase {
         card.press(forDuration: 1)
         let rename = app.buttons["agent-action-rename"]
         XCTAssertTrue(rename.waitForExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["Open workspace"].exists)
+        XCTAssertFalse(app.buttons["Open workspace"].exists)
         XCTAssertTrue(app.buttons["Mac controls"].exists)
         try app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "/tmp/herdr-agent-session-menu.png"))
         rename.tap()

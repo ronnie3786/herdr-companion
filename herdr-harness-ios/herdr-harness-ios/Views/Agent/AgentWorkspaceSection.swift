@@ -3,7 +3,6 @@ import SwiftUI
 struct AgentWorkspaceSection: View {
     @Bindable var model: HerdrAppModel
     let group: AgentWorkspaceGroup
-    let selectWorkspace: (HerdrWorkspace) -> Void
     let selectPane: (HerdrPane) -> Void
 
     let confirmAction: (AgentSessionAction) -> Void
@@ -11,9 +10,6 @@ struct AgentWorkspaceSection: View {
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 8) {
             AgentWorkspaceHeading(group: group)
-            .contextMenu {
-                Button("Open workspace", systemImage: "folder") { selectWorkspace(group.workspace) }
-            }
 
             ForEach(group.tabs) { tab in
                 Section {
@@ -35,7 +31,6 @@ struct AgentWorkspaceSection: View {
                             AgentSessionContextMenu(
                                 model: model,
                                 session: session,
-                                openWorkspace: { selectWorkspace(group.workspace) },
                                 confirm: confirmAction
                             )
                         }

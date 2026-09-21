@@ -2,7 +2,6 @@ import SwiftUI
 
 struct AgentsListView: View {
     @Bindable var model: HerdrAppModel
-    let selectWorkspace: (HerdrWorkspace) -> Void
     let selectPane: (HerdrPane) -> Void
     let openHudChats: () -> Void
     @Environment(\.scenePhase) private var scenePhase
@@ -50,7 +49,6 @@ struct AgentsListView: View {
                             AgentWorkspaceSection(
                                 model: model,
                                 group: group,
-                                selectWorkspace: selectWorkspace,
                                 selectPane: selectPane,
                                 confirmAction: { sessionAction = $0 }
                             )

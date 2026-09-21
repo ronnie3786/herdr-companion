@@ -4,7 +4,6 @@ import UIKit
 struct AgentSessionContextMenu: View {
     @Bindable var model: HerdrAppModel
     let session: AgentSession
-    let openWorkspace: () -> Void
     let confirm: (AgentSessionAction) -> Void
 
     private var pane: HerdrPane { session.pane }
@@ -30,7 +29,6 @@ struct AgentSessionContextMenu: View {
         ChatTabColorMenu(store: model.chatTabColors, tabID: pane.scopedTabID)
 
         Divider()
-        Button("Open workspace", systemImage: "folder", action: openWorkspace)
         Button("Copy pane ID", systemImage: "doc.on.doc") {
             UIPasteboard.general.string = pane.paneID
             model.toastMessage = "Workspace pane ID copied"

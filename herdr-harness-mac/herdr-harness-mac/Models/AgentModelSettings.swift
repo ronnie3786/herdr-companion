@@ -18,11 +18,22 @@ struct AgentModelSettings: Equatable, Sendable {
     static let quickChatThinkingLevelKey = "herdr.agent.thinkingLevel"
     static let notesModelKey = "herdr.notes.model"
     static let notesThinkingLevelKey = "herdr.notes.thinkingLevel"
+    /// Smart Rename's model has its own preference so a naming run can use a
+    /// different model than the chat it names. An empty value means "Same as
+    /// Agent model": `quickChatModelKey` first, then the execution machine's
+    /// Pi default.
+    static let smartRenameModelKey = "herdr.agent.smartRenameModel"
+    /// Smart Rename has always named with Low effort, so a missing or
+    /// unrecognized value must keep resolving there. It deliberately does not
+    /// inherit `quickChatThinkingLevelKey`'s Max default.
+    static let smartRenameThinkingLevelKey = "herdr.agent.smartRenameThinkingLevel"
 
     /// The model every image-bearing HUD message is rerouted to when the
     /// chosen model cannot see images. Was `HerdrHudModelRouting.visionModel`.
     static let builtInVisionModel = "openai-codex/gpt-5.6-luna"
     static let builtInThinkingLevel = PiThinkingLevel.max
+    /// The effort Smart Rename used before it became configurable.
+    static let builtInSmartRenameThinkingLevel = PiThinkingLevel.low
 
     var hudModel: String
     var quickChatModel: String
@@ -31,6 +42,8 @@ struct AgentModelSettings: Equatable, Sendable {
     var quickChatThinkingLevel: PiThinkingLevel
     var notesModel: String
     var notesThinkingLevel: PiThinkingLevel
+    var smartRenameModel: String
+    var smartRenameThinkingLevel: PiThinkingLevel
 
     static func load(from defaults: UserDefaults) -> AgentModelSettings {
         let legacy = defaults.string(forKey: quickChatThinkingLevelKey)
@@ -42,7 +55,11 @@ struct AgentModelSettings: Equatable, Sendable {
             hudThinkingLevel: PiThinkingLevel(rawValue: hudRaw ?? "") ?? builtInThinkingLevel,
             quickChatThinkingLevel: PiThinkingLevel(rawValue: legacy ?? "") ?? builtInThinkingLevel,
             notesModel: defaults.string(forKey: notesModelKey) ?? "",
-            notesThinkingLevel: PiThinkingLevel(rawValue: defaults.string(forKey: notesThinkingLevelKey) ?? "") ?? .medium
+            notesThinkingLevel: PiThinkingLevel(rawValue: defaults.string(forKey: notesThinkingLevelKey) ?? "") ?? .medium,
+            smartRenameModel: defaults.string(forKey: smartRenameModelKey) ?? "",
+            smartRenameThinkingLevel: PiThinkingLevel(
+                rawValue: defaults.string(forKey: smartRenameThinkingLevelKey) ?? ""
+            ) ?? builtInSmartRenameThinkingLevel
         )
     }
 
@@ -54,6 +71,8 @@ struct AgentModelSettings: Equatable, Sendable {
         defaults.set(quickChatThinkingLevel.rawValue, forKey: Self.quickChatThinkingLevelKey)
         defaults.set(notesModel, forKey: Self.notesModelKey)
         defaults.set(notesThinkingLevel.rawValue, forKey: Self.notesThinkingLevelKey)
+        defaults.set(smartRenameModel, forKey: Self.smartRenameModelKey)
+        defaults.set(smartRenameThinkingLevel.rawValue, forKey: Self.smartRenameThinkingLevelKey)
     }
 
     /// The vision model actually sent, never empty.
@@ -64,6 +83,15 @@ struct AgentModelSettings: Equatable, Sendable {
     var effectiveNotesModel: String? {
         if !notesModel.isEmpty { return notesModel }
         if !hudModel.isEmpty { return hudModel }
+        return nil
+    }
+
+    /// The naming model preference actually sent, if any. An empty Smart
+    /// Rename choice follows the Agent model; an empty Agent choice means the
+    /// execution machine's Pi default.
+    var effectiveSmartRenameModel: String? {
+        if !smartRenameModel.isEmpty { return smartRenameModel }
+        if !quickChatModel.isEmpty { return quickChatModel }
         return nil
     }
 }
@@ -92,6 +120,12 @@ final class AgentModelSettingsStore {
     var notesThinkingLevel: PiThinkingLevel {
         didSet { saveIfChanged(oldValue != notesThinkingLevel) }
     }
+    var smartRenameModel: String {
+        didSet { saveIfChanged(oldValue != smartRenameModel) }
+    }
+    var smartRenameThinkingLevel: PiThinkingLevel {
+        didSet { saveIfChanged(oldValue != smartRenameThinkingLevel) }
+    }
 
     var effectiveVisionModel: String {
         visionModel.isEmpty ? AgentModelSettings.builtInVisionModel : visionModel
@@ -100,6 +134,12 @@ final class AgentModelSettingsStore {
     var effectiveNotesModel: String? {
         if !notesModel.isEmpty { return notesModel }
         if !hudModel.isEmpty { return hudModel }
+        return nil
+    }
+
+    var effectiveSmartRenameModel: String? {
+        if !smartRenameModel.isEmpty { return smartRenameModel }
+        if !quickChatModel.isEmpty { return quickChatModel }
         return nil
     }
 
@@ -115,6 +155,8 @@ final class AgentModelSettingsStore {
         quickChatThinkingLevel = settings.quickChatThinkingLevel
         notesModel = settings.notesModel
         notesThinkingLevel = settings.notesThinkingLevel
+        smartRenameModel = settings.smartRenameModel
+        smartRenameThinkingLevel = settings.smartRenameThinkingLevel
     }
 
     private func saveIfChanged(_ changed: Bool) {
@@ -126,7 +168,9 @@ final class AgentModelSettingsStore {
             hudThinkingLevel: hudThinkingLevel,
             quickChatThinkingLevel: quickChatThinkingLevel,
             notesModel: notesModel,
-            notesThinkingLevel: notesThinkingLevel
+            notesThinkingLevel: notesThinkingLevel,
+            smartRenameModel: smartRenameModel,
+            smartRenameThinkingLevel: smartRenameThinkingLevel
         ).save(to: defaults)
     }
 }

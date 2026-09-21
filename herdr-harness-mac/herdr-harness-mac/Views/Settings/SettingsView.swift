@@ -25,6 +25,13 @@ struct SettingsView: View {
     @State private var isLoadingAgentModels = false
     @State private var agentModelsError: String?
     @State private var didLoadAgentModels = false
+    @State private var smartRenameCatalogMachineID: String?
+    @State private var smartRenameCatalog: AgentModelCatalogResponse?
+    @State private var isLoadingSmartRenameModels = false
+    @State private var smartRenameModelsError: String?
+    /// Incremented for every load so a response for a previous catalog source
+    /// can never write state over the current one.
+    @State private var smartRenameCatalogGeneration = 0
     @State private var selectedPane: SettingsPane
 
     init(
@@ -138,6 +145,7 @@ struct SettingsView: View {
             machinesSection
         case .agents:
             agentModelSection
+            smartRenameSection
             promptsSection
             cleanupSection
         case .hud:
@@ -428,7 +436,14 @@ struct SettingsView: View {
     private var agentModelSection: some View {
         Section {
             LabeledContent("HUD model") {
-                modelMenu(selection: $agentSettings.hudModel, identifier: "settings-hud-model-picker")
+                modelMenu(
+                    selection: $agentSettings.hudModel,
+                    identifier: "settings-hud-model-picker",
+                    catalog: agentCatalog,
+                    isLoading: isLoadingAgentModels,
+                    loadError: agentModelsError,
+                    retry: { Task { await loadAgentModels() } }
+                )
             }
             Picker("HUD thinking level", selection: $agentSettings.hudThinkingLevel) {
                 ForEach(PiThinkingLevel.allCases, id: \.self) { level in
@@ -438,7 +453,14 @@ struct SettingsView: View {
             .pickerStyle(.menu)
             .accessibilityIdentifier("settings-hud-thinking-picker")
             LabeledContent("Agent model") {
-                modelMenu(selection: $agentSettings.quickChatModel, identifier: "settings-agent-model-picker")
+                modelMenu(
+                    selection: $agentSettings.quickChatModel,
+                    identifier: "settings-agent-model-picker",
+                    catalog: agentCatalog,
+                    isLoading: isLoadingAgentModels,
+                    loadError: agentModelsError,
+                    retry: { Task { await loadAgentModels() } }
+                )
             }
             Picker("Agent thinking level", selection: $agentSettings.quickChatThinkingLevel) {
                 ForEach(PiThinkingLevel.allCases, id: \.self) { level in
@@ -448,13 +470,24 @@ struct SettingsView: View {
             .pickerStyle(.menu)
             .accessibilityIdentifier("settings-agent-thinking-picker")
             LabeledContent("Vision model") {
-                modelMenu(selection: $agentSettings.visionModel, identifier: "settings-agent-vision-picker")
+                modelMenu(
+                    selection: $agentSettings.visionModel,
+                    identifier: "settings-agent-vision-picker",
+                    catalog: agentCatalog,
+                    isLoading: isLoadingAgentModels,
+                    loadError: agentModelsError,
+                    retry: { Task { await loadAgentModels() } }
+                )
             }
             LabeledContent("Notes model") {
                 modelMenu(
                     selection: $agentSettings.notesModel,
                     identifier: "settings-notes-model-picker",
-                    defaultTitle: "Same as HUD model"
+                    defaultTitle: "Same as HUD model",
+                    catalog: agentCatalog,
+                    isLoading: isLoadingAgentModels,
+                    loadError: agentModelsError,
+                    retry: { Task { await loadAgentModels() } }
                 )
             }
             Picker("Notes thinking level", selection: $agentSettings.notesThinkingLevel) {
@@ -488,11 +521,108 @@ struct SettingsView: View {
         PromptSettingsSectionView(promptSettings: promptSettings)
     }
 
+    /// Smart Rename's model/effort policy. The machine menu only changes which
+    /// companion's catalog is browsable; the rename itself always validates
+    /// against the machine that executes it.
+    private var smartRenameSection: some View {
+        Section {
+            if !model.machines.isEmpty {
+                Picker("Model list from", selection: smartRenameCatalogSourceBinding) {
+                    ForEach(model.machines) { machine in
+                        Text(machine.name).tag(machine.id)
+                    }
+                }
+                .pickerStyle(.menu)
+                .accessibilityIdentifier("settings-smart-rename-source-picker")
+            }
+
+            LabeledContent("Smart Rename model") {
+                modelMenu(
+                    selection: $agentSettings.smartRenameModel,
+                    identifier: "settings-smart-rename-model-picker",
+                    defaultTitle: "Same as Agent model",
+                    catalog: smartRenameCatalog,
+                    isLoading: isLoadingSmartRenameModels,
+                    loadError: smartRenameModelsError,
+                    retryIdentifier: "settings-smart-rename-model-retry",
+                    retry: { Task { await loadSmartRenameModels(sourceID: smartRenameCatalogSourceID) } }
+                )
+            }
+
+            Picker("Smart Rename thinking level", selection: $agentSettings.smartRenameThinkingLevel) {
+                ForEach(PiThinkingLevel.allCases, id: \.self) { level in
+                    Text(level.displayName).tag(level)
+                }
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("settings-smart-rename-thinking-picker")
+
+            if let notice = smartRenameResolutionNotice {
+                Label(notice, systemImage: "exclamationmark.triangle.fill")
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.alert)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("settings-smart-rename-stale")
+            }
+        } header: {
+            Text("Smart Rename")
+        } footer: {
+            Text("A separate bounded ask names the pane; it never becomes a prompt in the chat or shell. An empty model follows the Agent model above, then the execution machine's Pi default. The model list can come from any connected companion, but availability is checked on the machine that runs the rename; an unavailable choice falls back to that machine's default without changing the saved preference. Naming uses Low effort by default, and Off when the resolved model cannot reason.")
+        }
+        .task(id: smartRenameCatalogSourceID) {
+            await loadSmartRenameModels(sourceID: smartRenameCatalogSourceID)
+        }
+    }
+
+    private var smartRenameCatalogSourceID: String? {
+        if let chosen = smartRenameCatalogMachineID,
+           model.machines.contains(where: { $0.id == chosen }) {
+            return chosen
+        }
+        return model.machines.first?.id
+    }
+
+    private var smartRenameCatalogSourceBinding: Binding<String> {
+        Binding(
+            get: { smartRenameCatalogSourceID ?? "" },
+            set: { smartRenameCatalogMachineID = $0 }
+        )
+    }
+
+    private var smartRenameCatalogMachineName: String {
+        guard let sourceID = smartRenameCatalogSourceID else { return "This machine" }
+        return model.machines.first { $0.id == sourceID }?.name ?? sourceID
+    }
+
+    /// The displayed catalog answers the same questions the runtime resolver
+    /// will ask the execution machine, so Settings can explain a fallback or a
+    /// broken declared default before the user runs Smart Rename.
+    private var smartRenameResolutionNotice: String? {
+        guard let catalog = smartRenameCatalog else { return nil }
+        do {
+            return try SmartRenameModelRouting.resolveCatalog(
+                preference: agentSettings.effectiveSmartRenameModel,
+                thinkingLevel: agentSettings.smartRenameThinkingLevel,
+                catalog: catalog,
+                machineName: smartRenameCatalogMachineName
+            ).notice
+        } catch let error as SmartRenameModelRoutingError {
+            return error.localizedDescription
+        } catch {
+            return nil
+        }
+    }
+
     @ViewBuilder
     private func modelMenu(
         selection: Binding<String>,
         identifier: String,
-        defaultTitle: String? = nil
+        defaultTitle: String? = nil,
+        catalog: AgentModelCatalogResponse?,
+        isLoading: Bool,
+        loadError: String?,
+        retryIdentifier: String = "settings-agent-model-retry",
+        retry: @escaping @MainActor () -> Void
     ) -> some View {
         let effectiveDefaultTitle = defaultTitle ?? defaultAgentModelMenuTitle
         Menu {
@@ -505,19 +635,19 @@ struct SettingsView: View {
                 )
             }
 
-            if isLoadingAgentModels {
+            if isLoading {
                 ProgressView()
-            } else if let agentModelsError {
-                Text(agentModelsError).disabled(true)
-                Button("Retry") { Task { await loadAgentModels() } }
-                    .accessibilityIdentifier("settings-agent-model-retry")
-            } else if agentCatalog?.models.isEmpty ?? true {
+            } else if let loadError {
+                Text(loadError).disabled(true)
+                Button("Retry") { retry() }
+                    .accessibilityIdentifier(retryIdentifier)
+            } else if catalog?.models.isEmpty ?? true {
                 Text("No models available").disabled(true)
-                Button("Retry") { Task { await loadAgentModels() } }
-                    .accessibilityIdentifier("settings-agent-model-retry")
+                Button("Retry") { retry() }
+                    .accessibilityIdentifier(retryIdentifier)
             } else {
                 PiModelMenuContent(
-                    models: agentCatalog?.models ?? [],
+                    models: catalog?.models ?? [],
                     favorites: modelFavorites,
                     isSelected: { $0.id == selection.wrappedValue },
                     select: { selection.wrappedValue = $0.id }
@@ -528,7 +658,8 @@ struct SettingsView: View {
                 Image(systemName: "cpu")
                 Text(agentModelMenuSelectionLabel(
                     for: selection.wrappedValue,
-                    defaultTitle: effectiveDefaultTitle
+                    defaultTitle: effectiveDefaultTitle,
+                    catalog: catalog
                 ))
                     .lineLimit(1)
                 Image(systemName: "chevron.up.chevron.down")
@@ -547,9 +678,13 @@ struct SettingsView: View {
         return "Machine default: \(defaultModel.displayName)"
     }
 
-    private func agentModelMenuSelectionLabel(for selection: String, defaultTitle: String) -> String {
+    private func agentModelMenuSelectionLabel(
+        for selection: String,
+        defaultTitle: String,
+        catalog: AgentModelCatalogResponse?
+    ) -> String {
         guard !selection.isEmpty else { return defaultTitle }
-        return agentCatalog?.models.first(where: { $0.id == selection })?.displayName
+        return catalog?.models.first(where: { $0.id == selection })?.displayName
             ?? PiModelDisplayName.short(fullID: selection)
     }
 
@@ -564,6 +699,33 @@ struct SettingsView: View {
             agentModelsError = error.localizedDescription
         }
         isLoadingAgentModels = false
+    }
+
+    /// Loads the selected catalog source. The previous source's catalog is
+    /// discarded before awaiting, and the generation check drops any response
+    /// that arrives after the user picked another machine.
+    private func loadSmartRenameModels(sourceID: String?) async {
+        smartRenameCatalogGeneration += 1
+        let generation = smartRenameCatalogGeneration
+        smartRenameCatalog = nil
+        smartRenameModelsError = nil
+        guard let sourceID else {
+            isLoadingSmartRenameModels = false
+            return
+        }
+        isLoadingSmartRenameModels = true
+        do {
+            let catalog = try await model.fetchAgentModels(machineID: sourceID)
+            guard generation == smartRenameCatalogGeneration else { return }
+            smartRenameCatalog = catalog
+            isLoadingSmartRenameModels = false
+        } catch is CancellationError {
+            // A newer source owns the state now; leave its load alone.
+        } catch {
+            guard generation == smartRenameCatalogGeneration else { return }
+            smartRenameModelsError = error.localizedDescription
+            isLoadingSmartRenameModels = false
+        }
     }
 
     private var cleanupSection: some View {

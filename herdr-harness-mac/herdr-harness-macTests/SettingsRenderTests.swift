@@ -149,6 +149,64 @@ struct SettingsRenderTests {
         #expect(digests.count == SettingsPane.allCases.count)
     }
 
+    @Test("Smart Rename settings render the saved naming model and effort")
+    func rendersSmartRenameSettings() async throws {
+        let populated = try await renderAgentsPane(
+            named: "settings-smart-rename-populated.png",
+            configure: { settings in
+                settings.smartRenameModel = "openai-codex/gpt-5.6-luna"
+                settings.smartRenameThinkingLevel = .off
+            }
+        )
+        let defaultsOnly = try await renderAgentsPane(
+            named: "settings-smart-rename-defaults.png",
+            configure: { _ in }
+        )
+
+        populated.expectSubstantial()
+        defaultsOnly.expectSubstantial()
+        // The naming model label and effort picker are part of the Agents pane,
+        // so a saved Smart Rename choice must change what it draws.
+        #expect(try Data(contentsOf: populated.url) != Data(contentsOf: defaultsOnly.url))
+    }
+
+    private func renderAgentsPane(
+        named name: String,
+        configure: (AgentModelSettingsStore) -> Void
+    ) async throws -> HerdrRenderHarness.RenderResult {
+        let suiteName = "SettingsRenderTests.smartRename.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let model = HerdrRenderFixtures.demoModel()
+        let fontScale = HerdrFontScaleStore(defaults: defaults)
+        let agentSettings = AgentModelSettingsStore(defaults: defaults)
+        configure(agentSettings)
+        return try await HerdrRenderHarness.render(name, size: CGSize(width: 920, height: 680)) {
+            SettingsView(
+                model: model,
+                fontScale: fontScale,
+                cleanupSettings: CleanupSettingsStore(defaults: defaults),
+                agentSettings: agentSettings,
+                promptSettings: HerdrPromptSettingsStore(defaults: defaults),
+                modelFavorites: ModelFavoritesStore(userDefaults: defaults),
+                hudController: HerdrHudController(userDefaults: defaults),
+                updates: HerdrUpdateController(defaults: defaults),
+                agentControl: AgentControlController(
+                    defaults: defaults,
+                    secretStorage: TestAgentControlSecretStorage()
+                ),
+                initialPane: .agents
+            )
+            .environment(\.herdrFontScale, fontScale.scale)
+            .background(HerdrTheme.ink)
+            .foregroundStyle(HerdrTheme.text)
+            .preferredColorScheme(.dark)
+            .tint(HerdrTheme.accent)
+        }
+    }
+
     private func luminanceStatistics(
         in bitmap: NSBitmapImageRep,
         columns: Range<Int>,

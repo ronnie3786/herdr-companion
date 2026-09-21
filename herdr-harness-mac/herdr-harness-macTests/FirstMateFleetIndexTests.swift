@@ -321,7 +321,11 @@ struct FirstMateFleetIndexTests {
             client: SyntheticFleetClient { .init(ok: true, features: []) }
         )
         let secondLifecycle = index.activate(sources: [rotatedAlpha, betaSource], connectionGeneration: 6)
-        #expect(index.attentionCount == 0)
+        // Alpha's rotated credential clears its own contribution immediately,
+        // while Beta's unchanged connection keeps its cached reminder.
+        #expect(index.hosts.first(where: { $0.id == "alpha" })?.features.isEmpty == true)
+        #expect(index.hosts.first(where: { $0.id == "beta" })?.features.map(\.id) == ["blocked"])
+        #expect(index.attentionCount == 1)
         await index.refresh(lifecycle: secondLifecycle)
         #expect(index.attentionCount == 1)
 
@@ -330,6 +334,144 @@ struct FirstMateFleetIndexTests {
         await index.refresh(lifecycle: thirdLifecycle)
         #expect(index.attentionCount == 0)
         #expect(index.hosts.map(\.machineID) == ["alpha"])
+    }
+
+    @Test("Unchanged offline hosts keep outstanding attention across reorder and unrelated edits")
+    func unchangedOfflineHostRetainsAttentionAcrossRosterEdits() async throws {
+        let index = FirstMateFleetIndex()
+        let alpha = machine(id: "alpha", name: "Alpha Mac")
+        let beta = machine(id: "beta", name: "Beta Mac")
+        let alphaConfiguration = configuration(for: alpha, token: "alpha-token")
+        let betaConfiguration = configuration(for: beta, token: "beta-token")
+
+        // Alpha reports attention once and then goes offline. A failed refresh
+        // keeps the last successful list instead of implying resolution.
+        let alphaScript = FirstMateFleetResponseScript([
+            .success([feature(id: "alpha-waiting", status: "awaiting_direction")]),
+            .failure(.server(status: 500, message: "Temporarily unavailable")),
+        ])
+        let betaScript = FirstMateFleetResponseScript([
+            .success([feature(id: "beta-working", status: "running")]),
+        ])
+        let initial = [
+            FirstMateFleetSource(
+                machine: alpha,
+                configuration: alphaConfiguration,
+                client: SyntheticScriptedFleetClient(script: alphaScript)
+            ),
+            FirstMateFleetSource(
+                machine: beta,
+                configuration: betaConfiguration,
+                client: SyntheticScriptedFleetClient(script: betaScript)
+            ),
+        ]
+        let initialLifecycle = index.activate(sources: initial, connectionGeneration: 30)
+        await index.refresh(lifecycle: initialLifecycle)
+        #expect(index.attentionCount == 1)
+        await index.refresh(lifecycle: initialLifecycle)
+        let offlineAlpha = try #require(index.hosts.first(where: { $0.id == "alpha" }))
+        #expect(offlineAlpha.error != nil)
+        #expect(offlineAlpha.lastUpdated != nil)
+        #expect(offlineAlpha.features.map(\.id) == ["alpha-waiting"])
+        #expect(index.attentionCount == 1)
+
+        // Reordering the roster is not a connection change.
+        let reordered = [
+            FirstMateFleetSource(
+                machine: beta,
+                configuration: betaConfiguration,
+                client: SyntheticScriptedFleetClient(script: betaScript)
+            ),
+            FirstMateFleetSource(
+                machine: alpha,
+                configuration: alphaConfiguration,
+                client: SyntheticScriptedFleetClient(script: alphaScript)
+            ),
+        ]
+        let reorderLifecycle = index.activate(sources: reordered, connectionGeneration: 30)
+        #expect(index.hosts.map(\.machineID) == ["beta", "alpha"])
+        #expect(index.attentionCount == 1)
+        await index.refresh(lifecycle: reorderLifecycle)
+        #expect(index.attentionCount == 1)
+        #expect(index.hosts.first(where: { $0.id == "alpha" })?.features.map(\.id) == ["alpha-waiting"])
+
+        // Editing another host bumps the process-wide generation, but Alpha's
+        // authenticated connection is unchanged, so its reminder stays.
+        // Renaming Alpha updates the label without discarding the cache either.
+        let renamedAlpha = HerdrMachine(id: alpha.id, name: "Alpha Mac Renamed", urlString: alpha.urlString)
+        let edited = [
+            FirstMateFleetSource(
+                machine: renamedAlpha,
+                configuration: alphaConfiguration,
+                client: SyntheticScriptedFleetClient(script: alphaScript)
+            ),
+            FirstMateFleetSource(
+                machine: beta,
+                configuration: configuration(for: beta, token: "rotated-beta-token"),
+                client: SyntheticScriptedFleetClient(script: betaScript)
+            ),
+        ]
+        let editedLifecycle = index.activate(sources: edited, connectionGeneration: 31)
+        let renamedOfflineAlpha = try #require(index.hosts.first(where: { $0.id == "alpha" }))
+        #expect(renamedOfflineAlpha.machineName == "Alpha Mac Renamed")
+        #expect(renamedOfflineAlpha.features.map(\.id) == ["alpha-waiting"])
+        #expect(index.attentionCount == 1)
+        await index.refresh(lifecycle: editedLifecycle)
+        #expect(index.attentionCount == 1)
+        #expect(index.hosts.first(where: { $0.id == "alpha" })?.error != nil)
+
+        // Removing the offline host clears its contribution immediately, and
+        // no later refresh can restore it.
+        let removedLifecycle = index.activate(sources: [edited[1]], connectionGeneration: 31)
+        #expect(index.hosts.map(\.machineID) == ["beta"])
+        #expect(index.attentionCount == 0)
+        await index.refresh(lifecycle: removedLifecycle)
+        #expect(index.attentionCount == 0)
+    }
+
+    @Test("Reconfiguring one host clears only that host's cached attention")
+    func reconfiguredHostClearsOnlyItself() async throws {
+        let index = FirstMateFleetIndex()
+        let alpha = machine(id: "alpha", name: "Alpha Mac")
+        let beta = machine(id: "beta", name: "Beta Mac")
+        let alphaConfiguration = configuration(for: alpha, token: "alpha-token")
+        let betaConfiguration = configuration(for: beta, token: "beta-token")
+        let betaWaiting = feature(id: "beta-waiting", status: "blocked")
+
+        let initial = [
+            FirstMateFleetSource(
+                machine: alpha,
+                configuration: alphaConfiguration,
+                client: SyntheticScriptedFleetClient(script: FirstMateFleetResponseScript([
+                    .success([feature(id: "alpha-waiting", status: "awaiting_direction")]),
+                    .failure(.server(status: 500, message: "Temporarily unavailable")),
+                ]))
+            ),
+            FirstMateFleetSource(
+                machine: beta,
+                configuration: betaConfiguration,
+                client: SyntheticScriptedFleetClient(script: FirstMateFleetResponseScript([.success([betaWaiting])]))
+            ),
+        ]
+        let initialLifecycle = index.activate(sources: initial, connectionGeneration: 40)
+        await index.refresh(lifecycle: initialLifecycle)
+        await index.refresh(lifecycle: initialLifecycle)
+        #expect(index.attentionCount == 2)
+
+        // Rotating Beta clears Beta only; Alpha's offline reminder survives.
+        let rotatedBeta = FirstMateFleetSource(
+            machine: beta,
+            configuration: configuration(for: beta, token: "rotated-beta-token"),
+            client: SyntheticScriptedFleetClient(script: FirstMateFleetResponseScript([
+                .success([feature(id: "beta-working", status: "running")]),
+            ]))
+        )
+        let secondLifecycle = index.activate(sources: [initial[0], rotatedBeta], connectionGeneration: 41)
+        #expect(index.hosts.first(where: { $0.id == "beta" })?.features.isEmpty == true)
+        #expect(index.hosts.first(where: { $0.id == "alpha" })?.features.map(\.id) == ["alpha-waiting"])
+        #expect(index.attentionCount == 1)
+        await index.refresh(lifecycle: secondLifecycle)
+        #expect(index.attentionCount == 1)
     }
 
     @Test("A delayed response from a rotated connection cannot restore attention")

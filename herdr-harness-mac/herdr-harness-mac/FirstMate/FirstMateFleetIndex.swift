@@ -21,17 +21,6 @@ struct FirstMateFleetHost: Identifiable, Equatable, Sendable {
 
 @MainActor @Observable
 final class FirstMateFleetIndex {
-    private struct Configuration: Equatable {
-        let connectionGeneration: Int
-        let machines: [Machine]
-
-        struct Machine: Equatable {
-            let id: String
-            let name: String
-            let configuration: ServerConfiguration
-        }
-    }
-
     private struct FetchResult: Sendable {
         let machineID: String
         let features: [FirstMateFeature]?
@@ -43,7 +32,10 @@ final class FirstMateFleetIndex {
     private(set) var hosts: [FirstMateFleetHost] = []
     @ObservationIgnored var pollingInterval: Duration = .seconds(10)
     @ObservationIgnored private var clients: [String: any FirstMateClient] = [:]
-    @ObservationIgnored private var configuration: Configuration?
+    /// The authenticated connection each cached host was last reconciled with,
+    /// keyed by stable machine ID. `activate` uses it to distinguish an
+    /// unchanged host from a removed or reconfigured one.
+    @ObservationIgnored private var hostConnections: [String: ServerConfiguration] = [:]
     @ObservationIgnored private var lifecycle = 0
     @ObservationIgnored private var refreshGeneration = 0
 
@@ -77,30 +69,45 @@ final class FirstMateFleetIndex {
         FirstMateAttention.count(hosts: hosts)
     }
 
+    /// Installs the observed roster and returns the lifecycle token that
+    /// ``refresh(lifecycle:)`` and ``deactivate(lifecycle:)`` require.
+    ///
+    /// Hosts are reconciled by stable machine ID and authenticated connection
+    /// identity (URL plus token), never by roster position, display name, or
+    /// the process-wide connection generation. An unchanged host keeps its last
+    /// successful feature list — so an offline host's outstanding attention
+    /// survives an unrelated roster edit — while its display name follows the
+    /// current roster. Removed hosts and hosts whose connection was
+    /// reconfigured are cleared, and every activation invalidates older
+    /// refreshes so a delayed result can never repopulate a stale connection.
     @discardableResult
     func activate(sources: [FirstMateFleetSource], connectionGeneration: Int) -> Int {
         lifecycle &+= 1
         refreshGeneration &+= 1
-        let next = Configuration(
-            connectionGeneration: connectionGeneration,
-            machines: sources.map {
-                .init(id: $0.machine.id, name: $0.machine.name, configuration: $0.configuration)
+        let cachedHosts = Dictionary(uniqueKeysWithValues: hosts.map { ($0.machineID, $0) })
+        let cachedConnections = hostConnections
+        hosts = sources.map { source in
+            let machine = source.machine
+            if let cached = cachedHosts[machine.id],
+               cachedConnections[machine.id] == source.configuration {
+                var retained = cached
+                retained.machineName = machine.name
+                // Any in-flight refresh belongs to an older lifecycle and will
+                // be rejected, so it must not leave a spinner running.
+                retained.isLoading = false
+                return retained
             }
-        )
-        if next != configuration {
-            configuration = next
-            hosts = sources.map {
-                FirstMateFleetHost(
-                    machineID: $0.machine.id,
-                    machineName: $0.machine.name,
-                    features: [],
-                    isLoading: false,
-                    error: nil,
-                    unsupported: false,
-                    lastUpdated: nil
-                )
-            }
+            return FirstMateFleetHost(
+                machineID: machine.id,
+                machineName: machine.name,
+                features: [],
+                isLoading: false,
+                error: nil,
+                unsupported: false,
+                lastUpdated: nil
+            )
         }
+        hostConnections = Dictionary(uniqueKeysWithValues: sources.map { ($0.machine.id, $0.configuration) })
         clients = Dictionary(uniqueKeysWithValues: sources.map { ($0.machine.id, $0.client) })
         return lifecycle
     }

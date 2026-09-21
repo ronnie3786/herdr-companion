@@ -123,6 +123,7 @@ struct PRReviewDiffTextTests {
         #expect(textView.string.contains("syntheticValue80"))
     }
 
+    @MainActor
     private func descendants(_ view: NSView) -> [NSView] {
         [view] + view.subviews.flatMap(descendants)
     }

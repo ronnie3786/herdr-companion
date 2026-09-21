@@ -9,4 +9,10 @@ enum HerdrHudSessionMetadataCycle {
     static func showsModel(at date: Date) -> Bool {
         floor(date.timeIntervalSince(epoch) / interval).truncatingRemainder(dividingBy: 2) == 0
     }
+
+    static func timeUntilNextBoundary(after date: Date) -> TimeInterval {
+        let elapsed = date.timeIntervalSince(epoch)
+        let boundaryIndex = floor(elapsed / interval) + 1
+        return boundaryIndex * interval - elapsed
+    }
 }

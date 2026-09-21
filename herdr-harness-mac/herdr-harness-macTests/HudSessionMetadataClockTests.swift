@@ -30,21 +30,61 @@ struct HudSessionMetadataClockTests {
     func lateMounts() async throws {
         let mounts = Mounts()
         let log = PhaseLog()
+        let clock = ManualHerdrHudMetadataClock()
+        let timeSource = HerdrHudMetadataTimeSource(clock)
+
+        func settle(maxAttempts: Int = 200, until condition: () -> Bool = { false }) async {
+            for _ in 0..<maxAttempts {
+                if condition() { return }
+                await Task.yield()
+                try? await Task.sleep(for: .milliseconds(2))
+            }
+        }
+
+        // Advances the manual clock toward a target in chunks smaller than
+        // `HerdrHudSessionMetadataCycle.interval` (5s). A single instantaneous jump across two or more phase
+        // boundaries would let SwiftUI observe only the *net* result of all of them at once (or nothing at all,
+        // if an even number of boundaries were skipped) -- nothing forces an intermediate render between two
+        // virtual instants the way real, continuously elapsing time would. Chunking below the interval
+        // guarantees at most one boundary per chunk. After each chunk, wait specifically for the "first" probe's
+        // logged phase to match what `showsModel(at:)` says it should now be -- an already-correct phase
+        // returns immediately (most chunks cross no boundary), while a chunk that did cross one gets a real,
+        // generous budget to flush through AppKit's offscreen render pipeline before the next chunk's jump can
+        // run past it.
+        func advanceAcrossBoundaries(totalMilliseconds: Int, chunkMilliseconds: Int = 1_000) async {
+            var remaining = totalMilliseconds
+            while remaining > 0 {
+                let step = min(chunkMilliseconds, remaining)
+                clock.advance(by: .milliseconds(step))
+                remaining -= step
+                let expected = HerdrHudSessionMetadataCycle.showsModel(at: timeSource.now())
+                await settle(until: { log.phases["first"] == expected })
+            }
+        }
+
         _ = try await HerdrRenderHarness.render("hud-shared-clock-test.png", size: CGSize(width: 240, height: 90), afterSettling: {
             #expect(log.phases["first"] != nil)
-            try await Task.sleep(for: .milliseconds(1250))
+
+            clock.advance(by: .milliseconds(1250))
             mounts.showsLate = true
-            try await Task.sleep(for: .milliseconds(100))
+            await settle(until: { log.phases["late"] != nil })
+
+            clock.advance(by: .milliseconds(100))
+            await settle(until: { log.phases["late"] == log.phases["first"] })
             #expect(log.phases["late"] == log.phases["first"])
-            try await Task.sleep(for: .milliseconds(5250))
+
+            await advanceAcrossBoundaries(totalMilliseconds: 5_250)
+            await settle(until: { (log.changes["first"] ?? 0) >= 2 && (log.changes["late"] ?? 0) >= 2 })
             #expect((log.changes["first"] ?? 0) >= 2)
             #expect((log.changes["late"] ?? 0) >= 2)
             #expect(log.phases["late"] == log.phases["first"])
+
             mounts.revision += 1
-            try await Task.sleep(for: .milliseconds(100))
+            clock.advance(by: .milliseconds(100))
+            await settle(until: { log.phases["late"] == log.phases["first"] })
             #expect(log.phases["late"] == log.phases["first"])
         }) {
-            ClockFixture(mounts: mounts, log: log)
+            ClockFixture(mounts: mounts, log: log, timeSource: timeSource)
         }
     }
 
@@ -58,9 +98,48 @@ struct HudSessionMetadataClockTests {
         var changes: [String: Int] = [:]
     }
 
+    /// Manual `Clock` used only by this test. `sleep(until:)` suspends the caller until a matching
+    /// `advance(by:)` call moves `now` at or past the deadline, then resumes the waiter. Only ever driven
+    /// from this `@MainActor` test, so the unchecked `Sendable` conformance and lack of internal locking is
+    /// safe in practice even though it is not statically enforced.
+    private final class ManualHerdrHudMetadataClock: Clock, @unchecked Sendable {
+        struct Instant: InstantProtocol {
+            fileprivate var offset: Duration
+            static func < (lhs: Instant, rhs: Instant) -> Bool { lhs.offset < rhs.offset }
+            func advanced(by duration: Duration) -> Instant { Instant(offset: offset + duration) }
+            func duration(to other: Instant) -> Duration { other.offset - offset }
+        }
+
+        private struct Waiter {
+            let deadline: Instant
+            let continuation: CheckedContinuation<Void, Never>
+        }
+
+        private(set) var now = Instant(offset: .zero)
+        let minimumResolution: Duration = .zero
+        private var waiters: [Waiter] = []
+
+        func sleep(until deadline: Instant, tolerance: Duration? = nil) async throws {
+            guard deadline > now else { return }
+            await withCheckedContinuation { continuation in
+                waiters.append(Waiter(deadline: deadline, continuation: continuation))
+            }
+        }
+
+        func advance(by duration: Duration) {
+            now = now.advanced(by: duration)
+            let ready = waiters.filter { $0.deadline <= now }
+            waiters.removeAll { $0.deadline <= now }
+            for waiter in ready {
+                waiter.continuation.resume()
+            }
+        }
+    }
+
     private struct ClockFixture: View {
         let mounts: Mounts
         let log: PhaseLog
+        let timeSource: HerdrHudMetadataTimeSource
 
         var body: some View {
             VStack {
@@ -70,6 +149,7 @@ struct HudSessionMetadataClockTests {
                 }
             }
             .modifier(HerdrHudSessionMetadataClock())
+            .environment(\.herdrHudMetadataTimeSource, timeSource)
         }
     }
 

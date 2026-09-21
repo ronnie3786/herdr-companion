@@ -1441,6 +1441,7 @@ class CodeFactory:
             if issue["status"] not in ("blocked", "failed"):
                 raise CodeFactoryError(f"issue #{number} is {issue['status']}; only blocked or failed issues can be retried", code="invalid_request")
             retry_stage = issue["stage"]
+            retry_fields: dict[str, Any] = {}
             if issue.get("blockedReason") == "human_question":
                 paths = self._paths(number)
                 try:
@@ -1470,7 +1471,45 @@ class CodeFactory:
                     number, issue["stage"], "info",
                     "Human-decision retry refreshed the issue description and will create a fresh plan; prior feedback is context, not approval",
                 )
-            self._store.update_issue(number, status="active", stage=retry_stage, error=None, blockedReason=None)
+            elif issue.get("blockedReason") == "ci_failures_exhausted":
+                head = str(issue.get("headSha") or "").strip()
+                if not head:
+                    raise CodeFactoryError(
+                        f"issue #{number} has no pull request head to revise",
+                        code="invalid_request",
+                    )
+                try:
+                    log = self._github.failed_run_log(head)
+                except CodeFactoryError as exc:
+                    message = f"Retry could not fetch the failed CI log; it remains blocked: {_error_text(exc)}"
+                    self._store.add_event(number, retry_stage, "warning", message)
+                    raise CodeFactoryError(message, code=exc.code) from exc
+                plan = self._plan_for(issue)
+                plan.update(
+                    ci_log=log[-prompts.MAX_LOG_CHARS:],
+                    last_review=None,
+                    last_review_head=None,
+                    last_review_posted=None,
+                )
+                self._save_plan(issue, plan, self._paths(number))
+                retry_stage = "revise"
+                retry_fields.update(ciFailures=0, ciRerunRequested=None, ciStatus="failure")
+                self._store.add_event(
+                    number, issue["stage"], "info",
+                    "CI recovery retry captured the failed log, reset the bounded CI budget, and will start a reviser",
+                    {"headSha": head},
+                )
+            elif issue.get("blockedReason") == "review_rounds_exhausted":
+                retry_stage = "revise"
+                retry_fields.update(reviewRound=0)
+                self._store.add_event(
+                    number, issue["stage"], "info",
+                    "Review recovery retry reset the bounded review budget and will start a reviser",
+                    {"headSha": issue.get("headSha")},
+                )
+            self._store.update_issue(
+                number, status="active", stage=retry_stage, error=None, blockedReason=None, **retry_fields,
+            )
             self._store.add_event(number, retry_stage, "info", f"Retry requested at {STAGE_LABELS.get(retry_stage, retry_stage)}")
             queued = self._start_release() if retry_stage == "release" else self._submit(number)
         elif action == "skip":

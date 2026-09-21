@@ -896,6 +896,15 @@ class BlockingAndActionTests(PipelineTestCase):
         self.assertTrue(Path(issue["worktreePath"]).is_dir())
         self.assertIn("Blocked (review_rounds_exhausted): 1 review round(s) used", self.events(12))
 
+        result = self.factory.action(12, "retry")
+        retry = result["issue"]
+        self.assertEqual((retry["status"], retry["stage"], retry["blockedReason"]), ("active", "revise", None))
+        self.assertEqual(retry["reviewRound"], 0)
+        self.assertIn(
+            "Review recovery retry reset the bounded review budget and will start a reviser",
+            self.events(12),
+        )
+
     def test_ci_failures_are_bounded_separately_from_review_rounds(self):
         self.factory = self.make_factory(max_ci_failures="1")
         self.github.add_issue(12, "Crash when opening the HUD")
@@ -1011,7 +1020,7 @@ class BlockingAndActionTests(PipelineTestCase):
         with self.assertRaises(CodeFactoryError):
             self.factory.action(12, "retry")
 
-    def test_verify_failure_bound_does_not_inflate_the_ci_counter(self):
+    def test_verify_failure_retry_starts_a_bounded_revision_cycle(self):
         self.factory = self.make_factory(max_ci_failures="1")
         self.github.add_issue(12, "Crash when opening the HUD")
         self.github.default_verify = "failure"
@@ -1020,16 +1029,46 @@ class BlockingAndActionTests(PipelineTestCase):
         self.assertEqual((issue["status"], issue["stage"], issue["blockedReason"]), ("blocked", "verify", "ci_failures_exhausted"))
         self.assertEqual(issue["reviewRound"], 0)
         self.assertEqual(issue["ciFailures"], 1)
-        for attempt in range(2):
-            self.factory.action(12, "retry")
-            issue = self.factory.run_issue(12)
-            self.assertEqual((issue["status"], issue["blockedReason"]), ("blocked", "ci_failures_exhausted"))
-            self.assertEqual(issue["reviewRound"], 0)
-            self.assertEqual(issue["ciFailures"], 1, "a retry on the same failing head never exceeds the configured maximum")
-        self.assertEqual(self.github.reruns, [77])
-        self.assertEqual(sum(1 for call in self.github.calls if call[0] == "failed_run_log"), 0,
-                         "no log is fetched for a CI failure that is going to block")
+        result = self.factory.action(12, "retry")
+        retry = result["issue"]
+        self.assertEqual((retry["status"], retry["stage"], retry["blockedReason"]), ("active", "revise", None))
+        self.assertEqual(retry["ciFailures"], 0)
+        self.assertIsNone(retry["ciRerunRequested"])
+        self.assertEqual(retry["ciStatus"], "failure")
+        self.assertIn("AssertionError: boom", retry["planJson"]["ci_log"])
+
+        issue = self.factory.run_issue(12)
+        self.assertEqual((issue["status"], issue["blockedReason"]), ("blocked", "ci_failures_exhausted"))
+        self.assertEqual(issue["reviewRound"], 0)
+        self.assertEqual(issue["ciFailures"], 1, "the new recovery cycle remains bounded")
+        self.assertEqual(self.sessions(12).count("reviser"), 1)
+        self.assertEqual(self.github.reruns, [77, 77])
+        self.assertEqual(sum(1 for call in self.github.calls if call[0] == "failed_run_log"), 1)
+        self.assertIn(
+            "CI recovery retry captured the failed log, reset the bounded CI budget, and will start a reviser",
+            self.events(12),
+        )
         self.assertIn("Blocked (ci_failures_exhausted): 1 CI failure(s) used; CI still failing", self.events(12))
+
+    def test_verify_failure_retry_stays_blocked_when_log_fetch_fails(self):
+        self.factory = self.make_factory(max_ci_failures="1")
+        self.github.add_issue(12, "Crash when opening the HUD")
+        self.github.default_verify = "failure"
+        self.factory.poll_once()
+        issue = self.factory.run_issue(12)
+        self.assertEqual((issue["status"], issue["blockedReason"]), ("blocked", "ci_failures_exhausted"))
+
+        def fail_log_fetch(_head: str) -> str:
+            raise CodeFactoryError("gh run view failed: HTTP 502", code="github_failed")
+
+        self.github.failed_run_log = fail_log_fetch
+        with self.assertRaisesRegex(CodeFactoryError, "remains blocked"):
+            self.factory.action(12, "retry")
+
+        issue = self.store.get_issue(12)
+        self.assertEqual((issue["status"], issue["stage"], issue["blockedReason"]),
+                         ("blocked", "verify", "ci_failures_exhausted"))
+        self.assertTrue(any("Retry could not fetch the failed CI log" in message for message in self.events(12)))
 
     def test_session_row_is_finished_when_the_runner_raises(self):
         self.pi.raise_for["planner"] = CodeFactoryError("cwd must be an existing directory", code="invalid_request")

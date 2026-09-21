@@ -81,6 +81,12 @@ This is an experimental personal automation. Read the safety section before enab
    `max_review_rounds`, while repeated CI failures are bounded separately by
    `max_ci_failures`. Exhausting either blocks the issue for a human with
    `review_rounds_exhausted` or `ci_failures_exhausted`, respectively.
+   Retrying `ci_failures_exhausted` is a supervisory recovery action: it captures the
+   latest failed log, grants one fresh bounded CI budget, and starts the reviser directly.
+   Retrying `review_rounds_exhausted` likewise grants one fresh bounded review budget and
+   starts the reviser with Astra's latest feedback. Both recoveries remain bounded, so a
+   reviser that cannot produce a working change blocks again instead of creating an
+   unlimited retry loop.
 10. **Merge and cleanup.** On approval the PR is squash-merged with its remote branch
     deleted, and the worktree and local branch are removed immediately. The dashboard
     shows a checkmark once the worktree is gone.

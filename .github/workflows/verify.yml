@@ -60,6 +60,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
           BEFORE: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -eu
           range=""
@@ -68,6 +69,10 @@ jobs:
             range="origin/$BASE_REF...HEAD"
           elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
             range="$BEFORE..HEAD"
+          elif [ "$EVENT_NAME" = "push" ] && [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then
+            # First push of a new branch: compare against the default branch.
+            git fetch --quiet origin "$DEFAULT_BRANCH"
+            range="origin/$DEFAULT_BRANCH...HEAD"
           fi
           ios=true
           if [ -n "$range" ]; then
@@ -86,12 +91,17 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - name: Cache Swift package checkouts
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.0
+        with:
+          path: /tmp/herdr-mac-derived/SourcePackages
+          key: mac-swiftpm-${{ hashFiles('herdr-harness-mac/herdr-harness-mac.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.12'
       - run: python -m unittest discover -s herdr-harness-mac/Scripts -p 'test_*.py'
       - name: Mac unit tests
-        run: xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' -derivedDataPath /tmp/herdr-mac-derived CODE_SIGNING_ALLOWED=NO test -only-testing:herdr-harness-macTests -retry-tests-on-failure -test-iterations 3
+        run: xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' -derivedDataPath /tmp/herdr-mac-derived CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO test -only-testing:herdr-harness-macTests -retry-tests-on-failure -test-iterations 3
   ios:
     needs: changes
     if: needs.changes.outputs.ios == 'true'
@@ -106,4 +116,4 @@ jobs:
       - name: iOS unit tests
         run: |
           DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for runtime,devices in d["devices"].items() if "iOS-26" in runtime for x in devices if "iPhone" in x["name"]))')
-          xcodebuild -project herdr-harness-ios/herdr-harness-ios.xcodeproj -scheme herdr-harness-ios -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath /tmp/herdr-ios-derived CODE_SIGNING_ALLOWED=NO test -only-testing:herdr-harness-iosTests -parallel-testing-enabled NO -retry-tests-on-failure -test-iterations 3
+          xcodebuild -project herdr-harness-ios/herdr-harness-ios.xcodeproj -scheme herdr-harness-ios -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath /tmp/herdr-ios-derived CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO test -only-testing:herdr-harness-iosTests -parallel-testing-enabled NO -retry-tests-on-failure -test-iterations 3

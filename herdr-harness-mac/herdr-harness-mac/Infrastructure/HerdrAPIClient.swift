@@ -1541,8 +1541,9 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient {
             // URLQueryItem leaves literal plus signs unescaped. The companion's
             // form-style query decoder reads those as spaces, so preserve them
             // as data after URLQueryItem has encoded every other character.
-            components?.percentEncodedQuery = components?.percentEncodedQuery?
+            let percentEncodedQuery = components?.percentEncodedQuery?
                 .replacingOccurrences(of: "+", with: "%2B")
+            components?.percentEncodedQuery = percentEncodedQuery
         }
         var request = URLRequest(url: components?.url ?? configuration.baseURL)
         request.httpMethod = method

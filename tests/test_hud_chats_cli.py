@@ -194,6 +194,47 @@ class HudChatsCLITests(unittest.TestCase):
         self.assertEqual([row["id"] for row in output["results"]], ["w1:p1"])
         self.assertNotIn("groups", output)
 
+    def test_offset_is_accepted_before_or_after_list_and_search(self):
+        cases = (
+            (["list", "--scope", "terminal", "--offset", "2"], "/api/v1/discovery", "2"),
+            (["--offset", "2", "list", "--scope", "terminal"], "/api/v1/discovery", "2"),
+            (["search", "planning", "--scope", "terminal", "--offset", "3"], "/api/v1/discovery", "3"),
+            (["--offset", "3", "search", "planning", "--scope", "terminal"], "/api/v1/discovery", "3"),
+            (["list", "--offset", "4"], "/api/v1/hud-chats", "4"),
+            (["--offset", "4", "search", "planning"], "/api/v1/hud-chats", "4"),
+        )
+        for arguments, path, expected in cases:
+            with self.subTest(arguments=arguments):
+                opener = RouteOpener(
+                    {
+                        "/api/v1/control/capabilities": CAPABILITIES,
+                        "/api/v1/discovery": discovery(
+                            terminal_row(
+                                "w1:p1",
+                                [entry(PRIMARY, "sage", "Synthetic Release Group")],
+                            )
+                        ),
+                        "/api/v1/hud-chats": {"ok": True, "chats": [], "nextOffset": None},
+                    }
+                )
+                status, output, error, opener = self.run_cli(arguments, opener=opener)
+                self.assertEqual(status, 0, error)
+                request = next(row for row in opener.requests if row["path"] == path)
+                self.assertEqual(request["query"]["offset"], [expected])
+                self.assertEqual(request["method"], "GET")
+
+        # The range check still applies to the post-subcommand position.
+        for arguments in (
+            ["list", "--scope", "terminal", "--offset", "100001"],
+            ["search", "planning", "--offset", "-1"],
+        ):
+            with self.subTest(arguments=arguments):
+                status, output, error, opener = self.run_cli(arguments, opener=RouteOpener({}))
+                self.assertEqual(status, 2)
+                self.assertIsNone(output)
+                self.assertEqual(error["error"]["code"], "invalid_arguments")
+                self.assertEqual(opener.requests, [])
+
     def test_terminal_search_forwards_filters_and_groups_by_label(self):
         opener = RouteOpener(
             {

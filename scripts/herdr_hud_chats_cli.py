@@ -31,6 +31,11 @@ from herdr_harness.chat_tab_color_cli import (
 from herdr_harness.secret_file import SecretFileError, load_private_bearer_token_file, validate_bearer_token
 
 
+# Accepted both before the subcommand (saved-list compatibility) and after one
+# of the list/search subcommands, mirroring ``herdr-control find`` options.
+_PAGE_OFFSET_HELP = "Page offset; follow nextOffset in the JSON response"
+
+
 class HudChatsClient(NotesClient):
     api_path = "/api/v1/hud-chats"
 
@@ -116,13 +121,19 @@ def main(argv=None, *, environ=None, stdout=None, stderr=None, opener=None):
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--base-url", default=environ.get("HERDR_HARNESS_BASE_URL") or environ.get("HERDR_HARNESS_URL") or "http://127.0.0.1:9092")
     parser.add_argument("--token-file")
-    parser.add_argument("--offset", type=int, default=0, help="Page offset; follow nextOffset in the JSON response")
+    parser.add_argument("--offset", type=int, default=0, help=_PAGE_OFFSET_HELP)
     commands = parser.add_subparsers(dest="command", required=True)
     list_command = commands.add_parser("list")
     search_command = commands.add_parser("search")
     search_command.add_argument("query")
     commands.add_parser("show").add_argument("id", help="HUD chat root or run ID (agr_…)")
     for command in (list_command, search_command):
+        command.add_argument(
+            "--offset",
+            type=int,
+            default=argparse.SUPPRESS,
+            help=_PAGE_OFFSET_HELP,
+        )
         command.add_argument(
             "--scope",
             choices=("saved", "terminal"),

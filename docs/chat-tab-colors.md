@@ -80,6 +80,9 @@ herdr-hud-chats search "planning" --scope terminal --color-label "Synthesé ✦ 
 herdr-hud-chats --offset 50 list --scope terminal --group-by color
 ```
 
+`--offset` is accepted before the subcommand, as historically, and after
+`list` or `search`, matching `herdr-control find`.
+
 `list`, `search`, and `show` default to the saved HUD history exactly as before;
 color options are rejected there with a `--scope terminal` suggestion.
 `--scope terminal` reads live terminal chats through discovery and does not

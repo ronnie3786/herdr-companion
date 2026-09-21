@@ -339,7 +339,7 @@ struct ResponseBriefCoordinatorTests {
         #expect(message.contains("blocked"))
     }
 
-    @Test("Finite deadline cancels the owned remote run")
+    @Test("Finite deadline cancels the owned remote run", .timeLimit(.minutes(1)))
     func deadlineCancelsRemoteRun() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }

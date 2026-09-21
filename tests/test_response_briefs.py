@@ -65,18 +65,33 @@ class ResponseBriefTests(unittest.TestCase):
             workspace_id=None,
         )["run"]
 
-    def test_capability_advertises_profile_and_bounds(self):
+    @staticmethod
+    def captured_charter(capture):
+        return capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
+
+    @staticmethod
+    def stored_run(manager, run_id):
+        return json.loads((manager.runs_root / run_id / "run.json").read_text(encoding="utf-8"))
+
+    def test_capability_advertises_profile_bounds_and_length_policy(self):
         capabilities = assistant.capabilities()
         self.assertIn(response_briefs.PROFILE, capabilities["profiles"])
         self.assertEqual(
             capabilities["responseBriefs"],
             {
                 "version": 1,
+                "lengthPolicyVersion": 2,
+                "lengthOptions": ["minimal", "medium", "long"],
                 "tools": "none",
                 "oneShot": True,
                 "maxOutputBytes": response_briefs.MAX_OUTPUT_BYTES,
                 "requiresParentSessionId": True,
             },
+        )
+        self.assertEqual(response_briefs.LENGTH_POLICY_VERSION, 2)
+        self.assertEqual(
+            tuple(capabilities["responseBriefs"]["lengthOptions"]),
+            response_briefs.LENGTH_OPTIONS,
         )
 
     def test_run_is_isolated_uses_lineage_only_and_keeps_captured_data_on_stdin(self):
@@ -120,22 +135,117 @@ class ResponseBriefTests(unittest.TestCase):
         self.assertIn("at most 9 non-whitespace Unicode scalars", charter)
         self.assertEqual(argv[argv.index("--name") + 1], "Response brief")
 
-    def test_python_policy_matches_shared_swift_fixture_corpus(self):
-        fixture_path = Path(__file__).parent / "fixtures" / "response_brief_policy.json"
+    def test_python_length_policy_matches_shared_swift_fixture_corpus(self):
+        fixture_path = Path(__file__).parent / "fixtures" / "response_brief_lengths.json"
         fixtures = json.loads(fixture_path.read_text(encoding="utf-8"))
 
+        self.assertEqual(
+            {fixture["length"] for fixture in fixtures},
+            set(response_briefs.LENGTH_OPTIONS),
+        )
         for fixture in fixtures:
             with self.subTest(name=fixture["name"]):
                 self.assertEqual(
-                    response_briefs.concision_policy(fixture["source"]),
+                    response_briefs.length_policy(fixture["source"], fixture["length"]),
                     {
+                        "length": fixture["length"],
                         "readableCharacters": fixture["readableCharacters"],
                         "sourceWords": fixture["sourceWords"],
                         "maximumVisibleCharacters": fixture["maximumVisibleCharacters"],
                         "maximumVisibleWords": fixture["maximumVisibleWords"],
-                        "shouldGenerate": fixture["shouldGenerate"],
                     },
                 )
+
+    def test_explicit_length_scales_character_and_word_ceilings(self):
+        source = "a" * 200
+        self.assertEqual(response_briefs.length_policy(source, "minimal")["maximumVisibleCharacters"], 50)
+        self.assertEqual(response_briefs.length_policy(source, "medium")["maximumVisibleCharacters"], 100)
+        self.assertEqual(response_briefs.length_policy(source, "long")["maximumVisibleCharacters"], 150)
+
+        many_words = " ".join(["ab"] * 200)
+        self.assertEqual(
+            [
+                response_briefs.length_policy(many_words, length)["maximumVisibleWords"]
+                for length in response_briefs.LENGTH_OPTIONS
+            ],
+            [40, 80, 120],
+        )
+        self.assertEqual(
+            [
+                response_briefs.length_policy(" ".join(["ab"] * 40), length)["maximumVisibleWords"]
+                for length in response_briefs.LENGTH_OPTIONS
+            ],
+            [10, 20, 30],
+        )
+
+    def test_explicit_minimal_preserves_legacy_ceilings_for_previously_eligible_sources(self):
+        for source in ("a" * 161, "ab " * 200, "\u754c" * 500):
+            with self.subTest(characters=len(source)):
+                legacy = response_briefs.concision_policy(source)
+                minimal = response_briefs.length_policy(source, "minimal")
+                self.assertTrue(legacy["shouldGenerate"])
+                self.assertEqual(
+                    minimal["maximumVisibleCharacters"],
+                    legacy["maximumVisibleCharacters"],
+                )
+                self.assertEqual(minimal["maximumVisibleWords"], legacy["maximumVisibleWords"])
+
+    def test_explicit_length_gives_newly_eligible_short_sources_a_usable_ceiling(self):
+        for source in ("a", "\U0001FABB" * 3, "a" * 160, "b" * 161):
+            with self.subTest(characters=len(source)):
+                for length, expected in (("minimal", 40), ("medium", 80), ("long", 120)):
+                    with self.subTest(length=length):
+                        policy = response_briefs.length_policy(source, length)
+                        self.assertEqual(policy["maximumVisibleCharacters"], expected)
+                        self.assertEqual(policy["maximumVisibleWords"], expected)
+        legacy = response_briefs.concision_policy("a")
+        self.assertEqual(legacy["maximumVisibleCharacters"], 0)
+        self.assertEqual(legacy["maximumVisibleWords"], 40)
+
+    def test_length_policy_rounds_quarters_and_keeps_absolute_caps(self):
+        self.assertEqual(response_briefs.length_policy("c" * 163, "minimal")["maximumVisibleCharacters"], 40)
+        self.assertEqual(response_briefs.length_policy("d" * 164, "medium")["maximumVisibleCharacters"], 82)
+        self.assertEqual(response_briefs.length_policy("e" * 165, "long")["maximumVisibleCharacters"], 123)
+        self.assertEqual(response_briefs.length_policy("z" * 10_000, "minimal")["maximumVisibleCharacters"], 240)
+        self.assertEqual(response_briefs.length_policy("z" * 10_000, "medium")["maximumVisibleCharacters"], 480)
+        self.assertEqual(response_briefs.length_policy("z" * 10_000, "long")["maximumVisibleCharacters"], 720)
+        self.assertEqual(
+            response_briefs.length_policy(" ".join(["ab"] * 10_000), "long")["maximumVisibleWords"],
+            120,
+        )
+
+    def test_unknown_length_option_is_rejected(self):
+        with self.assertRaises(AgentRunError) as error:
+            response_briefs.length_policy("a" * 200, "compact")
+        self.assertEqual(error.exception.code, "invalid_response_brief_length")
+        with self.assertRaises(AgentRunError) as error:
+            response_briefs.requested_length({"responseBriefLength": "compact"})
+        self.assertEqual(error.exception.code, "invalid_response_brief_length")
+        self.assertIsNone(response_briefs.requested_length({}))
+        self.assertEqual(response_briefs.requested_length({"responseBriefLength": "medium"}), "medium")
+
+    def test_explicit_length_charter_uses_required_source_only_and_allows_short_summaries(self):
+        context = copy.deepcopy(self.request["context"])
+        context["items"][0]["text"] = "a" * 4_000
+        context["items"].append({
+            "id": "optional-noise",
+            "kind": "text.v1",
+            "label": "Optional context",
+            "priority": "optional",
+            "text": "hidden " * 10_000,
+        })
+
+        charter = response_briefs.charter_for(context, "long")
+
+        self.assertIn("The selected length option is long.", charter)
+        self.assertIn("the source has 1 readable words", charter)
+        self.assertIn("4000 readable letter/number scalars", charter)
+        self.assertIn("at most 120 words", charter)
+        self.assertIn("at most 720 non-whitespace Unicode scalars", charter)
+        self.assertNotIn("hidden", charter)
+        self.assertNotIn("12 to 20", charter)
+        self.assertIn("no minimum", charter)
+        self.assertIn(response_briefs.OUTPUT_SCHEMA, charter)
 
     def test_visible_output_policy_counts_total_punctuation_emoji_and_word_boundaries(self):
         source = "a" * 200
@@ -191,6 +301,43 @@ class ResponseBriefTests(unittest.TestCase):
             self.request["parentSessionId"],
         )
 
+    def test_visible_content_fits_applies_the_selected_length_preset(self):
+        source = "a" * 200
+
+        self.assertTrue(response_briefs.visible_content_fits(source, ["b" * 50], "minimal"))
+        self.assertFalse(response_briefs.visible_content_fits(source, ["b" * 51], "minimal"))
+        self.assertTrue(response_briefs.visible_content_fits(source, ["b" * 100], "medium"))
+        self.assertFalse(response_briefs.visible_content_fits(source, ["b" * 101], "medium"))
+        self.assertTrue(response_briefs.visible_content_fits(source, ["b" * 150], "long"))
+        self.assertFalse(response_briefs.visible_content_fits(source, ["b" * 151], "long"))
+        self.assertFalse(response_briefs.visible_content_fits("a", ["b"]))
+        self.assertTrue(response_briefs.visible_content_fits("a", ["b"], "minimal"))
+
+    def test_omitted_length_keeps_legacy_budgets_and_unpinned_run_metadata(self):
+        run = self.start()
+        wait_for_status(self.manager, run["id"], {"completed"})
+        self.assertNotIn("responseBriefLength", self.stored_run(self.manager, run["id"]))
+        charter = self.captured_charter(json.loads(self.capture.read_text(encoding="utf-8")))
+        self.assertIn("at most 40 words", charter)
+        self.assertIn("at most 9 non-whitespace Unicode scalars", charter)
+        self.assertNotIn("The selected length option is", charter)
+
+    def test_explicit_length_is_persisted_and_drives_the_captured_charter(self):
+        request = copy.deepcopy(self.request)
+        request["context"]["items"][0]["text"] = "a" * 200
+        request["responseBriefLength"] = "long"
+
+        run = self.start(request)
+        wait_for_status(self.manager, run["id"], {"completed"})
+
+        self.assertEqual(self.stored_run(self.manager, run["id"])["responseBriefLength"], "long")
+        charter = self.captured_charter(json.loads(self.capture.read_text(encoding="utf-8")))
+        self.assertIn("The selected length option is long.", charter)
+        self.assertIn("the source has 1 readable words", charter)
+        self.assertIn("200 readable letter/number scalars", charter)
+        self.assertIn("at most 120 words", charter)
+        self.assertIn("at most 150 non-whitespace Unicode scalars", charter)
+
     def test_same_request_is_idempotent_and_changed_payload_conflicts(self):
         first = self.start()
         second = self.start()
@@ -200,6 +347,22 @@ class ResponseBriefTests(unittest.TestCase):
         with self.assertRaises(AgentRunError) as error:
             self.start(changed)
         self.assertEqual(error.exception.code, "assistant_request_conflict")
+
+    def test_same_request_id_with_a_changed_length_conflicts(self):
+        request = copy.deepcopy(self.request)
+        request["responseBriefLength"] = "minimal"
+        first = self.start(request)
+        repeated = self.start(copy.deepcopy(request))
+        self.assertEqual(first["id"], repeated["id"])
+
+        for changed in ("medium", "long", None):
+            with self.subTest(changed=changed):
+                conflicting = copy.deepcopy(self.request)
+                if changed is not None:
+                    conflicting["responseBriefLength"] = changed
+                with self.assertRaises(AgentRunError) as error:
+                    self.start(conflicting)
+                self.assertEqual(error.exception.code, "assistant_request_conflict")
 
     def test_profile_validation_precedes_durable_request_tombstone(self):
         invalid_requests = []
@@ -230,6 +393,10 @@ class ResponseBriefTests(unittest.TestCase):
         action_mode = copy.deepcopy(self.request)
         action_mode["mode"] = "act"
         invalid_requests.append(action_mode)
+        for length in (None, "", "Minimal", "MEDIUM", "short", "longer", 2, ["minimal"], {"length": "long"}):
+            bad_length = copy.deepcopy(self.request)
+            bad_length["responseBriefLength"] = length
+            invalid_requests.append(bad_length)
 
         for request in invalid_requests:
             with self.subTest(request=request):

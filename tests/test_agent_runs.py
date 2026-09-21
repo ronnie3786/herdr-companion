@@ -591,6 +591,64 @@ class AgentRunManagerTests(unittest.TestCase):
             self.assertFalse(finished["run"]["response"])
             manager.stop()
 
+    def test_response_brief_charter_uses_captured_length_or_legacy_budgets(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            capture = directory / "capture.json"
+            manager = self.manager(directory, FAKE_AGENT_CAPTURE=str(capture))
+            context = {
+                "version": 1,
+                "snapshotId": "legacy-brief-snapshot",
+                "capturedAt": "2026-09-17T00:00:00Z",
+                "source": {"feature": "chat.response-brief", "instanceId": "synthetic-legacy-response"},
+                "items": [
+                    {
+                        "id": "response-part-1",
+                        "kind": "text.v1",
+                        "label": "Original response part 1 of 1 (concatenate verbatim in order)",
+                        "priority": "required",
+                        "text": "a" * 100,
+                    }
+                ],
+            }
+            cases = (
+                (None, "at most 40 words", "at most 25 non-whitespace Unicode scalars"),
+                ("long", "at most 120 words", "at most 120 non-whitespace Unicode scalars"),
+            )
+            for index, (length, words, characters) in enumerate(cases):
+                with self.subTest(length=length):
+                    metadata = {
+                        "profile": "response-brief-v1",
+                        "responseBriefParentSessionId": "legacy-source-session",
+                        "clientRequestId": f"legacy-brief-request-{index:08d}",
+                        "context": context,
+                        "assistantScope": {
+                            "paneId": None,
+                            "workspaceId": None,
+                            "rootPath": str((directory / "home").resolve()),
+                        },
+                    }
+                    if length is not None:
+                        metadata["responseBriefLength"] = length
+                    started = manager.start(
+                        prompt="Create the response brief.",
+                        label="Response brief",
+                        cwd=str(directory / "home"),
+                        topology={},
+                        mode="ask",
+                        _assistant=metadata,
+                    )
+                    wait_for_status(manager, started["run"]["id"], {"completed"})
+                    argv = json.loads(capture.read_text(encoding="utf-8"))["argv"]
+                    charter = argv[argv.index("--append-system-prompt") + 1]
+                    self.assertIn(words, charter)
+                    self.assertIn(characters, charter)
+                    if length is None:
+                        self.assertNotIn("The selected length option is", charter)
+                    else:
+                        self.assertIn(f"The selected length option is {length}.", charter)
+            manager.stop()
+
     def test_empty_response_completion_is_marked_failed_with_no_output_error(self):
         with tempfile.TemporaryDirectory() as raw_directory:
             directory = Path(raw_directory)

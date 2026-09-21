@@ -38,13 +38,20 @@ def fail(message: str, code: str = "invalid_assistant_context", status: int = 40
 
 
 def capabilities() -> dict:
-    from .response_briefs import MAX_OUTPUT_BYTES, PROFILE as RESPONSE_BRIEF_PROFILE
+    from .response_briefs import (
+        LENGTH_OPTIONS,
+        LENGTH_POLICY_VERSION,
+        MAX_OUTPUT_BYTES,
+        PROFILE as RESPONSE_BRIEF_PROFILE,
+    )
 
     return {"ok": True, "profiles": [PROFILE, PR_REVIEW_PROFILE, "hud-chat-v1", RESPONSE_BRIEF_PROFILE], "contextVersions": [1],
             "hudChats": {"retention": "indefinite", "tools": "normal-pi", "history": "/api/v1/hud-chats"},
             "hudChatWorkingDirectory": True,
             "prReviewQuestions": {"version": 1, "tools": "read-only-in-checkout", "scope": "reviewId"},
-            "responseBriefs": {"version": 1, "tools": "none", "oneShot": True,
+            "responseBriefs": {"version": 1, "lengthPolicyVersion": LENGTH_POLICY_VERSION,
+                               "lengthOptions": list(LENGTH_OPTIONS),
+                               "tools": "none", "oneShot": True,
                                "maxOutputBytes": MAX_OUTPUT_BYTES, "requiresParentSessionId": True},
             "tools": "supplied-context-only", "strictContinuation": True,
             "idempotency": True, "history": True, "observation": ["poll"],
@@ -119,6 +126,7 @@ def start(manager, *, request: dict, cwd: str, pane_id: str | None, workspace_id
     """One manager owns this store. Its lock serializes claim, append and promotion."""
     profile = request.get("profile")
     context = validate_context(request.get("context"))
+    brief_length: str | None = None
     if profile in QUESTION_PROFILES:
         if request.get("mode", "ask") != "ask":
             fail("Contextual questions must use the question profile.")
@@ -126,12 +134,17 @@ def start(manager, *, request: dict, cwd: str, pane_id: str | None, workspace_id
             fail("Context cannot override the question policy.")
         if "parentSessionId" in request:
             fail("parentSessionId is only supported by response-brief-v1.")
+        if "responseBriefLength" in request:
+            fail(
+                "responseBriefLength is only supported by response-brief-v1.",
+                "invalid_response_brief_length",
+            )
     else:
         from .response_briefs import PROFILE as RESPONSE_BRIEF_PROFILE, validate_request
 
         if profile != RESPONSE_BRIEF_PROFILE:
             fail("This restricted Agent run profile is not supported.")
-        validate_request(request, context)
+        brief_length = validate_request(request, context)
     expected = request.get("scope", {})
     if not isinstance(expected, dict) or set(expected) - {"expectedRootPath", "reviewId"}:
         fail("Question scope is invalid.")
@@ -195,6 +208,8 @@ def start(manager, *, request: dict, cwd: str, pane_id: str | None, workspace_id
         else:
             # Captured source or prompt data must stay on stdin, never in argv.
             assistant_metadata["responseBriefParentSessionId"] = request["parentSessionId"]
+            if brief_length is not None:
+                assistant_metadata["responseBriefLength"] = brief_length
             label = "Response brief"
         result = manager.start(
             prompt=request["prompt"], label=label,

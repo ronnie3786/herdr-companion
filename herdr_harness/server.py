@@ -2297,6 +2297,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         "systemPrompt",
                         "paneId",
                         "cwd", "profile", "context", "scope", "clientRequestId", "parentSessionId",
+                        "responseBriefLength",
                     }
                     for key in body
                 ):
@@ -2334,6 +2335,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 response_brief = profile == "response-brief-v1"
                 if "parentSessionId" in body and not response_brief:
                     raise HTTPValidationError("parentSessionId requires response-brief-v1")
+                if "responseBriefLength" in body and not response_brief:
+                    raise HTTPValidationError("responseBriefLength requires response-brief-v1")
                 if response_brief and not valid_pi_session_id(body.get("parentSessionId")):
                     raise HTTPValidationError("parentSessionId is invalid")
                 if hud_chat and mode != "act":
@@ -2352,6 +2355,9 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         raise HTTPValidationError("Response briefs must use ask mode")
                     if any(key in body for key in ("attachments", "systemPrompt", "continueFromRunId")):
                         raise HTTPValidationError("Response briefs do not accept attachments, systemPrompt, or continuation")
+                    from .response_briefs import LENGTH_OPTIONS
+                    if "responseBriefLength" in body and body.get("responseBriefLength") not in LENGTH_OPTIONS:
+                        raise HTTPValidationError("responseBriefLength must be minimal, medium, or long")
                     return service.start_response_brief(body), 202
                 if profile is not None and not hud_chat:
                     return service.start_contextual_question(body), 202

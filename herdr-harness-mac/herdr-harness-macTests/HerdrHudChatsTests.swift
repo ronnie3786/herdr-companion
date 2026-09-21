@@ -1191,8 +1191,8 @@ struct HerdrHudChatsTests {
         }
     }
 
-    @Test("A placeholder adopted from saved history owns only its exact submission")
-    func adoptedHistoryPlaceholderOwnsItsSubmission() async throws {
+    @Test("A placeholder adopted from saved history maps only to its exact root")
+    func adoptedHistoryPlaceholderMapsToItsRoot() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanUp() }
         let session = fixture.chats.composer
@@ -1228,8 +1228,113 @@ struct HerdrHudChatsTests {
             model: fixture.model
         )
 
-        #expect(session.ownsSubmissionID("hud-pending-adopted"))
-        #expect(!session.ownsSubmissionID("hud-pending-other"))
+        #expect(session.acceptedSubmissionID(forHistoryIdentity: "synthetic:agr_adoptedroot01") == "hud-pending-adopted")
+        #expect(session.acceptedSubmissionID(forHistoryIdentity: "synthetic:agr_otherroot01") == nil)
+    }
+
+    @Test("A failed submission's pending title never attaches to a later accepted root")
+    func pendingTitleDoesNotLeakToLaterSubmission() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        let sharedPrompt = "Synthetic failed submission"
+        session.draft = sharedPrompt
+        HudChatsURLProtocol.state.withLock { $0.rejectNextStart = true }
+        await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) }
+        let failedSubmissionID = try #require(session.exchanges.last?.id)
+        #expect(failedSubmissionID.hasPrefix("hud-pending-"))
+        #expect(session.exchanges.last?.status == .failed)
+        #expect(session.thread == nil)
+        let chat = try #require(fixture.chats.chats.first { $0.session === session })
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Failed Submission Title"}"#)
+        _ = try await fixture.chats.smartRename(chat.id, model: fixture.model, runner: runner)
+        #expect(fixture.chats.chats.first { $0.id == chat.id }?.displayTitle == "Failed Submission Title")
+
+        // The next submission in the same chat reuses the same prompt text and
+        // is accepted while the failed placeholder is still retained. Its root
+        // must map to itself, never to the failed submission that was renamed
+        // first, even though prompt matching alone cannot tell them apart.
+        session.draft = sharedPrompt
+        let accepted = Task { await session.submit(model: fixture.model) }
+        try await wait { session.thread != nil }
+        let acceptedRoot = try #require(session.thread?.rootRunID)
+        let acceptedSubmissionID = try #require(session.exchanges.last?.id)
+        #expect(acceptedSubmissionID.hasPrefix("hud-pending-"))
+        #expect(session.acceptedSubmissionID(forHistoryIdentity: "synthetic:\(acceptedRoot)") == acceptedSubmissionID)
+        #expect(session.acceptedSubmissionID(forHistoryIdentity: "synthetic:\(acceptedRoot)") != failedSubmissionID)
+        HudChatsURLProtocol.finish(acceptedRoot)
+        await accepted.value
+
+        // Relaunch, remove the chat, and reopen the accepted root from saved
+        // history: the failed submission's title must not surface there.
+        let cache = fixture.directory.appendingPathComponent("hud-chats/\(chat.id).json")
+        try await wait {
+            HerdrHudPersistenceSnapshot.load(from: cache)?.exchanges.last?.id == acceptedRoot
+        }
+        let relaunched = HerdrHudChats(legacySession: fixture.prototype, defaults: fixture.defaults)
+        await relaunched.restore(model: fixture.model)
+        let relaunchedChat = try #require(relaunched.chats.first { $0.id == chat.id })
+        try await relaunched.dismiss(relaunchedChat.id, model: fixture.model)
+        let summary = HudChatSummary(
+            id: acceptedRoot,
+            title: "Synthetic accepted submission",
+            updatedAt: "2026-09-01T12:00:00Z",
+            latestRunId: acceptedRoot,
+            turnCount: 1,
+            status: .completed,
+            cwd: nil,
+            sessionId: nil,
+            promotedPaneId: nil
+        )
+        let reopenedID = try await relaunched.openHistory(summary, machineID: "synthetic", model: fixture.model)
+        let reopened = try #require(relaunched.chats.first { $0.id == reopenedID })
+        #expect(reopened.displayTitle == "Synthetic accepted submission")
+        #expect(reopened.displayTitle != "Failed Submission Title")
+    }
+
+    @Test("An explicit retry of a failed submission adopts its pending title")
+    func pendingTitleFollowsExplicitRetry() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.draft = "Synthetic retry target"
+        HudChatsURLProtocol.state.withLock { $0.rejectNextStart = true }
+        await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) }
+        let failed = try #require(session.exchanges.last)
+        #expect(failed.id.hasPrefix("hud-pending-"))
+        #expect(failed.status == .failed)
+        #expect(session.thread == nil)
+        let chat = try #require(fixture.chats.chats.first { $0.session === session })
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Retried Submission Title"}"#)
+        _ = try await fixture.chats.smartRename(chat.id, model: fixture.model, runner: runner)
+        #expect(fixture.chats.chats.first { $0.id == chat.id }?.displayTitle == "Retried Submission Title")
+
+        let retry = Task { await session.retry(failed, model: fixture.model) }
+        try await wait { session.thread != nil }
+        let retryRoot = try #require(session.thread?.rootRunID)
+        #expect(session.acceptedSubmissionID(forHistoryIdentity: "synthetic:\(retryRoot)") == failed.id)
+        HudChatsURLProtocol.finish(retryRoot)
+        await retry.value
+
+        try await fixture.chats.dismiss(chat.id, model: fixture.model)
+        let summary = HudChatSummary(
+            id: retryRoot,
+            title: "Synthetic retry target",
+            updatedAt: "2026-09-01T12:00:00Z",
+            latestRunId: retryRoot,
+            turnCount: 1,
+            status: .completed,
+            cwd: nil,
+            sessionId: nil,
+            promotedPaneId: nil
+        )
+        let reopenedID = try await fixture.chats.openHistory(summary, machineID: "synthetic", model: fixture.model)
+        let reopened = try #require(fixture.chats.chats.first { $0.id == reopenedID })
+        #expect(reopened.displayTitle == "Retried Submission Title")
     }
 
     @Test("A pending title belongs to its own chat and submission when another chat is accepted first")

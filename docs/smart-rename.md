@@ -185,10 +185,14 @@ conversation or assistant reply.
   server's title. If that refresh fails, the rename is still reported as
   completed with the refresh problem noted, rather than guessed or repeated.
 - A HUD title created before its first run has a durable history identity is
-  remembered against that exact chat and submission placeholder and attached
-  when that submission's accepted run becomes known, so it survives relaunch,
-  dismissal, and reopening from history without another chat or a later turn
-  claiming it.
+  remembered against that exact chat and submission placeholder. It is attached
+  only when the session's explicit accepted-submission-to-root mapping shows
+  that this submission established the current history root, so a failed
+  earlier submission still listed in the transcript cannot claim a later
+  submission's root, and a later turn cannot claim the first submission's
+  title. The title survives relaunch, dismissal, and reopening from history,
+  and an explicit Retry of the failed submission adopts it once that retry is
+  accepted.
 
 Persistence differs by target:
 
@@ -253,8 +257,9 @@ not contact a live provider. They cover:
 - `HerdrHudChatsTests` — HUD prompt-only naming, response/completion races,
   stale-result protection, invalid-output reporting, exact pending-title
   ownership across two chats with matching prompt prefixes and reversed
-  acceptance, and history-title persistence including pending titles and
-  relaunch/reopen.
+  acceptance, a failed submission followed by an accepted later submission
+  across relaunch and history reopening, explicit-retry adoption, and
+  history-title persistence including pending titles.
 - `AgentControlSmartRenameTests` and `AgentControlRoutingTests` — agent-control
   rename receipts, execution and invalid-output failures, and shell-pane
   routing.
@@ -279,6 +284,15 @@ the fixture-backed suites only: it is not evidence that an installed build
 shows the behavior or that any real provider works. Those records come from the
 private installed-UI matrix and per-companion execution checks below, and
 delivery stays gated until they exist for the delivered revision.
+
+### Evidence status
+
+No installed-UI matrix and no per-companion smoke-check record has been
+recorded for the revision under review, and no installed behavior or provider
+health is claimed. Until the single final validation owner records both outside
+Git for the delivered revision, those checks remain **unverified** or
+**unperformed** as applicable, and delivery stays gated. A passing automated
+run is not substituted for either record.
 
 ### Installed-UI evidence
 

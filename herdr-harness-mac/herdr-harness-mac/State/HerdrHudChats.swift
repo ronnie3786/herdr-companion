@@ -28,9 +28,10 @@ final class HerdrHudChats {
     }
 
     /// A title produced while its chat had no durable history identity yet.
-    /// Ownership is the exact chat and the exact submission placeholder, so a
-    /// different chat or a later turn can never consume it. Only that
-    /// submission's accepted run picks the title up once a root exists.
+    /// Ownership is the exact chat and the exact accepted submission, so a
+    /// different chat or a later turn can never consume it. Only the
+    /// submission recorded as the owner of the established root picks the
+    /// title up once that root exists.
     private struct PendingHistoryTitle: Codable, Equatable {
         let chatID: String
         let submissionID: String
@@ -296,14 +297,17 @@ final class HerdrHudChats {
     }
 
     /// Attaches remembered titles to the accepted conversation that owns them.
-    /// Matching uses the exact owning chat and submission placeholder, so a
-    /// different chat or an unrelated turn never inherits a stale title.
+    /// Adoption consults the session's explicit accepted-submission-to-root
+    /// mapping, so only the exact submission whose accepted run established the
+    /// current history root can attach a title. A failed earlier submission
+    /// retained in the transcript or a later turn can never claim it.
     private func adoptPendingHistoryTitles(for session: HerdrHudSession) {
         guard !pendingHistoryTitles.isEmpty,
               let identity = session.historyIdentity,
+              let acceptedSubmissionID = session.acceptedSubmissionID(forHistoryIdentity: identity),
               let ownerChatID = chats.first(where: { $0.session === session })?.id else { return }
         let matches = pendingHistoryTitles.filter { record in
-            record.chatID == ownerChatID && session.ownsSubmissionID(record.submissionID)
+            record.chatID == ownerChatID && record.submissionID == acceptedSubmissionID
         }
         guard !matches.isEmpty else { return }
         for record in matches.sorted(by: { $0.updatedAt < $1.updatedAt }) {
@@ -412,8 +416,9 @@ final class HerdrHudChats {
         for chat in chats where pendingRestorationIDs.contains(chat.id) {
             await chat.session.waitForPersistenceRestore()
             guard !Task.isCancelled else { return }
-            // A title created while the first turn was pending still belongs
-            // to the restored conversation even when its machine is offline.
+            // Attach any pending title this session can already bind to its
+            // root; the refresh below records the accepted-submission mapping
+            // when saved history re-establishes the conversation.
             adoptPendingHistoryTitles(for: chat.session)
             guard let machineID = chat.session.selectedMachineID,
                   model.canControl(machineID: machineID) else { continue }

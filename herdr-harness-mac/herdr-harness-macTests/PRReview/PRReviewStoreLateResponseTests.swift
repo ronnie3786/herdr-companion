@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 @testable import herdr_harness_mac
@@ -348,9 +349,10 @@ struct PRReviewStoreLateResponseTests {
         store.select(PRReviewDemo.reviewID)
         store.receive(PRReviewDemo.snapshot())
 
+        let uploadData = Data("synthetic upload".utf8)
         let file = FileManager.default.temporaryDirectory
             .appending(path: "PRReviewLateResponse-\(UUID().uuidString).md")
-        try Data("synthetic upload".utf8).write(to: file)
+        try uploadData.write(to: file)
         defer { try? FileManager.default.removeItem(at: file) }
 
         let request = Task { await store.uploadDocuments(urls: [file]) }
@@ -365,18 +367,116 @@ struct PRReviewStoreLateResponseTests {
         }
 
         // The server did receive the document before the transport changed,
-        // so the refresh lists it and retires the Retry affordance without
-        // resending any mutation.
+        // so the refresh lists it — with the same bytes the Mac attempted —
+        // and retires the Retry affordance without resending any mutation.
         var refreshed = PRReviewDemo.snapshot()
         refreshed.review.revision += 1
         var document = PRReviewDemo.snapshot().documents[0]
         document.id = "prdoc_reconciled_upload"
         document.filename = file.lastPathComponent
         document.origin = "user"
+        document.byteSize = Int64(uploadData.count)
+        document.contentHash = sha256Hex(uploadData)
         refreshed.documents.append(document)
         store.receive(refreshed)
 
         #expect(store.documentUploads.values.first?.status == .uploaded)
+    }
+
+    @Test("A same-named older document cannot reconcile a failed upload")
+    func sameNamedOlderDocumentDoesNotReconcileFailedUpload() async throws {
+        let gate = LateResponseGate()
+        let client = LateResponseClient()
+        client.addDocument = { _ in
+            await gate.wait()
+            return PRReviewDemo.snapshot().documents[0]
+        }
+        let store = PRReviewStore()
+        store.configure(client: client, machineID: "host-a", demo: false)
+        store.select(PRReviewDemo.reviewID)
+        store.receive(PRReviewDemo.snapshot())
+
+        let file = FileManager.default.temporaryDirectory
+            .appending(path: "PRReviewLateResponse-\(UUID().uuidString).md")
+        try Data("new report contents".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let request = Task { await store.uploadDocuments(urls: [file]) }
+        await gate.waitUntilWaiting()
+        store.reconnect(client: LateResponseClient(), machineID: "host-a", demo: false)
+        await gate.release()
+        await request.value
+
+        guard case .failed = try #require(store.documentUploads.values.first?.status) else {
+            Issue.record("the interrupted upload should be settled before reconciliation")
+            return
+        }
+
+        // The review already holds a user document with this filename but
+        // different bytes. A filename match is not evidence the new transfer
+        // landed, so Retry must remain.
+        var refreshed = PRReviewDemo.snapshot()
+        refreshed.review.revision += 1
+        var older = PRReviewDemo.snapshot().documents[0]
+        older.id = "prdoc_older_same_name"
+        older.filename = file.lastPathComponent
+        older.origin = "user"
+        older.byteSize = 12
+        older.contentHash = "older-contents-hash"
+        refreshed.documents.append(older)
+        store.receive(refreshed)
+
+        let status = try #require(store.documentUploads.values.first?.status)
+        guard case .failed = status else {
+            Issue.record("a filename match must not retire Retry for different content, got \(status)")
+            return
+        }
+    }
+
+    @Test("An ordinary rejected upload keeps Retry despite a same-named document")
+    func rejectedUploadKeepsRetryDespiteSameNamedDocument() async throws {
+        let counter = MethodCounter()
+        let client = LateResponseClient(counter: counter)
+        client.addDocument = { _ in
+            throw APIError.server(status: 400, message: "synthetic rejected upload")
+        }
+        let store = PRReviewStore()
+        store.configure(client: client, machineID: "host-a", demo: false)
+        store.select(PRReviewDemo.reviewID)
+        store.receive(PRReviewDemo.snapshot())
+
+        let file = FileManager.default.temporaryDirectory
+            .appending(path: "PRReviewLateResponse-\(UUID().uuidString).md")
+        try Data("rejected upload contents".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        await store.uploadDocuments(urls: [file])
+
+        guard case .failed = try #require(store.documentUploads.values.first?.status) else {
+            Issue.record("a rejected upload must fail before reconciliation")
+            return
+        }
+
+        // An ordinary rejected transfer must not be "reconciled" by an older
+        // document that happens to share its filename.
+        var refreshed = PRReviewDemo.snapshot()
+        refreshed.review.revision += 1
+        var older = PRReviewDemo.snapshot().documents[0]
+        older.id = "prdoc_older_rejected_name"
+        older.filename = file.lastPathComponent
+        older.origin = "user"
+        older.byteSize = 25
+        older.contentHash = "older-rejected-hash"
+        refreshed.documents.append(older)
+        store.receive(refreshed)
+
+        let status = try #require(store.documentUploads.values.first?.status)
+        guard case let .failed(message) = status else {
+            Issue.record("a rejected upload must stay failed after a refresh, got \(status)")
+            return
+        }
+        #expect(message.contains("synthetic rejected upload"))
+        #expect(await counter.count("add-document") == 1)
     }
 
     @Test("A delayed download cannot publish a ready phase after invalidation")
@@ -458,6 +558,11 @@ private actor MethodCounter {
     func count(_ method: String) -> Int {
         counts[method] ?? 0
     }
+}
+
+/// Lowercase SHA-256 hex, matching the server's `content_hash` for uploads.
+private func sha256Hex(_ data: Data) -> String {
+    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 }
 
 /// A PR Review client whose methods can be gated by a handler, so a test can

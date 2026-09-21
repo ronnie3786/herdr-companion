@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Observation
 import UniformTypeIdentifiers
@@ -94,6 +95,20 @@ final class PRReviewStore {
 
         var url: URL
         var status: Status
+        /// SHA-256 of the bytes this attempt sent (lowercase hex), retained so
+        /// reconciliation can require the server document to match the
+        /// attempted content instead of trusting a filename.
+        var contentHash: String?
+        /// Byte count of the attempted upload, paired with `contentHash` when
+        /// the server reports its own `byte_size`.
+        var byteCount: Int64?
+    }
+
+    /// One validated upload attempt, held only until its transfer finishes.
+    private struct PRReviewUploadPayload {
+        let data: Data
+        let digest: String
+        let mediaType: String
     }
 
     /// The connection and selection an asynchronous operation started under.
@@ -817,15 +832,33 @@ final class PRReviewStore {
             let reviewID = selectedReviewID
             let scope = operationScope(reviewID: reviewID)
             let uploadKey = documentUploadKey(reviewID: reviewID, url: url)
-            documentUploads[uploadKey] = .init(url: url, status: .uploading)
+            var attemptedHash: String?
+            var attemptedByteCount: Int64?
             do {
-                let document = try await uploadDocument(url: url)
+                // The digest is computed before the transfer so a later
+                // snapshot can only reconcile this row when the server
+                // document's content_hash proves this attempt landed.
+                let payload = try Self.prepareUpload(url: url)
+                attemptedHash = payload.digest
+                attemptedByteCount = Int64(payload.data.count)
+                documentUploads[uploadKey] = .init(
+                    url: url,
+                    status: .uploading,
+                    contentHash: payload.digest,
+                    byteCount: attemptedByteCount
+                )
+                let document = try await uploadDocument(url: url, payload: payload)
                 guard isCurrentConnection(scope) else { return }
                 // The transfer row belongs to its own review, so it settles
                 // even when the user has since selected another review. A
                 // changed connection is settled by `settleInterruptedProgress`
                 // and this stale completion must not overwrite it.
-                documentUploads[uploadKey] = .init(url: url, status: .uploaded)
+                documentUploads[uploadKey] = .init(
+                    url: url,
+                    status: .uploaded,
+                    contentHash: payload.digest,
+                    byteCount: attemptedByteCount
+                )
                 guard isCurrentSelection(scope) else { return }
                 appendDocument(document)
             } catch {
@@ -835,7 +868,14 @@ final class PRReviewStore {
                     return
                 }
                 let message = error.localizedDescription
-                documentUploads[uploadKey] = .init(url: url, status: .failed(message))
+                // An attempt whose bytes were never read keeps no digest, so
+                // reconciliation stays conservative and preserves Retry.
+                documentUploads[uploadKey] = .init(
+                    url: url,
+                    status: .failed(message),
+                    contentHash: attemptedHash,
+                    byteCount: attemptedByteCount
+                )
                 guard isCurrentSelection(scope) else { return }
                 contextImportError = message
             }
@@ -967,7 +1007,12 @@ final class PRReviewStore {
         scrollRequest = (path, line, side, (scrollRequest?.token ?? 0) + 1)
     }
 
-    private func uploadDocument(url: URL) async throws -> PRReviewDocument {
+    /// Reads and validates one upload attempt before it leaves the Mac.
+    ///
+    /// The SHA-256 digest travels with the upload row so reconciliation can
+    /// prove the server holds this attempt's bytes instead of trusting its
+    /// filename.
+    private static func prepareUpload(url: URL) throws -> PRReviewUploadPayload {
         let accessed = url.startAccessingSecurityScopedResource()
         defer {
             if accessed { url.stopAccessingSecurityScopedResource() }
@@ -983,7 +1028,11 @@ final class PRReviewStore {
         let data = try Data(contentsOf: url, options: .mappedIfSafe)
         let mediaType = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
             ?? "application/octet-stream"
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        return PRReviewUploadPayload(data: data, digest: digest, mediaType: mediaType)
+    }
 
+    private func uploadDocument(url: URL, payload: PRReviewUploadPayload) async throws -> PRReviewDocument {
         if isDemo {
             return Self.demoDocument(
                 id: "prdoc-upload-\(UUID().uuidString)",
@@ -992,7 +1041,7 @@ final class PRReviewStore {
                 title: url.deletingPathExtension().lastPathComponent,
                 filename: url.lastPathComponent,
                 url: nil,
-                byteSize: Int64(data.count),
+                byteSize: Int64(payload.data.count),
                 origin: "user",
                 downloadable: true
             )
@@ -1002,8 +1051,8 @@ final class PRReviewStore {
             id: selectedReviewID,
             payload: .upload(
                 filename: url.lastPathComponent,
-                contentType: mediaType,
-                dataBase64: data.base64EncodedString(),
+                contentType: payload.mediaType,
+                dataBase64: payload.data.base64EncodedString(),
                 title: url.deletingPathExtension().lastPathComponent
             ),
             requestID: UUID().uuidString
@@ -1147,7 +1196,12 @@ final class PRReviewStore {
             return false
         }
         for (key, upload) in interruptedUploads {
-            documentUploads[key] = .init(url: upload.url, status: .failed(uploadMessage))
+            documentUploads[key] = .init(
+                url: upload.url,
+                status: .failed(uploadMessage),
+                contentHash: upload.contentHash,
+                byteCount: upload.byteCount
+            )
         }
         for scope in heldDocumentScopes where documentResources.phase(for: scope) == .downloading {
             documentResources.setPhase(.failed(downloadMessage), for: scope)
@@ -1156,8 +1210,11 @@ final class PRReviewStore {
 
     /// A refreshed snapshot is the reconciliation point for uploads that were
     /// interrupted by a connection change: if this review's document list
-    /// contains the upload, the server received it after all, so the row stops
-    /// offering Retry.
+    /// contains the attempted bytes — same filename, user origin, matching
+    /// server `content_hash`, and matching byte count — the server received
+    /// the upload after all, so the row stops offering Retry. A filename alone
+    /// is never evidence: an older document with the same name, or a rejected
+    /// transfer, keeps its failure and Retry.
     private func reconcileSettledUploads(with value: PRReviewSnapshot) {
         let reviewPrefix = "\(value.review.id)|"
         let settledUploads = documentUploads.filter { entry in
@@ -1165,13 +1222,22 @@ final class PRReviewStore {
             return true
         }
         for (key, upload) in settledUploads {
+            guard let attemptedHash = upload.contentHash, !attemptedHash.isEmpty else { continue }
             let filename = upload.url.lastPathComponent
             guard !filename.isEmpty,
-                  value.documents.contains(where: {
-                      $0.filename == filename && $0.origin.lowercased() == "user"
+                  value.documents.contains(where: { document in
+                      document.filename == filename
+                          && document.origin.lowercased() == "user"
+                          && document.contentHash?.caseInsensitiveCompare(attemptedHash) == .orderedSame
+                          && (upload.byteCount == nil || document.byteSize == upload.byteCount)
                   })
             else { continue }
-            documentUploads[key] = .init(url: upload.url, status: .uploaded)
+            documentUploads[key] = .init(
+                url: upload.url,
+                status: .uploaded,
+                contentHash: attemptedHash,
+                byteCount: upload.byteCount
+            )
         }
     }
 

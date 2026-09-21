@@ -415,9 +415,9 @@ struct PRReviewDiffStyleTests {
         expect(emphasisPixel.color, matches: addEmphasis, tolerance: 0.05)
     }
 
-    @Test("Production Git resolution and native rendering agree on the same synthetic patch")
-    func nativeRenderingMatchesProductionGitResolution() async throws {
-        let production = try await resolveProductionGitPixels()
+    @Test("Native change rendering agrees with the pinned @pierre/diffs formula resolved in WebKit")
+    func nativeRenderingMatchesPinnedDiffFormula() async throws {
+        let pinnedFormula = try await resolvePinnedDiffFormulaPixels()
         let render = try await mount(diffFile(lines: replacementLines()))
         defer { render.window.close() }
 
@@ -428,27 +428,27 @@ struct PRReviewDiffStyleTests {
 
         expect(
             try sample(CGPoint(x: rightEdge, y: fragmentRect(for: addEntry, in: render).midY), in: render),
-            matches: production.addRow,
+            matches: pinnedFormula.addRow,
             tolerance: 0.02
         )
         expect(
             try sample(CGPoint(x: rightEdge, y: fragmentRect(for: delEntry, in: render).midY), in: render),
-            matches: production.delRow,
+            matches: pinnedFormula.delRow,
             tolerance: 0.02
         )
         expect(
             try sample(CGPoint(x: rightEdge, y: fragmentRect(for: contextEntry, in: render).midY), in: render),
-            matches: production.context,
+            matches: pinnedFormula.context,
             tolerance: 0.02
         )
         expect(
-            try closestPixel(in: gutterRect(for: addEntry, in: render), to: production.addGutter, in: render).color,
-            matches: production.addGutter,
+            try closestPixel(in: gutterRect(for: addEntry, in: render), to: pinnedFormula.addGutter, in: render).color,
+            matches: pinnedFormula.addGutter,
             tolerance: 0.02
         )
         expect(
-            try closestPixel(in: gutterRect(for: delEntry, in: render), to: production.delGutter, in: render).color,
-            matches: production.delGutter,
+            try closestPixel(in: gutterRect(for: delEntry, in: render), to: pinnedFormula.delGutter, in: render).color,
+            matches: pinnedFormula.delGutter,
             tolerance: 0.02
         )
 
@@ -463,27 +463,28 @@ struct PRReviewDiffStyleTests {
         expect(
             try closestPixel(
                 in: enclosingRect(for: addEmphasisRange, in: render),
-                to: production.addEmphasis,
+                to: pinnedFormula.addEmphasis,
                 in: render
             ).color,
-            matches: production.addEmphasis,
+            matches: pinnedFormula.addEmphasis,
             tolerance: 0.02
         )
         expect(
             try closestPixel(
                 in: enclosingRect(for: delEmphasisRange, in: render),
-                to: production.delEmphasis,
+                to: pinnedFormula.delEmphasis,
                 in: render
             ).color,
-            matches: production.delEmphasis,
+            matches: pinnedFormula.delEmphasis,
             tolerance: 0.02
         )
 
-        // The shared palette values themselves are the production resolution.
-        try expect(components(HerdrDiffStyle.lineColor(for: "add")), matches: production.addRow)
-        try expect(components(HerdrDiffStyle.gutterColor(for: "add")), matches: production.addGutter)
-        try expect(components(HerdrDiffStyle.lineColor(for: "del")), matches: production.delRow)
-        try expect(components(HerdrDiffStyle.gutterColor(for: "del")), matches: production.delGutter)
+        // The shared palette values resolve to the same pixels the pinned
+        // library formula produces from those variables.
+        try expect(components(HerdrDiffStyle.lineColor(for: "add")), matches: pinnedFormula.addRow)
+        try expect(components(HerdrDiffStyle.gutterColor(for: "add")), matches: pinnedFormula.addGutter)
+        try expect(components(HerdrDiffStyle.lineColor(for: "del")), matches: pinnedFormula.delRow)
+        try expect(components(HerdrDiffStyle.gutterColor(for: "del")), matches: pinnedFormula.delGutter)
     }
 
     // MARK: Fixtures
@@ -810,9 +811,9 @@ struct PRReviewDiffStyleTests {
         )
     }
 
-    // MARK: Production Git resolution
+    // MARK: Pinned library formula resolution
 
-    private struct ProductionPixels {
+    private struct PinnedDiffFormulaPixels {
         let addRow: (red: Double, green: Double, blue: Double)
         let addGutter: (red: Double, green: Double, blue: Double)
         let delRow: (red: Double, green: Double, blue: Double)
@@ -825,20 +826,25 @@ struct PRReviewDiffStyleTests {
     /// Resolves the pinned @pierre/diffs 1.3.2 dark-scheme formulas for a
     /// `data-background` diff in WebKit, with the same `diffs-container`
     /// variables the embedded Git page receives from `HerdrDiffStyle.cssVariables`,
-    /// and reads the composited pixels back from a canvas. This is the
-    /// production Git treatment of the same synthetic patch the native view
-    /// renders; it is not a second copy of the native palette.
-    private func resolveProductionGitPixels() async throws -> ProductionPixels {
+    /// and reads the composited pixels back from a canvas.
+    ///
+    /// This is a formula-resolution probe, not the live embedded Git renderer:
+    /// it evaluates the library's own background expressions against a minimal
+    /// DOM fed by the shared `HerdrDiffStyle`, so the native palette is checked
+    /// against the pinned library's math rather than a second copy of it. The
+    /// end-to-end comparison of the same synthetic patch in the live Git
+    /// segment and PR Review stays manual final-gate evidence.
+    private func resolvePinnedDiffFormulaPixels() async throws -> PinnedDiffFormulaPixels {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         let view = WKWebView(frame: .zero, configuration: configuration)
         defer { view.stopLoading() }
-        view.loadHTMLString(productionProbeHTML, baseURL: nil)
+        view.loadHTMLString(pinnedFormulaProbeHTML, baseURL: nil)
 
         var values: [[Int]]?
         for _ in 0..<200 {
             let json = (try? await view.evaluateJavaScript(
-                "JSON.stringify(window.__herdrProductionPixels ?? null)"
+                "JSON.stringify(window.__herdrPinnedFormulaPixels ?? null)"
             )) as? String
             if let json,
                let data = json.data(using: .utf8),
@@ -849,7 +855,7 @@ struct PRReviewDiffStyleTests {
             }
             try await Task.sleep(for: .milliseconds(25))
         }
-        let resolved = try #require(values, "The production Git colour probe did not resolve in WebKit")
+        let resolved = try #require(values, "The pinned @pierre/diffs formula probe did not resolve in WebKit")
 
         func channel(_ index: Int) -> (red: Double, green: Double, blue: Double) {
             let value = resolved[index]
@@ -859,7 +865,7 @@ struct PRReviewDiffStyleTests {
                 blue: Double(value[2]) / 255
             )
         }
-        return ProductionPixels(
+        return PinnedDiffFormulaPixels(
             addRow: channel(0),
             addGutter: channel(1),
             delRow: channel(2),
@@ -870,7 +876,7 @@ struct PRReviewDiffStyleTests {
         )
     }
 
-    private var productionProbeHTML: String {
+    private var pinnedFormulaProbeHTML: String {
         """
         <!doctype html>
         <html><head><meta charset="utf-8"><style>
@@ -880,10 +886,10 @@ struct PRReviewDiffStyleTests {
           \(HerdrDiffStyle.cssVariables)
         }
         </style></head><body>
-        <diffs-container id="production-diff"></diffs-container>
+        <diffs-container id="pinned-formula-diff"></diffs-container>
         <script>
         (() => {
-          const host = document.getElementById('production-diff');
+          const host = document.getElementById('pinned-formula-diff');
           const shadow = host.attachShadow({ mode: 'open' });
           // The final dark-scheme background-color expressions from the pinned
           // @pierre/diffs 1.3.2 stylesheet for a data-background diff. The
@@ -937,7 +943,7 @@ struct PRReviewDiffStyleTests {
           };
           const background = (id) => getComputedStyle(shadow.getElementById(id)).backgroundColor;
           const base = getComputedStyle(host).getPropertyValue('--diffs-bg').trim();
-          window.__herdrProductionPixels = [
+          window.__herdrPinnedFormulaPixels = [
             pixel(base, background('add-line')),
             pixel(base, background('add-gutter')),
             pixel(base, background('del-line')),

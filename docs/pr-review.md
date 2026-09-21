@@ -219,8 +219,9 @@ Ask AI draft is open, so nothing the reviewer typed is lost.
 - Mac unit (required exact-SHA Verify): `xcodebuild … test -only-testing:herdr-harness-macTests/PRReview*`.
   That suite covers the client contract, store and window scoping, routing identity, the render
   suite (including popped-out window sizing and the rendered change palette at default and
-  enlarged text scales), the production Git color-mix resolved in WebKit against the native
-  rendering of the same synthetic patch, and still renders the section without a server in demo mode.
+  enlarged text scales), the pinned @pierre/diffs dark-scheme formula resolved in WebKit against
+  the native rendering of the same synthetic patch (a formula-resolution probe of the shared
+  theme, not the live embedded Git page), and still renders the section without a server in demo mode.
 - Mac interactive (final gate): `xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test -only-testing:herdr-harness-macUITests/HerdrPRReviewUITests`.
   That suite exercises the row and header context menus, two concurrent review windows with
   independent tabs and files, chat navigation with an unsent draft, duplicate-window focus, and

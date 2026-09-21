@@ -179,6 +179,288 @@ struct FirstMateFleetIndexTests {
         #expect(shell.pendingFirstMateControlTarget?.featureID == "new-selection")
     }
 
+    @Test("Attention counts every host independently of search and unsupported hosts")
+    func attentionUsesUnfilteredHosts() async throws {
+        let index = FirstMateFleetIndex()
+        let sources = [
+            source(id: "alpha", name: "Alpha Mac", token: "alpha-token", result: .success([
+                feature(id: "shared", status: "awaiting_direction"),
+                feature(id: "shared", status: "blocked"),
+                feature(id: "working", status: "running"),
+            ])),
+            source(id: "beta", name: "Beta Mac", token: "beta-token", result: .success([
+                feature(id: "shared", status: "awaiting_direction"),
+            ])),
+            source(id: "legacy", name: "Legacy Mac", token: "legacy-token", result: .failure(.server(status: 404, message: "Missing"))),
+        ]
+
+        let lifecycle = index.activate(sources: sources, connectionGeneration: 11)
+        #expect(index.attentionCount == 0)
+        await index.refresh(lifecycle: lifecycle)
+        #expect(index.attentionCount == 2)
+        #expect(index.hosts.first(where: { $0.id == "legacy" })?.unsupported == true)
+
+        index.search = "working"
+        #expect(index.filteredHosts.flatMap(\.features).map(\.id) == ["working"])
+        #expect(index.attentionCount == 2)
+
+        index.search = "no synthetic feature matches this"
+        #expect(index.filteredHosts.isEmpty)
+        #expect(index.attentionCount == 2)
+    }
+
+    @Test("Polling applies successive responses without navigation")
+    func pollingAppliesSuccessiveResponses() async throws {
+        let gate = FirstMateFleetStepGate()
+        let machine = machine(id: "alpha", name: "Alpha Mac")
+        let index = FirstMateFleetIndex()
+        index.pollingInterval = .milliseconds(5)
+        let source = FirstMateFleetSource(
+            machine: machine,
+            configuration: configuration(for: machine, token: "alpha-token"),
+            client: SyntheticFleetClient { try await gate.fetch() }
+        )
+        let observation = Task { await index.observe(sources: [source], connectionGeneration: 12) }
+        defer { observation.cancel() }
+        try await gate.waitForFetch()
+
+        await gate.supply(.init(ok: true, features: [
+            feature(id: "one", status: "awaiting_direction"),
+            feature(id: "two", status: "blocked"),
+            feature(id: "three", status: "running"),
+        ]))
+        try await waitForFleetIndexCondition("initial attention") { index.attentionCount == 2 }
+        #expect(index.hosts.first?.lastUpdated != nil)
+
+        await gate.supply(.init(ok: true, features: [feature(id: "three", status: "running")]))
+        try await waitForFleetIndexCondition("cleared attention") { index.attentionCount == 0 }
+
+        await gate.supply(.init(ok: true, features: [feature(id: "four", status: "blocked")]))
+        try await waitForFleetIndexCondition("renewed attention") { index.attentionCount == 1 }
+
+        observation.cancel()
+        await gate.cancelPending()
+        await observation.value
+        let fetches = await gate.fetchCount
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(await gate.fetchCount == fetches)
+        #expect(index.hosts.first?.isLoading == false)
+    }
+
+    @Test("Failed hosts retain last-known attention while healthy hosts update")
+    func transientFailuresRetainAttention() async throws {
+        let index = FirstMateFleetIndex()
+        let alphaScript = FirstMateFleetResponseScript([
+            .success([feature(id: "alpha-direction", status: "awaiting_direction")]),
+            .failure(.server(status: 500, message: "Temporarily unavailable")),
+            .success([]),
+        ])
+        let betaScript = FirstMateFleetResponseScript([
+            .success([feature(id: "beta-blocked", status: "blocked")]),
+            .success([feature(id: "beta-working", status: "running")]),
+        ])
+        let alpha = machine(id: "alpha", name: "Alpha Mac")
+        let beta = machine(id: "beta", name: "Beta Mac")
+        let sources = [
+            FirstMateFleetSource(
+                machine: alpha,
+                configuration: configuration(for: alpha, token: "alpha-token"),
+                client: SyntheticScriptedFleetClient(script: alphaScript)
+            ),
+            FirstMateFleetSource(
+                machine: beta,
+                configuration: configuration(for: beta, token: "beta-token"),
+                client: SyntheticScriptedFleetClient(script: betaScript)
+            ),
+            source(id: "legacy", name: "Legacy Mac", token: "legacy-token", result: .failure(.server(status: 501, message: "Unsupported"))),
+        ]
+        let lifecycle = index.activate(sources: sources, connectionGeneration: 8)
+        await index.refresh(lifecycle: lifecycle)
+        #expect(index.attentionCount == 2)
+
+        await index.refresh(lifecycle: lifecycle)
+        #expect(index.attentionCount == 1)
+        let failedAlpha = try #require(index.hosts.first(where: { $0.id == "alpha" }))
+        #expect(failedAlpha.features.map(\.id) == ["alpha-direction"])
+        #expect(failedAlpha.lastUpdated != nil)
+        #expect(failedAlpha.error != nil)
+        #expect(!failedAlpha.unsupported)
+        #expect(index.hosts.first(where: { $0.id == "beta" })?.features.map(\.id) == ["beta-working"])
+
+        await index.refresh(lifecycle: lifecycle)
+        #expect(index.attentionCount == 0)
+        #expect(index.hosts.first(where: { $0.id == "alpha" })?.features.isEmpty == true)
+        #expect(index.hosts.first(where: { $0.id == "legacy" })?.unsupported == true)
+    }
+
+    @Test("Rotated and removed connections drop obsolete attention")
+    func rotationAndRemovalDropAttention() async throws {
+        let index = FirstMateFleetIndex()
+        let alpha = machine(id: "alpha", name: "Alpha Mac")
+        let beta = machine(id: "beta", name: "Beta Mac")
+        let awaiting = feature(id: "waiting", status: "awaiting_direction")
+        let blocked = feature(id: "blocked", status: "blocked")
+        let oldAlpha = FirstMateFleetSource(
+            machine: alpha,
+            configuration: configuration(for: alpha, token: "old-token"),
+            client: SyntheticFleetClient { .init(ok: true, features: [awaiting]) }
+        )
+        let betaSource = FirstMateFleetSource(
+            machine: beta,
+            configuration: configuration(for: beta, token: "beta-token"),
+            client: SyntheticFleetClient { .init(ok: true, features: [blocked]) }
+        )
+
+        let firstLifecycle = index.activate(sources: [oldAlpha, betaSource], connectionGeneration: 6)
+        await index.refresh(lifecycle: firstLifecycle)
+        #expect(index.attentionCount == 2)
+
+        let rotatedAlpha = FirstMateFleetSource(
+            machine: alpha,
+            configuration: configuration(for: alpha, token: "rotated-token"),
+            client: SyntheticFleetClient { .init(ok: true, features: []) }
+        )
+        let secondLifecycle = index.activate(sources: [rotatedAlpha, betaSource], connectionGeneration: 6)
+        #expect(index.attentionCount == 0)
+        await index.refresh(lifecycle: secondLifecycle)
+        #expect(index.attentionCount == 1)
+
+        let thirdLifecycle = index.activate(sources: [rotatedAlpha], connectionGeneration: 6)
+        #expect(index.attentionCount == 0)
+        await index.refresh(lifecycle: thirdLifecycle)
+        #expect(index.attentionCount == 0)
+        #expect(index.hosts.map(\.machineID) == ["alpha"])
+    }
+
+    @Test("A delayed response from a rotated connection cannot restore attention")
+    func delayedRotatedResponseRejected() async throws {
+        let gate = FirstMateFleetResponseGate()
+        let machine = machine(id: "alpha", name: "Alpha Mac")
+        let index = FirstMateFleetIndex()
+        let oldSource = FirstMateFleetSource(
+            machine: machine,
+            configuration: configuration(for: machine, token: "old-token"),
+            client: SyntheticFleetClient { try await gate.fetch() }
+        )
+        let oldLifecycle = index.activate(sources: [oldSource], connectionGeneration: 4)
+        let oldRefresh = Task { await index.refresh(lifecycle: oldLifecycle) }
+        defer {
+            oldRefresh.cancel()
+            Task { await gate.cancelPending() }
+        }
+        try await gate.waitForRequest()
+
+        let rotatedSource = FirstMateFleetSource(
+            machine: machine,
+            configuration: configuration(for: machine, token: "rotated-token"),
+            client: SyntheticFleetClient { .init(ok: true, features: []) }
+        )
+        let rotatedLifecycle = index.activate(sources: [rotatedSource], connectionGeneration: 4)
+        await index.refresh(lifecycle: rotatedLifecycle)
+        #expect(index.attentionCount == 0)
+
+        await gate.succeed(with: [feature(id: "stale", status: "awaiting_direction")])
+        await oldRefresh.value
+        #expect(index.attentionCount == 0)
+        #expect(index.hosts.first?.features.isEmpty == true)
+    }
+
+    @Test("Cancelling observation stops polling and releases loading state")
+    func cancelledObservationStopsPolling() async throws {
+        let gate = FirstMateFleetStepGate()
+        let machine = machine(id: "alpha", name: "Alpha Mac")
+        let index = FirstMateFleetIndex()
+        index.pollingInterval = .milliseconds(5)
+        let source = FirstMateFleetSource(
+            machine: machine,
+            configuration: configuration(for: machine, token: "alpha-token"),
+            client: SyntheticFleetClient { try await gate.fetch() }
+        )
+        let observation = Task { await index.observe(sources: [source], connectionGeneration: 13) }
+        try await gate.waitForFetch()
+        #expect(index.hosts.first?.isLoading == true)
+
+        observation.cancel()
+        await gate.cancelPending()
+        await observation.value
+
+        #expect(await gate.fetchCount == 1)
+        #expect(index.hosts.first?.isLoading == false)
+        #expect(index.attentionCount == 0)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(await gate.fetchCount == 1)
+    }
+
+    @Test("A superseded observer cannot clear or overwrite a newer roster")
+    func supersededObserverDoesNotClobber() async throws {
+        let staleGate = FirstMateFleetStepGate()
+        let staleMachine = machine(id: "alpha", name: "Alpha Mac")
+        let freshMachine = machine(id: "beta", name: "Beta Mac")
+        let index = FirstMateFleetIndex()
+        index.pollingInterval = .milliseconds(5)
+
+        let staleSource = FirstMateFleetSource(
+            machine: staleMachine,
+            configuration: configuration(for: staleMachine, token: "alpha-token"),
+            client: SyntheticFleetClient { try await staleGate.fetch() }
+        )
+        let staleObservation = Task { await index.observe(sources: [staleSource], connectionGeneration: 1) }
+        defer {
+            staleObservation.cancel()
+            Task { await staleGate.cancelPending() }
+        }
+        try await staleGate.waitForFetch()
+        await staleGate.supply(.init(ok: true, features: [feature(id: "stale-waiting", status: "awaiting_direction")]))
+        try await waitForFleetIndexCondition("stale attention") { index.attentionCount == 1 }
+
+        let freshScript = FirstMateFleetResponseScript([
+            .success([feature(id: "fresh-working", status: "running")]),
+            .success([feature(id: "fresh-blocked", status: "blocked")]),
+        ])
+        let freshSource = FirstMateFleetSource(
+            machine: freshMachine,
+            configuration: configuration(for: freshMachine, token: "beta-token"),
+            client: SyntheticScriptedFleetClient(script: freshScript)
+        )
+        let freshLifecycle = index.activate(sources: [freshSource], connectionGeneration: 2)
+        await index.refresh(lifecycle: freshLifecycle)
+        #expect(index.attentionCount == 0)
+        #expect(index.hosts.map(\.machineID) == ["beta"])
+
+        staleObservation.cancel()
+        await staleGate.cancelPending()
+        await staleObservation.value
+        #expect(index.attentionCount == 0)
+        #expect(index.hosts.map(\.machineID) == ["beta"])
+
+        await index.refresh(lifecycle: freshLifecycle)
+        #expect(index.attentionCount == 1)
+        #expect(index.hosts.first?.features.map(\.id) == ["fresh-blocked"])
+    }
+
+    @Test("An empty roster resets obsolete hosts and exits without polling")
+    func emptyRosterResetsAndExits() async throws {
+        let index = FirstMateFleetIndex()
+        let script = FirstMateFleetResponseScript([.success([feature(id: "waiting", status: "awaiting_direction")])])
+        let machine = machine(id: "alpha", name: "Alpha Mac")
+        let source = FirstMateFleetSource(
+            machine: machine,
+            configuration: configuration(for: machine, token: "alpha-token"),
+            client: SyntheticScriptedFleetClient(script: script)
+        )
+        let lifecycle = index.activate(sources: [source], connectionGeneration: 3)
+        await index.refresh(lifecycle: lifecycle)
+        #expect(index.attentionCount == 1)
+
+        index.pollingInterval = .milliseconds(5)
+        await index.observe(sources: [], connectionGeneration: 3)
+        #expect(index.hosts.isEmpty)
+        #expect(index.attentionCount == 0)
+        #expect(await script.fetchCount == 1)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(await script.fetchCount == 1)
+    }
+
     private func machine(id: String, name: String) -> HerdrMachine {
         HerdrMachine(id: id, name: name, urlString: "https://\(id).example.invalid")
     }
@@ -208,6 +490,12 @@ struct FirstMateFleetIndexTests {
 
     private func snapshot(id: String, title: String, goal: String) -> FirstMateSnapshot {
         FirstMateDemo.newFeature(title: title, goal: goal, cwd: "/tmp/synthetic", id: id)
+    }
+
+    private func feature(id: String, status: String) -> FirstMateFeature {
+        var feature = snapshot(id: id, title: "Synthetic feature \(id)", goal: "A synthetic goal for \(id)").feature
+        feature.status = status
+        return feature
     }
 
     private func isolatedDefaults() -> UserDefaults {
@@ -294,4 +582,126 @@ private actor FirstMateFleetResponseGate {
 
 private enum FirstMateFleetGateError: Error {
     case requestTimedOut
+}
+
+/// A fleet observer wait that fails instead of hanging when a condition is not
+/// met before its deadline.
+@MainActor
+private func waitForFleetIndexCondition(
+    _ description: String,
+    timeout: Duration = .seconds(5),
+    _ condition: () -> Bool
+) async throws {
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: timeout)
+    while !condition() {
+        guard clock.now < deadline else {
+            throw FirstMateFleetWaitError.timedOut(description)
+        }
+        try await clock.sleep(for: .milliseconds(2))
+    }
+}
+
+private enum FirstMateFleetWaitError: Error {
+    case timedOut(String)
+}
+
+/// A per-fetch gate that lets a test hold each polling response until the
+/// corresponding assertion has observed the previous state.
+private actor FirstMateFleetStepGate {
+    private var queued: [FirstMateFeatureList] = []
+    private var waiting: CheckedContinuation<FirstMateFeatureList, any Error>?
+    private var fetches = 0
+
+    var fetchCount: Int { fetches }
+
+    func fetch() async throws -> FirstMateFeatureList {
+        fetches += 1
+        try Task.checkCancellation()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                if queued.isEmpty {
+                    waiting = continuation
+                } else {
+                    continuation.resume(returning: queued.removeFirst())
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelPending() }
+        }
+    }
+
+    func waitForFetch(_ count: Int = 1) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while fetches < count {
+            try Task.checkCancellation()
+            guard clock.now < deadline else {
+                throw FirstMateFleetWaitError.timedOut("fleet gate did not receive \(count) fetch(es)")
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    func supply(_ response: FirstMateFeatureList) {
+        if let waiting {
+            waiting.resume(returning: response)
+            self.waiting = nil
+        } else {
+            queued.append(response)
+        }
+    }
+
+    func cancelPending() {
+        waiting?.resume(throwing: CancellationError())
+        waiting = nil
+    }
+}
+
+/// A deterministic list of fetch outcomes for tests that drive refreshes
+/// manually. Once the script is exhausted it repeats its last outcome.
+private actor FirstMateFleetResponseScript {
+    private var pending: [Result<[FirstMateFeature], APIError>]
+    private var last: Result<[FirstMateFeature], APIError>?
+    private var fetches = 0
+
+    init(_ responses: [Result<[FirstMateFeature], APIError>]) {
+        pending = responses
+    }
+
+    var fetchCount: Int { fetches }
+
+    func next() throws -> FirstMateFeatureList {
+        fetches += 1
+        let response: Result<[FirstMateFeature], APIError>
+        if pending.isEmpty {
+            guard let last else { throw APIError.invalidResponse }
+            response = last
+        } else {
+            response = pending.removeFirst()
+            last = response
+        }
+        switch response {
+        case .success(let features):
+            return FirstMateFeatureList(ok: true, features: features)
+        case .failure(let error):
+            throw error
+        }
+    }
+}
+
+private final class SyntheticScriptedFleetClient: FirstMateClient, @unchecked Sendable {
+    private let script: FirstMateFleetResponseScript
+
+    init(script: FirstMateFleetResponseScript) {
+        self.script = script
+    }
+
+    func fetchFirstMateFeatures() async throws -> FirstMateFeatureList { try await script.next() }
+    func fetchFirstMateFeature(_ id: String) async throws -> FirstMateSnapshot { throw APIError.invalidResponse }
+    func createFirstMateFeature(title: String, goal: String, cwd: String, requestID: String) async throws -> FirstMateSnapshot { throw APIError.invalidResponse }
+    func sendFirstMateMessage(featureID: String, text: String, requestID: String) async throws -> FirstMateSnapshot { throw APIError.invalidResponse }
+    func performFirstMateAction(featureID: String, action: String, requestID: String) async throws -> FirstMateSnapshot { throw APIError.invalidResponse }
+    func fetchFirstMateDocument(_ id: String) async throws -> FirstMateDocumentResponse { throw APIError.invalidResponse }
+    func fetchFirstMateSession(_ id: String, before: Int?) async throws -> FirstMateSessionResponse { throw APIError.invalidResponse }
 }

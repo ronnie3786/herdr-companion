@@ -66,6 +66,17 @@ final class FirstMateFleetIndex {
         hosts.contains { !$0.isLoading && ($0.lastUpdated != nil || $0.error != nil || $0.unsupported) }
     }
 
+    /// The number of distinct First Mate features on any host that are waiting
+    /// on a human decision.
+    ///
+    /// Counted from unfiltered hosts, so neither the fleet search nor the
+    /// selected host changes it. A host that has not reported a successful list
+    /// contributes nothing; a host whose refresh failed keeps its last
+    /// successful contribution, because an outage must not imply resolution.
+    var attentionCount: Int {
+        FirstMateAttention.count(hosts: hosts)
+    }
+
     @discardableResult
     func activate(sources: [FirstMateFleetSource], connectionGeneration: Int) -> Int {
         lifecycle &+= 1
@@ -164,5 +175,34 @@ final class FirstMateFleetIndex {
     func refresh() async {
         let activeLifecycle = lifecycle
         await refresh(lifecycle: activeLifecycle)
+    }
+
+    /// Activates the roster, refreshes it immediately, and then refreshes on
+    /// `pollingInterval` until this task is cancelled or a newer activation
+    /// supersedes the roster.
+    ///
+    /// An empty roster resets any obsolete hosts and exits without polling.
+    /// The deferred deactivation is lifecycle-scoped, so a superseded observer
+    /// can never tear down a newer roster or apply a delayed result. Existing
+    /// callers of `activate`/`refresh` keep working unchanged.
+    func observe(sources: [FirstMateFleetSource], connectionGeneration: Int) async {
+        guard !Task.isCancelled else { return }
+        let expectedLifecycle = activate(sources: sources, connectionGeneration: connectionGeneration)
+        defer { deactivate(lifecycle: expectedLifecycle) }
+        guard !sources.isEmpty else { return }
+        await refresh(lifecycle: expectedLifecycle)
+        while isObserving(expectedLifecycle) {
+            do {
+                try await Task.sleep(for: pollingInterval)
+            } catch {
+                return
+            }
+            guard isObserving(expectedLifecycle) else { return }
+            await refresh(lifecycle: expectedLifecycle)
+        }
+    }
+
+    private func isObserving(_ expectedLifecycle: Int) -> Bool {
+        !Task.isCancelled && expectedLifecycle == lifecycle
     }
 }

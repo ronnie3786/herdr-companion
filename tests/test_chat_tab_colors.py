@@ -104,6 +104,49 @@ class ChatTabColorContractTests(unittest.TestCase):
                 chat_tab_colors.publication_payload(body)
             self.assertIn(expected, str(raised.exception))
 
+    def test_mixed_topology_publication_matches_the_server_contract(self):
+        topology = self.fixture["topologies"]["mixed"]
+        empty_identities = [
+            pane
+            for workspace in topology
+            for pane in workspace.get("panes", [])
+            if pane.get("tab_id") == ""
+        ]
+        self.assertTrue(
+            empty_identities,
+            "the mixed topology fixture must contain a pane without a tab identity",
+        )
+
+        body = publication_body(self.fixture, "mixedTopology", server_id=self.server_id)
+        payload = chat_tab_colors.publication_payload(body)
+        self.assertEqual(
+            [tab["tabId"] for tab in payload["tabs"]],
+            ["ws_mixed_alpha:t1", "ws_mixed_alpha:t2"],
+        )
+        assigned = payload["tabs"][0]
+        self.assertEqual(assigned["color"], "sage")
+        self.assertEqual(assigned["label"], "Synthetic Release Group")
+        self.assertIsNone(payload["tabs"][1]["color"])
+        self.assertIsNone(payload["tabs"][1]["label"])
+
+        # The identity a tab-less pane would produce is rejected wholesale,
+        # which is why the Mac publisher must never emit it.
+        with self.assertRaises(ControlError) as raised:
+            chat_tab_colors.publication_payload(
+                {
+                    **body,
+                    "tabs": [
+                        {
+                            "workspaceId": "ws_mixed_beta",
+                            "tabId": "",
+                            "color": None,
+                            "label": None,
+                        }
+                    ],
+                }
+            )
+        self.assertIn("invalid", str(raised.exception))
+
     def test_unicode_labels_survive_grapheme_differences(self):
         family = "\U0001F468\u200D\U0001F469\u200D\U0001F467\u200D\U0001F466"
         label = family * 128

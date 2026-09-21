@@ -13,7 +13,7 @@ struct ChatTabColorPublisherTests {
         let (suite, defaults) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         let machine = HerdrMachine(id: "synthetic-a", name: "Synthetic A", urlString: "https://synthetic-a.example.invalid")
-        let model = makeModel(defaults: defaults, machines: [machine])
+        let model = makeModel(defaults: defaults, machines: [machine], serverID: "srv_synthetic_alpha")
         model.machineStates[machine.id] = .live
         model.workspaces = DemoData.workspaces.map { $0.stamped(machineID: machine.id) }
         model.chatTabColors.assign(.sage, to: "\(machine.id)|w1:t1")
@@ -74,7 +74,7 @@ struct ChatTabColorPublisherTests {
         let (suite, defaults) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         let machine = HerdrMachine(id: "synthetic-a", name: "Synthetic A", urlString: "https://synthetic-a.example.invalid")
-        let model = makeModel(defaults: defaults, machines: [machine])
+        let model = makeModel(defaults: defaults, machines: [machine], serverID: "srv_synthetic_alpha")
         model.machineStates[machine.id] = .live
         let workspace = try #require(DemoData.workspaces.first).stamped(machineID: machine.id)
         model.workspaces = [workspace]
@@ -102,7 +102,7 @@ struct ChatTabColorPublisherTests {
         let (suite, defaults) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         let machine = HerdrMachine(id: "synthetic-a", name: "Synthetic A", urlString: "https://synthetic-a.example.invalid")
-        let model = makeModel(defaults: defaults, machines: [machine])
+        let model = makeModel(defaults: defaults, machines: [machine], serverID: "srv_synthetic_alpha")
         model.machineStates[machine.id] = .live
         model.workspaces = DemoData.workspaces.map { $0.stamped(machineID: machine.id) }
         model.chatTabColors.assign(.sage, to: "\(machine.id)|w1:t1")
@@ -135,7 +135,7 @@ struct ChatTabColorPublisherTests {
         let (suite, defaults) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         let machine = HerdrMachine(id: "synthetic-a", name: "Synthetic A", urlString: "https://synthetic-a.example.invalid")
-        let model = makeModel(defaults: defaults, machines: [machine])
+        let model = makeModel(defaults: defaults, machines: [machine], serverID: "srv_synthetic_alpha")
         model.machineStates[machine.id] = .live
         model.workspaces = DemoData.workspaces.map { $0.stamped(machineID: machine.id) }
         model.chatTabColors.assign(.clay, to: "\(machine.id)|w2:t1")
@@ -175,7 +175,7 @@ struct ChatTabColorPublisherTests {
         let (suite, defaults) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         let machine = HerdrMachine(id: "synthetic-a", name: "Synthetic A", urlString: "https://synthetic-a.example.invalid")
-        let model = makeModel(defaults: defaults, machines: [machine])
+        let model = makeModel(defaults: defaults, machines: [machine], serverID: "srv_synthetic_alpha")
         model.machineStates[machine.id] = .live
         model.workspaces = DemoData.workspaces.map { $0.stamped(machineID: machine.id) }
         model.chatTabColors.assign(.slate, to: "\(machine.id)|w1:t1")
@@ -206,7 +206,7 @@ struct ChatTabColorPublisherTests {
         let (suite, defaults) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         let machine = HerdrMachine(id: "synthetic-a", name: "Synthetic A", urlString: "https://synthetic-a.example.invalid")
-        let model = makeModel(defaults: defaults, machines: [machine])
+        let model = makeModel(defaults: defaults, machines: [machine], serverID: "srv_synthetic_alpha")
         model.machineStates[machine.id] = .live
         model.workspaces = DemoData.workspaces.map { $0.stamped(machineID: machine.id) }
         model.chatTabColors.assign(.rose, to: "\(machine.id)|w1:t1")
@@ -237,7 +237,7 @@ struct ChatTabColorPublisherTests {
         let (suite, defaults) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         let machine = HerdrMachine(id: "synthetic-a", name: "Synthetic A", urlString: "https://synthetic-a.example.invalid")
-        let model = makeModel(defaults: defaults, machines: [machine])
+        let model = makeModel(defaults: defaults, machines: [machine], serverID: "srv_synthetic_alpha")
         model.machineStates[machine.id] = .live
         model.workspaces = DemoData.workspaces.map { $0.stamped(machineID: machine.id) }
 
@@ -271,7 +271,7 @@ struct ChatTabColorPublisherTests {
         let (suite, defaults) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         let machine = HerdrMachine(id: "synthetic-a", name: "Synthetic A", urlString: "https://synthetic-a.example.invalid")
-        let model = makeModel(defaults: defaults, machines: [machine])
+        let model = makeModel(defaults: defaults, machines: [machine], serverID: "srv_synthetic_alpha")
         model.machineStates[machine.id] = .live
         model.workspaces = DemoData.workspaces.map { $0.stamped(machineID: machine.id) }
         model.chatTabColors.assign(.iris, to: "\(machine.id)|w1:t1")
@@ -305,7 +305,7 @@ struct ChatTabColorPublisherTests {
         defer { defaults.removePersistentDomain(forName: suite) }
         let aliasA = HerdrMachine(id: "alias-a", name: "Alias A", urlString: "https://alias-a.example.invalid")
         let aliasB = HerdrMachine(id: "alias-b", name: "Alias B", urlString: "https://alias-b.example.invalid")
-        let model = makeModel(defaults: defaults, machines: [aliasA, aliasB])
+        let model = makeModel(defaults: defaults, machines: [aliasA, aliasB], serverID: "srv_shared")
         model.machineStates[aliasA.id] = .live
         model.machineStates[aliasB.id] = .live
         model.workspaces = (
@@ -352,7 +352,7 @@ struct ChatTabColorPublisherTests {
         defer { defaults.removePersistentDomain(forName: suite) }
         let machineA = HerdrMachine(id: "synthetic-a", name: "Synthetic A", urlString: "https://synthetic-a.example.invalid")
         let machineB = HerdrMachine(id: "synthetic-b", name: "Synthetic B", urlString: "https://synthetic-b.example.invalid")
-        let model = makeModel(defaults: defaults, machines: [machineA, machineB])
+        let model = makeModel(defaults: defaults, machines: [machineA, machineB], serverIDs: [machineB.id: "srv_synthetic_beta"])
         model.machineStates[machineA.id] = .live
         model.machineStates[machineB.id] = .live
         model.workspaces = (
@@ -394,7 +394,7 @@ struct ChatTabColorPublisherTests {
         let (suite, defaults) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         let machine = HerdrMachine(id: "synthetic-a", name: "Synthetic A", urlString: "https://synthetic-a.example.invalid")
-        let model = makeModel(defaults: defaults, machines: [machine])
+        let model = makeModel(defaults: defaults, machines: [machine], serverID: "srv_synthetic_alpha")
         model.machineStates[machine.id] = .live
         model.workspaces = DemoData.workspaces.map { $0.stamped(machineID: machine.id) }
         model.chatTabColors.assign(.clay, to: "\(machine.id)|w1:t1")
@@ -423,7 +423,7 @@ struct ChatTabColorPublisherTests {
         let (suite, defaults) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         let machine = HerdrMachine(id: "synthetic-a", name: "Synthetic A", urlString: "https://synthetic-a.example.invalid")
-        let model = makeModel(defaults: defaults, machines: [machine])
+        let model = makeModel(defaults: defaults, machines: [machine], serverID: "srv_synthetic_alpha")
         model.machineStates[machine.id] = .live
         model.workspaces = DemoData.workspaces.map { $0.stamped(machineID: machine.id) }
 
@@ -444,7 +444,7 @@ struct ChatTabColorPublisherTests {
         let (suite, defaults) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         let machine = HerdrMachine(id: "synthetic-a", name: "Before", urlString: "https://before.example.invalid")
-        let model = makeModel(defaults: defaults, machines: [machine])
+        let model = makeModel(defaults: defaults, machines: [machine], serverID: "srv_before")
         model.machineStates[machine.id] = .live
         model.workspaces = DemoData.workspaces.map { $0.stamped(machineID: machine.id) }
 
@@ -504,7 +504,7 @@ struct ChatTabColorPublisherTests {
         defer { defaults.removePersistentDomain(forName: suite) }
         let aliasA = HerdrMachine(id: "alias-a", name: "Alias A", urlString: "https://alias-a.example.invalid")
         let aliasB = HerdrMachine(id: "alias-b", name: "Alias B", urlString: "https://alias-b.example.invalid")
-        let model = makeModel(defaults: defaults, machines: [aliasA, aliasB])
+        let model = makeModel(defaults: defaults, machines: [aliasA, aliasB], serverID: "srv_shared")
         model.machineStates[aliasA.id] = .live
         model.machineStates[aliasB.id] = .live
         model.workspaces = (
@@ -555,7 +555,7 @@ struct ChatTabColorPublisherTests {
         defer { defaults.removePersistentDomain(forName: suite) }
         let aliasA = HerdrMachine(id: "alias-a", name: "Alias A", urlString: "https://alias-a.example.invalid")
         let aliasB = HerdrMachine(id: "alias-b", name: "Alias B", urlString: "https://alias-b.example.invalid")
-        let model = makeModel(defaults: defaults, machines: [aliasA, aliasB])
+        let model = makeModel(defaults: defaults, machines: [aliasA, aliasB], serverID: "srv_shared")
         model.machineStates[aliasA.id] = .live
         model.machineStates[aliasB.id] = .live
         model.workspaces = (
@@ -607,7 +607,7 @@ struct ChatTabColorPublisherTests {
         let (suite, defaults) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         let machine = HerdrMachine(id: "synthetic-a", name: "Synthetic A", urlString: "https://synthetic-a.example.invalid")
-        let model = makeModel(defaults: defaults, machines: [machine])
+        let model = makeModel(defaults: defaults, machines: [machine], serverID: "srv_synthetic_alpha")
         model.machineStates[machine.id] = .live
         model.workspaces = DemoData.workspaces.map { $0.stamped(machineID: machine.id) }
 
@@ -640,7 +640,7 @@ struct ChatTabColorPublisherTests {
         let (suite, defaults) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         let machine = HerdrMachine(id: "synthetic-a", name: "Synthetic A", urlString: "https://synthetic-a.example.invalid")
-        let model = makeModel(defaults: defaults, machines: [machine])
+        let model = makeModel(defaults: defaults, machines: [machine], serverID: "srv_synthetic_alpha")
         model.machineStates[machine.id] = .live
         model.workspaces = DemoData.workspaces.map { $0.stamped(machineID: machine.id) }
 
@@ -686,8 +686,8 @@ struct ChatTabColorPublisherTests {
         }
         let machineA = HerdrMachine(id: "synthetic-a", name: "Synthetic A", urlString: "https://synthetic-a.example.invalid")
         let machineB = HerdrMachine(id: "synthetic-b", name: "Synthetic B", urlString: "https://synthetic-b.example.invalid")
-        let modelA = makeModel(defaults: defaultsA, machines: [machineA])
-        let modelB = makeModel(defaults: defaultsB, machines: [machineB])
+        let modelA = makeModel(defaults: defaultsA, machines: [machineA], serverID: "srv_synthetic_alpha")
+        let modelB = makeModel(defaults: defaultsB, machines: [machineB], serverID: "srv_synthetic_beta")
         modelA.machineStates[machineA.id] = .live
         modelB.machineStates[machineB.id] = .live
         modelA.workspaces = DemoData.workspaces.map { $0.stamped(machineID: machineA.id) }
@@ -721,6 +721,195 @@ struct ChatTabColorPublisherTests {
         publisherB.stopForTesting()
     }
 
+    // MARK: - Server identity, mixed topology, and relaunch
+
+    @Test("A pane without a tab identity never blocks publication and the emitted request matches the shared contract")
+    func mixedTopologySkipsAbsentTabIdentities() async throws {
+        let (suite, defaults) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let machine = HerdrMachine(id: "synthetic-a", name: "Synthetic A", urlString: "https://synthetic-a.example.invalid")
+        let serverID = "srv_mixed_topology"
+        let model = makeModel(defaults: defaults, machines: [machine], serverID: serverID)
+        model.machineStates[machine.id] = .live
+        let configuration = try #require(model.firstMateConfiguration(machineID: machine.id))
+
+        // Confirm the mixed topology through the real refresh path. The shared
+        // fixture deliberately includes a workspace whose only pane has an
+        // empty tab_id.
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [ChatTabColorTopologyURLProtocol.self]
+        let client = HerdrAPIClient(
+            configuration: configuration,
+            session: URLSession(configuration: sessionConfiguration)
+        )
+        try await model.refresh(
+            machineID: machine.id,
+            using: client,
+            expectedGeneration: model.connectionGeneration
+        )
+        model.chatTabColors.assign(.sage, to: "\(machine.id)|ws_mixed_alpha:t1")
+        model.chatTabColors.rename(.sage, to: "Synthetic Release Group")
+
+        let transport = ChatTabColorTestTransport(serverID: serverID)
+        let publisher = makePublisher(defaults: defaults, storage: RecordingChatTabColorSecretStorage(), transport: transport)
+        publisher.configure(model: model)
+        publisher.setSharingEnabled(true)
+        try await transport.waitForPublicationCount(1)
+        let publication = try await requireLastPublication(transport)
+
+        // The tab-less pane never became an explicitly unassigned entry the
+        // companion would reject, and the valid tabs still published.
+        #expect(publication.request.tabs.map(\.workspaceId) == ["ws_mixed_alpha", "ws_mixed_alpha"])
+        #expect(publication.request.tabs.map(\.tabId) == ["ws_mixed_alpha:t1", "ws_mixed_alpha:t2"])
+        #expect(publication.request.tabs.allSatisfy {
+            ChatTabColorContract.isValidIdentifier($0.workspaceId)
+                && ChatTabColorContract.isValidIdentifier($0.tabId)
+        })
+
+        // The exact entries the Mac emits are the contract fixture the Python
+        // server suite validates with `chat_tab_colors.publication_payload`.
+        let fixture = try loadChatTabColorFixture()
+        let publications = try #require(fixture["publications"] as? [String: Any])
+        let mixed = try #require(publications["mixedTopology"] as? [String: Any])
+        let tabObjects = try #require(mixed["tabs"])
+        let expectedTabs = try JSONDecoder().decode(
+            [ChatTabColorPublicationTab].self,
+            from: JSONSerialization.data(withJSONObject: tabObjects)
+        )
+        #expect(publication.request.tabs == expectedTabs)
+        let topologies = try #require(fixture["topologies"] as? [String: Any])
+        let mixedWorkspaces = try #require(topologies["mixed"] as? [[String: Any]])
+        #expect(mixedWorkspaces.contains { workspace in
+            (workspace["panes"] as? [[String: Any]])?.contains { ($0["tab_id"] as? String) == "" } == true
+        })
+        publisher.stopForTesting()
+    }
+
+    @Test("A replacement companion at the same endpoint never receives cached topology")
+    func replacementServerIdentityRequiresFreshTopology() async throws {
+        let (suite, defaults) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let machine = HerdrMachine(id: "synthetic-a", name: "Synthetic A", urlString: "https://synthetic-a.example.invalid")
+        let originalServerID = "srv_original"
+        let model = makeModel(defaults: defaults, machines: [machine], serverID: originalServerID)
+        model.machineStates[machine.id] = .live
+        model.workspaces = DemoData.workspaces.map { $0.stamped(machineID: machine.id) }
+        model.chatTabColors.assign(.slate, to: "\(machine.id)|w1:t1")
+
+        let transport = ChatTabColorTestTransport(serverID: originalServerID)
+        let publisher = makePublisher(defaults: defaults, storage: RecordingChatTabColorSecretStorage(), transport: transport)
+        publisher.configure(model: model)
+        publisher.setSharingEnabled(true)
+        try await transport.waitForPublicationCount(1)
+        let first = try await requireLastPublication(transport)
+        #expect(first.request.serverId == originalServerID)
+        #expect(first.request.tabs.contains { $0.tabId == "w1:t1" })
+
+        // Same URL, same token, same connectionGeneration; only the
+        // authenticated companion identity changes. The cached topology from
+        // the previous server must not follow it.
+        await transport.setServerID("srv_replacement")
+        try await waitForHostPhase(publisher, .waitingForConnection)
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(await transport.publicationList().count == 1)
+        let configuration = try #require(model.firstMateConfiguration(machineID: machine.id))
+        #expect(!model.topologyIsConfirmed(
+            machineID: machine.id,
+            configuration: configuration,
+            serverID: "srv_replacement"
+        ))
+
+        // A fresh topology read for the replacement companion is required
+        // before export, and the old server's tab IDs are never sent.
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [ChatTabColorTopologyURLProtocol.self]
+        let client = HerdrAPIClient(
+            configuration: configuration,
+            session: URLSession(configuration: sessionConfiguration)
+        )
+        try await model.refresh(
+            machineID: machine.id,
+            using: client,
+            expectedGeneration: model.connectionGeneration
+        )
+        try await transport.waitForPublicationCount(2)
+        let second = try await requireLastPublication(transport)
+        #expect(second.request.serverId == "srv_replacement")
+        #expect(second.request.tabs.allSatisfy { $0.tabId.hasPrefix("ws_mixed_alpha") })
+        #expect(!second.request.tabs.contains { $0.tabId == "w1:t1" })
+        publisher.stopForTesting()
+    }
+
+    @Test("A persisted duplicate alias still blocks publication after relaunch while offline")
+    func relaunchPreservesAliasAmbiguity() async throws {
+        let (suite, defaults) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let aliasA = HerdrMachine(id: "alias-a", name: "Alias A", urlString: "https://alias-a.example.invalid")
+        let aliasB = HerdrMachine(id: "alias-b", name: "Alias B", urlString: "https://alias-b.example.invalid")
+        let firstModel = makeModel(defaults: defaults, machines: [aliasA, aliasB], serverID: "srv_shared")
+        firstModel.machineStates[aliasA.id] = .live
+        firstModel.machineStates[aliasB.id] = .live
+        firstModel.workspaces = (
+            DemoData.workspaces.map { $0.stamped(machineID: aliasA.id) }
+                + DemoData.workspaces.map { $0.stamped(machineID: aliasB.id) }
+        )
+        firstModel.chatTabColors.assign(.sage, to: "\(aliasA.id)|w1:t1")
+        firstModel.chatTabColors.assign(.rose, to: "\(aliasB.id)|w1:t1")
+
+        let transportA = ChatTabColorTestTransport(serverID: "srv_shared")
+        let transportB = ChatTabColorTestTransport(serverID: "srv_shared")
+        let firstPublisher = makePublisher(
+            defaults: defaults,
+            storage: RecordingChatTabColorSecretStorage(),
+            transport: transportA,
+            transportFactory: { configuration in
+                configuration.baseURL.host == "alias-b.example.invalid" ? transportB : transportA
+            }
+        )
+        firstPublisher.configure(model: firstModel)
+        firstPublisher.setSharingEnabled(true)
+        try await waitForAllHostPhases(firstPublisher, .ambiguous, count: 2)
+        #expect(await transportA.publicationList().isEmpty)
+        #expect(await transportB.publicationList().isEmpty)
+        firstPublisher.stopForTesting()
+
+        // The configuration-bound association survives the process, but the
+        // credential never enters the ledger.
+        let ledgerData = try #require(defaults.data(forKey: ChatTabColorPublicationLedgerStore.defaultsKey))
+        let ledgerText = String(decoding: ledgerData, as: UTF8.self)
+        #expect(!ledgerText.contains("synthetic-token-alias-a"))
+        #expect(!ledgerText.contains("synthetic-token-alias-b"))
+        let ledger = try JSONDecoder().decode(ChatTabColorPublicationLedger.self, from: ledgerData)
+        #expect(ledger.aliasAssociations[aliasA.id]?.serverID == "srv_shared")
+        #expect(ledger.aliasAssociations[aliasB.id]?.serverID == "srv_shared")
+
+        // Relaunch with alias B offline. The reachable alias must not publish
+        // its conflicting assignment as the installation's authority.
+        await transportB.setCapabilitiesFailure("Synthetic offline")
+        let secondModel = makeModel(defaults: defaults, machines: [aliasA, aliasB], serverID: "srv_shared")
+        secondModel.machineStates[aliasA.id] = .live
+        secondModel.machineStates[aliasB.id] = .live
+        secondModel.workspaces = (
+            DemoData.workspaces.map { $0.stamped(machineID: aliasA.id) }
+                + DemoData.workspaces.map { $0.stamped(machineID: aliasB.id) }
+        )
+        let secondPublisher = makePublisher(
+            defaults: defaults,
+            storage: RecordingChatTabColorSecretStorage(),
+            transport: transportA,
+            transportFactory: { configuration in
+                configuration.baseURL.host == "alias-b.example.invalid" ? transportB : transportA
+            }
+        )
+        secondPublisher.configure(model: secondModel)
+        secondPublisher.setSharingEnabled(true)
+        try await waitForAllHostPhases(secondPublisher, .ambiguous, count: 2)
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(await transportA.publicationList().isEmpty)
+        #expect(await transportB.publicationList().isEmpty)
+        secondPublisher.stopForTesting()
+    }
+
     // MARK: - Fixtures
 
     private func makeDefaults() -> (suite: String, defaults: UserDefaults) {
@@ -730,7 +919,12 @@ struct ChatTabColorPublisherTests {
         return (suite, defaults)
     }
 
-    private func makeModel(defaults: UserDefaults, machines: [HerdrMachine]) -> HerdrAppModel {
+    private func makeModel(
+        defaults: UserDefaults,
+        machines: [HerdrMachine],
+        serverID: String = "srv_synthetic_alpha",
+        serverIDs: [String: String] = [:]
+    ) -> HerdrAppModel {
         let credentials = TestCredentialStore()
         for machine in machines {
             credentials.values["api-token.\(machine.id)"] = "synthetic-token-\(machine.id)"
@@ -743,7 +937,10 @@ struct ChatTabColorPublisherTests {
         )
         model.hasCompletedSetup = true
         for machine in machines {
-            model.confirmTopologyForTesting(machineID: machine.id)
+            model.confirmTopologyForTesting(
+                machineID: machine.id,
+                serverID: serverIDs[machine.id] ?? serverID
+            )
         }
         return model
     }
@@ -791,6 +988,21 @@ struct ChatTabColorPublisherTests {
         }
     }
 
+    private func waitForAllHostPhases(
+        _ publisher: ChatTabColorPublisher,
+        _ phase: ChatTabColorPublisher.HostState.Phase,
+        count: Int
+    ) async throws {
+        let deadline = ContinuousClock.now + .seconds(10)
+        while publisher.hostStates.count != count
+            || !publisher.hostStates.allSatisfy({ $0.phase == phase }) {
+            if ContinuousClock.now > deadline {
+                throw ChatTabColorTestTransport.WaitError.exceededBound
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
     private func waitForAnyPublication(_ transports: [ChatTabColorTestTransport]) async throws {
         let deadline = ContinuousClock.now + .seconds(10)
         while true {
@@ -829,6 +1041,11 @@ struct ChatTabColorPublisherTests {
 
 /// Deterministic fleet response used only to confirm a machine's topology
 /// through the real `HerdrAppModel.refresh` path.
+///
+/// The response is the shared fixture's mixed topology, which deliberately
+/// includes a workspace whose only pane has an empty `tab_id`. A publisher
+/// that manufactured a row for it would emit an identity the companion
+/// rejects, blocking every valid tab on that host.
 final class ChatTabColorTopologyURLProtocol: URLProtocol {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -845,17 +1062,43 @@ final class ChatTabColorTopologyURLProtocol: URLProtocol {
             client?.urlProtocol(self, didFailWithError: URLError(.badURL))
             return
         }
-        let data = Data(
-            """
-            {"ok":true,"workspaces":[{"workspace_id":"w1","number":1,"label":"Workspace","focused":true,"pane_count":1,"tab_count":0,"active_tab_id":"","agent_status":"idle","panes":[{"pane_id":"w1:p1","workspace_id":"w1","tab_id":"","focused":true,"agent_status":"idle","revision":1}]}],"alerts":[]}
-            """.utf8
-        )
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocol(self, didLoad: Self.mixedTopologyData())
         client?.urlProtocolDidFinishLoading(self)
     }
 
+    static func mixedTopologyData() -> Data {
+        let fallback = Data(#"{"ok":true,"workspaces":[],"alerts":[]}"#.utf8)
+        guard let fixture = try? loadChatTabColorFixture(),
+              let topologies = fixture["topologies"] as? [String: Any],
+              let mixed = topologies["mixed"],
+              let data = try? JSONSerialization.data(
+                  withJSONObject: ["ok": true, "workspaces": mixed, "alerts": []]
+              )
+        else { return fallback }
+        return data
+    }
+
     override func stopLoading() {}
+}
+
+/// Loads the frozen contract fixture shared with the Python companion suite.
+func loadChatTabColorFixture() throws -> [String: Any] {
+    let url = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appendingPathComponent("tests/fixtures/chat-tab-colors-v1.json")
+    let data = try Data(contentsOf: url)
+    guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        throw ChatTabColorFixtureError.malformed
+    }
+    return object
+}
+
+enum ChatTabColorFixtureError: Error {
+    case malformed
 }
 
 final class MutableClock {
@@ -927,6 +1170,7 @@ actor ChatTabColorTestTransport: ChatTabColorTransport {
     func setCapabilitiesFailure(_ message: String?) { capabilitiesFailure = message }
     func setPublicationFailure(_ message: String?) { publicationFailure = message }
     func setPublishServerID(_ value: String?) { publishServerID = value }
+    func setServerID(_ value: String) { serverID = value }
     func setBlocksCapabilities(_ value: Bool) { blocksCapabilities = value }
     func setBlocksPublications(_ value: Bool) { blocksPublications = value }
 

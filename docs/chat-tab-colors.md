@@ -153,6 +153,19 @@ filter.
 - Reads return last-known values, always marked with `stale`, so an offline
   client's groups remain visible without being presented as current. Coverage
   reports `freshness: current`, `stale`, or `none`, plus publisher counts.
+- Export only happens after a topology read confirmed for the current endpoint
+  **and** the authenticated companion identity. If a replacement companion
+  answers at the same URL and token with a new `serverId`, the Mac treats the
+  cached workspace identities as belonging to the previous server and waits for
+  a fresh topology read before publishing, so the old tab IDs and personal
+  labels are never sent to the replacement.
+- Duplicate machine aliases that reach one companion are compared by their local
+  assignments. Conflicting aliases pause publication for that companion, and
+  the alias binding is persisted, so relaunching with one alias offline still
+  blocks publication instead of treating the reachable alias as authority.
+- A pane without a valid tab identity is not a tab. The publisher omits it
+  rather than emitting an entry the companion would reject wholesale, so it is
+  never reported as explicitly unassigned either.
 - The server keeps a per-`clientId` credential and revision binding until it is
   deliberately removed. A delayed or replayed older revision is rejected, so it
   cannot clear or restore newer metadata.

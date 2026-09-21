@@ -11,6 +11,34 @@ enum ChatTabColorContract {
     static let heartbeatSeconds: TimeInterval = 20
     static let staleAfterSeconds: TimeInterval = 60
     static let maximumTabs = 2048
+
+    /// Mirrors the companion's `chat_tab_colors.tab_identifier` contract
+    /// (`^[A-Za-z0-9][A-Za-z0-9:._-]{0,255}$`). The companion rejects a whole
+    /// publication when any entry carries an invalid identity, so the
+    /// publisher filters to identifiers the server can accept instead of
+    /// manufacturing an entry for a pane that has no tab identity.
+    static func isValidIdentifier(_ value: String) -> Bool {
+        let scalars = value.unicodeScalars
+        guard let first = scalars.first, scalars.count <= 256 else { return false }
+        guard isIdentifierStart(first) else { return false }
+        return scalars.dropFirst().allSatisfy(isIdentifierBody)
+    }
+
+    private static func isIdentifierStart(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 48...57, 65...90, 97...122: true
+        default: false
+        }
+    }
+
+    private static func isIdentifierBody(_ scalar: Unicode.Scalar) -> Bool {
+        if isIdentifierStart(scalar) { return true }
+        // `:`, `.`, `_`, `-`
+        switch scalar.value {
+        case 58, 46, 95, 45: true
+        default: false
+        }
+    }
 }
 
 struct ChatTabColorCapabilitiesResponse: Decodable, Equatable, Sendable {

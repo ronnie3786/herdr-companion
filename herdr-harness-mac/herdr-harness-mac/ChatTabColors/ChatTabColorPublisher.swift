@@ -445,6 +445,21 @@ final class ChatTabColorPublisher {
             guard let host = configuredByMachine[entry.key] else { return false }
             return host.configuration == entry.value.configuration
         }
+        // Restore configuration-bound aliases recorded by an earlier process so
+        // a duplicate alias that is offline at relaunch still participates in
+        // conflict detection. A probe this cycle always replaces a restored
+        // association for that machine.
+        for host in hosts {
+            guard authenticatedServers[host.machineID] == nil,
+                  let association = ledger.aliasAssociations[host.machineID],
+                  association.configurationFingerprint == Self.configurationFingerprint(host.configuration),
+                  Self.isSafeServerID(association.serverID)
+            else { continue }
+            authenticatedServers[host.machineID] = AuthenticatedServer(
+                configuration: host.configuration,
+                serverID: association.serverID
+            )
+        }
 
         var groups: [String: ServerGroup] = [:]
         for probe in probes {
@@ -455,7 +470,16 @@ final class ChatTabColorPublisher {
                     configuration: probe.host.configuration,
                     serverID: serverID
                 )
+                model?.noteAuthenticatedServer(
+                    machineID: probe.host.machineID,
+                    configuration: probe.host.configuration,
+                    serverID: serverID
+                )
                 ledger.serverIDsByMachine[probe.host.machineID] = serverID
+                ledger.aliasAssociations[probe.host.machineID] = ChatTabColorAliasAssociation(
+                    serverID: serverID,
+                    configurationFingerprint: Self.configurationFingerprint(probe.host.configuration)
+                )
                 if probe.supportsPublication {
                     groups[serverID, default: ServerGroup(
                         serverID: serverID,
@@ -564,7 +588,8 @@ final class ChatTabColorPublisher {
                 hasTopology: !workspaces.isEmpty,
                 isTopologyConfirmed: model.topologyIsConfirmed(
                     machineID: host.machineID,
-                    configuration: host.configuration
+                    configuration: host.configuration,
+                    serverID: group.serverID
                 ),
                 isLive: model.canControl(machineID: host.machineID),
                 rows: rows(for: host.machineID, workspaces: workspaces, store: model.chatTabColors)
@@ -1072,6 +1097,12 @@ final class ChatTabColorPublisher {
                 ))
             }
             for identity in identities {
+                // A pane without a tab identity is not a tab. Publishing an
+                // empty or malformed identity would make the companion reject
+                // the whole request, blocking every valid tab's color updates.
+                guard ChatTabColorContract.isValidIdentifier(identity.workspaceID),
+                      ChatTabColorContract.isValidIdentifier(identity.tabID)
+                else { continue }
                 let key = "\(identity.workspaceID)|\(identity.tabID)"
                 guard seen.insert(key).inserted else { continue }
                 let color = store.color(for: identity.scopedTabID)
@@ -1116,6 +1147,13 @@ final class ChatTabColorPublisher {
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_:"))
         return value.hasPrefix("srv_") && value.count <= 128
             && value.unicodeScalars.allSatisfy(allowed.contains)
+    }
+
+    /// A one-way binding between a restored alias association and the endpoint
+    /// and token that produced it. The ledger never stores the credential.
+    nonisolated static func configurationFingerprint(_ configuration: ServerConfiguration) -> String {
+        let material = configuration.baseURL.absoluteString + "\u{0}" + configuration.token
+        return SHA256.hash(data: Data(material.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
     #if DEBUG

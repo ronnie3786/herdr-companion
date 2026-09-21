@@ -85,6 +85,20 @@ struct ChatTabColorWireContractTests {
         #expect(!ChatTabColorPublisherSecret.isToken(String(repeating: "A", count: 64)))
         #expect(!ChatTabColorPublisherSecret.isToken(String(repeating: "g", count: 64)))
     }
+
+    @Test("The Mac identity filter mirrors the companion's tab_identifier contract")
+    func identifierContract() {
+        #expect(ChatTabColorContract.isValidIdentifier("w1:t1"))
+        #expect(ChatTabColorContract.isValidIdentifier("ws_mixed_alpha:t2"))
+        #expect(ChatTabColorContract.isValidIdentifier("a"))
+        #expect(ChatTabColorContract.isValidIdentifier(String(repeating: "a", count: 256)))
+        #expect(!ChatTabColorContract.isValidIdentifier(String(repeating: "a", count: 257)))
+        #expect(!ChatTabColorContract.isValidIdentifier(""))
+        #expect(!ChatTabColorContract.isValidIdentifier(":leading"))
+        #expect(!ChatTabColorContract.isValidIdentifier("has space"))
+        #expect(!ChatTabColorContract.isValidIdentifier("bad/id"))
+        #expect(!ChatTabColorContract.isValidIdentifier("caf\u{00e9}"))
+    }
 }
 
 @Suite("Chat tab color live transport", .serialized)

@@ -36,11 +36,24 @@ final class HerdrAppModel {
 
     /// Provenance of the cached fleet topology for one machine. Tab color
     /// publication may export `workspaces` only when a successful refresh
-    /// fetched them for the current connection generation and endpoint; a
-    /// reconfigured machine keeps its cached workspaces until that happens.
+    /// fetched them for the current connection generation, endpoint, and
+    /// authenticated companion; a reconfigured machine keeps its cached
+    /// workspaces until that happens. `serverID` is the companion identity a
+    /// capabilities probe observed while the refresh was in flight, so cached
+    /// workspace identities can never follow a replacement companion that
+    /// answers at the same URL with the same token.
     struct ConfirmedTopology: Equatable {
         let generation: Int
         let configuration: ServerConfiguration
+        let serverID: String?
+    }
+
+    /// Companion identity observed by a capabilities probe for one machine in
+    /// this process. It is the only source a refresh uses to bind its result
+    /// to a specific server.
+    private struct ObservedServerIdentity: Equatable {
+        let configuration: ServerConfiguration
+        let serverID: String
     }
 
     var workspaces: [HerdrWorkspace] = [] {
@@ -131,6 +144,7 @@ final class HerdrAppModel {
         }
     }
     @ObservationIgnored private(set) var confirmedTopology: [String: ConfirmedTopology] = [:]
+    @ObservationIgnored private var observedServerIdentities: [String: ObservedServerIdentity] = [:]
     private(set) var activeServerConnection: ActiveServerConnection?
     var machineStates: [String: ConnectionState] = [:]
     var machines: [HerdrMachine]
@@ -209,12 +223,18 @@ final class HerdrAppModel {
     var demoForcesFreshThreadForTesting = false
 
     /// Test-only: record the same topology provenance a successful fleet
-    /// refresh records, without reaching the network.
-    func confirmTopologyForTesting(machineID: String) {
+    /// refresh records after a capabilities probe, without reaching the
+    /// network.
+    func confirmTopologyForTesting(machineID: String, serverID: String) {
         guard let configuration = firstMateConfiguration(machineID: machineID) else { return }
+        observedServerIdentities[machineID] = ObservedServerIdentity(
+            configuration: configuration,
+            serverID: serverID
+        )
         confirmedTopology[machineID] = ConfirmedTopology(
             generation: connectionGeneration,
-            configuration: configuration
+            configuration: configuration,
+            serverID: serverID
         )
     }
 #endif
@@ -425,10 +445,39 @@ final class HerdrAppModel {
 
     /// Whether the cached workspaces for this machine were fetched by a
     /// successful refresh for the supplied endpoint at the current connection
-    /// generation. Publication refuses cached topology until this is true.
-    func topologyIsConfirmed(machineID: String, configuration: ServerConfiguration) -> Bool {
+    /// generation and while the authenticated companion was the supplied
+    /// server. Publication refuses cached topology until this is true, so a
+    /// replacement companion never receives the previous server's tab IDs or
+    /// labels.
+    func topologyIsConfirmed(
+        machineID: String,
+        configuration: ServerConfiguration,
+        serverID: String
+    ) -> Bool {
         guard let confirmed = confirmedTopology[machineID] else { return false }
-        return confirmed.generation == connectionGeneration && confirmed.configuration == configuration
+        return confirmed.generation == connectionGeneration
+            && confirmed.configuration == configuration
+            && confirmed.serverID == serverID
+    }
+
+    /// Records the companion identity a capabilities probe authenticated.
+    /// A probe that identifies another companion invalidates the cached
+    /// topology confirmation, so the next publication waits for a refresh
+    /// performed against that companion instead of exporting the previous
+    /// server's workspace identities.
+    func noteAuthenticatedServer(
+        machineID: String,
+        configuration: ServerConfiguration,
+        serverID: String
+    ) {
+        observedServerIdentities[machineID] = ObservedServerIdentity(
+            configuration: configuration,
+            serverID: serverID
+        )
+        guard let confirmed = confirmedTopology[machineID] else { return }
+        if confirmed.configuration != configuration || confirmed.serverID != serverID {
+            confirmedTopology[machineID] = nil
+        }
     }
 
     func resultArtifactPhase(id: String) -> AgentResultArtifactPhase {
@@ -630,6 +679,7 @@ final class HerdrAppModel {
         errorMessage = nil
         connectionGeneration += 1
         confirmedTopology[id] = nil
+        observedServerIdentities[id] = nil
         return true
     }
 
@@ -3800,11 +3850,22 @@ final class HerdrAppModel {
         defer {
             if showSpinner, expectedGeneration == connectionGeneration { isRefreshing = false }
         }
+        let observedBefore = observedServerIdentities[machineID]
         let response = try await client.fetchWorkspaces()
         guard expectedGeneration == connectionGeneration else { throw CancellationError() }
+        // Bind the fetched topology to the companion observed across the whole
+        // request. If a probe identified a different server while the request
+        // was in flight, record no identity so the response is never attributed
+        // to that server, and a later refresh has to confirm it.
+        let observedAfter = observedServerIdentities[machineID]
+        let confirmedServerID = observedBefore == observedAfter
+            && observedAfter?.configuration == client.configuration
+            ? observedAfter?.serverID
+            : nil
         confirmedTopology[machineID] = ConfirmedTopology(
             generation: expectedGeneration,
-            configuration: client.configuration
+            configuration: client.configuration,
+            serverID: confirmedServerID
         )
         var previousAlertIDs: Set<String> = []
         var previousReadAlertIDs: Set<String> = []
@@ -4211,6 +4272,7 @@ final class HerdrAppModel {
         runtimes = [:]
         machineStates = [:]
         confirmedTopology = [:]
+        observedServerIdentities = [:]
         activeServerConnection = nil
         connectionState = .disconnected
         let hadFleetContent = !workspaces.isEmpty || !alerts.isEmpty
@@ -4562,6 +4624,7 @@ final class HerdrAppModel {
         runtimes[id] = nil
         machineStates[id] = nil
         confirmedTopology[id] = nil
+        observedServerIdentities[id] = nil
         let workspaceCount = workspaces.count
         let alertCount = alerts.count
         workspaces.removeAll { $0.machineID == id }

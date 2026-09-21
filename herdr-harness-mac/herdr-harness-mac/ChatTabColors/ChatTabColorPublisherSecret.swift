@@ -95,12 +95,50 @@ struct ChatTabColorPublicationRecord: Codable, Equatable, Sendable {
     var lastPublishedAt: Date?
 }
 
+/// Last authenticated binding between one configured machine alias and the
+/// companion server it reached. It is persisted so duplicate-alias ambiguity
+/// survives a relaunch even when one alias is offline. Only a one-way
+/// fingerprint of the endpoint configuration is stored; credentials are never
+/// written to the ledger.
+struct ChatTabColorAliasAssociation: Codable, Equatable, Sendable {
+    var serverID: String
+    var configurationFingerprint: String
+}
+
 struct ChatTabColorPublicationLedger: Codable, Equatable, Sendable {
     var records: [String: ChatTabColorPublicationRecord] = [:]
     /// Last authenticated server identity per configured machine, so disabling
     /// sharing while a companion is offline can still report and later clear
     /// the correct server instead of guessing from a URL or display name.
     var serverIDsByMachine: [String: String] = [:]
+    /// Configuration-bound alias associations restored on relaunch so two
+    /// aliases known to point at one companion still block a single reachable
+    /// alias from publishing a conflicting assignment as authoritative.
+    var aliasAssociations: [String: ChatTabColorAliasAssociation] = [:]
+
+    init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case records
+        case serverIDsByMachine
+        case aliasAssociations
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        records = try container.decodeIfPresent(
+            [String: ChatTabColorPublicationRecord].self,
+            forKey: .records
+        ) ?? [:]
+        serverIDsByMachine = try container.decodeIfPresent(
+            [String: String].self,
+            forKey: .serverIDsByMachine
+        ) ?? [:]
+        aliasAssociations = try container.decodeIfPresent(
+            [String: ChatTabColorAliasAssociation].self,
+            forKey: .aliasAssociations
+        ) ?? [:]
+    }
 }
 
 struct ChatTabColorPublicationLedgerStore {

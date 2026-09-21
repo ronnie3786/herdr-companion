@@ -97,15 +97,15 @@ defaults are sensible for a single-operator repository:
 repository = "YOUR-OWNER/YOUR-REPOSITORY"
 checkout = "~/projects/your-checkout"
 allowed_authors = "your-github-login"
-dashboard_host = "tailscale"
+dashboard_host = "127.0.0.1" # Or "tailscale" for plain HTTP on the tailnet address.
 dashboard_port = 9097
 dashboard_token = { file = "~/.config/herdr-companion/secrets/code-factory-token" }
 release_enabled = true
 release_channel = "preview"
 ```
 
-`dashboard_host = "tailscale"` binds the dashboard to this machine's Tailscale IPv4
-address (fallback: loopback). Every dashboard API call requires the bearer token when
+`dashboard_host` is `127.0.0.1` for the HTTPS setup below, or `"tailscale"` to bind this
+machine's Tailscale IPv4 address directly (fallback: loopback). Every dashboard API call requires the bearer token when
 `dashboard_token` is set; the page asks for it once and stores it in the browser.
 The dashboard answers only for its own address (IP literals, `localhost`, the configured
 host name, or a tailnet MagicDNS name when fronted by `tailscale serve`), refuses
@@ -168,7 +168,17 @@ can front the dashboard when it is bound to loopback.
 
 ## Dashboard
 
-Open `http://<tailscale-ip>:9097/` from any device on your tailnet. It shows:
+The recommended setup binds the dashboard to loopback and lets Tailscale Serve
+publish it over HTTPS to your tailnet only (Tailscale cannot proxy to the node's own
+tailnet address, so the backend must be loopback):
+
+```sh
+tailscale serve --bg --https=9097 http://127.0.0.1:9097
+```
+
+Then open `https://<machine>.<tailnet>.ts.net:9097/` from any device on your tailnet.
+With `dashboard_host = "tailscale"` instead, the same page is served as plain HTTP on the
+machine's tailnet address. Either way it shows:
 
 - stat tiles for active, blocked, failed, released, done issues and worktrees pending
   cleanup;
@@ -222,6 +232,10 @@ branch history cannot be rebuilt.
   itself performs every push, `gh` call and merge, runs its git commands with
   repository hooks disabled, and on a session timeout terminates the session's whole
   process group.
+- **Release process groups.** Release `prepare` and `publish` commands run in their
+  own process group and are terminated as a whole on timeout or after a bounded
+  `stop()` gives up waiting, so build workers such as `swift-frontend` cannot outlive
+  them as orphans.
 - **Existing gates stay.** The public-source privacy check runs before every push. CI
   must be green on the exact commit before merge and again before release preparation.
   The release script keeps its signing, notarization, feed, and publisher-lock checks.
@@ -257,6 +271,21 @@ branch history cannot be rebuilt.
   it closes the ledger, so a merge or task that just completed is recorded. A dashboard
   that cannot bind (port in use, address not assigned) is reported as a plain error and
   nothing is started.
+
+## Housekeeping
+
+`herdr-prune-runtimes` prunes installed companion runtimes under
+`~/Library/Application Support/Herdr/Backend/` that are no longer referenced by a
+LaunchAgent, Pi package settings, a `herdr-*` wrapper, or the harness launcher, while
+keeping the newest few.
+
+```sh
+herdr-prune-runtimes
+herdr-prune-runtimes --apply
+```
+
+The first command is a dry run that prints a JSON report; the second deletes the
+reported unused runtimes.
 
 ## Troubleshooting
 

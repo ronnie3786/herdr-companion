@@ -18,7 +18,9 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import json
+import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -44,6 +46,7 @@ BRANCH_PREFIX = "codefactory/issue-"
 RELEASED_LABEL = "released"
 VERIFY_POLL_SECONDS = 30
 RELEASE_TIMEOUT_SECONDS = 3 * 3600
+KILL_GRACE_SECONDS = 10.0
 PRIVACY_CHECK_TIMEOUT_SECONDS = 600
 MAX_ATTACHMENT_DOWNLOADS = 12
 MAX_ATTACHMENT_NAME_CHARS = 120
@@ -193,7 +196,11 @@ class _Interrupted(Exception):
 
 
 class CodeFactory:
-    """Discover labeled issues and drive each one from intake to a released version."""
+    """Discover labeled issues and drive each one from intake to a released version.
+
+    Release batches normally finish before shutdown. A caller that gives ``stop()`` a
+    timeout may interrupt its release command after that wait expires.
+    """
 
     def __init__(
         self,
@@ -216,7 +223,6 @@ class CodeFactory:
         self._pi = pi
         self._clock = clock
         self._sleep = sleep
-        self._release_runner: Runner = release_runner or subprocess.run
         self._check_runner: Runner = check_runner or subprocess.run
         self._log: Logger = log or _default_log
         self._lock = threading.RLock()
@@ -226,6 +232,9 @@ class CodeFactory:
         self._poller: threading.Thread | None = None
         self._release_thread: threading.Thread | None = None
         self._release_lock = threading.Lock()
+        self._release_process_lock = threading.Lock()
+        self._release_process: Any | None = None
+        self._release_runner: Runner = release_runner or self._default_release_runner
         self._stop_event = threading.Event()
         self._cancelled: set[int] = set()
         self._release_failures = 0
@@ -276,8 +285,9 @@ class CodeFactory:
 
         In-flight Pi sessions are cancelled (their process group is terminated) and the
         issues stay ``active`` at their current stage, so the next ``start()`` resumes
-        them. A release batch is never interrupted: its thread is joined, because a
-        half-finished publish is worse than a slow shutdown.
+        them. A release batch is joined because a half-finished publish is worse than
+        a slow shutdown, unless a caller explicitly gives a stop timeout and it
+        elapses; then its current release command is terminated as a process group.
         """
         self._stop_event.set()
         with self._lock:
@@ -297,8 +307,10 @@ class CodeFactory:
         if executor is not None:
             executor.shutdown(wait=wait, cancel_futures=True)
         if release_thread is not None and release_thread.is_alive() and release_thread is not threading.current_thread():
-            self._log("waiting for the release batch to finish; a publish is never interrupted")
+            self._log("waiting for the release batch to finish; a bounded stop may interrupt its command")
             release_thread.join(timeout)
+            if timeout is not None and release_thread.is_alive():
+                self._terminate_tracked_release_process("stop timeout elapsed")
         self._log("stopped")
 
     def wait_idle(self, timeout: float | None = None) -> bool:
@@ -1572,6 +1584,79 @@ class CodeFactory:
         published = self._release_command([*base, "publish", str(manifest_path), *config], worktree, "publish")
         value = published.get("published")
         return value if isinstance(value, str) and value.strip() else tag
+
+    def _default_release_runner(self, argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        """Run a release command in an isolated process group."""
+        capture_output = bool(kwargs.pop("capture_output", False))
+        text = bool(kwargs.pop("text", False))
+        timeout = kwargs.pop("timeout", None)
+        if capture_output:
+            kwargs["stdout"] = subprocess.PIPE
+            kwargs["stderr"] = subprocess.PIPE
+        process = subprocess.Popen(argv, text=text, start_new_session=True, **kwargs)
+        self._set_release_process(process)
+        try:
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired as exc:
+                self._terminate_release_process(process, "timeout")
+                stdout, stderr = process.communicate()
+                raise subprocess.TimeoutExpired(argv, timeout, output=stdout, stderr=stderr) from exc
+            return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+        except subprocess.TimeoutExpired:
+            raise
+        except BaseException:
+            self._terminate_release_process(process, "unexpected failure")
+            raise
+        finally:
+            self._clear_release_process(process)
+
+    def _set_release_process(self, process: Any) -> None:
+        """Record the default-runner child so a bounded daemon stop can reap it."""
+        with self._release_process_lock:
+            self._release_process = process
+
+    def _clear_release_process(self, process: Any) -> None:
+        with self._release_process_lock:
+            if self._release_process is process:
+                self._release_process = None
+
+    def _terminate_tracked_release_process(self, reason: str) -> None:
+        with self._release_process_lock:
+            process = self._release_process
+        if process is not None:
+            self._terminate_release_process(process, reason)
+
+    def _terminate_release_process(self, process: Any, reason: str) -> None:
+        """Terminate a release process group, escalating after the standard grace period."""
+        self._signal_release_group(process, signal.SIGTERM, reason, process.terminate)
+        try:
+            process.wait(timeout=KILL_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            self._signal_release_group(process, signal.SIGKILL, reason, process.kill)
+            try:
+                process.wait(timeout=KILL_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                pass
+        except OSError:
+            pass
+
+    def _signal_release_group(self, process: Any, signum: int, reason: str, fallback: Callable[[], Any]) -> None:
+        """Signal the release group, falling back to the direct child when necessary."""
+        pid = getattr(process, "pid", None)
+        killpg = getattr(os, "killpg", None)
+        if callable(killpg) and isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
+            try:
+                killpg(pid, signum)
+            except OSError:
+                pass
+            else:
+                self._log(f"release process group {pid}: signal {signum} ({reason})")
+                return
+        try:
+            fallback()
+        except OSError:
+            pass
 
     def _release_command(self, argv: list[str], worktree: Path, step: str) -> dict[str, Any]:
         try:

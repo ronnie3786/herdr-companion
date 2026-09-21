@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import shutil
 import subprocess
 import sys
@@ -1457,6 +1458,87 @@ class ReleaseBatchTests(PipelineTestCase):
         self.assertEqual(module.release_tag({"version": "1.2.3", "build": 9, "channel": "preview", "preview": 2}), "macos-v1.2.3-beta.2")
         self.assertEqual(module.next_version({"version": "0.20.0", "build": 46, "channel": "preview", "preview": 1}, "patch", "preview"),
                          {"version": "0.20.1", "build": 47, "channel": "preview", "preview": 1})
+
+
+class ReleaseProcessGroupTests(PipelineTestCase):
+    @staticmethod
+    def _sleeping_tree_script() -> str:
+        return (
+            "import os, subprocess, sys, time\n"
+            "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+            "print(f'{os.getpid()} {child.pid}', flush=True)\n"
+            "time.sleep(60)\n"
+        )
+
+    def _real_release_factory(self) -> CodeFactory:
+        return CodeFactory(
+            self.settings, self.store, github=self.github, git=self.repo, pi=self.pi, clock=self.clock,
+            sleep=self.clock.sleep, release_runner=None, log=self.logs.append, check_runner=self.checks,
+        )
+
+    def _assert_process_gone(self, pid: int) -> None:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.02)
+        self.fail(f"process {pid} survived process-group termination")
+
+    def _kill_group(self, pid: int) -> None:
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    def test_default_release_runner_kills_grandchild_on_timeout(self):
+        factory = self._real_release_factory()
+        parent_pid = 0
+        child_pid = 0
+        try:
+            with self.assertRaises(subprocess.TimeoutExpired) as raised:
+                factory._release_runner(
+                    [sys.executable, "-c", self._sleeping_tree_script()], cwd=str(self.root), capture_output=True,
+                    text=True, timeout=0.2, env=self.env,
+                )
+            parent_pid, child_pid = (int(value) for value in str(raised.exception.output).strip().split())
+            self._assert_process_gone(child_pid)
+            self.assertTrue(any("release process group" in message and "timeout" in message for message in self.logs))
+        finally:
+            if parent_pid:
+                self._kill_group(parent_pid)
+            if child_pid:
+                try:
+                    os.kill(child_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    def test_tracked_release_process_kills_grandchild_after_bounded_stop(self):
+        factory = self._real_release_factory()
+        process = subprocess.Popen(
+            [sys.executable, "-c", self._sleeping_tree_script()], stdout=subprocess.PIPE, text=True,
+            start_new_session=True,
+        )
+        child_pid = 0
+        try:
+            assert process.stdout is not None
+            parent_pid, child_pid = (int(value) for value in process.stdout.readline().strip().split())
+            self.assertEqual(parent_pid, process.pid)
+            factory._set_release_process(process)
+            factory._terminate_tracked_release_process("stop timeout elapsed")
+            process.wait(timeout=2)
+            self._assert_process_gone(child_pid)
+            self.assertTrue(any("stop timeout elapsed" in message for message in self.logs))
+        finally:
+            self._kill_group(process.pid)
+            if child_pid:
+                try:
+                    os.kill(child_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            if process.stdout is not None:
+                process.stdout.close()
 
 
 if __name__ == "__main__":

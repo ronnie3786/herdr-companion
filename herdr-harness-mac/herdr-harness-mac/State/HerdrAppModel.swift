@@ -107,6 +107,9 @@ final class HerdrAppModel {
     var fleetRevision = 0
     var refreshTick = 0
     var activeWorkRefreshTick = 0
+    /// Changes whenever a companion publishes PR Review activity.
+    var prReviewRefreshTick = 0
+    var prReviewMachineRevision = 0
     var isRefreshing = false
     var isSending = false
     private(set) var quickPiSessionMachineIDs: Set<String> = []
@@ -271,7 +274,13 @@ final class HerdrAppModel {
         #endif
         Self.migrateMachinesIfNeeded(defaults: defaults, credentials: credentials, configuredMachines: configuredMachines)
         let bundledURL = Bundle.main.object(forInfoDictionaryKey: "HerdrDemoServerURL") as? String
-        let persistedMachines = Self.loadMachines(defaults: defaults)
+        // Bootstrap metadata can learn a machine's role after the user first
+        // saved it. Preserve all user-owned fields and backfill only the role
+        // for the same stable machine id.
+        let persistedMachines = Self.backfillingRoles(
+            in: Self.loadMachines(defaults: defaults),
+            from: configuredMachines
+        )
         machines = uiTestServerURL.map {
             [HerdrMachine(id: "ui-test", name: Self.machineName(for: $0), urlString: $0)]
         } ?? persistedMachines
@@ -437,7 +446,17 @@ final class HerdrAppModel {
         let name = Self.machineName(for: serverURLString)
         let machine: HerdrMachine
         if let first = savedMachines.first {
-            machine = HerdrMachine(id: first.id, name: first.name.isEmpty ? name : first.name, urlString: serverURLString, role: first.role)
+            let existingOrigin = HerdrMachine.normalizedOrigin(first.urlString)
+            let newOrigin = HerdrMachine.normalizedOrigin(serverURLString)
+            let retainsPresentation = existingOrigin != nil && existingOrigin == newOrigin
+            machine = HerdrMachine(
+                id: first.id,
+                name: first.name.isEmpty ? name : first.name,
+                urlString: serverURLString,
+                role: first.role,
+                sidebarLabel: retainsPresentation ? first.sidebarLabel : nil,
+                sidebarOrder: retainsPresentation ? first.sidebarOrder : nil
+            )
         } else {
             machine = HerdrMachine(id: UUID().uuidString, name: name, urlString: serverURLString)
         }
@@ -480,6 +499,25 @@ final class HerdrAppModel {
 
     func firstMateConfiguration(machineID: String?) -> ServerConfiguration? {
         guard !isDemoMode, let machine = machines.first(where: { $0.id == machineID }) ?? machines.first else { return nil }
+        let token = machine.id == "ui-test" ? runtimes[machine.id]?.connection?.configuration.token ?? "" : credentials.value(for: "api-token.\(machine.id)")
+        return ServerConfiguration(urlString: machine.urlString, token: token)
+    }
+
+    /// The review host is deliberate: an unconfigured role is safer than
+    /// silently sending a review request to the primary companion.
+    var prReviewMachineOverrideID: String? { userDefaults.string(forKey: "herdr.prReview.machineID")?.nonEmpty }
+    var prReviewMachine: HerdrMachine? {
+        if let override = prReviewMachineOverrideID { return machines.first { $0.id == override } }
+        return machines.first { $0.role == "development" }
+    }
+    func setPRReviewMachineOverride(_ id: String?) {
+        if let id, !id.isEmpty { userDefaults.set(id, forKey: "herdr.prReview.machineID") } else { userDefaults.removeObject(forKey: "herdr.prReview.machineID") }
+        prReviewMachineRevision &+= 1
+    }
+    func prReviewConfiguration(machineID: String? = nil) -> ServerConfiguration? {
+        guard !isDemoMode,
+              let machine = machines.first(where: { $0.id == machineID }) ?? prReviewMachine
+        else { return nil }
         let token = machine.id == "ui-test" ? runtimes[machine.id]?.connection?.configuration.token ?? "" : credentials.value(for: "api-token.\(machine.id)")
         return ServerConfiguration(urlString: machine.urlString, token: token)
     }
@@ -537,9 +575,17 @@ final class HerdrAppModel {
             errorMessage = "The token could not be saved securely. Unlock your Keychain and try again."
             return false
         }
+        let trimmedURL = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        let existingOrigin = HerdrMachine.normalizedOrigin(machines[index].urlString)
+        let newOrigin = HerdrMachine.normalizedOrigin(trimmedURL)
+        let retainsPresentation = existingOrigin != nil && existingOrigin == newOrigin
         machines[index].name = name.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
             ?? Self.machineName(for: urlString)
-        machines[index].urlString = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        machines[index].urlString = trimmedURL
+        if !retainsPresentation {
+            machines[index].sidebarLabel = nil
+            machines[index].sidebarOrder = nil
+        }
         persistMachines()
         if machines.first?.id == id {
             serverURLString = machines[index].urlString
@@ -610,6 +656,7 @@ final class HerdrAppModel {
                 setRuntimeState(.failed, for: machine.id, error: error.localizedDescription)
             }
         }
+        await syncSidebarMetadataFromPrimary(expectedGeneration: generation)
     }
 
     /// Strict, single-host refresh for agent-control target validation. Unlike
@@ -2538,9 +2585,9 @@ final class HerdrAppModel {
         }
         #if DEBUG
         if isDemoMode {
-            assistantCoordinator.present(title: title, machineID: "demo-" + machineID, paneID: originPane?.paneID,
-                                         rootPath: originPane?.foregroundCWD ?? originPane?.cwd, context: context,
-                                         transport: AssistantDemo().transport)
+            _ = assistantCoordinator.present(title: title, machineID: "demo-" + machineID, paneID: originPane?.paneID,
+                                             rootPath: originPane?.foregroundCWD ?? originPane?.cwd, context: context,
+                                             transport: AssistantDemo().transport)
             return
         }
         #endif
@@ -2557,9 +2604,141 @@ final class HerdrAppModel {
             promote: { try await client.promoteHeadlessAgent(id: $0, workspaceID: nil).run },
             openAgent: { HerdrMacAppDelegate.openPaneURLWithFallback(MachineScopedID.compose(machineID: machineID, rawID: $0)) }
         )
-        assistantCoordinator.present(title: title, machineID: machineID, paneID: originPane?.paneID,
-                                     rootPath: originPane?.foregroundCWD ?? originPane?.cwd,
-                                     context: context, transport: transport)
+        _ = assistantCoordinator.present(title: title, machineID: machineID, paneID: originPane?.paneID,
+                                         rootPath: originPane?.foregroundCWD ?? originPane?.cwd,
+                                         context: context, transport: transport)
+    }
+
+    /// PR review questions deliberately pin both transport and scope to the review host.
+    func presentPRReviewQuestion(
+        review: PRReviewSummary,
+        selection: PRReviewSelection,
+        question: String? = nil,
+        anchor: (view: NSView, rect: CGRect)?
+    ) async {
+        let checkoutPath = review.checkoutPath?.nonEmpty ?? (isDemoMode ? "/path/to/project" : nil)
+        guard let checkoutPath
+        else {
+            toastMessage = "Connect the development machine before asking about this review."
+            return
+        }
+        let machineID = isDemoMode ? "demo" : prReviewMachine?.id
+        guard let machineID else {
+            toastMessage = "Connect the development machine before asking about this review."
+            return
+        }
+
+        let firstSpan = selection.spans.first
+        let side = firstSpan?.side ?? .after
+        let line = firstSpan?.start ?? 1
+        var items: [AssistantContext.Item] = [
+            .init(
+                id: "selection",
+                kind: "text-selection.v1",
+                label: "\(selection.path), \(side.rawValue) lines \(line)–\(firstSpan?.end ?? line)",
+                text: selection.text,
+                priority: "required",
+                locator: .init(
+                    path: selection.path,
+                    oldPath: selection.oldPath.isEmpty ? nil : selection.oldPath,
+                    section: side == .before ? "pr-base" : "pr-head",
+                    revision: side == .before ? review.baseSHA : review.headSHA,
+                    spans: selection.spans.map {
+                        .init(side: $0.side.wireSide, startLine: $0.start, endLine: $0.end)
+                    }
+                )
+            ),
+        ]
+
+        if let client = client(forMachine: machineID) {
+            if let text = try? await client.prReviewFileText(
+                id: review.id,
+                path: selection.path,
+                side: side,
+                start: max(1, line - 40),
+                end: line + 40
+            ) {
+                items.append(.init(id: "excerpt", kind: "text.v1", label: "Surrounding excerpt (\(side.rawValue))",
+                                   text: Self.byteLimited(text.text, maximum: 12 * 1024), priority: "optional"))
+            }
+            if let findings = try? await client.prReviewFindings(id: review.id, path: selection.path),
+               !findings.text.isEmpty {
+                items.append(.init(id: "findings", kind: "text.v1",
+                                   label: "Review findings for \(selection.path) (reference only; may be wrong)",
+                                   text: Self.byteLimited(findings.text, maximum: 12 * 1024), priority: "optional"))
+            }
+        }
+        items.append(.init(
+            id: "review",
+            kind: "view.v1",
+            label: "PR review context",
+            text: "PR #\(review.number) \(review.title)\nRepo: \(review.owner)/\(review.repo)\nBase: \(review.baseSHA) → Head: \(review.headSHA)\nChecked out at: \(checkoutPath)\nReview id: \(review.id)\nFiles changed: \(review.changedFiles)",
+            priority: "optional"
+        ))
+        while items.count > 1,
+              Self.encodedContextSize(items: items, reviewID: review.id) > 64 * 1024 {
+            if let index = items.lastIndex(where: { $0.priority == "optional" }) { items.remove(at: index) } else { break }
+        }
+        let context = AssistantContext(source: .init(feature: "pr-review.diff", instanceId: review.id), items: items)
+        let submittedQuestion = question ?? selection.question ?? ""
+        #if DEBUG
+        if isDemoMode {
+            let session = assistantCoordinator.present(
+                title: "PR #\(review.number) · \(selection.path)",
+                machineID: "demo-\(machineID)",
+                paneID: nil,
+                rootPath: checkoutPath,
+                context: context,
+                transport: AssistantDemo().transport,
+                profile: "pr-review-question-v1",
+                reviewId: review.id,
+                anchor: anchor
+            )
+            session.submitDraftWhenReady(submittedQuestion)
+            return
+        }
+        #endif
+        guard let client = client(forMachine: machineID) else {
+            toastMessage = "Connect the development machine before asking about this review."
+            return
+        }
+        let transport = AssistantTransport(
+            capabilities: { try await client.assistantCapabilities() },
+            start: { try await client.startAssistant($0).run },
+            fetch: { try await client.fetchHeadlessAgent(id: $0).run },
+            stop: { try await client.cancelHeadlessAgent(id: $0).run },
+            models: { try await client.fetchAgentModels() },
+            promote: { try await client.promoteHeadlessAgent(id: $0, workspaceID: nil).run },
+            openAgent: { HerdrMacAppDelegate.openPaneURLWithFallback(MachineScopedID.compose(machineID: machineID, rawID: $0)) }
+        )
+        let session = assistantCoordinator.present(
+            title: "PR #\(review.number) · \(selection.path)",
+            machineID: machineID,
+            paneID: nil,
+            rootPath: checkoutPath,
+            context: context,
+            transport: transport,
+            profile: "pr-review-question-v1",
+            reviewId: review.id,
+            anchor: anchor
+        )
+        session.submitDraftWhenReady(submittedQuestion)
+    }
+
+    private static func byteLimited(_ text: String, maximum: Int) -> String {
+        guard text.utf8.count > maximum else { return text }
+        var result = ""
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let next = result + line + "\n"
+            guard next.utf8.count <= maximum - 12 else { break }
+            result = next
+        }
+        return result + "[truncated]"
+    }
+
+    private static func encodedContextSize(items: [AssistantContext.Item], reviewID: String) -> Int {
+        let context = AssistantContext(source: .init(feature: "pr-review.diff", instanceId: reviewID), items: items)
+        return (try? JSONEncoder().encode(context).count) ?? .max
     }
 
     func startHeadlessAgent(
@@ -4392,6 +4571,85 @@ final class HerdrAppModel {
         machines.first.flatMap { runtimes[$0.id]?.client }
     }
 
+    /// Best-effort presentation sync from the first saved connection. This is
+    /// deliberately called only for an explicit refresh or a connection, never
+    /// from event-driven fleet refreshes.
+    func syncSidebarMetadataFromPrimary(expectedGeneration: Int) async {
+        guard !isDemoMode,
+              let primary = machines.first,
+              let client = client(forMachine: primary.id)
+        else { return }
+        let expectedPrimaryID = primary.id
+        let expectedPrimaryURL = primary.urlString
+        guard let response = try? await client.fetchMachineConfiguration() else { return }
+        applySidebarMetadata(
+            response,
+            expectedGeneration: expectedGeneration,
+            expectedPrimaryID: expectedPrimaryID,
+            expectedPrimaryURL: expectedPrimaryURL
+        )
+    }
+
+    /// Applies the authenticated server's unique self record to the already-saved
+    /// primary connection, then uses exact, unique origin matches for every other
+    /// connection. An authoritative successful roster clears stale values for
+    /// safely unmatched origins, while ambiguous origins retain cached values.
+    func applySidebarMetadata(
+        _ response: HerdrMachineConfigurationResponse,
+        expectedGeneration: Int,
+        expectedPrimaryID: String,
+        expectedPrimaryURL: String
+    ) {
+        guard response.ok,
+              !isDemoMode,
+              expectedGeneration == connectionGeneration,
+              machines.first?.id == expectedPrimaryID,
+              machines.first?.urlString == expectedPrimaryURL
+        else { return }
+
+        let selfRecordIndices = response.localMachineId.map { localMachineId in
+            response.machines.indices.filter { response.machines[$0].id == localMachineId }
+        } ?? []
+        let selfRecordIndex = selfRecordIndices.count == 1 ? selfRecordIndices[0] : nil
+        let selfRecordOrigin = selfRecordIndex.flatMap {
+            HerdrMachine.normalizedOrigin(response.machines[$0].url)
+        }
+
+        var remoteByOrigin: [String: [HerdrMachineConfigurationRecord]] = [:]
+        for index in response.machines.indices {
+            if let selfRecordIndex, index == selfRecordIndex { continue }
+            let record = response.machines[index]
+            guard let origin = HerdrMachine.normalizedOrigin(record.url) else { continue }
+            remoteByOrigin[origin, default: []].append(record)
+        }
+        var localOriginCounts: [String: Int] = [:]
+        for machine in machines {
+            guard let origin = HerdrMachine.normalizedOrigin(machine.urlString) else { continue }
+            localOriginCounts[origin, default: 0] += 1
+        }
+
+        var updated = machines
+        for index in updated.indices {
+            if index == updated.startIndex, let selfRecordIndex {
+                let selfRecord = response.machines[selfRecordIndex]
+                updated[index].sidebarLabel = selfRecord.sidebarLabel
+                updated[index].sidebarOrder = selfRecord.sidebarOrder
+                continue
+            }
+            guard let origin = HerdrMachine.normalizedOrigin(updated[index].urlString),
+                  localOriginCounts[origin] == 1,
+                  selfRecordOrigin.map({ $0 != origin }) ?? true
+            else { continue }
+            let matches = remoteByOrigin[origin] ?? []
+            guard matches.count <= 1 else { continue }
+            updated[index].sidebarLabel = matches.first?.sidebarLabel
+            updated[index].sidebarOrder = matches.first?.sidebarOrder
+        }
+        guard updated != machines else { return }
+        machines = updated
+        persistMachines()
+    }
+
     private func client(forMachine id: String) -> HerdrAPIClient? {
         runtimes[id]?.client
     }
@@ -4431,6 +4689,10 @@ final class HerdrAppModel {
                 noteRefreshCompleted(for: machine.id)
                 guard expectedGeneration == connectionGeneration else { return }
                 setRuntimeState(.live, for: machine.id)
+                if machines.first?.id == machine.id {
+                    await syncSidebarMetadataFromPrimary(expectedGeneration: expectedGeneration)
+                    guard expectedGeneration == connectionGeneration else { return }
+                }
                 await syncPushDevice(machineID: machine.id, using: client, expectedGeneration: expectedGeneration)
                 retryDelay = 2
                 for try await event in await client.events(after: runtimes[machine.id]?.lastEventID) {
@@ -4464,6 +4726,8 @@ final class HerdrAppModel {
                         )
                     } else if event.event == "active_work.updated" {
                         activeWorkRefreshTick &+= 1
+                    } else if event.event == "pr_review.updated" {
+                        prReviewRefreshTick &+= 1
                     } else if event.event == "snapshot.updated" || event.event == "alert.created" ||
                         event.event == "alert.updated" || event.event == "alerts.read_state_changed" ||
                         event.event == "stars.changed" || event.event == "stream.reset" ||
@@ -4707,6 +4971,21 @@ final class HerdrAppModel {
         guard let data = defaults.data(forKey: "herdr.machines"),
               let machines = try? JSONDecoder().decode([HerdrMachine].self, from: data) else { return [] }
         return machines
+    }
+
+    private static func backfillingRoles(
+        in machines: [HerdrMachine],
+        from configuredMachines: [HerdrMachine]
+    ) -> [HerdrMachine] {
+        let rolesByID = Dictionary(uniqueKeysWithValues: configuredMachines.compactMap { machine in
+            machine.role.map { (machine.id, $0) }
+        })
+        return machines.map { machine in
+            guard machine.role == nil, let role = rolesByID[machine.id] else { return machine }
+            var updated = machine
+            updated.role = role
+            return updated
+        }
     }
 
     private static func migrateMachinesIfNeeded(defaults: UserDefaults, credentials: any HerdrCredentialStore, configuredMachines: [HerdrMachine]) {

@@ -30,6 +30,8 @@ def main():
         assert lineage.strip() == "ok"
         session_context_entry = run("from importlib.metadata import distribution; eps=distribution('herdr-companion').entry_points; assert any(e.name == 'herdr-session-context' and e.value == 'herdr_harness.commands:session_context' for e in eps); print('ok')")
         assert session_context_entry.strip() == "ok"
+        pr_review_entry = run("from importlib.metadata import distribution; eps=distribution('herdr-companion').entry_points; assert any(e.name == 'herdr-pr-review' and e.value == 'herdr_harness.commands:pr_review' for e in eps); print('ok')")
+        assert pr_review_entry.strip() == "ok"
         first_mate = json.loads(run("""
 import json
 from pathlib import Path
@@ -85,7 +87,7 @@ store.close()
                     raise AssertionError("Control API accepted a request without credentials")
                 except urllib.error.HTTPError as error:
                     assert error.code == 401
-                for path in ("/herdr-web/", "/first-mate/", "/api/v1/config/machines", "/api/v1/notes", "/api/v1/hud-chats", "/api/v1/first-mate/features", "/api/v1/first-mate/capabilities"):
+                for path in ("/herdr-web/", "/first-mate/", "/api/v1/config/machines", "/api/v1/notes", "/api/v1/hud-chats", "/api/v1/first-mate/features", "/api/v1/first-mate/capabilities", "/api/v1/pr-reviews/capabilities"):
                     request = urllib.request.Request(base + path, headers={"Authorization": "Bearer " + token})
                     with urllib.request.urlopen(request, timeout=2) as response:
                         assert response.status == 200, path

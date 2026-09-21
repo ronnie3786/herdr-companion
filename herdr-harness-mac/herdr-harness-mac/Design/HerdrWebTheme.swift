@@ -21,6 +21,31 @@ enum HerdrWebTheme {
         )
     }
 
+    /// Local reports need a small document stylesheet because they do not use
+    /// the embedded web app's class names, while keeping the existing theme script stable.
+    static func reportUserScript() -> WKUserScript {
+        WKUserScript(
+            source: """
+            (() => {
+              const existing = document.getElementById('herdr-pr-review-report');
+              if (existing) existing.remove();
+              const style = document.createElement('style');
+              style.id = 'herdr-pr-review-report';
+              style.textContent = [
+                'body { background: var(--bg); color: var(--text); font-family: var(--font);',
+                'max-width: 980px; margin: 0 auto; padding: 24px; }',
+                'a { color: var(--accent); }',
+                'pre, code { background: var(--panel); }',
+                'table { border-color: var(--line); }'
+              ].join('');
+              (document.head || document.documentElement).appendChild(style);
+            })();
+            """,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        )
+    }
+
     private static func hex(_ color: Color) -> String {
         let value = NSColor(color).usingColorSpace(.sRGB)!
         return String(

@@ -9,6 +9,7 @@ struct HerdrSidebarView: View {
     let openPane: (HerdrPane) -> Void
     let openWorkspace: (HerdrWorkspace) -> Void
     var openFirstMate: (() -> Void)? = nil
+    var openPRReview: (() -> Void)? = nil
     @State private var query = ""
     @State private var selectedColor: ChatTabColor?
     @State private var isPresentingCreateWorkspace = false
@@ -229,6 +230,14 @@ struct HerdrSidebarView: View {
                     .foregroundStyle(HerdrTheme.accent)
                     .padding(.vertical, 10)
                     .accessibilityIdentifier("open-first-mate")
+            }
+            if let openPRReview {
+                Button("PR Review", systemImage: "arrow.triangle.pull", action: openPRReview)
+                    .buttonStyle(.plain)
+                    .font(.headline)
+                    .foregroundStyle(HerdrTheme.accent)
+                    .padding(.vertical, 10)
+                    .accessibilityIdentifier("open-pr-review")
             }
 
             machinePicker

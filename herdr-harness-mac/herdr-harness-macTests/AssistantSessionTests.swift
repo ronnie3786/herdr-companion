@@ -51,4 +51,45 @@ struct AssistantSessionTests {
         #expect(decoded.thinkingLevel == nil)
         #expect(decoded.parentSessionId == nil)
     }
+
+    @Test("PR review profile carries its review scope")
+    func prReviewProfileAndScope() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        var requests: [AssistantRequest] = []
+        let run = try JSONDecoder().decode(HeadlessAgentRun.self, from: Data(#"{"id":"agr_0123456789ab","status":"completed","prompt":"Question","createdAt":"2026-09-07T00:00:00Z"}"#.utf8))
+        let transport = AssistantTransport(
+            capabilities: { AssistantCapabilities(profiles: ["pr-review-question-v1"]) },
+            start: { request in requests.append(request); return run },
+            fetch: { _ in run }, stop: { _ in run }, models: { throw URLError(.notConnectedToInternet) },
+            promote: { _ in run }, openAgent: { _ in }
+        )
+        let context = AssistantContext(source: .init(feature: "pr-review.diff", instanceId: "prr_1"), items: [])
+        let session = AssistantSession(title: "PR", machineID: "machine", paneID: nil, rootPath: "/checkout",
+                                       context: context, transport: transport,
+                                       persistence: AssistantPersistence(url: folder.appendingPathComponent("question.json")),
+                                       profile: "pr-review-question-v1", scopeReviewId: "prr_1")
+        await session.prepare()
+        session.draft = "Question"
+        session.submit()
+        for _ in 0..<100 where session.isRunning { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(requests.first?.profile == "pr-review-question-v1")
+        #expect(requests.first?.scope.reviewId == "prr_1")
+        #expect(requests.first?.paneId == nil)
+    }
+
+    @Test("Selection locators round trip with exact span keys")
+    func locatorRoundTrip() throws {
+        let item = AssistantContext.Item(
+            id: "selection", kind: "text-selection.v1", label: "Example.swift", text: "let seed = 1",
+            priority: "required", locator: .init(path: "Example.swift", spans: [.init(side: "after", startLine: 3, endLine: 4)])
+        )
+        let data = try JSONEncoder().encode(item)
+        let object = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        #expect(Set(object.keys) == ["id", "kind", "label", "text", "priority", "locator"])
+        let locator = try #require(object["locator"] as? [String: Any])
+        let spans = try #require(locator["spans"] as? [[String: Any]])
+        #expect(Set(spans[0].keys) == ["side", "startLine", "endLine"])
+        #expect(try JSONDecoder().decode(AssistantContext.Item.self, from: data) == item)
+    }
 }

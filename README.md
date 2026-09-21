@@ -17,7 +17,7 @@ every client supports every feature or that all integrations work without setup.
 
 | Feature | What it does |
 | --- | --- |
-| Multiple computers | Save your computers in one private configuration and switch between their workspaces and sessions. Connection credentials stay in Keychain in the native apps. On Mac, the sidebar's computer segments use compact labels—for example All, Work, Dev, and Studio—while each segment still selects its original machine and the saved selection survives relaunch. Full configured names remain in the segment tooltips. This is sidebar presentation only: configured names, roles, URLs, credentials, the zero-machine hidden state, and the four-or-more-machine menu are unchanged, and no server update or configuration migration is needed. |
+| Multiple computers | Save your computers in one private configuration and switch between their workspaces and sessions. Connection credentials stay in Keychain in the native apps. On Mac, optional per-machine `sidebar_label` and `sidebar_order` values configure the one-to-three-computer segment titles and partial order without changing machine identity or the saved selection. Missing labels use full names; names and roles imply nothing. The first saved companion serves the authoritative private roster on connection or Refresh and identifies its own configured record even when the saved connection uses localhost or another origin alias; other paired computers still require unique exact-origin matches. Runtime updates require matching companion and Mac versions. Zero machines remain hidden and four or more keep the full-name menu. |
 | Mac, iPhone, and browser clients | Follow work from a native desktop app, your phone, or a browser connected to your companion server. The clients have different capabilities. |
 | Native iPhone and iPad conversations | **Agents** groups currently available Pi sessions by workspace, with a prominent workspace heading, small machine label, tab sections, and compact agent cards with full wrapping titles, a single status/activity row, and short ages. Workspace and machine labels share a row when space allows; large text and long names expand naturally. Generic Pi labels appear once in the list summary. Workspaces and tabs are ordered by their newest matching chat, with newest-first agents inside each tab. Search these fields and tap a card to open its session. Long-press for Rename, Smart Rename, star, tab color, workspace navigation, copy pane ID, Mac controls, and confirmed close actions. Smart Rename uses a separate read-only run and preserves newer manual edits. Offline machines show the last known status. No server update is needed. The mobile navigator defaults to a flat newest-20 **Recents** list; choose **All** for Unread, then Starred, then machine → workspace → tab → pane. Search, machine, range, and optional tab-color filters intersect. Six tab-owned colors and editable labels persist only in that iOS app sandbox; Mac assignments are neither imported nor synchronized. Pane screens use charcoal chrome with system-scaled prose and Chat/Git/Terminal/Skills in Pane actions. Compact independent Model and Thinking controls follow connected Pi capabilities. The unified input card shows selected attachments with upload status and photo previews; terminal keys stay hidden until requested from More. Unsent text drafts remain in memory per pane while the app runs; they are not persisted or synced, and the legacy Pi bridge may still trim surrounding whitespace on submission. |
 | First Mate on iPhone and iPad | One conversation per feature, with a workflow timeline/graph, step-linked agents and documents, and exact saved Pi sessions including handoff history. iPhone uses focused sheets; iPad adds a feature sidebar and inspector. Supports system/light/dark appearance and scalable text. Uses the same First Mate state and authenticated API as Mac; requires the matching companion server with `first-mate-v1`. See [mobile behavior and verification](docs/first-mate/ios.md). |
@@ -35,6 +35,7 @@ every client supports every feature or that all integrations work without setup.
 | Conversation context on Mac | Drag a Pi chat from the sidebar onto another prompt on the same machine, or right-click it and choose **Add to current prompt**, to add a removable context chip pinned to the source Herdr workspace ID and current Pi session ID. No transcript is fetched or embedded by the Mac app. The sent prompt gives the receiving agent the exact `herdr-session-context get` command and explicitly treats fetched context as prior conversation data, never as instructions that override the current request. Cross-machine references are unavailable. Each prompt keeps its own staged references while the Mac app runs. Requires the matching companion 0.16.1b1 with `pi-session-context-v1` and the installed `herdr-session-context` CLI. |
 | Experimental concise response briefs on Mac | Opt individual Pi chats into an additional, restricted model request for long completed answers. The native rail shows one direct takeaway, at most one necessary caveat, and up to two short links to exact local source slices; short originals remain the shortest reading path and make no new request. Model and thinking choices are independent of the source chat. Requires matching Mac and companion revisions advertising `response-brief-v1`; there is no generic-agent fallback. See [setup, privacy, limits, and verification](docs/response-briefs.md). |
 | Notes | Notes use ink-colored cursors and title placeholders, with title/body defaults another point larger. The note-card header no longer includes New note; creation remains in the note stack and File menu. Use the labeled **Actions** menu for **Ask about this note**, **Tidy with AI**, and **Take action**; busy-state guards remain in place. Create notes from the Mac HUD note stack or File → New Note (Shift-Command-N), including when no notes exist. On the collapsed Mac HUD, hover over the HUD to reveal Notes at the orb's bottom-left corner, mirrored against Mic at bottom-right, and X at top-right. All three controls are 20% smaller and hidden at rest. Click Notes to expand or minimize the list; the expanded chat retains its Notes toggle below the card. Capture ideas in resizable note cards, edit their title and text on iPhone, and use them as context for agents. iPhone saves sync through the companion and detect conflicting edits. |
+| PR Review on Mac | Open **PR Review** from the left navigator under First Mate (⌘8) and paste a GitHub pull request link. The review is prepared on the machine whose role is `development`: the companion fetches the PR with `gh`, checks it out into its own worktree, parses the diff, opens a tab in a dedicated **PR Reviews** Herdr workspace, and runs the review, explainer-video and utility skills you choose. Files are ranked by AI impact with a single-category filter, a **Hide viewed** toggle and a **Guided** reading order; the native diff viewer offers **Ask AI** on any selection, sending the file, side, lines, surrounding code and the agents' findings (reference only) to a read-only question profile that verifies against the checkout. A context library holds findings, HTML reports, audio, videos, links and dropped files; Agents and Skills tabs show every run and let you mark skills ran or not run, or add custom skills. Reviews are archived, never deleted. The `herdr-pr-review` CLI and `pr-review.*` agent-control actions let agents and tutors drive the same workspace. Requires companion 0.27.0b1 advertising `pr-review-v1` on the review host; older servers show an update message. See [PR Review](docs/pr-review.md). |
 | Active Work board | Start from a template, then edit each ticket's path with review loops and extra steps. See the current action, owner, checkpoints, visit history, and agent handoff. Return to linked sessions. See [ticket paths](docs/ticket-paths.md) for board and agent controls. |
 | Recent chats on Mac | Choose Recents from the sidebar clock menu for roomier rows (10 extra points between chats), single-line titles with quiet machine/workspace context and explicit Working, Done, or attention status. The secondary line is 1 point larger, with the project/workspace name in bold. Hover for full tab context or right-click to open the workspace. Sidebar titles and statuses observe live panes, including Smart Rename and completion updates. Selected chats use a background highlight without a leading stripe. Other sidebar categories keep compact labels without the Recents subtitle when switching filters. Requires no server update. |
 | Tab colors on Mac | Right-click a tab, sidebar chat (including Recents), workspace chat card, or chat header → **Tab color** to assign or remove one of six muted accents: Lavender, Iris, Rose, Clay, Sage, and Slate. Every chat in the tab inherits the color, including future panes; only the left sidebar's chat rows and color key are tinted. The main chat, header, composer, and workspace cards retain their normal backgrounds. Active colors appear between **Filter chats** and **New session**. Click a color label to filter all sidebar categories to that color, intersecting the search, machine, and recency filters; click it again or **Show all colors** to clear. Color-key rows are 50.4 points tall (10% shorter) with 14-point titles that follow the app text-size setting. Use the pencil for inline label editing: the label is focused and selected immediately, ready to type (Enter or click away saves; Escape cancels), or right-click → **Smart Rename** to prefer a Jira key/title present in the grouped conversations. Shortcut labels use one or at most two lines. Right-click a color shortcut → **New chat** to create a chat in a tab with that color; when several tabs share it, choose the destination. Smart Rename uses the existing Quick Chat model and readable Pi conversations; it uses supplied context rather than querying Jira. Labels are shared by tabs using the same color. Assignments and labels persist locally on this Mac, not across clients; no server update is needed. |
@@ -126,6 +127,8 @@ state_dir = "~/.local/share/herdr-companion"
 name = "Desktop"
 role = "local"
 url = "https://desktop.example.invalid"
+sidebar_label = "Build"
+sidebar_order = 1
 
 [machines.desktop.server]
 api_token = { env = "DESKTOP_HERDR_TOKEN" }
@@ -134,6 +137,8 @@ api_token = { env = "DESKTOP_HERDR_TOKEN" }
 name = "Laptop"
 role = "work"
 url = "https://laptop.example.invalid"
+sidebar_label = "Lab"
+sidebar_order = 0
 
 [machines.laptop.server]
 api_token = { env = "LAPTOP_HERDR_TOKEN" }
@@ -165,10 +170,38 @@ per-machine settings; per-machine settings override shared settings. Each machin
 can override shared tables. `[environment]` exposes additional Herdr settings
 without a second configuration file.
 
-The authenticated `/api/v1/config/machines` endpoint returns only machine
-names, IDs, roles, and server origins. Native build configuration can seed this
-same roster. API tokens are never included in the roster or compiled into apps.
-Native connection credentials are stored in Keychain.
+Each machine may optionally set `sidebar_label` (trimmed, nonempty single-line
+text up to 128 characters) and `sidebar_order` (an integer from 0 through
+2,147,483,647). These values affect only the Mac sidebar's one-to-three-machine
+segment bar. Explicit orders sort before machines without an order; ties and
+unordered machines keep their roster order. Without a label, the complete
+machine name remains visible. Names, roles, and IDs never imply a label or order.
+
+The authenticated `/api/v1/config/machines` endpoint returns only allowlisted
+machine names, IDs, roles, server origins, and those optional presentation
+fields. When the server's selected machine exists uniquely in that roster, the
+response also identifies that record with `localMachineId`; it is a public,
+stable configured ID, not a credential. Native build configuration can seed this
+same roster on first launch. API tokens are never included in the roster or
+compiled into apps. Native connection credentials are stored in Keychain.
+
+For an installed Mac app, the private TOML served by its **first saved
+connection** is the sole sidebar-presentation authority. After editing that
+file, restart that companion server, then use Refresh in the Mac app (or
+reconnect/relaunch). The authenticated self ID lets the app apply that server's
+presentation to the already-saved first connection even when it uses localhost
+or another origin alias. It is used only for that primary connection and never
+replaces a saved app ID or URL. Other already-paired machines still require
+unique, exact HTTP(S) origin matches; the app does not add connections or match
+names and roles. Duplicate or unknown self IDs are not guessed and fall back to
+the same safe origin rules. Runtime synchronization requires both an updated
+companion and an updated Mac app. A Mac-only app update does not install or
+reconfigure companion servers. Older clients safely ignore the additive fields,
+and a response from an older server without `localMachineId` keeps exact-origin
+matching. If the roster endpoint is offline or unavailable, the Mac keeps its
+last synchronized labels. A successful roster response with absent presentation
+fields clears safely matched metadata and restores complete machine names and
+default roster order; ambiguous matches retain cached presentation.
 
 ## Optional integrations
 
@@ -177,6 +210,7 @@ Native connection credentials are stored in Keychain.
 | Git, file search, skills, uploads | Built into the server; Git must be installed for Git operations. |
 | Pi chats and tools | Install Pi and configure its providers. Extensions are tested with Pi 0.84.2. |
 | GitHub reviews | Authenticate `gh`; configure optional automation under `[integrations]`. |
+| PR Review | Set `role = "development"` on the reviewing machine, authenticate `gh` there, install the review skills, and optionally tune `[pr_review]`; see [docs/pr-review.md](docs/pr-review.md). |
 | Jira | Authenticate `acli` and configure your Jira site. No tenant or project is assumed. |
 | Transcription | `[providers.transcription]` supports OpenAI-compatible and Parakeet services. |
 | Summaries and quick voice | `[providers.summary]`, `[providers.voice]`, and `[providers.activity]`. |
@@ -369,4 +403,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and
 third-party materials retain their licenses.
 
 First Mate can also be driven through the authenticated `herdr-first-mate` CLI.
+PR reviews are created, run, marked, ranked and opened through the authenticated `herdr-pr-review` CLI ([docs/pr-review.md](docs/pr-review.md)).
 See [commands and native navigation](docs/first-mate/cli.md).

@@ -13,17 +13,21 @@ import SwiftUI
 struct HerdrHudDropTarget: NSViewRepresentable {
     var onTargetingChanged: (Bool) -> Void = { _ in }
     var onDrop: (NSPasteboard) -> Bool
+    var registeredTypes: [NSPasteboard.PasteboardType] = HerdrAttachmentDropPolicy.registeredTypes
+    var accepts: ([NSPasteboard.PasteboardType]) -> Bool = HerdrAttachmentDropPolicy.accepts
 
     func makeNSView(context: Context) -> HerdrHudDropView {
-        let view = HerdrHudDropView()
+        let view = HerdrHudDropView(registeredTypes: registeredTypes)
         view.onTargetingChanged = onTargetingChanged
         view.onDrop = onDrop
+        view.accepts = accepts
         return view
     }
 
     func updateNSView(_ view: HerdrHudDropView, context: Context) {
         view.onTargetingChanged = onTargetingChanged
         view.onDrop = onDrop
+        view.accepts = accepts
     }
 }
 
@@ -31,10 +35,11 @@ struct HerdrHudDropTarget: NSViewRepresentable {
 final class HerdrHudDropView: NSView {
     var onTargetingChanged: ((Bool) -> Void)?
     var onDrop: ((NSPasteboard) -> Bool)?
+    var accepts: ([NSPasteboard.PasteboardType]) -> Bool = HerdrAttachmentDropPolicy.accepts
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        registerForDraggedTypes(HerdrAttachmentDropPolicy.registeredTypes)
+    init(registeredTypes: [NSPasteboard.PasteboardType]) {
+        super.init(frame: .zero)
+        registerForDraggedTypes(registeredTypes)
     }
 
     @available(*, unavailable)
@@ -73,6 +78,6 @@ final class HerdrHudDropView: NSView {
     }
 
     private func isAcceptable(_ sender: NSDraggingInfo) -> Bool {
-        HerdrAttachmentDropPolicy.accepts(pasteboardTypes: sender.draggingPasteboard.types ?? [])
+        accepts(sender.draggingPasteboard.types ?? [])
     }
 }

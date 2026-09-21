@@ -762,6 +762,64 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(self.request("/api/v1/quick-voice/note-1/audio/report")[0], 200)
         self.assertEqual(self.request("/api/v1/quick-voice/note-1/audio/unknown")[0], 404)
 
+    def test_machine_configuration_contract_is_authenticated_and_additive(self):
+        self.service.configuration = Mock()
+        self.service.configuration.machine = "build-node"
+        self.service.configuration.public_machines.return_value = [
+            {
+                "id": "build-node",
+                "name": "Synthetic Build Computer",
+                "url": "https://build.example.invalid",
+                "role": "node",
+                "sidebarLabel": "Build",
+                "sidebarOrder": 2,
+            },
+            {
+                "id": "lab-node",
+                "name": "Synthetic Lab Computer",
+                "url": "https://lab.example.invalid",
+                "role": "work",
+            },
+        ]
+
+        self.assertEqual(self.request("/api/v1/config/machines", token=None)[0], 401)
+        status, _, body = self.request("/api/v1/config/machines")
+
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["localMachineId"], "build-node")
+        self.assertEqual(body["machines"][0]["sidebarLabel"], "Build")
+        self.assertEqual(body["machines"][0]["sidebarOrder"], 2)
+        self.assertNotIn("sidebarLabel", body["machines"][1])
+        self.assertNotIn("token", json.dumps(body).lower())
+        self.service.configuration.public_machines.assert_called_once_with()
+
+    def test_machine_configuration_omits_unverified_local_machine_identity(self):
+        self.service.configuration = Mock()
+        self.service.configuration.machine = "duplicate-node"
+        self.service.configuration.public_machines.return_value = [
+            {"id": "duplicate-node", "name": "One", "url": "https://one.example.invalid"},
+            {"id": "duplicate-node", "name": "Two", "url": "https://two.example.invalid"},
+        ]
+        status, _, body = self.request("/api/v1/config/machines")
+        self.assertEqual(status, 200)
+        self.assertNotIn("localMachineId", body)
+
+        self.service.configuration.machine = "unknown-node"
+        self.service.configuration.public_machines.return_value = [
+            {"id": "known-node", "name": "Known", "url": "https://known.example.invalid"},
+        ]
+        self.assertNotIn("localMachineId", self.request("/api/v1/config/machines")[2])
+
+        self.service.configuration.machine = None
+        self.assertNotIn("localMachineId", self.request("/api/v1/config/machines")[2])
+
+        self.service.configuration = None
+        self.assertEqual(
+            self.request("/api/v1/config/machines")[2],
+            {"ok": True, "machines": []},
+        )
+
     def test_setup_page_is_public_but_api_requires_bearer_token(self):
         with urllib.request.urlopen(self.base + "/", timeout=2) as response:
             html = response.read().decode()
@@ -1182,6 +1240,25 @@ class HerdrHTTPTests(unittest.TestCase):
         self.service.start_contextual_question.assert_called_once_with(request)
         status, _, _ = self.request("/api/v1/agent-runs", method="POST", payload={"prompt": "Explain", "context": {}})
         self.assertEqual(status, 400)
+
+    def test_pr_review_question_capabilities_and_dispatch(self):
+        status, _, capabilities = self.request("/api/v1/agent-runs/capabilities")
+        self.assertEqual(status, 200)
+        self.assertIn("pr-review-question-v1", capabilities["profiles"])
+        self.assertIn("prReviewQuestions", capabilities)
+        self.service.start_contextual_question = Mock(return_value={"ok": True, "run": {"id": "agr_0123456789ab"}})
+        request = {
+            "prompt": "Explain",
+            "profile": "pr-review-question-v1",
+            "clientRequestId": "fixture-pr-review-0001",
+            "scope": {"reviewId": "prr_0123456789ab"},
+            "context": {"version": 1},
+        }
+        status, _, _ = self.request("/api/v1/agent-runs", method="POST", payload=request)
+        self.assertEqual(status, 202)
+        self.service.start_contextual_question.assert_called_once_with(request)
+        invalid = {**request, "clientRequestId": "fixture-pr-review-0002", "cwd": "/synthetic/checkout"}
+        self.assertEqual(self.request("/api/v1/agent-runs", method="POST", payload=invalid)[0], 400)
 
     def test_response_brief_profile_is_advertised_and_dispatches_with_valid_lineage(self):
         status, _, capabilities = self.request("/api/v1/agent-runs/capabilities")

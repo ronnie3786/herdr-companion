@@ -40,6 +40,19 @@ Use your configured Herdr Mac build with sample sessions. Check off each item af
 
 - [ ] **Recording permissions:** In **Settings > Privacy & Access > Screen & System Audio Recording**, use **Identify this copy of Herdr** and **Test Access**. If access fails, quit Herdr, remove the stale macOS permission entry, add `/Applications/Herdr.app`, enable it, and reopen. The test lists displays, without recording. This adds diagnosis and recovery; macOS still needs your grant, and replacing this build can change its signing identity. [Recovery instructions](RECORDING_PERMISSIONS.md).
 
+## PR Review
+
+Use `-HerdrDemoMode` for the synthetic review, or a disposable pull request on a companion advertising `pr-review-v1`.
+
+- [ ] **Entry point:** Click **PR Review** under First Mate in the left navigator (or ⌘8). The left column becomes the review rail with an **All sessions** back link; the toolbar shows a PR Review label instead of the segment picker. Back and Forward return to the previous pane.
+- [ ] **Paste a PR link:** Paste `https://github.com/example-owner/example-repo/pull/42` into the rail field and press Return. The start sheet lists skills grouped Review / Explainer videos / Utilities / Custom; **Start review** creates the review and it appears selected with a Preparing pill, then Ready.
+- [ ] **Files, filters, order:** Impact dots and reasons are visible; choosing High shows only high-impact files; **Hide viewed** removes viewed rows; **Guided** reorders files and shows the reason note above the diff; ⌥↑/⌥↓ move between files; ⌥V toggles viewed.
+- [ ] **Diff and Ask AI:** Added, removed and hunk lines are tinted full width with old | new numbers. Select a few lines: the floating **Ask AI** button and the right-click item open the question popover; Send opens the Ask window with the file, side, lines and findings listed in its context.
+- [ ] **Context:** Drop a markdown file and a folder onto the Context tab; allowed files appear with "Added by you"; a markdown document opens in-app; an HTML report opens in the in-app viewer; audio/video open in QuickTime Player.
+- [ ] **Agents and Skills:** A running skill shows a pane and latest output; **Finish** moves it to Finished and its outputs appear under Context; Skills shows ✓ Ran with the run count; **Mark as not run** flips the state; **Add custom skill…** adds a row that can be run.
+- [ ] **Archive, never delete:** Archive a review; it leaves Active, appears under Archived with all documents and runs, and Unarchive restores it.
+- [ ] **Agent control:** `herdr-control --control-machine <id> ui segment pr-review --wait 30` opens the section; `ui invoke pr-review.scroll-to-line` with a path and line scrolls and flashes that line; `pr-review.state` returns the selected file and visible range.
+
 ## Tab colors and sidebar filtering
 
 These preferences are local to this Mac; no server update is needed.

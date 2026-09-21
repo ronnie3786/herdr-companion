@@ -175,6 +175,10 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient {
         try await request(path: "/api/v1/network")
     }
 
+    func fetchMachineConfiguration() async throws -> HerdrMachineConfigurationResponse {
+        try await request(path: "/api/v1/config/machines")
+    }
+
     func fetchResponseAudioCapabilities() async throws -> ResponseAudioCapabilities {
         try await request(path: "/api/v1/response-audio/capabilities")
     }
@@ -1283,7 +1287,7 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient {
     }
 
     static func timeoutInterval(path: String, method: String) -> TimeInterval {
-        if path == "/api/v1/health" || path == "/api/v1/network" {
+        if path == "/api/v1/health" || path == "/api/v1/network" || path == "/api/v1/config/machines" {
             return 8
         }
         if path == "/api/v1/response-audio/capabilities" {

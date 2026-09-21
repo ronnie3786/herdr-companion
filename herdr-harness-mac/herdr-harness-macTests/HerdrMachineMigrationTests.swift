@@ -56,6 +56,27 @@ struct HerdrMachineMigrationTests {
         #expect(defaults.stringArray(forKey: "herdr.sidebar.starredChats") == ["\(migrated.id)|w1:p1"])
     }
 
+    @Test("Saved JSON from before sidebar metadata still decodes")
+    func oldMachineJSONCompatibility() throws {
+        let data = Data(#"[{"id":"legacy-id","name":"Legacy Computer","urlString":"https://legacy.example.test","role":"node"}]"#.utf8)
+        let machines = try JSONDecoder().decode([HerdrMachine].self, from: data)
+
+        #expect(machines.count == 1)
+        #expect(machines[0].id == "legacy-id")
+        #expect(machines[0].sidebarLabel == nil)
+        #expect(machines[0].sidebarOrder == nil)
+    }
+
+    @Test("Malformed optional presentation values do not reject a saved machine")
+    func malformedOptionalMetadataIsIgnored() throws {
+        let data = Data(#"[{"id":"saved-id","name":"Saved Computer","urlString":"https://saved.example.test","sidebarLabel":"Line\nbreak","sidebarOrder":true}]"#.utf8)
+        let machines = try JSONDecoder().decode([HerdrMachine].self, from: data)
+
+        #expect(machines.count == 1)
+        #expect(machines[0].sidebarLabel == nil)
+        #expect(machines[0].sidebarOrder == nil)
+    }
+
     @Test("Fresh install records an empty machine list")
     func freshMigration() {
         let suiteName = "herdr-machine-migration-test-\(UUID().uuidString)"

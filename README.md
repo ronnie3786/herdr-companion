@@ -17,7 +17,7 @@ every client supports every feature or that all integrations work without setup.
 
 | Feature | What it does |
 | --- | --- |
-| Multiple computers | Save your computers in one private configuration and switch between their workspaces and sessions. Connection credentials stay in Keychain in the native apps. On Mac, the sidebar's computer segments use compact labels—for example All, Work, Dev, and Studio—while each segment still selects its original machine and the saved selection survives relaunch. Full configured names remain in the segment tooltips. This is sidebar presentation only: configured names, roles, URLs, credentials, the zero-machine hidden state, and the four-or-more-machine menu are unchanged, and no server update or configuration migration is needed. |
+| Multiple computers | Save your computers in one private configuration and switch between their workspaces and sessions. Connection credentials stay in Keychain in the native apps. On Mac, optional per-machine `sidebar_label` and `sidebar_order` values configure the one-to-three-computer segment titles and partial order without changing machine identity or the saved selection. Missing labels use full names; names and roles imply nothing. The first saved companion serves the authoritative private roster on connection or Refresh, so runtime updates require matching companion and Mac versions. Zero machines remain hidden and four or more keep the full-name menu. |
 | Mac, iPhone, and browser clients | Follow work from a native desktop app, your phone, or a browser connected to your companion server. The clients have different capabilities. |
 | Native iPhone and iPad conversations | **Agents** groups currently available Pi sessions by workspace, with a prominent workspace heading, small machine label, tab sections, and compact agent cards with full wrapping titles, a single status/activity row, and short ages. Workspace and machine labels share a row when space allows; large text and long names expand naturally. Generic Pi labels appear once in the list summary. Workspaces and tabs are ordered by their newest matching chat, with newest-first agents inside each tab. Search these fields and tap a card to open its session. Long-press for Rename, Smart Rename, star, tab color, workspace navigation, copy pane ID, Mac controls, and confirmed close actions. Smart Rename uses a separate read-only run and preserves newer manual edits. Offline machines show the last known status. No server update is needed. The mobile navigator defaults to a flat newest-20 **Recents** list; choose **All** for Unread, then Starred, then machine → workspace → tab → pane. Search, machine, range, and optional tab-color filters intersect. Six tab-owned colors and editable labels persist only in that iOS app sandbox; Mac assignments are neither imported nor synchronized. Pane screens use charcoal chrome with system-scaled prose and Chat/Git/Terminal/Skills in Pane actions. Compact independent Model and Thinking controls follow connected Pi capabilities. The unified input card shows selected attachments with upload status and photo previews; terminal keys stay hidden until requested from More. Unsent text drafts remain in memory per pane while the app runs; they are not persisted or synced, and the legacy Pi bridge may still trim surrounding whitespace on submission. |
 | First Mate on iPhone and iPad | One conversation per feature, with a workflow timeline/graph, step-linked agents and documents, and exact saved Pi sessions including handoff history. iPhone uses focused sheets; iPad adds a feature sidebar and inspector. Supports system/light/dark appearance and scalable text. Uses the same First Mate state and authenticated API as Mac; requires the matching companion server with `first-mate-v1`. See [mobile behavior and verification](docs/first-mate/ios.md). |
@@ -126,6 +126,8 @@ state_dir = "~/.local/share/herdr-companion"
 name = "Desktop"
 role = "local"
 url = "https://desktop.example.invalid"
+sidebar_label = "Build"
+sidebar_order = 1
 
 [machines.desktop.server]
 api_token = { env = "DESKTOP_HERDR_TOKEN" }
@@ -134,6 +136,8 @@ api_token = { env = "DESKTOP_HERDR_TOKEN" }
 name = "Laptop"
 role = "work"
 url = "https://laptop.example.invalid"
+sidebar_label = "Lab"
+sidebar_order = 0
 
 [machines.laptop.server]
 api_token = { env = "LAPTOP_HERDR_TOKEN" }
@@ -165,10 +169,28 @@ per-machine settings; per-machine settings override shared settings. Each machin
 can override shared tables. `[environment]` exposes additional Herdr settings
 without a second configuration file.
 
-The authenticated `/api/v1/config/machines` endpoint returns only machine
-names, IDs, roles, and server origins. Native build configuration can seed this
-same roster. API tokens are never included in the roster or compiled into apps.
-Native connection credentials are stored in Keychain.
+Each machine may optionally set `sidebar_label` (trimmed, nonempty single-line
+text up to 128 characters) and `sidebar_order` (an integer from 0 through
+2,147,483,647). These values affect only the Mac sidebar's one-to-three-machine
+segment bar. Explicit orders sort before machines without an order; ties and
+unordered machines keep their roster order. Without a label, the complete
+machine name remains visible. Names, roles, and IDs never imply a label or order.
+
+The authenticated `/api/v1/config/machines` endpoint returns only allowlisted
+machine names, IDs, roles, server origins, and those optional presentation
+fields. Native build configuration can seed this same roster on first launch.
+API tokens are never included in the roster or compiled into apps. Native
+connection credentials are stored in Keychain.
+
+For an installed Mac app, the private TOML served by its **first saved
+connection** is the sole sidebar-presentation authority. After editing that
+file, restart that companion server, then use Refresh in the Mac app (or
+reconnect/relaunch). The app matches only already-paired machines with unique,
+exact HTTP(S) origins; it does not add connections or match names and roles.
+Runtime synchronization requires both an updated companion and an updated Mac
+app. A Mac-only app update does not install or reconfigure companion servers.
+Older clients safely ignore the additive fields, and older/offline servers leave
+the Mac's last synchronized labels available.
 
 ## Optional integrations
 

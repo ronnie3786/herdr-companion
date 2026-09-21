@@ -121,6 +121,22 @@ load the canned fleet — 3 workspaces, 6 panes, alerts, git, skills — with no
    Mac, or an HTTPS address for another machine. Enter its bearer token in onboarding
    or Settings. Tokens are stored only in Keychain. A failed secure save is reported.
 
+For one to three saved computers, optional `sidebar_label` and `sidebar_order`
+values under each private `[machines.<id>]` table configure the segment titles
+and partial ordering. Ordered computers appear first; equal orders and computers
+without an order keep the saved roster order. Missing labels show the complete
+saved name. Names, IDs, and roles have no built-in aliases.
+
+At runtime, the first saved connection is the sole configuration authority. The
+Mac asks that companion's authenticated `/api/v1/config/machines` endpoint on
+connection and explicit Refresh, then applies metadata only to already-paired
+computers with unique exact HTTP(S) origins. It never imports connections or
+credentials. After editing the authoritative private TOML, restart that
+companion and refresh or reconnect the Mac app. This workflow requires updated
+companion and Mac software; updating the Mac app alone does not update a server.
+If the endpoint is unavailable, cached labels remain usable offline. Four or more
+computers continue to use the existing full-name menu.
+
 See [Apple configuration](APPLE_CONFIGURATION.md) for signing, universal links, and
 private upgrade compatibility.
 
@@ -222,7 +238,9 @@ It uses the same repository view and permissions as the embedded Git tab.
 
 The sidebar's range selector has **All**, **Today**, and **Recents**. Recents keeps
 the existing list of the 20 most recently active chats. With one to three configured
-machines, the machine selector also uses segments, including **All**. It is hidden
-when no machines are configured. Four or more machines use a menu, and machine
+machines, the machine selector also uses segments, including **All**. Optional
+private roster labels and partial ordering control those segments; otherwise the
+full saved names and roster order are used. It is hidden when no machines are
+configured. Four or more machines use the unchanged full-name menu, and machine
 management remains available in the sidebar footer. Archived **Previous chat**
 sections keep their existing excerpt presentation.

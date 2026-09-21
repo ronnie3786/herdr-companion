@@ -12,6 +12,7 @@ import os
 import re
 import stat
 import tomllib
+import unicodedata
 import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -174,7 +175,30 @@ def _scalar(value: Any, field: str, root: Path, environ: Mapping[str, str]) -> s
     return str(value)
 
 
-def _machine_records(data: Mapping[str, Any]) -> list[dict[str, str]]:
+def _sidebar_label(value: Any, field: str) -> str:
+    if not isinstance(value, str):
+        raise ConfigurationError(f"{field} must be text")
+    label = value.strip()
+    if (
+        not label
+        or len(label) > 128
+        or any(
+            unicodedata.category(char).startswith("C")
+            or unicodedata.category(char) in {"Zl", "Zp"}
+            for char in value
+        )
+    ):
+        raise ConfigurationError(f"{field} must be nonempty single-line text of at most 128 characters")
+    return label
+
+
+def _sidebar_order(value: Any, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 2_147_483_647:
+        raise ConfigurationError(f"{field} must be an integer from 0 through 2147483647")
+    return value
+
+
+def _machine_records(data: Mapping[str, Any]) -> list[dict[str, Any]]:
     result = []
     for key, settings in _section(data, "machines").items():
         if not _MACHINE_ID.fullmatch(key) or not isinstance(settings, dict):
@@ -198,7 +222,16 @@ def _machine_records(data: Mapping[str, Any]) -> list[dict[str, str]]:
                 valid = False
             if not valid:
                 raise ConfigurationError(f"machines.{key}.url must be an HTTP(S) origin without credentials")
-        result.append({"id": key, "name": name, "url": url.rstrip("/"), "role": role})
+        record: dict[str, Any] = {"id": key, "name": name, "url": url.rstrip("/"), "role": role}
+        if "sidebar_label" in settings:
+            record["sidebarLabel"] = _sidebar_label(
+                settings["sidebar_label"], f"machines.{key}.sidebar_label"
+            )
+        if "sidebar_order" in settings:
+            record["sidebarOrder"] = _sidebar_order(
+                settings["sidebar_order"], f"machines.{key}.sidebar_order"
+            )
+        result.append(record)
     return result
 
 
@@ -213,8 +246,8 @@ class Configuration:
     def section(self, name: str) -> dict[str, Any]:
         return copy.deepcopy(_section(self.data, name))
 
-    def public_machines(self) -> list[dict[str, str]]:
-        """Only allowlisted connection metadata; never tokens or per-machine settings."""
+    def public_machines(self) -> list[dict[str, Any]]:
+        """Only allowlisted connection/presentation metadata; never tokens or private settings."""
         return _machine_records(self.data)
 
 

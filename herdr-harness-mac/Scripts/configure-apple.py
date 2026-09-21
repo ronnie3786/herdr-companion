@@ -90,7 +90,12 @@ def main() -> None:
             raise ValueError("Machine URLs cannot contain credentials, queries, or fragments")
         if url.scheme != "https" and not (url.scheme == "http" and url.hostname in ("localhost", "127.0.0.1", "::1")):
             raise ValueError("Machine URLs require HTTPS except for loopback HTTP")
-        machines.append({"id": item["id"], "name": item["name"], "urlString": item["url"], "role": item.get("role", "node")})
+        machine = {"id": item["id"], "name": item["name"], "urlString": item["url"], "role": item.get("role", "node")}
+        if "sidebarLabel" in item:
+            machine["sidebarLabel"] = item["sidebarLabel"]
+        if "sidebarOrder" in item:
+            machine["sidebarOrder"] = item["sidebarOrder"]
+        machines.append(machine)
     for platform in ("mac", "ios"):
         project = ROOT / f"herdr-harness-{platform}"
         app = project / f"herdr-harness-{platform}"

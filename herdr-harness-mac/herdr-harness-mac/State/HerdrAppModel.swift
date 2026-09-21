@@ -437,7 +437,17 @@ final class HerdrAppModel {
         let name = Self.machineName(for: serverURLString)
         let machine: HerdrMachine
         if let first = savedMachines.first {
-            machine = HerdrMachine(id: first.id, name: first.name.isEmpty ? name : first.name, urlString: serverURLString, role: first.role)
+            let existingOrigin = HerdrMachine.normalizedOrigin(first.urlString)
+            let newOrigin = HerdrMachine.normalizedOrigin(serverURLString)
+            let retainsPresentation = existingOrigin != nil && existingOrigin == newOrigin
+            machine = HerdrMachine(
+                id: first.id,
+                name: first.name.isEmpty ? name : first.name,
+                urlString: serverURLString,
+                role: first.role,
+                sidebarLabel: retainsPresentation ? first.sidebarLabel : nil,
+                sidebarOrder: retainsPresentation ? first.sidebarOrder : nil
+            )
         } else {
             machine = HerdrMachine(id: UUID().uuidString, name: name, urlString: serverURLString)
         }
@@ -537,9 +547,17 @@ final class HerdrAppModel {
             errorMessage = "The token could not be saved securely. Unlock your Keychain and try again."
             return false
         }
+        let trimmedURL = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        let existingOrigin = HerdrMachine.normalizedOrigin(machines[index].urlString)
+        let newOrigin = HerdrMachine.normalizedOrigin(trimmedURL)
+        let retainsPresentation = existingOrigin != nil && existingOrigin == newOrigin
         machines[index].name = name.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
             ?? Self.machineName(for: urlString)
-        machines[index].urlString = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        machines[index].urlString = trimmedURL
+        if !retainsPresentation {
+            machines[index].sidebarLabel = nil
+            machines[index].sidebarOrder = nil
+        }
         persistMachines()
         if machines.first?.id == id {
             serverURLString = machines[index].urlString
@@ -610,6 +628,7 @@ final class HerdrAppModel {
                 setRuntimeState(.failed, for: machine.id, error: error.localizedDescription)
             }
         }
+        await syncSidebarMetadataFromPrimary(expectedGeneration: generation)
     }
 
     /// Strict, single-host refresh for agent-control target validation. Unlike
@@ -4392,6 +4411,67 @@ final class HerdrAppModel {
         machines.first.flatMap { runtimes[$0.id]?.client }
     }
 
+    /// Best-effort presentation sync from the first saved connection. This is
+    /// deliberately called only for an explicit refresh or a connection, never
+    /// from event-driven fleet refreshes.
+    func syncSidebarMetadataFromPrimary(expectedGeneration: Int) async {
+        guard !isDemoMode,
+              let primary = machines.first,
+              let client = client(forMachine: primary.id)
+        else { return }
+        let expectedPrimaryID = primary.id
+        let expectedPrimaryURL = primary.urlString
+        guard let response = try? await client.fetchMachineConfiguration() else { return }
+        applySidebarMetadata(
+            response,
+            expectedGeneration: expectedGeneration,
+            expectedPrimaryID: expectedPrimaryID,
+            expectedPrimaryURL: expectedPrimaryURL
+        )
+    }
+
+    /// Applies only exact, unique origin matches. An authoritative successful
+    /// roster clears stale values for safely unmatched origins, while ambiguous
+    /// local or remote origins retain their cached values for offline use.
+    func applySidebarMetadata(
+        _ response: HerdrMachineConfigurationResponse,
+        expectedGeneration: Int,
+        expectedPrimaryID: String,
+        expectedPrimaryURL: String
+    ) {
+        guard response.ok,
+              !isDemoMode,
+              expectedGeneration == connectionGeneration,
+              machines.first?.id == expectedPrimaryID,
+              machines.first?.urlString == expectedPrimaryURL
+        else { return }
+
+        var remoteByOrigin: [String: [HerdrMachineConfigurationRecord]] = [:]
+        for record in response.machines {
+            guard let origin = HerdrMachine.normalizedOrigin(record.url) else { continue }
+            remoteByOrigin[origin, default: []].append(record)
+        }
+        var localOriginCounts: [String: Int] = [:]
+        for machine in machines {
+            guard let origin = HerdrMachine.normalizedOrigin(machine.urlString) else { continue }
+            localOriginCounts[origin, default: 0] += 1
+        }
+
+        var updated = machines
+        for index in updated.indices {
+            guard let origin = HerdrMachine.normalizedOrigin(updated[index].urlString),
+                  localOriginCounts[origin] == 1
+            else { continue }
+            let matches = remoteByOrigin[origin] ?? []
+            guard matches.count <= 1 else { continue }
+            updated[index].sidebarLabel = matches.first?.sidebarLabel
+            updated[index].sidebarOrder = matches.first?.sidebarOrder
+        }
+        guard updated != machines else { return }
+        machines = updated
+        persistMachines()
+    }
+
     private func client(forMachine id: String) -> HerdrAPIClient? {
         runtimes[id]?.client
     }
@@ -4431,6 +4511,10 @@ final class HerdrAppModel {
                 noteRefreshCompleted(for: machine.id)
                 guard expectedGeneration == connectionGeneration else { return }
                 setRuntimeState(.live, for: machine.id)
+                if machines.first?.id == machine.id {
+                    await syncSidebarMetadataFromPrimary(expectedGeneration: expectedGeneration)
+                    guard expectedGeneration == connectionGeneration else { return }
+                }
                 await syncPushDevice(machineID: machine.id, using: client, expectedGeneration: expectedGeneration)
                 retryDelay = 2
                 for try await event in await client.events(after: runtimes[machine.id]?.lastEventID) {

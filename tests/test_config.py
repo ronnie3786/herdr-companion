@@ -141,6 +141,40 @@ api_token="private-token"
             with self.subTest(url=url), self.assertRaises(ConfigurationError):
                 self.load(f'[machines.worker]\nurl="{url}"')
 
+    def test_optional_sidebar_metadata_is_trimmed_and_safely_projected(self):
+        config = self.load('''[machines.build]
+name="Arbitrary Computer Name"
+url="https://build.example.invalid"
+role="node"
+sidebar_label="  Build  "
+sidebar_order=7
+ssh_user="private-user"
+[machines.build.server]
+api_token="private-token"
+''')
+        self.assertEqual(config.public_machines(), [{
+            'id': 'build', 'name': 'Arbitrary Computer Name',
+            'url': 'https://build.example.invalid', 'role': 'node',
+            'sidebarLabel': 'Build', 'sidebarOrder': 7,
+        }])
+        projected = json.dumps(config.public_machines())
+        self.assertNotIn('private-user', projected)
+        self.assertNotIn('private-token', projected)
+
+    def test_invalid_sidebar_labels_are_rejected(self):
+        values = [
+            '42', '[]', '"   "', '"Line\\tbreak"', '"Build\\n"',
+            '"' + ('x' * 129) + '"',
+        ]
+        for value in values:
+            with self.subTest(value=value), self.assertRaises(ConfigurationError):
+                self.load('[machines.worker]\nurl="https://worker.example.invalid"\nsidebar_label=' + value)
+
+    def test_invalid_sidebar_orders_are_rejected(self):
+        for value in ('true', '-1', '1.5', '2147483648', '"1"'):
+            with self.subTest(value=value), self.assertRaises(ConfigurationError):
+                self.load('[machines.worker]\nurl="https://worker.example.invalid"\nsidebar_order=' + value)
+
     def test_state_directory_owns_all_durable_server_stores(self):
         config = self.load('[server]\nstate_dir="state"')
         root = str(self.root.resolve() / 'state')

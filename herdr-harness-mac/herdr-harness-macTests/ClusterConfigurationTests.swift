@@ -14,6 +14,24 @@ struct ClusterConfigurationTests {
         #expect(store.machines.first?.role == .node)
     }
 
+    @Test("Older bootstrap plists decode without sidebar presentation fields")
+    func legacyBootstrapPlist() throws {
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: [[
+                "id": "old-plist",
+                "name": "Legacy Computer",
+                "urlString": "https://legacy.example.test",
+                "role": "node",
+            ]],
+            format: .xml,
+            options: 0
+        )
+        let machines = try PropertyListDecoder().decode([HerdrMachine].self, from: data)
+
+        #expect(machines[0].sidebarLabel == nil)
+        #expect(machines[0].sidebarOrder == nil)
+    }
+
     @Test("Machine names and URL labels never select a private machine role")
     func arbitraryNamesRemainNodes() {
         let source = [

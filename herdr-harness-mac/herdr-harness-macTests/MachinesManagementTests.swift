@@ -81,6 +81,57 @@ struct MachinesManagementTests {
         }
     }
 
+    @Test("Editing a machine retains metadata only for the same normalized origin")
+    func updateMachineDoesNotCarryMetadataAcrossOrigins() throws {
+        try withCleanMachineDefaults { model, _ in
+            model.machines = [HerdrMachine(
+                id: "machine-a",
+                name: "Before",
+                urlString: "https://SAME.example.test:443/",
+                sidebarLabel: "Build",
+                sidebarOrder: 3
+            )]
+
+            #expect(model.updateMachine(
+                id: "machine-a", name: "Same", urlString: "https://same.example.test", token: "same-token"
+            ))
+            #expect(model.machines[0].sidebarLabel == "Build")
+            #expect(model.machines[0].sidebarOrder == 3)
+
+            #expect(model.updateMachine(
+                id: "machine-a", name: "Changed", urlString: "https://other.example.test", token: "other-token"
+            ))
+            #expect(model.machines[0].sidebarLabel == nil)
+            #expect(model.machines[0].sidebarOrder == nil)
+            credentials.removeValue(for: "api-token.machine-a")
+        }
+    }
+
+    @Test("Reconnect retains cached metadata only when the primary origin is unchanged")
+    func reconnectDoesNotEraseOrCarryMetadata() throws {
+        try withCleanMachineDefaults { model, _ in
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.protocolClasses = [UnavailableMachineURLProtocol.self]
+            let session = URLSession(configuration: configuration)
+            model.clientFactory = { HerdrAPIClient(configuration: $0, session: session) }
+            model.machines = [HerdrMachine(
+                id: "machine-a", name: "Primary", urlString: "https://same.example.test",
+                sidebarLabel: "Lab", sidebarOrder: 2
+            )]
+            model.serverURLString = "https://SAME.example.test:443/"
+            model.apiToken = "same-token"
+            model.connect()
+            #expect(model.machines[0].sidebarLabel == "Lab")
+            #expect(model.machines[0].sidebarOrder == 2)
+
+            model.serverURLString = "https://different.example.test"
+            model.connect()
+            #expect(model.machines[0].sidebarLabel == nil)
+            #expect(model.machines[0].sidebarOrder == nil)
+            credentials.removeValue(for: "api-token.machine-a")
+        }
+    }
+
     @Test("Removing the scoped machine resets scope and prunes machine collapse state")
     func removeMachineResetsScope() throws {
         try withCleanMachineDefaults { model, _ in
@@ -156,4 +207,15 @@ struct MachinesManagementTests {
         defaults.removeObject(forKey: "herdr.sidebar.collapsedTabs")
         try body(HerdrAppModel(credentials: credentials, arguments: [], userDefaults: defaults), defaults)
     }
+}
+
+private final class UnavailableMachineURLProtocol: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+    }
+
+    override func stopLoading() {}
 }

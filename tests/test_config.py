@@ -88,6 +88,7 @@ runner = "synthetic-runner"
 auto_rank = false
 sync_viewed_to_github = true
 gh_timeout_seconds = 45
+checkout_timeout_seconds = 600
 pi_binary = "synthetic-pi"
 claude_binary = "synthetic-claude"
 ''')
@@ -98,6 +99,7 @@ claude_binary = "synthetic-claude"
         self.assertEqual(config.environ['HERDR_HARNESS_PR_REVIEW_RUNS_ROOT'], str((self.root / 'review/runs').resolve()))
         self.assertEqual(config.environ['HERDR_PR_REVIEW_RUNNER'], 'synthetic-runner')
         self.assertEqual(config.environ['HERDR_PR_REVIEW_AUTO_RANK'], 'false')
+        self.assertEqual(config.environ['HERDR_PR_REVIEW_CHECKOUT_TIMEOUT_SECONDS'], '600')
         defaulted = self.load('[server]\nstate_dir = "state"')
         self.assertEqual(defaulted.environ['HERDR_HARNESS_PR_REVIEW_STORE_PATH'], str((self.root / 'state/pr-review.sqlite3').resolve()))
         self.assertEqual(defaulted.environ['HERDR_HARNESS_PR_REVIEW_RUNS_ROOT'], str((self.root / 'state/pr-review-runs').resolve()))

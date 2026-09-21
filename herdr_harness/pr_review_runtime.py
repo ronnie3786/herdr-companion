@@ -15,6 +15,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -99,6 +100,27 @@ def _resolve_binary(environ: Mapping[str, str], override_name: str, executable: 
     return None
 
 
+def _run_process_group(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess:
+    """Bound the whole command, including Git children launched by gh."""
+    timeout = kwargs.pop("timeout", None)
+    data = kwargs.pop("input", None)
+    if kwargs.pop("capture_output", False):
+        kwargs.update(stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if data is not None:
+        kwargs["stdin"] = subprocess.PIPE
+    with subprocess.Popen(argv, start_new_session=True, **kwargs) as process:
+        try:
+            stdout, stderr = process.communicate(input=data, timeout=timeout)
+        except BaseException:
+            # Killing only gh leaves its clone/fetch children writing into the
+            # checkout after the review reports failure.
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            process.communicate()
+            raise
+    return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+
+
 def parse_pr_url(url: str) -> dict[str, Any]:
     value = url if "://" in url else f"https://{url}"
     parsed = urlsplit(value)
@@ -110,7 +132,7 @@ def parse_pr_url(url: str) -> dict[str, Any]:
 
 
 class PRReviewRuntime:
-    def __init__(self, service: Any, store: Any, *, environ: Mapping[str, str], runtime_root: str | Path | None = None, runner: Callable[..., Any] = subprocess.run, popen: Callable[..., Any] = subprocess.Popen) -> None:
+    def __init__(self, service: Any, store: Any, *, environ: Mapping[str, str], runtime_root: str | Path | None = None, runner: Callable[..., Any] = _run_process_group, popen: Callable[..., Any] = subprocess.Popen) -> None:
         self.service = service
         self.store = store
         self.environ = dict(environ)
@@ -122,6 +144,7 @@ class PRReviewRuntime:
         self.runner = runner
         self.popen = popen
         self.gh_timeout_seconds = _bounded_int(self.environ, "HERDR_PR_REVIEW_GH_TIMEOUT_SECONDS", 120, 10, 900)
+        self.checkout_timeout_seconds = _bounded_int(self.environ, "HERDR_PR_REVIEW_CHECKOUT_TIMEOUT_SECONDS", 900, 10, 3600)
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
@@ -129,6 +152,7 @@ class PRReviewRuntime:
         self._lock = threading.RLock()
         self._processes: dict[str, tuple[Any, Any]] = {}
         self._preparing_reviews: set[str] = set()
+        self._checkout_locks: dict[str, threading.Lock] = {}
         self._last_heavy_scan = 0.0
 
     def start(self) -> None:
@@ -158,6 +182,12 @@ class PRReviewRuntime:
         self._wake.set()
 
     def _loop(self) -> None:
+        # Preparation runs in a process-local thread. Its durable review and
+        # selected runs survive a restart, so give interrupted work a new worker.
+        for review in self.store.list_reviews("active"):
+            if self._stop.is_set():
+                return
+            self._schedule_preparation(review["id"])
         while not self._stop.is_set():
             try:
                 self.reconcile()
@@ -192,8 +222,9 @@ class PRReviewRuntime:
         return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value or "")
 
     def capabilities(self) -> dict[str, Any]:
-        runner = self.environ.get("HERDR_PR_REVIEW_RUNNER", "claude")
-        runner_bin = _resolve_binary(self.environ, "HERDR_PR_REVIEW_PI_BIN" if runner == "pi" else "HERDR_PR_REVIEW_CLAUDE_BIN", runner)
+        runner = self.environ.get("HERDR_PR_REVIEW_RUNNER", "pi")
+        override_name = {"pi": "HERDR_PR_REVIEW_PI_BIN", "claude": "HERDR_PR_REVIEW_CLAUDE_BIN"}.get(runner)
+        runner_bin = _resolve_binary(self.environ, override_name, runner) if override_name else None
         pi_bin = _resolve_binary(self.environ, "HERDR_PR_REVIEW_PI_BIN", "pi")
         gh_bin = shutil.which("gh", path=self.environ.get("PATH"))
         reason = ""
@@ -211,6 +242,22 @@ class PRReviewRuntime:
     def _review_worktree(self, review_id: str) -> Path:
         return self.checkout_root / "reviews" / review_id
 
+    def _checkout_lock(self, review: Mapping[str, Any]) -> threading.Lock:
+        key = f"{review['owner']}/{review['repo']}"
+        with self._lock:
+            return self._checkout_locks.setdefault(key, threading.Lock())
+
+    @staticmethod
+    def _quarantine_incomplete_checkout(path: Path) -> Path | None:
+        """Preserve a non-checkout path beside its managed destination."""
+        if not path.is_symlink() and (not path.exists() or (path / ".git").exists()):
+            return None
+        while True:
+            quarantine = path.with_name(f".{path.name}.incomplete-{time.time_ns()}-{os.urandom(4).hex()}")
+            if not quarantine.exists() and not quarantine.is_symlink():
+                path.rename(quarantine)
+                return quarantine
+
     def create_review(self, url: str, request_id: str, skill_ids: list[str] | None = None, actor: str = "") -> dict[str, Any]:
         review = self.store.create_review(parse_pr_url(url) | {"request_id": request_id})
         for skill_id in skill_ids or []:
@@ -218,14 +265,22 @@ class PRReviewRuntime:
                 self.start_run(review["id"], skill_id, f"{request_id}:{skill_id}", actor)
             elif not any(run["skill_id"] == skill_id for run in self.store.runs_for_review(review["id"])):
                 self.store.queue_run(review["id"], skill_id, f"{request_id}:{skill_id}", actor)
-        if review["status"] == "preparing" and review.get("prepared_at") is None:
-            with self._lock:
-                should_prepare = review["id"] not in self._preparing_reviews
-                if should_prepare:
-                    self._preparing_reviews.add(review["id"])
-            if should_prepare:
-                threading.Thread(target=self._prepare_once, args=(review["id"],), daemon=True).start()
+        self._schedule_preparation(review["id"])
         return review
+
+    def _schedule_preparation(self, review_id: str) -> None:
+        with self._lock:
+            # Receipts and startup snapshots can predate completion or archival.
+            review = self.store.get_review(review_id, True)
+            if (review["status"] != "preparing" or review.get("prepared_at") is not None
+                    or review.get("archived_at") is not None or review_id in self._preparing_reviews):
+                return
+            self._preparing_reviews.add(review_id)
+            try:
+                threading.Thread(target=self._prepare_once, args=(review_id,), daemon=True).start()
+            except Exception:
+                self._preparing_reviews.discard(review_id)
+                raise
 
     def _prepare_once(self, review_id: str) -> None:
         try:
@@ -251,22 +306,32 @@ class PRReviewRuntime:
 
     def _checkout(self, review: Mapping[str, Any], metadata: Mapping[str, Any]) -> tuple[Path, str]:
         clone = self.checkout_root / "repos" / f"{review['owner']}__{review['repo']}"
-        clone.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if not clone.exists():
-            self._run(["gh", "repo", "clone", f"{review['owner']}/{review['repo']}", str(clone), "--", "--quiet"], kind="gh")
-        self._run(["git", "-C", str(clone), "fetch", "--quiet", "origin"], kind="git")
+        worktree = self._review_worktree(str(review["id"]))
         base_ref = str(metadata.get("baseRefName") or review.get("base_ref") or "")
         head_sha = str(metadata.get("headRefOid") or review.get("head_sha") or "")
         if not base_ref or not head_sha:
             raise PRReviewError("GitHub PR metadata is incomplete", code="github_failed", status=502)
-        self._run(["git", "-C", str(clone), "fetch", "--quiet", "origin", f"pull/{review['number']}/head:refs/herdr-pr/{review['number']}"], kind="git")
-        worktree = self._review_worktree(str(review["id"]))
-        worktree.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if worktree.exists():
-            self._run(["git", "-C", str(worktree), "checkout", "--detach", head_sha], kind="git")
-        else:
-            self._run(["git", "-C", str(clone), "worktree", "add", "--detach", str(worktree), head_sha], kind="git")
-        merge_base = self._run(["git", "-C", str(worktree), "merge-base", f"origin/{base_ref}", head_sha], kind="git").stdout.strip()
+        with self._checkout_lock(review):
+            clone.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            self._quarantine_incomplete_checkout(clone)
+            if not clone.exists():
+                try:
+                    self._run(["gh", "repo", "clone", f"{review['owner']}/{review['repo']}", str(clone), "--", "--quiet", "--filter=blob:none", "--no-checkout"], timeout=self.checkout_timeout_seconds, kind="gh")
+                except Exception:
+                    self._quarantine_incomplete_checkout(clone)
+                    raise
+            self._run(["git", "-C", str(clone), "fetch", "--quiet", "origin"], timeout=self.checkout_timeout_seconds, kind="git")
+            self._run(["git", "-C", str(clone), "fetch", "--quiet", "origin", f"pull/{review['number']}/head:refs/herdr-pr/{review['number']}"], timeout=self.checkout_timeout_seconds, kind="git")
+            worktree.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            self._quarantine_incomplete_checkout(worktree)
+            if worktree.exists():
+                self._run(["git", "-C", str(worktree), "checkout", "--detach", head_sha], timeout=self.checkout_timeout_seconds, kind="git")
+            else:
+                # A timed-out worktree add may leave an administrative entry
+                # after its incomplete directory is quarantined.
+                self._run(["git", "-C", str(clone), "worktree", "prune", "--expire", "now"], timeout=self.checkout_timeout_seconds, kind="git")
+                self._run(["git", "-C", str(clone), "worktree", "add", "--detach", str(worktree), head_sha], timeout=self.checkout_timeout_seconds, kind="git")
+            merge_base = self._run(["git", "-C", str(worktree), "merge-base", f"origin/{base_ref}", head_sha], kind="git").stdout.strip()
         if not merge_base:
             raise PRReviewError("Git could not find a merge base", code="git_failed", status=502)
         return worktree, merge_base
@@ -341,30 +406,40 @@ class PRReviewRuntime:
         review = self.store.get_review(review_id, True)
         directory = self._review_dir(review_id)
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        stage = "metadata"
         try:
             metadata = self._metadata(review, directory)
+            stage = "checkout"
             worktree, merge_base = self._checkout(review, metadata)
+            stage = "diff"
             files = self._diff(review, worktree, merge_base, str(metadata["headRefOid"]), directory)
+            stage = "workspace"
             workspace_id = tab_id = anchor_pane_id = None
             workspace_error = review.get("workspace_error")
-            if not refresh:
+            if not refresh and all(review.get(key) for key in ("workspace_id", "tab_id", "anchor_pane_id")):
+                workspace_id, tab_id, anchor_pane_id = (review[key] for key in ("workspace_id", "tab_id", "anchor_pane_id"))
+            elif not refresh:
                 workspace_id, tab_id, anchor_pane_id, workspace_error = self._workspace(review, metadata, worktree)
             self.store.update_review(review_id, title=str(metadata.get("title") or ""), body=str(metadata.get("body") or "")[:65_536], author=str((metadata.get("author") or {}).get("login") or ""), base_ref=metadata.get("baseRefName"), head_ref=metadata.get("headRefName"), base_sha=metadata.get("baseRefOid"), head_sha=metadata.get("headRefOid"), merge_base_sha=merge_base, github_state=metadata.get("state"), is_draft=int(bool(metadata.get("isDraft"))), additions=int(metadata.get("additions") or 0), deletions=int(metadata.get("deletions") or 0), changed_files=int(metadata.get("changedFiles") or len(files)), checkout_path=str(worktree), **({"workspace_id": workspace_id, "tab_id": tab_id, "anchor_pane_id": anchor_pane_id, "workspace_error": workspace_error} if not refresh else {}))
+            stage = "viewed-file sync"
             self._pull_viewed(self.store.get_review(review_id, True))
             self.store.update_review(review_id, status="ready", error=None, prepared_at=_now())
             self.store.add_event(review_id, "review.refreshed" if refresh else "review.prepared", "PR review refreshed" if refresh else "PR review prepared")
             self._changed(review_id)
             if not refresh:
+                stage = "skill launch"
                 for run in self.store.runs_for_review(review_id):
                     if run["state"] == "queued":
                         self._launch_existing_run(review_id, run["id"])
                 if _enabled(self.environ, "HERDR_PR_REVIEW_AUTO_RANK", True):
                     self.rank_review(review_id, f"auto-rank:{int(time.time() * 1000)}")
-        except Exception:
+        except Exception as exc:
             # Git and native-client errors can contain checkout locations, which
             # are never safe to surface through the review API.
-            self.store.update_review(review_id, status="failed", error="PR review preparation failed")
-            self.store.add_event(review_id, "review.failed", "PR review preparation failed")
+            timed_out = isinstance(exc, subprocess.TimeoutExpired) or isinstance(exc.__cause__, subprocess.TimeoutExpired)
+            error = f"PR review preparation {'timed out' if timed_out else 'failed'} during {stage}. Use Refresh to retry."
+            self.store.update_review(review_id, status="failed", error=error)
+            self.store.add_event(review_id, "review.failed", error)
             self._changed(review_id)
 
     def refresh_review(self, review_id: str, request_id: str) -> dict[str, Any]:
@@ -372,14 +447,37 @@ class PRReviewRuntime:
         cached = self.store.receipt(scope, request_id, {})
         if cached is not None:
             return cached
-        self.store.get_review(review_id)
-        threading.Thread(target=self.prepare, args=(review_id,), kwargs={"refresh": True}, daemon=True).start()
+        review = self.store.get_review(review_id)
+        if review.get("archived_at") is not None:
+            raise PRReviewError("Review is archived", code="review_archived")
+        if review.get("prepared_at") is None and review["status"] in {"preparing", "failed"}:
+            self.store.update_review(review_id, status="preparing", error=None)
+            self._schedule_preparation(review_id)
+        else:
+            threading.Thread(target=self.prepare, args=(review_id,), kwargs={"refresh": True}, daemon=True).start()
         result = self.store.get_review(review_id, True)
         self.store.save_receipt(scope, request_id, {}, result)
         return result
 
     def _render(self, template: str, review: Mapping[str, Any], run_id: str) -> str:
         return template.format(number=review["number"], url=review["url"], owner=review["owner"], repo=review["repo"], review_id=review["id"], run_id=run_id, checkout=review.get("checkout_path") or "")
+
+    @staticmethod
+    def _runner_prompt(prompt: str, skill_id: str, runner: str) -> str:
+        if runner != "pi":
+            return prompt
+        legacy = f"/{skill_id}"
+        if prompt == legacy or (prompt.startswith(legacy) and prompt[len(legacy):len(legacy) + 1].isspace()):
+            return f"/skill:{skill_id}{prompt[len(legacy):]}"
+        return prompt
+
+    @staticmethod
+    def _runner_args(runner: str, prompt: str, *, print_mode: bool = False) -> list[str]:
+        args = ["--no-approve"] if runner == "pi" else []
+        if print_mode:
+            args.append("-p")
+        args.append(prompt)
+        return args
 
     def _snapshot_outputs(self, worktree: Path, outputs: list[str]) -> list[str]:
         result = self._run(["git", "-C", str(worktree), "ls-files", "--others", "--exclude-standard"], cwd=worktree, kind="git")
@@ -416,8 +514,12 @@ class PRReviewRuntime:
             thread.start()
             self._changed(review_id)
             return
-        prompt = self._render(str(skill.get("prompt_template") or ""), review, run_id)
-        runner = self.environ.get("HERDR_PR_REVIEW_RUNNER", "claude")
+        runner = self.environ.get("HERDR_PR_REVIEW_RUNNER", "pi")
+        prompt = self._runner_prompt(self._render(str(skill.get("prompt_template") or ""), review, run_id), str(skill["id"]), runner)
+        interactive_args = self._runner_args(runner, prompt)
+        override_name = {"pi": "HERDR_PR_REVIEW_PI_BIN", "claude": "HERDR_PR_REVIEW_CLAUDE_BIN"}.get(runner)
+        runner_bin = _resolve_binary(self.environ, override_name, runner) if override_name else None
+        executable = runner_bin or runner
         workspace_id = review.get("workspace_id")
         tab_id = review.get("tab_id")
         anchor = review.get("anchor_pane_id")
@@ -438,10 +540,10 @@ class PRReviewRuntime:
                     # Persist ownership before a native request can make the pane live.
                     self.store.update_run(review_id, run_id, launch="none", command=prompt, workspace_id=workspace_id, tab_id=tab_id, pane_id=pane_id, output_snapshot_json=json.dumps(snapshot), started_at=_now(), state="running")
                     try:
-                        self._native("agent.start", {"pane_id": pane_id, "name": f"prr-{run_id[5:13]}", "kind": runner, "args": [prompt], "timeout_ms": 30_000})
+                        self._native("agent.start", {"pane_id": pane_id, "name": f"prr-{run_id[5:13]}", "kind": runner, "args": interactive_args, "timeout_ms": 30_000})
                         launch = "agent"
                     except Exception:
-                        self._native("pane.send_input", {"pane_id": pane_id, "text": f"{runner} {shlex.quote(prompt)}", "keys": ["enter"]})
+                        self._native("pane.send_input", {"pane_id": pane_id, "text": shlex.join([executable, *interactive_args]), "keys": ["enter"]})
                         launch = "input"
                     self.store.update_run(review_id, run_id, launch=launch)
                     self.store.add_event(review_id, "run.started", "Skill run started", {"run_id": run_id})
@@ -452,7 +554,7 @@ class PRReviewRuntime:
         log_path = run_dir / "output.log"
         log = log_path.open("w", encoding="utf-8")
         try:
-            process = self.popen([runner, "-p", prompt], cwd=str(worktree), env=self._child_environment(), stdout=log, stderr=subprocess.STDOUT, text=True)
+            process = self.popen([executable, *self._runner_args(runner, prompt, print_mode=True)], cwd=str(worktree), env=self._child_environment(pi_bin=runner_bin if runner == "pi" else None), stdout=log, stderr=subprocess.STDOUT, text=True)
         except OSError as exc:
             log.close()
             self.store.update_run(review_id, run_id, state="failed", error=_trim_error(exc, "Review runner could not start"), finished_at=_now())
@@ -562,7 +664,7 @@ class PRReviewRuntime:
                     if pane is None and snapshot:
                         self.store.update_run(review["id"], run["id"], state="ended", note="Pane closed before the run reported an outcome", finished_at=_now())
                         changed = True
-                    elif pane is not None and str(pane.get("agent_status") or (pane.get("agent_info") or {}).get("agent_status") or "") in {"done", "idle"}:
+                    elif pane is not None and str(pane.get("agent_status") or (pane.get("agent_info") or {}).get("agent_status") or "") == "done":
                         started = run.get("started_at")
                         try:
                             age = datetime.now(timezone.utc) - datetime.fromisoformat(str(started).replace("Z", "+00:00"))

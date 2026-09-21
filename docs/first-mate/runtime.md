@@ -19,7 +19,11 @@ The Pi supervisor is a detached Python module using Pi's documented JSONL RPC.
 It maintains a saved session even if the first model request fails.
 
 Status responses contain canonical projections and short event summaries.
-They never contain previous status-tool payloads. The SQL ledger stores operation
+The coordinator receives a current-stage, reference-oriented projection with
+authoritative feature, visit, assignment, revision, blocker and Document IDs. It
+does not receive worker prompts, worktree metadata, transcript pages or Document
+bodies. Workers and advisors retain the detailed evidence readers. Status results
+never contain previous status-tool payloads. The SQL ledger stores operation
 identities, hashes and references to the exact private JSONL evidence rather than
 recursively embedding tool results. This prevents repeated status reads from
 expanding the agent's context. Model document/session reads are paginated, with
@@ -38,16 +42,30 @@ The First Mate extension registers tools only in a scoped managed process. Its
 private file spool carries stable tool request IDs and atomic replies; workers do
 not inherit the companion control token.
 
-- Coordinator: read status/evidence, begin one human-authorized major stage,
-  delegate, steer, retry, revise affected work, resolve explicit human gates,
-  complete a stage and finish the feature.
+- Coordinator: read reference-oriented status, begin one human-authorized major
+  stage, delegate, steer, retry, revise affected work, resolve explicit human
+  gates, complete a stage and finish the feature. Its exact allowlist excludes
+  Document and transcript readers as well as built-in execution tools.
 - Worker: read feature evidence, delegate scoped children, yield until their
   outcomes, retry a direct child, report a verdict with documents, request a
   human decision, produce a checkpoint and acknowledge a predecessor's handoff.
 - Advisor: read evidence, return a bounded intervention decision or assemble an
   independent recovery brief when the stopped predecessor cannot summarize.
 
-Coordinators cannot execute shell commands or code edits. Read-only planners and
+The coordinator is a small conversational router. Simple direction,
+clarification and status replies stay in the feature conversation and default to
+one to three sentences (normally at most 80 words). Substantive planning,
+research, investigation, implementation, review, testing, evidence reading and
+synthesis are tracked worker assignments; their detailed deliverables live in
+Documents. The coordinator can use concise structured worker summaries to close
+a stage. If the evidence needs substantial reconciliation, it delegates that
+reconciliation to a lead or reviewer before completing the stage. It does not
+turn a request for detail into a long untracked response.
+
+Coordinators cannot execute shell commands or code edits. The Pi process uses a
+replacement `--system-prompt` charter and an exact orchestration-tool allowlist.
+The current charter is applied on every dispatch, including turns in an existing
+saved coordinator session. Read-only planners and
 reviewers have both a Pi tool allowlist and a blocking extension hook. Writable
 assignments use private Git worktrees and `codex/first-mate-…` branches. An explicit
 source assignment selects the actual implementation/integration worktree for
@@ -109,12 +127,14 @@ predecessor's transcript and native ID remain retained; lineage changes to
 checkpoint before successor execution, so there are no overlapping writers.
 
 First Mate's own conversation can also rotate after a completed turn. Its
-checkpoint retains the feature, stage history, assignments, document identities,
-all human directives with source IDs, and recent conversation. The old native
-session remains inspectable. Very long feature histories may ultimately need an
-incremental decision-summary service to avoid reinjecting an ever-growing list of
-human directives; this initial implementation favors retaining instructions over
-silently dropping older constraints.
+checkpoint retains the reference-oriented current workflow state, all human
+directives with source IDs, and the latest 30 user/assistant messages. The recent
+window preserves the meaning of terse answers such as “yes” beside the
+coordinator question they answer. The old native session remains retained in
+full. Very long feature histories may ultimately need an incremental
+decision-summary service to avoid reinjecting an ever-growing list of human
+directives; this implementation favors retaining instructions over silently
+dropping older constraints.
 
 Unsuccessful process recovery is bounded to two retries. Internal repair has a
 separate bounded count. A third unsuccessful result blocks the feature and brings
@@ -134,7 +154,10 @@ executable while exercising real detached processes, session files, writer locks
 spool callbacks and SQLite transactions. They cover stage checkpoints, seven
 independent reviewers, restart, exact document authorship, bounded missing-outcome
 recovery, fresh successor acknowledgement, worktree isolation, role scoping and
-idempotent delegation. Acceptance tests inject claim-creation crash gaps and
+idempotent delegation. They also cover the coordinator's replacement prompt,
+resumed-session charter refresh, exact tool allowlist, reference-oriented input,
+worker evidence capabilities and question/answer continuity across rotation.
+Acceptance tests inject claim-creation crash gaps and
 exercise paused handoffs, cancellation, direction changes and context rotation.
 
 A separate live verification used the installed Pi provider to delegate a

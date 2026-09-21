@@ -154,12 +154,13 @@ poll_seconds = 10
 # checkout_root = "~/.local/share/herdr-companion/pr-review-runs/checkouts" # Shared clones and per-review worktrees.
 # store_path = "~/.local/share/herdr-companion/pr-review.sqlite3" # Ledger of reviews, runs, documents, events.
 # runs_root = "~/.local/share/herdr-companion/pr-review-runs" # PR metadata, diffs, documents, run logs.
-# runner = "claude" # Agent launched for skill runs: claude or pi.
+# runner = "pi" # Agent launched for skill runs; uses the host's Pi settings by default.
 # model = "your-provider/your-model" # Pi model for impact ranking and Ask AI; omit for Pi's default.
 # thinking_level = "medium"
 # auto_rank = true # Rank files by impact after a review is prepared.
 # sync_viewed_to_github = true # Push viewed toggles to GitHub through gh.
 # gh_timeout_seconds = 120 # 10–900.
+# checkout_timeout_seconds = 900 # Clone, fetch, and checkout commands, 10–3600.
 # pi_binary = "/path/to/pi" # Optional explicit binaries when the service PATH differs.
 # claude_binary = "/path/to/claude"
 

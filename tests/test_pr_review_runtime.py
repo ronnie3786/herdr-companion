@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
+import signal
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -10,7 +14,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from herdr_harness.pr_review_runtime import PRReviewRuntime
+from herdr_harness.pr_review_runtime import PRReviewRuntime, _run_process_group
 from herdr_harness.pr_review_store import PRReviewError, PRReviewStore
 
 
@@ -238,6 +242,45 @@ class PRReviewRuntimeTests(unittest.TestCase):
         self.runtime._save_document(review["id"], "large.md", b"Sources/Garden.swift\n" + b"x" * (4 * 1024 * 1024), "text/markdown", "Large", "user", "large")
         self.assertEqual(self.runtime.findings_for_path(review["id"], "Sources/Garden.swift"), {"path": "Sources/Garden.swift", "text": "", "document_ids": []})
 
+    def test_capabilities_default_to_configured_pi_binary(self):
+        bin_dir = Path(self.temp.name) / "synthetic-bin"
+        bin_dir.mkdir()
+        gh = bin_dir / "gh"
+        pi = bin_dir / "custom-pi"
+        for executable in (gh, pi):
+            executable.write_text("", encoding="utf-8")
+            executable.chmod(0o700)
+        runtime = PRReviewRuntime(self.service, self.store, environ={"PATH": str(bin_dir), "HERDR_PR_REVIEW_PI_BIN": str(pi)}, runtime_root=self.temp.name, runner=self.runner)
+
+        capabilities = runtime.capabilities()
+
+        self.assertTrue(capabilities["available"])
+        self.assertEqual(capabilities["runner"], "pi")
+        self.assertTrue(capabilities["runner_available"])
+        self.assertTrue(capabilities["pi_available"])
+
+    def test_pi_prompt_normalization_is_limited_to_selected_skill_command(self):
+        normalize = PRReviewRuntime._runner_prompt
+        self.assertEqual(normalize("/comprehensive-pr-review 42", "comprehensive-pr-review", "pi"),
+                         "/skill:comprehensive-pr-review 42")
+        self.assertEqual(normalize("/comprehensive-pr-review", "comprehensive-pr-review", "pi"),
+                         "/skill:comprehensive-pr-review")
+        self.assertEqual(normalize("/custom-review\nextra", "custom-review", "pi"),
+                         "/skill:custom-review\nextra")
+        for prompt in ("/skill:comprehensive-pr-review 42", "/comprehensive-pr-reviewer 42",
+                       " /comprehensive-pr-review 42", "Review pull request 42"):
+            self.assertEqual(normalize(prompt, "comprehensive-pr-review", "pi"), prompt)
+        self.assertEqual(normalize("/comprehensive-pr-review 42", "comprehensive-pr-review", "claude"),
+                         "/comprehensive-pr-review 42")
+
+    def test_runner_args_suppress_pi_project_trust_only(self):
+        prompt = "/skill:comprehensive-pr-review 42"
+        self.assertEqual(PRReviewRuntime._runner_args("pi", prompt), ["--no-approve", prompt])
+        self.assertEqual(PRReviewRuntime._runner_args("pi", prompt, print_mode=True),
+                         ["--no-approve", "-p", prompt])
+        self.assertEqual(PRReviewRuntime._runner_args("claude", prompt), [prompt])
+        self.assertEqual(PRReviewRuntime._runner_args("claude", prompt, print_mode=True), ["-p", prompt])
+
     def test_create_review_prepares_once_for_replays(self):
         calls = []
         started = threading.Event()
@@ -250,6 +293,234 @@ class PRReviewRuntimeTests(unittest.TestCase):
         self._until(lambda: not self.runtime._preparing_reviews)
         self.assertEqual(first["id"], replay["id"])
         self.assertEqual(calls, [first["id"]])
+
+    def test_restart_resumes_preparation_and_original_selected_runs(self):
+        review = self._review()
+        runs = [self.store.queue_run(review["id"], skill, f"selected:{skill}") for skill in (
+            "comprehensive-pr-review", "tech-explainer-video",
+        )]
+        restored_store = PRReviewStore(self.store.path)
+        self.addCleanup(restored_store.close)
+        service = LaunchService()
+        runtime = PRReviewRuntime(service, restored_store, environ={"HERDR_PR_REVIEW_AUTO_RANK": "false"},
+                                  runtime_root=self.temp.name, runner=self.runner)
+        self.addCleanup(runtime.stop)
+        runtime.start()
+        self._until(lambda: all(run["state"] == "running" for run in restored_store.runs_for_review(review["id"]))
+                    and not runtime._preparing_reviews)
+        runtime.start()
+        self.assertEqual(restored_store.get_review(review["id"])["status"], "ready")
+        self.assertEqual({run["id"] for run in restored_store.runs_for_review(review["id"])},
+                         {run["id"] for run in runs})
+        self.assertEqual([name for name, _ in service.calls].count("agent.start"), 2)
+        self.assertEqual([name for name, _ in service.calls].count("tab.create"), 1)
+
+    def test_startup_recovery_and_create_replay_share_one_worker(self):
+        review = self._review()
+        started = threading.Event()
+        release = threading.Event()
+        calls = []
+        prepare = self.runtime.prepare
+
+        def blocking_prepare(review_id):
+            calls.append(review_id)
+            started.set()
+            release.wait(3)
+            prepare(review_id)
+
+        self.runtime.prepare = blocking_prepare
+        self.addCleanup(self.runtime.stop)
+        self.runtime.start()
+        try:
+            self.assertTrue(started.wait(1))
+            replay = self.runtime.create_review(review["url"], "retry-after-restart")
+            self.assertEqual(replay["id"], review["id"])
+        finally:
+            release.set()
+            self._until(lambda: not self.runtime._preparing_reviews)
+        self.assertEqual(calls, [review["id"]])
+
+    def test_startup_does_not_restart_archived_failed_or_prepared_reviews(self):
+        for state in ("ready", "failed", "archived", "prepared"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
+                store = PRReviewStore(Path(directory) / "store.sqlite3")
+                review = store.create_review({"url": "https://github.com/example-owner/garden/pull/42",
+                                              "host": "github.com", "owner": "example-owner", "repo": "garden",
+                                              "number": 42, "request_id": "create"})
+                if state == "archived":
+                    store.archive(review["id"], "archive")
+                elif state == "prepared":
+                    store.update_review(review["id"], prepared_at="2026-01-01T00:00:00Z")
+                else:
+                    store.update_review(review["id"], status=state)
+                runtime = PRReviewRuntime(self.service, store, environ={}, runtime_root=directory, runner=self.runner)
+                calls = []
+                scanned = threading.Event()
+                runtime.prepare = calls.append
+                runtime.reconcile = scanned.set
+                try:
+                    runtime.start()
+                    self.assertTrue(scanned.wait(1))
+                    self.assertEqual(calls, [])
+                finally:
+                    runtime.stop()
+                    store.close()
+
+    def test_create_replay_does_not_reprepare_from_stale_receipt(self):
+        first = self.runtime.create_review("https://github.com/example-owner/garden/pull/42", "create-once")
+        self._until(lambda: not self.runtime._preparing_reviews)
+        self.assertEqual(self.store.get_review(first["id"])["status"], "ready")
+        calls = []
+        self.runtime.prepare = calls.append
+        self.runtime.create_review(first["url"], "create-once")
+        self._until(lambda: not self.runtime._preparing_reviews)
+        self.assertEqual(calls, [])
+
+    def test_resumed_preparation_reuses_persisted_workspace(self):
+        review = self._review()
+        self.store.update_review(review["id"], workspace_id="workspace", tab_id="tab", anchor_pane_id="anchor")
+        self.runtime.prepare(review["id"])
+        self.assertEqual(self.store.get_review(review["id"])["status"], "ready")
+        self.assertNotIn("tab.create", [name for name, _ in self.service.calls])
+
+    def test_refresh_retries_failed_preparation_and_starts_original_runs(self):
+        review = self._review()
+        selected = self.store.queue_run(review["id"], "comprehensive-pr-review", "selected")
+        self.store.update_review(review["id"], status="failed", error="Synthetic timeout")
+        self.runtime.service = LaunchService()
+        self.runtime.refresh_review(review["id"], "retry")
+        self._until(lambda: not self.runtime._preparing_reviews)
+        self.assertEqual(self.store.get_review(review["id"])["status"], "ready")
+        runs = self.store.runs_for_review(review["id"])
+        self.assertEqual([run["id"] for run in runs], [selected["id"]])
+        self.assertEqual(runs[0]["state"], "running")
+
+    def test_checkout_timeout_reports_stage_without_private_command(self):
+        review = self._review()
+        clone = self.runtime.checkout_root / "repos" / "example-owner__garden"
+
+        def timeout_clone(argv, kwargs):
+            if argv[:3] == ["gh", "repo", "clone"]:
+                clone.mkdir(parents=True)
+                (clone / "partial").write_text("synthetic", encoding="utf-8")
+                raise subprocess.TimeoutExpired(["synthetic-private-command"], kwargs["timeout"], stderr="synthetic-private-stderr")
+            return None
+
+        self.runner.on_call = timeout_clone
+        self.runtime.prepare(review["id"])
+        failed = self.store.get_review(review["id"])
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(failed["error"], "PR review preparation timed out during checkout. Use Refresh to retry.")
+        self.assertNotIn("synthetic-private", json.dumps(self.store.events(review["id"])))
+        self.assertFalse(clone.exists())
+        quarantined = list(clone.parent.glob(f".{clone.name}.incomplete-*"))
+        self.assertEqual(len(quarantined), 1)
+        self.assertEqual((quarantined[0] / "partial").read_text(encoding="utf-8"), "synthetic")
+
+    def test_checkout_discards_incomplete_worktree_before_retry(self):
+        review = self._review()
+        clone = self.runtime.checkout_root / "repos" / "example-owner__garden"
+        (clone / ".git").mkdir(parents=True)
+        worktree = self.runtime._review_worktree(review["id"])
+        worktree.mkdir(parents=True)
+        (worktree / "partial").write_text("synthetic", encoding="utf-8")
+
+        self.runtime.prepare(review["id"])
+
+        self.assertFalse(worktree.exists())
+        quarantined = list(worktree.parent.glob(f".{worktree.name}.incomplete-*"))
+        self.assertEqual(len(quarantined), 1)
+        self.assertEqual((quarantined[0] / "partial").read_text(encoding="utf-8"), "synthetic")
+        commands = [argv for argv, _ in self.runner.calls]
+        self.assertIn(["git", "-C", str(clone), "worktree", "prune", "--expire", "now"], commands)
+        self.assertIn(["git", "-C", str(clone), "worktree", "add", "--detach", str(worktree), "head"], commands)
+
+    def test_same_repository_checkouts_are_serialized(self):
+        first = self._review()
+        second = first | {"id": "prr_synthetic_second", "number": 43}
+        metadata = {"baseRefName": "main", "headRefOid": "head"}
+        entered = threading.Event()
+        release = threading.Event()
+        counter_lock = threading.Lock()
+        active = 0
+        maximum = 0
+
+        def block_first_fetch(argv, _kwargs):
+            nonlocal active, maximum
+            if len(argv) >= 6 and argv[0] == "git" and argv[3:5] == ["fetch", "--quiet"]:
+                with counter_lock:
+                    active += 1
+                    maximum = max(maximum, active)
+                entered.set()
+                release.wait(3)
+                with counter_lock:
+                    active -= 1
+            return None
+
+        self.runner.on_call = block_first_fetch
+        errors = []
+
+        def checkout(review):
+            try:
+                self.runtime._checkout(review, metadata)
+            except Exception as exc:
+                errors.append(exc)
+
+        workers = [threading.Thread(target=checkout, args=(review,)) for review in (first, second)]
+        workers[0].start()
+        self.assertTrue(entered.wait(1))
+        workers[1].start()
+        time.sleep(0.05)
+        release.set()
+        for worker in workers:
+            worker.join(2)
+
+        self.assertFalse(errors)
+        self.assertTrue(all(not worker.is_alive() for worker in workers))
+        self.assertEqual(maximum, 1)
+
+    def test_checkout_uses_separate_budget_and_skips_default_branch_contents(self):
+        review = self._review()
+        runtime = PRReviewRuntime(self.service, self.store, environ={"HERDR_PR_REVIEW_CHECKOUT_TIMEOUT_SECONDS": "600",
+                                  "HERDR_PR_REVIEW_GH_TIMEOUT_SECONDS": "20", "HERDR_PR_REVIEW_AUTO_RANK": "false"},
+                                  runtime_root=self.temp.name, runner=self.runner)
+        runtime.prepare(review["id"])
+        clone, clone_kwargs = next((argv, kwargs) for argv, kwargs in self.runner.calls if argv[:3] == ["gh", "repo", "clone"])
+        self.assertEqual(clone_kwargs["timeout"], 600)
+        self.assertIn("--filter=blob:none", clone)
+        self.assertIn("--no-checkout", clone)
+        for argv, kwargs in self.runner.calls:
+            if "fetch" in argv or "worktree" in argv:
+                self.assertEqual(kwargs["timeout"], 600)
+            if argv[:3] == ["gh", "pr", "view"]:
+                self.assertEqual(kwargs["timeout"], 20)
+
+    def test_process_timeout_stops_descendant_that_holds_output_pipe(self):
+        script = ("import os,time\n"
+                  "pid=os.fork()\n"
+                  "if pid: print(pid,flush=True)\n"
+                  "time.sleep(30)\n")
+        started = time.monotonic()
+        with self.assertRaises(subprocess.TimeoutExpired) as caught:
+            _run_process_group([sys.executable, "-c", script], capture_output=True, timeout=1)
+        self.assertLess(time.monotonic() - started, 5)
+        pid = int(caught.exception.output.strip())
+
+        def stopped():
+            result = subprocess.run(["ps", "-p", str(pid), "-o", "stat="], capture_output=True, text=True)
+            return not result.stdout.strip() or result.stdout.strip().startswith("Z")
+
+        try:
+            self._until(stopped)
+        finally:
+            if not stopped():
+                os.kill(pid, signal.SIGKILL)
+
+    def test_process_runner_preserves_input_and_captured_output(self):
+        result = _run_process_group([sys.executable, "-c", "import sys; print(sys.stdin.read().upper())"],
+                                    input=b"synthetic", capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, b"SYNTHETIC\n")
 
     def test_start_run_replay_launches_once(self):
         review, _ = self._ready_review(workspace_id="workspace", tab_id="tab", anchor_pane_id="anchor")
@@ -347,17 +618,26 @@ class PRReviewRuntimeTests(unittest.TestCase):
         self.assertEqual(observed["tab_id"], "tab")
         self.assertEqual(observed["pane_id"], "new-pane")
         self.assertTrue(observed["started_at"])
-        self.assertEqual(self.store.run(review["id"], run["id"])["launch"], "agent")
+        stored = self.store.run(review["id"], run["id"])
+        self.assertEqual(stored["launch"], "agent")
+        self.assertEqual(stored["command"], "/skill:comprehensive-pr-review 42")
+        started = next(params for method, params in service.calls if method == "agent.start")
+        self.assertEqual(started["kind"], "pi")
+        self.assertEqual(started["args"], ["--no-approve", "/skill:comprehensive-pr-review 42"])
         self.assertLess([name for name, _ in service.calls].index("pane.split"), [name for name, _ in service.calls].index("agent.start"))
         self.assertIn("run.started", self._event_types(review["id"]))
 
     def test_agent_start_failure_sends_shell_quoted_input(self):
         review, _ = self._ready_review(workspace_id="workspace", tab_id="tab", anchor_pane_id="anchor")
         service = LaunchService(agent_error=True)
-        runtime = PRReviewRuntime(service, self.store, environ={"HERDR_PR_REVIEW_AUTO_RANK": "false", "HERDR_PR_REVIEW_RUNNER": "synthetic runner"}, runtime_root=self.temp.name, runner=self.runner)
+        pi = Path(self.temp.name) / "bin with space" / "pi"
+        pi.parent.mkdir()
+        pi.write_text("", encoding="utf-8")
+        pi.chmod(0o700)
+        runtime = PRReviewRuntime(service, self.store, environ={"HERDR_PR_REVIEW_AUTO_RANK": "false", "HERDR_PR_REVIEW_PI_BIN": str(pi)}, runtime_root=self.temp.name, runner=self.runner)
         run = runtime.start_run(review["id"], "comprehensive-pr-review", "input-fallback")
         sent = next(params for method, params in service.calls if method == "pane.send_input")
-        self.assertEqual(sent["text"], "synthetic runner " + shlex.quote("/comprehensive-pr-review 42"))
+        self.assertEqual(sent["text"], shlex.join([str(pi.resolve()), "--no-approve", "/skill:comprehensive-pr-review 42"]))
         self.assertEqual(sent["keys"], ["enter"])
         self.assertEqual(self.store.run(review["id"], run["id"])["launch"], "input")
 
@@ -370,17 +650,23 @@ class PRReviewRuntimeTests(unittest.TestCase):
             popen_calls.append((argv, kwargs))
             return FakeProcess()
 
-        runtime = PRReviewRuntime(service, self.store, environ={"HERDR_PR_REVIEW_AUTO_RANK": "false", "HERDR_PR_REVIEW_RUNNER": "synthetic-runner"}, runtime_root=self.temp.name, runner=self.runner, popen=popen)
+        pi = Path(self.temp.name) / "synthetic-pi"
+        pi.write_text("", encoding="utf-8")
+        pi.chmod(0o700)
+        pi_bin = str(pi.resolve())
+        runtime = PRReviewRuntime(service, self.store, environ={"HERDR_PR_REVIEW_AUTO_RANK": "false", "HERDR_PR_REVIEW_PI_BIN": pi_bin}, runtime_root=self.temp.name, runner=self.runner, popen=popen)
         run = runtime.start_run(review["id"], "comprehensive-pr-review", "shell-fallback")
-        self.assertEqual(popen_calls[0][0], ["synthetic-runner", "-p", "/comprehensive-pr-review 42"])
+        self.assertEqual(popen_calls[0][0], [pi_bin, "--no-approve", "-p", "/skill:comprehensive-pr-review 42"])
         self.assertEqual(popen_calls[0][1]["cwd"], str(worktree))
+        self.assertEqual(popen_calls[0][1]["env"]["PI_SKIP_VERSION_CHECK"], "1")
+        self.assertFalse(any(key.startswith("HERDR_") for key in popen_calls[0][1]["env"]))
         self.assertEqual(self.store.run(review["id"], run["id"])["launch"], "shell")
         runtime._processes[run["id"]][1].close()
 
         def fail_popen(*_args, **_kwargs):
             raise OSError("synthetic popen failure")
 
-        failed_runtime = PRReviewRuntime(LaunchService(split_error=True), self.store, environ={"HERDR_PR_REVIEW_AUTO_RANK": "false"}, runtime_root=self.temp.name, runner=self.runner, popen=fail_popen)
+        failed_runtime = PRReviewRuntime(LaunchService(split_error=True), self.store, environ={"HERDR_PR_REVIEW_AUTO_RANK": "false", "HERDR_PR_REVIEW_PI_BIN": pi_bin}, runtime_root=self.temp.name, runner=self.runner, popen=fail_popen)
         failed = failed_runtime.start_run(review["id"], "comprehensive-pr-review", "popen-failure")
         stored = self.store.run(review["id"], failed["id"])
         self.assertEqual(stored["state"], "failed")
@@ -435,10 +721,12 @@ class PRReviewRuntimeTests(unittest.TestCase):
         old = (datetime.now(timezone.utc) - timedelta(seconds=61)).isoformat().replace("+00:00", "Z")
         missing = self.store.create_run(review["id"], "comprehensive-pr-review", "missing-pane")
         done = self.store.create_run(review["id"], "comprehensive-pr-review", "done-pane")
+        idle = self.store.create_run(review["id"], "comprehensive-pr-review", "idle-pane")
         ok = self.store.create_run(review["id"], "comprehensive-pr-review", "shell-ok")
         bad = self.store.create_run(review["id"], "comprehensive-pr-review", "shell-bad")
         self.store.update_run(review["id"], missing["id"], state="running", launch="agent", pane_id="gone", started_at=old)
         self.store.update_run(review["id"], done["id"], state="running", launch="agent", pane_id="done", started_at=old)
+        self.store.update_run(review["id"], idle["id"], state="running", launch="agent", pane_id="idle", started_at=old)
         self.store.update_run(review["id"], ok["id"], state="running", launch="shell")
         self.store.update_run(review["id"], bad["id"], state="running", launch="shell")
         logs = []
@@ -447,11 +735,16 @@ class PRReviewRuntimeTests(unittest.TestCase):
             log.parent.mkdir(parents=True, exist_ok=True)
             logs.append(log.open("w", encoding="utf-8"))
         self.runtime._processes = {ok["id"]: (FakeProcess(0), logs[0]), bad["id"]: (FakeProcess(1), logs[1])}
-        self.service.refresh_snapshot = lambda **_kwargs: {"panes": [{"pane_id": "done", "agent_status": "done"}]}
+        self.service.refresh_snapshot = lambda **_kwargs: {"panes": [
+            {"pane_id": "done", "agent_status": "done"},
+            {"pane_id": "idle", "agent_status": "idle"},
+        ]}
         self.runtime.reconcile()
         self.assertEqual(self.store.run(review["id"], missing["id"])["state"], "ended")
         self.assertEqual(self.store.run(review["id"], missing["id"])["note"], "Pane closed before the run reported an outcome")
         self.assertEqual(self.store.run(review["id"], done["id"])["state"], "finished")
+        self.assertEqual(self.store.run(review["id"], idle["id"])["state"], "running")
+        self.assertIsNone(self.store.run(review["id"], idle["id"])["finished_at"])
         self.assertEqual(self.store.run(review["id"], ok["id"])["state"], "finished")
         self.assertEqual(self.store.run(review["id"], bad["id"])["state"], "failed")
 

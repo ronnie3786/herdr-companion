@@ -59,8 +59,14 @@ struct FirstMateResourceSheet: View {
                 ContentUnavailableView("Resource unavailable", systemImage: "exclamationmark.circle", description: Text(error))
             } else {
                 ScrollView {
-                    Text(store.resourceText).herdrFont(.body).lineSpacing(6).textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading).padding(24)
+                    Group {
+                        if rendersMarkdownDocument {
+                            FirstMateMarkdownContentView(source: store.resourceText)
+                        } else {
+                            Text(store.resourceText).herdrFont(.body).lineSpacing(6).textSelection(.enabled)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(24)
                 }
             }
             Divider()
@@ -70,5 +76,12 @@ struct FirstMateResourceSheet: View {
         .frame(minWidth: 580, idealWidth: 720, minHeight: 480, idealHeight: 650)
         .background(FirstMatePalette(scheme: scheme).background).foregroundStyle(.primary)
         .accessibilityIdentifier("first-mate-resource-sheet")
+    }
+
+    private var rendersMarkdownDocument: Bool {
+        guard case .document(let document) = resource else { return false }
+        return String(document.mediaType.split(separator: ";", maxSplits: 1).first ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() == "text/markdown"
     }
 }

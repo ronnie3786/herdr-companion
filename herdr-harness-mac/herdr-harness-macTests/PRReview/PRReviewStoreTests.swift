@@ -3,7 +3,7 @@ import Testing
 @testable import herdr_harness_mac
 
 @MainActor
-@Suite("PR Review store")
+@Suite("PR Review store", .timeLimit(.minutes(1)))
 struct PRReviewStoreTests {
     @Test("Configure resets state and seeds the synthetic demo")
     func configureResetsAndSeedsDemo() async {
@@ -162,6 +162,203 @@ struct PRReviewStoreTests {
 
         #expect(store.selectedReviewID == "prr_fictional_new")
     }
+
+    @Test("A late diff from another host cannot replace the current host diff")
+    func diffGenerationGuardDropsLateHostResponse() async {
+        let gate = DiffResponseGate()
+        let oldClient = TestPRReviewClient(diffHandler: { _, _ in
+            await gate.wait()
+            var diff = PRReviewDemo.diff()
+            diff.files[0].hunks[0].lines[1].text = "stale host code"
+            return diff
+        })
+        let newClient = TestPRReviewClient(diffHandler: { _, _ in
+            var diff = PRReviewDemo.diff()
+            diff.files[0].hunks[0].lines[1].text = "current host code"
+            return diff
+        })
+        let store = PRReviewStore()
+        store.configure(client: oldClient, machineID: "old-host", demo: false)
+        store.select(PRReviewDemo.reviewID)
+        store.receive(PRReviewDemo.snapshot())
+        store.selectedPath = PRReviewDemo.snapshot().files[0].path
+
+        let staleLoad = Task { await store.loadDiff(for: store.selectedPath) }
+        await gate.waitUntilWaiting()
+        store.configure(client: newClient, machineID: "new-host", demo: false)
+        store.select(PRReviewDemo.reviewID)
+        store.receive(PRReviewDemo.snapshot())
+        store.selectedPath = PRReviewDemo.snapshot().files[0].path
+        await store.loadDiff(for: store.selectedPath)
+        await gate.release()
+        await staleLoad.value
+
+        #expect(store.diff?.files[0].hunks[0].lines[1].text == "current host code")
+    }
+
+    @Test("A late file response cannot replace the newly selected file")
+    func diffPathGuardDropsLateResponse() async {
+        let firstPath = PRReviewDemo.snapshot().files[0].path
+        let secondPath = PRReviewDemo.snapshot().files[1].path
+        let gate = DiffResponseGate()
+        let client = TestPRReviewClient(diffHandler: { _, path in
+            if path == firstPath { await gate.wait() }
+            var diff = PRReviewDemo.diff()
+            diff.files[0].path = path ?? ""
+            diff.files[0].hunks[0].lines[1].text = path == firstPath ? "old selection" : "new selection"
+            return diff
+        })
+        let store = PRReviewStore()
+        store.configure(client: client, machineID: "review-host", demo: false)
+        store.select(PRReviewDemo.reviewID)
+        store.receive(PRReviewDemo.snapshot())
+        store.selectedPath = firstPath
+
+        let firstLoad = Task { await store.loadDiff(for: firstPath) }
+        await gate.waitUntilWaiting()
+        store.selectedPath = secondPath
+        await store.loadDiff(for: secondPath)
+        await gate.release()
+        await firstLoad.value
+
+        #expect(store.diff?.files.first?.path == secondPath)
+        #expect(store.diff?.files.first?.hunks[0].lines[1].text == "new selection")
+    }
+
+    @Test("A mismatched diff revision completes with an explicit retryable error")
+    func mismatchedDiffRevisionReportsError() async {
+        let client = TestPRReviewClient(diffHandler: { _, _ in
+            var diff = PRReviewDemo.diff()
+            diff.baseSHA = "different-base"
+            return diff
+        })
+        let store = PRReviewStore()
+        store.configure(client: client, machineID: "review-host", demo: false)
+        store.select(PRReviewDemo.reviewID)
+        store.receive(PRReviewDemo.snapshot())
+        store.selectedPath = PRReviewDemo.snapshot().files[0].path
+
+        await store.loadDiff(for: store.selectedPath)
+
+        #expect(store.diff == nil)
+        #expect(store.currentDiffLoadError?.contains("different review revision") == true)
+        #expect(store.completedDiffIdentity == store.currentDiffRequestIdentity)
+        #expect(store.loadingDiffIdentity == nil)
+    }
+
+    @Test("A successful response missing the selected file completes instead of spinning")
+    func missingSelectedDiffCompletesRequest() async {
+        let client = TestPRReviewClient(diffHandler: { _, _ in
+            var diff = PRReviewDemo.diff()
+            diff.files = []
+            return diff
+        })
+        let store = PRReviewStore()
+        store.configure(client: client, machineID: "review-host", demo: false)
+        store.select(PRReviewDemo.reviewID)
+        store.receive(PRReviewDemo.snapshot())
+        store.selectedPath = PRReviewDemo.snapshot().files[0].path
+
+        await store.loadDiff(for: store.selectedPath)
+
+        #expect(store.diff?.files.isEmpty == true)
+        #expect(store.completedDiffIdentity == store.currentDiffRequestIdentity)
+        #expect(store.loadingDiffIdentity == nil)
+        #expect(store.currentDiffLoadError == nil)
+    }
+
+    @Test("File and base/head changes produce new diff identities while ordinary polling does not")
+    func diffIdentityTracksExactSource() {
+        let store = PRReviewStore()
+        store.configure(client: TestPRReviewClient(), machineID: "review-host", demo: false)
+        store.select(PRReviewDemo.reviewID)
+        var snapshot = PRReviewDemo.snapshot()
+        store.receive(snapshot)
+        store.selectedPath = snapshot.files[0].path
+        let original = store.currentDiffRequestIdentity
+
+        snapshot.review.revision += 1
+        store.receive(snapshot)
+        #expect(store.currentDiffRequestIdentity == original)
+
+        store.selectedPath = snapshot.files[1].path
+        #expect(store.currentDiffRequestIdentity != original)
+        store.selectedPath = snapshot.files[0].path
+        snapshot.review.revision += 1
+        snapshot.review.baseSHA = "new-base"
+        store.receive(snapshot)
+        let changedBase = store.currentDiffRequestIdentity
+        #expect(changedBase != original)
+        snapshot.review.revision += 1
+        snapshot.review.headSHA = "new-head"
+        store.receive(snapshot)
+        #expect(store.currentDiffRequestIdentity != changedBase)
+    }
+
+    @Test("Polling does not clear the selected diff error")
+    func pollingPreservesDiffError() async {
+        let client = TestPRReviewClient(diffHandler: { _, _ in throw APIError.invalidResponse })
+        let store = PRReviewStore()
+        store.configure(client: client, machineID: "review-host", demo: false)
+        store.select(PRReviewDemo.reviewID)
+        var snapshot = PRReviewDemo.snapshot()
+        store.receive(snapshot)
+        store.selectedPath = snapshot.files[0].path
+
+        await store.loadDiff(for: store.selectedPath)
+        let error = store.currentDiffLoadError
+        snapshot.review.revision += 1
+        store.receive(snapshot)
+
+        #expect(error != nil)
+        #expect(store.currentDiffLoadError == error)
+    }
+
+    @Test("A cancelled successful response cannot install a diff")
+    func cancelledDiffLoadDoesNotMutateState() async {
+        let gate = DiffResponseGate()
+        let client = TestPRReviewClient(diffHandler: { _, _ in
+            await gate.wait()
+            return PRReviewDemo.diff()
+        })
+        let store = PRReviewStore()
+        store.configure(client: client, machineID: "review-host", demo: false)
+        store.select(PRReviewDemo.reviewID)
+        store.receive(PRReviewDemo.snapshot())
+        store.selectedPath = PRReviewDemo.snapshot().files[0].path
+
+        let load = Task { await store.loadDiff(for: store.selectedPath) }
+        await gate.waitUntilWaiting()
+        load.cancel()
+        await gate.release()
+        await load.value
+
+        #expect(store.diff == nil)
+    }
+}
+
+private actor DiffResponseGate {
+    private var isWaiting = false
+    private var responseContinuation: CheckedContinuation<Void, Never>?
+    private var arrivalContinuations: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        isWaiting = true
+        let arrivals = arrivalContinuations
+        arrivalContinuations.removeAll()
+        arrivals.forEach { $0.resume() }
+        await withCheckedContinuation { responseContinuation = $0 }
+    }
+
+    func waitUntilWaiting() async {
+        guard !isWaiting else { return }
+        await withCheckedContinuation { arrivalContinuations.append($0) }
+    }
+
+    func release() {
+        responseContinuation?.resume()
+        responseContinuation = nil
+    }
 }
 
 private final class TestPRReviewClient: PRReviewClient, @unchecked Sendable {
@@ -169,12 +366,20 @@ private final class TestPRReviewClient: PRReviewClient, @unchecked Sendable {
     private let capabilitiesError: APIError?
     private let reviewError: APIError?
     private let createdReviewID: String?
+    private let diffHandler: (@Sendable (String, String?) async throws -> PRReviewDiff)?
 
-    init(delay: Duration? = nil, capabilitiesError: APIError? = nil, reviewError: APIError? = nil, createdReviewID: String? = nil) {
+    init(
+        delay: Duration? = nil,
+        capabilitiesError: APIError? = nil,
+        reviewError: APIError? = nil,
+        createdReviewID: String? = nil,
+        diffHandler: (@Sendable (String, String?) async throws -> PRReviewDiff)? = nil
+    ) {
         self.delay = delay
         self.capabilitiesError = capabilitiesError
         self.reviewError = reviewError
         self.createdReviewID = createdReviewID
+        self.diffHandler = diffHandler
     }
 
     func prReviewCapabilities() async throws -> PRReviewCapabilities {
@@ -200,7 +405,10 @@ private final class TestPRReviewClient: PRReviewClient, @unchecked Sendable {
     }
     func refreshPRReview(id: String, requestID: String) async throws -> PRReviewSnapshot { PRReviewDemo.snapshot() }
     func archivePRReview(id: String, archived: Bool, requestID: String) async throws -> PRReviewSnapshot { PRReviewDemo.snapshot() }
-    func prReviewDiff(id: String, path: String?) async throws -> PRReviewDiff { PRReviewDemo.diff() }
+    func prReviewDiff(id: String, path: String?) async throws -> PRReviewDiff {
+        if let diffHandler { return try await diffHandler(id, path) }
+        return PRReviewDemo.diff()
+    }
     func prReviewFileText(id: String, path: String, side: PRReviewSide, start: Int?, end: Int?) async throws -> PRReviewFileText { throw APIError.invalidResponse }
     func prReviewFindings(id: String, path: String) async throws -> PRReviewFindings { throw APIError.invalidResponse }
     func createPRReviewRun(id: String, skillID: String, requestID: String) async throws -> PRReviewRun { throw APIError.invalidResponse }

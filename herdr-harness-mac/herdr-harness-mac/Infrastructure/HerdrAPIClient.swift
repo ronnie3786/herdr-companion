@@ -1536,7 +1536,15 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient {
         query: [URLQueryItem] = []
     ) -> URLRequest {
         var components = URLComponents(url: configuration.baseURL.appending(path: path), resolvingAgainstBaseURL: false)
-        if !query.isEmpty { components?.queryItems = query }
+        if !query.isEmpty {
+            components?.queryItems = query
+            // URLQueryItem leaves literal plus signs unescaped. The companion's
+            // form-style query decoder reads those as spaces, so preserve them
+            // as data after URLQueryItem has encoded every other character.
+            let percentEncodedQuery = components?.percentEncodedQuery?
+                .replacingOccurrences(of: "+", with: "%2B")
+            components?.percentEncodedQuery = percentEncodedQuery
+        }
         var request = URLRequest(url: components?.url ?? configuration.baseURL)
         request.httpMethod = method
         request.timeoutInterval = Self.timeoutInterval(path: path, method: method)

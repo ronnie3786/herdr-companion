@@ -15,7 +15,9 @@ import time
 import unittest
 from unittest.mock import patch
 
-from herdr_harness.first_mate_runtime import FirstMateRuntime, _write_json, _read_json, _records, _locked, _ledger_event
+from herdr_harness.first_mate_runtime import (COORDINATOR_PROMPT, COORDINATOR_TOOLS,
+    WORKER_PROMPT, FirstMateRuntime, _coordinator_state, _ledger_event, _locked,
+    _pi_command, _read_json, _records, _write_json)
 from herdr_harness.first_mate_store import FirstMateStore, FirstMateError
 
 FAKE_PI = r'''#!PYTHON
@@ -69,7 +71,6 @@ for line in sys.stdin:
     response='Planning is running. Follow it in the sidebar.'
    else:
     if snapshot['feature']['status']=='running' and all(a['status']=='completed' for a in snapshot['assignments']):
-     for doc in snapshot['documents']: tool('fm_read_document',{'document_id':doc['id']},doc['id'])
      tool('fm_complete_stage',{'summary':'Plan inspected and complete','recommendation':'Review the plan and choose implementation'},'complete')
     response='Awaiting your direction.'
   elif job['kind']=='worker':
@@ -195,6 +196,102 @@ class FirstMateRuntimeTests(unittest.TestCase):
             else:
                 self.assertNotIn('--model', argv)
                 self.assertNotIn('--thinking', argv)
+
+    def test_coordinator_uses_replacement_charter_and_exact_tool_allowlist(self):
+        feature = self.feature()
+        claim = self.store.claim_message(feature['id'], self.runtime.owner)
+        job = self.runtime._new_job(feature, kind='coordinator', prompt='Hello', claim=claim)
+        job['charter'] = 'stale persisted coordinator charter'
+        command = _pi_command(job)
+        self.assertEqual(command[command.index('--system-prompt') + 1], COORDINATOR_PROMPT)
+        self.assertNotIn('--append-system-prompt', command)
+        tools = command[command.index('--tools') + 1].split(',')
+        self.assertEqual(tools, list(COORDINATOR_TOOLS))
+        self.assertNotIn('fm_read_document', tools)
+        self.assertNotIn('fm_read_session', tools)
+
+    def test_worker_launch_keeps_evidence_tools_and_worker_charter(self):
+        job = {'kind':'worker','pi_bin':'pi','session_file':'/tmp/synthetic-session.jsonl',
+               'claim':{'title':'Synthetic worker'},'extension':'/tmp/first-mate.ts',
+               'workspace_mode':'read_only','charter':'stale persisted worker charter'}
+        command = _pi_command(job)
+        self.assertEqual(command[command.index('--append-system-prompt') + 1], WORKER_PROMPT)
+        self.assertNotIn('--system-prompt', command)
+        tools = command[command.index('--tools') + 1].split(',')
+        self.assertIn('fm_read_document', tools)
+        self.assertIn('fm_read_session', tools)
+        self.assertIn('fm_delegate', tools)
+
+    def test_coordinator_input_is_current_scope_and_reference_oriented(self):
+        snapshot = {
+            'feature': {'id':'feature','title':'Synthetic','goal':'Ship it','status':'running',
+                        'revision':3,'current_visit_id':'visit-current','cwd':'/private/project',
+                        'session_file':'/private/session'},
+            'visits': [
+                {'id':'visit-old','stage_key':'plan','title':'Plan','status':'completed','revision':2,
+                 'summary':'Old detailed result'},
+                {'id':'visit-current','stage_key':'review','title':'Review','status':'running','revision':3,
+                 'summary':'','recommendation':''},
+            ],
+            'memberships': [
+                {'visit_id':'visit-old','assignment_id':'old','revision':2,'authorization_message_id':'human-old'},
+                {'visit_id':'visit-current','assignment_id':'current','revision':3,
+                 'authorization_message_id':'human-current','carried_from_visit_id':None},
+            ],
+            'assignments': [
+                {'id':'old','visit_id':'visit-old','title':'Old','role':'planner','status':'completed',
+                 'summary':'Historical details','prompt':'old secret prompt','metadata':{'worktree_path':'/private/old'}},
+                {'id':'current','visit_id':'visit-current','title':'Current','role':'reviewer','status':'paused',
+                 'verdict':'blocked','generation':2,'input_revision':3,'summary':'Awaiting a choice',
+                 'prompt':'current secret prompt','native_session_id':'native-current',
+                 'metadata':{'worktree_path':'/private/current','human_gate':{'status':'pending','reason':'Choose A or B'}}},
+            ],
+            'documents': [
+                {'id':'doc-old','visit_id':'visit-old','assignment_id':'old','title':'Old plan'},
+                {'id':'doc-current','visit_id':'visit-current','assignment_id':'current','title':'Review evidence',
+                 'content_hash':'abc','generation':2,'input_revision':3},
+            ],
+            'handoffs': [],
+        }
+        claim = {'id':'update','role':'system','text':'Current worker needs a choice.',
+                 'metadata':{'assignment_id':'current','human_gate':{'status':'pending'}}}
+        state = _coordinator_state(snapshot, claim)
+        self.assertEqual([a['id'] for a in state['assignments']], ['current'])
+        self.assertEqual(state['assignments'][0]['operational']['human_gate']['reason'], 'Choose A or B')
+        self.assertEqual([d['id'] for d in state['document_references']], ['doc-current'])
+        rendered = self.runtime._coordinator_input(snapshot, claim)
+        self.assertNotIn('secret prompt', rendered)
+        self.assertNotIn('/private/current', rendered)
+        self.assertIn('doc-current', rendered)
+
+    def test_coordinator_cannot_open_detailed_evidence_directly(self):
+        feature = self.feature()
+        claim = self.store.claim_message(feature['id'], self.runtime.owner)
+        job = {'feature_id':feature['id'],'kind':'coordinator','claim':claim}
+        with self.assertRaisesRegex(ValueError, 'tracked worker'):
+            self.runtime._tool(job, 'fm_read_document', {'document_id':'synthetic'}, 'read-document')
+        with self.assertRaisesRegex(ValueError, 'tracked worker'):
+            self.runtime._tool(job, 'fm_read_session', {'native_session_id':'synthetic'}, 'read-session')
+
+    def test_rotation_retains_coordinator_question_with_terse_human_answer(self):
+        feature = self.feature()
+        first = self.store.claim_message(feature['id'], self.runtime.owner)
+        first_job = self.runtime._new_job(feature, kind='coordinator', prompt='Initial direction', claim=first)
+        self.runtime._bind(first_job, 'synthetic-coordinator', first_job['session_file'])
+        self.store.finish_message(first['id'], self.runtime.owner, 'The release is ready. Should I publish it?')
+        self.store.append_human_message(feature['id'], 'Yes, go ahead.', 'approve')
+        second = self.store.claim_message(feature['id'], self.runtime.owner)
+        second_job = self.runtime._new_job(self.store.get_feature(feature['id']), kind='coordinator',
+                                           prompt='Approval', claim=second)
+        self.runtime._bind(second_job, 'synthetic-coordinator', second_job['session_file'])
+        telemetry = self.runtime._job_dir(second_job) / 'telemetry.jsonl'
+        telemetry.write_text(json.dumps({'type':'context_usage',
+                                         'payload':{'tokens':160000,'contextWindow':200000}})+'\n')
+        self.runtime._finish(second_job, {'ended':True,'response':'Publishing is authorized.'})
+        checkpoint = _read_json(self.runtime.root / 'checkpoints' / (feature['id']+'.json'))
+        recent = [(message['role'], message['text']) for message in checkpoint['recent_conversation']]
+        self.assertIn(('assistant', 'The release is ready. Should I publish it?'), recent)
+        self.assertIn(('user', 'Yes, go ahead.'), recent)
 
     def test_real_process_plans_reports_and_parks_at_human_gate(self):
         feature = self.feature()

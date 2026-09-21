@@ -1,6 +1,6 @@
 # PR Review
 
-Status: first implementation, macOS 0.27.0-beta.1 with companion 0.27.0b1 (2026-09-21).
+Status: macOS 0.27.1-beta.1 with companion 0.27.0b3 (2026-09-21).
 Product intent lives in [pr-review-assistant.md](pr-review-assistant.md).
 
 PR Review turns a GitHub pull request link into an AI-assisted review workspace inside the
@@ -16,10 +16,15 @@ On the review host:
    `pr-review-question-v1` question profile.
 2. Authenticate `gh` for the GitHub account that can read the pull requests you review, and
    install the `gh autoview` extension if you use the mark-viewed utility.
-3. Install the review skills for the agent runner (`claude` by default) so these names
+3. Install the review skills for the agent runner (`pi` by default) so these names
    resolve: `ios-review-remote-pr`, `comprehensive-pr-review`, `github-pr-explainer-video`,
    `github-pr-explainer-video-v2`, `tech-explainer-video`, `pr-explainer-dev-manager`,
-   `mark-generated-and-test-viewed-in-pull-request`.
+   `mark-generated-and-test-viewed-in-pull-request`. Pi discovers shared skills in
+   `~/.agents/skills/` and invokes them with `/skill:<name>`. Selected skills use
+   the host's existing global Pi provider and model settings. Install selected
+   skills globally: managed review runs ignore checkout-local Pi settings,
+   extensions, and skills, so reviewing a new checkout does not require granting
+   it project trust.
 4. Optionally add a `[pr_review]` table to the private configuration
    (see [config.example.toml](../config.example.toml)). Every key has a default:
 
@@ -30,11 +35,12 @@ On the review host:
 | `checkout_root` | `<state_dir>/pr-review-runs/checkouts` | Shared repository clones plus one worktree per review. |
 | `store_path` | `<state_dir>/pr-review.sqlite3` | SQLite ledger of reviews, files, runs, marks, documents, events. |
 | `runs_root` | `<state_dir>/pr-review-runs` | Per-review private files: PR metadata, diff, documents, run logs. |
-| `runner` | `claude` | Agent launched for skill runs (`claude` or `pi`). |
+| `runner` | `pi` | Agent launched for skill runs. An explicitly configured `claude` runner remains supported. |
 | `model`, `thinking_level` | Pi default, `medium` | Model used for impact ranking and Ask AI answers. |
 | `auto_rank` | `true` | Rank files automatically after a review is prepared. |
 | `sync_viewed_to_github` | `true` | Push viewed toggles to GitHub through the GraphQL API. |
-| `gh_timeout_seconds` | `120` | Timeout for every `gh` call (10–900). |
+| `gh_timeout_seconds` | `120` | Timeout for GitHub metadata and API calls (10–900). |
+| `checkout_timeout_seconds` | `900` | Timeout for each clone, fetch, and checkout command (10–3600). Clones fetch blobs on demand and skip checking out the default branch. |
 | `pi_binary`, `claude_binary` | found on `PATH` | Explicit binaries when the service PATH differs. |
 
 On the Mac: pair the review host in Settings → Machines as usual. The app picks the machine
@@ -56,6 +62,23 @@ checks the head out into a per-review worktree, parses the diff, opens a tab nam
 review ready, starts the chosen skills, and ranks the files. Creating the same open PR twice
 returns the existing review.
 
+Starting with companion 0.27.0b2, if the companion restarts during preparation, it resumes active, unfinished preparation
+with the original queued skill runs. A persisted review tab is reused. Completed, failed,
+and archived reviews are not automatically prepared again. Failed preparation identifies
+the failed stage; use **Refresh** to retry with the original queued skills. Timed-out
+commands stop their whole process group so Git children cannot keep writing after failure.
+On older companions, submitting the same PR with **Add without running** resumes interrupted preparation without adding
+new runs; it keeps the original skill selection.
+
+Companion 0.27.0b2 also defaults skill runs to Pi. Existing stored slash-command
+templates are translated to Pi's `/skill:<name>` syntax at launch, including queued
+runs created by older companions. Freeform prompts remain unchanged.
+
+Starting with companion 0.27.0b3, Pi runs use `--no-approve` to continue with global
+resources without a project-trust prompt. An idle agent pane is not evidence that
+the skill completed; automatic completion requires the terminal's explicit `done`
+status. You can still finish a run manually from Agents.
+
 **Files.** Files carry an AI impact (High, Medium, Low, or unranked) with a one-line reason.
 Filter to one impact at a time, hide viewed files, search, and switch between GitHub order and
 the **Guided** order, which lists files in the order the AI suggests for building a mental model
@@ -64,7 +87,9 @@ marks a file viewed (also on GitHub when syncing is enabled). **Rank files** re-
 `herdr-pr-review set-rankings` lets an agent supply its own.
 
 **Diff and Ask AI.** The diff is native: old and new line numbers, full-width tinting for added,
-removed and hunk-header lines. Select code and choose **Ask AI** (floating button or right-click).
+removed and hunk-header lines. Deleted text files show their removal hunks. Long files scroll vertically
+and horizontally. If the patch is truncated, Herdr shows every available hunk with a partial-diff
+notice and a link to the full diff. Select code and choose **Ask AI** (floating button or right-click).
 The question carries the file, the exact selection, whether it is on the before or after side,
 the line range, up to 40 surrounding lines, the PR summary, and the review agents' findings for
 that file as reference only. Answers come from the `pr-review-question-v1` profile: a Pi run

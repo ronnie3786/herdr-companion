@@ -92,6 +92,7 @@ ENVIRONMENT_FIELDS = {
         "model": "HERDR_PR_REVIEW_MODEL", "thinking_level": "HERDR_PR_REVIEW_THINKING",
         "auto_rank": "HERDR_PR_REVIEW_AUTO_RANK", "sync_viewed_to_github": "HERDR_PR_REVIEW_SYNC_VIEWED",
         "gh_timeout_seconds": "HERDR_PR_REVIEW_GH_TIMEOUT_SECONDS", "pi_binary": "HERDR_PR_REVIEW_PI_BIN",
+        "checkout_timeout_seconds": "HERDR_PR_REVIEW_CHECKOUT_TIMEOUT_SECONDS",
         "claude_binary": "HERDR_PR_REVIEW_CLAUDE_BIN",
     },
     "integrations": {

@@ -37,6 +37,11 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
     let retired = false;
     let checkpointRequested = false;
     let successorAcknowledged = !job.handoff_id;
+    const coordinatorTools = new Set([
+      "fm_status", "fm_delegate", "fm_begin_stage", "fm_recover",
+      "fm_resolve_gate", "fm_steer", "fm_retry", "fm_complete_stage",
+      "fm_revise", "fm_finish_feature",
+    ]);
 
     const identity = (ctx: ExtensionContext) => ({
       native_session_id: ctx.sessionManager.getSessionId(),
@@ -71,9 +76,13 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
         return result;
       },
     });
-    register("fm_status", "Read authoritative feature status, assignments, outcomes and retained documents. No model polling is necessary.", Type.Object({}));
-    register("fm_read_document", "Read a retained source document belonging to this feature before evaluating or synthesizing its evidence.", Type.Object({ document_id: text("Exact document ID"), offset: Type.Optional(Type.Integer({ minimum: 0 })), length: Type.Optional(Type.Integer({ minimum: 1000, maximum: 80000 })) }));
-    register("fm_read_session", "Inspect a retained native Pi conversation belonging to this feature when the actual execution evidence is needed.", Type.Object({ native_session_id: text("Exact native session ID"), before: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })), message_index: Type.Optional(Type.Integer({ minimum: 0 })), text_offset: Type.Optional(Type.Integer({ minimum: 0 })), text_length: Type.Optional(Type.Integer({ minimum: 1000, maximum: 80000 })) }));
+    register("fm_status", role === "coordinator"
+      ? "Read the authoritative reference-oriented router status. Detailed evidence stays with tracked workers; no polling is necessary."
+      : "Read authoritative feature status, assignments, outcomes and retained document references. No model polling is necessary.", Type.Object({}));
+    if (role !== "coordinator") {
+      register("fm_read_document", "Read a retained source document belonging to this feature before evaluating or synthesizing its evidence.", Type.Object({ document_id: text("Exact document ID"), offset: Type.Optional(Type.Integer({ minimum: 0 })), length: Type.Optional(Type.Integer({ minimum: 1000, maximum: 80000 })) }));
+      register("fm_read_session", "Inspect a retained native Pi conversation belonging to this feature when the actual execution evidence is needed.", Type.Object({ native_session_id: text("Exact native session ID"), before: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })), message_index: Type.Optional(Type.Integer({ minimum: 0 })), text_offset: Type.Optional(Type.Integer({ minimum: 0 })), text_length: Type.Optional(Type.Integer({ minimum: 1000, maximum: 80000 })) }));
+    }
     if (role === "coordinator" || role === "worker") {
       register("fm_delegate", "Queue an independent saved Pi worker in the current authorized stage. This returns immediately. Delegate long work; never wait or poll.", Type.Object({
         title: text("Assignment title"), role: text("Specialist role"),
@@ -151,7 +160,7 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
       if (role === "worker" && job.workspace_mode === "read_only" && !["read", "grep", "find", "ls", "fm_status", "fm_read_document", "fm_read_session", "fm_outcome", "fm_handoff", "fm_acknowledge_handoff", "fm_request_human", "fm_delegate", "fm_retry", "fm_wait_for_children"].includes(event.toolName)) {
         return { block: true, reason: "This assignment is read-only. Ask First Mate for an isolated testing/implementation assignment when commands or mutations are needed." };
       }
-      if (role === "coordinator" && !event.toolName.startsWith("fm_")) {
+      if (role === "coordinator" && !coordinatorTools.has(event.toolName)) {
         return { block: true, reason: "First Mate delegates execution through fm_delegate. Keep this conversation available for the human." };
       }
       if (role === "advisor" && !["read", "ls", "find", "grep", "fm_status", "fm_read_document", "fm_read_session", "fm_advice", "fm_recovery_brief"].includes(event.toolName)) {

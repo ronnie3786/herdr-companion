@@ -269,6 +269,7 @@ final class PRReviewDiffTextView: NSTextView, NSPopoverDelegate {
 
 struct PRReviewDiffText: NSViewRepresentable {
     let file: PRReviewDiffFile
+    var baseSHA = ""
     var headSHA = ""
     @Environment(\.herdrFontScale) private var fontScale
     var highlight: (start: Int, end: Int, side: PRReviewSide)?
@@ -289,14 +290,30 @@ struct PRReviewDiffText: NSViewRepresentable {
         textView.backgroundColor = NSColor(HerdrTheme.graphite)
         textView.textContainerInset = NSSize(width: 12, height: 12)
         textView.textContainer?.lineFragmentPadding = 8
+        textView.minSize = .zero
+        textView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.isHorizontallyResizable = true
         textView.isVerticallyResizable = true
-        textView.autoresizingMask = [.width]
+        textView.autoresizingMask = []
+        textView.textContainer?.containerSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.textContainer?.widthTracksTextView = false
+        textView.textContainer?.heightTracksTextView = false
         textView.selectedTextAttributes = [.backgroundColor: NSColor(HerdrTheme.accent).withAlphaComponent(0.3)]
         let scroll = NSScrollView()
         scroll.documentView = textView
         scroll.hasVerticalScroller = true
+        scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = true
+        scroll.drawsBackground = true
+        scroll.backgroundColor = NSColor(HerdrTheme.graphite)
         scroll.contentView.postsBoundsChangedNotifications = true
+        scroll.contentView.postsFrameChangedNotifications = true
         context.coordinator.install(on: scroll, textView: textView)
         return scroll
     }
@@ -306,6 +323,7 @@ struct PRReviewDiffText: NSViewRepresentable {
         let identity = Coordinator.RenderIdentity(
             path: file.path,
             oldPath: file.oldPath,
+            baseSHA: baseSHA,
             headSHA: headSHA,
             fontScale: fontScale
         )
@@ -315,6 +333,7 @@ struct PRReviewDiffText: NSViewRepresentable {
             textView.lineIndex = rendered.index
             context.coordinator.lastRenderedIdentity = identity
         }
+        context.coordinator.sizeDocumentToFitContent()
         textView.selectionPath = file.path
         textView.selectionOldPath = file.oldPath ?? ""
         textView.highlight = highlight
@@ -342,6 +361,7 @@ struct PRReviewDiffText: NSViewRepresentable {
         struct RenderIdentity: Equatable {
             let path: String
             let oldPath: String?
+            let baseSHA: String
             let headSHA: String
             let fontScale: HerdrFontScale
         }
@@ -351,6 +371,7 @@ struct PRReviewDiffText: NSViewRepresentable {
         private weak var scrollView: NSScrollView?
         private weak var textView: PRReviewDiffTextView?
         private var boundsObserver: NSObjectProtocol?
+        private var frameObserver: NSObjectProtocol?
         private var visibilityTask: Task<Void, Never>?
         private var path = ""
         private var onVisibleLinesChange: ((String, Int, Int, PRReviewSide) -> Void)?
@@ -369,6 +390,15 @@ struct PRReviewDiffText: NSViewRepresentable {
             ) { [weak self] _ in
                 Task { @MainActor in
                     self?.scheduleVisibleLinesUpdate()
+                }
+            }
+            frameObserver = NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification,
+                object: scrollView.contentView,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.sizeDocumentToFitContent()
                 }
             }
         }
@@ -394,7 +424,28 @@ struct PRReviewDiffText: NSViewRepresentable {
             if let boundsObserver {
                 NotificationCenter.default.removeObserver(boundsObserver)
             }
+            if let frameObserver {
+                NotificationCenter.default.removeObserver(frameObserver)
+            }
             visibilityTask?.cancel()
+        }
+
+        func sizeDocumentToFitContent() {
+            guard let scrollView,
+                  let textView,
+                  let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer
+            else { return }
+            layoutManager.ensureLayout(for: textContainer)
+            let used = layoutManager.usedRect(for: textContainer)
+            let horizontalInset = textView.textContainerInset.width * 2
+                + textContainer.lineFragmentPadding * 2
+            let verticalInset = textView.textContainerInset.height * 2
+            let viewport = scrollView.contentSize
+            textView.setFrameSize(NSSize(
+                width: max(viewport.width, ceil(used.width + horizontalInset)),
+                height: max(viewport.height, ceil(used.height + verticalInset))
+            ))
         }
 
         private func reportVisibleLines() {

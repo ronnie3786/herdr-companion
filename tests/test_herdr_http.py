@@ -1242,6 +1242,9 @@ class HerdrHTTPTests(unittest.TestCase):
         status, _, _ = self.request("/api/v1/agent-runs", method="POST", payload=request)
         self.assertEqual(status, 202)
         self.service.start_contextual_question.assert_called_once_with(request)
+        rejected = {**request, "clientRequestId": "fixture-request-00002", "responseBriefLength": "minimal"}
+        self.assertEqual(self.request("/api/v1/agent-runs", method="POST", payload=rejected)[0], 400)
+        self.assertEqual(self.service.start_contextual_question.call_count, 1)
         status, _, _ = self.request("/api/v1/agent-runs", method="POST", payload={"prompt": "Explain", "context": {}})
         self.assertEqual(status, 400)
 
@@ -1381,6 +1384,11 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("response-brief-v1", capabilities["profiles"])
         self.assertTrue(capabilities["responseBriefs"]["requiresParentSessionId"])
+        self.assertEqual(capabilities["responseBriefs"]["lengthPolicyVersion"], 2)
+        self.assertEqual(
+            capabilities["responseBriefs"]["lengthOptions"],
+            ["minimal", "medium", "long"],
+        )
 
         self.service.start_response_brief = Mock(
             return_value={"ok": True, "run": {"id": "agr_0123456789ab"}}
@@ -1400,6 +1408,15 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(status, 202)
         self.service.start_response_brief.assert_called_once_with(request)
 
+        for length in ("minimal", "medium", "long"):
+            with self.subTest(length=length):
+                selected = {**request, "responseBriefLength": length}
+                status, _, _ = self.request(
+                    "/api/v1/agent-runs", method="POST", payload=selected
+                )
+                self.assertEqual(status, 202)
+                self.service.start_response_brief.assert_called_with(selected)
+
         for invalid in (
             {**request, "parentSessionId": "../source"},
             {key: value for key, value in request.items() if key != "parentSessionId"},
@@ -1408,20 +1425,38 @@ class HerdrHTTPTests(unittest.TestCase):
             {**request, "continueFromRunId": "agr_0123456789ab"},
             {**request, "cwd": "~"},
             {**request, "mode": "act"},
+            {**request, "responseBriefLength": None},
+            {**request, "responseBriefLength": ""},
+            {**request, "responseBriefLength": "Minimal"},
+            {**request, "responseBriefLength": "compact"},
+            {**request, "responseBriefLength": "longer"},
+            {**request, "responseBriefLength": 2},
+            {**request, "responseBriefLength": ["minimal"]},
         ):
             with self.subTest(invalid=invalid):
                 invalid_status, _, _ = self.request(
                     "/api/v1/agent-runs", method="POST", payload=invalid
                 )
                 self.assertEqual(invalid_status, 400)
-        self.assertEqual(self.service.start_response_brief.call_count, 1)
+        self.assertEqual(self.service.start_response_brief.call_count, 4)
 
-        generic_status, _, _ = self.request(
-            "/api/v1/agent-runs",
-            method="POST",
-            payload={"prompt": "Question", "parentSessionId": "source-session-1"},
-        )
-        self.assertEqual(generic_status, 400)
+        for other_profile in (
+            {"prompt": "Question", "parentSessionId": "source-session-1"},
+            {"prompt": "Question", "responseBriefLength": "minimal"},
+            {"prompt": "Question", "profile": "contextual-question-v1", "responseBriefLength": "minimal"},
+            {
+                "prompt": "Question",
+                "profile": "hud-chat-v1",
+                "mode": "act",
+                "responseBriefLength": "minimal",
+            },
+        ):
+            with self.subTest(other_profile=other_profile):
+                other_status, _, _ = self.request(
+                    "/api/v1/agent-runs", method="POST", payload=other_profile
+                )
+                self.assertEqual(other_status, 400)
+        self.assertEqual(self.service.start_response_brief.call_count, 4)
 
     def test_agent_run_routes_use_async_start_and_stable_envelope(self):
         status, _, body = self.request(

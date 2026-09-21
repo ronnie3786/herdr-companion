@@ -44,37 +44,59 @@ struct ResponseBriefRenderTests {
         #expect(ResponseBriefRailView.latestRecord(in: [fixture.record], for: skippedLatest) == nil)
     }
 
-    @Test("An already concise latest answer renders quietly while one prior verbose record remains selectable")
-    func conciseLatestWithPriorVerboseHistory() async throws {
-        let fixture = try await AlreadyConciseRenderFixture()
+    @Test("A newly eligible short latest answer renders its own card beside prior history")
+    func shortLatestGeneratesAndRenders() async throws {
+        let fixture = try await ShortLatestRenderFixture()
         defer { fixture.cleanup() }
         let result = try await HerdrRenderHarness.render(
-            "response-brief-already-concise.png",
-            size: CGSize(width: 440, height: 720)
+            "response-brief-short-latest.png",
+            size: CGSize(width: 440, height: 760)
         ) {
             fixture.layout
         }
 
         #expect(result.byteCount > 6_000)
-        #expect(fixture.coordinator.state(for: fixture.latestSource.chat).phase == .alreadyConcise)
+        #expect(fixture.coordinator.length == .minimal)
+        #expect(fixture.coordinator.state(for: fixture.latestSource.chat).phase == .idle)
         let records = fixture.coordinator.briefs(for: fixture.latestSource.chat)
-        #expect(records.count == 1)
-        #expect(ResponseBriefRailView.latestRecord(in: records, for: fixture.latestSource) == nil)
+        #expect(records.count == 2)
+        #expect(ResponseBriefRailView.latestRecord(in: records, for: fixture.latestSource)?.source.id == fixture.latestSource.id)
         #expect(ResponseBriefRailView.shouldShowRecordPicker(records: records, latestSource: fixture.latestSource))
+        #expect(ResponseBriefCardView.defaultVisibleGeneratedStrings(for: fixture.priorRecord).isEmpty)
+        #expect(ResponseBriefRailView.selectedRecordPresentation(for: fixture.priorRecord) == .regenerateNeeded)
+    }
+
+    @Test("A generated short latest card renders in the narrow large-text layout")
+    func shortLatestLargeTextRendering() async throws {
+        let fixture = try await ShortLatestRenderFixture()
+        defer { fixture.cleanup() }
+        let latestRecord = try #require(
+            ResponseBriefRailView.latestRecord(
+                in: fixture.coordinator.briefs(for: fixture.latestSource.chat),
+                for: fixture.latestSource
+            )
+        )
+
+        let result = try await HerdrRenderHarness.render(
+            "response-brief-length-large-text.png",
+            size: CGSize(width: 1_100, height: 720)
+        ) {
+            fixture.layout
+                .environment(\.herdrFontScale, .xxxLarge)
+        }
+
+        #expect(result.byteCount > 8_000)
         #expect(ResponseBriefRailView.selectedRecord(
-            in: records,
-            selectedRecordID: nil,
-            followsLatest: true,
-            latestSource: fixture.latestSource
-        ) == nil)
-        let selectedPrior = ResponseBriefRailView.selectedRecord(
-            in: records,
-            selectedRecordID: fixture.priorRecord.id,
+            in: [latestRecord],
+            selectedRecordID: latestRecord.id,
             followsLatest: false,
             latestSource: fixture.latestSource
-        )
-        #expect(selectedPrior == fixture.priorRecord)
-        #expect(ResponseBriefCardView.defaultVisibleGeneratedStrings(for: fixture.priorRecord).isEmpty)
+        ) == latestRecord)
+        #expect(ResponseBriefRailView.selectionFollowsLatest(
+            recordID: latestRecord.id,
+            records: [latestRecord],
+            latestSource: fixture.latestSource
+        ))
     }
 
     @Test("Presentation ownership and same-source generation selection remain explicit")
@@ -136,8 +158,8 @@ struct ResponseBriefRenderTests {
             followsLatest: false,
             latestSource: record.source
         ))
-        #expect(ResponseBriefRailView.selectedRecordPresentation(for: latestShort) == .alreadyConcise)
-        #expect(ResponseBriefRailView.selectedRecordPresentation(for: explicitlySelectedShort) == .alreadyConcise)
+        #expect(ResponseBriefRailView.selectedRecordPresentation(for: latestShort) == .regenerateNeeded)
+        #expect(ResponseBriefRailView.selectedRecordPresentation(for: explicitlySelectedShort) == .regenerateNeeded)
 
         let newest = ResponseBriefPersistence.Record(
             id: "newest-same-source",
@@ -182,7 +204,7 @@ struct ResponseBriefRenderTests {
 }
 
 @MainActor
-private final class AlreadyConciseRenderFixture {
+private final class ShortLatestRenderFixture {
     let directory: URL
     let suiteName: String
     let defaults: UserDefaults
@@ -192,14 +214,14 @@ private final class AlreadyConciseRenderFixture {
     let transport: ResponseBriefTransport
 
     init() async throws {
-        let newDirectory = FileManager.default.temporaryDirectory.appending(path: "response-brief-concise-render-\(UUID().uuidString)")
-        let newSuiteName = "response-brief-concise-render-\(UUID().uuidString)"
+        let newDirectory = FileManager.default.temporaryDirectory.appending(path: "response-brief-short-latest-render-\(UUID().uuidString)")
+        let newSuiteName = "response-brief-short-latest-render-\(UUID().uuidString)"
         let newDefaults = try #require(UserDefaults(suiteName: newSuiteName))
         let persistence = ResponseBriefPersistence(url: newDirectory.appending(path: "cache.json"))
         let chat = ResponseBriefChatIdentity(
             machineID: "synthetic-machine",
             paneID: "w1:p2",
-            sessionID: "synthetic-concise-session"
+            sessionID: "synthetic-short-session"
         )
         let priorSource = ResponseBriefSource(
             chat: chat,
@@ -229,18 +251,27 @@ private final class AlreadyConciseRenderFixture {
         )
         let latest = ResponseBriefSource(
             chat: chat,
-            responseID: "answer-already-concise",
+            responseID: "answer-short-latest",
             text: "Already concise.",
             currentUserText: nil,
             previousUserText: nil,
             previousAssistantText: nil
         )
-        let isolatedTransport = ResponseBriefTransport(
-            capabilities: { _ in AssistantCapabilities(profiles: ["response-brief-v1"]) },
+        let syntheticTransport = ResponseBriefTransport(
+            capabilities: { _ in
+                AssistantCapabilities(
+                    profiles: ["response-brief-v1"],
+                    responseBriefs: .init(
+                        version: 1,
+                        lengthPolicyVersion: ResponseBriefLength.policyVersion,
+                        lengthOptions: ResponseBriefLength.options
+                    )
+                )
+            },
             models: { _ in AgentModelCatalogResponse(ok: true, models: [], defaultModel: nil) },
             fetchSnapshot: { _ in throw APIError.invalidResponse },
-            start: { _, _ in throw APIError.invalidResponse },
-            fetch: { _, _ in throw APIError.invalidResponse },
+            start: { _, _ in syntheticShortBriefRun() },
+            fetch: { _, _ in syntheticShortBriefRun() },
             cancel: { _, _ in throw APIError.invalidResponse }
         )
 
@@ -250,11 +281,11 @@ private final class AlreadyConciseRenderFixture {
         coordinator = ResponseBriefCoordinator(defaults: newDefaults, persistence: persistence)
         latestSource = latest
         priorRecord = record
-        transport = isolatedTransport
+        transport = syntheticTransport
 
         try await persistence.saveRecord(record)
         #expect(coordinator.enable(chat))
-        await coordinator.observe(latest, transport: isolatedTransport)
+        await coordinator.observe(latest, transport: syntheticTransport)
         await coordinator.waitForIdleForTesting()
     }
 
@@ -273,6 +304,32 @@ private final class AlreadyConciseRenderFixture {
         try? FileManager.default.removeItem(at: directory)
         defaults.removePersistentDomain(forName: suiteName)
     }
+}
+
+private func syntheticShortBriefRun() -> HeadlessAgentRun {
+    HeadlessAgentRun(
+        id: "agr_synthetic0001",
+        status: .completed,
+        mode: .ask,
+        model: nil,
+        thinkingLevel: nil,
+        prompt: "synthetic",
+        cwd: nil,
+        response: #"{"version":1,"title":"T","summary":"Answered.","points":[],"details":[]}"#,
+        error: nil,
+        createdAt: "2026-09-17T00:00:00Z",
+        startedAt: "2026-09-17T00:00:00Z",
+        finishedAt: "2026-09-17T00:00:01Z",
+        sessionID: "synthetic-brief-session",
+        sessionFile: nil,
+        costUSD: 0,
+        promotedWorkspaceID: nil,
+        promotedPaneID: nil,
+        attachments: nil,
+        steps: nil,
+        stepsTruncated: nil,
+        threadRootRunId: nil
+    )
 }
 
 @MainActor

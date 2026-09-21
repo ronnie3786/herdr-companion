@@ -33,7 +33,11 @@ struct ResponseBrief: Codable, Equatable, Identifiable, Sendable {
 
     var id: String { "\(version):\(title):\(summary)" }
 
-    static func decodeValidated(_ data: Data, source: String) throws -> ResponseBrief {
+    static func decodeValidated(
+        _ data: Data,
+        source: String,
+        length: ResponseBriefLength? = nil
+    ) throws -> ResponseBrief {
         guard data.count <= ResponseBriefLimits.maximumOutputBytes else {
             throw ResponseBriefValidationError.outputTooLarge
         }
@@ -44,7 +48,7 @@ struct ResponseBrief: Codable, Equatable, Identifiable, Sendable {
         } catch {
             throw ResponseBriefValidationError.malformedJSON
         }
-        try brief.validate(source: source)
+        try brief.validate(source: source, length: length)
         return brief
     }
 
@@ -54,18 +58,27 @@ struct ResponseBrief: Codable, Equatable, Identifiable, Sendable {
         return lines[(startLine - 1)...(endLine - 1)].joined(separator: "\n")
     }
 
-    private func validate(source: String) throws {
+    private func validate(source: String, length: ResponseBriefLength?) throws {
         guard version == 1 else { throw ResponseBriefValidationError.unsupportedVersion }
-        guard !title.isEmpty, title.count <= 100,
-              !summary.isEmpty, summary.count <= 800,
+        // Structural bounds stay large enough that the largest preset budget
+        // (Long: 720 non-whitespace scalars across visible fields) is
+        // attainable; `ResponseBriefValidationTests` pins that relationship.
+        guard !title.isEmpty, title.count <= ResponseBriefLimits.maximumTitleCharacters,
+              !summary.isEmpty, summary.count <= ResponseBriefLimits.maximumSummaryCharacters,
               points.count <= 4,
               details.count <= 6
         else { throw ResponseBriefValidationError.invalidBounds }
-        guard points.allSatisfy({ !$0.text.isEmpty && $0.text.count <= 400 }),
-              details.allSatisfy({ !$0.label.isEmpty && $0.label.count <= 100 })
+        guard points.allSatisfy({ !$0.text.isEmpty && $0.text.count <= ResponseBriefLimits.maximumPointCharacters }),
+              details.allSatisfy({
+                  !$0.label.isEmpty && $0.label.count <= ResponseBriefLimits.maximumDetailLabelCharacters
+              })
         else { throw ResponseBriefValidationError.invalidBounds }
 
-        try ResponseBriefConcisionPolicy(source: source).validate(self)
+        if let length {
+            try ResponseBriefConcisionPolicy(source: source, length: length).validate(self)
+        } else {
+            try ResponseBriefConcisionPolicy(source: source).validate(self)
+        }
 
         let lineCount = ResponseBriefSourceLines.split(source).count
         let ranges = points.map { ($0.startLine, $0.endLine) }
@@ -140,6 +153,12 @@ enum ResponseBriefLimits {
     static let maximumEnvelopeBytes = 64 * 1_024
     static let targetChunkBytes = 15_500
     static let templateVersion = 1
+    /// Structural string bounds. The largest preset budget must remain
+    /// representable inside these or its ceiling would be unreachable.
+    static let maximumTitleCharacters = 100
+    static let maximumSummaryCharacters = 800
+    static let maximumPointCharacters = 400
+    static let maximumDetailLabelCharacters = 100
 }
 
 enum ResponseBriefSourceLines {

@@ -10,6 +10,10 @@ from .pi_semantic import valid_pi_session_id
 
 PROFILE = "response-brief-v1"
 MAX_OUTPUT_BYTES = 32 * 1024
+LENGTH_OPTIONS = ("minimal", "medium", "long")
+LENGTH_MULTIPLIERS = {"minimal": 1, "medium": 2, "long": 3}
+LENGTH_POLICY_VERSION = 2
+MINIMUM_VISIBLE_CHARACTERS = 40
 _TARGET_LABEL = re.compile(
     r"Original response part ([1-9][0-9]*) of ([1-9][0-9]*) \(concatenate verbatim in order\)"
 )
@@ -29,7 +33,8 @@ CHARTER = (
     "no Markdown fence, prose, or keys outside this exact schema: " + OUTPUT_SCHEMA + " "
     "Use version 1. title is a short compatibility label at most 100 characters and is not displayed. "
     "summary must lead with the direct answer or outcome, normally in one sentence (two only when "
-    "necessary), and should usually use 12 to 20 words for a long source without padding. points must "
+    "necessary). Any nonempty summary is acceptable at any length, however short; there is no minimum "
+    "summary length, so never pad, repeat, or add filler to reach a target. points must "
     "contain zero or one object, and point text must be at most 12 words and add only an indispensable, "
     "non-repeated blocker, caveat, or decision. details must contain zero to two objects; each label must "
     "be descriptive, at most 4 words and at most 28 non-whitespace Unicode scalars, and kind must be "
@@ -167,8 +172,52 @@ def concision_policy(source: str) -> dict[str, int | bool]:
     }
 
 
-def visible_content_fits(source: str, values: list[str]) -> bool:
+def requested_length(request: dict) -> str | None:
+    """Validate the optional top-level responseBriefLength selection.
+
+    Returns None when the request omits the field so older clients and saved
+    requests keep their existing behavior.
+    """
+
+    if "responseBriefLength" not in request:
+        return None
+    value = request["responseBriefLength"]
+    if not isinstance(value, str) or value not in LENGTH_MULTIPLIERS:
+        fail(
+            "responseBriefLength must be minimal, medium, or long.",
+            "invalid_response_brief_length",
+        )
+    return value
+
+
+def length_policy(source: str, length: str) -> dict[str, int | str]:
+    """Compute the visible-content ceilings for one explicit length selection."""
+
+    if length not in LENGTH_MULTIPLIERS:
+        fail(
+            "responseBriefLength must be minimal, medium, or long.",
+            "invalid_response_brief_length",
+        )
     policy = concision_policy(source)
+    multiplier = LENGTH_MULTIPLIERS[length]
+    return {
+        "length": length,
+        "readableCharacters": policy["readableCharacters"],
+        "sourceWords": policy["sourceWords"],
+        "maximumVisibleCharacters": multiplier
+        * max(MINIMUM_VISIBLE_CHARACTERS, min(240, policy["readableCharacters"] // 4)),
+        "maximumVisibleWords": multiplier * policy["maximumVisibleWords"],
+    }
+
+
+def budgets_for(source: str, length: str | None = None) -> dict:
+    """Legacy budgets when length is omitted, preset-scaled budgets otherwise."""
+
+    return concision_policy(source) if length is None else length_policy(source, length)
+
+
+def visible_content_fits(source: str, values: list[str], length: str | None = None) -> bool:
+    policy = budgets_for(source, length)
     visible = " ".join(values)
     return (
         word_count(visible) <= policy["maximumVisibleWords"]
@@ -176,16 +225,19 @@ def visible_content_fits(source: str, values: list[str]) -> bool:
     )
 
 
-def charter_for(context: dict) -> str:
+def charter_for(context: dict, length: str | None = None) -> str:
     source = "".join(
         item["text"]
         for item in context.get("items", [])
         if item.get("priority", "required") == "required"
     )
-    policy = concision_policy(source)
+    policy = budgets_for(source, length)
+    selection = "" if length is None else f"The selected length option is {length}. "
     return (
         CHARTER
-        + " Trusted numeric limits computed only from the required original-response parts: "
+        + " "
+        + selection
+        + "Trusted numeric limits computed only from the required original-response parts: "
         + f"the source has {policy['sourceWords']} readable words and "
         + f"{policy['readableCharacters']} readable letter/number scalars. Across summary, the optional "
         + f"point, and every detail label together, use at most {policy['maximumVisibleWords']} words "
@@ -199,8 +251,12 @@ def fail(message: str, code: str = "invalid_response_brief", status: int = 400) 
     raise AgentRunError(message, code=code, status=status)
 
 
-def validate_request(request: dict, context: dict) -> None:
-    """Validate profile-only fields before the shared durable request claim."""
+def validate_request(request: dict, context: dict) -> str | None:
+    """Validate profile-only fields before the shared durable request claim.
+
+    Returns the validated optional length selection, or None when the request
+    omits the field.
+    """
 
     if request.get("profile") != PROFILE or request.get("mode", "ask") != "ask":
         fail("Response briefs must use response-brief-v1 in ask mode.")
@@ -210,6 +266,7 @@ def validate_request(request: dict, context: dict) -> None:
         fail("Response briefs cannot override the output policy.")
     if "continueFromRunId" in request:
         fail("Response briefs are one-shot and cannot continue another run.", "response_brief_continuation_forbidden", 409)
+    length = requested_length(request)
     parent_session_id = request.get("parentSessionId")
     if not valid_pi_session_id(parent_session_id):
         fail("A valid source parentSessionId is required.", "invalid_parent_session_id")
@@ -224,6 +281,7 @@ def validate_request(request: dict, context: dict) -> None:
         match = _TARGET_LABEL.fullmatch(item["label"])
         if match is None or int(match.group(1)) != index or int(match.group(2)) != len(required):
             fail("Required response parts must be labeled and ordered without gaps.")
+    return length
 
 
 def start(manager, *, request: dict, cwd: str, pane_id: str | None, workspace_id: str | None) -> dict:

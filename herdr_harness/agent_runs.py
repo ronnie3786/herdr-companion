@@ -1083,7 +1083,7 @@ class AgentRunManager:
                 extension_path = None
             elif profile == "response-brief-v1":
                 from .response_briefs import charter_for
-                charter = charter_for(run["context"])
+                charter = charter_for(run["context"], run.get("responseBriefLength"))
             elif profile == SMART_RENAME_PROFILE:
                 # The client prompt supplies the requested JSON shape; this
                 # server-side charter is the enforced policy and never invites

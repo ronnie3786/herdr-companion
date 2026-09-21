@@ -19,9 +19,10 @@ final class ResponseBriefCoordinator {
         case idle
         case checkingSupport
         case generating
-        case alreadyConcise
         case regenerateNeeded(String)
         case unsupported
+        case upgradeRequired(String)
+        case baselineUnmatched(String)
         case oversized
         case failed(String)
     }
@@ -42,8 +43,23 @@ final class ResponseBriefCoordinator {
         let source: ResponseBriefSource
         let configuration: GenerationConfiguration
         let generationID: String
+        /// The captured length selection for this request. Nil replays a
+        /// legacy receipt or request that predates configurable length.
+        let length: ResponseBriefLength?
+        /// Stable marker for a coalescible length replacement. Non-nil only
+        /// for replacement jobs driven by a durable pending intent.
+        let replacementKey: String?
+        /// The selection revision captured with `replacementKey`. Non-nil
+        /// exactly when this job is a coalescible length replacement. A newer
+        /// selection advances the coordinator epoch before its own durable
+        /// write returns, so this revision lets an older unowned job detect
+        /// supersession while the previous intent is still stored.
+        let replacementRevision: Int?
         let force: Bool
         let allowsNonPendingReceipt: Bool
+        /// User-initiated replacement, regeneration, or retry. Deliberate jobs
+        /// may create a fresh generation even when a saved brief exists.
+        let isDeliberate: Bool
     }
 
     private struct ActiveOperation {
@@ -65,9 +81,18 @@ final class ResponseBriefCoordinator {
     @ObservationIgnored private var receipts: [String: ResponseBriefPersistence.Receipt] = [:]
     @ObservationIgnored private var attemptedGenerationIDs: Set<String> = []
     @ObservationIgnored private var responseCursorByChatID: [String: String] = [:]
+    @ObservationIgnored private var baselineAnchors: [String: ResponseBriefPersistence.BaselineAnchor] = [:]
+    @ObservationIgnored private var verifiedAliases: [String: [ResponseBriefPersistence.VerifiedAlias]] = [:]
+    @ObservationIgnored private var pendingRegenerations: [String: ResponseBriefPersistence.PendingRegeneration] = [:]
+    @ObservationIgnored private var responseBriefCapabilities: [String: AssistantCapabilities.ResponseBriefs] = [:]
     @ObservationIgnored private var latestSources: [String: ResponseBriefSource] = [:]
     @ObservationIgnored private var operations: [String: ActiveOperation] = [:]
     @ObservationIgnored private var pending: [Job] = []
+    /// Monotonic per-chat selection/cancellation epoch. Disabling a chat or
+    /// selecting a newer length advances it, which invalidates any durable
+    /// intent publication that was still suspended before the change so an
+    /// obsolete replacement can never be installed or resumed later.
+    @ObservationIgnored private var chatEpochs: [String: Int] = [:]
     @ObservationIgnored private var isConnectionChanging = false
     private var supportedMachines: Set<String> = []
     private var unsupportedMachines: Set<String> = []
@@ -78,6 +103,10 @@ final class ResponseBriefCoordinator {
     @ObservationIgnored private let maximumQueuedPerChat = 8
     @ObservationIgnored var runPollDelay: Duration = .seconds(1)
     @ObservationIgnored var generationTimeout: Duration = .seconds(120)
+    /// Test-only suspension point immediately before a durable regeneration
+    /// intent is written. Persistence-barrier regressions use it to interleave
+    /// a disable or a newer selection with the awaited save. Nil in the app.
+    @ObservationIgnored var intentPersistenceBarrier: (@MainActor () async -> Void)?
 
     init(
         defaults: UserDefaults = .standard,
@@ -94,6 +123,13 @@ final class ResponseBriefCoordinator {
     var enabledChats: [ResponseBriefChatIdentity] {
         _ = preferencesRevision
         return preferences.enabledChats
+    }
+
+    /// The app-wide length preference. Selecting a new value through
+    /// `changeLength` regenerates the currently selected source.
+    var length: ResponseBriefLength {
+        _ = preferencesRevision
+        return preferences.length
     }
 
     func isEnabled(_ chat: ResponseBriefChatIdentity) -> Bool {
@@ -126,8 +162,8 @@ final class ResponseBriefCoordinator {
 
     func hasNonconformingBrief(for source: ResponseBriefSource) -> Bool {
         records.contains {
-            $0.source.id == source.id
-                && !$0.brief.conformsToConcisionPolicy(source: $0.source.text)
+            areEquivalent($0.source, source)
+                && !$0.briefConformsToCapturedPolicy
         }
     }
 
@@ -152,7 +188,7 @@ final class ResponseBriefCoordinator {
 
     func canRegenerate(_ source: ResponseBriefSource) -> Bool {
         isLoaded
-            && ResponseBriefConcisionPolicy(source: source.text).metrics.shouldGenerate
+            && ResponseBriefConcisionPolicy(source: source.text, length: length).metrics.shouldGenerate
             && operations[source.chat.id] == nil
             && !receipts.values.contains {
                 $0.source.chat.id == source.chat.id && $0.status != .settled
@@ -167,6 +203,32 @@ final class ResponseBriefCoordinator {
             receipts = Dictionary(uniqueKeysWithValues: snapshot.receipts.map { ($0.id, $0) })
             attemptedGenerationIDs = snapshot.attemptedGenerationIDs
             responseCursorByChatID = snapshot.responseCursorByChatID
+            baselineAnchors = snapshot.baselineAnchors
+            verifiedAliases = snapshot.verifiedAliases
+            pendingRegenerations = snapshot.pendingRegenerations
+            // Selection revisions are only comparable across processes when
+            // the durable watermark seeds the local counter. Otherwise a
+            // post-relaunch selection could allocate a lower revision than an
+            // intent this cache already rejected or cancelled.
+            for (chatID, revision) in snapshot.regenerationRevisions {
+                chatEpochs[chatID] = max(chatEpochs[chatID] ?? 0, revision)
+            }
+            for (chatID, intent) in snapshot.pendingRegenerations {
+                chatEpochs[chatID] = max(chatEpochs[chatID] ?? 0, intent.revision)
+            }
+            // An intent owned by a chat that is not enabled cannot become
+            // current work: new selections are only accepted while enabled and
+            // disabling tombstones them. This is upgrade residue or a disable
+            // whose tombstone write failed, so remove it durably before a later
+            // re-enable could resume obsolete work.
+            let enabledChatIDs = Set(preferences.enabledChats.map(\.id))
+            for (chatID, intent) in snapshot.pendingRegenerations where !enabledChatIDs.contains(chatID) {
+                try await persistence.cancelPendingRegeneration(
+                    chatID: chatID,
+                    revision: intent.revision
+                )
+                pendingRegenerations.removeValue(forKey: chatID)
+            }
         } catch {
             storageError = error.localizedDescription
         }
@@ -189,23 +251,41 @@ final class ResponseBriefCoordinator {
         return enabled
     }
 
-    func disable(_ chat: ResponseBriefChatIdentity, transport: ResponseBriefTransport) {
+    func disable(_ chat: ResponseBriefChatIdentity, transport: ResponseBriefTransport) async {
+        // Load first so the local revision counter starts from the durable
+        // watermark; otherwise a disable before the first load could allocate a
+        // revision an existing intent already superseded.
+        await load()
         preferences.disable(chat)
         preferencesRevision &+= 1
+        // Disabling supersedes any replacement work that is waiting to be
+        // published or resumed for this chat.
+        let epoch = advanceChatEpoch(for: chat.id)
         latestSources.removeValue(forKey: chat.id)
         pollFailureCounts[chat.id] = nil
         nextPollAt[chat.id] = nil
         pending.removeAll { $0.source.chat.id == chat.id }
+        pendingRegenerations.removeValue(forKey: chat.id)
+        // Cancel any owned run, then durably tombstone the cancellation before
+        // returning so a delayed older intent write can never be resumed after
+        // a relaunch.
+        if let operation = operations[chat.id] {
+            operation.task.cancel()
+        }
+        do {
+            try await persistence.cancelPendingRegeneration(chatID: chat.id, revision: epoch)
+        } catch {
+            noteStorageFailure(error, chat: chat, sourceID: nil)
+        }
 
         // Keep the slot until the operation has either learned the run ID and
         // cancelled it, or durably recorded that ownership is ambiguous.
-        if let operation = operations[chat.id] {
-            operation.task.cancel()
-        } else if let receipt = receipts.values.first(where: {
-            $0.source.chat.id == chat.id && $0.status != .settled
-        }) {
+        if operations[chat.id] == nil,
+           let receipt = receipts.values.first(where: {
+               $0.source.chat.id == chat.id && $0.status != .settled
+           }) {
             enqueueCancellationReconciliation(receipt, transport: transport)
-        } else {
+        } else if operations[chat.id] == nil {
             states[chat.id] = ChatState()
         }
     }
@@ -220,6 +300,31 @@ final class ResponseBriefCoordinator {
         preferences.replaceThinkingLevel(level)
     }
 
+    /// The single app-wide length action. It stores the preference, then
+    /// starts a durable replacement for the currently selected source (or the
+    /// latest completed source for the chat) without changing opt-in, model,
+    /// or thinking. Selecting the current value is a no-op.
+    func changeLength(
+        _ newLength: ResponseBriefLength,
+        chat: ResponseBriefChatIdentity?,
+        selectedSource: ResponseBriefSource?,
+        transport: ResponseBriefTransport
+    ) async {
+        await load()
+        guard newLength != length else { return }
+        preferences.replaceLength(newLength)
+        preferencesRevision &+= 1
+        guard let chat, canDispatch(for: chat) else { return }
+        let target: ResponseBriefSource?
+        if let selectedSource, selectedSource.chat == chat {
+            target = selectedSource
+        } else {
+            target = latestSources[chat.id]
+        }
+        guard let target else { return }
+        await requestReplacement(for: target, length: newLength, transport: transport)
+    }
+
     func prepare(machineID: String, transport: ResponseBriefTransport) async {
         await load()
         guard storageError == nil, !unsupportedMachines.contains(machineID) else { return }
@@ -227,10 +332,12 @@ final class ResponseBriefCoordinator {
             if !supportedMachines.contains(machineID) {
                 let capabilities = try await transport.capabilities(machineID)
                 guard capabilities.profiles.contains("response-brief-v1") else {
+                    responseBriefCapabilities.removeValue(forKey: machineID)
                     unsupportedMachines.insert(machineID)
                     return
                 }
                 supportedMachines.insert(machineID)
+                responseBriefCapabilities[machineID] = capabilities.responseBriefs
             }
             if modelsByMachine[machineID] == nil {
                 let catalog = try await transport.models(machineID)
@@ -248,13 +355,22 @@ final class ResponseBriefCoordinator {
         supportedMachines.remove(machineID)
         unsupportedMachines.remove(machineID)
         modelsByMachine.removeValue(forKey: machineID)
+        responseBriefCapabilities.removeValue(forKey: machineID)
         await prepare(machineID: machineID, transport: transport)
         for chat in enabledChats where chat.machineID == machineID {
             if unsupportedMachines.contains(machineID) {
                 states[chat.id] = ChatState(phase: .unsupported)
             } else if supportedMachines.contains(machineID), modelsByMachine[machineID] != nil {
                 states[chat.id] = ChatState()
-                if let source = latestSources[chat.id] {
+                if pendingRegenerations[chat.id] != nil {
+                    // A deliberate replacement waiting behind this machine's
+                    // revalidated support owns the next request. Resuming the
+                    // intent keeps exactly one submission for the selection
+                    // instead of creating an ordinary duplicate.
+                    resumePendingReceipt(for: chat, transport: transport)
+                    resumePendingRegeneration(for: chat, transport: transport)
+                    drain(transport: transport)
+                } else if let source = latestSources[chat.id] {
                     enqueue(source, transport: transport, force: true)
                 }
             } else {
@@ -276,32 +392,54 @@ final class ResponseBriefCoordinator {
 
         if responseCursorByChatID[source.chat.id] == nil {
             guard await advanceCursor(to: source) else { return }
+        } else if responseCursorByChatID[source.chat.id] == source.responseID {
+            // The observed source is already the saved baseline, so an older
+            // unmatched warning is obsolete.
+            clearObsoleteBaselineWarning(chatID: source.chat.id, latestSourceID: source.id)
         }
         resumePendingReceipt(for: source.chat, transport: transport)
+        resumePendingRegeneration(for: source.chat, transport: transport)
         enqueue(source, transport: transport)
     }
 
     /// Ingests all eligible final answers in chronological order. The first
     /// observation establishes a baseline and generates only the newest answer;
     /// later snapshots queue every completion after the durable high-watermark.
+    /// A live-to-persisted identifier change is reconciled only through durable
+    /// verified identity evidence; ambiguous history stays on the warning path.
     func observeSources(_ sources: [ResponseBriefSource], transport: ResponseBriefTransport) async {
         await load()
         guard let latest = sources.last, canDispatch(for: latest.chat) else { return }
         let chat = latest.chat
         latestSources[chat.id] = latest
         resumePendingReceipt(for: chat, transport: transport)
+        resumePendingRegeneration(for: chat, transport: transport)
         drain(transport: transport)
 
         let candidates: ArraySlice<ResponseBriefSource>
         if let cursor = responseCursorByChatID[chat.id] {
-            guard let cursorIndex = sources.lastIndex(where: { $0.responseID == cursor }) else {
+            if let cursorIndex = sources.lastIndex(where: { $0.responseID == cursor }) {
+                candidates = sources[sources.index(after: cursorIndex)...]
+                clearObsoleteBaselineWarning(chatID: chat.id, latestSourceID: latest.id)
+            } else if let resolution = resolveBaseline(cursor: cursor, chatID: chat.id, sources: sources) {
+                guard await recordVerifiedAlias(
+                    aliasID: cursor,
+                    canonical: resolution,
+                    chatID: chat.id
+                ) else { return }
+                guard await advanceCursor(to: resolution) else { return }
+                guard let resolvedIndex = sources.lastIndex(where: {
+                    $0.responseID == resolution.responseID
+                }) else { return }
+                candidates = sources[sources.index(after: resolvedIndex)...]
+                clearObsoleteBaselineWarning(chatID: chat.id, latestSourceID: latest.id)
+            } else {
                 states[chat.id] = ChatState(
                     sourceID: latest.id,
-                    phase: .failed("Some completed responses could not be matched to the saved brief baseline. No historical backfill was started.")
+                    phase: .baselineUnmatched("Some completed responses could not be matched to the saved brief baseline. No historical backfill was started.")
                 )
                 return
             }
-            candidates = sources[sources.index(after: cursorIndex)...]
         } else {
             candidates = sources.suffix(1)
         }
@@ -323,34 +461,168 @@ final class ResponseBriefCoordinator {
         if let lastAccepted = accepted.last {
             guard await advanceCursor(to: lastAccepted) else { return }
         }
-        settleIdlePresentation(for: chat)
         drain(transport: transport)
+    }
+
+    /// Explicit latest-only recovery for an unmatched baseline. It always
+    /// establishes a durable new baseline before generating, and never
+    /// backfills or replays the unmatched history. Accepted work, including a
+    /// transport-uncertain submission, is reconciled through its captured
+    /// receipt instead of being discarded or hidden.
+    func restartBriefsFromLatest(
+        _ chat: ResponseBriefChatIdentity,
+        transport: ResponseBriefTransport
+    ) async {
+        await load()
+        guard canDispatch(for: chat) else { return }
+        // Reserve the recovery revision before the snapshot fetch suspends. A
+        // newer length selection, disable/re-enable, or cancellation advances
+        // the epoch while the fetch is in flight, so this confirmed recovery
+        // must be revalidated against that ordering before it can mutate the
+        // baseline or publish work. Reserving here also supersedes any older
+        // intent publication that is still suspended for this chat.
+        let recoveryEpoch = supersedeOlderWork(for: chat.id)
+        resumePendingReceipt(for: chat, transport: transport)
+        replayUncertainReceiptForRecovery(for: chat, transport: transport)
+        // Make the reservation durable before the snapshot fetch. The same
+        // write tombstones any older unsubmitted selection that the epoch
+        // reservation already invalidated in memory, so an in-process
+        // supersession and a later relaunch agree. Accepted receipts started
+        // above are unaffected.
+        do {
+            try await persistence.cancelPendingRegeneration(chatID: chat.id, revision: recoveryEpoch)
+        } catch {
+            noteStorageFailure(error, chat: chat, sourceID: nil)
+            return
+        }
+        // Keep memory aligned with the tombstone: an older in-memory intent is
+        // gone durably, while a newer selection admitted during the awaits
+        // above is preserved in both places.
+        if (pendingRegenerations[chat.id]?.revision ?? 0) <= recoveryEpoch {
+            pendingRegenerations.removeValue(forKey: chat.id)
+        }
+        resumePendingRegeneration(for: chat, transport: transport)
+        drain(transport: transport)
+
+        var latest = latestSources[chat.id]
+        if let snapshot = try? await transport.fetchSnapshot(chat) {
+            guard isCurrentRecovery(chat: chat, epoch: recoveryEpoch) else { return }
+            var reducer = PiConversationReducer()
+            reducer.replace(with: snapshot)
+            if reducer.sessionID == chat.sessionID {
+                let sources = ResponseBriefSource.completedSources(
+                    turns: reducer.turns,
+                    machineID: chat.machineID,
+                    paneID: chat.paneID,
+                    sessionID: chat.sessionID
+                )
+                if let persistedLatest = sources.last {
+                    latest = persistedLatest
+                }
+            }
+        }
+        // Revalidate before every baseline or intent mutation below. A
+        // superseded recovery leaves the newer selection and the existing
+        // baseline untouched instead of replacing them with latest-only work.
+        guard isCurrentRecovery(chat: chat, epoch: recoveryEpoch) else { return }
+        guard let latest else {
+            states[chat.id] = ChatState(
+                sourceID: nil,
+                phase: .failed("The latest completed response is not available yet. Wait for this chat to finish, then try again.")
+            )
+            return
+        }
+        latestSources[chat.id] = latest
+
+        let configuration = GenerationConfiguration(model: selectedModel, thinkingLevel: thinkingLevel)
+        let needsBrief = ResponseBriefConcisionPolicy(source: latest.text, length: length).metrics.shouldGenerate
+            && !hasNonconformingBrief(for: latest)
+            && !hasOwnedGeneration(for: latest, configuration: configuration, includeAttempts: true)
+        if needsBrief {
+            let now = Date.now
+            // A confirmed recovery supersedes any older intent publication
+            // that is still suspended for this chat, and a newer revision
+            // supersedes this recovery.
+            let intent = ResponseBriefPersistence.PendingRegeneration(
+                chatID: chat.id,
+                source: latest,
+                length: length,
+                createdAt: now,
+                revision: recoveryEpoch
+            )
+            let accepted: Bool
+            do {
+                // Retain the latest-only recovery work together with its new
+                // baseline so a relaunch behind accepted ownership still
+                // performs exactly one latest submission.
+                await awaitIntentPersistenceBarrier()
+                guard isCurrentRecovery(chat: chat, epoch: recoveryEpoch) else { return }
+                accepted = try await persistence.saveRecoveryIntent(intent, recordedAt: now)
+            } catch {
+                noteStorageFailure(error, chat: chat, sourceID: latest.id)
+                return
+            }
+            // Rejected atomically because a newer revision already owns the
+            // slot. Disabling the chat or starting a newer selection while the
+            // save was suspended supersedes this recovery work; publishing it
+            // would resume an obsolete request after re-enabling.
+            guard accepted else { return }
+            guard isCurrentRecovery(chat: chat, epoch: recoveryEpoch) else {
+                await discardSupersededIntent(intent)
+                return
+            }
+            pendingRegenerations[chat.id] = intent
+            responseCursorByChatID[chat.id] = latest.responseID
+            baselineAnchors[chat.id] = .init(
+                chatID: chat.id,
+                responseID: latest.responseID,
+                identity: latest.identity,
+                recordedAt: now
+            )
+            // An unsubmitted automatic job for this exact answer is superseded
+            // by the durable recovery intent.
+            pending.removeAll { job in
+                job.source.chat.id == chat.id
+                    && !job.isDeliberate
+                    && areEquivalent(job.source, latest)
+            }
+            resumePendingRegeneration(for: chat, transport: transport)
+            drain(transport: transport)
+        } else {
+            guard await advanceCursor(to: latest, expectingRevision: recoveryEpoch) else { return }
+            guard isCurrentRecovery(chat: chat, epoch: recoveryEpoch) else { return }
+        }
+        clearObsoleteBaselineWarning(chatID: chat.id, latestSourceID: latest.id)
     }
 
     func retry(_ source: ResponseBriefSource, transport: ResponseBriefTransport) async {
         await load()
         guard canDispatch(for: source.chat) else { return }
-        let configuredID = generationID(for: source)
-        let configuredReceipt = receipts[configuredID].flatMap {
-            $0.status == .settled ? nil : $0
+        let unresolved = receipts.values
+            .filter { areEquivalent($0.source, source) && $0.status != .settled }
+            .max { $0.createdAt < $1.createdAt }
+        let matchingIntent = pendingRegenerations[source.chat.id].flatMap {
+            areEquivalent($0.source, source) ? $0 : nil
         }
-        let unresolvedSourceReceipt = receipts.values
-            .filter { $0.source.id == source.id && $0.status != .settled }
-            .max { $0.createdAt < $1.createdAt }
-        let unresolvedChatReceipt = receipts.values
-            .filter { $0.source.chat.id == source.chat.id && $0.status != .settled }
-            .max { $0.createdAt < $1.createdAt }
-
-        if let receipt = configuredReceipt ?? unresolvedSourceReceipt ?? unresolvedChatReceipt {
-            let job = job(for: receipt, force: true)
+        let replacement: Job? = matchingIntent.map { replacementJob(for: $0) }
+        if let receipt = unresolved {
             states[source.chat.id] = ChatState(sourceID: receipt.source.id, phase: .idle)
-            enqueue(job, transport: transport)
-        } else if receipts.values.contains(where: {
-            $0.source.id == source.id && $0.status == .settled
-        }) {
+            enqueue(job(for: receipt, force: true), transport: transport)
+        } else if let replacement, receipts[replacement.generationID] == nil {
+            // A durable replacement intent is the deliberate request the user
+            // already queued. Retry resumes that exact submission instead of
+            // creating an ordinary job that the intent would pay for again on
+            // the next observation, poll, or relaunch.
+            states[source.chat.id] = ChatState(sourceID: source.id, phase: .idle)
+            enqueue(replacement, transport: transport)
+        } else if receipts.values.contains(where: { areEquivalent($0.source, source) })
+            || records.contains(where: { areEquivalent($0.source, source) }) {
+            // A settled receipt or an existing brief cannot be replayed. Keep
+            // an explicit regeneration path visible instead of clearing into
+            // an empty idle rail the bounded enqueue would silently reject.
             states[source.chat.id] = ChatState(
                 sourceID: source.id,
-                phase: .regenerateNeeded("The previous result is settled and cannot be retried. Regenerate to create a fresh request.")
+                phase: .regenerateNeeded("A previous brief request for this response already settled. Regenerate to create a fresh request.")
             )
         } else {
             states[source.chat.id] = ChatState(sourceID: source.id, phase: .idle)
@@ -361,33 +633,54 @@ final class ResponseBriefCoordinator {
     func regenerate(_ source: ResponseBriefSource, transport: ResponseBriefTransport) async {
         await load()
         guard canDispatch(for: source.chat) else { return }
-        guard ResponseBriefConcisionPolicy(source: source.text).metrics.shouldGenerate else {
-            // A selected historical source must not replace the coordinator's
-            // actual latest source. Legacy accepted work still owns its receipt
-            // and must be reconciled before this no-op can settle.
-            resumePendingReceipt(for: source.chat, transport: transport)
-            drain(transport: transport)
-            settleIdlePresentation(for: source.chat)
+        guard ResponseBriefConcisionPolicy(source: source.text, length: length).metrics.shouldGenerate else {
             return
         }
         let hasUnresolvedChatReceipt = receipts.values.contains {
             $0.source.chat.id == source.chat.id && $0.status != .settled
         }
         if operations[source.chat.id] != nil || hasUnresolvedChatReceipt {
-            states[source.chat.id] = ChatState(
-                sourceID: source.id,
-                phase: .failed("Wait for the current response brief run to settle before regenerating.")
-            )
+            // Reconcile accepted ownership instead of stranding it; the
+            // explicit regeneration can be requested again once it settles.
+            resumePendingReceipt(for: source.chat, transport: transport)
+            drain(transport: transport)
+            // A receipt-backed presentation already identifies the exact
+            // retryable owner; only explain waiting when no receipt exists yet.
+            if !receipts.values.contains(where: {
+                $0.source.chat.id == source.chat.id && $0.status != .settled
+            }) {
+                states[source.chat.id] = ChatState(
+                    sourceID: source.id,
+                    phase: .failed("Wait for the current response brief run to settle before regenerating.")
+                )
+            }
             return
+        }
+        if let matchingIntent = pendingRegenerations[source.chat.id].flatMap({
+            areEquivalent($0.source, source) ? $0 : nil
+        }) {
+            let replacement = replacementJob(for: matchingIntent)
+            if receipts[replacement.generationID] == nil {
+                // A pending replacement is already the deliberate fresh request
+                // for this answer. Dispatch it by identity instead of creating
+                // an ordinary regeneration that would duplicate the paid work.
+                states[source.chat.id] = ChatState(sourceID: source.id, phase: .idle)
+                enqueue(replacement, transport: transport)
+                return
+            }
         }
         let configuration = GenerationConfiguration(model: selectedModel, thinkingLevel: thinkingLevel)
         let job = Job(
             source: source,
             configuration: configuration,
-            generationID: generationID(for: source, configuration: configuration)
+            generationID: generationIdentity(for: source, configuration: configuration, length: length)
                 + ":regenerate:" + UUID().uuidString,
+            length: length,
+            replacementKey: nil,
+            replacementRevision: nil,
             force: true,
-            allowsNonPendingReceipt: false
+            allowsNonPendingReceipt: false,
+            isDeliberate: true
         )
         enqueue(job, transport: transport)
     }
@@ -421,6 +714,7 @@ final class ResponseBriefCoordinator {
         pollFailureCounts = [:]
         nextPollAt = [:]
         modelsByMachine = [:]
+        responseBriefCapabilities = [:]
     }
 
     func waitForIdleForTesting() async {
@@ -444,7 +738,7 @@ final class ResponseBriefCoordinator {
                     var reducer = PiConversationReducer()
                     reducer.replace(with: snapshot)
                     guard reducer.sessionID == chat.sessionID else {
-                        disable(chat, transport: transport)
+                        await disable(chat, transport: transport)
                         continue
                     }
                     resumePendingReceipt(for: chat, transport: transport)
@@ -483,10 +777,45 @@ final class ResponseBriefCoordinator {
         return true
     }
 
-    private func advanceCursor(to source: ResponseBriefSource) async -> Bool {
+    /// Advances the durable baseline together with the identity evidence
+    /// observed for that exact response. A crash between separate writes could
+    /// otherwise strand the baseline after an identifier change. When a
+    /// revision is supplied, the move is admitted atomically only while that
+    /// revision is still the newest selection ordering for the chat, so a
+    /// superseded recovery cannot move the baseline after a newer selection
+    /// has been durably admitted.
+    private func advanceCursor(
+        to source: ResponseBriefSource,
+        expectingRevision revision: Int? = nil
+    ) async -> Bool {
+        let recordedAt = Date.now
         do {
-            try await persistence.advanceCursor(chatID: source.chat.id, responseID: source.responseID)
+            let moved: Bool
+            if let revision {
+                moved = try await persistence.advanceCursor(
+                    chatID: source.chat.id,
+                    responseID: source.responseID,
+                    anchorIdentity: source.identity,
+                    recordedAt: recordedAt,
+                    expectingRevision: revision
+                )
+            } else {
+                try await persistence.advanceCursor(
+                    chatID: source.chat.id,
+                    responseID: source.responseID,
+                    anchorIdentity: source.identity,
+                    recordedAt: recordedAt
+                )
+                moved = true
+            }
+            guard moved else { return false }
             responseCursorByChatID[source.chat.id] = source.responseID
+            baselineAnchors[source.chat.id] = .init(
+                chatID: source.chat.id,
+                responseID: source.responseID,
+                identity: source.identity,
+                recordedAt: recordedAt
+            )
             return true
         } catch {
             noteStorageFailure(error, chat: source.chat, sourceID: source.id)
@@ -494,17 +823,393 @@ final class ResponseBriefCoordinator {
         }
     }
 
+    /// Clears an obsolete unmatched-baseline warning after reconciliation
+    /// proved the saved baseline's continuity. Active operations and other
+    /// failure presentations are left untouched.
+    private func clearObsoleteBaselineWarning(chatID: String, latestSourceID: String) {
+        guard operations[chatID] == nil,
+              let state = states[chatID],
+              case .baselineUnmatched = state.phase
+        else { return }
+        states[chatID] = ChatState(sourceID: latestSourceID, phase: .idle)
+    }
+
+    /// Resolves a saved baseline identifier against a snapshot using only
+    /// durable evidence. Exact identifiers and previously verified aliases
+    /// match first; otherwise continuity must be proven by identity evidence
+    /// from the baseline anchor or the newest owned source. Text, labels,
+    /// ordering, and display names are never identity.
+    private func resolveBaseline(
+        cursor: String,
+        chatID: String,
+        sources: [ResponseBriefSource]
+    ) -> ResponseBriefSource? {
+        if let exact = sources.last(where: { $0.responseID == cursor }) {
+            return exact
+        }
+        let canonical = canonicalResponseID(cursor, chatID: chatID)
+        if canonical != cursor, let aliased = sources.last(where: { $0.responseID == canonical }) {
+            return aliased
+        }
+        if let anchor = baselineAnchors[chatID], anchor.responseID == cursor, let identity = anchor.identity {
+            return ResponseBriefIdentity.uniqueVerifiedCandidate(
+                responseID: cursor,
+                identity: identity,
+                among: sources
+            )
+        }
+        // Migrate a baseline saved before anchors existed only when an owned
+        // source for that same baseline verifies a unique candidate.
+        let owned = (records.map(\.source) + receipts.values.map(\.source))
+            .filter { $0.chat.id == chatID && $0.responseID == cursor }
+        for candidate in owned {
+            guard let identity = candidate.identity else { continue }
+            if let resolved = ResponseBriefIdentity.uniqueVerifiedCandidate(
+                responseID: cursor,
+                identity: identity,
+                among: sources
+            ) {
+                return resolved
+            }
+        }
+        return nil
+    }
+
+    private func recordVerifiedAlias(
+        aliasID: String,
+        canonical: ResponseBriefSource,
+        chatID: String
+    ) async -> Bool {
+        guard aliasID != canonical.responseID else { return true }
+        let identity = baselineAnchors[chatID].flatMap { $0.responseID == aliasID ? $0.identity : nil }
+            ?? canonical.identity
+        let verifiedAt = Date.now
+        do {
+            try await persistence.recordVerifiedAlias(
+                chatID: chatID,
+                aliasID: aliasID,
+                canonicalID: canonical.responseID,
+                identity: identity,
+                verifiedAt: verifiedAt
+            )
+            var aliases = verifiedAliases[chatID] ?? []
+            aliases.removeAll { $0.aliasID == aliasID }
+            aliases.append(.init(
+                aliasID: aliasID,
+                canonicalID: canonical.responseID,
+                identity: identity,
+                verifiedAt: verifiedAt
+            ))
+            aliases.sort { $0.verifiedAt < $1.verifiedAt }
+            verifiedAliases[chatID] = aliases
+            return true
+        } catch {
+            noteStorageFailure(error, chat: canonical.chat, sourceID: canonical.id)
+            return false
+        }
+    }
+
+    private func canonicalResponseID(_ responseID: String, chatID: String) -> String {
+        guard let aliases = verifiedAliases[chatID], !aliases.isEmpty else { return responseID }
+        var current = responseID
+        for _ in 0..<8 {
+            guard let next = aliases.last(where: { $0.aliasID == current })?.canonicalID,
+                  next != current
+            else { break }
+            current = next
+        }
+        return current
+    }
+
+    /// Equates two projections of one completed answer without ever using
+    /// text alone. Exact identifiers and verified identity evidence are the
+    /// only accepted relationships, plus durable aliases proven earlier. This
+    /// is shared by generation ownership and the rail's selection, labeling,
+    /// and original-response presentation so a reconciled live-to-persisted
+    /// answer keeps one identity everywhere.
+    func areEquivalent(_ lhs: ResponseBriefSource, _ rhs: ResponseBriefSource) -> Bool {
+        guard lhs.chat == rhs.chat else { return false }
+        if lhs.responseID == rhs.responseID { return true }
+        if ResponseBriefIdentity.match(lhs, rhs) != nil { return true }
+        return lhs.sourceHash == rhs.sourceHash
+            && canonicalResponseID(lhs.responseID, chatID: lhs.chat.id)
+                == canonicalResponseID(rhs.responseID, chatID: rhs.chat.id)
+    }
+
+    private func hasOwnedGeneration(
+        for source: ResponseBriefSource,
+        configuration: GenerationConfiguration,
+        includeAttempts: Bool
+    ) -> Bool {
+        if records.contains(where: { areEquivalent($0.source, source) }) { return true }
+        if receipts.values.contains(where: { areEquivalent($0.source, source) }) { return true }
+        if includeAttempts,
+           let intent = pendingRegenerations[source.chat.id],
+           areEquivalent(intent.source, source) {
+            return true
+        }
+        guard includeAttempts else { return false }
+        var candidates = [source]
+        candidates.append(contentsOf: records.map(\.source))
+        candidates.append(contentsOf: receipts.values.map(\.source))
+        for candidate in candidates where areEquivalent(candidate, source) {
+            let explicit = generationIdentity(for: candidate, configuration: configuration, length: length)
+            let legacy = generationIdentity(for: candidate, configuration: configuration, length: nil)
+            if attemptedGenerationIDs.contains(explicit) || attemptedGenerationIDs.contains(legacy) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func ownsEquivalentGeneration(
+        _ source: ResponseBriefSource,
+        excluding generationID: String
+    ) -> Bool {
+        records.contains { $0.id != generationID && areEquivalent($0.source, source) }
+            || receipts.values.contains { $0.id != generationID && areEquivalent($0.source, source) }
+    }
+
+    /// Stores the single coalescible replacement intent for the chat and
+    /// queues it. Accepted ownership is never rewritten; the replacement waits
+    /// behind any unresolved receipt through the normal drain serialization.
+    private func requestReplacement(
+        for source: ResponseBriefSource,
+        length: ResponseBriefLength,
+        transport: ResponseBriefTransport
+    ) async {
+        // A new selection supersedes any older intent publication that is
+        // still suspended, so the newest selection wins regardless of
+        // persistence ordering. Advancing the epoch immediately also drops
+        // older unowned replacement work before its own durable write is
+        // awaited; an already-running unowned job is rejected at its
+        // pre-receipt boundary by the captured revision.
+        let epoch = supersedeOlderWork(for: source.chat.id)
+        let intent = ResponseBriefPersistence.PendingRegeneration(
+            chatID: source.chat.id,
+            source: source,
+            length: length,
+            createdAt: .now,
+            revision: epoch
+        )
+        let accepted: Bool
+        do {
+            await awaitIntentPersistenceBarrier()
+            accepted = try await persistence.savePendingRegeneration(intent)
+        } catch {
+            noteStorageFailure(error, chat: source.chat, sourceID: source.id)
+            return
+        }
+        // A newer revision already owns the slot when the atomic save was
+        // rejected, so this selection never publishes over it. Disabling the
+        // chat or selecting a newer length while the save was suspended
+        // supersedes this intent too. Publishing it anyway would let a later
+        // re-enable resume obsolete work.
+        guard accepted, chatEpochs[source.chat.id] == epoch, isEnabled(source.chat) else {
+            if accepted {
+                await discardSupersededIntent(intent)
+            }
+            return
+        }
+        pendingRegenerations[source.chat.id] = intent
+        // An unsubmitted automatic job for this exact answer is superseded by
+        // the durable intent; an older intent job is dropped by the key check.
+        pending.removeAll { job in
+            job.source.chat.id == source.chat.id
+                && !job.isDeliberate
+                && areEquivalent(job.source, source)
+        }
+        resumePendingReceipt(for: source.chat, transport: transport)
+        resumePendingRegeneration(for: source.chat, transport: transport)
+        drain(transport: transport)
+    }
+
+    /// Advances the per-chat selection/cancellation epoch and returns the new
+    /// value. Intent publications captured before this point are superseded.
+    private func advanceChatEpoch(for chatID: String) -> Int {
+        let next = (chatEpochs[chatID] ?? 0) + 1
+        chatEpochs[chatID] = next
+        return next
+    }
+
+    /// Advances the per-chat selection/cancellation epoch and immediately
+    /// invalidates older unowned replacement jobs. The epoch moves before the
+    /// newer selection's own durable write is awaited, so dropping the queued
+    /// stale work here keeps an older preflight from surviving until the new
+    /// intent becomes visible. Accepted ownership with a durable receipt is
+    /// never discarded by this invalidation.
+    private func supersedeOlderWork(for chatID: String) -> Int {
+        let epoch = advanceChatEpoch(for: chatID)
+        pending.removeAll { job in
+            job.source.chat.id == chatID
+                && job.replacementKey != nil
+                && (job.replacementRevision ?? 0) < epoch
+                && receipts[job.generationID] == nil
+        }
+        return epoch
+    }
+
+    /// True when an unowned replacement job no longer owns the chat's
+    /// selection ordering. The captured revision is checked, not only the
+    /// stored intent key: a newer selection can advance the epoch before its
+    /// own durable write returns, leaving the previous intent stored while it
+    /// is already superseded. A stale job must be rejected before durable
+    /// receipt conversion so it can never create a paid submission.
+    private func isSupersededReplacement(_ job: Job, chatID: String) -> Bool {
+        guard let key = job.replacementKey else { return false }
+        guard let intent = pendingRegenerations[chatID] else { return true }
+        return intent.replacementKey != key
+            || intent.revision != job.replacementRevision
+            || chatEpochs[chatID] != job.replacementRevision
+    }
+
+    /// Whether a confirmed recovery still owns the chat's selection and
+    /// cancellation ordering. A newer selection, disable/re-enable, or
+    /// cancellation advances the epoch while the snapshot fetch is suspended,
+    /// and an obsolete recovery must not move the baseline or publish work.
+    private func isCurrentRecovery(chat: ResponseBriefChatIdentity, epoch: Int) -> Bool {
+        chatEpochs[chat.id] == epoch && isEnabled(chat)
+    }
+
+    /// Removes a durable intent that lost a race with a disable or a newer
+    /// selection and durably records the cancellation tombstone for its exact
+    /// revision. A newer selection with a greater revision is preserved, and a
+    /// delayed stale write for the discarded revision stays rejected instead of
+    /// being restored by a post-hoc rewrite.
+    private func discardSupersededIntent(
+        _ intent: ResponseBriefPersistence.PendingRegeneration
+    ) async {
+        do {
+            try await persistence.cancelPendingRegeneration(
+                chatID: intent.chatID,
+                revision: intent.revision
+            )
+        } catch {
+            return
+        }
+        if pendingRegenerations[intent.chatID]?.replacementKey == intent.replacementKey {
+            pendingRegenerations.removeValue(forKey: intent.chatID)
+        }
+    }
+
+    /// Test-only suspension point around durable intent writes.
+    private func awaitIntentPersistenceBarrier() async {
+        if let barrier = intentPersistenceBarrier { await barrier() }
+    }
+
+    /// Resumes accepted ownership for this chat. A pending receipt is polled
+    /// without another paid submission. A transport-uncertain receipt is never
+    /// replayed automatically, but it stays visibly actionable so a relaunch or
+    /// cancellation cannot strand its accepted run behind an idle chat.
     private func resumePendingReceipt(for chat: ResponseBriefChatIdentity, transport: ResponseBriefTransport) {
         // An active operation already owns any unresolved receipt for this chat.
         // Queuing that same receipt again would leave a stale replay behind if
         // cancellation settles it before the queued job reaches the front.
         guard operations[chat.id] == nil,
               let receipt = receipts.values
-            .filter({ $0.source.chat.id == chat.id && $0.status == .pending })
-            .sorted(by: { $0.createdAt < $1.createdAt })
-            .first
+            .filter({ $0.source.chat.id == chat.id && $0.status != .settled })
+            .min(by: { $0.createdAt < $1.createdAt })
         else { return }
+        guard receipt.status == .pending else {
+            presentUncertainOwnership(receipt, chatID: chat.id)
+            return
+        }
         enqueue(job(for: receipt), transport: transport)
+    }
+
+    /// Makes a transport-uncertain receipt actionable through the existing
+    /// Retry control, which replays the exact captured request. Nothing is
+    /// submitted automatically because the paid request may still be running.
+    private func presentUncertainOwnership(
+        _ receipt: ResponseBriefPersistence.Receipt,
+        chatID: String
+    ) {
+        if let state = states[chatID] {
+            switch state.phase {
+            case .idle, .baselineUnmatched:
+                break
+            default:
+                // Preserve an active operation or an existing explanation.
+                return
+            }
+        }
+        states[chatID] = ChatState(
+            sourceID: receipt.source.id,
+            phase: .failed("A response brief request may have been accepted. Retry replays its exact saved request without creating a new one."),
+            runID: receipt.runID
+        )
+    }
+
+    /// A user-confirmed recovery explicitly replays the oldest
+    /// transport-uncertain receipt. Normal observation never does this because
+    /// the accepted paid request may still be running.
+    private func replayUncertainReceiptForRecovery(
+        for chat: ResponseBriefChatIdentity,
+        transport: ResponseBriefTransport
+    ) {
+        guard operations[chat.id] == nil,
+              let receipt = receipts.values
+            .filter({ $0.source.chat.id == chat.id && $0.status != .settled })
+            .min(by: { $0.createdAt < $1.createdAt }),
+              receipt.status == .needsExplicitRetry
+        else { return }
+        enqueue(job(for: receipt, force: true), transport: transport)
+    }
+
+    /// Builds the single dispatchable job for a durable replacement intent.
+    /// Its identity is derived from the intent's captured key so a retry,
+    /// support refresh, poll, user regeneration, or relaunch resumes exactly
+    /// the same submission instead of creating an ordinary duplicate.
+    private func replacementJob(
+        for intent: ResponseBriefPersistence.PendingRegeneration
+    ) -> Job {
+        let configuration = GenerationConfiguration(model: selectedModel, thinkingLevel: thinkingLevel)
+        let key = intent.replacementKey
+        let id = generationIdentity(for: intent.source, configuration: configuration, length: intent.length)
+            + ":length:" + key
+        return Job(
+            source: intent.source,
+            configuration: configuration,
+            generationID: id,
+            length: intent.length,
+            replacementKey: key,
+            replacementRevision: intent.revision,
+            force: false,
+            allowsNonPendingReceipt: false,
+            isDeliberate: true
+        )
+    }
+
+    /// Replays the durable replacement intent after relaunch. The job identity
+    /// is derived from the intent's recorded timestamp, so resumption cannot
+    /// create a second paid request for one selection.
+    private func resumePendingRegeneration(
+        for chat: ResponseBriefChatIdentity,
+        transport: ResponseBriefTransport
+    ) {
+        guard isEnabled(chat), let intent = pendingRegenerations[chat.id] else { return }
+        let job = replacementJob(for: intent)
+        // Once a receipt exists the run owns the replacement; resuming it again
+        // on every poll would only queue duplicate copies of the same request.
+        guard receipts[job.generationID] == nil else { return }
+        enqueue(job, transport: transport)
+    }
+
+    private func clearPendingRegeneration(key: String, revision: Int, chatID: String) async {
+        guard pendingRegenerations[chatID]?.replacementKey == key,
+              pendingRegenerations[chatID]?.revision == revision
+        else { return }
+        do {
+            try await persistence.removePendingRegeneration(chatID: chatID, expectingKey: key)
+        } catch {
+            // The receipt now owns the work, so a lingering intent can only
+            // deduplicate against that same request on the next load.
+            return
+        }
+        if pendingRegenerations[chatID]?.replacementKey == key,
+           pendingRegenerations[chatID]?.revision == revision {
+            pendingRegenerations.removeValue(forKey: chatID)
+        }
     }
 
     private func enqueue(
@@ -513,17 +1218,23 @@ final class ResponseBriefCoordinator {
         force: Bool = false
     ) {
         guard !hasNonconformingBrief(for: source) else { return }
-        guard ResponseBriefConcisionPolicy(source: source.text).metrics.shouldGenerate else {
-            settleIdlePresentation(for: source.chat)
+        guard ResponseBriefConcisionPolicy(source: source.text, length: length).metrics.shouldGenerate else {
             return
         }
         let configuration = GenerationConfiguration(model: selectedModel, thinkingLevel: thinkingLevel)
+        if hasOwnedGeneration(for: source, configuration: configuration, includeAttempts: !force) {
+            return
+        }
         let job = Job(
             source: source,
             configuration: configuration,
-            generationID: generationID(for: source, configuration: configuration),
+            generationID: generationIdentity(for: source, configuration: configuration, length: length),
+            length: length,
+            replacementKey: nil,
+            replacementRevision: nil,
             force: force,
-            allowsNonPendingReceipt: false
+            allowsNonPendingReceipt: false,
+            isDeliberate: force
         )
         enqueue(job, transport: transport)
     }
@@ -534,7 +1245,10 @@ final class ResponseBriefCoordinator {
             if records.contains(where: { $0.id == id }) { return }
             if let receipt = receipts[id] {
                 guard receipt.status == .pending else { return }
-            } else if attemptedGenerationIDs.contains(id) {
+            } else if job.replacementKey == nil, attemptedGenerationIDs.contains(id) {
+                // Durable replacement intent never POSTs before its receipt is
+                // saved, so replaying a pre-receipt attempt cannot duplicate
+                // paid work and may recover after a relaunch.
                 return
             }
         }
@@ -585,6 +1299,19 @@ final class ResponseBriefCoordinator {
         if let receipt = receipts[job.generationID] {
             return receipt.status == .pending || job.allowsNonPendingReceipt
         }
+        if let key = job.replacementKey {
+            guard let intent = pendingRegenerations[job.source.chat.id],
+                  intent.replacementKey == key,
+                  intent.revision == job.replacementRevision,
+                  chatEpochs[job.source.chat.id] == job.replacementRevision
+            else { return false }
+            return true
+        } else if !job.isDeliberate,
+                  ownsEquivalentGeneration(job.source, excluding: job.generationID) {
+            // Another projection of this same answer already has a record or
+            // receipt. Drop the duplicate instead of paying for it again.
+            return false
+        }
         return job.force || !attemptedGenerationIDs.contains(job.generationID)
     }
 
@@ -599,20 +1326,7 @@ final class ResponseBriefCoordinator {
             enqueueCancellationReconciliation(receipt, transport: transport)
         } else {
             drain(transport: transport)
-            settleIdlePresentation(for: latestSources[chatID]?.chat)
         }
-    }
-
-    private func settleIdlePresentation(for chat: ResponseBriefChatIdentity?) {
-        guard let chat,
-              operations[chat.id] == nil,
-              !receipts.values.contains(where: {
-                  $0.source.chat.id == chat.id && $0.status != .settled
-              }),
-              let latest = latestSources[chat.id],
-              !ResponseBriefConcisionPolicy(source: latest.text).metrics.shouldGenerate
-        else { return }
-        states[chat.id] = ChatState(sourceID: latest.id, phase: .alreadyConcise)
     }
 
     private func generate(_ job: Job, token: UUID, transport: ResponseBriefTransport) async {
@@ -639,19 +1353,50 @@ final class ResponseBriefCoordinator {
             states[chatID] = ChatState(sourceID: source.id, phase: .idle)
             return
         }
-        if receipts[job.generationID] == nil {
-            if attemptedGenerationIDs.contains(job.generationID), !job.force { return }
-            do {
-                try await persistence.markAttempted(id: job.generationID)
-                attemptedGenerationIDs.insert(job.generationID)
-            } catch {
-                noteStorageFailure(error, chat: source.chat, sourceID: source.id)
-                return
+        // Accepted ownership is reconciled before any fresh capability or
+        // catalog preflight. A removed model, an unavailable catalog, or an
+        // older companion must never strand an already-owned run or the
+        // replacement waiting behind it: fetching a known run ID and replaying
+        // a captured request do not depend on current machine support.
+        if let saved = receipts[job.generationID] {
+            if let key = job.replacementKey {
+                await clearPendingRegeneration(
+                    key: key,
+                    revision: job.replacementRevision ?? 0,
+                    chatID: chatID
+                )
             }
+            await completeGeneration(
+                job,
+                source: source,
+                receipt: saved,
+                deadline: deadline,
+                transport: transport
+            )
+            return
+        }
+        if attemptedGenerationIDs.contains(job.generationID), !job.force, job.replacementKey == nil {
+            return
+        }
+        do {
+            try await persistence.markAttempted(id: job.generationID)
+            attemptedGenerationIDs.insert(job.generationID)
+        } catch {
+            noteStorageFailure(error, chat: source.chat, sourceID: source.id)
+            return
         }
 
         states[chatID] = ChatState(sourceID: source.id, phase: .checkingSupport)
         await prepare(machineID: source.chat.machineID, transport: transport)
+        // A newer selection can supersede an in-flight replacement while
+        // capability and model preflight is suspended. Revalidate the captured
+        // revision before creating durable ownership so a superseded selection
+        // can never produce a paid submission even while the previous intent
+        // is still the only one stored.
+        if isSupersededReplacement(job, chatID: chatID) {
+            states[chatID] = ChatState(sourceID: source.id, phase: .idle)
+            return
+        }
         guard generationDeadlineNow() < deadline else {
             states[chatID] = ChatState(sourceID: source.id, phase: .failed(ResponseBriefCoordinatorError.timedOut.localizedDescription))
             return
@@ -681,27 +1426,63 @@ final class ResponseBriefCoordinator {
             return
         }
 
-        var receipt: ResponseBriefPersistence.Receipt
+        let receipt: ResponseBriefPersistence.Receipt
         do {
-            if let saved = receipts[job.generationID] {
-                receipt = saved
-            } else {
-                let request = try ResponseBriefRequestBuilder.request(
-                    for: source,
-                    model: job.configuration.model,
-                    thinkingLevel: job.configuration.thinkingLevel
-                )
-                receipt = .init(
-                    id: job.generationID,
-                    source: source,
-                    request: request,
-                    runID: nil,
-                    createdAt: .now
-                )
-                try await persistence.saveReceipt(receipt)
-                receipts[job.generationID] = receipt
-                attemptedGenerationIDs.insert(job.generationID)
+            if job.length != nil {
+                guard let advertised = responseBriefCapabilities[source.chat.machineID],
+                      advertised.supportsEveryLengthOption else {
+                    // Drop the cached support result so an explicit retry
+                    // refetches capabilities after the companion upgrades.
+                    supportedMachines.remove(source.chat.machineID)
+                    responseBriefCapabilities.removeValue(forKey: source.chat.machineID)
+                    states[chatID] = ChatState(
+                        sourceID: source.id,
+                        phase: .upgradeRequired("Update the companion for configurable brief length (\(ResponseBriefLength.options.joined(separator: ", "))). This request was not sent and no fallback was used.")
+                    )
+                    return
+                }
             }
+            let request = try ResponseBriefRequestBuilder.request(
+                for: source,
+                model: job.configuration.model,
+                thinkingLevel: job.configuration.thinkingLevel,
+                length: job.length
+            )
+            receipt = .init(
+                id: job.generationID,
+                source: source,
+                request: request,
+                runID: nil,
+                createdAt: .now
+            )
+            if let key = job.replacementKey {
+                // Revalidate once more at the receipt boundary: the intent
+                // must still be the captured revision, and the durable save
+                // below admits that revision only while it is still the
+                // newest selection ordering for this chat.
+                guard !isSupersededReplacement(job, chatID: chatID) else {
+                    states[chatID] = ChatState(sourceID: source.id, phase: .idle)
+                    return
+                }
+                // The intent becomes the receipt in one atomic write, so a
+                // selection that changed during the async preflight above
+                // cannot leave a superseded paid request behind.
+                guard try await persistence.commitReplacementReceipt(
+                    receipt,
+                    expecting: key,
+                    revision: job.replacementRevision ?? 0
+                ) else {
+                    states[chatID] = ChatState(sourceID: source.id, phase: .idle)
+                    return
+                }
+                if pendingRegenerations[chatID]?.replacementKey == key {
+                    pendingRegenerations.removeValue(forKey: chatID)
+                }
+            } else {
+                try await persistence.saveReceipt(receipt)
+            }
+            receipts[job.generationID] = receipt
+            attemptedGenerationIDs.insert(job.generationID)
         } catch let error as ResponseBriefRequestError {
             do {
                 try await persistence.markAttempted(id: job.generationID)
@@ -718,6 +1499,29 @@ final class ResponseBriefCoordinator {
             return
         }
 
+        await completeGeneration(
+            job,
+            source: source,
+            receipt: receipt,
+            deadline: deadline,
+            transport: transport
+        )
+    }
+
+    /// Finishes the paid phase of a generation whose durable receipt already
+    /// exists or was just committed. A known run ID is fetched and a captured
+    /// request is replayed without consulting current capability or catalog
+    /// state, so accepted ownership always reconciles and never strands the
+    /// replacement waiting behind it.
+    private func completeGeneration(
+        _ job: Job,
+        source: ResponseBriefSource,
+        receipt: ResponseBriefPersistence.Receipt,
+        deadline: ContinuousClock.Instant,
+        transport: ResponseBriefTransport
+    ) async {
+        let chatID = source.chat.id
+        var receipt = receipt
         if Task.isCancelled || !isEnabled(source.chat) {
             await reconcileCancellation(receipt: receipt, source: source, transport: transport)
             return
@@ -790,7 +1594,11 @@ final class ResponseBriefCoordinator {
 
             let brief: ResponseBrief
             do {
-                brief = try ResponseBrief.decodeValidated(Data(response.utf8), source: source.text)
+                brief = try ResponseBrief.decodeValidated(
+                    Data(response.utf8),
+                    source: source.text,
+                    length: job.length
+                )
             } catch {
                 receipt.status = .settled
                 try await saveUpdatedReceipt(receipt)
@@ -802,7 +1610,9 @@ final class ResponseBriefCoordinator {
                 brief: brief,
                 model: job.configuration.model,
                 thinkingLevel: job.configuration.thinkingLevel,
-                createdAt: .now
+                createdAt: .now,
+                responseBriefLength: job.length,
+                responseBriefLengthPolicyVersion: job.length == nil ? nil : ResponseBriefLength.policyVersion
             )
             try await persistence.saveRecord(record)
             records.removeAll { $0.id == job.generationID }
@@ -1001,20 +1811,24 @@ final class ResponseBriefCoordinator {
                 thinkingLevel: receipt.request.thinkingLevel
             ),
             generationID: receipt.id,
+            length: receipt.request.responseBriefLength,
+            replacementKey: nil,
+            replacementRevision: nil,
             force: force,
-            allowsNonPendingReceipt: force
+            allowsNonPendingReceipt: force,
+            isDeliberate: true
         )
     }
 
-    private func generationID(for source: ResponseBriefSource) -> String {
-        generationID(
-            for: source,
-            configuration: GenerationConfiguration(model: selectedModel, thinkingLevel: thinkingLevel)
-        )
-    }
-
-    private func generationID(for source: ResponseBriefSource, configuration: GenerationConfiguration) -> String {
-        let material = [
+    /// Generation identity for one source and configuration. Legacy requests
+    /// (nil length) keep the exact predecessor material so restored receipts
+    /// remain findable. New requests add the chosen preset and policy version.
+    private func generationIdentity(
+        for source: ResponseBriefSource,
+        configuration: GenerationConfiguration,
+        length: ResponseBriefLength?
+    ) -> String {
+        var material = [
             source.chat.machineID,
             source.chat.sessionID,
             source.responseID,
@@ -1022,8 +1836,14 @@ final class ResponseBriefCoordinator {
             String(ResponseBriefLimits.templateVersion),
             configuration.model ?? "default",
             configuration.thinkingLevel ?? "default",
-        ].joined(separator: "\u{0}")
-        return SHA256.hash(data: Data(material.utf8)).map { String(format: "%02x", $0) }.joined()
+        ]
+        if let length {
+            material.append(length.rawValue)
+            material.append("length-policy-\(ResponseBriefLength.policyVersion)")
+        }
+        return SHA256.hash(data: Data(material.joined(separator: "\u{0}").utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
     }
 }
 

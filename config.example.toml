@@ -160,6 +160,7 @@ poll_seconds = 10
 # auto_rank = true # Rank files by impact after a review is prepared.
 # sync_viewed_to_github = true # Push viewed toggles to GitHub through gh.
 # gh_timeout_seconds = 120 # 10–900.
+# checkout_timeout_seconds = 900 # Clone, fetch, and checkout commands, 10–3600.
 # pi_binary = "/path/to/pi" # Optional explicit binaries when the service PATH differs.
 # claude_binary = "/path/to/claude"
 

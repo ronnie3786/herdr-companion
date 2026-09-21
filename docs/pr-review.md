@@ -1,6 +1,6 @@
 # PR Review
 
-Status: first implementation, macOS 0.27.0-beta.1 with companion 0.27.0b1 (2026-09-21).
+Status: macOS 0.27.0-beta.1 with companion 0.27.0b2 (2026-09-21).
 Product intent lives in [pr-review-assistant.md](pr-review-assistant.md).
 
 PR Review turns a GitHub pull request link into an AI-assisted review workspace inside the
@@ -34,7 +34,8 @@ On the review host:
 | `model`, `thinking_level` | Pi default, `medium` | Model used for impact ranking and Ask AI answers. |
 | `auto_rank` | `true` | Rank files automatically after a review is prepared. |
 | `sync_viewed_to_github` | `true` | Push viewed toggles to GitHub through the GraphQL API. |
-| `gh_timeout_seconds` | `120` | Timeout for every `gh` call (10–900). |
+| `gh_timeout_seconds` | `120` | Timeout for GitHub metadata and API calls (10–900). |
+| `checkout_timeout_seconds` | `900` | Timeout for each clone, fetch, and checkout command (10–3600). Clones fetch blobs on demand and skip checking out the default branch. |
 | `pi_binary`, `claude_binary` | found on `PATH` | Explicit binaries when the service PATH differs. |
 
 On the Mac: pair the review host in Settings → Machines as usual. The app picks the machine
@@ -55,6 +56,14 @@ checks the head out into a per-review worktree, parses the diff, opens a tab nam
 `PR #42 · <title>` in the PR Reviews workspace, pulls your GitHub viewed-file state, marks the
 review ready, starts the chosen skills, and ranks the files. Creating the same open PR twice
 returns the existing review.
+
+Starting with companion 0.27.0b2, if the companion restarts during preparation, it resumes active, unfinished preparation
+with the original queued skill runs. A persisted review tab is reused. Completed, failed,
+and archived reviews are not automatically prepared again. Failed preparation identifies
+the failed stage; use **Refresh** to retry with the original queued skills. Timed-out
+commands stop their whole process group so Git children cannot keep writing after failure.
+On older companions, submitting the same PR with **Add without running** resumes interrupted preparation without adding
+new runs; it keeps the original skill selection.
 
 **Files.** Files carry an AI impact (High, Medium, Low, or unranked) with a one-line reason.
 Filter to one impact at a time, hide viewed files, search, and switch between GitHub order and

@@ -17,6 +17,7 @@ from typing import Any, Iterable, Sequence
 
 
 REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
+RAW_REVISION_RE = re.compile(rb"(?<![0-9a-f])[0-9a-f]{40}(?![0-9a-f])")
 DEFAULT_ROOT = Path.home() / "Library" / "Application Support" / "Herdr" / "Backend"
 
 
@@ -45,25 +46,29 @@ def _strings(value: Any) -> Iterable[str]:
             yield from _strings(item)
 
 
-def _read_text(path: Path) -> str:
+def _raw_sha_strings(path: Path) -> list[str]:
     try:
-        return path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        return ""
+        content = path.read_bytes()
+    except OSError:
+        return []
+    return [match.group().decode("ascii") for match in RAW_REVISION_RE.finditer(content)]
 
 
-def reference_strings(home: Path) -> list[str]:
+def reference_strings(home: Path) -> tuple[list[str], list[dict[str, str]]]:
     """Collect only the launcher and package-setting strings relevant to runtimes."""
     found: list[str] = []
+    warnings: list[dict[str, str]] = []
     launch_agents = home / "Library" / "LaunchAgents"
     if launch_agents.is_dir():
-        for path in launch_agents.glob("*.plist"):
+        for path in sorted(launch_agents.glob("*.plist")):
             if not path.is_file():
                 continue
             try:
                 with path.open("rb") as handle:
                     payload = plistlib.load(handle)
-            except (OSError, ValueError, plistlib.InvalidFileException):
+            except Exception as exc:
+                found.extend(_raw_sha_strings(path))
+                warnings.append({"file": str(path), "problem": str(exc) or type(exc).__name__})
                 continue
             if not isinstance(payload, dict):
                 continue
@@ -75,24 +80,34 @@ def reference_strings(home: Path) -> list[str]:
                 found.append(working)
 
     settings = home / ".pi" / "agent" / "settings.json"
-    if settings.is_file():
+    if settings.exists():
         try:
-            payload = json.loads(_read_text(settings))
-        except json.JSONDecodeError:
-            payload = None
-        if isinstance(payload, dict):
-            found.extend(_strings(payload.get("packages")))
+            payload = json.loads(settings.read_text(encoding="utf-8"))
+        except Exception as exc:
+            found.extend(_raw_sha_strings(settings))
+            warnings.append({"file": str(settings), "problem": str(exc) or type(exc).__name__})
+        else:
+            if isinstance(payload, dict):
+                found.extend(_strings(payload.get("packages")))
 
     bin_dir = home / ".local" / "bin"
     if bin_dir.is_dir():
         for path in bin_dir.glob("herdr-*"):
             if path.is_file():
-                found.append(_read_text(path))
+                try:
+                    found.append(path.read_text(encoding="utf-8"))
+                except Exception as exc:
+                    found.extend(_raw_sha_strings(path))
+                    warnings.append({"file": str(path), "problem": str(exc) or type(exc).__name__})
 
     launcher = home / ".config" / "herdr-harness" / "run-herdr-harness.sh"
-    if launcher.is_file():
-        found.append(_read_text(launcher))
-    return found
+    if launcher.exists():
+        try:
+            found.append(launcher.read_text(encoding="utf-8"))
+        except Exception as exc:
+            found.extend(_raw_sha_strings(launcher))
+            warnings.append({"file": str(launcher), "problem": str(exc) or type(exc).__name__})
+    return found, warnings
 
 
 def candidates(root: Path) -> list[Runtime]:
@@ -160,7 +175,7 @@ def prune(root: Path, home: Path, keep: int, *, apply: bool) -> dict[str, Any]:
     """Build the pruning report and optionally remove the runtimes selected by it."""
     root_real = Path(os.path.realpath(root))
     runtimes = candidates(root)
-    references = reference_strings(home)
+    references, warnings = reference_strings(home)
     in_use = {runtime.name for runtime in runtimes if any(runtime.name in text for text in references)}
     retained = sorted((runtime for runtime in runtimes if runtime.name not in in_use), key=lambda item: item.mtime, reverse=True)
     newest = {runtime.name for runtime in retained[:max(0, keep)]}
@@ -175,6 +190,7 @@ def prune(root: Path, home: Path, keep: int, *, apply: bool) -> dict[str, Any]:
         "kept": sorted(kept),
         "removed": [runtime.name for runtime in removed],
         "freedBytes": sum(runtime.size for runtime in removed),
+        "warnings": sorted(warnings, key=lambda warning: warning["file"]),
     }
 
 

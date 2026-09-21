@@ -65,6 +65,32 @@ class PruneCompanionRuntimesTests(unittest.TestCase):
         self.assertEqual(result["kept"], result["inUse"])
         self.assertEqual(result["removed"], [])
 
+    def test_recovers_references_from_malformed_launch_agent_plist(self):
+        referenced = revision("a", "1")
+        self.runtime(referenced)
+        agents = self.home / "Library" / "LaunchAgents"
+        agents.mkdir(parents=True)
+        malformed = agents / "malformed.plist"
+        malformed.write_bytes(
+            plistlib.dumps({"ProgramArguments": ["runtime", referenced]}) + b"\nnot xml garbage"
+        )
+
+        result = prune.prune(self.root, self.home, 0, apply=False)
+
+        self.assertIn(referenced, result["inUse"])
+        warnings = [warning for warning in result["warnings"] if warning["file"] == str(malformed)]
+        self.assertEqual(len(warnings), 1)
+        self.assertTrue(warnings[0]["problem"])
+
+    def test_warns_for_undecodable_pi_settings(self):
+        settings = self.home / ".pi" / "agent" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_bytes(b"\xff\xfe not json")
+
+        result = prune.prune(self.root, self.home, 0, apply=False)
+
+        self.assertTrue(any(warning["file"] == str(settings) for warning in result["warnings"]))
+
     def test_retains_newest_unused_and_all_in_use_runtimes(self):
         oldest = revision("a", "1")
         in_use = revision("b", "2")

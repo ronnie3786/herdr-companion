@@ -45,6 +45,7 @@
   }
   const literal = value => `<div class="literal-text">${escape(value)}</div>`;
   const messageContent = message => message.role==='assistant' ? `<div class="markdown">${markdown(message.text||message.content)}</div>` : literal(message.text||message.content);
+  const humanMessage = message => message.role==='user'||message.role==='human';
   const label = value => String(value || 'ready').replaceAll('_', ' ');
   const date = value => { const d = new Date(value || 0); return Number.isNaN(+d) ? '' : d.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}); };
   const base = new URL('../api/v1/first-mate/', location.href).pathname;
@@ -117,7 +118,7 @@
     const f=d.feature;
     $('#feature-header').innerHTML=`<h1>${escape(f.title)}</h1><p>Your First Mate · one conversation for this feature</p>${status(f.status)}`;
     const log=$('#messages'), nearBottom=log.scrollHeight-log.scrollTop-log.clientHeight<90;
-    log.innerHTML=d.messages.map(m=>`<article class="message ${m.role==='user'?'user':''}"><span class="avatar" aria-hidden="true">${m.role==='user'?'You':'FM'}</span><div class="message-main"><div class="message-meta"><strong>${m.role==='user'?'You':m.role==='system'?'Workflow':'First Mate'}</strong><time>${escape(date(m.created_at))}</time>${m.status==='queued'?'<small>Queued</small>':''}</div><div class="prose">${messageContent(m)}</div></div></article>`).join('')||empty('Ready for your direction','Tell First Mate what this feature should achieve.');
+    log.innerHTML=d.messages.filter(m=>['user','human','assistant'].includes(m.role)).map(m=>`<article class="message ${humanMessage(m)?'user':''}"><span class="avatar" aria-hidden="true">${humanMessage(m)?'You':'FM'}</span><div class="message-main"><div class="message-meta"><strong>${humanMessage(m)?'You':'First Mate'}</strong><time>${escape(date(m.created_at))}</time>${m.status==='queued'?'<small>Queued</small>':''}</div><div class="prose">${messageContent(m)}</div></div></article>`).join('')||empty('Ready for your direction','Tell First Mate what this feature should achieve.');
     if(nearBottom)log.scrollTop=log.scrollHeight;
     $('#chat-status').textContent=['completed','cancelled'].includes(f.status)?'This feature is closed. Its history remains available.':f.status==='awaiting_direction'?'Your move. Describe what should happen next.':f.status==='coordinating'?'First Mate is responding. You can queue your next message.':'Work continues independently. Your First Mate is available.';
     renderTabs();renderWorkspace();

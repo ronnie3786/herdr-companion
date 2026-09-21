@@ -90,14 +90,16 @@ test('revised workflow resource menus include carried evidence without rewriting
   assert.equal(snapshot.documents[0].visit_id,'original');
 });
 
-test('assistant replies render safe markdown while human and workflow text stay literal', async () => {
+test('main chat renders assistant markdown, keeps human text literal, and excludes worker outcomes', async () => {
   const app = inspector();
   await app.reply('/features', {ok:true,features:[feature('a')]});
   const snapshot = detail('a');
   snapshot.messages = [
     {role:'assistant',text:'# Result\n\nUse **care** and `code`.\n\n- One\n- Two\n\n[Safe](https://example.invalid) [Unsafe](javascript:alert(1))\n\n~~~js\nconst safe = true;\n~~~\n\n<script>bad()</script>',status:'delivered'},
     {role:'user',text:'**Keep my markers** <b>literal</b>',status:'queued'},
-    {role:'system',text:'# Workflow literal'},
+    {role:'human',text:'_Human alias_ <i>literal</i>',status:'delivered'},
+    {role:'system',text:'# Hidden worker outcome'},
+    {role:'tool',text:'Hidden raw tool output'},
   ];
   await app.reply('/features/a',snapshot);
   const html = app.element('#messages').innerHTML;
@@ -110,7 +112,10 @@ test('assistant replies render safe markdown while human and workflow text stay 
   assert.doesNotMatch(html, /href="javascript:/);
   assert.doesNotMatch(html, /<script>/);
   assert.match(html, /<div class="literal-text">\*\*Keep my markers\*\* &lt;b&gt;literal&lt;\/b&gt;<\/div>/);
-  assert.match(html, /<div class="literal-text"># Workflow literal<\/div>/);
+  assert.match(html, /<div class="literal-text">_Human alias_ &lt;i&gt;literal&lt;\/i&gt;<\/div>/);
+  assert.equal((html.match(/class="message user"/g)||[]).length, 2);
+  assert.equal((html.match(/<strong>You<\/strong>/g)||[]).length, 2);
+  assert.doesNotMatch(html, /Hidden worker outcome|Hidden raw tool output/);
   assert.match(html, /<small>Queued<\/small>/);
 });
 
@@ -157,19 +162,23 @@ test('non-markdown documents stay literal and deeply nested quotes are bounded',
   assert.equal((html.match(/<blockquote>/g)||[]).length, 9);
 });
 
-test('saved sessions render assistant markdown and preserve user text literally', async () => {
+test('saved sessions render assistant markdown and preserve other roles literally', async () => {
   const app = inspector();
   await app.refresh('a');
   const opening = app.click({ session: 'session-a' });
   await app.reply('/sessions/session-a', { ok: true, native_session_id: 'session-a', messages: [
     { role: 'user', text: '*literal request*' },
     { role: 'assistant', text: '> Reviewed\n\n## Answer' },
+    { role: 'system', text: '# Retained worker outcome' },
+    { role: 'tool', text: '<tool-result>literal</tool-result>' },
   ] });
   await opening;
   const html = app.element('#dialog-body').innerHTML;
   assert.match(html, /<div class="literal-text">\*literal request\*<\/div>/);
   assert.match(html, /<blockquote><p>Reviewed<\/p><\/blockquote>/);
   assert.match(html, /<h2>Answer<\/h2>/);
+  assert.match(html, /<div class="literal-text"># Retained worker outcome<\/div>/);
+  assert.match(html, /<div class="literal-text">&lt;tool-result&gt;literal&lt;\/tool-result&gt;<\/div>/);
 });
 
 test('selecting a feature removes the previous header and action controls before detail arrives', async () => {

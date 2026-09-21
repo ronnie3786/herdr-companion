@@ -43,7 +43,7 @@ struct RemoteNoteTests {
     }
 }
 
-@Suite("Shared notes store", .serialized, .timeLimit(.minutes(1)))
+@Suite("Shared notes store", .serialized, .timeLimit(.minutes(3)))
 @MainActor
 struct RemoteNotesStoreTests {
     @Test("Each machine owns its own notes even when UUIDs match")

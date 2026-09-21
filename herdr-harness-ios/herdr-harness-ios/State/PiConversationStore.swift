@@ -62,6 +62,16 @@ private struct PiCandidateReset: Error {
     let cause: PiRecoveryCause
 }
 
+protocol PiConversationSleepClock: Sendable {
+    func sleep(for duration: Duration) async throws
+}
+
+struct PiConversationSystemClock: PiConversationSleepClock {
+    func sleep(for duration: Duration) async throws {
+        try await Task.sleep(for: duration)
+    }
+}
+
 @MainActor
 private final class PiRecoveryCandidateState {
     var reducer: PiConversationReducer
@@ -118,6 +128,7 @@ final class PiConversationStore {
     @ObservationIgnored var recoveryNoProgressTimeout: Duration = .seconds(15)
     @ObservationIgnored var connectedSnapshotPollInterval: Duration = .seconds(2)
     @ObservationIgnored var offlineSnapshotPollInterval: Duration = .seconds(5)
+    @ObservationIgnored var sleepClock: any PiConversationSleepClock = PiConversationSystemClock()
     @ObservationIgnored var snapshotProvider: (@MainActor (HerdrPane) async throws -> PiConversationSnapshot)?
     @ObservationIgnored var eventsProvider: (@MainActor (HerdrPane, String?) async -> AsyncThrowingStream<PiConversationStreamEvent, any Error>?)?
     @ObservationIgnored var recoveryProgress: (@MainActor (String?) -> Void)?
@@ -562,7 +573,7 @@ final class PiConversationStore {
                         let retryGeneration = projectionGeneration
                         let delay = retryDelay(attempt: semanticRecoveryAttempts)
                         do {
-                            try await performOwnedWork { try await Task.sleep(for: delay) }
+                            try await performOwnedWork { try await self.sleepClock.sleep(for: delay) }
                         } catch is CancellationError where !Task.isCancelled && retryGeneration != projectionGeneration {
                             continue
                         }
@@ -620,7 +631,7 @@ final class PiConversationStore {
                     let retryGeneration = projectionGeneration
                     let delay = retryDelay(attempt: semanticRecoveryAttempts)
                     do {
-                        try await performOwnedWork { try await Task.sleep(for: delay) }
+                        try await performOwnedWork { try await self.sleepClock.sleep(for: delay) }
                     } catch is CancellationError where !Task.isCancelled && retryGeneration != projectionGeneration {
                         continue
                     }
@@ -646,7 +657,7 @@ final class PiConversationStore {
                 let retryGeneration = projectionGeneration
                 let delay = retryDelay(attempt: failedAttempts)
                 do {
-                    try await performOwnedWork { try await Task.sleep(for: delay) }
+                    try await performOwnedWork { try await self.sleepClock.sleep(for: delay) }
                 } catch is CancellationError where !Task.isCancelled && retryGeneration != projectionGeneration {
                     continue
                 } catch {
@@ -759,7 +770,7 @@ final class PiConversationStore {
                 replay.failedAttempts = min(replay.failedAttempts + 1, reconnectAttemptLimit)
                 do {
                     try await performOwnedWork {
-                        try await Task.sleep(for: self.retryDelay(attempt: replay.failedAttempts))
+                        try await self.sleepClock.sleep(for: self.retryDelay(attempt: replay.failedAttempts))
                     }
                 } catch is CancellationError where expiredRecoveryDeadline == deadlineToken {
                     throw PiRecoveryExhausted()
@@ -806,7 +817,7 @@ final class PiConversationStore {
             if expiredRecoveryDeadline == deadlineToken { throw PiRecoveryExhausted() }
             do {
                 try await performOwnedWork {
-                    try await Task.sleep(for: self.retryDelay(attempt: replay.failedAttempts))
+                    try await self.sleepClock.sleep(for: self.retryDelay(attempt: replay.failedAttempts))
                 }
             } catch is CancellationError where expiredRecoveryDeadline == deadlineToken {
                 throw PiRecoveryExhausted()
@@ -869,7 +880,7 @@ final class PiConversationStore {
             do {
                 let delay = previous.connected ? connectedSnapshotPollInterval : offlineSnapshotPollInterval
                 let snapshot = try await performOwnedWork {
-                    try await Task.sleep(for: delay)
+                    try await self.sleepClock.sleep(for: delay)
                     return try await self.fetchSnapshot(model: model, pane: pane)
                 }
                 try Task.checkCancellation()
@@ -912,7 +923,7 @@ final class PiConversationStore {
                 lastError = hasContent ? "Live updates paused. Reconnecting…" : error.localizedDescription
                 let delay = retryDelay(attempt: failures)
                 do {
-                    try await performOwnedWork { try await Task.sleep(for: delay) }
+                    try await performOwnedWork { try await self.sleepClock.sleep(for: delay) }
                 } catch is CancellationError where !Task.isCancelled && generation != projectionGeneration {
                     return .superseded
                 } catch {
@@ -1011,8 +1022,9 @@ final class PiConversationStore {
         activeRecoveryDeadline = token
         expiredRecoveryDeadline = nil
         let timeout = recoveryNoProgressTimeout
+        let sleepClock = self.sleepClock
         recoveryDeadlineTask = Task { [weak self] in
-            do { try await Task.sleep(for: timeout) } catch { return }
+            do { try await sleepClock.sleep(for: timeout) } catch { return }
             guard !Task.isCancelled, let self,
                   self.projectionGeneration == generation,
                   self.activeRecoveryDeadline == token

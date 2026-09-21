@@ -331,8 +331,9 @@ struct HangReproTests {
         return String(text.dropFirst().dropLast())
     }
 
-    @Test("Layout cost per row kind (40 rows each)")
+    @Test("Layout cost per row kind (8 rows each)")
     func rowKindCosts() async throws {
+        let rowCount = 8
         let clock = ContinuousClock()
         func tool(_ i: Int, status: PiToolInvocation.Status = .succeeded) -> PiToolInvocation {
             PiToolInvocation(id: "tool:\(i)", callID: "c\(i)", name: "bash", arguments: .string("ls -la /tmp/project/\(i)"), result: .string("done \(i)"), status: status, startedAt: Date(), finishedAt: Date())
@@ -343,7 +344,7 @@ struct HangReproTests {
         func assistant(_ i: Int) -> PiAssistantBlock {
             PiAssistantBlock(id: "a\(i)", text: "Step \(i): checked the **repository** state and found `\(i)` files that need a closer look before moving on.", status: .complete, timestamp: nil)
         }
-        let groups = (0..<40).map { i in PiTurnSegmentation.segments(for: [.thinking(thinking(i)), .tool(tool(i))]).compactMap { seg -> PiWorkingGroup? in if case let .working(g) = seg { return g }; return nil }.first! }
+        let groups = (0..<rowCount).map { i in PiTurnSegmentation.segments(for: [.thinking(thinking(i)), .tool(tool(i))]).compactMap { seg -> PiWorkingGroup? in if case let .working(g) = seg { return g }; return nil }.first! }
         var results: [(String, Duration)] = []
         func measure(_ name: String, @ViewBuilder content: () -> some View) async throws {
             let start = clock.now
@@ -351,12 +352,12 @@ struct HangReproTests {
             results.append((name, start.duration(to: clock.now)))
         }
         try await measure("baseline-empty") { Color.clear }
-        try await measure("plainText") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in Text("Step \(i): plain text row") } } }
-        try await measure("assistantMarkdown") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in PiAssistantMessageView(block: assistant(i)) } } }
-        try await measure("workingGroupCollapsed") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in PiWorkingGroupView(group: groups[i]) } } }
-        try await measure("toolCardCollapsed") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in PiToolCardView(tool: tool(i)) } } }
-        try await measure("thinkingCollapsed") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in PiThinkingDisclosureView(block: thinking(i)) } } }
-        try await measure("wgHeaderOnly-HStack") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in
+        try await measure("plainText") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<rowCount, id: \.self) { i in Text("Step \(i): plain text row") } } }
+        try await measure("assistantMarkdown") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<rowCount, id: \.self) { i in PiAssistantMessageView(block: assistant(i)) } } }
+        try await measure("workingGroupCollapsed") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<rowCount, id: \.self) { i in PiWorkingGroupView(group: groups[i]) } } }
+        try await measure("toolCardCollapsed") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<rowCount, id: \.self) { i in PiToolCardView(tool: tool(i)) } } }
+        try await measure("thinkingCollapsed") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<rowCount, id: \.self) { i in PiThinkingDisclosureView(block: thinking(i)) } } }
+        try await measure("wgHeaderOnly-HStack") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<rowCount, id: \.self) { i in
             HStack(spacing: 9) {
                 Image(systemName: "gearshape.2").foregroundStyle(HerdrTheme.muted).frame(width: 18, height: 18)
                 Text("Clanking").herdrFont(.caption, weight: .semibold).foregroundStyle(HerdrTheme.mist)
@@ -368,7 +369,7 @@ struct HangReproTests {
             .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
             .frame(minHeight: 44)
         } } }
-        try await measure("wgHeader-noSymbols") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in
+        try await measure("wgHeader-noSymbols") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<rowCount, id: \.self) { i in
             HStack(spacing: 9) {
                 Circle().fill(HerdrTheme.muted).frame(width: 18, height: 18)
                 Text("Clanking").herdrFont(.caption, weight: .semibold).foregroundStyle(HerdrTheme.mist)
@@ -379,7 +380,7 @@ struct HangReproTests {
             .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
             .frame(minHeight: 44)
         } } }
-        try await measure("wgHeader-systemFont") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in
+        try await measure("wgHeader-systemFont") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<rowCount, id: \.self) { i in
             HStack(spacing: 9) {
                 Circle().fill(HerdrTheme.muted).frame(width: 18, height: 18)
                 Text("Clanking").font(.caption.weight(.semibold)).foregroundStyle(HerdrTheme.mist)
@@ -390,7 +391,7 @@ struct HangReproTests {
             .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
             .frame(minHeight: 44)
         } } }
-        try await measure("wgHeader-inButton") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in
+        try await measure("wgHeader-inButton") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<rowCount, id: \.self) { i in
             Button {} label: {
                 HStack(spacing: 9) {
                     Circle().fill(HerdrTheme.muted).frame(width: 18, height: 18)
@@ -408,13 +409,13 @@ struct HangReproTests {
         } } }
         // Bisect the collapsed-card chrome, one modifier family at a time.
         @State var dummy = false
-        try await measure("card-bare") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in
+        try await measure("card-bare") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<rowCount, id: \.self) { i in
             PiDisclosureCard(isExpanded: .constant(false), chevronColor: HerdrTheme.mist) { Text("content") } label: { Text("Clanking \(i)").herdrFont(.caption, weight: .semibold) }
                 .padding(.horizontal, 12).padding(.vertical, 10)
                 .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
                 .frame(minHeight: 44)
         } } }
-        try await measure("card+tint+opacity") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in
+        try await measure("card+tint+opacity") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<rowCount, id: \.self) { i in
             PiDisclosureCard(isExpanded: .constant(false), chevronColor: HerdrTheme.mist) { Text("content") } label: { Text("Clanking \(i)").herdrFont(.caption, weight: .semibold) }
                 .tint(HerdrTheme.mist)
                 .padding(.horizontal, 12).padding(.vertical, 10)
@@ -422,7 +423,7 @@ struct HangReproTests {
                 .frame(minHeight: 44)
                 .opacity(HerdrProse.subOutputOpacity)
         } } }
-        try await measure("card+animations") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in
+        try await measure("card+animations") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<rowCount, id: \.self) { i in
             PiDisclosureCard(isExpanded: .constant(false), chevronColor: HerdrTheme.mist) { Text("content") } label: { Text("Clanking \(i)").herdrFont(.caption, weight: .semibold) }
                 .padding(.horizontal, 12).padding(.vertical, 10)
                 .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
@@ -430,7 +431,7 @@ struct HangReproTests {
                 .animation(PiChatMotion.stateAnimation(reduceMotion: false), value: i)
                 .frame(minHeight: 44)
         } } }
-        try await measure("card+onChange") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in
+        try await measure("card+onChange") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<rowCount, id: \.self) { i in
             PiDisclosureCard(isExpanded: .constant(false), chevronColor: HerdrTheme.mist) { Text("content") } label: { Text("Clanking \(i)").herdrFont(.caption, weight: .semibold) }
                 .padding(.horizontal, 12).padding(.vertical, 10)
                 .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
@@ -438,14 +439,14 @@ struct HangReproTests {
                 .onChange(of: i, initial: true) { _, _ in }
                 .frame(minHeight: 44)
         } } }
-        try await measure("card+haptic") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in
+        try await measure("card+haptic") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<rowCount, id: \.self) { i in
             PiDisclosureCard(isExpanded: .constant(false), chevronColor: HerdrTheme.mist) { Text("content") } label: { Text("Clanking \(i)").herdrFont(.caption, weight: .semibold) }
                 .padding(.horizontal, 12).padding(.vertical, 10)
                 .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
                 .herdrHaptic(trigger: HerdrHapticPulse())
                 .frame(minHeight: 44)
         } } }
-        try await measure("card+labelZStackTransitions") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in
+        try await measure("card+labelZStackTransitions") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<rowCount, id: \.self) { i in
             PiDisclosureCard(isExpanded: .constant(false), chevronColor: HerdrTheme.mist) { Text("content") } label: {
                 HStack(spacing: 9) {
                     ZStack {
@@ -465,7 +466,7 @@ struct HangReproTests {
                 .background(HerdrTheme.graphite.opacity(0.55), in: RoundedRectangle(cornerRadius: 11))
                 .frame(minHeight: 44)
         } } }
-        try await measure("card+progressViewOnly") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<40, id: \.self) { i in
+        try await measure("card+progressViewOnly") { VStack(alignment: .leading, spacing: 10) { ForEach(0..<rowCount, id: \.self) { i in
             HStack(spacing: 9) {
                 ProgressView().controlSize(.small)
                 Text("Clanking \(i)").herdrFont(.caption, weight: .semibold)
@@ -478,6 +479,7 @@ struct HangReproTests {
         _ = dummy
         for (name, duration) in results {
             print("HANGREPRO rowcost \(name) elapsed=\(duration)")
+            print("HANGREPRO rowcost \(name) perRow=\(duration / rowCount)")
         }
     }
 

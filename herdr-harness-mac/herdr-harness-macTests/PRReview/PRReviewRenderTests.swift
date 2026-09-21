@@ -32,6 +32,39 @@ struct PRReviewRenderTests {
         result.expectSubstantial()
     }
 
+    @Test("Completed missing diff renders for visual review")
+    func rendersCompletedMissingDiff() async throws {
+        let configuration = try #require(ServerConfiguration(
+            urlString: "https://example.invalid",
+            token: "synthetic-token"
+        ))
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [PRReviewMissingDiffURLProtocol.self]
+        let client = HerdrAPIClient(
+            configuration: configuration,
+            session: URLSession(configuration: sessionConfiguration)
+        )
+        let store = PRReviewStore()
+        let snapshot = PRReviewDemo.snapshot()
+        let selectedPath = snapshot.files[0].path
+        store.configure(client: client, machineID: "synthetic-host", demo: false)
+        store.select(snapshot.review.id)
+        store.receive(snapshot)
+        store.selectedPath = selectedPath
+        await store.loadDiff(for: selectedPath)
+
+        #expect(store.completedDiffIdentity == store.currentDiffRequestIdentity)
+        #expect(store.diff?.files.isEmpty == true)
+        let result = try await HerdrRenderHarness.render(
+            "pr-review-completed-missing-diff.png",
+            size: CGSize(width: 1240, height: 820)
+        ) {
+            PRReviewContainerView(store: store, canControl: true)
+        }
+
+        result.expectSubstantial()
+    }
+
     @Test(
         "Files layout bounds the rail and displays native code",
         arguments: [CGFloat(1240), 1720]
@@ -276,4 +309,26 @@ struct PRReviewRenderTests {
     private func descendants(_ view: NSView) -> [NSView] {
         [view] + view.subviews.flatMap(descendants)
     }
+}
+
+private final class PRReviewMissingDiffURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let body = Data("""
+        {"ok":true,"review_id":"prr_demo42","base_sha":"base","head_sha":"head","truncated":false,"files":[]}
+        """.utf8)
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

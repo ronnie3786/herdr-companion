@@ -274,6 +274,7 @@ struct PRReviewDiffView: View {
         VStack(spacing: 0) {
             if let file {
                 header(file)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let message = store.currentDiffLoadError {
                     unavailable("Couldn’t load this diff", detail: message, retry: true)
                 } else if let diffFile {
@@ -403,5 +404,6 @@ struct PRReviewDiffView: View {
                     .buttonStyle(.borderedProminent)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

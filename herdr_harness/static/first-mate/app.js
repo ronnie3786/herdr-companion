@@ -2,6 +2,49 @@
 (() => {
   const $ = selector => document.querySelector(selector);
   const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const safeLink = value => {
+    const href=String(value||'').trim();
+    if(/^(?:https?:|mailto:)/i.test(href)||/^(?:#|\/|\.\/|\.\.\/)/.test(href))return href;
+    return null;
+  };
+  function markdownInline(value) {
+    const source=String(value??'');let html='',cursor=0;
+    const token=/(`+)([^`\n]*?)\1|\[([^\]\n]+)\]\(([^\s)]+)\)/g;
+    const emphasis=text=>escape(text)
+      .replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>')
+      .replace(/__([^_\n]+)__/g,'<strong>$1</strong>')
+      .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g,'$1<em>$2</em>')
+      .replace(/(^|[^_])_([^_\n]+)_(?!_)/g,'$1<em>$2</em>');
+    for(const match of source.matchAll(token)){
+      html+=emphasis(source.slice(cursor,match.index));
+      if(match[1])html+=`<code>${escape(match[2])}</code>`;
+      else {const href=safeLink(match[4]);html+=href?`<a href="${escape(href)}">${emphasis(match[3])}</a>`:escape(match[0]);}
+      cursor=match.index+match[0].length;
+    }
+    return html+emphasis(source.slice(cursor));
+  }
+  function markdown(value, quoteDepth=0) {
+    const lines=String(value??'').replace(/\r\n?/g,'\n').split('\n');let html='',index=0;
+    const tableDivider=line=>/^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+    const cells=line=>line.trim().replace(/^\||\|$/g,'').split('|').map(cell=>cell.trim());
+    const beginsBlock=(line,next)=>/^\s*$/.test(line)||/^\s*(?:`{3,}|~{3,})/.test(line)||/^\s{0,3}#{1,6}\s+/.test(line)||/^\s*>/.test(line)||/^\s*(?:[-+*]|\d+[.)])\s+/.test(line)||(line.includes('|')&&tableDivider(next||''));
+    while(index<lines.length){
+      const line=lines[index];
+      if(/^\s*$/.test(line)){index++;continue;}
+      const fence=line.match(/^\s*(`{3,}|~{3,})\s*([^\s`]*)\s*$/);
+      if(fence){index++;const code=[],marker=fence[1][0],closing=new RegExp(`^\\s*${marker}{${fence[1].length},}\\s*$`);while(index<lines.length&&!closing.test(lines[index]))code.push(lines[index++]);if(index<lines.length)index++;html+=`<pre${fence[2]?` data-language="${escape(fence[2])}"`:''}><code>${escape(code.join('\n'))}</code></pre>`;continue;}
+      const heading=line.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
+      if(heading){const level=heading[1].length;html+=`<h${level}>${markdownInline(heading[2])}</h${level}>`;index++;continue;}
+      if(/^\s*>/.test(line)){const quote=[];while(index<lines.length&&/^\s*>/.test(lines[index]))quote.push(lines[index++].replace(/^\s*>\s?/,''));const content=quoteDepth<8?markdown(quote.join('\n'),quoteDepth+1):`<p>${quote.map(markdownInline).join('<br>')}</p>`;html+=`<blockquote>${content}</blockquote>`;continue;}
+      const item=line.match(/^\s*(?:([-+*])|(\d+)[.)])\s+(.+)$/);
+      if(item){const ordered=!!item[2],items=[];while(index<lines.length){const current=lines[index].match(/^\s*(?:([-+*])|(\d+)[.)])\s+(.+)$/);if(!current||!!current[2]!==ordered)break;items.push(current[3]);index++;}const tag=ordered?'ol':'ul';html+=`<${tag}>${items.map(text=>`<li>${markdownInline(text)}</li>`).join('')}</${tag}>`;continue;}
+      if(line.includes('|')&&tableDivider(lines[index+1]||'')){const headers=cells(line);index+=2;const rows=[];while(index<lines.length&&lines[index].includes('|')&&!/^\s*$/.test(lines[index]))rows.push(cells(lines[index++]));html+=`<div class="markdown-table"><table><thead><tr>${headers.map(cell=>`<th>${markdownInline(cell)}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr>${headers.map((_,column)=>`<td>${markdownInline(row[column]||'')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;continue;}
+      const paragraph=[line];index++;while(index<lines.length&&!beginsBlock(lines[index],lines[index+1]))paragraph.push(lines[index++]);html+=`<p>${paragraph.map(markdownInline).join('<br>')}</p>`;
+    }
+    return html;
+  }
+  const literal = value => `<div class="literal-text">${escape(value)}</div>`;
+  const messageContent = message => message.role==='assistant' ? `<div class="markdown">${markdown(message.text||message.content)}</div>` : literal(message.text||message.content);
   const label = value => String(value || 'ready').replaceAll('_', ' ');
   const date = value => { const d = new Date(value || 0); return Number.isNaN(+d) ? '' : d.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}); };
   const base = new URL('../api/v1/first-mate/', location.href).pathname;
@@ -74,7 +117,7 @@
     const f=d.feature;
     $('#feature-header').innerHTML=`<h1>${escape(f.title)}</h1><p>Your First Mate · one conversation for this feature</p>${status(f.status)}`;
     const log=$('#messages'), nearBottom=log.scrollHeight-log.scrollTop-log.clientHeight<90;
-    log.innerHTML=d.messages.map(m=>`<article class="message ${m.role==='user'?'user':''}"><span class="avatar" aria-hidden="true">${m.role==='user'?'You':'FM'}</span><div class="message-main"><div class="message-meta"><strong>${m.role==='user'?'You':m.role==='system'?'Workflow':'First Mate'}</strong><time>${escape(date(m.created_at))}</time>${m.status==='queued'?'<small>Queued</small>':''}</div><div class="prose">${escape(m.text||m.content)}</div></div></article>`).join('')||empty('Ready for your direction','Tell First Mate what this feature should achieve.');
+    log.innerHTML=d.messages.map(m=>`<article class="message ${m.role==='user'?'user':''}"><span class="avatar" aria-hidden="true">${m.role==='user'?'You':'FM'}</span><div class="message-main"><div class="message-meta"><strong>${m.role==='user'?'You':m.role==='system'?'Workflow':'First Mate'}</strong><time>${escape(date(m.created_at))}</time>${m.status==='queued'?'<small>Queued</small>':''}</div><div class="prose">${messageContent(m)}</div></div></article>`).join('')||empty('Ready for your direction','Tell First Mate what this feature should achieve.');
     if(nearBottom)log.scrollTop=log.scrollHeight;
     $('#chat-status').textContent=['completed','cancelled'].includes(f.status)?'This feature is closed. Its history remains available.':f.status==='awaiting_direction'?'Your move. Describe what should happen next.':f.status==='coordinating'?'First Mate is responding. You can queue your next message.':'Work continues independently. Your First Mate is available.';
     renderTabs();renderWorkspace();
@@ -105,7 +148,8 @@
       const result=await api(`documents/${encodeURIComponent(id)}`),d=result.document;
       if(generation!==state.generation || resource!==state.resourceGeneration)return;
       if(d?.id!==id || d.feature_id!==feature)throw Error('Document ownership did not match this feature.');
-      modal(d.title,`<div class="document-meta">Produced by ${escape(d.assignment_id||'First Mate')}<br>Session ${escape(d.native_session_id||'Unassigned')}</div><pre>${escape(d.content)}</pre>${d.native_session_id?`<button data-session="${escape(d.native_session_id)}">Open producing session</button>`:''}`);
+      const content=/^text\/markdown(?:\s*;|$)/i.test(d.media_type||'')?`<div class="markdown document-content">${markdown(d.content)}</div>`:`<div class="literal-text document-content">${escape(d.content)}</div>`;
+      modal(d.title,`<div class="document-meta">Produced by ${escape(d.assignment_id||'First Mate')}<br>Session ${escape(d.native_session_id||'Unassigned')}</div>${content}${d.native_session_id?`<button data-session="${escape(d.native_session_id)}">Open producing session</button>`:''}`);
     }catch(e){if(generation===state.generation && resource===state.resourceGeneration)notice(e.message);}
   }
   async function openSession(id, before=null){
@@ -121,7 +165,7 @@
       state.sessionView={id,messages};
       const paging=d.total_messages!=null?`<div class="document-meta">${messages.length} of ${escape(d.total_messages)} saved messages</div>`:'';
       const earlier=d.next_before!=null?`<button data-session="${escape(id)}" data-before="${escape(d.next_before)}">Load earlier messages</button>`:'';
-      modal('Saved agent session',`<p class="document-meta">${escape(id)}</p>${paging}${earlier}${messages.map(m=>`<article class="event"><strong>${escape(m.role)}</strong><div class="prose">${escape(m.text||m.content)}</div></article>`).join('')||empty('No saved messages yet','The exact session is registered, but it has not written a transcript yet.')}`);
+      modal('Saved agent session',`<p class="document-meta">${escape(id)}</p>${paging}${earlier}${messages.map(m=>`<article class="event"><strong>${escape(m.role)}</strong><div class="prose">${messageContent(m)}</div></article>`).join('')||empty('No saved messages yet','The exact session is registered, but it has not written a transcript yet.')}`);
     }catch(e){if(generation===state.generation && resource===state.resourceGeneration)notice(e.message);}
   }
   async function openAgent(id){const a=state.detail.assignments.find(a=>a.id===id);const sessions=(state.detail.sessions||[]).filter(s=>s.assignment_id===id);if(!sessions.length&&a?.native_session_id)return openSession(a.native_session_id);modal(a?.title||'Assignment',`<p>${escape(label(a?.status))}</p>${sessions.length?sessions.map(s=>`<button class="row" data-session="${escape(s.native_session_id)}"><span><strong>${s.native_session_id===a.native_session_id?'Latest session':'Earlier session'}</strong><small>${escape(s.native_session_id)}</small></span>${status(s.status)}</button>`).join(''):'<p class="document-meta">A saved session will appear after this assignment starts.</p>'}${state.detail.sessions_truncated?'<p>Showing recent session history. Older sessions remain retained on the companion host.</p>':''}`);}

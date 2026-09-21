@@ -16,8 +16,14 @@ struct FirstMateMessageView: View {
                     Text(human ? "You" : "First Mate").herdrFont(.caption, weight: .semibold)
                     if message.status == "queued" { Text("Queued").herdrFont(.caption2).foregroundStyle(.secondary) }
                 }
-                Text(message.text)
-                    .herdrFont(.body).lineSpacing(5).textSelection(.enabled)
+                Group {
+                    if human {
+                        Text(message.text)
+                            .herdrFont(.body).lineSpacing(5).textSelection(.enabled)
+                    } else {
+                        FirstMateMarkdownContentView(source: message.text)
+                    }
+                }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(human ? 12 : 0)
                     .background(human ? FirstMatePalette(scheme: scheme).surface : .clear, in: .rect(cornerRadius: 9))

@@ -90,6 +90,88 @@ test('revised workflow resource menus include carried evidence without rewriting
   assert.equal(snapshot.documents[0].visit_id,'original');
 });
 
+test('assistant replies render safe markdown while human and workflow text stay literal', async () => {
+  const app = inspector();
+  await app.reply('/features', {ok:true,features:[feature('a')]});
+  const snapshot = detail('a');
+  snapshot.messages = [
+    {role:'assistant',text:'# Result\n\nUse **care** and `code`.\n\n- One\n- Two\n\n[Safe](https://example.invalid) [Unsafe](javascript:alert(1))\n\n~~~js\nconst safe = true;\n~~~\n\n<script>bad()</script>',status:'delivered'},
+    {role:'user',text:'**Keep my markers** <b>literal</b>',status:'queued'},
+    {role:'system',text:'# Workflow literal'},
+  ];
+  await app.reply('/features/a',snapshot);
+  const html = app.element('#messages').innerHTML;
+  assert.match(html, /<h1>Result<\/h1>/);
+  assert.match(html, /<strong>care<\/strong>/);
+  assert.match(html, /<code>code<\/code>/);
+  assert.match(html, /<ul><li>One<\/li><li>Two<\/li><\/ul>/);
+  assert.match(html, /href="https:\/\/example\.invalid"/);
+  assert.match(html, /<pre data-language="js"><code>const safe = true;<\/code><\/pre>/);
+  assert.doesNotMatch(html, /href="javascript:/);
+  assert.doesNotMatch(html, /<script>/);
+  assert.match(html, /<div class="literal-text">\*\*Keep my markers\*\* &lt;b&gt;literal&lt;\/b&gt;<\/div>/);
+  assert.match(html, /<div class="literal-text"># Workflow literal<\/div>/);
+  assert.match(html, /<small>Queued<\/small>/);
+});
+
+test('retained documents render tables and code without accepting raw HTML', async () => {
+  const app = inspector();
+  await app.refresh('a');
+  const opening = app.click({ document: 'document-a' });
+  await app.reply('/documents/document-a', { ok: true, document: {
+    id: 'document-a', feature_id: 'a', title: 'Evidence', media_type: 'text/markdown; charset=utf-8',
+    content: '| Item | State |\n| --- | --- |\n| Check | **Done** |\n\n```sh\nprintf "safe"\n```\n\n<img src=x onerror=bad()>',
+  }});
+  await opening;
+  const html = app.element('#dialog-body').innerHTML;
+  assert.match(html, /class="markdown-table"/);
+  assert.match(html, /<th>Item<\/th>/);
+  assert.match(html, /<td><strong>Done<\/strong><\/td>/);
+  assert.match(html, /<pre data-language="sh"><code>printf &quot;safe&quot;<\/code><\/pre>/);
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /&lt;img src=x onerror=bad\(\)&gt;/);
+});
+
+test('non-markdown documents stay literal and deeply nested quotes are bounded', async () => {
+  const app = inspector();
+  await app.refresh('a');
+  let opening = app.click({ document: 'document-a' });
+  await app.reply('/documents/document-a', { ok: true, document: {
+    id: 'document-a', feature_id: 'a', title: 'Data', media_type: 'application/json',
+    content: '{"heading":"# literal","html":"<b>literal</b>"}',
+  }});
+  await opening;
+  let html = app.element('#dialog-body').innerHTML;
+  assert.doesNotMatch(html, /class="markdown document-content"/);
+  assert.match(html, /&quot;heading&quot;:&quot;# literal&quot;/);
+  assert.match(html, /&lt;b&gt;literal&lt;\/b&gt;/);
+
+  const snapshot = detail('b');
+  snapshot.messages = [{role:'assistant',text:`${'> '.repeat(30)}Retained tail`}];
+  const selection = app.click({feature:'b'});
+  await app.reply('/features', {ok:true,features:[feature('a'),feature('b')]});
+  await app.reply('/features/b',snapshot);
+  await selection;
+  html = app.element('#messages').innerHTML;
+  assert.match(html, /Retained tail/);
+  assert.equal((html.match(/<blockquote>/g)||[]).length, 9);
+});
+
+test('saved sessions render assistant markdown and preserve user text literally', async () => {
+  const app = inspector();
+  await app.refresh('a');
+  const opening = app.click({ session: 'session-a' });
+  await app.reply('/sessions/session-a', { ok: true, native_session_id: 'session-a', messages: [
+    { role: 'user', text: '*literal request*' },
+    { role: 'assistant', text: '> Reviewed\n\n## Answer' },
+  ] });
+  await opening;
+  const html = app.element('#dialog-body').innerHTML;
+  assert.match(html, /<div class="literal-text">\*literal request\*<\/div>/);
+  assert.match(html, /<blockquote><p>Reviewed<\/p><\/blockquote>/);
+  assert.match(html, /<h2>Answer<\/h2>/);
+});
+
 test('selecting a feature removes the previous header and action controls before detail arrives', async () => {
   const app = inspector();
   await app.refresh('a');

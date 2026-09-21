@@ -649,6 +649,34 @@ struct PRReviewWindowTests {
         }
     }
 
+    @Test("Closing a document window releases its lease but keeps Ready for the originating rail")
+    func documentWindowCloseKeepsReadyPhaseForRail() async throws {
+        let resources = PRReviewDocumentResources(cache: temporaryDocumentCache())
+        let client = SyntheticPRReviewWindowClient(downloadHandler: { _, _, destination in
+            try Data("synthetic report".utf8).write(to: destination, options: .atomic)
+        })
+        let main = PRReviewStore(documentResources: resources)
+        main.configure(client: client, machineID: "machine-a", demo: false)
+        let document = PRReviewDemo.snapshot().documents[1]
+        main.select(document.reviewID)
+
+        let session = try #require(
+            PRReviewDocumentWindow.makeSession(kind: "html", document: document, store: main)
+        )
+        let url = try await session.store.localURL(for: document)
+        _ = session.store.acquireDocumentLease(for: url)
+        #expect(resources.protectedURLs.contains(url.standardizedFileURL))
+        #expect(main.documentPhases[document.id] == .ready(url))
+
+        // Closing the window releases the cache protection while the shared
+        // Ready phase stays published, so the Context rail keeps offering
+        // Reveal in Finder for the cached file.
+        session.windowSession.stop()
+        #expect(!resources.protectedURLs.contains(url.standardizedFileURL))
+        #expect(main.documentPhases[document.id] == .ready(url))
+        #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+
     @Test("A retention cleanup cannot evict a document another window is displaying")
     func retentionCleanupProtectsDisplayedDocumentsAcrossStores() async throws {
         let resources = PRReviewDocumentResources(cache: PRReviewDocumentCache(

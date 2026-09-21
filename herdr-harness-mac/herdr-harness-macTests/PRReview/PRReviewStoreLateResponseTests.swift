@@ -256,6 +256,55 @@ struct PRReviewStoreLateResponseTests {
         #expect(await oldCounter.count("add-document") == 1)
     }
 
+    @Test("An invalidated connection settles an in-flight upload into a retryable state")
+    func invalidatedUploadSettlesAndRetries() async throws {
+        let gate = LateResponseGate()
+        let oldCounter = MethodCounter()
+        let newCounter = MethodCounter()
+        let oldClient = LateResponseClient(counter: oldCounter)
+        oldClient.addDocument = { _ in
+            await gate.wait()
+            return PRReviewDemo.snapshot().documents[0]
+        }
+        let store = PRReviewStore()
+        store.configure(client: oldClient, machineID: "host-a", demo: false)
+        store.select(PRReviewDemo.reviewID)
+        store.receive(PRReviewDemo.snapshot())
+
+        let file = FileManager.default.temporaryDirectory
+            .appending(path: "PRReviewLateResponse-\(UUID().uuidString).md")
+        try Data("synthetic upload".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let request = Task { await store.uploadDocuments(urls: [file]) }
+        await gate.waitUntilWaiting()
+        store.invalidateConnection()
+
+        // Invalidation retires the uploading row into a terminal state that
+        // still offers Retry rather than leaving the Context row spinning.
+        let settled = try #require(store.documentUploads.values.first?.status)
+        guard case let .failed(message) = settled else {
+            Issue.record("an upload interrupted by invalidation must become retryable, got \(settled)")
+            return
+        }
+        #expect(!message.isEmpty)
+        #expect(store.contextImportError == nil)
+        #expect(store.documentTransport(for: PRReviewDemo.snapshot().documents[0]) == nil)
+
+        await gate.release()
+        await request.value
+        #expect(store.documentUploads.values.first?.status == settled)
+
+        // Retry waits for a transport. Once a host returns, it uploads through
+        // the new client without resending from the previous generation.
+        let newClient = LateResponseClient(counter: newCounter)
+        store.reconnect(client: newClient, machineID: "host-a", demo: false)
+        await store.uploadDocuments(urls: [file])
+        #expect(store.documentUploads.values.first?.status == .uploaded)
+        #expect(await newCounter.count("add-document") == 1)
+        #expect(await oldCounter.count("add-document") == 1)
+    }
+
     @Test("An upload that completes after the reviewer switches reviews still settles")
     func uploadSettlesAcrossSelectionChange() async throws {
         let gate = LateResponseGate()

@@ -61,7 +61,11 @@ struct PRReviewWindowRoutingTests {
         #expect(model.prReviewConfiguration()?.baseURL.absoluteString == "https://default-host.example.invalid")
         #expect(model.prReviewConfiguration(pinnedMachineID: "review-host")?.baseURL.absoluteString == "https://review-host.example.invalid")
 
+        let beforeRemoval = model.prReviewWindowHostProbe(for: "review-host")
         model.machines = [model.machines[0]]
+        let afterRemoval = model.prReviewWindowHostProbe(for: "review-host")
+        #expect(afterRemoval != beforeRemoval)
+        #expect(!afterRemoval.machineExists)
         #expect(model.prReviewConfiguration(pinnedMachineID: "review-host") == nil)
         #expect(model.prReviewConfiguration(machineID: "review-host") == nil)
         #expect(model.prReviewConfiguration() != nil)
@@ -76,6 +80,9 @@ struct PRReviewWindowRoutingTests {
                 urlString: "https://review-host.example.invalid"
             ),
         ]
+        let afterReAdd = model.prReviewWindowHostProbe(for: "review-host")
+        #expect(afterReAdd != afterRemoval)
+        #expect(afterReAdd.machineExists)
         #expect(model.prReviewConfiguration(pinnedMachineID: "review-host") != nil)
         #expect(model.prReviewWindowHostResolution(for: "review-host").state == .available)
         #expect(model.prReviewWindowHostResolution(for: "review-host").client != nil)
@@ -117,9 +124,12 @@ struct PRReviewWindowRoutingTests {
         let after = probe()
 
         // A token-only edit keeps the same URL and machine, so the activation
-        // identity must change through the configuration revision instead.
+        // identity must change through that machine's configuration revision
+        // instead of the credential itself.
         #expect(before.machineExists == after.machineExists)
         #expect(before.configurationURL == after.configurationURL)
+        #expect(before.machineRevision == 0)
+        #expect(after.machineRevision == before.machineRevision + 1)
         #expect(before != after)
         #expect(before.identifier != after.identifier)
         #expect(!before.identifier.contains("synthetic-before-token"))
@@ -142,6 +152,54 @@ struct PRReviewWindowRoutingTests {
         await session.store.loadDiff(for: "Sources/Models/Seed.swift")
         #expect(await second.diffPaths == ["Sources/Models/Seed.swift"])
         #expect(await first.diffPaths.isEmpty)
+    }
+
+    @Test("An unrelated machine's credential edit leaves a pinned window identity unchanged")
+    func unrelatedMachineChangeDoesNotReactivatePinnedWindow() async throws {
+        let defaults = try testDefaults()
+        let credentials = TestCredentialStore()
+        credentials.values["api-token.review-host"] = "synthetic-review-token"
+        credentials.values["api-token.other-host"] = "synthetic-other-token"
+        let model = HerdrAppModel(
+            credentials: credentials,
+            arguments: ["HerdrTests"],
+            userDefaults: defaults,
+            configuredMachines: []
+        )
+        model.machines = [
+            HerdrMachine(id: "review-host", name: "Review", urlString: "https://review-host.example.invalid"),
+            HerdrMachine(id: "other-host", name: "Other", urlString: "https://other-host.example.invalid"),
+        ]
+        let target = PRReviewWindowTarget(machineID: "review-host", reviewID: PRReviewDemo.reviewID)
+        let before = model.prReviewWindowHostProbe(for: target.machineID)
+
+        let session = PRReviewWindowSession(target: target)
+        let first = SyntheticPRReviewWindowClient()
+        await session.activate(identity: before.identifier, hostState: .available, client: first, seed: nil)
+        #expect(await first.capabilitiesCallCount == 1)
+
+        #expect(model.updateMachine(
+            id: "other-host",
+            name: "Other",
+            urlString: "https://other-host.example.invalid",
+            token: "synthetic-other-token-rotated"
+        ))
+
+        // The pinned machine's own configuration did not change, so SwiftUI
+        // would not re-run its window task and an unrelated edit cannot retire
+        // the window's in-flight document work.
+        let after = model.prReviewWindowHostProbe(for: target.machineID)
+        #expect(after == before)
+        #expect(after.identifier == before.identifier)
+        #expect(after.machineRevision == before.machineRevision)
+        #expect(model.prReviewWindowHostProbe(for: "other-host").machineRevision == 1)
+
+        let second = SyntheticPRReviewWindowClient()
+        await session.activate(identity: after.identifier, hostState: .available, client: second, seed: nil)
+        #expect(await second.capabilitiesCallCount == 0)
+        #expect(await first.capabilitiesCallCount == 1)
+        #expect(session.store.currentMachineID == "review-host")
+        #expect(session.store.snapshot?.review.id == PRReviewDemo.reviewID)
     }
 
     @Test("Two active reviews stay open in independent sessions")

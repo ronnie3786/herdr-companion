@@ -121,6 +121,13 @@ final class HerdrAppModel {
             }
         }
     }
+    /// Machine-scoped revision for pinned PR Review windows.
+    ///
+    /// `connectionGeneration` is global, so a credential or URL edit for one
+    /// machine changes it for every other machine too. Pinned windows compare
+    /// this machine-scoped revision instead: only the edited machine's windows
+    /// re-activate, and an unrelated edit cannot retire their in-flight work.
+    private(set) var machineConfigurationRevisions: [String: Int] = [:]
     private(set) var activeServerConnection: ActiveServerConnection?
     var machineStates: [String: ConnectionState] = [:]
     var machines: [HerdrMachine]
@@ -475,6 +482,7 @@ final class HerdrAppModel {
         errorMessage = nil
         resetConnectionState()
         connectionGeneration += 1
+        noteMachineConfigurationChange(machine.id)
         runtimes[machine.id] = MachineRuntime(
             client: clientFactory(configuration),
             connection: ActiveServerConnection(configuration: configuration, generation: connectionGeneration)
@@ -546,8 +554,18 @@ final class HerdrAppModel {
             isDemoTarget: isDemoTarget,
             machineExists: machines.contains { $0.id == machineID },
             configurationURL: configuration?.baseURL.absoluteString,
-            connectionGeneration: connectionGeneration
+            machineRevision: machineConfigurationRevision(for: machineID)
         )
+    }
+
+    /// The current machine-scoped configuration revision. Windows pinned to
+    /// this machine re-activate when it changes; other machines' edits do not.
+    func machineConfigurationRevision(for machineID: String) -> Int {
+        machineConfigurationRevisions[machineID] ?? 0
+    }
+
+    private func noteMachineConfigurationChange(_ machineID: String) {
+        machineConfigurationRevisions[machineID, default: 0] &+= 1
     }
 
     /// Resolves a probe into either a usable pinned client or the unavailable
@@ -579,6 +597,7 @@ final class HerdrAppModel {
         userDefaults.set(false, forKey: "herdr.demoMode")
         isDemoMode = false
         machines = Self.loadMachines(defaults: userDefaults)
+        for machine in machines { noteMachineConfigurationChange(machine.id) }
         hasCompletedSetup = !machines.isEmpty
         userDefaults.set(hasCompletedSetup, forKey: "herdr.completedSetup")
         if let primary = machines.first {
@@ -611,6 +630,7 @@ final class HerdrAppModel {
         userDefaults.set(true, forKey: "herdr.completedSetup")
         errorMessage = nil
         connectionGeneration += 1
+        noteMachineConfigurationChange(machine.id)
         return true
     }
 
@@ -646,6 +666,7 @@ final class HerdrAppModel {
         }
         errorMessage = nil
         connectionGeneration += 1
+        noteMachineConfigurationChange(id)
         return true
     }
 
@@ -4637,6 +4658,7 @@ final class HerdrAppModel {
             machineScope.save(to: userDefaults)
         }
         connectionGeneration += 1
+        noteMachineConfigurationChange(id)
         updateAggregateConnectionState()
         mirrorPrimaryConnection()
     }

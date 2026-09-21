@@ -12,7 +12,7 @@ Start with one authoritative host, existing Herdr Companion server and Pi extens
 
 ## Shared initial API
 
-Root prefix `/api/v1/first-mate`, authenticated with normal companion read/control policy. Capability `first-mate-v1`. JSON uses snake_case. Errors use existing structured HTTP conventions. Initial endpoints:
+Root prefix `/api/v1/first-mate`, authenticated with normal companion read/control policy. Capabilities `first-mate-v1` and `first-mate-usage-v1`. JSON uses snake_case. Errors use existing structured HTTP conventions. Initial endpoints:
 
 - GET `/features`: `{ok:true,features:[feature]}`
 - POST `/features`: `{title,goal,cwd,request_id,work_item_id?}` -> `{ok:true,feature}`
@@ -20,10 +20,14 @@ Root prefix `/api/v1/first-mate`, authenticated with normal companion read/contr
 - POST `/features/{id}/messages`: `{text,request_id}` -> `{ok:true,message,feature}` immediately after durable queueing. This acknowledgment is partial; clients fetch feature detail separately.
 - POST `/features/{id}/actions`: `{action,request_id,expected_revision?}` for pause/resume/cancel. No HTTP action bypasses a human gate; demo scenario advancement is local to the synthetic native fixture.
 - GET `/features/{id}/events?after=0`: `{ok:true,events,cursor}`
-- GET `/sessions/{native_session_id}?before=<cursor>&limit=100`: `{ok:true,native_session_id,messages:[{role,text,created_at?}],next_before,total_messages,session?:metadata}`, host-owned exact-session lookup.
+- GET `/sessions/{native_session_id}?before=<cursor>&limit=100`: `{ok:true,native_session_id,messages:[{role,text,created_at?}],next_before,total_messages,usage,session?:metadata}`, host-owned exact-session lookup. `usage` always describes the entire saved session, independent of the transcript page.
 - GET `/documents/{id}`: `{ok:true,document:{metadata...,content}}`, retaining producer associations.
 
 Feature minimum fields: `id,title,goal,cwd,status,current_visit_id,revision,created_at,updated_at,work_item_id?`. Status vocabulary: `ready,coordinating,running,awaiting_direction,paused,blocked,completed,cancelled,recovering`. Detail arrays use persistent IDs and timestamps. Stage visit: `id,feature_id,stage_key,title,status,revision`. Assignment: `id,feature_id,visit_id,title,role,status,verdict,native_session_id,attempt,generation,input_revision,updated_at`. Document: `id,feature_id,visit_id,assignment_id,native_session_id,title,media_type,content_hash,created_at`. Message: `id,feature_id,role,text,status,created_at`. Event: monotonic `sequence,id,feature_id,type,summary,created_at,payload`.
+
+Usage accounting is additive. Feature objects, assignment objects and session objects may contain `usage`; assignments may also contain `subtree_usage` for that assignment, all recursive child assignments and attached advisors, deduplicated by native Pi session. Session objects may contain `kind` (`coordinator`, `worker`, or `advisor`) and `parent_session_id`. Older clients must ignore these fields and newer clients must accept their absence. The detail response still exposes at most the most recent 1,000 sessions and preserves `sessions_truncated`; feature and assignment totals always use the complete managed inventory, never that page.
+
+A usage summary has `currency` (`USD`), nullable `cost_usd`, `status` (`complete`, `partial`, or `unavailable`), nonnegative integer `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, and `total_tokens`, `usage_records`, `missing_cost_records`, `session_count`, `known_cost_sessions`, `models`, and `updated_at`. Public integer counters are bounded to the cross-client JSON-safe range `0...(2^53-1)`; an invalid or overflowing value is skipped and lowers coverage instead of emitting a rounded or un-decodable number. Each model row repeats the cost/status/token/record fields and adds nullable `provider` and `model`. Optional `stale:true` means a previously parsed amount was preserved after its source became temporarily unreadable; its status is never complete. Explicit Pi-reported zero is valid. Unknown cost is `null`, never an invented zero. These are Pi-reported estimates rather than provider invoices, and subscription-backed providers may report zero.
 
 ## Implementation layers
 

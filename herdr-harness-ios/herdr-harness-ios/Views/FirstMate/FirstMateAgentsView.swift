@@ -13,8 +13,17 @@ struct FirstMateAgentsView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
-            if !snapshot.sessions(for: nil).isEmpty {
-                FirstMateCoordinatorHistoryView(store: store, sessions: snapshot.sessions(for: nil))
+            if !snapshot.coordinatorSessions.isEmpty {
+                FirstMateCoordinatorHistoryView(store: store, sessions: snapshot.coordinatorSessions)
+            }
+            if !snapshot.advisorSessions.isEmpty {
+                FirstMateCoordinatorHistoryView(
+                    store: store,
+                    sessions: snapshot.advisorSessions,
+                    title: "Advisors",
+                    symbol: "lifepreserver",
+                    accessibilityID: "first-mate-advisor-history"
+                )
             }
             ForEach(snapshot.visits.filter { !snapshot.agents(for: $0.id).isEmpty }) { visit in
                 FirstMateAgentGroup(store: store, snapshot: snapshot, visit: visit,

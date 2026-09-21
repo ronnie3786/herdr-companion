@@ -13,10 +13,11 @@ struct FirstMateSessionHistoryView: View {
                     Button {
                         Task { await store.open(.history(session)) }
                     } label: {
-                        Label("Generation \(session.generation) · \(session.ownershipStatus) · \(session.createdAt.prefix(10))",
+                        Label("\(session.kindDisplayName) · generation \(session.generation) · \(FirstMateUsageFormatting.compactCost(session.usage)) · \(session.ownershipStatus) · \(session.createdAt.prefix(10))",
                               systemImage: resource.nativeSessionID == session.nativeSessionID ? "checkmark" : "bubble.left")
                     }
-                    .help(session.nativeSessionID)
+                    .accessibilityLabel("\(session.kindDisplayName), generation \(session.generation), \(session.ownershipStatus). \(FirstMateUsageFormatting.accessibilityDescription(session.usage))")
+                    .help("\(session.nativeSessionID)\n\(FirstMateUsageFormatting.accessibilityDescription(session.usage))")
                 }
             } label: {
                 Label("Session history (\(sessions.count))", systemImage: "clock.arrow.circlepath")

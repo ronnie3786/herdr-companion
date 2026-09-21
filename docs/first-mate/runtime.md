@@ -15,8 +15,36 @@ First Mate executions and validates the exact native Pi session header.
 `stop()` stops reconciliation, not detached executions. A new service instance
 reattaches to the same private dispatch directories. A manager lock protects a
 runtime root; each dispatch and native conversation has its own OS writer lock.
+
+The same managed inventory drives usage accounting: the unbounded retained SQL
+session ledger plus started dispatch jobs, including failed starts, coordinator
+rotations, retries, handoff predecessors/successors, nested workers, watchdog
+advisors and recovery advisors. Pending jobs that never launched are not sessions.
+Arbitrary Pi sessions outside this inventory and external services are not
+attributed to a feature.
+
 The Pi supervisor is a detached Python module using Pi's documented JSONL RPC.
 It maintains a saved session even if the first model request fails.
+
+Saved Pi JSONL is streamed from the private runtime sessions root and validated
+against its session header. Assistant usage, explicit tool-result usage,
+compaction usage and branch-summary usage are counted; compaction `retainedTail`
+is not re-counted. A compaction or branch summary without usage lowers coverage.
+Entry IDs deduplicate repeated records. Recorded message/usage provider and model
+fields drive historical grouping; configured model settings are never substituted.
+Partial final lines wait for completion. Missing, malformed, identity-mismatched,
+escaped, negative, boolean, unsafe-integer and non-finite data lower coverage
+without exposing transcript content or breaking feature reads. Canonical path and
+native-ID ownership conflicts across features are unavailable to every claimant.
+
+Parsed results retain only the current stat-keyed version for each resolved path
+and expected identity, so ordinary feature-list polling does not rescan unchanged
+transcripts. File changes refresh accounting without a workflow event. A previously
+valid amount may be retained with `stale:true` and `partial` status while its source
+is temporarily unreadable or its header is incomplete; a readable identity mismatch
+never reuses that amount. A valid header-only session is complete with explicit zero
+usage; a started job with no readable session is unavailable. Aggregation reads files
+outside SQLite transactions and performs no provider request.
 
 Status responses contain canonical projections and short event summaries.
 The coordinator receives a current-stage, reference-oriented projection with
@@ -29,6 +57,13 @@ recursively embedding tool results. This prevents repeated status reads from
 expanding the agent's context. Model document/session reads are paginated, with
 explicit continuation offsets; the authenticated human session API returns full
 message bodies in pages of up to 100 entries.
+
+Feature totals deduplicate the complete managed inventory directly. Assignment
+`usage` includes every attempt and advisor attached to that assignment;
+`subtree_usage` recursively includes child assignments without double counting.
+The public session history remains capped at 1,000 rows and can include retained
+job-only advisors, while totals remain unbounded. Transcript pages return the
+whole-session summary at top level regardless of pagination.
 
 The SQLite claim is committed before `job.json` exists, and `job.json` exists
 before process launch. Recovery reconstructs a missing spool from its original
@@ -160,7 +195,7 @@ the evidence back to First Mate. Interrupted executions are never labeled succes
 Run the focused suite from the repository with Python 3.11 or newer:
 
 ```sh
-python3 -m unittest tests.test_first_mate_store tests.test_first_mate_runtime tests.test_first_mate_acceptance
+python3 -m unittest tests.test_first_mate_store tests.test_first_mate_runtime tests.test_first_mate_acceptance tests.test_first_mate_usage
 node --test pi-semantic-bridge/test/first-mate.test.mjs
 ```
 
@@ -172,7 +207,10 @@ recovery, fresh successor acknowledgement, worktree isolation, role scoping and
 idempotent delegation. They also cover the coordinator's replacement prompt,
 resumed-session charter and extension refresh, normal configured tool access,
 role-specific First Mate workflow actions, reference-oriented input, worker
-evidence capabilities and question/answer continuity across rotation.
+evidence capabilities and question/answer continuity across rotation. Focused
+usage tests cover mixed models and entry shapes, zero/missing/corrupt numeric
+values, append refresh and stale cache behavior, header/path validation, retries,
+nested/advisor attribution, unbounded inventory and transcript-page independence.
 Acceptance tests inject claim-creation crash gaps and
 exercise paused handoffs, cancellation, direction changes and context rotation.
 

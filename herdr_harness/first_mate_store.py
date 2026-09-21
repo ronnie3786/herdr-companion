@@ -270,6 +270,24 @@ class FirstMateStore:
         with self._lock:
             return [self._decode(r) for r in self._db.execute("SELECT * FROM fm_features ORDER BY updated_at DESC,id")]
 
+    def list_session_records(self, feature_id: str | None = None) -> list[dict]:
+        """Return the complete managed session ledger for internal accounting.
+
+        Public snapshots remain capped independently.  The private session path is
+        included here so trusted runtime code can read only explicitly owned files.
+        """
+        with self._lock:
+            where = "WHERE s.feature_id=?" if feature_id is not None else ""
+            args = (feature_id,) if feature_id is not None else ()
+            rows = self._db.execute(f"""SELECT s.native_session_id,s.feature_id,s.assignment_id,
+                COALESCE(a.title,'First Mate') AS title,COALESCE(a.role,'first_mate') AS role,
+                COALESCE(x.status,s.status) AS status,s.generation,x.attempt,x.input_revision,
+                s.created_at,s.updated_at,s.status AS ownership_status,s.session_file
+                FROM fm_sessions s LEFT JOIN fm_assignments a ON a.id=s.assignment_id
+                LEFT JOIN fm_attempts x ON x.assignment_id=s.assignment_id AND x.generation=s.generation
+                {where} ORDER BY s.created_at DESC,s.native_session_id""", args).fetchall()
+            return [dict(row) for row in rows]
+
     def snapshot(self, feature_id: str) -> dict:
         with self._transaction():
             result = {"feature": self._one("fm_features", feature_id)}

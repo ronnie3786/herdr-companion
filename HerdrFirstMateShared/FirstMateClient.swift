@@ -30,10 +30,12 @@ struct FirstMateSessionResponse: Decodable, Sendable {
     var content: String?
     var nextBefore: Int?
     var totalMessages: Int?
+    var usage: FirstMateUsage? = nil
     enum CodingKeys: String, CodingKey {
         case ok, messages, content
         case nativeSessionID = "native_session_id"
         case nextBefore = "next_before", totalMessages = "total_messages"
+        case usage
     }
 }
 

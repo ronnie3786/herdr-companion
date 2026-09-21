@@ -11,9 +11,13 @@ struct FirstMateFeatureCard: View {
             HStack(alignment: .top) {
                 FirstMateStatusLabel(status: feature.status)
                 Spacer(minLength: 8)
-                if let ticket = feature.workItemID {
-                    Text(ticket).font(.caption2.weight(.medium)).foregroundStyle(palette.secondaryText)
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(feature.workItemID ?? "Idea")
+                    Text(FirstMateUsageFormatting.compactCost(feature.usage))
+                        .monospacedDigit()
                 }
+                .font(.caption)
+                .foregroundStyle(palette.secondaryText)
             }
             VStack(alignment: .leading, spacing: 7) {
                 Text(feature.title).font(.headline).foregroundStyle(palette.text)
@@ -34,5 +38,6 @@ struct FirstMateFeatureCard: View {
         .background(palette.surface, in: .rect(cornerRadius: 20))
         .overlay(RoundedRectangle(cornerRadius: 20).stroke(palette.line, lineWidth: 0.5))
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(feature.title), \(feature.workItemID ?? "Idea"), status \(feature.status.replacingOccurrences(of: "_", with: " ")). Goal: \(feature.goal). \(FirstMateUsageFormatting.taskAccessibilityDescription(feature.usage))")
     }
 }

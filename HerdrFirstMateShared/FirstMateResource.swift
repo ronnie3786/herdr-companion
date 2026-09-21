@@ -32,4 +32,17 @@ enum FirstMateResource: Identifiable {
         case .history(let session): session.assignmentID
         }
     }
+    func usage(in snapshot: FirstMateSnapshot?) -> FirstMateUsage? {
+        switch self {
+        case .document:
+            return nil
+        case .session(let assignment):
+            guard let nativeSessionID = assignment.nativeSessionID else { return nil }
+            return snapshot?.sessions.first {
+                $0.featureID == assignment.featureID && $0.nativeSessionID == nativeSessionID
+            }?.usage
+        case .history(let session):
+            return session.usage
+        }
+    }
 }

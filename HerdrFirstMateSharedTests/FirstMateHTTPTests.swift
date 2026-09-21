@@ -73,6 +73,8 @@ struct FirstMateHTTPTests {
         #expect(transcript.nativeSessionID == "native-session:123")
         #expect(transcript.nextBefore == 140)
         #expect(transcript.totalMessages == 340)
+        #expect(transcript.usage?.costUSD == 0.004)
+        #expect(FirstMateUsageFormatting.compactCost(transcript.usage) == "<$0.01")
         let requests = FirstMateURLProtocol.recorder.requests()
         #expect(requests.count == 4)
         for request in requests {
@@ -152,7 +154,7 @@ private final class FirstMateURLProtocol: URLProtocol {
             } else if url.path == "/api/v1/first-mate/models" {
                 data = Data(#"{"ok":true,"models":[{"id":"synthetic/reasoner","name":"Reasoner","provider":"synthetic","reasoning":true}],"default_model":"synthetic/default","thinking_levels":["off","high"]}"#.utf8)
             } else if url.path.contains("/sessions/") {
-                data = Data(#"{"ok":true,"native_session_id":"native-session:123","messages":[{"role":"assistant","text":"Saved review result"}],"next_before":140,"total_messages":340}"#.utf8)
+                data = Data(#"{"ok":true,"native_session_id":"native-session:123","messages":[{"role":"assistant","text":"Saved review result"}],"next_before":140,"total_messages":340,"usage":{"currency":"USD","cost_usd":0.004,"status":"complete","input_tokens":100,"output_tokens":20,"cache_read_tokens":30,"cache_write_tokens":0,"total_tokens":150,"usage_records":2,"missing_cost_records":0,"session_count":1,"known_cost_sessions":1,"models":[],"updated_at":"2026-09-21T20:00:00Z"}}"#.utf8)
             } else if url.path.contains("/documents/") {
                 var document = FirstMateDemo.features(step: 0)[0].documents[0]
                 document.id = "document:123"

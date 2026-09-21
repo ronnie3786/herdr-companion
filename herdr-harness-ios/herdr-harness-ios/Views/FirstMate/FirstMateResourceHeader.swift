@@ -42,7 +42,7 @@ struct FirstMateResourceHeader: View {
                 FirstMateSessionHistoryView(store: store, resource: resource)
                 FirstMateResourceMetadataView(resource: resource)
             case .history(let session):
-                Text("\(session.role.replacingOccurrences(of: "_", with: " ").capitalized) · generation \(session.generation)")
+                Text("\(session.kindDisplayName) · \(session.role.replacingOccurrences(of: "_", with: " ").capitalized) · generation \(session.generation)")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 FirstMateStatusLabel(status: session.status)

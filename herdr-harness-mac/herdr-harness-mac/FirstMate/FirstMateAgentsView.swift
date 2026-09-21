@@ -8,13 +8,22 @@ struct FirstMateAgentsView: View {
             Text("Your crew").herdrFont(.title2, weight: .semibold)
             Text("\(snapshot.assignments.count) assignments, each with its own session and evidence.")
                 .herdrFont(.subheadline).foregroundStyle(.secondary)
-            if !snapshot.sessions(for: nil).isEmpty {
-                DisclosureGroup("First Mate · \(snapshot.sessions(for: nil).count) saved sessions") {
-                    ForEach(snapshot.sessions(for: nil)) { session in
+            if !snapshot.coordinatorSessions.isEmpty {
+                DisclosureGroup("First Mate coordinator · \(snapshot.coordinatorSessions.count) saved sessions") {
+                    ForEach(snapshot.coordinatorSessions) { session in
                         FirstMateSessionRow(store: store, session: session)
                     }
                 }
                 .accessibilityIdentifier("first-mate-coordinator-history")
+                Divider()
+            }
+            if !snapshot.advisorSessions.isEmpty {
+                DisclosureGroup("Advisors · \(snapshot.advisorSessions.count) saved sessions") {
+                    ForEach(snapshot.advisorSessions) { session in
+                        FirstMateSessionRow(store: store, session: session)
+                    }
+                }
+                .accessibilityIdentifier("first-mate-advisor-history")
                 Divider()
             }
             ForEach(snapshot.visits.filter { !snapshot.agents(for: $0.id).isEmpty }) { visit in

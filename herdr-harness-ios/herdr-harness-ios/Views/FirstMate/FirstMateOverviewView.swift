@@ -25,6 +25,11 @@ struct FirstMateOverviewView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(FirstMatePalette(scheme: scheme).surface, in: .rect(cornerRadius: 20))
 
+            FirstMateUsageSummaryView(usage: snapshot.feature.usage, title: "Full task usage")
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(FirstMatePalette(scheme: scheme).surface, in: .rect(cornerRadius: 20))
+
             if let visit = snapshot.currentVisit {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("Current focus").font(.headline).accessibilityAddTraits(.isHeader)

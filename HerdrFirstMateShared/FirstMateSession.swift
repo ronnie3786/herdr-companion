@@ -13,12 +13,26 @@ struct FirstMateSession: Codable, Equatable, Identifiable, Sendable {
     var createdAt: String
     var updatedAt: String
     var ownershipStatus: String
+    var kind: String? = nil
+    var parentSessionID: String? = nil
+    var usage: FirstMateUsage? = nil
     var id: String { nativeSessionID }
+
+    var kindDisplayName: String {
+        switch kind {
+        case "coordinator": "First Mate coordinator"
+        case "worker": "Worker"
+        case "advisor": "Advisor"
+        default: role == "first_mate" ? "First Mate coordinator" : "Worker"
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case title, role, status, generation, attempt
         case nativeSessionID = "native_session_id", featureID = "feature_id", assignmentID = "assignment_id"
         case inputRevision = "input_revision", createdAt = "created_at", updatedAt = "updated_at"
         case ownershipStatus = "ownership_status"
+        case kind, usage
+        case parentSessionID = "parent_session_id"
     }
 }

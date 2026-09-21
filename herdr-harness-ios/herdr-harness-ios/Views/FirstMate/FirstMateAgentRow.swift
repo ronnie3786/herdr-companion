@@ -22,6 +22,18 @@ struct FirstMateAgentRow: View {
                     Text(agent.role.replacingOccurrences(of: "_", with: " ").capitalized)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                    if let subtree = agent.subtreeUsage, subtree != agent.usage {
+                        Text("Own · \(FirstMateUsageFormatting.inlineSummary(agent.usage))")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        Text("With descendants · \(FirstMateUsageFormatting.inlineSummary(subtree))")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text(FirstMateUsageFormatting.inlineSummary(agent.usage))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                     FirstMateStatusLabel(status: agent.status)
                     if sessions.count > 1 {
                         Label("\(sessions.count) saved sessions", systemImage: "clock.arrow.circlepath")

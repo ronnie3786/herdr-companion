@@ -14,6 +14,7 @@ struct FirstMateFeature: Codable, Equatable, Identifiable, Sendable {
     var coordinatorModel: String? = nil
     var coordinatorThinking: String? = nil
     var modelSettingsRevision: Int? = nil
+    var usage: FirstMateUsage? = nil
 
     var modelDisplayName: String {
         guard let model = coordinatorModel, !model.isEmpty else { return "Host default" }
@@ -26,5 +27,6 @@ struct FirstMateFeature: Codable, Equatable, Identifiable, Sendable {
         case workItemID = "work_item_id"
         case coordinatorModel = "coordinator_model", coordinatorThinking = "coordinator_thinking"
         case modelSettingsRevision = "model_settings_revision"
+        case usage
     }
 }

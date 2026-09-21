@@ -409,6 +409,7 @@ def api_description() -> dict:
         "capabilities": [
             "pane-retirement-v1",
             "first-mate-v1",
+            "first-mate-usage-v1",
             "pr-review-v1",
             "pi-session-context-v1",
             "agent-control-v1",
@@ -1035,13 +1036,17 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
 
         def _first_mate_route(self, method: str, tail: list[str], query: dict, body: dict):
             store = service.first_mate_store
+            runtime = service.first_mate
+            feature_view = runtime.feature if hasattr(runtime, "feature") else store.get_feature
+            snapshot_view = runtime.snapshot if hasattr(runtime, "snapshot") else store.snapshot
+            features_view = runtime.list_features if hasattr(runtime, "list_features") else store.list_features
             if method == "GET" and tail == ["capabilities"]:
-                return {"ok": True, "capabilities": ["first-mate-v1", "first-mate-model-settings-v1"], **service.first_mate.capabilities()}
+                return {"ok": True, "capabilities": ["first-mate-v1", "first-mate-model-settings-v1", "first-mate-usage-v1"], **runtime.capabilities()}
             if method == "GET" and tail == ["models"]:
                 return {"ok": True, **service.first_mate.model_catalog()}
             if tail == ["features"]:
                 if method == "GET":
-                    return {"ok": True, "features": store.list_features()}
+                    return {"ok": True, "features": features_view()}
                 if method == "POST":
                     if set(body) - {"title", "goal", "cwd", "request_id", "work_item_id"}:
                         raise HTTPValidationError("Feature contains an unsupported field")
@@ -1050,15 +1055,15 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         raise HTTPValidationError("Choose an existing absolute project directory", code="first_mate_directory_invalid")
                     feature = store.create_feature(body)
                     service.first_mate_changed(feature["id"])
-                    return {"ok": True, "feature": feature}, 201
+                    return {"ok": True, "feature": feature_view(feature["id"])}, 201
             if len(tail) >= 2 and tail[0] == "features":
                 feature_id = _string(tail[1], "feature_id", maximum=128)
                 if len(tail) == 2 and method == "GET":
-                    return {"ok": True, **store.snapshot(feature_id)}
+                    return {"ok": True, **snapshot_view(feature_id)}
                 if tail[2:] == ["model-settings"] and method == "POST":
                     store.set_model_settings(feature_id, body)
                     # Settings alone never enqueue a conversation turn or authorize work.
-                    return {"ok": True, **store.snapshot(feature_id)}
+                    return {"ok": True, **snapshot_view(feature_id)}
                 if tail[2:] == ["messages"] and method == "POST":
                     if set(body) - {"text", "request_id"}:
                         raise HTTPValidationError("Message contains an unsupported field")
@@ -1066,7 +1071,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     request_id = _string(body.get("request_id"), "request_id", maximum=200)
                     message = store.append_human_message(feature_id, text, request_id)
                     service.first_mate_changed(feature_id)
-                    return {"ok": True, "message": message, "feature": store.get_feature(feature_id)}, 202
+                    return {"ok": True, "message": message, "feature": feature_view(feature_id)}, 202
                 if tail[2:] == ["actions"] and method == "POST":
                     if set(body) - {"action", "request_id", "expected_revision"}:
                         raise HTTPValidationError("Action contains an unsupported field")
@@ -1074,9 +1079,9 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     if action not in {"pause", "resume", "cancel"}:
                         raise HTTPValidationError("Use a message to direct the next stage", code="first_mate_action_invalid")
                     request_id = _string(body.get("request_id"), "request_id", maximum=200)
-                    feature = service.first_mate.action(feature_id, action, request_id, expected_revision=body.get("expected_revision"))
+                    runtime.action(feature_id, action, request_id, expected_revision=body.get("expected_revision"))
                     service.first_mate_changed(feature_id)
-                    return {"ok": True, "feature": feature}
+                    return {"ok": True, "feature": feature_view(feature_id)}
                 if tail[2:] == ["events"] and method == "GET":
                     try:
                         after = int((query.get("after") or ["0"])[0])

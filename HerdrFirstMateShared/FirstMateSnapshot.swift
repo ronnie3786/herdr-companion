@@ -59,6 +59,16 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
         sessions.filter { $0.featureID == feature.id && $0.assignmentID == assignmentID }
             .sorted { $0.generation == $1.generation ? $0.createdAt < $1.createdAt : $0.generation < $1.generation }
     }
+    var coordinatorSessions: [FirstMateSession] {
+        sessions.filter {
+            $0.featureID == feature.id && ($0.kind == "coordinator" || ($0.kind == nil && $0.role == "first_mate"))
+        }
+        .sorted { $0.generation == $1.generation ? $0.createdAt < $1.createdAt : $0.generation < $1.generation }
+    }
+    var advisorSessions: [FirstMateSession] {
+        sessions.filter { $0.featureID == feature.id && $0.kind == "advisor" }
+            .sorted { $0.generation == $1.generation ? $0.createdAt < $1.createdAt : $0.generation < $1.generation }
+    }
     func author(of document: FirstMateDocument) -> FirstMateAssignment? {
         guard document.featureID == feature.id,
               var author = assignments.first(where: { $0.id == document.assignmentID && $0.featureID == document.featureID && $0.visitID == document.visitID }) else { return nil }

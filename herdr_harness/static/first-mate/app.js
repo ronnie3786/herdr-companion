@@ -48,6 +48,42 @@
   const humanMessage = message => message.role==='user'||message.role==='human';
   const label = value => String(value || 'ready').replaceAll('_', ' ');
   const date = value => { const d = new Date(value || 0); return Number.isNaN(+d) ? '' : d.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}); };
+  const nonnegative = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+  const number = value => (Number.isInteger(value) && value >= 0 ? value : 0).toLocaleString('en-US');
+  const costAmount = usage => {
+    if(!usage || usage.status==='unavailable' || !nonnegative(usage.cost_usd))return 'Unavailable';
+    if(usage.cost_usd>0 && usage.cost_usd<0.01)return '<$0.01';
+    return new Intl.NumberFormat('en-US',{style:'currency',currency:usage.currency||'USD',minimumFractionDigits:2,maximumFractionDigits:2}).format(usage.cost_usd);
+  };
+  const coverageLabels = usage => [usage?.status==='partial'?'Partial':'',usage?.stale?'Last reported':''].filter(Boolean);
+  const compactCost = usage => {
+    const amount=costAmount(usage);
+    return amount==='Unavailable'||coverageLabels(usage).length===0?amount:`${amount}*`;
+  };
+  const modelName = model => [model?.provider,model?.model].filter(value=>typeof value==='string'&&value.trim()).join(' / ')||'Unknown model';
+  const modelNames = usage => usage?.models?.length ? usage.models.map(modelName).join(', ') : 'Unknown model';
+  const coverage = usage => `${number(usage?.known_cost_sessions)} of ${number(usage?.session_count)} ${usage?.session_count===1?'session':'sessions'} report cost`;
+  const usageDescription = usage => {
+    if(!usage)return 'Usage unavailable. This companion did not report usage and may need an update.';
+    const amount=costAmount(usage);
+    const estimate=amount==='Unavailable'?'Estimated USD cost unavailable':`${amount} estimated USD reported by Pi`;
+    const qualifiers=coverageLabels(usage).map(value=>` · ${value.toLowerCase()}`).join('');
+    return `${estimate} · ${number(usage.total_tokens)} tokens · ${coverage(usage)}${qualifiers}. Not a provider invoice.`;
+  };
+  const taskUsageDescription = usage => `Task total across all retained managed sessions. ${usageDescription(usage)}`;
+  const usageInline = usage => {
+    if(!usage)return 'Usage unavailable';
+    const cost=compactCost(usage),qualifiers=coverageLabels(usage).map(value=>` · ${escape(value)}`).join('');
+    return `${cost==='Unavailable'?'Usage unavailable':`${escape(cost)} estimated`}${qualifiers} · ${escape(number(usage.total_tokens))} tokens · ${escape(modelNames(usage))}`;
+  };
+  function usagePanel(usage,title='Usage and estimated cost'){
+    if(!usage)return `<section class="usage-panel"><h2>${escape(title)}</h2><strong>Usage unavailable</strong><p>This companion did not report usage. Update the companion server to inspect Pi-reported estimates.</p></section>`;
+    const models=(usage.models||[]).map(model=>`<div class="usage-model"><span><strong>${escape(modelName(model))}</strong><small>${escape(number(model.total_tokens))} tokens · ${escape(model.usage_records||0)} usage records</small></span><strong class="usage-cost">${escape(compactCost({...usage,cost_usd:model.cost_usd,status:model.status}))}</strong></div>`).join('');
+    const warning=usage.status==='partial'||usage.stale?`<p class="usage-warning">⚠ ${usage.stale?'Showing the last reported total; the source is temporarily unreadable.':'Some retained usage or cost records are unavailable.'}</p>`:'';
+    const cache=(nonnegative(usage.cache_read_tokens)&&usage.cache_read_tokens>0)||(nonnegative(usage.cache_write_tokens)&&usage.cache_write_tokens>0)?`<p>Cache · ${escape(number(usage.cache_read_tokens))} read · ${escape(number(usage.cache_write_tokens))} write</p>`:'';
+    return `<section class="usage-panel" aria-label="${escape(title)}" title="${escape(usageDescription(usage))}"><div class="usage-heading"><h2>${escape(title)}</h2><strong class="usage-total">${escape(compactCost(usage))}</strong></div><p>Pi-reported estimated USD. Not a provider invoice; subscription providers may report $0.00.</p><p><strong>${escape(number(usage.total_tokens))}</strong> total tokens · ${escape(number(usage.input_tokens))} input · ${escape(number(usage.output_tokens))} output</p>${cache}<p>${escape(coverage(usage))}</p>${warning}${models?`<div class="usage-models">${models}</div>`:''}</section>`;
+  }
+  const sessionKind = session => session?.kind==='advisor'?'Advisor':session?.kind==='coordinator'||(!session?.kind&&session?.role==='first_mate')?'First Mate coordinator':'Worker';
   const base = new URL('../api/v1/first-mate/', location.href).pathname;
   const state = {features:[],selected:new URLSearchParams(location.search).get('feature'),detail:null,tab:'Overview',graph:false,token:'',drafts:new Map(),pending:new Map(),generation:0,resourceGeneration:0,sessionView:null,refreshSequence:0,appliedRefresh:0,sending:new Set(),lastSignature:'',error:null};
   let noticeTimer;
@@ -111,7 +147,7 @@
     updateComposer();
   }
   function renderFeatures(){
-    $('#features').innerHTML=state.features.map(f=>`<button class="feature ${f.id===state.selected?'selected':''}" data-feature="${escape(f.id)}" aria-pressed="${f.id===state.selected}"><strong>${escape(f.title)}</strong><small>${escape(label(f.status))}</small></button>`).join('')||empty('Start a feature','Your ideas and tickets will appear here.');
+    $('#features').innerHTML=state.features.map(f=>`<button class="feature ${f.id===state.selected?'selected':''}" data-feature="${escape(f.id)}" aria-pressed="${f.id===state.selected}" aria-label="${escape(`${f.title}, ${f.work_item_id||'Idea'}, status ${label(f.status)}, ${taskUsageDescription(f.usage)}`)}" title="${escape(taskUsageDescription(f.usage))}"><strong>${escape(f.title)}</strong><small class="feature-meta"><span>${escape(f.work_item_id||'Idea')} · ${escape(label(f.status))}</span><span class="compact-cost">${escape(compactCost(f.usage))}</span></small></button>`).join('')||empty('Start a feature','Your ideas and tickets will appear here.');
   }
   function renderDetail(){
     const d=state.detail;if(!d){$('#feature-header').innerHTML=empty(state.selected?'Loading feature':'Your First Mate','Select a feature or start something new.');$('#messages').innerHTML=empty('A clear place to begin','Create a feature. Your First Mate will help shape the plan and delegate each step.');$('#workspace').innerHTML=empty('Your feature workspace','Goals, agents, documents, and the workflow live here.');renderTabs();return;}
@@ -126,18 +162,27 @@
   function renderTabs(){ $('#tabs').innerHTML=['Overview','Agents','Documents','Workflow'].map(tab=>`<button data-tab="${tab}" class="${state.tab===tab?'selected':''}" aria-current="${state.tab===tab?'page':'false'}">${tab}</button>`).join(''); }
   function documentsForVisit(visitId){const d=state.detail,ids=new Set(d.assignments.filter(a=>(a.visit_ids||[a.visit_id]).includes(visitId)).map(a=>a.id));return d.documents.filter(doc=>doc.visit_id===visitId||ids.has(doc.assignment_id));}
   function resources(visit){const d=state.detail,agents=d.assignments.filter(a=>(a.visit_ids||[a.visit_id]).includes(visit.id)),docs=documentsForVisit(visit.id);return `<div class="resources"><button data-resource="agents" data-visit="${escape(visit.id)}" ${agents.length?'':'disabled'}>${agents.length} agents</button><button data-resource="documents" data-visit="${escape(visit.id)}" ${docs.length?'':'disabled'}>${docs.length} documents</button></div>`;}
-  function agentRows(agents){return agents.map(a=>`<button class="row" data-agent="${escape(a.id)}"><span><strong>${escape(a.title||a.role)}</strong><small>${escape(a.role)} · Attempt ${escape(a.generation||1)}</small></span>${status(a.status||a.verdict)}</button>`).join('')||empty('No agents yet','Delegated assignments appear here when First Mate starts a stage.');}
+  function agentRows(agents){return agents.map(a=>{const distinctSubtree=a.subtree_usage&&JSON.stringify(a.subtree_usage)!==JSON.stringify(a.usage);const own=distinctSubtree?`<small>Own · ${usageInline(a.usage)}</small>`:`<small>${usageInline(a.usage)}</small>`;const subtree=distinctSubtree?`<small>With descendants · ${usageInline(a.subtree_usage)}</small>`:'';return `<button class="row" data-agent="${escape(a.id)}"><span><strong>${escape(a.title||a.role)}</strong><small>${escape(a.role)} · Attempt ${escape(a.attempt||1)}</small>${own}${subtree}</span>${status(a.status||a.verdict)}</button>`;}).join('')||empty('No agents yet','Delegated assignments appear here when First Mate starts a stage.');}
+  function sessionRows(sessions){return sessions.map(s=>`<button class="row" data-session="${escape(s.native_session_id)}"><span><strong>${escape(sessionKind(s))} · generation ${escape(s.generation||1)}</strong><small>${escape(s.ownership_status||label(s.status))}</small><small>${usageInline(s.usage)}</small></span>${status(s.status)}</button>`).join('');}
   function docRows(docs){return docs.map(d=>`<button class="row" data-document="${escape(d.id)}"><span><strong>${escape(d.title)}</strong><small>${escape(d.media_type||'Document')} · ${escape(date(d.created_at))}</small></span><span aria-hidden="true">↗</span></button>`).join('')||empty('No documents yet','Plans, evidence, and review reports stay attached to the work that produced them.');}
   function visitCard(v,graph=false){return `<article class="${graph?'node':'visit'} ${escape(v.status)}"><h3>${escape(v.title||label(v.stage_key))}</h3>${status(v.status)}${resources(v)}</article>`;}
   function renderWorkspace(){
     const d=state.detail;if(!d)return;let html='';
     if(state.tab==='Overview'){
-      html=`<p class="eyebrow">The goal</p><p class="goal">${escape(d.feature.goal)}</p>`;
+      html=`<p class="eyebrow">The goal</p><p class="goal">${escape(d.feature.goal)}</p>${usagePanel(d.feature.usage,'Full task usage')}`;
       if(d.feature.status==='awaiting_direction')html+='<section class="checkpoint"><h3>Ready for your next direction</h3><p>Work is waiting at a human checkpoint. Review the latest request, then tell First Mate how you want to continue.</p></section>';
       html+=`<div class="section-title"><h2>Working on this feature</h2><small>${d.assignments.length} assignments</small></div>${agentRows([...d.assignments.filter(a=>['running','queued','dispatching','handoff_pending'].includes(a.status)),...d.assignments.filter(a=>!['running','queued','dispatching','handoff_pending'].includes(a.status)).slice(-4)].slice(0,4))}`;
       html+='<div class="section-title"><h2>Feature journal</h2></div>'+d.events.slice(-12).reverse().map(e=>`<article class="event"><time>${escape(date(e.created_at))}</time>${escape(e.summary||label(e.type))}</article>`).join('');
       html+=`<div class="controls"><button data-action-feature="${escape(d.feature.id)}" data-action="${d.feature.status==='paused'?'resume':'pause'}" ${['completed','cancelled'].includes(d.feature.status)?'disabled':''}>${d.feature.status==='paused'?'Resume authorized work':'Pause work'}</button><button data-action-feature="${escape(d.feature.id)}" data-action="cancel" ${['completed','cancelled'].includes(d.feature.status)?'disabled':''}>Cancel feature</button></div>`;
-    } else if(state.tab==='Agents')html='<h2>The crew</h2><p class="eyebrow">Independent sessions, grouped by the work they own.</p>'+d.visits.map(v=>`<div class="section-title"><h3>${escape(v.title||label(v.stage_key))}</h3></div>${agentRows(d.assignments.filter(a=>(a.visit_ids||[a.visit_id]).includes(v.id)))}`).join('');
+    } else if(state.tab==='Agents'){
+      const coordinators=d.sessions.filter(s=>s.kind==='coordinator'||(!s.kind&&s.role==='first_mate'));
+      const advisors=d.sessions.filter(s=>s.kind==='advisor');
+      html='<h2>The crew</h2><p class="eyebrow">Independent sessions, grouped by the work they own.</p>';
+      if(coordinators.length)html+=`<div class="section-title"><h3>First Mate coordinator</h3><small>${coordinators.length} saved sessions</small></div>${sessionRows(coordinators)}`;
+      if(advisors.length)html+=`<div class="section-title"><h3>Advisors</h3><small>${advisors.length} saved sessions</small></div>${sessionRows(advisors)}`;
+      html+=d.visits.map(v=>`<div class="section-title"><h3>${escape(v.title||label(v.stage_key))}</h3></div>${agentRows(d.assignments.filter(a=>(a.visit_ids||[a.visit_id]).includes(v.id)))}`).join('');
+      if(d.sessions_truncated)html+='<p class="eyebrow">Showing recent saved sessions. Earlier sessions remain retained on the companion host.</p>';
+    }
     else if(state.tab==='Documents')html='<h2>Feature documents</h2><p class="eyebrow">Every result keeps its producing assignment and session.</p>'+docRows(d.documents);
     else html=`<div class="view-switch"><button data-view="timeline" class="${state.graph?'':'selected'}">Timeline</button><button data-view="graph" class="${state.graph?'selected':''}">Graph</button></div><p class="eyebrow">Recorded stage visits, including returns and revisions.</p><div class="${state.graph?'graph':'timeline'}">${d.visits.map(v=>visitCard(v,state.graph)).join('')||empty('Your route starts here','First Mate will propose a stage after your first message.')}</div>`;
     $('#workspace').innerHTML=html;
@@ -155,21 +200,23 @@
   }
   async function openSession(id, before=null){
     const generation=state.generation, resource=++state.resourceGeneration;
-    const previous=before!==null && state.sessionView?.id===id ? state.sessionView.messages : [];
+    const previousView=before!==null && state.sessionView?.id===id ? state.sessionView : null;
+    const previous=previousView?.messages||[];
     try {
       const query=before===null?'':`?before=${encodeURIComponent(before)}&limit=100`;
       const d=await api(`sessions/${encodeURIComponent(id)}${query}`);
       if(generation!==state.generation || resource!==state.resourceGeneration)return;
       if(d.native_session_id!==id)throw Error('Saved session identity did not match.');
       if(before!==null && d.next_before!=null && (d.next_before<0 || d.next_before>=before))throw Error('Saved session cursor did not advance.');
-      const messages=[...(d.messages||[]),...previous];
-      state.sessionView={id,messages};
+      const retainedUsage=(state.detail?.sessions||[]).find(session=>session.native_session_id===id)?.usage;
+      const messages=[...(d.messages||[]),...previous], usage=d.usage||previousView?.usage||retainedUsage;
+      state.sessionView={id,messages,usage};
       const paging=d.total_messages!=null?`<div class="document-meta">${messages.length} of ${escape(d.total_messages)} saved messages</div>`:'';
       const earlier=d.next_before!=null?`<button data-session="${escape(id)}" data-before="${escape(d.next_before)}">Load earlier messages</button>`:'';
-      modal('Saved agent session',`<p class="document-meta">${escape(id)}</p>${paging}${earlier}${messages.map(m=>`<article class="event"><strong>${escape(m.role)}</strong><div class="prose">${messageContent(m)}</div></article>`).join('')||empty('No saved messages yet','The exact session is registered, but it has not written a transcript yet.')}`);
+      modal('Saved agent session',`<p class="document-meta">${escape(id)}</p>${usagePanel(usage,'Whole-session usage')}${paging}${earlier}${messages.map(m=>`<article class="event"><strong>${escape(m.role)}</strong><div class="prose">${messageContent(m)}</div></article>`).join('')||empty('No saved messages yet','The exact session is registered, but it has not written a transcript yet.')}`);
     }catch(e){if(generation===state.generation && resource===state.resourceGeneration)notice(e.message);}
   }
-  async function openAgent(id){const a=state.detail.assignments.find(a=>a.id===id);const sessions=(state.detail.sessions||[]).filter(s=>s.assignment_id===id);if(!sessions.length&&a?.native_session_id)return openSession(a.native_session_id);modal(a?.title||'Assignment',`<p>${escape(label(a?.status))}</p>${sessions.length?sessions.map(s=>`<button class="row" data-session="${escape(s.native_session_id)}"><span><strong>${s.native_session_id===a.native_session_id?'Latest session':'Earlier session'}</strong><small>${escape(s.native_session_id)}</small></span>${status(s.status)}</button>`).join(''):'<p class="document-meta">A saved session will appear after this assignment starts.</p>'}${state.detail.sessions_truncated?'<p>Showing recent session history. Older sessions remain retained on the companion host.</p>':''}`);}
+  async function openAgent(id){const a=state.detail.assignments.find(a=>a.id===id);const sessions=(state.detail.sessions||[]).filter(s=>s.assignment_id===id);if(!sessions.length&&a?.native_session_id)return openSession(a.native_session_id);const own=a?.subtree_usage&&JSON.stringify(a.subtree_usage)!==JSON.stringify(a.usage)?`<p>Own · ${usageInline(a.usage)}<br>With descendants · ${usageInline(a.subtree_usage)}</p>`:`<p>${usageInline(a?.usage)}</p>`;modal(a?.title||'Assignment',`<p>${escape(label(a?.status))}</p>${own}${sessions.length?sessionRows(sessions):'<p class="document-meta">A saved session will appear after this assignment starts.</p>'}${state.detail.sessions_truncated?'<p>Showing recent session history. Older sessions remain retained on the companion host.</p>':''}`);}
   document.addEventListener('click',async e=>{
     const b=e.target.closest('button');if(!b)return;
     if(b.dataset.feature){selectFeature(b.dataset.feature);await refresh();}

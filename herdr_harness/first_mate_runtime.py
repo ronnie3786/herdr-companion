@@ -28,6 +28,7 @@ from .alerts import utc_now
 from .child_environment import agent_environment
 from .resources import pi_extension_path
 from .first_mate_store import FirstMateError
+from .first_mate_usage import FirstMateUsage
 
 MAX_RECORD = 4 * 1024 * 1024
 class DeferredOperation(Exception):
@@ -292,6 +293,7 @@ class FirstMateRuntime:
         self._catalog_lock = threading.Lock()
         self._catalog_cache = None
         self._catalog_at = 0.0
+        self.usage = FirstMateUsage(self.root / "sessions")
 
     def capabilities(self) -> dict:
         return {"available": bool(self.pi_bin and self.extension and self.extension.is_file()),
@@ -308,6 +310,46 @@ class FirstMateRuntime:
                 self._catalog_cache = read_model_catalog(self.pi_bin, self.environ, self.root)
                 self._catalog_at = time.monotonic()
             return self._catalog_cache
+
+    def _usage_account(self, feature: dict, *, assignments: list[dict] | None = None,
+                       jobs: list[dict] | None = None,
+                       ledger_sessions: list[dict] | None = None) -> dict:
+        return self.usage.account(
+            feature_id=feature["id"],
+            assignments=assignments if assignments is not None else self.store.list_assignments(feature_id=feature["id"]),
+            ledger_sessions=ledger_sessions if ledger_sessions is not None else self.store.list_session_records(),
+            jobs=jobs if jobs is not None else self._jobs(),
+            jobs_root=self.jobs_root,
+            updated_at=feature.get("updated_at") or utc_now(),
+        )
+
+    def list_features(self) -> list[dict]:
+        jobs = self._jobs()
+        ledger_sessions = self.store.list_session_records()
+        result = []
+        for feature in self.store.list_features():
+            account = self._usage_account(feature, jobs=jobs, ledger_sessions=ledger_sessions)
+            result.append({**feature, "usage": account["usage"]})
+        return result
+
+    def feature(self, feature_id: str) -> dict:
+        feature = self.store.get_feature(feature_id)
+        return {**feature, "usage": self._usage_account(feature)["usage"]}
+
+    def snapshot(self, feature_id: str) -> dict:
+        snapshot = self.store.snapshot(feature_id)
+        account = self._usage_account(snapshot["feature"], assignments=snapshot["assignments"])
+        result = dict(snapshot)
+        result["feature"] = {**snapshot["feature"], "usage": account["usage"]}
+        result["assignments"] = [
+            {**assignment,
+             "usage": account["assignment_usage"][assignment["id"]],
+             "subtree_usage": account["subtree_usage"][assignment["id"]]}
+            for assignment in snapshot["assignments"]
+        ]
+        result["sessions"] = account["sessions"][:1000]
+        result["sessions_truncated"] = len(account["sessions"]) > 1000
+        return result
 
     def start(self) -> None:
         with self._mutex:
@@ -1215,14 +1257,43 @@ class FirstMateRuntime:
         return {"decision": decision, "recorded": True}
 
     def session(self, native_session_id: str, *, before: int | None = None, limit: int = 100) -> dict:
-        matches = [j for j in self._jobs() if j.get("native_session_id") == native_session_id]
-        if not matches:
+        jobs = self._jobs()
+        ledger_records = self.store.list_session_records()
+        claims = []
+        for job in jobs:
+            started = (self._job_dir(job) / "started.json").exists()
+            if job.get("native_session_id") == native_session_id:
+                claims.append(("job", job, Path(job["session_file"]).resolve(), job["feature_id"], job["kind"]))
+            elif started and not job.get("native_session_id"):
+                # Header discovery closes only the bind crash gap. Never let a
+                # header override a different stored native identity.
+                parsed = self.usage.session_usage(job.get("session_file", ""))
+                if parsed.get("_identity_valid") and parsed.get("_session_id") == native_session_id:
+                    claims.append(("job", job, Path(job["session_file"]).resolve(), job["feature_id"], job["kind"]))
+        for row in ledger_records:
+            if row.get("native_session_id") == native_session_id:
+                kind = "worker" if row.get("assignment_id") else "coordinator"
+                claims.append(("ledger", row, Path(row["session_file"]).resolve(), row["feature_id"], kind))
+        if not claims:
             raise ValueError("Saved First Mate session was not found")
-        job = matches[-1]
-        path = Path(job["session_file"]).resolve()
+
+        path_features: dict[Path, set[str]] = {}
+        for row in ledger_records:
+            if row.get("session_file") and row.get("feature_id"):
+                path_features.setdefault(Path(row["session_file"]).resolve(), set()).add(row["feature_id"])
+        for job in jobs:
+            if ((self._job_dir(job) / "started.json").exists() or job.get("native_session_id")) and job.get("session_file"):
+                path_features.setdefault(Path(job["session_file"]).resolve(), set()).add(job["feature_id"])
+        claim_paths = {claim[2] for claim in claims}
+        if (len({claim[3] for claim in claims}) > 1 or len(claim_paths) > 1
+                or any(len(path_features.get(path, set())) > 1 for path in claim_paths)):
+            raise ValueError("Saved session identity has conflicting First Mate ownership")
+
+        selected = next((claim for claim in reversed(claims) if claim[0] == "job"), claims[-1])
+        _, _, path, feature_id, kind = selected
         path.relative_to((self.root / "sessions").resolve())
         rows, _ = _records(path)
-        header = next((r for r in rows if r.get("type") == "session"), {})
+        header = next((row for row in rows if row.get("type") == "session"), {})
         if header.get("id") != native_session_id:
             raise ValueError("Saved session identity does not match the retained assignment")
         messages = []
@@ -1239,10 +1310,12 @@ class FirstMateRuntime:
         count = max(1, min(100, int(limit)))
         start = max(0, end - count)
         selected = [{**m, "index": start + index} for index, m in enumerate(messages[start:end])]
+        usage = self.usage.public_summary(self.usage.session_usage(path, native_session_id))
         return {"ok": True, "native_session_id": native_session_id, "messages": selected,
                 "next_before": start if start else None, "total_messages": total,
-                "session": {"native_session_id": native_session_id, "feature_id": job["feature_id"],
-                            "session_file": str(path), "kind": job["kind"]}}
+                "usage": usage,
+                "session": {"native_session_id": native_session_id, "feature_id": feature_id,
+                            "session_file": str(path), "kind": kind, "usage": usage}}
 
 
 def _pi_command(job: dict) -> list[str]:

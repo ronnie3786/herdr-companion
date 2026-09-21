@@ -16,8 +16,12 @@ struct FirstMateSessionRow: View {
                     .padding(.top, 2)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 7) {
-                    Text("Generation \(session.generation)").font(.subheadline.weight(.semibold))
+                    Text("\(session.kindDisplayName) · generation \(session.generation)")
+                        .font(.subheadline.weight(.semibold))
                     Text(session.ownershipStatus.replacingOccurrences(of: "_", with: " ").capitalized)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Text(FirstMateUsageFormatting.inlineSummary(session.usage))
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                     FirstMateStatusLabel(status: session.status)

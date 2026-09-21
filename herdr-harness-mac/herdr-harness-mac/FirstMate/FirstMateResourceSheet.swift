@@ -16,7 +16,7 @@ struct FirstMateResourceSheet: View {
                         Text(agent.nativeSessionID ?? "Session pending").herdrFont(.caption2, monospaced: true).textSelection(.enabled)
                         FirstMateSessionHistoryView(store: store, resource: resource)
                     case .history(let session):
-                        Text("Saved Pi session · \(session.role) · generation \(session.generation) · \(session.ownershipStatus)")
+                        Text("Saved Pi session · \(session.kindDisplayName) · \(session.role) · generation \(session.generation) · \(session.ownershipStatus)")
                             .herdrFont(.caption).foregroundStyle(.secondary)
                         Text(session.nativeSessionID).herdrFont(.caption, monospaced: true).textSelection(.enabled)
                         FirstMateSessionHistoryView(store: store, resource: resource)
@@ -36,38 +36,50 @@ struct FirstMateResourceSheet: View {
                     .accessibilityIdentifier("first-mate-resource-close")
             }.padding(24)
             Divider()
-            if resource.nativeSessionID != nil, let total = store.sessionTotalMessages {
-                HStack {
-                    Text("\(store.sessionLoadedMessages) of \(total) saved messages").herdrFont(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    if store.sessionNextBefore != nil {
-                        Button(store.isLoadingEarlier ? "Loading earlier…" : "Load earlier messages") {
-                            Task { await store.loadEarlierSessionMessages() }
-                        }
-                        .disabled(store.isLoadingEarlier)
-                        .accessibilityIdentifier("first-mate-load-earlier")
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    if resource.nativeSessionID != nil {
+                        FirstMateUsageSummaryView(
+                            usage: store.resourceUsage ?? resource.usage(in: store.snapshot),
+                            title: "Whole-session usage"
+                        )
                     }
-                }.padding(16)
-                if let error = store.sessionPageError {
-                    Text(error).herdrFont(.caption).foregroundStyle(.orange).padding(.horizontal, 16)
-                }
-                Divider()
-            }
-            if store.resourceLoading {
-                ProgressView("Loading saved resource…").frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let error = store.resourceError {
-                ContentUnavailableView("Resource unavailable", systemImage: "exclamationmark.circle", description: Text(error))
-            } else {
-                ScrollView {
-                    Group {
-                        if rendersMarkdownDocument {
-                            FirstMateMarkdownContentView(source: store.resourceText)
-                        } else {
-                            Text(store.resourceText).herdrFont(.body).lineSpacing(6).textSelection(.enabled)
+                    if resource.nativeSessionID != nil, let total = store.sessionTotalMessages {
+                        Divider()
+                        HStack {
+                            Text("\(store.sessionLoadedMessages) of \(total) saved messages").herdrFont(.caption).foregroundStyle(.secondary)
+                            Spacer()
+                            if store.sessionNextBefore != nil {
+                                Button(store.isLoadingEarlier ? "Loading earlier…" : "Load earlier messages") {
+                                    Task { await store.loadEarlierSessionMessages() }
+                                }
+                                .disabled(store.isLoadingEarlier)
+                                .accessibilityIdentifier("first-mate-load-earlier")
+                            }
+                        }
+                        if let error = store.sessionPageError {
+                            Text(error).herdrFont(.caption).foregroundStyle(.orange)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(24)
+                    Divider()
+                    if store.resourceLoading {
+                        ProgressView("Loading saved resource…")
+                            .frame(maxWidth: .infinity, minHeight: 220)
+                    } else if let error = store.resourceError {
+                        ContentUnavailableView("Resource unavailable", systemImage: "exclamationmark.circle", description: Text(error))
+                            .frame(maxWidth: .infinity, minHeight: 220)
+                    } else if rendersMarkdownDocument {
+                        FirstMateMarkdownContentView(source: store.resourceText)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text(store.resourceText)
+                            .herdrFont(.body)
+                            .lineSpacing(6)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
+                .padding(24)
             }
             Divider()
             Text(store.isDemo ? "Synthetic recording fixture" : "Read-only saved history. Closing this view does not end the session.")

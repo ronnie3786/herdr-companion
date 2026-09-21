@@ -12,6 +12,10 @@ struct FirstMateOverviewView: View {
                 Text(snapshot.feature.goal).herdrFont(.body).lineSpacing(5).textSelection(.enabled)
             }
             Divider()
+            FirstMateUsageSummaryView(usage: snapshot.feature.usage, title: "Full task usage")
+                .padding(16)
+                .background(FirstMatePalette(scheme: scheme).surface, in: .rect(cornerRadius: 10))
+            Divider()
             if let visit = snapshot.currentVisit {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("CURRENT FOCUS").herdrFont(.caption, weight: .semibold).foregroundStyle(.secondary)

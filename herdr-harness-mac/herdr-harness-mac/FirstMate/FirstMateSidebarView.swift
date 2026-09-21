@@ -36,7 +36,15 @@ struct FirstMateSidebarView: View {
                                 Image(systemName: "square.stack.3d.up").foregroundStyle(FirstMatePalette(scheme: scheme).accent)
                                 VStack(alignment: .leading, spacing: 7) {
                                     Text(feature.title).herdrFont(.body, weight: .medium).multilineTextAlignment(.leading)
-                                    Text(feature.workItemID ?? "Idea").herdrFont(.caption2).foregroundStyle(.secondary)
+                                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                        Text(feature.workItemID ?? "Idea")
+                                        Spacer(minLength: 4)
+                                        Text(FirstMateUsageFormatting.compactCost(feature.usage))
+                                            .monospacedDigit()
+                                            .lineLimit(1)
+                                    }
+                                    .herdrFont(.caption)
+                                    .foregroundStyle(.secondary)
                                     FirstMateStatusLabel(status: feature.status)
                                 }
                                 Spacer(minLength: 0)
@@ -44,7 +52,9 @@ struct FirstMateSidebarView: View {
                             .padding(12).frame(maxWidth: .infinity, alignment: .leading)
                             .background(store.selectedFeatureID == feature.id ? FirstMatePalette(scheme: scheme).accent.opacity(0.12) : .clear, in: .rect(cornerRadius: 9))
                         }
+                        .accessibilityLabel("\(feature.title), \(feature.workItemID ?? "Idea"), status \(feature.status.replacingOccurrences(of: "_", with: " ")), \(FirstMateUsageFormatting.taskAccessibilityDescription(feature.usage))")
                         .accessibilityAddTraits(store.selectedFeatureID == feature.id ? .isSelected : [])
+                        .help(FirstMateUsageFormatting.taskAccessibilityDescription(feature.usage))
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("first-mate-feature-\(feature.id)")
                     }

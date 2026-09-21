@@ -10,8 +10,11 @@ struct FirstMateSessionRow: View {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "bubble.left.and.bubble.right").accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("Generation \(session.generation)").herdrFont(.subheadline, weight: .medium)
+                    Text("\(session.kindDisplayName) · generation \(session.generation)")
+                        .herdrFont(.subheadline, weight: .medium)
                     Text("\(session.ownershipStatus.capitalized) · \(session.createdAt.prefix(10))")
+                        .herdrFont(.caption).foregroundStyle(.secondary)
+                    Text(FirstMateUsageFormatting.inlineSummary(session.usage))
                         .herdrFont(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()

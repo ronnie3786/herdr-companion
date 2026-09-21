@@ -11,7 +11,7 @@ enum FirstMateDemo {
         let currentIndex = [0, 1, 2, 2, 3, 4][step]
         let current = stageKeys[currentIndex]
         let statuses = ["awaiting_direction", "running", "running", "awaiting_direction", "awaiting_direction", "awaiting_direction"]
-        let feature = FirstMateFeature(id: "demo-session-continuity", title: "Keep agent sessions connected", goal: "A feature keeps its agents, evidence, and decisions together, even when a session moves to a new process.", cwd: "/workspace/sample-app", status: statuses[step], currentVisitID: "demo-\(current)", revision: step + 1, createdAt: timestamp, updatedAt: timestamp, workItemID: "DEMO-104")
+        var feature = FirstMateFeature(id: "demo-session-continuity", title: "Keep agent sessions connected", goal: "A feature keeps its agents, evidence, and decisions together, even when a session moves to a new process.", cwd: "/workspace/sample-app", status: statuses[step], currentVisitID: "demo-\(current)", revision: step + 1, createdAt: timestamp, updatedAt: timestamp, workItemID: "DEMO-104")
         let visits = stageKeys.enumerated().map { index, key in
             FirstMateVisit(id: "demo-\(key)", featureID: feature.id, stageKey: key == "revision" ? "implement" : key, title: visitTitles[index], status: index < currentIndex ? "completed" : index == currentIndex ? statuses[step] : "planned", revision: index < 3 ? 1 : 2, createdAt: timestamp, predecessorVisitID: index == 0 ? nil : "demo-\(stageKeys[index - 1])")
         }
@@ -27,6 +27,15 @@ enum FirstMateDemo {
         }
         if step >= 4 { assignments.append(agent("replan", title: "Revise the recovery boundary", role: "Architect", visit: "revision", feature: feature.id, status: "completed", verdict: "passed", revision: 2)) }
         if step == 5 { assignments.append(agent("successor", title: "Continue from verified checkpoint", role: "Successor", visit: "proof", feature: feature.id, status: "idle", verdict: "handoff_verified", revision: 2)) }
+        for index in assignments.indices {
+            assignments[index].usage = usage(cost: Double(index + 1) * 0.004, tokens: (index + 1) * 380)
+            assignments[index].subtreeUsage = assignments[index].usage
+        }
+        let assignmentCost = assignments.indices.reduce(0.0) { $0 + Double($1 + 1) * 0.004 }
+        let assignmentTokens = assignments.indices.reduce(0) { $0 + ($1 + 1) * 380 }
+        feature.usage = usage(cost: assignmentCost + 0.008 + (step >= 2 ? 0.002 : 0) + (step == 5 ? 0.009 : 0),
+                              tokens: assignmentTokens + 900 + (step >= 2 ? 180 : 0) + (step == 5 ? 860 : 0),
+                              sessionCount: assignments.count + 1 + (step >= 2 ? 1 : 0) + (step == 5 ? 2 : 0))
         var documents = assignments.filter { $0.status == "completed" }.map { assignment in
             FirstMateDocument(id: "doc-\(assignment.id)", featureID: feature.id, visitID: assignment.visitID, assignmentID: assignment.id, nativeSessionID: assignment.nativeSessionID, title: "\(assignment.role) findings.md", mediaType: "text/markdown", contentHash: "demo-content-\(assignment.id)", createdAt: timestamp, content: "# \(assignment.title)\n\nSynthetic demonstration evidence.\n\nThe exact assignment, workflow visit, session, and input revision are retained together.\n\n## Findings\n\nOwnership is explicit. Reconnecting the view cannot complete a task or approve the next stage.\n\n## Verification\n\nThe focused checks pass for revision \(assignment.inputRevision).")
         }
@@ -50,11 +59,14 @@ enum FirstMateDemo {
         let second = newFeature(title: "Make review evidence searchable", goal: "Find the document, producing agent, and workflow visit from one search.", cwd: "/workspace/sample-app", id: "demo-search")
         var sessions = assignments.compactMap { assignment -> FirstMateSession? in
             guard let id = assignment.nativeSessionID else { return nil }
-            return FirstMateSession(nativeSessionID: id, featureID: feature.id, assignmentID: assignment.id, title: assignment.title, role: assignment.role, status: assignment.status, generation: assignment.generation, attempt: assignment.attempt, inputRevision: assignment.inputRevision, createdAt: timestamp, updatedAt: timestamp, ownershipStatus: assignment.status == "running" ? "active" : "retained")
+            return FirstMateSession(nativeSessionID: id, featureID: feature.id, assignmentID: assignment.id, title: assignment.title, role: assignment.role, status: assignment.status, generation: assignment.generation, attempt: assignment.attempt, inputRevision: assignment.inputRevision, createdAt: timestamp, updatedAt: timestamp, ownershipStatus: assignment.status == "running" ? "active" : "retained", kind: "worker", usage: assignment.usage)
         }
-        sessions.append(.init(nativeSessionID: "demo-coordinator-1", featureID: feature.id, assignmentID: nil, title: "First Mate", role: "first_mate", status: "retained", generation: 1, createdAt: timestamp, updatedAt: timestamp, ownershipStatus: step == 5 ? "retained" : "active"))
+        sessions.append(.init(nativeSessionID: "demo-coordinator-1", featureID: feature.id, assignmentID: nil, title: "First Mate", role: "first_mate", status: "retained", generation: 1, createdAt: timestamp, updatedAt: timestamp, ownershipStatus: step == 5 ? "retained" : "active", kind: "coordinator", usage: usage(cost: 0.008, tokens: 900)))
+        if step >= 2 {
+            sessions.append(.init(nativeSessionID: "demo-advisor-1", featureID: feature.id, assignmentID: nil, title: "Recovery advisor", role: "recovery_advisor", status: "retained", generation: 1, createdAt: timestamp, updatedAt: timestamp, ownershipStatus: "retained", kind: "advisor", parentSessionID: "demo-coordinator-1", usage: usage(cost: 0.002, tokens: 180)))
+        }
         if step == 5 {
-            sessions.append(.init(nativeSessionID: "demo-coordinator-2", featureID: feature.id, assignmentID: nil, title: "First Mate", role: "first_mate", status: "active", generation: 2, createdAt: timestamp, updatedAt: timestamp, ownershipStatus: "active"))
+            sessions.append(.init(nativeSessionID: "demo-coordinator-2", featureID: feature.id, assignmentID: nil, title: "First Mate", role: "first_mate", status: "active", generation: 2, createdAt: timestamp, updatedAt: timestamp, ownershipStatus: "active", kind: "coordinator", usage: usage(cost: 0.006, tokens: 620)))
             if let index = assignments.firstIndex(where: { $0.id == "demo-successor" }) {
                 assignments[index].generation = 2
                 assignments[index].attempt = 2
@@ -62,14 +74,31 @@ enum FirstMateDemo {
                     sessions[sessionIndex].generation = 2
                     sessions[sessionIndex].attempt = 2
                 }
-                sessions.append(.init(nativeSessionID: "demo-session-predecessor", featureID: feature.id, assignmentID: "demo-successor", title: "Continue from verified checkpoint", role: "Successor", status: "quiesced", generation: 1, attempt: 1, inputRevision: 2, createdAt: timestamp, updatedAt: timestamp, ownershipStatus: "quiesced"))
+                let predecessorUsage = usage(cost: 0.003, tokens: 240)
+                sessions.append(.init(nativeSessionID: "demo-session-predecessor", featureID: feature.id, assignmentID: "demo-successor", title: "Continue from verified checkpoint", role: "Successor", status: "quiesced", generation: 1, attempt: 1, inputRevision: 2, createdAt: timestamp, updatedAt: timestamp, ownershipStatus: "quiesced", kind: "worker", usage: predecessorUsage))
+                if let currentUsage = assignments[index].usage {
+                    let assignmentUsage = usage(
+                        cost: (currentUsage.costUSD ?? 0) + (predecessorUsage.costUSD ?? 0),
+                        tokens: currentUsage.totalTokens + predecessorUsage.totalTokens,
+                        sessionCount: 2
+                    )
+                    assignments[index].usage = assignmentUsage
+                    assignments[index].subtreeUsage = assignmentUsage
+                }
             }
         }
         return [FirstMateSnapshot(feature: feature, visits: visits, assignments: assignments, documents: documents, messages: messages, events: events, sessions: sessions), second]
     }
 
     static func newFeature(title: String, goal: String, cwd: String, id: String = UUID().uuidString) -> FirstMateSnapshot {
-        .init(feature: .init(id: id, title: title, goal: goal, cwd: cwd, status: "ready", currentVisitID: nil, revision: 1, createdAt: timestamp, updatedAt: timestamp), messages: [
+        var feature = FirstMateFeature(id: id, title: title, goal: goal, cwd: cwd, status: "ready", currentVisitID: nil,
+                                       revision: 1, createdAt: timestamp, updatedAt: timestamp)
+        feature.usage = FirstMateUsage(
+            currency: "USD", costUSD: 0, status: "complete", inputTokens: 0, outputTokens: 0,
+            cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0, usageRecords: 0,
+            missingCostRecords: 0, sessionCount: 0, knownCostSessions: 0, models: [], updatedAt: timestamp
+        )
+        return .init(feature: feature, messages: [
             .init(id: "\(id)-welcome", featureID: id, role: "assistant", text: "What outcome would you like to work toward? Tell me your constraints and I will help shape a plan.", status: "delivered", createdAt: timestamp)
         ])
     }
@@ -82,6 +111,19 @@ enum FirstMateDemo {
         case .session(let agent):
             "You\n\(agent.title). Work within revision \(agent.inputRevision). Report evidence and a verdict.\n\n\(agent.role)\nI am examining the explicit session ownership and recovery behavior. This is an independently saved Pi session.\n\nVerification\nThe assignment belongs to \(agent.visitID). Results are attached to this visit and retain their source session.\n\nOutcome\n\(agent.verdict ?? "Work is still in progress. No verdict has been reported.")\n\nSynthetic demo. No model or repository changes were executed."
         }
+    }
+
+    private static func usage(cost: Double, tokens: Int, sessionCount: Int = 1) -> FirstMateUsage {
+        FirstMateUsage(
+            currency: "USD", costUSD: cost, status: "complete", inputTokens: tokens * 3 / 4,
+            outputTokens: tokens / 4, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: tokens,
+            usageRecords: sessionCount, missingCostRecords: 0, sessionCount: sessionCount,
+            knownCostSessions: sessionCount,
+            models: [.init(provider: "synthetic", model: "sample-reasoner", costUSD: cost, status: "complete",
+                           inputTokens: tokens * 3 / 4, outputTokens: tokens / 4, cacheReadTokens: 0,
+                           cacheWriteTokens: 0, totalTokens: tokens, usageRecords: sessionCount, missingCostRecords: 0)],
+            updatedAt: timestamp
+        )
     }
 
     private static func agent(_ id: String, title: String, role: String, visit: String, feature: String, status: String, verdict: String?, revision: Int = 1) -> FirstMateAssignment {

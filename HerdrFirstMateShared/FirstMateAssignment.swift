@@ -14,11 +14,14 @@ struct FirstMateAssignment: Codable, Equatable, Identifiable, Sendable {
     var inputRevision: Int
     var updatedAt: String
     var visitIDs: [String]?
+    var usage: FirstMateUsage? = nil
+    var subtreeUsage: FirstMateUsage? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, title, role, status, verdict, attempt, generation
         case featureID = "feature_id", visitID = "visit_id", nativeSessionID = "native_session_id"
         case inputRevision = "input_revision", updatedAt = "updated_at"
         case visitIDs = "visit_ids"
+        case usage, subtreeUsage = "subtree_usage"
     }
 }

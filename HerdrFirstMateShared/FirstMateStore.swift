@@ -38,6 +38,7 @@ final class FirstMateStore {
     private(set) var resourceText = ""
     private(set) var resourceLoading = false
     private(set) var resourceError: String?
+    private(set) var resourceUsage: FirstMateUsage?
     private(set) var sessionNextBefore: Int?
     private(set) var sessionTotalMessages: Int?
     private(set) var sessionLoadedMessages = 0
@@ -77,6 +78,7 @@ final class FirstMateStore {
         resourceText = ""
         resourceLoading = false
         resourceError = nil
+        resourceUsage = nil
         resetSessionPagination()
         error = nil
         unsupported = false
@@ -110,13 +112,16 @@ final class FirstMateStore {
         if value.hasDetails, let existing = snapshots[value.feature.id], existing.feature.revision == value.feature.revision,
            (existing.events.map(\.sequence).max() ?? 0) > (value.events.map(\.sequence).max() ?? 0) { return }
         if !value.hasDetails, var existing = snapshots[value.feature.id] {
-            // Mutations acknowledge the feature; their omitted arrays are not deletions.
-            existing.feature = value.feature
+            // Mutations acknowledge the feature; their omitted arrays and usage are not deletions.
+            var feature = value.feature
+            if feature.usage == nil { feature.usage = existing.feature.usage }
+            existing.feature = feature
             snapshots[value.feature.id] = existing
         } else { snapshots[value.feature.id] = value }
+        let acceptedFeature = snapshots[value.feature.id]?.feature ?? value.feature
         if let index = features.firstIndex(where: { $0.id == value.feature.id }) {
-            features[index] = value.feature
-        } else { features.append(value.feature) }
+            features[index] = acceptedFeature
+        } else { features.append(acceptedFeature) }
         lastUpdated = .now
     }
 
@@ -130,9 +135,15 @@ final class FirstMateStore {
             guard capturedGeneration == generation else { return }
             guard list.ok else { throw APIError.invalidResponse }
             features = list.features.map { feature in
-                if let cached = snapshots[feature.id]?.feature,
-                   cached.revision > feature.revision || cached.updatedAt > feature.updatedAt { return cached }
-                return feature
+                guard let cached = snapshots[feature.id]?.feature else { return feature }
+                if cached.revision > feature.revision || cached.updatedAt > feature.updatedAt {
+                    var retained = cached
+                    if let usage = feature.usage { retained.usage = usage }
+                    return retained
+                }
+                var refreshed = feature
+                if refreshed.usage == nil { refreshed.usage = cached.usage }
+                return refreshed
             }
             if selectedFeatureID == nil { selectedFeatureID = features.first?.id }
             if let id = selectedFeatureID {
@@ -260,6 +271,7 @@ final class FirstMateStore {
         if resourcePresentation == nil { resourcePresentation = FirstMateResourcePresentation() }
         resourceText = ""
         resourceError = nil
+        resourceUsage = resource.usage(in: snapshot)
         resetSessionPagination()
         resourceLoading = true
         defer { if token == resourceGeneration { resourceLoading = false } }
@@ -283,6 +295,7 @@ final class FirstMateStore {
                 sessionNextBefore = response.nextBefore
                 sessionTotalMessages = response.totalMessages
                 sessionLoadedMessages = response.messages?.count ?? 0
+                if let usage = response.usage { resourceUsage = usage }
                 content = response.messages?.map { "\($0.role.capitalized)\n\($0.text)" }.joined(separator: "\n\n")
                     ?? response.content ?? "The saved session does not have any messages yet."
             }
@@ -296,6 +309,7 @@ final class FirstMateStore {
         openedResource = nil
         resourcePresentation = nil
         resourceLoading = false
+        resourceUsage = nil
         resetSessionPagination()
     }
 
@@ -317,6 +331,7 @@ final class FirstMateStore {
             sessionLoadedMessages += earlier.count
             sessionNextBefore = response.nextBefore
             sessionTotalMessages = response.totalMessages ?? sessionTotalMessages
+            if let usage = response.usage { resourceUsage = usage }
         } catch { if token == resourceGeneration { sessionPageError = error.localizedDescription } }
     }
 

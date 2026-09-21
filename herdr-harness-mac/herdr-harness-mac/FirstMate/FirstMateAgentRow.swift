@@ -17,6 +17,15 @@ struct FirstMateAgentRow: View {
                     Text(agent.title).herdrFont(.subheadline, weight: .medium)
                     Text("\(agent.role) · attempt \(agent.attempt) · revision \(agent.inputRevision)")
                         .herdrFont(.caption2).foregroundStyle(.secondary)
+                    if let subtree = agent.subtreeUsage, subtree != agent.usage {
+                        Text("Own · \(FirstMateUsageFormatting.inlineSummary(agent.usage))")
+                            .herdrFont(.caption).foregroundStyle(.secondary)
+                        Text("With descendants · \(FirstMateUsageFormatting.inlineSummary(subtree))")
+                            .herdrFont(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Text(FirstMateUsageFormatting.inlineSummary(agent.usage))
+                            .herdrFont(.caption).foregroundStyle(.secondary)
+                    }
                     if let count = store.snapshot?.sessions(for: agent.id).count, count > 1 {
                         Text("\(count) saved sessions").herdrFont(.caption).foregroundStyle(.secondary)
                     }

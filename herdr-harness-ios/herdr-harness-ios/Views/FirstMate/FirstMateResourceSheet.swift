@@ -10,6 +10,12 @@ struct FirstMateResourceSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     FirstMateResourceHeader(store: store, resource: resource)
+                    if resource.nativeSessionID != nil {
+                        FirstMateUsageSummaryView(
+                            usage: store.resourceUsage ?? resource.usage(in: store.snapshot),
+                            title: "Whole-session usage"
+                        )
+                    }
                     Divider()
                     if store.resourceLoading {
                         ProgressView("Loading saved resource…")

@@ -105,7 +105,10 @@ conversation; **Continue in agent** hands off for actions.
 report, audio summaries, explainer videos, links and anything you drop in (files, folders, web
 links; uploads are limited to 20 MB, larger files are registered by path on the review host or
 added as links). Markdown and HTML open inside the app; audio and video download once and open
-in QuickTime Player; links open in the browser. Skill runs register their outputs automatically.
+in QuickTime Player; links open in the browser. Markdown and HTML document windows are pinned to
+the review host that opened them: a credential or URL edit for that same machine reconnects them,
+a removed host shows an unavailable state instead of falling back, and while one is open the
+Context row reports Ready and offers Reveal in Finder. Skill runs register their outputs automatically.
 
 **Agents.** Every skill run is a pane in the review's tab on the review host. The tab shows
 the run state, the pane, its latest output, and buttons to open the pane, finish the run or mark

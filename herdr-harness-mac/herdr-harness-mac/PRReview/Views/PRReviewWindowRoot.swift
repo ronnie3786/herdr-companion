@@ -21,7 +21,10 @@ struct PRReviewWindowRoot: View {
         self.model = model
         self.shell = shell
         self.target = target
-        _session = State(initialValue: PRReviewWindowSession(target: target))
+        _session = State(initialValue: PRReviewWindowSession(
+            target: target,
+            store: PRReviewStore(documentResources: shell.prReviewDocumentResources)
+        ))
     }
 
     var body: some View {
@@ -85,7 +88,8 @@ struct PRReviewWindowRoot: View {
                 shell.openPane(rawPaneID: paneID, machineID: machineID ?? target.machineID, model: model)
             },
             setAddingSkill: { session.setAddingSkill($0) },
-            navigationTitle: windowTitle
+            navigationTitle: windowTitle,
+            documentHost: model
         )
     }
 
@@ -130,30 +134,11 @@ struct PRReviewWindowRoot: View {
     }
 
     private var resolvedHost: (state: PRReviewWindowHostState, client: (any PRReviewClient)?) {
-        let probe = hostProbe
-        let state = PRReviewWindowHostResolver.resolve(
-            isDemoTarget: probe.isDemoTarget,
-            targetMachineExists: probe.machineExists,
-            hasConfiguration: probe.configurationURL != nil
-        )
-        guard state == .available,
-              let configuration = model.prReviewConfiguration(pinnedMachineID: target.machineID)
-        else {
-            return (state, nil)
-        }
-        return (.available, HerdrAPIClient(configuration: configuration))
+        model.prReviewWindowHostResolution(for: target.machineID)
     }
 
     private var hostProbe: PRReviewWindowHostProbe {
-        let isDemoTarget = model.isDemoMode && target.machineID == "demo"
-        let machineExists = model.machines.contains { $0.id == target.machineID }
-        let configuration = isDemoTarget ? nil : model.prReviewConfiguration(pinnedMachineID: target.machineID)
-        return PRReviewWindowHostProbe(
-            isDemoTarget: isDemoTarget,
-            machineExists: machineExists,
-            configurationURL: configuration?.baseURL.absoluteString,
-            connectionGeneration: model.connectionGeneration
-        )
+        model.prReviewWindowHostProbe(for: target.machineID)
     }
 
     private var machineName: String {

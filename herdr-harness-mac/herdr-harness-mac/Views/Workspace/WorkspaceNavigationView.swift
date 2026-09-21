@@ -269,7 +269,8 @@ struct WorkspaceNavigationView: View {
                     shell.openPane(rawPaneID: paneID, machineID: machineID, model: model)
                 },
                 setAddingSkill: { shell.isAddingPRReviewSkill = $0 },
-                popOut: { openWindow(id: HerdrWindowID.prReview, value: $0) }
+                popOut: { openWindow(id: HerdrWindowID.prReview, value: $0) },
+                documentHost: model
             )
         case .activeWork:
             Group {

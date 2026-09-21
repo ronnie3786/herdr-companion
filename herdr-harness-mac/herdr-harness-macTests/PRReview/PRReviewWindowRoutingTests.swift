@@ -65,6 +65,8 @@ struct PRReviewWindowRoutingTests {
         #expect(model.prReviewConfiguration(pinnedMachineID: "review-host") == nil)
         #expect(model.prReviewConfiguration(machineID: "review-host") == nil)
         #expect(model.prReviewConfiguration() != nil)
+        #expect(model.prReviewWindowHostResolution(for: "review-host").state == .missingHost)
+        #expect(model.prReviewWindowHostResolution(for: "review-host").client == nil)
 
         model.machines = [
             model.machines[0],
@@ -75,6 +77,8 @@ struct PRReviewWindowRoutingTests {
             ),
         ]
         #expect(model.prReviewConfiguration(pinnedMachineID: "review-host") != nil)
+        #expect(model.prReviewWindowHostResolution(for: "review-host").state == .available)
+        #expect(model.prReviewWindowHostResolution(for: "review-host").client != nil)
     }
 
     @Test("A token-only credential update re-activates a pinned window without exposing the token")
@@ -93,15 +97,11 @@ struct PRReviewWindowRoutingTests {
         ]
         let target = PRReviewWindowTarget(machineID: "review-host", reviewID: PRReviewDemo.reviewID)
         func probe() -> PRReviewWindowHostProbe {
-            PRReviewWindowHostProbe(
-                isDemoTarget: model.isDemoMode && target.machineID == "demo",
-                machineExists: model.machines.contains { $0.id == target.machineID },
-                configurationURL: model.prReviewConfiguration(pinnedMachineID: target.machineID)?.baseURL.absoluteString,
-                connectionGeneration: model.connectionGeneration
-            )
+            model.prReviewWindowHostProbe(for: target.machineID)
         }
 
         let before = probe()
+        #expect(model.prReviewWindowHostResolution(for: target.machineID).state == .available)
         let first = SyntheticPRReviewWindowClient()
         let session = PRReviewWindowSession(target: target)
         await session.activate(identity: before.identifier, hostState: .available, client: first, seed: nil)

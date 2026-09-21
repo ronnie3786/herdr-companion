@@ -533,6 +533,42 @@ final class HerdrAppModel {
         configuration(forReviewMachine: machines.first { $0.id == machineID })
     }
 
+    /// The observable configuration of a pinned machine/review window.
+    ///
+    /// Reading this in a window body subscribes that window to machine and
+    /// credential changes, so a review or document pop-out reconnects without
+    /// depending on the main window's review-host task. The probe intentionally
+    /// carries no credential.
+    func prReviewWindowHostProbe(for machineID: String) -> PRReviewWindowHostProbe {
+        let isDemoTarget = isDemoMode && machineID == "demo"
+        let configuration = isDemoTarget ? nil : prReviewConfiguration(pinnedMachineID: machineID)
+        return PRReviewWindowHostProbe(
+            isDemoTarget: isDemoTarget,
+            machineExists: machines.contains { $0.id == machineID },
+            configurationURL: configuration?.baseURL.absoluteString,
+            connectionGeneration: connectionGeneration
+        )
+    }
+
+    /// Resolves a probe into either a usable pinned client or the unavailable
+    /// state the window must show instead of falling back to another machine.
+    func prReviewWindowHostResolution(
+        for machineID: String
+    ) -> (state: PRReviewWindowHostState, client: (any PRReviewClient)?) {
+        let probe = prReviewWindowHostProbe(for: machineID)
+        let state = PRReviewWindowHostResolver.resolve(
+            isDemoTarget: probe.isDemoTarget,
+            targetMachineExists: probe.machineExists,
+            hasConfiguration: probe.configurationURL != nil
+        )
+        guard state == .available,
+              let configuration = prReviewConfiguration(pinnedMachineID: machineID)
+        else {
+            return (state, nil)
+        }
+        return (.available, HerdrAPIClient(configuration: configuration))
+    }
+
     private func configuration(forReviewMachine machine: HerdrMachine?) -> ServerConfiguration? {
         guard !isDemoMode, let machine else { return nil }
         let token = machine.id == "ui-test" ? runtimes[machine.id]?.connection?.configuration.token ?? "" : credentials.value(for: "api-token.\(machine.id)")

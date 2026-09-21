@@ -199,9 +199,135 @@ struct PRReviewStoreLateResponseTests {
 
         #expect(store.snapshot?.documents.count == documentCount)
         #expect(store.snapshot?.documents.contains(where: { $0.id == "prdoc_stale_upload" }) == false)
-        #expect(store.documentUploads.values.first?.status != .uploaded)
+        // A reconnect must settle an interrupted upload into a terminal state
+        // that still offers Retry instead of leaving the row spinning forever.
+        let status = try #require(store.documentUploads.values.first?.status)
+        guard case let .failed(message) = status else {
+            Issue.record("an upload interrupted by reconnect must become retryable, got \(status)")
+            return
+        }
+        #expect(!message.isEmpty)
         #expect(store.contextImportError == nil)
         #expect(await counter.count("add-document") == 1)
+    }
+
+    @Test("An interrupted upload retries through the new transport after reconnect")
+    func interruptedUploadRetriesAfterReconnect() async throws {
+        let gate = LateResponseGate()
+        let oldCounter = MethodCounter()
+        let newCounter = MethodCounter()
+        let oldClient = LateResponseClient(counter: oldCounter)
+        oldClient.addDocument = { _ in
+            await gate.wait()
+            return PRReviewDemo.snapshot().documents[0]
+        }
+        let newClient = LateResponseClient(counter: newCounter)
+        let store = PRReviewStore()
+        store.configure(client: oldClient, machineID: "host-a", demo: false)
+        store.select(PRReviewDemo.reviewID)
+        store.receive(PRReviewDemo.snapshot())
+
+        let file = FileManager.default.temporaryDirectory
+            .appending(path: "PRReviewLateResponse-\(UUID().uuidString).md")
+        try Data("synthetic upload".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let request = Task { await store.uploadDocuments(urls: [file]) }
+        await gate.waitUntilWaiting()
+        store.reconnect(client: newClient, machineID: "host-a", demo: false)
+
+        let settled = try #require(store.documentUploads.values.first?.status)
+        guard case .failed = settled else {
+            Issue.record("reconnect must settle the upload before its stale completion, got \(settled)")
+            return
+        }
+
+        await gate.release()
+        await request.value
+
+        // The stale completion belongs to the old generation and must not
+        // overwrite the settled state.
+        #expect(store.documentUploads.values.first?.status == settled)
+
+        // Retry reuses the upload row and goes through the reconnected client.
+        await store.uploadDocuments(urls: [file])
+        #expect(store.documentUploads.values.first?.status == .uploaded)
+        #expect(await newCounter.count("add-document") == 1)
+        #expect(await oldCounter.count("add-document") == 1)
+    }
+
+    @Test("An upload that completes after the reviewer switches reviews still settles")
+    func uploadSettlesAcrossSelectionChange() async throws {
+        let gate = LateResponseGate()
+        let client = LateResponseClient()
+        client.addDocument = { _ in
+            await gate.wait()
+            return PRReviewDemo.snapshot().documents[0]
+        }
+        let store = PRReviewStore()
+        store.configure(client: client, machineID: "host-a", demo: false)
+        store.select(PRReviewDemo.reviewID)
+        store.receive(PRReviewDemo.snapshot())
+
+        let file = FileManager.default.temporaryDirectory
+            .appending(path: "PRReviewLateResponse-\(UUID().uuidString).md")
+        try Data("synthetic upload".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let request = Task { await store.uploadDocuments(urls: [file]) }
+        await gate.waitUntilWaiting()
+        // The completion belongs to the same connection but a different
+        // review; its row must still settle instead of spinning forever.
+        store.select(PRReviewDemo.secondReviewID)
+        await gate.release()
+        await request.value
+
+        #expect(store.documentUploads.values.first?.status == .uploaded)
+        #expect(store.snapshot == nil)
+    }
+
+    @Test("A refreshed document list reconciles an interrupted upload to uploaded")
+    func refreshedDocumentsReconcileInterruptedUpload() async throws {
+        let gate = LateResponseGate()
+        let client = LateResponseClient()
+        client.addDocument = { _ in
+            await gate.wait()
+            return PRReviewDemo.snapshot().documents[0]
+        }
+        let store = PRReviewStore()
+        store.configure(client: client, machineID: "host-a", demo: false)
+        store.select(PRReviewDemo.reviewID)
+        store.receive(PRReviewDemo.snapshot())
+
+        let file = FileManager.default.temporaryDirectory
+            .appending(path: "PRReviewLateResponse-\(UUID().uuidString).md")
+        try Data("synthetic upload".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let request = Task { await store.uploadDocuments(urls: [file]) }
+        await gate.waitUntilWaiting()
+        store.reconnect(client: LateResponseClient(), machineID: "host-a", demo: false)
+        await gate.release()
+        await request.value
+
+        guard case .failed = try #require(store.documentUploads.values.first?.status) else {
+            Issue.record("the interrupted upload should be settled before reconciliation")
+            return
+        }
+
+        // The server did receive the document before the transport changed,
+        // so the refresh lists it and retires the Retry affordance without
+        // resending any mutation.
+        var refreshed = PRReviewDemo.snapshot()
+        refreshed.review.revision += 1
+        var document = PRReviewDemo.snapshot().documents[0]
+        document.id = "prdoc_reconciled_upload"
+        document.filename = file.lastPathComponent
+        document.origin = "user"
+        refreshed.documents.append(document)
+        store.receive(refreshed)
+
+        #expect(store.documentUploads.values.first?.status == .uploaded)
     }
 
     @Test("A delayed download cannot publish a ready phase after invalidation")
@@ -237,7 +363,13 @@ struct PRReviewStoreLateResponseTests {
         let wasCancelled = await request.value
 
         #expect(wasCancelled)
-        #expect(store.documentPhases[document.id] == .downloading)
+        // The interrupted download settles into a terminal, retryable state
+        // rather than leaving the Context row downloading forever.
+        let phase = try #require(store.documentPhases[document.id])
+        guard case .failed = phase else {
+            Issue.record("an invalidated download must settle, got \(phase)")
+            return
+        }
         #expect(await counter.count("download") == 1)
     }
 }

@@ -12,6 +12,9 @@ struct PRReviewContainerView: View {
     var setAddingSkill: (Bool) -> Void = { _ in }
     var popOut: ((PRReviewWindowTarget) -> Void)?
     var navigationTitle = "PR Review"
+    /// The live model, when the container runs inside the app, so an opened
+    /// document window can observe credential and machine changes on its own.
+    var documentHost: HerdrAppModel? = nil
 
     var body: some View {
         ZStack {
@@ -128,7 +131,7 @@ struct PRReviewContainerView: View {
                 questionDraftChanged: questionDraftChanged
             )
         case .context:
-            PRReviewContextView(store: store)
+            PRReviewContextView(store: store, documentHost: documentHost)
         case .agents:
             PRReviewAgentsView(store: store, openPane: openPane)
         case .skills:

@@ -555,6 +555,164 @@ struct PRReviewWindowTests {
         #expect(PRReviewDocumentWindow.makeSession(kind: "html", document: document, store: store) == nil)
     }
 
+    @Test("A document window reconnects on credential rotation and refuses a removed host")
+    func documentWindowObservesRotatedAndRemovedHosts() async throws {
+        let first = SyntheticPRReviewWindowClient(downloadHandler: { _, _, _ in
+            throw APIError.invalidResponse
+        })
+        let second = SyntheticPRReviewWindowClient(downloadHandler: { _, _, destination in
+            try Data("synthetic report".utf8).write(to: destination, options: .atomic)
+        })
+        let resources = PRReviewDocumentResources(cache: temporaryDocumentCache())
+        let store = PRReviewStore(documentResources: resources)
+        store.configure(client: first, machineID: "machine-a", demo: false)
+        store.select(PRReviewDemo.reviewID)
+        let document = PRReviewDemo.snapshot().documents[0]
+        let session = PRReviewDocumentWindowSession(document: document, store: store)
+
+        await session.activate(identity: "before-rotation", hostState: .available, client: first)
+        await #expect(throws: (any Error).self) {
+            try await store.localURL(for: document)
+        }
+
+        // A token or URL edit for the pinned machine swaps the transport, so
+        // Try Again reaches the rotated credential rather than the old client.
+        await session.activate(identity: "after-rotation", hostState: .available, client: second)
+        let url = try await store.localURL(for: document)
+        let contents = try String(contentsOf: url, encoding: .utf8)
+        #expect(contents == "synthetic report")
+        #expect(await first.downloadRequests == [document.id])
+        #expect(await second.downloadRequests == [document.id])
+
+        // Removing the machine invalidates the authenticated transport; the
+        // window owns that decision independent of the originating review.
+        await session.activate(identity: "after-removal", hostState: .missingHost, client: nil)
+        #expect(session.hostState == .missingHost)
+        #expect(store.documentTransport(for: document) == nil)
+        #expect(store.currentMachineID == "machine-a")
+        #expect(session.machineID == "machine-a")
+
+        let third = SyntheticPRReviewWindowClient()
+        await session.activate(identity: "after-readd", hostState: .available, client: third)
+        #expect(session.hostState == .available)
+        #expect(store.documentTransport(for: document) != nil)
+        #expect(store.currentMachineID == "machine-a")
+        #expect(session.revision == 4)
+    }
+
+    @Test("Closing a document window releases its cache leases")
+    func documentWindowStopReleasesLeases() async throws {
+        let resources = PRReviewDocumentResources(cache: temporaryDocumentCache())
+        let client = SyntheticPRReviewWindowClient(downloadHandler: { _, _, destination in
+            try Data("synthetic report".utf8).write(to: destination, options: .atomic)
+        })
+        let store = PRReviewStore(documentResources: resources)
+        store.configure(client: client, machineID: "machine-a", demo: false)
+        store.select(PRReviewDemo.reviewID)
+        let document = PRReviewDemo.snapshot().documents[0]
+        let session = PRReviewDocumentWindowSession(document: document, store: store)
+        await session.activate(identity: "window", hostState: .available, client: client)
+
+        let url = try await store.localURL(for: document)
+        _ = store.acquireDocumentLease(for: url)
+        #expect(resources.protectedURLs.contains(url.standardizedFileURL))
+
+        session.stop()
+        #expect(!resources.protectedURLs.contains(url.standardizedFileURL))
+        #expect(store.documentTransport(for: document) == nil)
+    }
+
+    @Test("Markdown and HTML document windows publish Ready to the originating rail")
+    func documentWindowsPublishReadyPhaseToOriginatingStore() async throws {
+        for kind in ["markdown", "html"] {
+            let resources = PRReviewDocumentResources(cache: temporaryDocumentCache())
+            let client = SyntheticPRReviewWindowClient(downloadHandler: { _, _, destination in
+                try Data("synthetic \(kind) report".utf8).write(to: destination, options: .atomic)
+            })
+            let document = kind == "html"
+                ? PRReviewDemo.snapshot().documents[1]
+                : PRReviewDemo.snapshot().documents[0]
+            let main = PRReviewStore(documentResources: resources)
+            main.configure(client: client, machineID: "machine-a", demo: false)
+            main.select(document.reviewID)
+
+            // The production document-window session owns the download while
+            // the Context rail that offered Open keeps reading the shared
+            // machine/review/document-scoped phase.
+            let session = try #require(
+                PRReviewDocumentWindow.makeSession(kind: kind, document: document, store: main)
+            )
+            let url = try await session.store.localURL(for: document)
+
+            #expect(main.documentPhases[document.id] == .ready(url))
+            #expect(session.store.documentPhases[document.id] == .ready(url))
+        }
+    }
+
+    @Test("A retention cleanup cannot evict a document another window is displaying")
+    func retentionCleanupProtectsDisplayedDocumentsAcrossStores() async throws {
+        let resources = PRReviewDocumentResources(cache: PRReviewDocumentCache(
+            rootURL: FileManager.default.temporaryDirectory
+                .appending(path: "PRReviewWindowTests-\(UUID().uuidString)"),
+            retentionPolicy: .init(
+                maximumFileCount: 1,
+                maximumByteCount: .max,
+                maximumAge: 60 * 60 * 24 * 365
+            )
+        ))
+        let client = SyntheticPRReviewWindowClient(downloadHandler: { _, documentID, destination in
+            try Data("synthetic \(documentID)".utf8).write(to: destination, options: .atomic)
+        })
+        let firstDocument = syntheticDocument(id: "prdoc_window_first", filename: "first.md")
+        let secondDocument = syntheticDocument(id: "prdoc_window_second", filename: "second.md")
+
+        let firstStore = PRReviewStore(documentResources: resources)
+        firstStore.configure(client: client, machineID: "machine-a", demo: false)
+        firstStore.select(firstDocument.reviewID)
+        let secondStore = PRReviewStore(documentResources: resources)
+        secondStore.configure(client: client, machineID: "machine-a", demo: false)
+        secondStore.select(secondDocument.reviewID)
+
+        let firstURL = try await firstStore.localURL(for: firstDocument)
+        _ = firstStore.acquireDocumentLease(for: firstURL)
+        #expect(resources.protectedURLs.contains(firstURL.standardizedFileURL))
+
+        // The second window's download runs cleanup at the one-file retention
+        // limit. The first window's lease keeps its displayed file alive, and
+        // the just-installed second destination is protected as well.
+        let secondURL = try await secondStore.localURL(for: secondDocument)
+        #expect(FileManager.default.fileExists(atPath: firstURL.path))
+        #expect(FileManager.default.fileExists(atPath: secondURL.path))
+
+        // Closing the first window releases its lease; only then does cleanup
+        // evict the now-unprotected oldest file and forget its Ready phase.
+        firstStore.releaseOutstandingDocumentLeases()
+        #expect(!resources.protectedURLs.contains(firstURL.standardizedFileURL))
+        try resources.cleanup()
+        #expect(!FileManager.default.fileExists(atPath: firstURL.path))
+        #expect(FileManager.default.fileExists(atPath: secondURL.path))
+        #expect(firstStore.documentPhases[firstDocument.id] == nil)
+    }
+
+    private func syntheticDocument(id: String, filename: String) -> PRReviewDocument {
+        PRReviewDocument(
+            id: id,
+            reviewID: PRReviewDemo.reviewID,
+            runID: nil,
+            kind: .markdown,
+            title: filename,
+            mediaType: "text/markdown",
+            filename: filename,
+            url: nil,
+            byteSize: 16,
+            contentHash: id,
+            origin: "skill",
+            originPath: nil,
+            createdAt: nil,
+            downloadable: true
+        )
+    }
+
     private func temporaryDocumentCache() -> PRReviewDocumentCache {
         PRReviewDocumentCache(
             rootURL: FileManager.default.temporaryDirectory

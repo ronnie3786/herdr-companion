@@ -24,7 +24,7 @@ final class PRReviewStore {
     private var client: (any PRReviewClient)?
     private var generation = 0
     private var machineID: String?
-    private let documentCache: PRReviewDocumentCache
+    private let documentResources: PRReviewDocumentResources
 
     private(set) var isDemo = false
     var reviews: [PRReviewSummary] = []
@@ -56,11 +56,26 @@ final class PRReviewStore {
     var unsupported = false
     var error: String?
     var capabilities: PRReviewCapabilities?
-    var documentPhases: [String: PRReviewDocumentPhase] = [:]
     var documentUploads: [String: PRReviewDocumentUpload] = [:]
-    var protectedDocumentURLs: Set<URL> = []
     var contextImportError: String?
     var unconfigured = false
+
+    /// Every document resource this store has published a phase for. A
+    /// connection change retires phases still marked `.downloading` so a slow
+    /// download cannot leave a Context row spinning without a retry.
+    @ObservationIgnored private var heldDocumentScopes: Set<PRReviewDocumentResources.Scope> = []
+    /// Window-lifetime cache protections handed out through this store.
+    @ObservationIgnored private var documentLeases: [ObjectIdentifier: PRReviewDocumentLease] = [:]
+
+    /// Download phases for the currently configured machine and review. The
+    /// state itself is shared, so a document downloaded through a popped-out
+    /// window still publishes Ready and Reveal in Finder to this rail.
+    var documentPhases: [String: PRReviewDocumentPhase] {
+        guard let machineID, let selectedReviewID else { return [:] }
+        return documentResources.phases(machineID: machineID, reviewID: selectedReviewID)
+    }
+
+    var documentCache: PRReviewDocumentCache { documentResources.cache }
 
     enum PRReviewDocumentPhase: Equatable {
         case idle
@@ -93,13 +108,18 @@ final class PRReviewStore {
         let reviewID: String?
     }
 
-    init(documentCache: PRReviewDocumentCache = PRReviewDocumentCache()) {
-        self.documentCache = documentCache
+    init(
+        documentCache: PRReviewDocumentCache = PRReviewDocumentCache(),
+        documentResources: PRReviewDocumentResources? = nil
+    ) {
+        self.documentResources = documentResources ?? PRReviewDocumentResources(cache: documentCache)
     }
 
     /// A new host must discard every server-specific selection before a late response arrives.
     func configure(client: (any PRReviewClient)?, machineID: String?, demo: Bool) {
         generation &+= 1
+        settleInterruptedProgress()
+        releaseOutstandingDocumentLeases()
         self.client = client
         self.machineID = machineID
         isDemo = demo
@@ -118,9 +138,7 @@ final class PRReviewStore {
         unsupported = false
         error = nil
         capabilities = nil
-        documentPhases = [:]
         documentUploads = [:]
-        protectedDocumentURLs = []
         contextImportError = nil
 
         if demo {
@@ -149,6 +167,11 @@ final class PRReviewStore {
     /// filters, or selected file. Bumping the generation rejects every
     /// in-flight response from the previous client while the refresh reloads
     /// the same review, so the pinned window keeps its own local state.
+    ///
+    /// Operations that were in flight when the transport changed can no longer
+    /// publish their completion, so their progress settles into a terminal,
+    /// retryable state here instead of spinning forever. Nothing is resent; a
+    /// following refresh reconciles uploads that did reach the server.
     func reconnect(client: (any PRReviewClient)?, machineID: String?, demo: Bool) {
         generation &+= 1
         self.client = client
@@ -159,6 +182,7 @@ final class PRReviewStore {
         loadingDiffIdentity = nil
         diffLoadError = nil
         diffLoadErrorIdentity = nil
+        settleInterruptedProgress()
     }
 
     /// Invalidates every in-flight request and drops access to the configured
@@ -175,6 +199,8 @@ final class PRReviewStore {
         unconfigured = true
         isRefreshing = false
         loadingDiffIdentity = nil
+        settleInterruptedProgress()
+        releaseOutstandingDocumentLeases()
     }
 
     var currentMachineID: String? { machineID }
@@ -193,7 +219,7 @@ final class PRReviewStore {
             reviewID: document.reviewID,
             isDemo: isDemo,
             client: client,
-            documentCache: documentCache
+            resources: documentResources
         )
     }
 
@@ -429,6 +455,7 @@ final class PRReviewStore {
         } else {
             archivedReviews.insert(value.review, at: 0)
         }
+        reconcileSettledUploads(with: value)
     }
 
     func setViewed(paths: [String], viewed: Bool) async {
@@ -793,17 +820,23 @@ final class PRReviewStore {
             documentUploads[uploadKey] = .init(url: url, status: .uploading)
             do {
                 let document = try await uploadDocument(url: url)
+                guard isCurrentConnection(scope) else { return }
+                // The transfer row belongs to its own review, so it settles
+                // even when the user has since selected another review. A
+                // changed connection is settled by `settleInterruptedProgress`
+                // and this stale completion must not overwrite it.
+                documentUploads[uploadKey] = .init(url: url, status: .uploaded)
                 guard isCurrentSelection(scope) else { return }
                 appendDocument(document)
-                documentUploads[uploadKey] = .init(url: url, status: .uploaded)
             } catch {
-                guard isCurrentSelection(scope),
+                guard isCurrentConnection(scope),
                       !HerdrCancellation.isCancellation(error)
                 else {
                     return
                 }
                 let message = error.localizedDescription
                 documentUploads[uploadKey] = .init(url: url, status: .failed(message))
+                guard isCurrentSelection(scope) else { return }
                 contextImportError = message
             }
         }
@@ -861,7 +894,13 @@ final class PRReviewStore {
         guard let machineID else { throw APIError.invalidResponse }
         let reviewID = document.reviewID
         let scope = operationScope(reviewID: reviewID)
-        documentPhases[document.id] = .downloading
+        let resourceScope = documentResources.scope(
+            machineID: machineID,
+            reviewID: reviewID,
+            documentID: document.id
+        )
+        heldDocumentScopes.insert(resourceScope)
+        documentResources.setPhase(.downloading, for: resourceScope)
         let destination = try documentCache.prepareDestinationURL(
             machineID: machineID,
             reviewID: reviewID,
@@ -884,22 +923,43 @@ final class PRReviewStore {
             }
             guard isCurrentConnection(scope) else { throw CancellationError() }
             try documentCache.markAccessed(destination)
-            documentPhases[document.id] = .ready(destination)
-            try? documentCache.cleanup(protecting: protectedDocumentURLs)
+            documentResources.setPhase(.ready(destination), for: resourceScope)
+            // The freshly installed destination is protected even before the
+            // presenting window takes its lease, so a second store's cleanup
+            // at the retention limit cannot evict the file just downloaded.
+            try? documentResources.cleanup(additionallyProtecting: [destination])
             return destination
         } catch {
             guard isCurrentConnection(scope) else { throw CancellationError() }
-            documentPhases[document.id] = .failed(error.localizedDescription)
+            documentResources.setPhase(.failed(error.localizedDescription), for: resourceScope)
             throw error
         }
     }
 
-    func protectDocumentURL(_ url: URL) {
-        protectedDocumentURLs.insert(url.standardizedFileURL)
+    /// Takes a window-lifetime cache protection for a displayed document.
+    /// The lease keeps retention cleanup from evicting the file while the
+    /// window shows it; the shared phase still publishes Ready and Reveal to
+    /// every rail reading this review.
+    func acquireDocumentLease(for url: URL) -> PRReviewDocumentLease {
+        documentResources.acquireLease(for: url)
+        let lease = PRReviewDocumentLease(url: url) { [documentResources] in
+            documentResources.releaseLease(for: url)
+        }
+        documentLeases[ObjectIdentifier(lease)] = lease
+        return lease
     }
 
-    func unprotectDocumentURL(_ url: URL) {
-        protectedDocumentURLs.remove(url.standardizedFileURL)
+    func releaseDocumentLease(_ lease: PRReviewDocumentLease) {
+        lease.release()
+        documentLeases[ObjectIdentifier(lease)] = nil
+    }
+
+    /// Releases every protection this store still owns, e.g. when its window
+    /// closes. Double releases are already no-ops.
+    func releaseOutstandingDocumentLeases() {
+        let leases = documentLeases.values
+        documentLeases.removeAll()
+        for lease in leases { lease.release() }
     }
 
     func scroll(to path: String, line: Int, side: PRReviewSide) {
@@ -1072,6 +1132,47 @@ final class PRReviewStore {
 
     private func record(_ failure: Error) {
         error = failure.localizedDescription
+    }
+
+    /// A reconnect or host removal makes every in-flight operation's completion
+    /// stale. Upload rows and download rows must not keep spinning with no
+    /// Retry, so they settle into a terminal, retryable state here. The
+    /// operations themselves are never resent; the next refresh reconciles
+    /// uploads that did reach the server before the transport changed.
+    private func settleInterruptedProgress() {
+        let uploadMessage = "The connection changed before this upload finished. Retry to upload it again."
+        let downloadMessage = "This download was interrupted. Open the document to try again."
+        let interruptedUploads = documentUploads.filter { entry in
+            if case .uploading = entry.value.status { return true }
+            return false
+        }
+        for (key, upload) in interruptedUploads {
+            documentUploads[key] = .init(url: upload.url, status: .failed(uploadMessage))
+        }
+        for scope in heldDocumentScopes where documentResources.phase(for: scope) == .downloading {
+            documentResources.setPhase(.failed(downloadMessage), for: scope)
+        }
+    }
+
+    /// A refreshed snapshot is the reconciliation point for uploads that were
+    /// interrupted by a connection change: if this review's document list
+    /// contains the upload, the server received it after all, so the row stops
+    /// offering Retry.
+    private func reconcileSettledUploads(with value: PRReviewSnapshot) {
+        let reviewPrefix = "\(value.review.id)|"
+        let settledUploads = documentUploads.filter { entry in
+            guard entry.key.hasPrefix(reviewPrefix), case .failed = entry.value.status else { return false }
+            return true
+        }
+        for (key, upload) in settledUploads {
+            let filename = upload.url.lastPathComponent
+            guard !filename.isEmpty,
+                  value.documents.contains(where: {
+                      $0.filename == filename && $0.origin.lowercased() == "user"
+                  })
+            else { continue }
+            documentUploads[key] = .init(url: upload.url, status: .uploaded)
+        }
     }
 
     private func operationScope(reviewID: String?) -> PRReviewOperationScope {

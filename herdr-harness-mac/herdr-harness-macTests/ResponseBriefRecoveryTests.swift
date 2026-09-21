@@ -674,6 +674,164 @@ struct ResponseBriefRecoveryTests {
         #expect(stored.receipts.isEmpty)
         #expect(stored.responseCursorByChatID[latest.chat.id] == latest.responseID)
     }
+
+    @Test("Accepted ownership reconciles when its captured model was removed")
+    func removedModelStillReconcilesAcceptedRun() async throws {
+        let fixture = try RecoveryFixture()
+        defer { fixture.cleanup() }
+        let accepted = fixture.source(responseID: "entry-removed-model")
+        let latest = fixture.source(
+            responseID: "entry-removed-model-latest",
+            responseTimestamp: Date(timeIntervalSince1970: 1_800_000_300),
+            userTimestamp: Date(timeIntervalSince1970: 1_800_000_200)
+        )
+        // The accepted run was captured under a model the current catalog no
+        // longer contains. Its captured request must still reconcile.
+        let request = try ResponseBriefRequestBuilder.request(
+            for: accepted,
+            model: "provider/removed-model",
+            thinkingLevel: nil,
+            clientRequestID: "removed-model-request",
+            length: .minimal
+        )
+        try await fixture.persistence.saveReceipt(.init(
+            id: "removed-model-receipt",
+            source: accepted,
+            request: request,
+            runID: "agr_synthetic0001",
+            createdAt: .now
+        ))
+        // A length replacement is waiting behind the accepted run.
+        try await fixture.persistence.savePendingRegeneration(.init(
+            chatID: latest.chat.id,
+            source: latest,
+            length: .long,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_500)
+        ))
+
+        var starts: [AssistantRequest] = []
+        var fetches = 0
+        let transport = fixture.transport(
+            start: { submitted in
+                starts.append(submitted)
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _ in
+                fetches += 1
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            }
+        )
+        let coordinator = fixture.coordinator()
+        coordinator.runPollDelay = .zero
+        #expect(coordinator.enable(accepted.chat))
+
+        await coordinator.observe(latest, transport: transport)
+        await coordinator.waitForIdleForTesting()
+
+        #expect(fetches == 1)
+        #expect(starts.count == 1)
+        #expect(starts.first?.context.source.instanceId == latest.responseID)
+        #expect(starts.first?.responseBriefLength == .long)
+        #expect(coordinator.state(for: accepted.chat).phase == .idle)
+        let responseIDs = Set(coordinator.briefs(for: accepted.chat).map(\.source.responseID))
+        #expect(responseIDs == [accepted.responseID, latest.responseID])
+        let stored = try await fixture.persistence.snapshot()
+        #expect(stored.receipts.isEmpty)
+        #expect(stored.pendingRegenerations.isEmpty)
+    }
+
+    @Test("Accepted ownership reconciles while the catalog is unavailable and the replacement recovers")
+    func unavailableCatalogStillReconcilesAcceptedRun() async throws {
+        let fixture = try RecoveryFixture()
+        defer { fixture.cleanup() }
+        let accepted = fixture.source(responseID: "entry-unavailable-catalog")
+        let latest = fixture.source(
+            responseID: "entry-unavailable-catalog-latest",
+            responseTimestamp: Date(timeIntervalSince1970: 1_800_000_300),
+            userTimestamp: Date(timeIntervalSince1970: 1_800_000_200)
+        )
+        let request = try ResponseBriefRequestBuilder.request(
+            for: accepted,
+            model: "provider/brief-model",
+            thinkingLevel: nil,
+            clientRequestID: "unavailable-catalog-request",
+            length: .minimal
+        )
+        try await fixture.persistence.saveReceipt(.init(
+            id: "unavailable-catalog-receipt",
+            source: accepted,
+            request: request,
+            runID: "agr_synthetic0001",
+            createdAt: .now
+        ))
+        try await fixture.persistence.savePendingRegeneration(.init(
+            chatID: latest.chat.id,
+            source: latest,
+            length: .long,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_500)
+        ))
+
+        var starts: [AssistantRequest] = []
+        var fetches = 0
+        var catalogAvailable = false
+        let transport = ResponseBriefTransport(
+            capabilities: { _ in fixture.capabilities() },
+            models: { _ in
+                guard catalogAvailable else { throw APIError.invalidResponse }
+                return AgentModelCatalogResponse(
+                    ok: true,
+                    models: [fixture.briefModel],
+                    defaultModel: nil
+                )
+            },
+            fetchSnapshot: { _ in throw APIError.invalidResponse },
+            start: { _, submitted in
+                starts.append(submitted)
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _, _ in
+                fetches += 1
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            cancel: { _, id in
+                fixture.run(status: .cancelled, response: nil, error: "cancelled \(id)")
+            }
+        )
+        let coordinator = fixture.coordinator()
+        coordinator.runPollDelay = .zero
+        #expect(coordinator.enable(accepted.chat))
+
+        await coordinator.observe(latest, transport: transport)
+        await coordinator.waitForIdleForTesting()
+
+        // The accepted run still reconciles by fetching its known run ID; only
+        // the genuinely new replacement waits for a working catalog.
+        #expect(fetches == 1)
+        #expect(starts.isEmpty)
+        #expect(coordinator.briefs(for: accepted.chat).map(\.source.responseID) == [accepted.responseID])
+        guard case .failed = coordinator.state(for: accepted.chat).phase else {
+            Issue.record("Expected the catalog failure to stay actionable")
+            return
+        }
+        let waiting = try await fixture.persistence.snapshot()
+        #expect(waiting.pendingRegenerations[latest.chat.id]?.length == .long)
+        #expect(waiting.receipts.isEmpty)
+
+        // Once the catalog returns, the waiting replacement resumes once.
+        catalogAvailable = true
+        await coordinator.observe(latest, transport: transport)
+        await coordinator.waitForIdleForTesting()
+
+        #expect(starts.count == 1)
+        #expect(starts.first?.context.source.instanceId == latest.responseID)
+        #expect(starts.first?.responseBriefLength == .long)
+        #expect(coordinator.state(for: accepted.chat).phase == .idle)
+        let responseIDs = Set(coordinator.briefs(for: accepted.chat).map(\.source.responseID))
+        #expect(responseIDs == [accepted.responseID, latest.responseID])
+        let stored = try await fixture.persistence.snapshot()
+        #expect(stored.pendingRegenerations.isEmpty)
+        #expect(stored.receipts.isEmpty)
+    }
 }
 
 @MainActor

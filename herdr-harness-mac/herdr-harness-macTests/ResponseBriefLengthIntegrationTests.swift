@@ -638,6 +638,290 @@ struct ResponseBriefLengthIntegrationTests {
         #expect(replayed.responseBriefLength == .medium)
         #expect(relaunched.state(for: uncertain.chat).phase == .idle)
     }
+
+    @Test("Retry resumes a durable length replacement exactly once when no card exists")
+    func retryResumesPendingReplacementWithoutCard() async throws {
+        let fixture = try LengthFixture()
+        defer { fixture.cleanup() }
+        let coordinator = fixture.coordinator()
+        coordinator.runPollDelay = .zero
+        let source = fixture.source(responseID: "entry-retry-no-card")
+        var blockedRequests: [AssistantRequest] = []
+        let oldTransport = fixture.oldServerTransport(
+            start: { request in
+                blockedRequests.append(request)
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
+        )
+        #expect(coordinator.enable(source.chat))
+
+        // Changing length against an old companion leaves exactly one durable
+        // replacement intent and sends nothing.
+        await coordinator.changeLength(
+            .medium,
+            chat: source.chat,
+            selectedSource: source,
+            transport: oldTransport
+        )
+        await coordinator.waitForIdleForTesting()
+        #expect(blockedRequests.isEmpty)
+        guard case .upgradeRequired = coordinator.state(for: source.chat).phase else {
+            Issue.record("Expected the configurable-length upgrade notice")
+            return
+        }
+        let awaiting = try await fixture.persistence.snapshot()
+        #expect(awaiting.pendingRegenerations[source.chat.id]?.length == .medium)
+
+        // Retry after upgrading must dispatch the captured intent instead of an
+        // ordinary job the intent would pay for again on the next poll.
+        var requests: [AssistantRequest] = []
+        let upgradedTransport = fixture.transport(
+            start: { request in
+                requests.append(request)
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
+        )
+        await coordinator.retry(source, transport: upgradedTransport)
+        await coordinator.waitForIdleForTesting()
+
+        #expect(requests.count == 1)
+        #expect(requests.first?.responseBriefLength == .medium)
+        #expect(coordinator.state(for: source.chat).phase == .idle)
+        #expect(coordinator.briefs(for: source.chat).count == 1)
+        let consumed = try await fixture.persistence.snapshot()
+        #expect(consumed.pendingRegenerations.isEmpty)
+        #expect(consumed.receipts.isEmpty)
+
+        // Polling and a relaunch never replay the deliberate replacement.
+        await coordinator.observe(source, transport: upgradedTransport)
+        await coordinator.waitForIdleForTesting()
+        #expect(requests.count == 1)
+
+        let relaunched = ResponseBriefCoordinator(
+            defaults: fixture.defaults,
+            persistence: ResponseBriefPersistence(url: fixture.folder.appending(path: "cache.json"))
+        )
+        relaunched.runPollDelay = .zero
+        #expect(relaunched.enable(source.chat))
+        await relaunched.observe(source, transport: upgradedTransport)
+        await relaunched.waitForIdleForTesting()
+        #expect(requests.count == 1)
+        #expect(relaunched.briefs(for: source.chat).count == 1)
+    }
+
+    @Test("Retry resumes the pending length replacement instead of stopping at regenerateNeeded")
+    func retryResumesPendingReplacementWithExistingCard() async throws {
+        let fixture = try LengthFixture()
+        defer { fixture.cleanup() }
+        let coordinator = fixture.coordinator()
+        coordinator.runPollDelay = .zero
+        let source = fixture.source(responseID: "entry-retry-card")
+        var requests: [AssistantRequest] = []
+        let upgradedTransport = fixture.transport(
+            start: { request in
+                requests.append(request)
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
+        )
+        #expect(coordinator.enable(source.chat))
+        await coordinator.observe(source, transport: upgradedTransport)
+        await coordinator.waitForIdleForTesting()
+        #expect(requests.count == 1)
+
+        // A companion downgrade clears cached support, so the length change
+        // cannot reach the old server even though a card already exists.
+        await coordinator.connectionDidChange()
+        let oldTransport = fixture.oldServerTransport(
+            start: { request in
+                requests.append(request)
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
+        )
+        await coordinator.changeLength(
+            .long,
+            chat: source.chat,
+            selectedSource: source,
+            transport: oldTransport
+        )
+        await coordinator.waitForIdleForTesting()
+        #expect(requests.count == 1)
+        guard case .upgradeRequired = coordinator.state(for: source.chat).phase else {
+            Issue.record("Expected the configurable-length upgrade notice")
+            return
+        }
+        let blocked = try await fixture.persistence.snapshot()
+        #expect(blocked.pendingRegenerations[source.chat.id]?.length == .long)
+
+        // Retry must perform the queued deliberate replacement rather than
+        // only presenting guidance that leaves the intent to fire later.
+        await coordinator.retry(source, transport: upgradedTransport)
+        await coordinator.waitForIdleForTesting()
+
+        #expect(requests.count == 2)
+        #expect(requests.last?.responseBriefLength == .long)
+        #expect(coordinator.state(for: source.chat).phase == .idle)
+        #expect(coordinator.briefs(for: source.chat).count == 2)
+        let consumed = try await fixture.persistence.snapshot()
+        #expect(consumed.pendingRegenerations.isEmpty)
+
+        await coordinator.observe(source, transport: upgradedTransport)
+        await coordinator.waitForIdleForTesting()
+        #expect(requests.count == 2)
+
+        let relaunched = ResponseBriefCoordinator(
+            defaults: fixture.defaults,
+            persistence: ResponseBriefPersistence(url: fixture.folder.appending(path: "cache.json"))
+        )
+        relaunched.runPollDelay = .zero
+        #expect(relaunched.enable(source.chat))
+        await relaunched.observe(source, transport: upgradedTransport)
+        await relaunched.waitForIdleForTesting()
+        #expect(requests.count == 2)
+        #expect(relaunched.briefs(for: source.chat).count == 2)
+    }
+
+    @Test("Refreshing support resumes the pending replacement instead of an ordinary duplicate")
+    func refreshSupportResumesPendingReplacement() async throws {
+        let fixture = try LengthFixture()
+        defer { fixture.cleanup() }
+        let coordinator = fixture.coordinator()
+        coordinator.runPollDelay = .zero
+        let source = fixture.source(responseID: "entry-refresh-support")
+        var blockedRequests: [AssistantRequest] = []
+        let oldTransport = fixture.oldServerTransport(
+            start: { request in
+                blockedRequests.append(request)
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
+        )
+        #expect(coordinator.enable(source.chat))
+        await coordinator.observe(source, transport: oldTransport)
+        await coordinator.waitForIdleForTesting()
+        #expect(blockedRequests.isEmpty)
+
+        await coordinator.changeLength(
+            .medium,
+            chat: source.chat,
+            selectedSource: source,
+            transport: oldTransport
+        )
+        await coordinator.waitForIdleForTesting()
+        #expect(blockedRequests.isEmpty)
+        let awaiting = try await fixture.persistence.snapshot()
+        #expect(awaiting.pendingRegenerations[source.chat.id]?.length == .medium)
+
+        var requests: [AssistantRequest] = []
+        let upgradedTransport = fixture.transport(
+            start: { request in
+                requests.append(request)
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
+        )
+        await coordinator.refreshSupport(
+            machineID: source.chat.machineID,
+            transport: upgradedTransport
+        )
+        await coordinator.waitForIdleForTesting()
+
+        // The waiting selection owns the one submission; the refresh must not
+        // create an ordinary job the intent would pay for again after it.
+        #expect(requests.count == 1)
+        #expect(requests.first?.responseBriefLength == .medium)
+        let consumed = try await fixture.persistence.snapshot()
+        #expect(consumed.pendingRegenerations.isEmpty)
+
+        await coordinator.observe(source, transport: upgradedTransport)
+        await coordinator.waitForIdleForTesting()
+        #expect(requests.count == 1)
+        #expect(coordinator.briefs(for: source.chat).count == 1)
+    }
+
+    @Test("Disabling and re-enabling during the intent save discards the obsolete replacement")
+    func disableDuringIntentSaveDiscardsObsoleteReplacement() async throws {
+        let fixture = try LengthFixture()
+        defer { fixture.cleanup() }
+        let coordinator = fixture.coordinator()
+        coordinator.runPollDelay = .zero
+        let selected = fixture.source(responseID: "entry-barrier-selected")
+        let latest = fixture.source(
+            responseID: "entry-barrier-latest",
+            text: selected.text + " A later synthetic follow-up with more detail.",
+            responseTimestamp: Date(timeIntervalSince1970: 1_800_000_300),
+            userTimestamp: Date(timeIntervalSince1970: 1_800_000_200)
+        )
+        var requests: [AssistantRequest] = []
+        let transport = fixture.transport(
+            start: { request in
+                requests.append(request)
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
+        )
+        #expect(coordinator.enable(latest.chat))
+
+        var release: CheckedContinuation<Void, Never>?
+        var barrierStarted: AsyncStream<Void>.Continuation?
+        let started = AsyncStream<Void> { barrierStarted = $0 }
+        coordinator.intentPersistenceBarrier = {
+            barrierStarted?.yield()
+            await withCheckedContinuation { release = $0 }
+        }
+
+        let change = Task { @MainActor in
+            await coordinator.changeLength(
+                .long,
+                chat: selected.chat,
+                selectedSource: selected,
+                transport: transport
+            )
+        }
+        var iterator = started.makeAsyncIterator()
+        _ = await iterator.next()
+
+        // The durable write is still suspended when the chat is disabled and
+        // immediately re-enabled, so the captured selection is obsolete and
+        // must never be published or resumed.
+        coordinator.disable(selected.chat, transport: transport)
+        #expect(coordinator.enable(selected.chat))
+        release?.resume()
+        await change.value
+        coordinator.intentPersistenceBarrier = nil
+        await coordinator.waitForIdleForTesting()
+
+        #expect(requests.isEmpty)
+        let discarded = try await fixture.persistence.snapshot()
+        #expect(discarded.pendingRegenerations.isEmpty)
+
+        // Re-enabling observes the latest completion. Only that new answer may
+        // generate; the discarded intent never resurfaces for the selection.
+        await coordinator.observe(latest, transport: transport)
+        await coordinator.waitForIdleForTesting()
+        #expect(requests.count == 1)
+        #expect(requests.allSatisfy { $0.context.source.instanceId == latest.responseID })
+        #expect(coordinator.briefs(for: selected.chat).count == 1)
+
+        await coordinator.observeSources([selected, latest], transport: transport)
+        await coordinator.waitForIdleForTesting()
+        #expect(requests.count == 1)
+
+        let relaunched = ResponseBriefCoordinator(
+            defaults: fixture.defaults,
+            persistence: ResponseBriefPersistence(url: fixture.folder.appending(path: "cache.json"))
+        )
+        relaunched.runPollDelay = .zero
+        #expect(relaunched.enable(selected.chat))
+        await relaunched.observeSources([selected, latest], transport: transport)
+        await relaunched.waitForIdleForTesting()
+        #expect(requests.count == 1)
+        #expect(relaunched.briefs(for: selected.chat).count == 1)
+        #expect(relaunched.briefs(for: selected.chat).first?.source.responseID == latest.responseID)
+    }
 }
 
 @MainActor

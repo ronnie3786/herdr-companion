@@ -580,6 +580,64 @@ struct ResponseBriefCoordinatorTests {
         #expect(stored.receipts.first?.status == .settled)
     }
 
+    @Test("Retry after a settled terminal failure keeps explicit regeneration available")
+    func retryAfterSettledFailureRequiresExplicitRegeneration() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let coordinator = fixture.coordinator()
+        coordinator.runPollDelay = .zero
+        let source = fixture.source(responseID: "answer-settled-failure", text: "Synthetic long answer")
+        var starts = 0
+        let failingTransport = fixture.transport(
+            start: { _ in
+                starts += 1
+                return fixture.run(status: .failed, response: nil, error: "synthetic provider failure")
+            },
+            fetch: { _ in fixture.run(status: .failed, response: nil, error: "synthetic provider failure") }
+        )
+        #expect(coordinator.enable(source.chat))
+        await coordinator.observe(source, transport: failingTransport)
+        await coordinator.waitForIdleForTesting()
+
+        #expect(starts == 1)
+        guard case .failed = coordinator.state(for: source.chat).phase else {
+            Issue.record("Expected the terminal provider failure state")
+            return
+        }
+        let settled = try await fixture.persistence.snapshot()
+        #expect(settled.receipts.map(\.status) == [.settled])
+        #expect(settled.records.isEmpty)
+
+        // Retry cannot replay a settled receipt, but it must keep an explicit
+        // regeneration path visible instead of clearing into an empty rail the
+        // bounded enqueue would silently reject.
+        await coordinator.retry(source, transport: failingTransport)
+        await coordinator.waitForIdleForTesting()
+        #expect(starts == 1)
+        guard case .regenerateNeeded = coordinator.state(for: source.chat).phase else {
+            Issue.record("Expected explicit regeneration guidance after a settled failure")
+            return
+        }
+        #expect(coordinator.briefs(for: source.chat).isEmpty)
+
+        // The explicit regeneration then creates a fresh paid request.
+        let workingTransport = fixture.transport(
+            start: { _ in
+                starts += 1
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
+        )
+        await coordinator.regenerate(source, transport: workingTransport)
+        await coordinator.waitForIdleForTesting()
+
+        #expect(starts == 2)
+        #expect(coordinator.briefs(for: source.chat).count == 1)
+        #expect(coordinator.state(for: source.chat).phase == .idle)
+        let regenerated = try await fixture.persistence.snapshot()
+        #expect(regenerated.records.count == 1)
+    }
+
     @Test("Regenerating a historical short source creates a deliberate brief for that exact source")
     func historicalShortRegenerationTargetsThatSource() async throws {
         let fixture = try Fixture()

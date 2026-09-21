@@ -86,8 +86,11 @@ and explains each position above the diff. ⌥↑ and ⌥↓ move between files;
 marks a file viewed (also on GitHub when syncing is enabled). **Rank files** re-runs the ranking;
 `herdr-pr-review set-rankings` lets an agent supply its own.
 
-**Diff and Ask AI.** The diff is native: old and new line numbers, full-width tinting for added,
-removed and hunk-header lines. Deleted text files show their removal hunks. Long files scroll vertically
+**Diff and Ask AI.** The diff is native: old and new line numbers, and added and removed
+lines use the same change treatment as the Git segment's diff — a full-width green/red row
+tint, a stronger line-number gutter, and still stronger changed-word emphasis inside
+replacement blocks. Hunk headers keep their own tint and unchanged context stays plain.
+Deleted text files show their removal hunks. Long files scroll vertically
 and horizontally. If the patch is truncated, Herdr shows every available hunk with a partial-diff
 notice and a link to the full diff. Select code and choose **Ask AI** (floating button or right-click).
 The question carries the file, the exact selection, whether it is on the before or after side,
@@ -116,6 +119,23 @@ placeholders, output globs) without updating the app. Custom skills can also be 
 
 **Archive.** Archiving hides a review from the Active list and keeps every file, run, document
 and event; Archived lists them and Unarchive brings one back.
+
+**Pop-out windows.** Right-click any active review row — selected or not — or the header of the
+review currently displayed, and choose **Pop Out into Window**. The review opens in its own
+resizable Mac window that keeps the complete workspace (Files, Context, Agents, Skills, and
+Ask AI) while the main Herdr window stays free to move through All sessions and other chats;
+an unsent chat draft is untouched by either window, and ⌘8 brings the section back. Every window
+is pinned to the machine and review it was opened from: changing the main window's review host,
+selection, or file never retargets it, and its Ask AI questions, document downloads, and agent
+handoffs stay on that host. One window exists per machine/review pair, so reopening the same
+review focuses its window instead of creating a duplicate; opening another review never replaces
+an existing window. Closing a window only closes the view — the review, its files, runs and
+documents stay on the review host and it remains in the Active list. A review whose host is
+removed or unconfigured shows an unavailable message rather than silently falling back to another
+machine. Titles, display labels, and pull request numbers are presentation; windows are identified
+by machine and review id, so identical labels and duplicate numbers remain separate windows.
+Pop-outs are Mac-side secondary windows, not separate processes, and need no server support
+beyond the existing `pr-review-v1` capability.
 
 ## Command line: `herdr-pr-review`
 
@@ -193,9 +213,17 @@ Ask AI draft is open, so nothing the reviewer typed is lost.
 ## Verification
 
 - Python: `.venv/bin/python -m unittest tests.test_pr_review_store tests.test_pr_review_runtime tests.test_pr_review_http tests.test_pr_review_cli tests.test_pr_review_questions tests.test_pr_review_diff`.
-- Mac: `xcodebuild … test -only-testing:herdr-harness-macTests/PRReview*` plus the navigation
-  and agent-control suites; demo mode renders the section without a server.
-- Manual: [MANUAL_TEST_CHECKLIST.md](../herdr-harness-mac/MANUAL_TEST_CHECKLIST.md) → PR Review.
+- Mac unit (required exact-SHA Verify): `xcodebuild … test -only-testing:herdr-harness-macTests/PRReview*`.
+  That suite covers the client contract, store and window scoping, routing identity, the render
+  suite (including popped-out window sizing and the rendered change palette at default and
+  enlarged text scales), and still renders the section without a server in demo mode.
+- Mac interactive (final gate): `xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test -only-testing:herdr-harness-macUITests/HerdrPRReviewUITests`.
+  That suite exercises the row and header context menus, two concurrent review windows with
+  independent tabs and files, chat navigation with an unsent draft, duplicate-window focus, and
+  close-versus-archive. It is recorded as pending until the final gate executes it; generated
+  render PNGs and screenshots are layout evidence, not installed-app verification.
+- Manual: [MANUAL_TEST_CHECKLIST.md](../herdr-harness-mac/MANUAL_TEST_CHECKLIST.md) → PR Review,
+  including the production Git renderer comparison and simultaneous review/chat windows.
 
 ## Limits
 
@@ -210,3 +238,6 @@ Ask AI draft is open, so nothing the reviewer typed is lost.
   event and never blocks the local toggle.
 - Reviews of the same PR are keyed by repository and number while active; archive one to start
   a fresh review of the same PR.
+- Pop-out windows are secondary Mac windows inside the same process, not separate launches.
+  They share the app's credentials and reuse the machine/review-scoped PR Review endpoints, so
+  they add no server capability beyond `pr-review-v1`.

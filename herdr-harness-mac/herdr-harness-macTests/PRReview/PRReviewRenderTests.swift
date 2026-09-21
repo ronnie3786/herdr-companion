@@ -66,12 +66,19 @@ struct PRReviewRenderTests {
 
         let split = try #require(descendants(hosting).compactMap { $0 as? NSSplitView }.first)
         let rail = try #require(split.subviews.first)
-        let diffPane = try #require(split.subviews.last)
         let textView = try #require(descendants(hosting).compactMap { $0 as? PRReviewDiffTextView }.first)
+        let codeViewport = try #require(textView.enclosingScrollView?.contentView)
+        let railRect = rail.convert(rail.bounds, to: hosting)
+        let codeViewportRect = codeViewport.convert(codeViewport.bounds, to: hosting)
+        let minimumRemainingWidth = size.width - PRReviewFilesLayout.maximumRailWidth - 20
 
-        #expect(rail.frame.width >= PRReviewFilesLayout.minimumRailWidth - 1)
-        #expect(rail.frame.width <= PRReviewFilesLayout.maximumRailWidth + 1)
-        #expect(diffPane.frame.width > rail.frame.width)
+        #expect(railRect.width >= PRReviewFilesLayout.minimumRailWidth - 1)
+        #expect(railRect.width <= PRReviewFilesLayout.maximumRailWidth + 1)
+        #expect(codeViewportRect.width > railRect.width)
+        #expect(codeViewportRect.width >= minimumRemainingWidth)
+        #expect(codeViewportRect.minX >= railRect.maxX - 1)
+        #expect(codeViewportRect.maxX >= size.width - 20)
+        #expect(codeViewportRect.height > size.height * 0.6)
         #expect(split.frame.height > size.height * 0.72)
         #expect(textView.string.contains("struct SeedCatalog {}"))
         #expect(textView.isLineVisible(2, side: .after))

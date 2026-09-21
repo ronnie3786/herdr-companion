@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -37,6 +38,7 @@ TOOL_HASHES = {
 }
 SPARKLE_NS = "{http://www.andymatuschak.org/xml-namespaces/sparkle}"
 LOCK_REF = "tags/macos-release-publish-lock"
+SLEEP = time.sleep
 
 class ReleaseError(ValueError):
     pass
@@ -582,15 +584,18 @@ def tag_commit(tag):
 def release_by_tag(tag):
     # GitHub's tag endpoint excludes drafts. Authenticated release listings
     # include them, and their numeric ID remains valid after publication.
-    page = 1
-    while True:
-        releases = api(f"releases?per_page=100&page={page}")
-        for item in releases:
-            if item["tag_name"] == tag:
-                return api(f"releases/{item['id']}")
-        if len(releases) < 100:
-            raise ReleaseError("Expected release is missing from the authenticated listing")
-        page += 1
+    for attempt in range(8):
+        page = 1
+        while True:
+            releases = api(f"releases?per_page=100&page={page}")
+            for item in releases:
+                if item["tag_name"] == tag:
+                    return api(f"releases/{item['id']}")
+            if len(releases) < 100:
+                break
+            page += 1
+        if attempt < 7: SLEEP(3)
+    raise ReleaseError("Expected release is missing from the authenticated listing")
 
 
 def verify_remote_assets(release, manifest, *, complete):

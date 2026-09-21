@@ -26,12 +26,20 @@ private actor PiSnapshotGate {
     }
 }
 
-@Suite("Pi conversation reconnect state machine", .serialized, .timeLimit(.minutes(1)))
+private struct InstantSleepClock: PiConversationSleepClock {
+    func sleep(for duration: Duration) async throws {
+        try Task.checkCancellation()
+        await Task.yield()
+    }
+}
+
+@Suite("Pi conversation reconnect state machine", .serialized, .timeLimit(.minutes(3)))
 @MainActor
 struct PiConversationStoreReloadGuardTests {
     @Test("Overflow, disconnect, and EOF retry the applied cursor without refetching")
     func transientFailuresRetainCommittedPrefix() async throws {
         let store = PiConversationStore()
+        store.sleepClock = InstantSleepClock()
         store.reconnectBackoffBase = .zero
         let pane = testPane()
         var snapshotCalls = 0

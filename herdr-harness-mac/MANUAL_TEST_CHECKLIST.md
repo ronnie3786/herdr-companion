@@ -55,11 +55,13 @@ Use `-HerdrDemoMode` for the synthetic review, or a disposable pull request on a
 
 ## Tab colors and sidebar filtering
 
-These preferences are local to this Mac; no server update is needed.
+These preferences are local to this Mac. Smart Rename inside this section
+requires the execution companion to advertise the tool-free naming profile; the
+color assignments and labels themselves need no server update.
 
 - [ ] Right-click a tab or a chat in Recents → **Tab color**. Try all six colors. Check the menu swatches, selected checkmark, and sidebar row fills. Pi chat, header, composer, and workspace card backgrounds must remain unchanged. Sibling chats and new panes in the same tab inherit the color; an identically numbered tab on another machine does not.
 - [ ] Confirm the color key appears below **Filter chats** and above **New session**. Click a label: only matching chats remain, including in Unread, Starred, and workspace groups. Combine with text search, machine scope, and recency. Click again or **Show all colors** to clear. Remove the last matching tab's color while filtered: a clearable empty state remains. **Reveal in Sidebar** clears the color filter.
-- [ ] Check the 56-point color-key rows and larger titles. Click the pencil beside a color label while Filter chats has focus, then type immediately without clicking the editor: the selected label should be replaced and the filter should remain untouched. Enter and clicking away save; Escape cancels. Empty, multiline, or over-80-character labels preserve the previous value with feedback. Right-click → **Smart Rename** with readable Pi chats containing a synthetic Jira key/title. Edit the label or reassign a tab while AI is running: the late result must not replace your change. Failure must retain the old label and clear the spinner. Save a model the naming machine does not offer: the label must stay unchanged with an actionable error that names the selection and companion, never a substituted default. Then retry with shell-only panes in the same color: the label must still be nameable from bounded terminal output or pane metadata, using the naming machine of the first successfully sampled pane.
+- [ ] Check the 56-point color-key rows and larger titles. Click the pencil beside a color label while Filter chats has focus, then type immediately without clicking the editor: the selected label should be replaced and the filter should remain untouched. Enter and clicking away save; Escape cancels. Empty, multiline, or over-80-character labels preserve the previous value with feedback. Right-click → **Smart Rename** with readable Pi chats containing a synthetic Jira key/title. Edit the label or reassign a tab, or submit a newer prompt on a sampled pane, while AI is running: the late result must not replace your change. Failure must retain the old label and clear the spinner, and invalid output must name the model, effort, and companion without echoing the model text. Save a model the naming machine does not offer: the label must stay unchanged with an actionable error that names the selection and companion, never a substituted default. Then retry with shell-only panes in the same color: the label must still be nameable from bounded terminal output or pane metadata, using the naming machine of the first successfully sampled pane.
 - [ ] Relaunch: assignments and custom labels persist. Remove a tab's color: every sibling returns to its normal background, without changing its title, status, or unread state. Check large text, keyboard navigation, VoiceOver color-group labels, and **Differentiate without color** (numbered sidebar symbols).
 
 ## iPhone notification checks
@@ -98,11 +100,21 @@ Use synthetic demo data or a disposable test conversation for these checks.
   companion in the error. Repeat with an Agent model inherited by an empty Smart
   Rename model, and with a non-reasoning model paired with an effort above Off.
   Confirm that Off is accepted and an offered selection is sent unchanged.
+- On a companion whose server predates the tool-free `smart-rename-v1` naming
+  profile, run Smart Rename: no request should reach the companion, the current
+  title must stay, and the error must name the companion and ask for its server
+  update. Confirm the tool-free path on an updated companion by checking the
+  dispatched run profile, and confirm the model output rules still apply: a
+  non-JSON, over-80-character, or control-character title names the model,
+  effort, and companion without echoing the raw output, and never changes the
+  title or saved selection.
 - Smart Rename immediately after submitting a HUD prompt, before any reply or
   tool activity appears. It must succeed from the submitted prompt alone. Let a
   reply and completion arrive while the naming spinner is still visible: the
   title must still be applied. Repeat with a running chat that has no assistant
-  text yet.
+  text yet. Rename one pending chat and then accept a second chat with the same
+  prompt prefix first: the title must remain owned by its own chat, and each
+  chat must keep the right title after relaunch and reopen from history.
 - Run the synthetic matrix in [docs/smart-rename.md](../docs/smart-rename.md)
   with disposable machines whose companions advertise different model catalogs.
   Confirm each rename runs on the target pane's or HUD chat's machine: an offered
@@ -112,9 +124,10 @@ Use synthetic demo data or a disposable test conversation for these checks.
   names the companion and selection — never a fallback. Verify a catalog-listed
   model whose provider fails also preserves the title with one attempt. Edit a
   title while naming is in flight; the manual edit must win. Never use production
-  machines, credentials, or real conversations for this check; per-companion
-  smoke checks require separate authorization, their evidence stays private, and
-  inaccessible machines remain unverified.
+  machines, credentials, or real conversations for this check; the required
+  per-companion smoke checks are recorded privately by the single validation
+  owner, inaccessible machines remain unverified, and unperformed checks stay
+  unperformed rather than passing.
 - Open Git in a new window, resize it, switch the main chat to another repository,
   and verify the detached view remains on its original pane and machine. Reopen
   the same target and verify its existing window is used. Test disconnect/reconnect

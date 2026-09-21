@@ -5,14 +5,14 @@ import Testing
 
 @MainActor
 final class FakeNoteAIRunner: HerdrNoteAIRunner {
-    struct Call { let prompt: String; let machineID: String; let mode: HeadlessAgentRunMode; let systemPrompt: String?; let model: String?; let thinkingLevel: String? }
+    struct Call { let prompt: String; let machineID: String; let mode: HeadlessAgentRunMode; let systemPrompt: String?; let profile: String?; let model: String?; let thinkingLevel: String? }
     enum Mode { case succeed(String), throwing(any Error), hanging }
     var mode: Mode = .succeed("")
     var onRun: (@MainActor () async -> Void)?
     private(set) var calls: [Call] = []
 
-    func run(prompt: String, machineID: String, mode: HeadlessAgentRunMode, model: String?, thinkingLevel: String?, systemPrompt: String?, deadline: Duration, appModel: HerdrAppModel, onProgress: @escaping @MainActor (HerdrNoteRunProgress) -> Void) async throws -> String {
-        calls.append(Call(prompt: prompt, machineID: machineID, mode: mode, systemPrompt: systemPrompt, model: model, thinkingLevel: thinkingLevel))
+    func run(prompt: String, machineID: String, mode: HeadlessAgentRunMode, model: String?, thinkingLevel: String?, systemPrompt: String?, profile: String?, deadline: Duration, appModel: HerdrAppModel, onProgress: @escaping @MainActor (HerdrNoteRunProgress) -> Void) async throws -> String {
+        calls.append(Call(prompt: prompt, machineID: machineID, mode: mode, systemPrompt: systemPrompt, profile: profile, model: model, thinkingLevel: thinkingLevel))
         onProgress(HerdrNoteRunProgress(stepCount: 1, lastStep: "Read · note.txt"))
         await onRun?()
         switch self.mode {

@@ -104,6 +104,34 @@ struct AgentControlSmartRenameTests {
         #expect(!fixture.model.smartRenamingPaneIDs.contains(fixture.pane.id))
     }
 
+    @Test("Invalid naming output reaches agent control with the actionable selection details")
+    func invalidOutputReceiptPreservesTitle() async throws {
+        let fixture = try makeFixture(refreshFails: false)
+        defer {
+            fixture.defaults.removePersistentDomain(forName: fixture.suite)
+            AgentControlSmartRenameURLProtocol.reset()
+        }
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed("not JSON")
+
+        do {
+            _ = try await fixture.model.smartRenameForAgentControl(fixture.pane, runner: runner) {}
+            Issue.record("Expected invalid naming output to throw")
+        } catch let error as SmartRenameExecutionError {
+            #expect(error.machineName == "Desktop")
+            #expect(error.model == "synthetic/naming")
+            #expect(error.thinkingLevel == .low)
+            #expect(error.reason == SmartRenameModelRouting.invalidTitleReason)
+        }
+
+        let counts = AgentControlSmartRenameURLProtocol.counts()
+        #expect(counts.renames == 0)
+        #expect(counts.refreshes == 0)
+        #expect(runner.calls.count == 1)
+        #expect(fixture.model.pane(id: fixture.pane.id)?.displayTitle == "Original title")
+        #expect(!fixture.model.smartRenamingPaneIDs.contains(fixture.pane.id))
+    }
+
     private func makeFixture(refreshFails: Bool) throws -> (
         model: HerdrAppModel,
         pane: HerdrPane,

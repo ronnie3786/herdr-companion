@@ -20,7 +20,7 @@ from . import attachments, issue_reports, response_audio, result_artifacts, voic
 from .active_work import ActiveWorkError
 from .first_mate_store import FirstMateError
 from .pr_review_store import PRReviewError
-from .agent_runs import AgentRunError, MAX_ATTACHMENTS, MODEL_PATTERN, THINKING_LEVELS
+from .agent_runs import SMART_RENAME_PROFILE, AgentRunError, MAX_ATTACHMENTS, MODEL_PATTERN, THINKING_LEVELS
 from .alerts import utc_now
 from .issue_reports import IssueReportError
 from .client import HerdrAPIError, HerdrClientError
@@ -2332,6 +2332,39 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 profile = body.get("profile")
                 hud_chat = profile == "hud-chat-v1"
                 response_brief = profile == "response-brief-v1"
+                smart_rename = profile == SMART_RENAME_PROFILE
+                if smart_rename:
+                    # Naming is one-shot and tool-free: no continuation, files,
+                    # working-folder change, client system prompt, or supplied
+                    # context is accepted, so a naming run can only ever name
+                    # from the prompt the app sends.
+                    if mode != "ask":
+                        raise HTTPValidationError("Smart Rename must use ask mode")
+                    if any(
+                        key in body
+                        for key in (
+                            "attachments",
+                            "continueFromRunId",
+                            "systemPrompt",
+                            "paneId",
+                            "cwd",
+                            "context",
+                            "scope",
+                            "clientRequestId",
+                            "parentSessionId",
+                        )
+                    ):
+                        raise HTTPValidationError(
+                            "Smart Rename accepts only a prompt, model, and thinkingLevel"
+                        )
+                    return (
+                        service.start_smart_rename(
+                            prompt=prompt,
+                            model=model,
+                            thinking_level=thinking_level,
+                        ),
+                        202,
+                    )
                 if "parentSessionId" in body and not response_brief:
                     raise HTTPValidationError("parentSessionId requires response-brief-v1")
                 if response_brief and not valid_pi_session_id(body.get("parentSessionId")):

@@ -122,6 +122,11 @@ final class HerdrHudSession {
     private(set) var latestPromotableExchangeID: String?
     private(set) var thread: HerdrHudThread?
     private var historyRootRunID: String?
+    /// The local submission placeholder whose accepted run the session adopted
+    /// from saved history. Smart Rename uses it only to attach a pending title
+    /// to the exact submission it was created for. Not persisted: history
+    /// loading re-establishes it on each relaunch.
+    @ObservationIgnored private(set) var adoptedSubmissionID: String?
     private(set) var isLoadingHistory = false
     private(set) var needsHistoryRefresh = false
     private(set) var isEnding = false
@@ -326,6 +331,15 @@ final class HerdrHudSession {
         if let thread { return "\(thread.machineID):\(thread.rootRunID)" }
         guard let exchange = exchanges.first, !exchange.id.hasPrefix("hud-") else { return nil }
         return "\(exchange.machineID):\(historyRootRunID ?? exchange.id)"
+    }
+
+    /// Whether this session owned `submissionID`: either the placeholder is
+    /// still in the transcript or it is the submission whose accepted run the
+    /// session adopted from saved history. Only Smart Rename's pending-title
+    /// bookkeeping consumes this, so a different chat or a later turn can never
+    /// claim that title.
+    func ownsSubmissionID(_ submissionID: String) -> Bool {
+        submissionID == adoptedSubmissionID || exchanges.contains { $0.id == submissionID }
     }
 
     private enum HistoryRefreshKind {
@@ -1377,6 +1391,7 @@ final class HerdrHudSession {
             lastRunID: page.latestRunId,
             turnCount: turns.count
         ) : nil
+        adoptedSubmissionID = acceptedPendingExchange?.id
         onHistoryIdentityEstablished?()
         selectedMachineID = machineID
         selectedWorkingFolder = HerdrHudWorkingFolder(path: historyWorkingFolder)
@@ -1458,6 +1473,7 @@ final class HerdrHudSession {
         markExchangesChanged()
         thread = nil
         historyRootRunID = nil
+        adoptedSubmissionID = nil
         needsHistoryRefresh = false
         selectedWorkingFolder = .home
         await persistence.remove()

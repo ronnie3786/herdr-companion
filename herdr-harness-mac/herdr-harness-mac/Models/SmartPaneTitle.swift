@@ -24,12 +24,18 @@ enum SmartPaneTitle {
         let selected = turns.count > 9 ? Array(turns.prefix(1)) + Array(turns.suffix(8)) : turns
         return selected.flatMap { turn -> [String] in
             var messages: [String] = []
-            if let user = turn.user, !user.text.isEmpty {
-                messages.append("User: \(user.text.prefix(1500))")
+            if let user = turn.user {
+                let text = user.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if hasReadableText(text) {
+                    messages.append("User: \(text.prefix(1500))")
+                }
             }
             for item in turn.items {
-                if case let .assistant(block) = item, !block.text.isEmpty {
-                    messages.append("Assistant: \(block.text.prefix(1500))")
+                if case let .assistant(block) = item {
+                    let text = block.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if hasReadableText(text) {
+                        messages.append("Assistant: \(text.prefix(1500))")
+                    }
                 }
             }
             return messages

@@ -119,6 +119,7 @@ final class HerdrAppModel {
                 cancelDeferredRefreshes()
                 discardPendingQuickPaneRoutes()
                 acceptedPrompts.removeAll()
+                paneSubmissionRevisions.removeAll()
             }
         }
     }
@@ -172,12 +173,21 @@ final class HerdrAppModel {
     /// map lets `acknowledgeUnreadAlerts` post once per episode.
     @ObservationIgnored private var lastAckedDoneEpisodeByPaneID: [String: String] = [:]
     @ObservationIgnored private var promptOverrideSupport: [String: (generation: Int, supported: Bool, probedAt: Date)] = [:]
+    /// Whether a companion advertises the enforced tool-free naming profile.
+    /// Cached like prompt-override support; an unsupported companion is probed
+    /// again after a minute so a server update is picked up without relaunch.
+    @ObservationIgnored private var toolFreeNamingSupport: [String: (generation: Int, supported: Bool, probedAt: Date)] = [:]
     /// Latest successfully accepted prompt per pane/session, memory-only, so a
     /// Smart Rename asked for right after a submission can name the pane before
     /// its semantic snapshot catches up. Never persisted, never read from the
     /// pane-only `promptHistory`, and validated against the pane's current
     /// terminal/workspace/tab/session and connection generation before use.
     @ObservationIgnored private var acceptedPrompts: [AcceptedPromptRecord] = []
+    /// Bumped only when a submission is accepted for a pane. Smart Rename
+    /// captures the value with its context and rechecks it before mutating, so
+    /// a newer prompt invalidates a late title without treating assistant
+    /// streaming, tool activity, or completion as invalidation.
+    @ObservationIgnored private var paneSubmissionRevisions: [String: UUID] = [:]
     @ObservationIgnored private var lastPresentedConnectionError: String?
     @ObservationIgnored private var lastBadgeCount: Int?
     @ObservationIgnored private var paneIndex: [String: PaneLocation] = [:]
@@ -1501,6 +1511,40 @@ final class HerdrAppModel {
         }
     }
 
+    /// The headless-run profiles this companion advertises. Used to feature-detect
+    /// server-enforced profiles before dispatching a run whose older counterpart
+    /// could execute with different tool access.
+    func assistantCapabilities(machineID: String) async throws -> AssistantCapabilities {
+        if isDemoMode {
+            return AssistantCapabilities(
+                profiles: [HerdrNoteAIProfiles.smartRename, "hud-chat-v1"],
+                hudChatWorkingDirectory: true
+            )
+        }
+        guard canControl(machineID: machineID), let client = client(forMachine: machineID) else {
+            throw APIError.noActiveConnection(
+                machineID: machines.first(where: { $0.id == machineID })?.name ?? machineID
+            )
+        }
+        return try await client.assistantCapabilities()
+    }
+
+    /// Whether `machineID` can execute Smart Rename's enforced tool-free profile.
+    /// A companion that does not advertise it must never receive a naming ask:
+    /// its contextual-question route could run the same prompt with tools.
+    func supportsToolFreeNaming(machineID: String) async -> Bool {
+        if isDemoMode { return true }
+        if let cached = toolFreeNamingSupport[machineID],
+           cached.generation == connectionGeneration,
+           cached.supported || Date.now.timeIntervalSince(cached.probedAt) < 60 {
+            return cached.supported
+        }
+        let supported = (try? await assistantCapabilities(machineID: machineID))?
+            .profiles.contains(HerdrNoteAIProfiles.smartRename) ?? false
+        toolFreeNamingSupport[machineID] = (connectionGeneration, supported, .now)
+        return supported
+    }
+
     func prepareResponseAudio(
         action: ResponseAudioAction,
         text: String,
@@ -1925,8 +1969,9 @@ final class HerdrAppModel {
         let title: String?
         let connectionGeneration: Int
         let renameRevision: UUID?
+        let submissionRevision: UUID?
 
-        init(pane: HerdrPane, connectionGeneration: Int, renameRevision: UUID?) {
+        init(pane: HerdrPane, connectionGeneration: Int, renameRevision: UUID?, submissionRevision: UUID?) {
             machineID = pane.machineID
             scopedPaneID = pane.id
             terminalID = pane.terminalID
@@ -1937,9 +1982,15 @@ final class HerdrAppModel {
             title = pane.title
             self.connectionGeneration = connectionGeneration
             self.renameRevision = renameRevision
+            self.submissionRevision = submissionRevision
         }
 
-        func matches(_ pane: HerdrPane, connectionGeneration: Int, renameRevision: UUID?) -> Bool {
+        func matches(
+            _ pane: HerdrPane,
+            connectionGeneration: Int,
+            renameRevision: UUID?,
+            submissionRevision: UUID?
+        ) -> Bool {
             machineID == pane.machineID
                 && scopedPaneID == pane.id
                 && terminalID == pane.terminalID
@@ -1950,6 +2001,7 @@ final class HerdrAppModel {
                 && title == pane.title
                 && self.connectionGeneration == connectionGeneration
                 && self.renameRevision == renameRevision
+                && self.submissionRevision == submissionRevision
         }
     }
 
@@ -2009,11 +2061,13 @@ final class HerdrAppModel {
 
         // Capture identity before any model, context, or AI work so ordinary
         // output revisions can be ignored while replacement, session changes,
-        // manual renames, and connection changes are rejected.
+        // manual renames, connection changes, and newer accepted submissions
+        // are rejected.
         let identity = PaneMutationIdentity(
             pane: pane,
             connectionGeneration: connectionGeneration,
-            renameRevision: paneRenameRevisions[pane.id]
+            renameRevision: paneRenameRevisions[pane.id],
+            submissionRevision: paneSubmissionRevisions[pane.id]
         )
         // Model availability resolves against the machine that will execute
         // the naming ask, never the primary machine's catalog.
@@ -2025,16 +2079,15 @@ final class HerdrAppModel {
         guard let context = try await smartRenameContext(for: pane), !context.isEmpty else {
             throw AgentControlCommandError.unavailable("This pane has no readable context to name yet.")
         }
-        let charter = await supportsPromptOverrides(machineID: pane.machineID)
-            ? "You name conversations. Use only supplied text. Never call tools. Return only the requested JSON object."
-            : nil
         let response: String
         do {
             response = try await runner.run(
                 prompt: SmartPaneTitle.prompt(context: context), machineID: pane.machineID,
                 mode: .ask, model: resolution.modelID,
                 thinkingLevel: resolution.thinkingLevel.rawValue,
-                systemPrompt: charter, deadline: .seconds(60),
+                systemPrompt: nil,
+                profile: HerdrNoteAIProfiles.smartRename,
+                deadline: .seconds(60),
                 appModel: self, onProgress: { _ in }
             )
         } catch {
@@ -2045,12 +2098,13 @@ final class HerdrAppModel {
               identity.matches(
                   current,
                   connectionGeneration: connectionGeneration,
-                  renameRevision: paneRenameRevisions[pane.id]
+                  renameRevision: paneRenameRevisions[pane.id],
+                  submissionRevision: paneSubmissionRevisions[pane.id]
               ) else {
-            throw AgentControlCommandError.conflict("The pane changed while Smart Rename was running.")
+            throw AgentControlCommandError.conflict("The pane changed or received a newer prompt while Smart Rename was running.")
         }
         guard let title = SmartPaneTitle.parse(response) else {
-            throw AgentControlCommandError.failed("Smart Rename did not return a valid short title.")
+            throw SmartRenameModelRouting.invalidOutputError(resolution: resolution)
         }
         try validateBeforeMutation()
         noteUserInteraction(machineID: current.machineID)
@@ -2204,6 +2258,9 @@ final class HerdrAppModel {
         if acceptedPrompts.count > Self.maxAcceptedPromptRecords {
             acceptedPrompts.removeFirst(acceptedPrompts.count - Self.maxAcceptedPromptRecords)
         }
+        // A newer accepted submission invalidates an in-flight naming result
+        // that read the older prompt, while streaming and completion do not.
+        paneSubmissionRevisions[record.scopedPaneID] = UUID()
     }
 
     private func acceptedPrompt(for pane: HerdrPane) -> String? {
@@ -2224,6 +2281,7 @@ final class HerdrAppModel {
             record.connectionGeneration != connectionGeneration
                 || self.pane(id: record.scopedPaneID) == nil
         }
+        paneSubmissionRevisions = paneSubmissionRevisions.filter { self.pane(id: $0.key) != nil }
     }
 
     /// Name the shared color label, never the underlying tabs or conversations.
@@ -2249,17 +2307,17 @@ final class HerdrAppModel {
             var seenTabs: Set<String> = []
             let representatives = controllable.filter { seenTabs.insert($0.scopedTabID).inserted }
             let extra = controllable.filter { pane in !representatives.contains(where: { $0.id == pane.id }) }
-            var loaded: [HerdrPane] = []
+            var loaded: [(pane: HerdrPane, submissionRevision: UUID?)] = []
             for pane in (representatives + extra).prefix(6) {
                 try Task.checkCancellation()
                 do {
                     guard let text = try await smartRenameContext(for: pane), !text.isEmpty else { continue }
                     context += "\nChat \(pane.displayTitle.prefix(80)):\n\(SmartChatColorTitle.compact(text))"
-                    loaded.append(pane)
+                    loaded.append((pane, paneSubmissionRevisions[pane.id]))
                 } catch is CancellationError { throw CancellationError() }
                 catch { continue } // One unavailable sibling must not hide the others.
             }
-            guard let source = loaded.first else {
+            guard let source = loaded.first?.pane else {
                 toastMessage = "This color group has no readable context to name yet."
                 return
             }
@@ -2270,16 +2328,15 @@ final class HerdrAppModel {
                 executionMachineID: source.machineID,
                 appModel: self
             )
-            let charter = await supportsPromptOverrides(machineID: source.machineID)
-                ? "You name chat groups. Use only supplied text. Never call tools. Return only the requested JSON object."
-                : nil
             let response: String
             do {
                 response = try await runner.run(
                     prompt: SmartChatColorTitle.prompt(context: context), machineID: source.machineID,
                     mode: .ask, model: resolution.modelID,
                     thinkingLevel: resolution.thinkingLevel.rawValue,
-                    systemPrompt: charter, deadline: .seconds(60),
+                    systemPrompt: nil,
+                    profile: HerdrNoteAIProfiles.smartRename,
+                    deadline: .seconds(60),
                     appModel: self, onProgress: { _ in }
                 )
             } catch {
@@ -2291,18 +2348,18 @@ final class HerdrAppModel {
             guard chatTabColors.revision(for: color) == revision,
                   currentIDs == Set(panes.map(\.id)),
                   loaded.allSatisfy({ entry in
-                      guard let current = pane(id: entry.id) else { return false }
-                      return current.terminalID == entry.terminalID
-                          && current.piSemantic?.sessionID == entry.piSemantic?.sessionID
-                          && current.label == entry.label
-                          && current.title == entry.title
+                      guard let current = pane(id: entry.pane.id) else { return false }
+                      return current.terminalID == entry.pane.terminalID
+                          && current.piSemantic?.sessionID == entry.pane.piSemantic?.sessionID
+                          && current.label == entry.pane.label
+                          && current.title == entry.pane.title
+                          && paneSubmissionRevisions[current.id] == entry.submissionRevision
                   }) else {
                 toastMessage = "Color group changed while naming it. Your changes were kept."
                 return
             }
             guard let title = SmartPaneTitle.parse(response) else {
-                toastMessage = "AI did not return a valid short label. Try Smart Rename again."
-                return
+                throw SmartRenameModelRouting.invalidOutputError(resolution: resolution)
             }
             chatTabColors.rename(color, to: title)
             toastMessage = resolution.notice.map { "Color label renamed. \($0)" } ?? "Color label renamed"

@@ -2964,6 +2964,21 @@ class HerdrService:
             workspace_id=workspace_id,
         )
 
+    def start_smart_rename(self, *, prompt: str, model: Optional[str], thinking_level: Optional[str]) -> dict:
+        """One-shot, enforced tool-free naming ask for Smart Rename."""
+        from .agent_runs import SMART_RENAME_PROFILE
+
+        return self.agent_runs.start(
+            prompt=prompt,
+            label="Smart Rename",
+            cwd=str(self._server_home()),
+            topology={},
+            mode="ask",
+            model=model,
+            thinking_level=thinking_level,
+            _assistant={"profile": SMART_RENAME_PROFILE},
+        )
+
     def get_agent_run(self, run_id: str) -> dict:
         return self.agent_runs.get(run_id)
 

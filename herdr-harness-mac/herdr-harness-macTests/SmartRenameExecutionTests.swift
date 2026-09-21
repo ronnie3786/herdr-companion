@@ -10,7 +10,7 @@ import Testing
 @Suite("Smart Rename live execution", .serialized)
 @MainActor
 struct SmartRenameExecutionTests {
-    @Test("The live naming run sends the exact model, effort, system prompt, and context")
+    @Test("The live naming run sends the exact model, effort, tool-free profile, and context")
     func liveRunSendsExactRequestValues() async throws {
         let fixture = try makeFixture()
         defer { fixture.tearDown() }
@@ -25,10 +25,8 @@ struct SmartRenameExecutionTests {
         #expect(json["mode"] == nil)
         #expect(json["model"] as? String == "synthetic/naming")
         #expect(json["thinkingLevel"] as? String == "low")
-        #expect(
-            json["systemPrompt"] as? String
-                == "You name conversations. Use only supplied text. Never call tools. Return only the requested JSON object."
-        )
+        #expect(json["profile"] as? String == "smart-rename-v1")
+        #expect(json["systemPrompt"] == nil)
         let prompt = try #require(json["prompt"] as? String)
         #expect(prompt.contains("Rename this synthetic conversation"))
         #expect(prompt.contains("untrusted"))
@@ -39,7 +37,7 @@ struct SmartRenameExecutionTests {
         let counts = SmartRenameExecutionURLProtocol.counts()
         #expect(counts.starts == 1)
         #expect(counts.catalogs == 1)
-        #expect(counts.prompts == 1)
+        #expect(counts.capabilities == 1)
         #expect(counts.renames == 1)
         #expect(SmartRenameExecutionURLProtocol.renameLabel() == "Synthetic Execution Title")
         #expect(fixture.model.pane(id: fixture.pane.id)?.displayTitle == "Synthetic Execution Title")
@@ -134,6 +132,32 @@ struct SmartRenameExecutionTests {
         #expect(toast.contains("Execution Mac"))
         #expect(toast.contains("Settings"))
         #expect(fixture.defaults.string(forKey: AgentModelSettings.quickChatModelKey) == "ghost/model")
+    }
+
+    @Test("An older companion without the tool-free naming profile dispatches nothing")
+    func incompatibleCompanionDispatchesNothing() async throws {
+        var configuration = SmartRenameExecutionFixture()
+        configuration.smartRenameAvailable = false
+        let fixture = try makeFixture(configuration)
+        defer { fixture.tearDown() }
+
+        await fixture.model.smartRename(fixture.pane, runner: HerdrLiveNoteAIRunner())
+
+        // The model catalog is still resolved first; the capability probe is
+        // the only gate, and no naming request is dispatched past it.
+        let counts = SmartRenameExecutionURLProtocol.counts()
+        #expect(counts.catalogs == 1)
+        #expect(counts.capabilities == 1)
+        #expect(counts.starts == 0)
+        #expect(counts.renames == 0)
+        #expect(fixture.model.pane(id: fixture.pane.id)?.displayTitle == "Original title")
+        let toast = try #require(fixture.model.toastMessage)
+        #expect(toast.hasPrefix("Smart Rename failed"))
+        #expect(toast.contains("synthetic/naming"))
+        #expect(toast.contains("Execution Mac"))
+        #expect(toast.lowercased().contains("update"))
+        #expect(toast.lowercased().contains("companion"))
+        #expect(toast.contains("Settings"))
     }
 
     // MARK: - Fixtures
@@ -248,7 +272,7 @@ private struct SmartRenameExecutionFixture: Sendable {
     var outputText: String? = nil
     var catalogBody: String = Self.defaultCatalog
     var startBehavior: StartBehavior = .complete(#"{"title":"Synthetic Execution Title"}"#)
-    var promptsAvailable = true
+    var smartRenameAvailable = true
 
     static let defaultCatalog = #"{"ok":true,"models":[{"provider":"synthetic","id":"naming","name":"Synthetic Naming","reasoning":true,"context_window":64000}],"default":{"provider":"synthetic","id":"naming","name":"Synthetic Naming"}}"#
 }
@@ -261,7 +285,7 @@ private final class SmartRenameExecutionURLProtocol: URLProtocol, @unchecked Sen
         var fixture = SmartRenameExecutionFixture()
         var starts = 0
         var catalogs = 0
-        var prompts = 0
+        var capabilities = 0
         var fetches = 0
         var renames = 0
         var renamedLabel: String?
@@ -278,8 +302,8 @@ private final class SmartRenameExecutionURLProtocol: URLProtocol, @unchecked Sen
         state.withLock { $0 = State() }
     }
 
-    static func counts() -> (starts: Int, catalogs: Int, prompts: Int, fetches: Int, renames: Int) {
-        state.withLock { ($0.starts, $0.catalogs, $0.prompts, $0.fetches, $0.renames) }
+    static func counts() -> (starts: Int, catalogs: Int, capabilities: Int, fetches: Int, renames: Int) {
+        state.withLock { ($0.starts, $0.catalogs, $0.capabilities, $0.fetches, $0.renames) }
     }
 
     static func startBodies() -> [Data] {
@@ -309,12 +333,14 @@ private final class SmartRenameExecutionURLProtocol: URLProtocol, @unchecked Sen
                 return state.fixture.catalogBody
             }
             response = (200, catalog)
-        case (_, "/api/v1/agent-runs/prompts"):
+        case (_, "/api/v1/agent-runs/capabilities"):
             let available = Self.state.withLock { state -> Bool in
-                state.prompts += 1
-                return state.fixture.promptsAvailable
+                state.capabilities += 1
+                return state.fixture.smartRenameAvailable
             }
-            response = available ? (200, #"{"ok":true,"prompts":{}}"#) : (404, Self.notFound)
+            response = available
+                ? (200, #"{"ok":true,"profiles":["hud-chat-v1","smart-rename-v1"],"hudChatWorkingDirectory":true}"#)
+                : (200, #"{"ok":true,"profiles":["hud-chat-v1"],"hudChatWorkingDirectory":true}"#)
         case ("POST", "/api/v1/agent-runs"):
             let behavior = Self.state.withLock { state -> SmartRenameExecutionFixture.StartBehavior in
                 state.starts += 1

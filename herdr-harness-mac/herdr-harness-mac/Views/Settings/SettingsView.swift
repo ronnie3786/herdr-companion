@@ -1017,7 +1017,7 @@ enum SmartRenameSettingsPresentation {
     /// The strict policy: no conversation is required, the saved selection is
     /// honored exactly, and a missing or incompatible selection stops the
     /// rename instead of being substituted or silently rewritten.
-    static let sectionFooter = "A separate bounded ask names the pane or chat; it never becomes a prompt in the chat or shell. An empty model follows the Agent model above, then the execution machine's Pi default. If the execution machine does not offer the saved selection, or the catalog marks the model as non-reasoning and the level is not Off, the rename stops with an actionable error, keeps the current title, and leaves the saved preference unchanged; no other model or machine is substituted. Naming defaults to Low thinking."
+    static let sectionFooter = "A separate bounded, tool-free ask names the pane or chat; it never becomes a prompt in the chat or shell and the companion runs it without tools. An empty model follows the Agent model above, then the execution machine's Pi default. If the execution machine does not offer the saved selection, or the catalog marks the model as non-reasoning and the level is not Off, the rename stops with an actionable error, keeps the current title, and leaves the saved preference unchanged; no other model or machine is substituted. Naming defaults to Low thinking."
 
     /// The missing-model or incompatible-thinking warning for the browsed
     /// catalog, or nil when the saved selection would run there as-is.

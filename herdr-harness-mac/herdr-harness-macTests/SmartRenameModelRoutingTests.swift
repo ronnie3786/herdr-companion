@@ -407,6 +407,28 @@ struct SmartRenameModelRoutingTests {
         #expect(description.contains("Synthetic provider failure"))
     }
 
+    @Test("Invalid naming output is reported as an actionable execution error")
+    func invalidOutputIsActionable() throws {
+        let error = SmartRenameModelRouting.invalidOutputError(
+            resolution: SmartRenameModelResolution(
+                modelID: "alpha/offered",
+                thinkingLevel: .low,
+                machineName: "Alpha",
+                notice: nil
+            )
+        )
+        #expect(error.machineName == "Alpha")
+        #expect(error.model == "alpha/offered")
+        #expect(error.thinkingLevel == .low)
+        #expect(error.reason == SmartRenameModelRouting.invalidTitleReason)
+        let description = try #require(error.errorDescription)
+        #expect(description.contains("alpha/offered"))
+        #expect(description.contains("Low"))
+        #expect(description.contains("Alpha"))
+        #expect(description.contains("Settings"))
+        #expect(description.contains(SmartRenameModelRouting.invalidTitleReason))
+    }
+
     @Test("An omitted model is described as the machine's Pi default")
     func omittedModelIsDescribedAsPiDefault() throws {
         let resolution = SmartRenameModelResolution(

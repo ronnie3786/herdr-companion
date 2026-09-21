@@ -248,8 +248,10 @@ was created before the first run was accepted.
 ### Smart Rename
 
 Smart Rename is the shared naming path for pane titles, color-group labels, and
-HUD chat titles on Mac. It runs a separate, bounded `.ask` run and never submits a
-prompt to the source agent or shell.
+HUD chat titles on Mac. It runs a separate, bounded run in the companion's
+enforced tool-free `smart-rename-v1` profile: the companion executes it with
+`--no-tools` and no extension, accepts only a prompt, model, and thinking level,
+and never submits a prompt to the source agent or shell.
 
 - **Preferences:** **Settings → Agents → Smart Rename** chooses the naming model
   and thinking level. An empty model follows the Agent model, then the execution
@@ -282,9 +284,10 @@ prompt to the source agent or shell.
   treated as untrusted data. A genuinely context-free target keeps its title and
   says so instead of requiring a conversation.
 - **Guards:** duplicate renames are refused, cancellation keeps the old title,
-  and a manual title edit, replaced terminal or session, changed machine, removed
-  chat, or changed color-group membership wins over a late result. Streaming and
-  shell activity do not invalidate a rename.
+  and a manual title edit, replaced terminal or session, changed machine, a newer
+  accepted submission on the target, removed chat, or changed color-group
+  membership wins over a late result. Streaming and shell activity do not
+  invalidate a rename.
 - **Persistence:** pane titles are renamed through the companion and are server
   state for that pane, so every connected client sees them. Color-group labels
   and HUD title overrides are local app state on this Mac and are not synced to
@@ -293,9 +296,13 @@ prompt to the source agent or shell.
 
 Model catalogs describe what a companion's Pi installation offers. They are not
 proof of provider credentials, quota, or service health, and every provider used
-must work in the environment of the companion that executes the rename. This
-feature reuses the existing Pi snapshot, terminal-output, agent-model, and
-headless-agent APIs; it introduces no new server capability.
+must work in the environment of the companion that executes the rename. Smart
+Rename reuses the existing Pi snapshot, terminal-output, agent-model, and
+headless-agent APIs, and it requires the execution companion to advertise the
+`smart-rename-v1` profile from its agent-run capabilities endpoint. A companion
+that does not advertise it is never sent a naming request: the rename stops, the
+current title stays, and the error asks for that companion's server to be
+updated. This adds no migration and changes no companion configuration.
 
 See [Smart Rename behavior and verification](../docs/smart-rename.md).
 

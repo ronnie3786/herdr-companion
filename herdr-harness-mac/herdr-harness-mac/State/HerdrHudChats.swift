@@ -28,12 +28,12 @@ final class HerdrHudChats {
     }
 
     /// A title produced while its chat had no durable history identity yet.
-    /// The stable turn fields let the eventual accepted run — and only that
-    /// submission — pick the title up once a root exists.
+    /// Ownership is the exact chat and the exact submission placeholder, so a
+    /// different chat or a later turn can never consume it. Only that
+    /// submission's accepted run picks the title up once a root exists.
     private struct PendingHistoryTitle: Codable, Equatable {
-        let machineID: String
-        let createdAt: Date
-        let promptSignature: String
+        let chatID: String
+        let submissionID: String
         let title: String
         let updatedAt: Date
     }
@@ -61,14 +61,12 @@ final class HerdrHudChats {
         case unavailable
         case busy
         case changed
-        case invalidTitle
 
         var errorDescription: String? {
             switch self {
             case .unavailable: "This HUD chat has no readable context to name yet."
             case .busy: "Smart Rename is already running for this HUD chat."
             case .changed: "The HUD chat changed while Smart Rename was running. Try again."
-            case .invalidTitle: "Smart Rename did not return a valid short title."
             }
         }
     }
@@ -78,9 +76,6 @@ final class HerdrHudChats {
     private static let pendingHistoryTitlesDefaultsKey = "herdr.hud.pendingHistoryTitles.v1"
     private static let maximumSavedHistoryTitles = 200
     private static let maximumPendingHistoryTitles = 200
-    /// How close two submission stamps must be to describe the same turn
-    /// after a round trip through persistence.
-    private static let pendingTurnDateTolerance: TimeInterval = 2
     private let defaults: UserDefaults
     private let prototype: HerdrHudSession
     private(set) var chats: [Chat]
@@ -186,9 +181,6 @@ final class HerdrHudChats {
             executionMachineID: machineID,
             appModel: model
         )
-        let charter = await model.supportsPromptOverrides(machineID: machineID)
-            ? "You name conversations. Use only supplied text. Never call tools. Return only the requested JSON object."
-            : nil
         let response: String
         do {
             response = try await runner.run(
@@ -197,7 +189,8 @@ final class HerdrHudChats {
                 mode: .ask,
                 model: resolution.modelID,
                 thinkingLevel: resolution.thinkingLevel.rawValue,
-                systemPrompt: charter,
+                systemPrompt: nil,
+                profile: HerdrNoteAIProfiles.smartRename,
                 deadline: .seconds(60),
                 appModel: model,
                 onProgress: { _ in }
@@ -220,20 +213,22 @@ final class HerdrHudChats {
         guard Self.conversationMatches(session: session, snapshot: expectedConversation) else {
             throw SmartRenameError.changed
         }
-        guard let title = SmartPaneTitle.parse(response) else { throw SmartRenameError.invalidTitle }
+        guard let title = SmartPaneTitle.parse(response) else {
+            throw SmartRenameModelRouting.invalidOutputError(resolution: resolution)
+        }
 
         chats[index] = Chat(id: id, title: title, session: session)
         if let historyIdentity = session.historyIdentity {
             saveHistoryTitle(title, for: historyIdentity)
-        } else if let turn = expectedConversation.lastTurn {
+        } else if let turn = expectedConversation.lastTurn, turn.isPendingPlaceholder {
             // The first turn is still an unaccepted placeholder. Remember the
-            // title against the stable submission so its eventual accepted
-            // root can adopt it; otherwise a remove/reopen would lose it.
+            // title against this exact chat and submission so only that
+            // submission's accepted run can adopt it and a remove/reopen
+            // cannot lose it.
             savePendingHistoryTitle(
                 PendingHistoryTitle(
-                    machineID: turn.machineID,
-                    createdAt: turn.createdAt,
-                    promptSignature: Self.promptSignature(turn.sentPrompt),
+                    chatID: id,
+                    submissionID: turn.id,
                     title: title,
                     updatedAt: .now
                 )
@@ -300,21 +295,15 @@ final class HerdrHudChats {
         )
     }
 
-    private static func promptSignature(_ prompt: String) -> String {
-        String(prompt.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120))
-    }
-
     /// Attaches remembered titles to the accepted conversation that owns them.
-    /// Matching uses the stable submission fields, so a different turn on the
-    /// same machine never inherits a stale title.
+    /// Matching uses the exact owning chat and submission placeholder, so a
+    /// different chat or an unrelated turn never inherits a stale title.
     private func adoptPendingHistoryTitles(for session: HerdrHudSession) {
-        guard !pendingHistoryTitles.isEmpty, let identity = session.historyIdentity else { return }
+        guard !pendingHistoryTitles.isEmpty,
+              let identity = session.historyIdentity,
+              let ownerChatID = chats.first(where: { $0.session === session })?.id else { return }
         let matches = pendingHistoryTitles.filter { record in
-            session.exchanges.contains { exchange in
-                exchange.machineID == record.machineID
-                    && abs(exchange.createdAt.timeIntervalSince(record.createdAt)) < Self.pendingTurnDateTolerance
-                    && Self.promptSignature(exchange.sentPrompt) == record.promptSignature
-            }
+            record.chatID == ownerChatID && session.ownsSubmissionID(record.submissionID)
         }
         guard !matches.isEmpty else { return }
         for record in matches.sorted(by: { $0.updatedAt < $1.updatedAt }) {
@@ -325,38 +314,17 @@ final class HerdrHudChats {
         persistIndex()
     }
 
-    private func dropPendingHistoryTitles(for session: HerdrHudSession) {
+    private func dropPendingHistoryTitles(chatID: String) {
         guard !pendingHistoryTitles.isEmpty else { return }
-        let turnKeys = Set(session.exchanges.map { exchange in
-            PendingTurnKey(
-                machineID: exchange.machineID,
-                createdAt: exchange.createdAt,
-                promptSignature: Self.promptSignature(exchange.sentPrompt)
-            )
-        })
-        let remaining = pendingHistoryTitles.filter { record in
-            !turnKeys.contains(PendingTurnKey(
-                machineID: record.machineID,
-                createdAt: record.createdAt,
-                promptSignature: record.promptSignature
-            ))
-        }
+        let remaining = pendingHistoryTitles.filter { $0.chatID != chatID }
         guard remaining.count != pendingHistoryTitles.count else { return }
         pendingHistoryTitles = remaining
         persistPendingHistoryTitles()
     }
 
-    private struct PendingTurnKey: Hashable {
-        let machineID: String
-        let createdAt: Date
-        let promptSignature: String
-    }
-
     private func savePendingHistoryTitle(_ record: PendingHistoryTitle) {
         pendingHistoryTitles.removeAll {
-            $0.machineID == record.machineID
-                && $0.createdAt == record.createdAt
-                && $0.promptSignature == record.promptSignature
+            $0.chatID == record.chatID && $0.submissionID == record.submissionID
         }
         pendingHistoryTitles.insert(record, at: 0)
         if pendingHistoryTitles.count > Self.maximumPendingHistoryTitles {
@@ -380,7 +348,7 @@ final class HerdrHudChats {
         guard !chat.session.isRunning, !chat.session.isLoadingHistory else { return }
         if selectedID == id { select(nil) }
         chats.removeAll { $0.id == id }
-        dropPendingHistoryTitles(for: chat.session)
+        dropPendingHistoryTitles(chatID: id)
         persistIndex()
     }
 
@@ -393,7 +361,7 @@ final class HerdrHudChats {
         if wasSelected { select(nil) }
         chats.removeAll { $0.id == id }
         pendingRestorationIDs.remove(id)
-        dropPendingHistoryTitles(for: chat.session)
+        dropPendingHistoryTitles(chatID: id)
         persistIndex()
         return wasSelected
     }

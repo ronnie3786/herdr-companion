@@ -105,6 +105,29 @@ struct SmartPaneTitleTests {
         #expect(!SmartPaneTitle.hasReadableText(" \n\t "))
     }
 
+    @Test func dropsWhitespaceOnlySnapshotMessagesBeforeContextSelection() throws {
+        let snapshot = try JSONDecoder().decode(PiConversationSnapshot.self, from: Data(#"""
+        {"available":true,"session":{"id":"session-a"},"entries":[
+          {"type":"message","id":"a","message":{"role":"user","content":[{"type":"text","text":"   \n\t "}]}},
+          {"type":"message","id":"b","message":{"role":"assistant","content":[{"type":"text","text":"\n  "}]}}
+        ]}
+        """#.utf8))
+        let context = SmartPaneTitle.context(from: snapshot)
+        #expect(context.isEmpty)
+        #expect(!SmartPaneTitle.hasReadableText(context))
+        #expect(SmartPaneTitle.mergedContext(conversation: context, acceptedPrompt: nil).isEmpty)
+
+        // A readable message beside an empty one still contributes, and the
+        // empty one must not inject a bare "User:" or "Assistant:" line.
+        let mixed = try JSONDecoder().decode(PiConversationSnapshot.self, from: Data(#"""
+        {"available":true,"session":{"id":"session-a"},"entries":[
+          {"type":"message","id":"a","message":{"role":"user","content":[{"type":"text","text":"  Plan the synthetic release checklist  "}]}},
+          {"type":"message","id":"b","message":{"role":"assistant","content":[{"type":"text","text":"   "}]}}
+        ]}
+        """#.utf8))
+        #expect(SmartPaneTitle.context(from: mixed) == "User: Plan the synthetic release checklist")
+    }
+
     @Test func stripsTerminalEscapesAndControlSequences() {
         let raw = "\u{1B}[31mFailing\u{1B}[0m test \u{1B}]0;window title\u{7}\u{8}tail\u{0D}"
         #expect(SmartPaneTitle.strippingTerminalEscapes(raw) == "Failing test tail")

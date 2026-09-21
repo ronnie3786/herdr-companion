@@ -162,6 +162,21 @@ enum SmartRenameModelRouting {
         )
     }
 
+    /// A dispatched naming run whose output is not a usable title. Routed
+    /// through the same actionable execution formatter as run failures so the
+    /// error names the model, thinking level, and companion, without echoing
+    /// the raw model output back to the user.
+    static let invalidTitleReason = "the model did not return a valid short title"
+
+    static func invalidOutputError(resolution: SmartRenameModelResolution) -> SmartRenameExecutionError {
+        SmartRenameExecutionError(
+            machineName: resolution.machineName,
+            model: resolution.modelID ?? "the machine's Pi default model",
+            thinkingLevel: resolution.thinkingLevel,
+            reason: invalidTitleReason
+        )
+    }
+
     /// A machine without a declared default lets Pi choose. A declared default
     /// that the catalog does not offer is a configuration error rather than a
     /// silent fallthrough.

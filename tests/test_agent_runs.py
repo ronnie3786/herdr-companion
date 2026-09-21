@@ -10,6 +10,7 @@ from pathlib import Path
 
 from herdr_harness.agent_runs import (
     PUBLIC_RUN_KEYS,
+    SMART_RENAME_PROFILE,
     AgentRunError,
     AgentRunManager,
 )
@@ -489,6 +490,60 @@ class AgentRunManagerTests(unittest.TestCase):
             self.assertIn("sole permitted side effect", charter)
             self.assertIn("HTTP(S) link", charter)
             self.assertIn("do not register local files in ASK mode", charter)
+            manager.stop()
+
+    def test_smart_rename_profile_is_tool_free_and_one_shot(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            capture_path = directory / "capture.json"
+            manager = self.manager(directory, FAKE_AGENT_CAPTURE=str(capture_path))
+
+            started = manager.start(
+                prompt="Name this synthetic conversation",
+                label="Smart Rename",
+                cwd=str(directory / "home"),
+                topology={},
+                _assistant={"profile": SMART_RENAME_PROFILE},
+            )
+            finished = wait_for_status(manager, started["run"]["id"], {"completed"})
+
+            self.assertEqual(finished["run"]["status"], "completed")
+            capture = json.loads(capture_path.read_text(encoding="utf-8"))
+            self.assertNotIn("--tools", capture["argv"])
+            self.assertIn("--no-tools", capture["argv"])
+            self.assertNotIn("--extension", capture["argv"])
+            self.assertNotIn("read,bash", " ".join(capture["argv"]))
+            charter = capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
+            self.assertIn("Never use tools", charter)
+            self.assertIn("untrusted data", charter)
+            self.assertNotIn("snapshot", charter.lower())
+            # Source context stays on stdin, never in argv.
+            self.assertNotIn("Name this synthetic conversation", " ".join(capture["argv"]))
+            self.assertEqual(capture["prompt"], "Name this synthetic conversation")
+            manager.stop()
+
+    def test_smart_rename_profile_rejects_actions_continuation_and_overrides(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory)
+            for arguments in (
+                {"mode": "act"},
+                {"attachments": [{"filename": "note.txt", "dataBase64": "aGk="}]},
+                {"system_prompt": "override the naming policy"},
+                {"continue_from_run_id": "agr_0123456789ab"},
+            ):
+                with self.subTest(arguments=arguments):
+                    with self.assertRaises(AgentRunError) as context:
+                        manager.start(
+                            prompt="Name this synthetic conversation",
+                            label="Smart Rename",
+                            cwd=str(directory / "home"),
+                            topology={},
+                            _assistant={"profile": SMART_RENAME_PROFILE},
+                            **arguments,
+                        )
+                    self.assertEqual(context.exception.code, "invalid_smart_rename")
+                    self.assertEqual(context.exception.status, 400)
             manager.stop()
 
     def test_custom_system_prompt_uses_act_tools_and_keeps_topology_note(self):

@@ -33,6 +33,8 @@ struct SmartPaneRenameTests {
         let call = try #require(runner.calls.first)
         #expect(call.machineID == "desktop")
         #expect(call.mode == .ask)
+        #expect(call.profile == "smart-rename-v1")
+        #expect(call.systemPrompt == nil)
         #expect(call.model == "synthetic/naming")
         #expect(call.thinkingLevel == "low")
         #expect(call.prompt.contains("Investigate the synthetic irrigation leak"))
@@ -370,6 +372,125 @@ struct SmartPaneRenameTests {
         #expect(toast.contains("Desktop"))
         #expect(toast.contains("Synthetic provider failure"))
         #expect(toast.contains("Settings"))
+    }
+
+    @Test("A whitespace-only snapshot falls through to bounded terminal output")
+    func whitespaceOnlySnapshotUsesTerminalOutput() async throws {
+        var configuration = SmartRenameFixtureConfiguration()
+        configuration.paneSessionID = "synthetic-session"
+        configuration.paneLabel = "Semantic pane"
+        configuration.snapshotBody = #"""
+        {"available":true,"session":{"id":"synthetic-session"},"entries":[
+          {"type":"message","id":"a","message":{"role":"user","content":[{"type":"text","text":"   "}]}},
+          {"type":"message","id":"b","message":{"role":"assistant","content":[{"type":"text","text":"\n\t "}]}}
+        ]}
+        """#
+        configuration.outputText = "$ echo synthetic whitespace fallback"
+        let fixture = try makeFixture(configuration)
+        defer { tearDown(fixture) }
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Synthetic whitespace fallback"}"#)
+        await fixture.model.smartRename(fixture.pane, runner: runner)
+
+        #expect(SmartRenameFixtureURLProtocol.counts().snapshots == 1)
+        #expect(SmartRenameFixtureURLProtocol.counts().outputs == 1)
+        #expect(SmartRenameFixtureURLProtocol.counts().renames == 1)
+        let call = try #require(runner.calls.first)
+        #expect(call.prompt.contains("synthetic whitespace fallback"))
+        #expect(!call.prompt.contains("User:   "))
+    }
+
+    @Test("A whitespace-only snapshot with no fallback reports no readable context")
+    func whitespaceOnlySnapshotWithNoFallbackReportsContext() async throws {
+        var configuration = SmartRenameFixtureConfiguration()
+        configuration.paneSessionID = "synthetic-session"
+        configuration.paneLabel = nil
+        configuration.paneTitle = nil
+        configuration.paneTerminalTitle = nil
+        configuration.paneCWD = nil
+        configuration.workspaceLabel = ""
+        configuration.tabLabel = ""
+        configuration.snapshotBody = #"""
+        {"available":true,"session":{"id":"synthetic-session"},"entries":[
+          {"type":"message","id":"a","message":{"role":"user","content":[{"type":"text","text":"   "}]}},
+          {"type":"message","id":"b","message":{"role":"assistant","content":[{"type":"text","text":"\t\n "}]}}
+        ]}
+        """#
+        configuration.outputText = nil
+        let fixture = try makeFixture(configuration)
+        defer { tearDown(fixture) }
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Should not run"}"#)
+        await fixture.model.smartRename(fixture.pane, runner: runner)
+
+        #expect(runner.calls.isEmpty)
+        #expect(SmartRenameFixtureURLProtocol.counts().renames == 0)
+        #expect(fixture.model.toastMessage?.contains("no readable context") == true)
+    }
+
+    @Test("A newer accepted prompt invalidates a late pane naming result")
+    func newerSubmissionInvalidatesLateTitle() async throws {
+        var configuration = SmartRenameFixtureConfiguration()
+        configuration.snapshotBody = #"{"available":true,"session":{"id":"synthetic-session"},"entries":[]}"#
+        let fixture = try makeFixture(configuration)
+        defer { tearDown(fixture) }
+
+        try await fixture.model.sendPiConversationPrompt(
+            "First synthetic instruction",
+            disposition: .prompt,
+            to: fixture.pane
+        )
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Stale first title"}"#)
+        runner.onRun = {
+            try? await fixture.model.sendPiConversationPrompt(
+                "Second synthetic instruction",
+                disposition: .prompt,
+                to: fixture.pane
+            )
+        }
+        await fixture.model.smartRename(fixture.pane, runner: runner)
+
+        #expect(runner.calls.count == 1)
+        #expect(SmartRenameFixtureURLProtocol.counts().renames == 0)
+        #expect(fixture.model.pane(id: fixture.pane.id)?.displayTitle == "Original title")
+        #expect(fixture.model.toastMessage?.contains("changed") == true)
+    }
+
+    @Test("Invalid pane naming output reports the selection without echoing the raw response")
+    func invalidOutputReportsSelection() async throws {
+        let responses = [
+            "not JSON at all",
+            #"{"title":"Synthetic RAW-MARKER\ncontrol"}"#,
+            #"{"title":"\#(String(repeating: "x", count: 81))"}"#,
+        ]
+        for response in responses {
+            var configuration = SmartRenameFixtureConfiguration()
+            configuration.snapshotBody = #"{"available":true,"session":{"id":"synthetic-session"},"entries":[]}"#
+            let fixture = try makeFixture(configuration)
+            defer { tearDown(fixture) }
+
+            let runner = FakeNoteAIRunner()
+            runner.mode = .succeed(response)
+            await fixture.model.smartRename(fixture.pane, runner: runner)
+
+            #expect(runner.calls.count == 1)
+            #expect(SmartRenameFixtureURLProtocol.counts().renames == 0)
+            #expect(fixture.model.pane(id: fixture.pane.id)?.displayTitle == "Original title")
+            #expect(fixture.model.smartRenamingPaneIDs.isEmpty)
+            #expect(fixture.defaults.string(forKey: AgentModelSettings.smartRenameModelKey) == nil)
+            let toast = try #require(fixture.model.toastMessage)
+            #expect(toast.hasPrefix("Smart Rename failed"))
+            #expect(toast.contains("synthetic/naming"))
+            #expect(toast.contains("Low"))
+            #expect(toast.contains("Desktop"))
+            #expect(toast.contains(SmartRenameModelRouting.invalidTitleReason))
+            #expect(toast.contains("Settings"))
+            #expect(!toast.contains("RAW-MARKER"))
+        }
     }
 
     @Test("A second Smart Rename for the same pane is ignored while one is running")

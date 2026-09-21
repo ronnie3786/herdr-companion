@@ -1241,6 +1241,47 @@ class HerdrHTTPTests(unittest.TestCase):
         status, _, _ = self.request("/api/v1/agent-runs", method="POST", payload={"prompt": "Explain", "context": {}})
         self.assertEqual(status, 400)
 
+    def test_smart_rename_profile_is_advertised_and_dispatches_tool_free(self):
+        status, _, capabilities = self.request("/api/v1/agent-runs/capabilities")
+        self.assertEqual(status, 200)
+        self.assertIn("smart-rename-v1", capabilities["profiles"])
+        self.assertEqual(capabilities["smartRename"]["tools"], "none")
+        self.assertTrue(capabilities["smartRename"]["oneShot"])
+
+        self.service.start_smart_rename = Mock(
+            return_value={"ok": True, "run": {"id": "agr_0123456789ab"}}
+        )
+        self.service.start_contextual_question = Mock()
+        request = {"prompt": "Name this synthetic chat", "profile": "smart-rename-v1"}
+        status, _, _ = self.request("/api/v1/agent-runs", method="POST", payload=request)
+        self.assertEqual(status, 202)
+        self.service.start_smart_rename.assert_called_once_with(
+            prompt="Name this synthetic chat", model=None, thinking_level=None
+        )
+        self.service.start_contextual_question.assert_not_called()
+
+        offered = {**request, "model": "synthetic/naming", "thinkingLevel": "low"}
+        self.assertEqual(self.request("/api/v1/agent-runs", method="POST", payload=offered)[0], 202)
+        self.service.start_smart_rename.assert_called_with(
+            prompt="Name this synthetic chat", model="synthetic/naming", thinking_level="low"
+        )
+
+        for invalid in (
+            {**request, "mode": "act"},
+            {**request, "attachments": []},
+            {**request, "systemPrompt": "override"},
+            {**request, "continueFromRunId": "agr_0123456789ab"},
+            {**request, "cwd": "~"},
+            {**request, "paneId": "w1:p1"},
+            {**request, "context": {"version": 1}},
+            {**request, "clientRequestId": "naming-request-0001"},
+        ):
+            with self.subTest(invalid=invalid):
+                self.assertEqual(
+                    self.request("/api/v1/agent-runs", method="POST", payload=invalid)[0], 400
+                )
+        self.assertEqual(self.service.start_smart_rename.call_count, 2)
+
     def test_pr_review_question_capabilities_and_dispatch(self):
         status, _, capabilities = self.request("/api/v1/agent-runs/capabilities")
         self.assertEqual(status, 200)

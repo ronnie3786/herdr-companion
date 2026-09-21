@@ -232,6 +232,58 @@ struct SmartChatColorRenameTests {
         #expect(fixture.model.chatTabColors.label(for: .sage) == "Safe synthetic label")
     }
 
+    @Test("A newer accepted prompt on a sampled pane invalidates a late color naming result")
+    func newerSubmissionInvalidatesLateLabel() async throws {
+        let fixture = try makeFixture()
+        defer { tearDown(fixture) }
+        let sampledPane = try #require(fixture.model.workspaces.first?.panes.first)
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Stale group title"}"#)
+        runner.onRun = {
+            try? await fixture.model.sendPiConversationPrompt(
+                "Newer synthetic instruction",
+                disposition: .prompt,
+                to: sampledPane
+            )
+        }
+        await fixture.model.smartRenameChatColor(.sage, runner: runner)
+
+        #expect(runner.calls.count == 1)
+        #expect(fixture.model.chatTabColors.label(for: .sage) == "Sage")
+        #expect(fixture.model.chatTabColors.smartRenaming.isEmpty)
+        #expect(fixture.model.toastMessage?.contains("changed") == true)
+    }
+
+    @Test("Invalid color-label output reports the selection without echoing the raw response")
+    func invalidOutputReportsSelection() async throws {
+        let responses = [
+            "not JSON",
+            #"{"title":"GARDEN-42 RAW-MARKER\ncontrol"}"#,
+            #"{"title":"\#(String(repeating: "x", count: 81))"}"#,
+        ]
+        for response in responses {
+            let fixture = try makeFixture()
+            defer { tearDown(fixture) }
+            let runner = FakeNoteAIRunner()
+            runner.mode = .succeed(response)
+            await fixture.model.smartRenameChatColor(.sage, runner: runner)
+
+            #expect(runner.calls.count == 1)
+            #expect(fixture.model.chatTabColors.label(for: .sage) == "Sage")
+            #expect(fixture.model.chatTabColors.smartRenaming.isEmpty)
+            #expect(fixture.defaults.string(forKey: AgentModelSettings.smartRenameModelKey) == nil)
+            let toast = try #require(fixture.model.toastMessage)
+            #expect(toast.hasPrefix("Smart Rename failed"))
+            #expect(toast.contains("synthetic/naming"))
+            #expect(toast.contains("Low"))
+            #expect(toast.contains("Desktop"))
+            #expect(toast.contains(SmartRenameModelRouting.invalidTitleReason))
+            #expect(toast.contains("Settings"))
+            #expect(!toast.contains("RAW-MARKER"))
+        }
+    }
+
     // MARK: - Fixtures
 
     private struct Fixture {

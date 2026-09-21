@@ -261,24 +261,35 @@ prompt to the source agent or shell.
   machine of the first successfully sampled controllable pane. The Settings
   machine menu only changes which catalog is browsable; it never redirects a
   rename.
-- **Fallbacks:** if the saved model is missing from the execution machine's
-  catalog, the rename uses that machine's declared Pi default and shows a notice
-  in the HUD or toast. The saved preference is not rewritten. A model that the
-  catalog marks as non-reasoning receives **Off** without changing the saved
-  thinking choice. A catalog that cannot be read, is empty, or declares a missing
-  default keeps the current title and reports an actionable error.
+- **Selection fidelity:** the rename honors the saved model and thinking level
+  exactly on the machine that owns the target. A non-blank selection the
+  execution machine does not offer, a declared default missing from its own
+  catalog, an unreadable or empty catalog, and a non-reasoning model paired with
+  an effort above **Off** all stop before any naming request. The current title
+  stays, the saved preference is not rewritten, and the error names the selection
+  and companion and points to Settings or that companion's provider
+  configuration. A failure during the naming run is reported the same way; no
+  other model, thinking level, or machine is substituted.
+- **Selection defaults:** an empty Smart Rename model follows the Agent model,
+  then the execution machine's Pi default; thinking defaults to **Low**. An
+  explicit selection is sent unchanged, including **Off**. Model catalogs expose
+  only a reasoning flag, so unknown effort ranges are never guessed.
 - **Context:** a submitted prompt, the readable Pi conversation, a bounded
   terminal window (the last 160 lines, escape sequences stripped), or
-  pane/tab/workspace/folder metadata. All supplied text is treated as untrusted
-  data. A genuinely context-free target keeps its title and says so instead of
-  requiring a conversation.
+  pane/tab/workspace/folder metadata. An unavailable, empty, or mismatched Pi
+  snapshot falls through to terminal output and metadata rather than blocking
+  the rename or importing another session's transcript. All supplied text is
+  treated as untrusted data. A genuinely context-free target keeps its title and
+  says so instead of requiring a conversation.
 - **Guards:** duplicate renames are refused, cancellation keeps the old title,
   and a manual title edit, replaced terminal or session, changed machine, removed
   chat, or changed color-group membership wins over a late result. Streaming and
   shell activity do not invalidate a rename.
-- **Persistence:** pane and color-group labels and HUD chat titles are saved
-  locally on this Mac. HUD titles carry into saved history; they are not synced
-  to other clients.
+- **Persistence:** pane titles are renamed through the companion and are server
+  state for that pane, so every connected client sees them. Color-group labels
+  and HUD title overrides are local app state on this Mac and are not synced to
+  other clients; HUD titles carry into local saved history, including a title
+  created before its first run was accepted.
 
 Model catalogs describe what a companion's Pi installation offers. They are not
 proof of provider credentials, quota, or service health, and every provider used

@@ -3,10 +3,11 @@
 Smart Rename gives a chat a short, contextual title. On Mac it is the shared
 naming path for three targets:
 
-- a workspace pane (Pi or shell), renamed through the server so every client sees
-  the new label;
+- a workspace pane (Pi or shell), renamed through the companion so every client
+  sees the new label;
 - a color-group label in the sidebar, stored locally on this Mac;
-- a HUD chat title, stored locally and carried into saved HUD history.
+- a HUD chat title override, stored locally on this Mac and carried into saved
+  HUD history.
 
 All three use one bounded, separate `.ask` run. Naming never submits a prompt to
 the source agent or shell, never continues the conversation, and never calls
@@ -24,113 +25,237 @@ tools. The supplied context is treated as untrusted data.
 - **Smart Rename thinking level** — defaults to **Low**, matching earlier
   releases.
 
-An unavailable saved model is not rewritten. Renaming falls back to the
-execution machine's declared default and shows a notice. A model the catalog
-marks as non-reasoning receives **Off** for that run without changing the saved
-thinking level. Unrelated Agent, HUD, and Notes preferences are untouched.
+These defaults are unchanged from earlier releases. An explicit model or
+thinking level is honored exactly; the saved preference is never rewritten by a
+rename, and changing Smart Rename never changes Agent, HUD, Vision, or Notes
+preferences.
+
+## Strict selection policy
+
+A rename checks the exact companion that will execute it. It fetches that
+companion's model catalog and resolves the effective selection — the explicit
+Smart Rename model, otherwise the Agent model, otherwise the companion's
+declared default — against that catalog. A missing or failing selection is
+reported for correction; it is never replaced with another model or machine.
+
+| Condition | Result |
+| --- | --- |
+| A non-blank explicit or inherited selection is not offered by the execution companion | The rename stops before any naming request. The model is reported by name along with the companion, and the message points to Settings or to configuring that provider on that companion. |
+| No effective selection and the companion declares a default missing from its own catalog | The rename stops before any naming request and reports the broken default. |
+| The catalog cannot be read (transport, cancellation aside, or `ok: false`) | The rename stops before any naming request and reports that the companion's models could not be read. |
+| The catalog decodes but lists no models | The rename stops before any naming request and reports that the companion's Pi installation advertises no models. |
+| A model the catalog marks specifically as non-reasoning is paired with a thinking level above **Off** | The rename stops before any naming request and reports the incompatibility, suggesting **Off** or a reasoning-capable model. |
+| The naming request starts but the provider, model, or run fails, times out, or returns invalid output | The rename reports the model, thinking level, and companion that executed it, explains the failure, and directs the user to Settings or that companion's provider configuration. No partial title is applied and no retry or replacement occurs. |
+
+Strictness details:
+
+- **Off** is always permitted. Every other selected level passes through
+  unchanged, including levels above what a provider may support.
+- The catalog exposes only a per-model reasoning flag, not effort ranges.
+  Unknown capability is never guessed: only an explicit `reasoning: false`
+  model is treated as known-incompatible.
+- A catalog is not proof of provider credentials, quota, or service health. A
+  listed model can still fail to start, and exactly one naming request is then
+  attempted.
+- Cancellation passes through as cancellation: the current title stays and
+  nothing is mutated.
+- Failures leave pane titles, color labels, HUD titles, and saved preferences
+  untouched, and clear the busy state so the action can be retried.
 
 ## Which machine executes a rename
 
-The rename resolves the model catalog and runs the ask on the machine that owns
-the target (the pane's machine, or the HUD chat's selected machine). A
-color-group label runs on the machine of the first successfully sampled
-controllable pane, not the primary or selected catalog machine.
+The rename resolves the catalog and runs the ask on the machine that owns the
+target:
 
-Because of that:
+- a pane runs on that pane's companion;
+- a HUD chat runs on that chat's selected companion;
+- a color-group label runs on the machine of the first successfully sampled
+  controllable pane, not the primary or browsed catalog machine.
 
-- A model offered by one companion may be unavailable on another. The saved
-  preference stays as configured; the notice explains the fallback.
-- A model catalog is not proof of provider credentials, quota, or service
-  health. The provider must be configured and working in the environment of the
-  companion that executes the rename.
-- Catalog failures (transport error, `ok: false`, an empty list, or a declared
-  default missing from its own list) stop before any request is dispatched and
-  leave the existing title in place with an actionable message.
+The **Model list from** picker never redirects a rename. Two companions that
+advertise different model catalogs resolve independently: a model offered by one
+companion may be missing on another, and the rename on that other companion
+fails actionably instead of substituting its default.
 
 ## Context sources and bounds
 
-Smart Rename uses the first readable source:
+Naming uses the first readable source and never requires an established
+conversation:
 
-1. **A matching Pi conversation** — the original goal plus recent turns, with
-   tools, images, and private reasoning excluded. Individual messages are
-   bounded and the total input is capped at 16,000 characters.
+1. **A matching Pi conversation** — when the pane declares a semantic session,
+   its snapshot provides the original goal plus recent turns, with tools,
+   images, and private reasoning excluded. Individual messages are bounded to
+   1,500 characters and the total input is capped at 16,000 characters. A
+   snapshot that is unavailable, empty, or declares a different session is
+   treated as no conversation rather than blended into this pane's title.
 2. **An acknowledged submission** — a successfully submitted prompt is merged
-   ahead of a lagging snapshot, so a pane or HUD chat can be named before any
-   assistant response. Failed submissions are never used.
+   ahead of a lagging snapshot, so a pane or HUD chat can be named from the
+   prompt alone before any assistant response. Failed submissions are never
+   used, and a cached prompt is only considered for the same machine, pane,
+   terminal, workspace, tab, session, and connection generation.
 3. **Bounded terminal output** for shell or other nonsemantic panes — the last
-   160 lines (scanned within a 128,000-character tail) with ANSI/CSI/OSC escape
-   sequences and control characters stripped.
-4. **Pane, tab, workspace, and working-folder metadata** — labels and paths,
-   each bounded to 200 characters.
+   160 lines within the final 128,000 characters of output, with ANSI/CSI/OSC
+   escape sequences and control characters stripped. It is labeled as untrusted
+   terminal text.
+4. **Pane, tab, workspace, and working-folder metadata** — pane label/title,
+   terminal title, session title, workspace label, tab label, and working
+   folder, each bounded to 200 characters.
 
-Color groups sample up to six tab-fair, deterministic panes, compact each pane's
-context to 3,000 characters, and cap the combined group input at 24,000
-characters.
+HUD chats have their own transcript path: the first and most recent exchanges
+(when more than nine exist, the first plus the last eight), with whitespace-only
+prompts and responses omitted. Each message is bounded to 1,500 characters and
+the total to 16,000 characters.
 
-If none of these sources has readable text, the target keeps its title and the
-UI reports that there is not enough context yet; it never demands a conversation
-or replies.
+Color groups sample up to six panes, preferring one pane per tab in
+deterministic order, run each sampled pane through the same pane context path,
+compact each pane to 3,000 characters (keeping the beginning and end, with the
+middle omitted), and cap the combined group input at 24,000 characters. One pane
+with unreadable context is skipped so it cannot hide the rest; the group still
+needs at least one readable pane.
 
-## Guards and persistence
+If none of the available sources has readable text, the target keeps its title
+and the UI reports that there is not enough context yet. It never demands a
+conversation or assistant reply.
+
+## Guards, stale results, and persistence
 
 - Duplicate renames for the same target are refused while one is running.
 - Cancellation keeps the previous title and performs no mutation.
 - Streaming responses, tool progress, and completion for the submitted turn do
-  not invalidate a rename.
+  not invalidate a rename; a reply arriving while naming is in flight does not
+  discard the result.
 - A manual title edit, a replaced terminal or session, a changed machine, a
   removed or ended HUD chat, a changed color-group membership, a different
   prompt/turn, or a replaced history root prevents a stale result from being
-  applied.
-- A HUD title created before the first run has a durable identity is remembered
-  against that submission and attached to the conversation when its accepted run
-  becomes known; it survives relaunch and reopening from history.
-- Pane and color-group labels and HUD titles persist locally on this Mac. They
-  are not synced to other clients.
+  applied. The user's newer change wins.
+- Pane naming captures the pane identity, connection generation, and rename
+  revision before the model, context, and AI work, rechecks them immediately
+  before the server mutation, and reports a conflict if anything changed.
+- Invalid output (not a JSON `title` object, empty after trimming, longer than
+  80 characters, or containing control characters) performs no mutation and
+  reports the failure.
+- After a successful pane mutation, the app refreshes once and reports the
+  server's title. If that refresh fails, the rename is still reported as
+  completed with the refresh problem noted, rather than guessed or repeated.
+- A HUD title created before its first run has a durable history identity is
+  remembered against that submission and attached when the accepted run becomes
+  known, so it survives relaunch and reopening from history.
+
+Persistence differs by target:
+
+- **Pane labels are renamed through the companion.** The title is server state
+  for that pane, so every connected client sees it. It is not a local-only
+  label.
+- **Color-group labels and HUD title overrides remain local app state on this
+  Mac.** They are stored in this Mac's preferences and are not synced to
+  other clients. HUD history titles are keyed to the saved conversation's
+  machine, creation time, and prompt signature, with bounded saved and pending
+  history-title stores.
 
 ## Compatibility
 
-Smart Rename reuses existing APIs:
+Smart Rename reuses existing endpoints:
 
 - the Pi semantic snapshot endpoint for conversations;
 - the pane output endpoint for shell context;
 - the agent-model catalog endpoint for availability;
-- the existing headless-agent run and pane/hud-chat mutation endpoints.
+- the existing headless-agent run, pane rename, and HUD chat APIs.
 
 No new server capability, contract, or migration is introduced, so this is a
-Mac-only change. The server-side endpoints must be present on every companion
-that executes a rename; providers must work in each target companion's
-environment. iOS, the web client, and the server contract are unchanged.
+Mac-only change. iOS, the web client, and the server contract are unchanged. The
+server-side endpoints must be present on every companion that executes a rename,
+and providers must work in each execution companion's environment; a companion
+that cannot return a usable model list produces the actionable catalog error
+above. No companion configuration is changed by this feature.
 
-## Synthetic manual matrix
+## Verification
 
-Run this with disposable, synthetic machines and data only. Never use production
-hosts, credentials, or real conversations. The automated tests use fake runners
-and synthetic HTTP fixtures; no live provider is contacted.
+### Deterministic automated suites
+
+The fixture-backed suites use fake runners and synthetic HTTP fixtures; they do
+not contact a live provider. They cover:
+
+- `SmartRenameModelRoutingTests` — strict resolution against one exact machine,
+  differing companion catalogs, missing explicit and inherited selections,
+  machine defaults, incompatible and Off effort, catalog failures, execution
+  error wrapping, and cancellation passthrough.
+- `SmartRenameExecutionTests` — the HTTP-backed execution seam: exact model,
+  effort, prompt, and context in the dispatched request; shell-pane naming; an
+  advertised model that fails at execution; no partial mutation; and no
+  dispatched request for a missing selection.
+- `SmartPaneRenameTests` — prompt-only pane naming, empty and lagging
+  snapshots, shell and metadata fallbacks, unreadable and mismatched snapshots,
+  no-context reporting, stale-target and manual-edit guards, refresh reporting,
+  and strict selection failures.
+- `SmartPaneTitleTests` — parsing, bounds, metadata, and escape-free terminal
+  context.
+- `SmartChatColorRenameTests` — color-group context, deterministic routing,
+  races, and strict selection failures.
+- `HerdrHudChatsTests` — HUD prompt-only naming, response/completion races,
+  stale-result protection, and history-title persistence including pending
+  titles.
+- `AgentControlSmartRenameTests` and `AgentControlRoutingTests` — agent-control
+  rename receipts, execution failures, and shell-pane routing.
+- `AgentModelSettingsStoreTests` — unchanged defaults and inheritance,
+  persistence across store recreation, and no unrelated-preference rewrites.
+- `SettingsRenderTests` — both Smart Rename controls, the saved unavailable
+  selection, the incompatible-effort warning, and strict-policy copy.
+
+The required final gate is the exact-SHA **Verify** run, which owns
+`herdr-harness-macTests` (including the suites above), the portable Python and
+Node suites, the standalone-install check, the gitleaks history scan, and
+`python3 scripts/check-public-source.py` (run with `--staged` inside Verify).
+The complete manual matrix and smoke-check procedure below are handed to that
+single final validation owner; tests are authored alongside the code but are not
+run incrementally or duplicated locally by habit.
+
+### Synthetic manual matrix
+
+Run this only with disposable, synthetic machines and data. Never use production
+hosts, credentials, or real conversations. The fixture tests above are not
+evidence that any real provider works; only the smoke check below records actual
+execution.
 
 | Scenario | Setup | Expected |
 | --- | --- | --- |
-| Initial prompt | Submit a prompt to a fresh Pi pane or HUD chat and rename before any reply appears | The submitted prompt alone produces a title; later response text, tool steps, and completion do not discard it |
-| Shell-only pane | A controllable shell pane with no Pi session and recent output | The title is built from the bounded terminal tail and pane/workspace metadata; escape sequences do not leak in |
-| Streaming HUD | Rename a running HUD chat, then let the run complete while naming is still in flight | The late AI title still applies; the chat is not marked changed |
-| Two catalogs | Two disposable companions advertising different model catalogs; name a target on the second | Only the target machine's catalog is fetched; the ask runs there with the configured thinking level |
-| Fallback and error | Save a model the execution machine does not offer; then make its catalog unreachable or empty | Fallback uses that machine's default with a visible notice and no preference rewrite; catalog failure keeps the old title with an actionable message |
-| Manual-edit race | Edit a title or color label while its naming run is in flight | The manual value wins; the late result is not applied |
-| Persistence | Rename, relaunch, and remove/reopen the HUD chat from history | The title is retained locally, including a title created before the first run was accepted |
-| Non-reasoning model | Make the execution machine's default a model marked non-reasoning, with a saved thinking level | The run receives **Off**; the saved thinking level is unchanged |
+| Successful early naming | Submit a prompt to a fresh, disposable Pi pane or HUD chat and rename before any reply appears | The submitted prompt alone produces a title; later response text, tool steps, and completion do not discard it |
+| Shell context | A controllable disposable shell pane with no Pi session and recent output | The title is built from the bounded terminal tail and pane/workspace metadata; escape sequences do not leak in and no input is submitted to the shell |
+| Unavailable snapshot | A Pi pane whose snapshot endpoint fails, returns empty, or names another session, while terminal output exists | Naming uses the terminal output (then metadata); another session's transcript is never imported |
+| Two differing catalogs | Two disposable companions advertising different model catalogs; name a target on the second | Only the target machine's catalog is fetched; the ask runs there with the effective selection and effort |
+| Missing explicit model | Save a Smart Rename model that the execution companion does not offer | No naming request is dispatched; the title, label, and saved preference are unchanged, and the error names the model and companion and points to Settings or that provider |
+| Missing inherited model | Leave Smart Rename empty with an Agent model the execution companion does not offer | Same failure as above; the rename does not silently fall back to the machine default, and the Agent preference is unchanged |
+| Advertised-but-failing provider | The catalog lists a model, but its provider fails to start or the naming run times out | Exactly one request is attempted; no title mutation; the error names model, effort, and companion and directs to Settings or provider configuration |
+| Incompatible effort | A catalog model marked non-reasoning with a saved thinking level above Off | The rename stops before dispatch, suggests Off or a reasoning-capable model, and keeps the saved effort; selecting Off succeeds |
+| Unreadable or empty catalog | The execution companion's catalog is unreachable, unsuccessful, or empty | The rename stops before dispatch, keeps the current title, and shows the actionable catalog error; no preference is rewritten |
+| Manual-edit race | Edit a title, color label, or HUD title while its naming run is in flight | The manual value wins; the late result is not applied |
+| Stale target | Replace the terminal or session, remove or end the HUD chat, or change color-group membership while naming is in flight | The late result is discarded; the replacement or newer state is untouched |
+| HUD history persistence | Rename a HUD chat, relaunch, and remove/reopen it from history; include a title created before the first run was accepted | The title is retained locally through relaunch and reopening, including the pending title that attaches when the accepted run becomes known |
+| Color-group routing | Shell-only panes sharing one color, on a machine that can control them | The label is named from bounded terminal/metadata context and runs on the machine of the first successfully sampled controllable pane |
 
-## Automated verification
+### Authorized per-companion smoke check
 
-The focused suites are:
+Per-companion functionality claims require actual execution evidence; catalog
+membership alone is not proof. At the frozen source revision, the final
+validation owner may run one authorized synthetic smoke check per configured
+execution companion (the exact-SHA Verify run owns the automated suites):
 
-```bash
-xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj \
-  -scheme herdr-harness-mac -destination 'platform=macOS' \
-  CODE_SIGNING_ALLOWED=NO test \
-  -only-testing:herdr-harness-macTests/HerdrHudChatsTests
-```
+1. Confirm the companion may be used for a synthetic check and that a
+   disposable pane, HUD chat, or color group with synthetic text is available.
+2. Record the private evidence fields: app/source revision, companion revision,
+   the effective selected model and thinking level, the observed result, and any
+   failure.
+3. Run Smart Rename with an explicit selection the companion offers, then with
+   the default **Same as Agent model** path. Confirm the resulting title reflects
+   the synthetic context and that the dispatched values match the recorded
+   selection.
+4. If the selection is missing from that companion, or the provider fails,
+   record the failure and correct Settings or the provider only when that
+   correction is separately authorized. Never report a per-companion result as
+   fixed, working, or verified without an observed synthetic result.
+5. A companion that is inaccessible remains **unverified**, not failed and not
+   passing. Record unperformed checks explicitly.
 
-`SmartPaneRenameTests`, `SmartChatColorRenameTests`, and
-`SmartRenameModelRoutingTests` cover the pane, color-group, and catalog
-policies. The final validation owner runs the exact-SHA Verify suite and performs
-the manual matrix above; these checks are not a claim that any real machine or
-provider was exercised.
+The smoke check contacts only the named disposable companions. Keep evidence
+reports private and outside Git: no hostnames, credentials, personal paths, or
+captured conversation data. Record only the fields above and generic companion
+identifiers.

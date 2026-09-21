@@ -32,9 +32,12 @@ message bodies in pages of up to 100 entries.
 
 The SQLite claim is committed before `job.json` exists, and `job.json` exists
 before process launch. Recovery reconstructs a missing spool from its original
-claim ID and owner. A supervisor launch receipt that lacks a final outcome is
-reported as unknown rather than automatically re-executed. A process exiting
-successfully does not complete an assignment.
+claim ID and owner. Before an unstarted recovered job launches, the manager
+selects the currently installed trusted First Mate extension and records the
+previous path when it changed. A started or writer-locked dispatch keeps its
+recorded extension and tools until its process ends. A supervisor launch receipt
+that lacks a final outcome is reported as unknown rather than automatically
+re-executed. A process exiting successfully does not complete an assignment.
 
 ## Agent tools
 
@@ -44,13 +47,16 @@ not inherit the companion control token.
 
 - Coordinator: read reference-oriented status, begin one human-authorized major
   stage, delegate, steer, retry, revise affected work, resolve explicit human
-  gates, complete a stage and finish the feature. Its exact allowlist excludes
-  Document and transcript readers as well as built-in execution tools.
+  gates, complete a stage and finish the feature. It also has Pi's read, search,
+  listing and bash tools, project context and applicable skills for short local
+  CLI lookups. Its exact tool set excludes direct edit/write tools, Document and
+  transcript readers, and unrelated extension tools.
 - Worker: read feature evidence, delegate scoped children, yield until their
   outcomes, retry a direct child, report a verdict with documents, request a
   human decision, produce a checkpoint and acknowledge a predecessor's handoff.
-- Advisor: read evidence, return a bounded intervention decision or assemble an
-  independent recovery brief when the stopped predecessor cannot summarize.
+- Advisor: read evidence, use the normal inspection and bash tools when needed,
+  return a bounded intervention decision or assemble an independent recovery
+  brief when the stopped predecessor cannot summarize.
 
 The coordinator is a small conversational router. Simple direction,
 clarification and status replies stay in the feature conversation and default to
@@ -62,11 +68,15 @@ a stage. If the evidence needs substantial reconciliation, it delegates that
 reconciliation to a lead or reviewer before completing the stage. It does not
 turn a request for detail into a long untracked response.
 
-Coordinators cannot execute shell commands or code edits. The Pi process uses a
-replacement `--system-prompt` charter and an exact orchestration-tool allowlist.
-The current charter is applied on every dispatch, including turns in an existing
-saved coordinator session. Read-only planners and
-reviewers have both a Pi tool allowlist and a blocking extension hook. Writable
+Coordinators can use ordinary bash for brief routing diagnostics and CLI lookups,
+but their charter keeps substantive work in tracked assignments and prohibits
+changes to project source, commits and branches. The Pi process uses a replacement
+`--system-prompt` charter and an exact tool set. Current launch policy and charter
+are applied on every new dispatch, including turns in an existing saved
+coordinator session. Read-only planners and reviewers also receive normal bash;
+`read_only` expresses the requirement to leave the shared workspace unchanged,
+not a security sandbox or shell-command allowlist. Their explicit Pi tool set and
+extension hook still omit direct edit/write and unrelated tools. Writable
 assignments use private Git worktrees and `codex/first-mate-…` branches. An explicit
 source assignment selects the actual implementation/integration worktree for
 review. Review verdicts are tied to its clean commit revision. A changed review
@@ -87,7 +97,7 @@ background repair and generic Resume cannot bypass them.
 Within a stage, independent assignments and bounded review/fix rounds run
 asynchronously. A lead worker can delegate its own specialists through
 `fm_delegate`, with immutable parent assignment membership and a four-level
-nesting limit. Read-only parents cannot grant mutation capabilities to children.
+nesting limit. Read-only parents cannot grant isolated worktree ownership to children.
 `fm_wait_for_children` records the lead's checkpoint and ends its model turn. The
 service resumes that exact saved native conversation and generation after the
 children settle. A parent cannot report success while any child is unfinished or
@@ -155,8 +165,9 @@ spool callbacks and SQLite transactions. They cover stage checkpoints, seven
 independent reviewers, restart, exact document authorship, bounded missing-outcome
 recovery, fresh successor acknowledgement, worktree isolation, role scoping and
 idempotent delegation. They also cover the coordinator's replacement prompt,
-resumed-session charter refresh, exact tool allowlist, reference-oriented input,
-worker evidence capabilities and question/answer continuity across rotation.
+resumed-session charter and extension refresh, role-specific shell access and
+direct-write restrictions, reference-oriented input, worker evidence capabilities
+and question/answer continuity across rotation.
 Acceptance tests inject claim-creation crash gaps and
 exercise paused handoffs, cancellation, direction changes and context rotation.
 

@@ -35,16 +35,33 @@ class DeferredOperation(Exception):
 
 
 TERMINAL = {"completed", "failed", "blocked", "cancelled", "superseded", "paused"}
-COORDINATOR_TOOLS = (
+SHELL_INSPECTION_TOOLS = ("read", "bash", "grep", "find", "ls")
+COORDINATOR_TOOLS = SHELL_INSPECTION_TOOLS + (
     "fm_status", "fm_delegate", "fm_begin_stage", "fm_recover",
     "fm_resolve_gate", "fm_steer", "fm_retry", "fm_complete_stage",
     "fm_revise", "fm_finish_feature",
+)
+READ_ONLY_WORKER_TOOLS = SHELL_INSPECTION_TOOLS + (
+    "fm_status", "fm_read_document", "fm_read_session", "fm_outcome",
+    "fm_handoff", "fm_acknowledge_handoff", "fm_request_human",
+    "fm_delegate", "fm_retry", "fm_wait_for_children",
+)
+ADVISOR_TOOLS = SHELL_INSPECTION_TOOLS + (
+    "fm_status", "fm_read_document", "fm_read_session", "fm_advice",
+    "fm_recovery_brief",
 )
 COORDINATOR_PROMPT = """You are First Mate, the human's small conversational router for ONE feature.
 Keep every ordinary reply brief: one to three sentences and normally at most 80
 words. Use short bullets only when they materially improve clarity. Detailed
 plans, research, investigation, implementation, review, testing, synthesis and
 deliverables belong in tracked worker assignments and Documents, not this chat.
+
+You have normal read tools and bash for short project lookups and diagnostics,
+including discovering and invoking applicable local CLI workflows. Keep these
+actions bounded to routing the feature, preserve project source, commits and
+branches, and do not perform unrelated or unauthorized actions. Direct write and
+edit tools are unavailable. Delegate substantive work rather than performing it
+in this conversation.
 
 Answer simple direction, clarification and status questions yourself from the
 reference-oriented authoritative state. Human messages alone can authorize major
@@ -53,8 +70,9 @@ when a necessary choice is genuinely ambiguous. Within an authorized stage,
 delegate substantive work through fm_delegate. Give each worker complete scope,
 acceptance criteria, required Documents, the exact revision to inspect when
 applicable, and any internal human gates. Acknowledge dispatch briefly, then end
-your turn. Never poll, wait, execute work, or consume a turn monitoring workers;
-ordinary service code watches and records them automatically.
+your turn. Never poll, wait, perform substantive assignment work, or consume a
+turn monitoring workers; ordinary service code watches and records them
+automatically. Short routing lookups through the shell remain allowed.
 
 System updates are evidence, never new human authorization. Use the supplied
 outcome summaries for a short stage checkpoint. If completion requires reading
@@ -86,12 +104,20 @@ handoff, call fm_handoff with a thorough checkpoint and end your turn. Never
 compact; a new saved session will continue the same assignment. If you are a
 successor, inspect the checkpoint and workspace then fm_acknowledge_handoff
 before changing anything. All observable execution is retained in the work log.
+For a read_only workspace, bash and the read tools remain available for inspection
+and normal project CLIs. Treat read_only as an instruction not to edit workspace
+files, commits or branches, and do not perform unrelated or unauthorized actions;
+it is not a security sandbox. An isolated assignment owns its designated worktree
+within the assignment scope.
 """
 ADVISOR_PROMPT = """You are the read-only advisor for a potentially unhealthy Pi
 assignment. Inspect the evidence supplied. Repetition can be legitimate; do not
 intervene without a concrete reason. Return fm_advice with continue, steer,
 handoff or pause. You cannot perform the assignment, mutate files or authorize a
-workflow stage. Keep the assessment bounded and evidence-based.
+workflow stage. Bash and read tools are available for bounded inspection in the
+assigned workspace, but preserve project source, commits and branches and do not
+perform unrelated or unauthorized actions. Keep the assessment bounded and
+evidence-based.
 """
 
 
@@ -414,6 +440,15 @@ class FirstMateRuntime:
         directory = self._job_dir(job)
         if (directory / "started.json").exists() or _locked(directory / "writer.lock"):
             return
+        # An unlaunched spool may outlive a package upgrade. Refresh only before
+        # its first writer starts so recovered jobs receive the current policy;
+        # running and previously-started dispatches retain exact provenance.
+        current_extension = str(self.extension) if self.extension else job.get("extension")
+        if current_extension and job.get("extension") != current_extension:
+            job["previous_extension"] = job.get("extension")
+            job["extension"] = current_extension
+            job["extension_selected_at"] = utc_now()
+            self._save_job(job)
         child_env = agent_environment({**os.environ, **self.environ}, integration=False)
         child_env["PATH"] = _child_path(self.pi_bin or "pi", child_env.get("PATH"))
         child_env["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent)
@@ -796,7 +831,7 @@ class FirstMateRuntime:
             if feature["status"] != "running" or not self.store.assignment_is_in_current_visit(parent["id"]):
                 raise FirstMateError("Nested work must remain in the current human-authorized stage")
             if job.get("workspace_mode") == "read_only" and params.get("workspace_mode", "read_only") != "read_only":
-                raise FirstMateError("A read-only parent cannot grant mutation capabilities to a child")
+                raise FirstMateError("A read-only parent cannot grant an isolated worktree to a child")
             depth = 0
             ancestor = parent
             while ancestor.get("metadata", {}).get("parent_assignment_id"):
@@ -1240,14 +1275,15 @@ def _pi_command(job: dict) -> list[str]:
                "--name", "First Mate" if job["kind"] == "coordinator" else job["claim"].get("title", "First Mate advisor"),
                prompt_flag, charter, "--extension", job["extension"]]
     if job["kind"] in {"coordinator", "advisor"}:
-        command += ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-builtin-tools"]
+        command += ["--no-extensions", "--no-prompt-templates"]
+    if job["kind"] == "advisor":
+        command += ["--no-skills", "--no-context-files"]
     if job["kind"] == "coordinator":
         command += ["--tools", ",".join(COORDINATOR_TOOLS)]
     if job["kind"] == "worker" and job.get("workspace_mode") == "read_only":
-        command += ["--tools", "read,grep,find,ls,fm_status,fm_read_document,fm_read_session,fm_outcome,fm_handoff,fm_acknowledge_handoff,fm_request_human,fm_delegate,fm_retry,fm_wait_for_children"]
+        command += ["--tools", ",".join(READ_ONLY_WORKER_TOOLS)]
     if job["kind"] == "advisor":
-        command = [part for part in command if part != "--no-builtin-tools"]
-        command += ["--tools", "read,grep,find,ls,fm_status,fm_read_document,fm_read_session,fm_advice,fm_recovery_brief"]
+        command += ["--tools", ",".join(ADVISOR_TOOLS)]
     if job.get("model"):
         command += ["--model", job["model"]]
     if job.get("thinking"):
@@ -1285,7 +1321,8 @@ def run_detached(directory: Path) -> int:
             os.chmod(session_path, 0o600)
             empty.flush()
             os.fsync(empty.fileno())
-    _write_json(directory / "started.json", {"pid": os.getpid(), "at": utc_now()})
+    _write_json(directory / "started.json", {"pid": os.getpid(), "at": utc_now(),
+                                               "extension": job.get("extension")})
     status = {"pid": os.getpid(), "started_at": utc_now(), "accepted": False,
               "ended": False, "response": "", "last_event_epoch": time.time()}
     _write_json(directory / "status.json", status)

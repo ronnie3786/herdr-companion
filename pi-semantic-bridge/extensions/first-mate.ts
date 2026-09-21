@@ -37,7 +37,9 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
     let retired = false;
     let checkpointRequested = false;
     let successorAcknowledged = !job.handoff_id;
+    const inspectionTools = ["read", "bash", "grep", "find", "ls"];
     const coordinatorTools = new Set([
+      ...inspectionTools,
       "fm_status", "fm_delegate", "fm_begin_stage", "fm_recover",
       "fm_resolve_gate", "fm_steer", "fm_retry", "fm_complete_stage",
       "fm_revise", "fm_finish_feature",
@@ -157,13 +159,13 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
       if (!successorAcknowledged && !["fm_acknowledge_handoff", "fm_status", "read", "ls", "find", "grep"].includes(event.toolName)) {
         return { block: true, reason: "Inspect the handoff and workspace, then acknowledge with fm_acknowledge_handoff before executing work." };
       }
-      if (role === "worker" && job.workspace_mode === "read_only" && !["read", "grep", "find", "ls", "fm_status", "fm_read_document", "fm_read_session", "fm_outcome", "fm_handoff", "fm_acknowledge_handoff", "fm_request_human", "fm_delegate", "fm_retry", "fm_wait_for_children"].includes(event.toolName)) {
-        return { block: true, reason: "This assignment is read-only. Ask First Mate for an isolated testing/implementation assignment when commands or mutations are needed." };
+      if (role === "worker" && job.workspace_mode === "read_only" && ![...inspectionTools, "fm_status", "fm_read_document", "fm_read_session", "fm_outcome", "fm_handoff", "fm_acknowledge_handoff", "fm_request_human", "fm_delegate", "fm_retry", "fm_wait_for_children"].includes(event.toolName)) {
+        return { block: true, reason: "This assignment must leave the shared workspace unchanged. Use bash and read tools only for inspection, or ask First Mate for an isolated worktree assignment." };
       }
       if (role === "coordinator" && !coordinatorTools.has(event.toolName)) {
         return { block: true, reason: "First Mate delegates execution through fm_delegate. Keep this conversation available for the human." };
       }
-      if (role === "advisor" && !["read", "ls", "find", "grep", "fm_status", "fm_read_document", "fm_read_session", "fm_advice", "fm_recovery_brief"].includes(event.toolName)) {
+      if (role === "advisor" && ![...inspectionTools, "fm_status", "fm_read_document", "fm_read_session", "fm_advice", "fm_recovery_brief"].includes(event.toolName)) {
         return { block: true, reason: "The advisor is read-only and returns judgment through fm_advice." };
       }
     });

@@ -22,14 +22,15 @@ test("ordinary Pi sessions gain no First Mate tools", () => {
   createFirstMateExtension({})({registerTool() { assert.fail("unexpected tool"); }});
 });
 
-test("coordinator exposes only asynchronous orchestration and cannot execute commands", () => {
+test("coordinator exposes bounded shell inspection with asynchronous orchestration", () => {
   const f = fixture("coordinator");
   try {
     assert.ok(f.tools.has("fm_status"));
     assert.ok(f.tools.has("fm_delegate")); assert.ok(f.tools.has("fm_complete_stage")); assert.ok(f.tools.has("fm_resolve_gate"));
     assert.ok(!f.tools.has("fm_outcome"));
     assert.ok(!f.tools.has("fm_read_document")); assert.ok(!f.tools.has("fm_read_session"));
-    assert.equal(f.handlers.get("tool_call")({toolName:"bash"}).block, true);
+    for (const toolName of ["read","bash","grep","find","ls"]) assert.equal(f.handlers.get("tool_call")({toolName}), undefined);
+    for (const toolName of ["edit","write"]) assert.equal(f.handlers.get("tool_call")({toolName}).block, true);
     assert.equal(f.handlers.get("tool_call")({toolName:"fm_invented_tool"}).block, true);
     assert.equal(f.handlers.get("tool_call")({toolName:"fm_delegate"}), undefined);
   } finally { f.cleanup(); }
@@ -45,12 +46,21 @@ test("writable workers retain execution and detailed evidence capabilities", () 
   } finally { f.cleanup(); }
 });
 
-test("read-only workers cannot mutate through builtins or unrelated extension tools", () => {
+test("read-only workers can inspect with bash but cannot use direct mutation tools", () => {
   const f = fixture("worker", {workspace_mode:"read_only"});
   try {
-    for (const toolName of ["write","edit","bash","some_unrelated_tool"]) assert.equal(f.handlers.get("tool_call")({toolName}).block, true);
-    assert.equal(f.handlers.get("tool_call")({toolName:"read"}), undefined);
+    for (const toolName of ["write","edit","some_unrelated_tool"]) assert.equal(f.handlers.get("tool_call")({toolName}).block, true);
+    for (const toolName of ["read","bash","grep","find","ls"]) assert.equal(f.handlers.get("tool_call")({toolName}), undefined);
     assert.equal(f.handlers.get("tool_call")({toolName:"fm_read_document"}), undefined);
+  } finally { f.cleanup(); }
+});
+
+test("advisor can inspect with bash while direct mutations stay unavailable", () => {
+  const f = fixture("advisor");
+  try {
+    for (const toolName of ["read","bash","grep","find","ls"]) assert.equal(f.handlers.get("tool_call")({toolName}), undefined);
+    for (const toolName of ["edit","write","fm_delegate"]) assert.equal(f.handlers.get("tool_call")({toolName}).block, true);
+    assert.equal(f.handlers.get("tool_call")({toolName:"fm_advice"}), undefined);
   } finally { f.cleanup(); }
 });
 
@@ -58,10 +68,12 @@ test("successor is fenced until verified acknowledgement", async () => {
   const f = fixture("worker", {handoff_id:"handoff-synthetic",workspace_mode:"isolated"});
   try {
     assert.equal(f.handlers.get("tool_call")({toolName:"write"}).block, true);
+    assert.equal(f.handlers.get("tool_call")({toolName:"bash"}).block, true);
     const id = spoolRequestId("synthetic-job", "ack-call");
     writeFileSync(join(f.root,"responses",id+".json"),JSON.stringify({ok:true,result:{acknowledged:true}}));
     await f.tools.get("fm_acknowledge_handoff").execute("ack-call",{summary:"Workspace verified"},undefined,undefined,f.ctx);
     assert.equal(f.handlers.get("tool_call")({toolName:"write"}), undefined);
+    assert.equal(f.handlers.get("tool_call")({toolName:"bash"}), undefined);
     const request = JSON.parse(readFileSync(join(f.root,"requests",id+".json"),"utf8"));
     assert.equal(request.native_session_id,"native-synthetic");
   } finally { f.cleanup(); }
@@ -94,5 +106,6 @@ test("completed outcome prevents further worker mutations", async () => {
     writeFileSync(join(f.root,"responses",id+".json"),JSON.stringify({ok:true,result:{verdict:"success"}}));
     await f.tools.get("fm_outcome").execute("outcome",{verdict:"success",summary:"Verified",documents:[]},undefined,undefined,f.ctx);
     assert.equal(f.handlers.get("tool_call")({toolName:"write"}).terminate,true);
+    assert.equal(f.handlers.get("tool_call")({toolName:"bash"}).terminate,true);
   } finally { f.cleanup(); }
 });

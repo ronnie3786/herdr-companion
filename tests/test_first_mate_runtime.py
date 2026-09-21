@@ -15,7 +15,8 @@ import time
 import unittest
 from unittest.mock import patch
 
-from herdr_harness.first_mate_runtime import (COORDINATOR_PROMPT, COORDINATOR_TOOLS,
+from herdr_harness.first_mate_runtime import (ADVISOR_TOOLS, COORDINATOR_PROMPT,
+    COORDINATOR_TOOLS, READ_ONLY_WORKER_TOOLS, SHELL_INSPECTION_TOOLS,
     WORKER_PROMPT, FirstMateRuntime, _coordinator_state, _ledger_event, _locked,
     _pi_command, _read_json, _records, _write_json)
 from herdr_harness.first_mate_store import FirstMateStore, FirstMateError
@@ -197,7 +198,7 @@ class FirstMateRuntimeTests(unittest.TestCase):
                 self.assertNotIn('--model', argv)
                 self.assertNotIn('--thinking', argv)
 
-    def test_coordinator_uses_replacement_charter_and_exact_tool_allowlist(self):
+    def test_coordinator_uses_replacement_charter_shell_tools_skills_and_project_context(self):
         feature = self.feature()
         claim = self.store.claim_message(feature['id'], self.runtime.owner)
         job = self.runtime._new_job(feature, kind='coordinator', prompt='Hello', claim=claim)
@@ -207,8 +208,15 @@ class FirstMateRuntimeTests(unittest.TestCase):
         self.assertNotIn('--append-system-prompt', command)
         tools = command[command.index('--tools') + 1].split(',')
         self.assertEqual(tools, list(COORDINATOR_TOOLS))
+        self.assertEqual(tools[:len(SHELL_INSPECTION_TOOLS)], list(SHELL_INSPECTION_TOOLS))
+        self.assertIn('bash', tools)
+        self.assertNotIn('edit', tools)
+        self.assertNotIn('write', tools)
         self.assertNotIn('fm_read_document', tools)
         self.assertNotIn('fm_read_session', tools)
+        self.assertNotIn('--no-skills', command)
+        self.assertNotIn('--no-context-files', command)
+        self.assertNotIn('--no-builtin-tools', command)
 
     def test_worker_launch_keeps_evidence_tools_and_worker_charter(self):
         job = {'kind':'worker','pi_bin':'pi','session_file':'/tmp/synthetic-session.jsonl',
@@ -218,9 +226,34 @@ class FirstMateRuntimeTests(unittest.TestCase):
         self.assertEqual(command[command.index('--append-system-prompt') + 1], WORKER_PROMPT)
         self.assertNotIn('--system-prompt', command)
         tools = command[command.index('--tools') + 1].split(',')
+        self.assertEqual(tools, list(READ_ONLY_WORKER_TOOLS))
+        self.assertIn('bash', tools)
+        self.assertNotIn('edit', tools)
+        self.assertNotIn('write', tools)
         self.assertIn('fm_read_document', tools)
         self.assertIn('fm_read_session', tools)
         self.assertIn('fm_delegate', tools)
+
+    def test_every_role_and_workspace_mode_launches_with_bash(self):
+        base = {'pi_bin':'pi','session_file':'/tmp/synthetic-session.jsonl',
+                'claim':{'title':'Synthetic assignment'},'extension':'/tmp/first-mate.ts'}
+        jobs = [
+            {**base, 'kind':'coordinator'},
+            {**base, 'kind':'worker', 'workspace_mode':'read_only'},
+            {**base, 'kind':'worker', 'workspace_mode':'isolated'},
+            {**base, 'kind':'advisor'},
+        ]
+        for job in jobs:
+            with self.subTest(kind=job['kind'], workspace_mode=job.get('workspace_mode')):
+                command = _pi_command(job)
+                if '--tools' in command:
+                    self.assertIn('bash', command[command.index('--tools') + 1].split(','))
+                else:
+                    self.assertNotIn('--no-tools', command)
+                    self.assertNotIn('--no-builtin-tools', command)
+        advisor_command = _pi_command(jobs[-1])
+        self.assertEqual(advisor_command[advisor_command.index('--tools') + 1].split(','), list(ADVISOR_TOOLS))
+        self.assertNotIn('--no-builtin-tools', advisor_command)
 
     def test_coordinator_input_is_current_scope_and_reference_oriented(self):
         snapshot = {
@@ -493,10 +526,57 @@ class FirstMateRuntimeTests(unittest.TestCase):
         claim = self.store.claim_message(feature['id'], self.runtime.owner)
         job = self.runtime._new_job(feature,kind='coordinator',prompt='Hello',claim=claim)
         self.runtime.environ['HERDR_HARNESS_API_TOKEN']='synthetic-control-token'
+        configured_path = '/synthetic/cli/bin:/usr/bin:/bin'
+        self.runtime.environ['PATH'] = configured_path
         with patch('herdr_harness.first_mate_runtime.subprocess.Popen') as spawn:
             self.runtime._launch(job)
         child = spawn.call_args.kwargs['env']
         self.assertNotIn('HERDR_HARNESS_API_TOKEN', child)
         self.assertEqual(child['HERDR_FIRST_MATE_ROLE'],'coordinator')
+        self.assertEqual(spawn.call_args.kwargs['cwd'], feature['cwd'])
+        self.assertEqual(child['PATH'].split(os.pathsep)[0], str(self.fake.parent))
+        self.assertTrue(child['PATH'].endswith(configured_path))
+
+    def test_unstarted_persisted_job_refreshes_extension_before_launch(self):
+        feature = self.feature()
+        claim = self.store.claim_message(feature['id'], self.runtime.owner)
+        job = self.runtime._new_job(feature, kind='coordinator', prompt='Hello', claim=claim)
+        current = self.root / 'current-first-mate.ts'
+        current.write_text('// synthetic current extension\n')
+        self.runtime.extension = current
+        job['extension'] = '/private/old-package/extensions/first-mate.ts'
+        self.runtime._save_job(job)
+
+        with patch('herdr_harness.first_mate_runtime.subprocess.Popen') as spawn:
+            self.runtime._launch(job)
+        self.assertTrue(spawn.called)
+        persisted = _read_json(self.runtime._job_dir(job) / 'job.json')
+        self.assertEqual(persisted['extension'], str(current))
+        self.assertEqual(persisted['previous_extension'], '/private/old-package/extensions/first-mate.ts')
+        self.assertIn('extension_selected_at', persisted)
+
+    def test_started_or_locked_job_keeps_recorded_extension(self):
+        feature = self.feature()
+        claim = self.store.claim_message(feature['id'], self.runtime.owner)
+        job = self.runtime._new_job(feature, kind='coordinator', prompt='Hello', claim=claim)
+        current = self.root / 'current-first-mate.ts'
+        current.write_text('// synthetic current extension\n')
+        self.runtime.extension = current
+        job['extension'] = '/private/running-package/extensions/first-mate.ts'
+        self.runtime._save_job(job)
+        directory = self.runtime._job_dir(job)
+
+        _write_json(directory / 'started.json', {'pid': 123, 'extension': job['extension']})
+        with patch('herdr_harness.first_mate_runtime.subprocess.Popen') as spawn:
+            self.runtime._launch(job)
+        spawn.assert_not_called()
+        self.assertEqual(_read_json(directory / 'job.json')['extension'], job['extension'])
+
+        (directory / 'started.json').unlink()
+        with patch('herdr_harness.first_mate_runtime._locked', return_value=True), \
+             patch('herdr_harness.first_mate_runtime.subprocess.Popen') as spawn:
+            self.runtime._launch(job)
+        spawn.assert_not_called()
+        self.assertEqual(_read_json(directory / 'job.json')['extension'], job['extension'])
 
 if __name__ == '__main__': unittest.main()

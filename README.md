@@ -346,6 +346,11 @@ recorded workflow; Agents and Documents open the evidence behind each visit.
 The companion server runs the durable queue, execution watcher, bounded recovery,
 and work log. Closing the Mac window does not stop the work. The optional browser
 view is served at `/first-mate/` and uses the same authenticated API and records.
+Coordinators, workers and internal advisors can use normal project shell commands
+in their assigned folder. Coordinators keep shell use to brief routing lookups and
+delegate substantive work. A `read_only` assignment is an instruction to leave
+the shared workspace unchanged, not a separate security sandbox; direct edit and
+write tools remain unavailable for those assignments.
 Configure Pi and optional Message Hub notifications in the private `[first_mate]`
 section described in [config.example.toml](config.example.toml). No private
 notification service or provider is enabled by a source-code default.

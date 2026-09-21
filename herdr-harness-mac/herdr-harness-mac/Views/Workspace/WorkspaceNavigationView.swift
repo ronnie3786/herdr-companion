@@ -25,7 +25,7 @@ private struct FirstMateFleetTaskIdentity: Hashable {
         let token: String
     }
 
-    let isActive: Bool
+    let isDemo: Bool
     let generation: Int
     let machines: [Machine]
 }
@@ -101,7 +101,8 @@ struct WorkspaceNavigationView: View {
                         openPane: openSession,
                         openWorkspace: { shell.showWorkspace(id: $0.id, model: model) },
                         openFirstMate: { shell.show(.firstMate, model: model) },
-                        openPRReview: { shell.show(.prReview, model: model) }
+                        openPRReview: { shell.show(.prReview, model: model) },
+                        firstMateAttentionCount: firstMateAttentionCount
                     )
                     .background(HerdrTheme.ink)
                 }
@@ -131,30 +132,22 @@ struct WorkspaceNavigationView: View {
             }
         }
         .task(id: firstMateFleetTaskIdentity) {
+            // Connection-owned First Mate stores are reconciled on every roster
+            // or credential change, whether or not First Mate is on screen.
             shell.reconcileFirstMateStores(
                 configurations: firstMateConfigurations,
                 connectionGeneration: model.connectionGeneration,
                 isDemo: model.isDemoMode
             )
-            guard firstMateFleetTaskIdentity.isActive else {
-                shell.firstMateFleet.deactivate()
-                return
-            }
-            let lifecycle = shell.firstMateFleet.activate(
-                sources: firstMateFleetSources,
+            // The Chat sidebar badge has to be visible without opening First
+            // Mate, so observation runs independently of the selected
+            // destination and the selected First Mate host. Demo mode owns no
+            // live hosts: the empty roster also clears fleet data a previous
+            // connection left behind.
+            await shell.firstMateFleet.observe(
+                sources: model.isDemoMode ? [] : firstMateFleetSources,
                 connectionGeneration: model.connectionGeneration
             )
-            defer { shell.firstMateFleet.deactivate(lifecycle: lifecycle) }
-            await shell.firstMateFleet.refresh(lifecycle: lifecycle)
-            while !Task.isCancelled {
-                do {
-                    try await Task.sleep(for: shell.firstMateFleet.pollingInterval)
-                } catch {
-                    return
-                }
-                guard !Task.isCancelled else { return }
-                await shell.firstMateFleet.refresh(lifecycle: lifecycle)
-            }
         }
         .task(id: PRReviewConnectionIdentity(configuration: prReviewConfiguration, generation: model.connectionGeneration, isDemo: model.isDemoMode, machineRevision: prReviewMachineID?.hashValue ?? model.prReviewMachineRevision)) {
             shell.configurePRReviewIfNeeded(configuration: prReviewConfiguration, machineID: prReviewMachineID, connectionGeneration: model.connectionGeneration, isDemo: model.isDemoMode)
@@ -291,7 +284,7 @@ struct WorkspaceNavigationView: View {
 
     private var firstMateFleetTaskIdentity: FirstMateFleetTaskIdentity {
         .init(
-            isActive: shell.detailScope == .firstMate && resolvedFirstMateScope == .all && !model.isDemoMode,
+            isDemo: model.isDemoMode,
             generation: model.connectionGeneration,
             machines: firstMateConfiguredMachines.compactMap { machine in
                 guard let configuration = firstMateConfigurations[machine.id] else { return nil }
@@ -303,6 +296,19 @@ struct WorkspaceNavigationView: View {
                 )
             }
         )
+    }
+
+    /// What the Chat navigator badges beside First Mate.
+    ///
+    /// Live attention is counted from the unfiltered fleet index, so search
+    /// text, machine scope, and the selected First Mate host never change it.
+    /// Demo mode has no live hosts, so the same predicate counts the demo
+    /// store's own synthetic features instead.
+    private var firstMateAttentionCount: Int {
+        if model.isDemoMode {
+            return FirstMateAttention.count(features: shell.firstMate.features, machineID: "demo")
+        }
+        return shell.firstMateFleet.attentionCount
     }
 
     private var firstMateScopeSelection: Binding<FirstMateMachineScope> {

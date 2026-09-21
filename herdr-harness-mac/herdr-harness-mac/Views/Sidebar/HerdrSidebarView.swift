@@ -10,6 +10,9 @@ struct HerdrSidebarView: View {
     let openWorkspace: (HerdrWorkspace) -> Void
     var openFirstMate: (() -> Void)? = nil
     var openPRReview: (() -> Void)? = nil
+    /// Features waiting on a human across every configured host. The Chat
+    /// navigator badges First Mate with this count; zero keeps the entry plain.
+    var firstMateAttentionCount: Int = 0
     @State private var query = ""
     @State private var selectedColor: ChatTabColor?
     @State private var isPresentingCreateWorkspace = false
@@ -224,12 +227,10 @@ struct HerdrSidebarView: View {
         VStack(alignment: .leading, spacing: 8) {
             header
             if let openFirstMate {
-                Button("First Mate", systemImage: "sailboat", action: openFirstMate)
-                    .buttonStyle(.plain)
-                    .font(.headline)
-                    .foregroundStyle(HerdrTheme.accent)
-                    .padding(.vertical, 10)
-                    .accessibilityIdentifier("open-first-mate")
+                FirstMateNavigationButton(
+                    attentionCount: firstMateAttentionCount,
+                    action: openFirstMate
+                )
             }
             if let openPRReview {
                 Button("PR Review", systemImage: "arrow.triangle.pull", action: openPRReview)

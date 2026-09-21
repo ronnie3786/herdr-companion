@@ -376,6 +376,10 @@ class GitHubClient:
         ])
         return self._dict_list(payload)
 
+    def list_runs(self, sha: str) -> list[dict[str, Any]]:
+        """Verify workflow runs for ``sha`` (at most 20)."""
+        return self._runs_for(sha)
+
     @staticmethod
     def classify_runs(runs: Iterable[Mapping[str, Any]]) -> str:
         """Fold workflow runs into ``success|failure|pending|none``."""
@@ -390,12 +394,12 @@ class GitHubClient:
         return "success"
 
     def verify_status(self, sha: str) -> str:
-        return self.classify_runs(self._runs_for(sha))
+        return self.classify_runs(self.list_runs(sha))
 
     def failed_run_log(self, sha: str) -> str:
         """The failing steps' log tail (≤ 4000 chars) of the first failed Verify run, or ``""``."""
         failed = [
-            run for run in self._runs_for(sha)
+            run for run in self.list_runs(sha)
             if run.get("status") == "completed" and run.get("conclusion") != "success"
             and isinstance(run.get("databaseId"), int)
         ]
@@ -408,6 +412,10 @@ class GitHubClient:
         if result.returncode != 0 and not text.strip():
             text = result.stderr if isinstance(result.stderr, str) else ""
         return text[-MAX_LOG_CHARS:]
+
+    def rerun_failed(self, run_id: int) -> None:
+        """Ask GitHub to re-run only the failed jobs in one workflow run."""
+        self._run(["run", "rerun", str(_number(run_id, "run_id")), "--repo", self.repository, "--failed"])
 
     # -- reviews and merges -------------------------------------------------------
 

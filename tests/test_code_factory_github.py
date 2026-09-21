@@ -279,6 +279,21 @@ class VerifyStatusTests(GitHubClientTestCase):
         with self.assertRaises(CodeFactoryError):
             self.client.verify_status("not a sha")
 
+    def test_list_runs_and_rerun_failed(self):
+        runs = [{"status": "completed", "conclusion": "failure", "databaseId": 77, "url": "https://example.invalid/run/77"}]
+        self.runner.reply_json(runs)
+        self.assertEqual(self.client.list_runs("abcdef1234"), runs)
+        self.assertEqual(self.runner.argv[0], [
+            "gh", "run", "list", "--repo", REPO, "--commit", "abcdef1234", "--workflow", "Verify",
+            "--json", "status,conclusion,databaseId,url", "--limit", "20",
+        ])
+        self.client.rerun_failed(77)
+        self.assertEqual(self.runner.argv[1], ["gh", "run", "rerun", "77", "--repo", REPO, "--failed"])
+        for value in (0, -1, True, "77"):
+            with self.subTest(value=value), self.assertRaises(CodeFactoryError) as caught:
+                self.client.rerun_failed(value)
+            self.assertEqual(caught.exception.code, "invalid_request")
+
     def test_failed_run_log(self):
         self.runner.reply_json([
             {"status": "completed", "conclusion": "success", "databaseId": 1},

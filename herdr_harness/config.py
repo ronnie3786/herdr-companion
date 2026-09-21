@@ -105,6 +105,7 @@ ENVIRONMENT_FIELDS = {
         "implementer_thinking": "HERDR_CODE_FACTORY_IMPLEMENTER_THINKING",
         "max_parallel_issues": "HERDR_CODE_FACTORY_MAX_PARALLEL_ISSUES",
         "max_review_rounds": "HERDR_CODE_FACTORY_MAX_REVIEW_ROUNDS",
+        "max_ci_failures": "HERDR_CODE_FACTORY_MAX_CI_FAILURES",
         "session_timeout_seconds": "HERDR_CODE_FACTORY_SESSION_TIMEOUT_SECONDS",
         "verify_wait_seconds": "HERDR_CODE_FACTORY_VERIFY_WAIT_SECONDS",
         "dashboard_host": "HERDR_CODE_FACTORY_DASHBOARD_HOST",

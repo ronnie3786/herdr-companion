@@ -300,6 +300,7 @@ implementer_model = "ollama-cloud/deepseek-v4.1-flash:cloud"
 implementer_thinking = "max"
 max_parallel_issues = 2
 max_review_rounds = 3
+max_ci_failures = 3
 session_timeout_seconds = 3600
 verify_wait_seconds = 1800
 dashboard_host = "tailscale"
@@ -332,6 +333,7 @@ python = "python3"
             'HERDR_CODE_FACTORY_IMPLEMENTER_THINKING': 'max',
             'HERDR_CODE_FACTORY_MAX_PARALLEL_ISSUES': '2',
             'HERDR_CODE_FACTORY_MAX_REVIEW_ROUNDS': '3',
+            'HERDR_CODE_FACTORY_MAX_CI_FAILURES': '3',
             'HERDR_CODE_FACTORY_SESSION_TIMEOUT_SECONDS': '3600',
             'HERDR_CODE_FACTORY_VERIFY_WAIT_SECONDS': '1800',
             'HERDR_CODE_FACTORY_DASHBOARD_HOST': 'tailscale',

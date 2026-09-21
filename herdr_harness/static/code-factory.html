@@ -1197,7 +1197,9 @@
     var facts = h("dl", { className: "kv" });
     function fact(label, value) { facts.appendChild(h("dt", { text: label })); facts.appendChild(h("dd", null, value)); }
     fact("Status", (STATUS_LABELS[issue.status] || issue.status) + " · " + (issue.stageLabel || issue.stage));
-    fact("Attempts", String(issue.attempts || 0) + (issue.reviewRound ? " · review round " + issue.reviewRound : ""));
+    var ciLimit = state.data && state.data.settings && Number(state.data.settings.max_ci_failures) > 0 ? " / " + Number(state.data.settings.max_ci_failures) : "";
+    var ciFailures = issue.ciFailures ? " · CI failures " + issue.ciFailures + ciLimit : "";
+    fact("Attempts", String(issue.attempts || 0) + (issue.reviewRound ? " · review round " + issue.reviewRound : "") + ciFailures);
     var ci = ciDescriptor(issue.ciStatus);
     fact("CI", h("span", { className: ci.cls, text: ci.text + (issue.headSha ? " · " + shortSha(issue.headSha) : "") }));
     fact("Created", timeElement(issue.createdAt));

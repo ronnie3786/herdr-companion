@@ -73,6 +73,7 @@ final class ResponseBriefCoordinator {
     private var unsupportedMachines: Set<String> = []
     @ObservationIgnored private var pollFailureCounts: [String: Int] = [:]
     @ObservationIgnored private var nextPollAt: [String: ContinuousClock.Instant] = [:]
+    @ObservationIgnored private let generationDeadlineNow: @MainActor () -> ContinuousClock.Instant
     @ObservationIgnored private let globalConcurrencyLimit = 2
     @ObservationIgnored private let maximumQueuedPerChat = 8
     @ObservationIgnored var runPollDelay: Duration = .seconds(1)
@@ -80,10 +81,12 @@ final class ResponseBriefCoordinator {
 
     init(
         defaults: UserDefaults = .standard,
-        persistence: ResponseBriefPersistence = ResponseBriefPersistence()
+        persistence: ResponseBriefPersistence = ResponseBriefPersistence(),
+        generationDeadlineNow: @escaping @MainActor () -> ContinuousClock.Instant = { ContinuousClock.now }
     ) {
         preferences = ResponseBriefPreferences(defaults: defaults)
         self.persistence = persistence
+        self.generationDeadlineNow = generationDeadlineNow
         selectedModel = preferences.model
         thinkingLevel = preferences.thinkingLevel
     }
@@ -615,7 +618,7 @@ final class ResponseBriefCoordinator {
     private func generate(_ job: Job, token: UUID, transport: ResponseBriefTransport) async {
         let source = job.source
         let chatID = source.chat.id
-        let deadline = ContinuousClock.now.advanced(by: generationTimeout)
+        let deadline = generationDeadlineNow().advanced(by: generationTimeout)
         let deadlineNotice = Task<Void, Never> { @MainActor [weak self] in
             do { try await Task.sleep(for: self?.generationTimeout ?? .seconds(120)) }
             catch { return }
@@ -649,7 +652,7 @@ final class ResponseBriefCoordinator {
 
         states[chatID] = ChatState(sourceID: source.id, phase: .checkingSupport)
         await prepare(machineID: source.chat.machineID, transport: transport)
-        guard ContinuousClock.now < deadline else {
+        guard generationDeadlineNow() < deadline else {
             states[chatID] = ChatState(sourceID: source.id, phase: .failed(ResponseBriefCoordinatorError.timedOut.localizedDescription))
             return
         }
@@ -768,7 +771,7 @@ final class ResponseBriefCoordinator {
                 await reconcileCancellation(receipt: receipt, source: source, knownRun: run, transport: transport)
                 return
             }
-            if ContinuousClock.now >= deadline {
+            if generationDeadlineNow() >= deadline {
                 try await cancelForDeadline(receipt: &receipt, source: source, run: run, transport: transport)
                 throw ResponseBriefCoordinatorError.timedOut
             }
@@ -844,14 +847,14 @@ final class ResponseBriefCoordinator {
         var failures = 0
         while !run.status.isTerminal {
             try Task.checkCancellation()
-            guard ContinuousClock.now < deadline else {
+            guard generationDeadlineNow() < deadline else {
                 var receipt = try requiredReceipt(for: source, runID: run.id)
                 try await cancelForDeadline(receipt: &receipt, source: source, run: run, transport: transport)
                 throw ResponseBriefCoordinatorError.timedOut
             }
             do {
                 let requestedDelay = failures == 0 ? runPollDelay : .seconds(min(8, failures * 2))
-                let remaining = ContinuousClock.now.duration(to: deadline)
+                let remaining = generationDeadlineNow().duration(to: deadline)
                 let delay = min(requestedDelay, remaining)
                 if delay > .zero { try await Task.sleep(for: delay) }
                 else { await Task.yield() }

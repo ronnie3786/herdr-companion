@@ -37,7 +37,7 @@ struct MachineSidebarMetadataSyncTests {
         #expect(context.model.machines.map(\.sidebarLabel) == ["Build", "Lab"])
         #expect(context.model.machines.map(\.sidebarOrder) == [5, 1])
         #expect(SidebarMachineSegmentPresentation.segments(for: context.model.machines).map(\.title) == ["Lab", "Build"])
-        #expect(MetadataURLProtocol.fixture.configHosts() == ["build.example.test"])
+        #expect(MetadataURLProtocol.fixture.configHosts() == ["BUILD.example.test"])
         #expect(MetadataURLProtocol.fixture.configAuthorizationValues() == ["Bearer primary-token"])
 
         let persisted = try #require(context.defaults.data(forKey: "herdr.machines"))

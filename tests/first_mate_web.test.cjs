@@ -415,9 +415,14 @@ test('whole-session usage is independent of transcript pagination and survives o
   await opening;
   assert.match(app.element('#dialog-body').innerHTML, /\$0\.00/);
   const earlier = app.click({ session: 'session-a', before: '2' });
-  await app.reply('/sessions/session-a?before=2&limit=100', { ok: true, native_session_id: 'session-a', messages: [{ role: 'user', text: 'Original direction' }], next_before: null, total_messages: 3 });
+  await app.reply('/sessions/session-a?before=2&limit=100', { ok: true, native_session_id: 'session-a', messages: [{ role: 'user', text: 'Original direction' }, { role: 'assistant', text: 'Earlier result' }], next_before: null, total_messages: 3 });
   await earlier;
   const html = app.element('#dialog-body').innerHTML;
   assert.match(html, /\$0\.00/);
   assert.match(html, /3 of 3 saved messages/);
+  assert.match(html, /Original direction/);
+  assert.match(html, /Earlier result/);
+  assert.match(html, /Latest result/);
+  assert.ok(html.indexOf('Original direction') < html.indexOf('Earlier result'));
+  assert.ok(html.indexOf('Earlier result') < html.indexOf('Latest result'));
 });

@@ -393,6 +393,287 @@ struct ResponseBriefRecoveryTests {
         #expect(coordinator.briefs(for: first.chat).count == 2)
         #expect(coordinator.state(for: first.chat).phase == .idle)
     }
+
+    @Test("A reconciled persisted answer clears the stale warning and later completions generate once")
+    func persistedReconciliationClearsStaleWarning() async throws {
+        let fixture = try RecoveryFixture()
+        defer { fixture.cleanup() }
+        let coordinator = fixture.coordinator()
+        coordinator.runPollDelay = .zero
+        let live = fixture.source(responseID: "live:synthetic:1800000100")
+        // An unrelated older exchange cannot verify the saved live baseline.
+        let olderExchange = fixture.source(
+            responseID: "entry-older-exchange",
+            text: "An unrelated older synthetic exchange.",
+            responseTimestamp: Date(timeIntervalSince1970: 1_700_000_100),
+            userTimestamp: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let persisted = fixture.source(responseID: "entry-a1", text: live.text)
+        let subsequent = fixture.source(
+            responseID: "entry-a2",
+            text: "A distinct later synthetic answer.",
+            responseTimestamp: Date(timeIntervalSince1970: 1_800_000_500),
+            userTimestamp: Date(timeIntervalSince1970: 1_800_000_400)
+        )
+        var starts: [String] = []
+        let transport = fixture.transport(
+            snapshot: fixture.snapshot(for: [persisted, subsequent]),
+            start: { request in
+                starts.append(request.context.source.instanceId)
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
+        )
+
+        #expect(coordinator.enable(live.chat))
+        await coordinator.observe(live, transport: transport)
+        await coordinator.waitForIdleForTesting()
+        #expect(starts == [live.responseID])
+        #expect(coordinator.state(for: live.chat).phase == .idle)
+
+        // The intervening snapshot comes through the same reducer projection
+        // the app uses, and cannot prove which answer owns the saved baseline.
+        await coordinator.observeSources(
+            fixture.reducedSources(for: [olderExchange]),
+            transport: transport
+        )
+        await coordinator.waitForIdleForTesting()
+        guard case .baselineUnmatched = coordinator.state(for: live.chat).phase else {
+            Issue.record("Expected the unmatched-baseline warning")
+            return
+        }
+        #expect(starts == [live.responseID])
+
+        // The persisted projection arrives with verifiable continuity. The
+        // warning must disappear rather than stay stuck after reconciliation.
+        let persistedSources = fixture.reducedSources(for: [persisted])
+        let persistedID = try #require(persistedSources.last?.id)
+        await coordinator.observeSources(persistedSources, transport: transport)
+        await coordinator.waitForIdleForTesting()
+        #expect(coordinator.state(for: live.chat).phase == .idle)
+        #expect(coordinator.state(for: live.chat).sourceID == persistedID)
+        #expect(starts == [live.responseID])
+        #expect(coordinator.briefs(for: live.chat).map(\.source.responseID) == [live.responseID])
+        let stored = try await fixture.persistence.snapshot()
+        #expect(stored.responseCursorByChatID[live.chat.id] == persisted.responseID)
+        #expect(stored.verifiedAliases[live.chat.id]?.contains {
+            $0.aliasID == live.responseID && $0.canonicalID == persisted.responseID
+        } == true)
+
+        // The next genuine completion still generates its own brief.
+        let fullSources = fixture.reducedSources(for: [persisted, subsequent])
+        await coordinator.observeSources(fullSources, transport: transport)
+        await coordinator.waitForIdleForTesting()
+        #expect(starts == [live.responseID, subsequent.responseID])
+        #expect(coordinator.state(for: live.chat).phase == .idle)
+        #expect(coordinator.briefs(for: live.chat).count == 2)
+
+        // Relaunch replays nothing for either reconciled answer.
+        let relaunched = ResponseBriefCoordinator(
+            defaults: fixture.defaults,
+            persistence: ResponseBriefPersistence(url: fixture.folder.appending(path: "cache.json"))
+        )
+        relaunched.runPollDelay = .zero
+        await relaunched.observeSources(fullSources, transport: transport)
+        await relaunched.waitForIdleForTesting()
+        #expect(starts.count == 2)
+        #expect(relaunched.briefs(for: live.chat).count == 2)
+        #expect(relaunched.state(for: live.chat).phase == .idle)
+    }
+
+    @Test("Confirmed recovery replays a transport-uncertain receipt and then briefs only the latest")
+    func recoveryReplaysUncertainReceiptThenLatest() async throws {
+        let fixture = try RecoveryFixture()
+        defer { fixture.cleanup() }
+        let uncertain = fixture.source(responseID: "entry-uncertain-recovery")
+        let older = fixture.source(responseID: "entry-older-history")
+        let latest = fixture.source(
+            responseID: "entry-latest-recovery",
+            text: older.text,
+            responseTimestamp: Date(timeIntervalSince1970: 1_800_000_300),
+            userTimestamp: Date(timeIntervalSince1970: 1_800_000_200)
+        )
+        let request = try ResponseBriefRequestBuilder.request(
+            for: uncertain,
+            model: "provider/brief-model",
+            thinkingLevel: nil,
+            clientRequestID: "uncertain-recovery-request"
+        )
+        try await fixture.persistence.saveReceipt(.init(
+            id: fixture.legacyGenerationID(for: uncertain, model: "provider/brief-model", thinkingLevel: nil),
+            source: uncertain,
+            request: request,
+            runID: nil,
+            createdAt: .now,
+            status: .needsExplicitRetry
+        ))
+        try await fixture.persistence.advanceCursor(
+            chatID: uncertain.chat.id,
+            responseID: "missing-answer"
+        )
+        let coordinator = fixture.coordinator()
+        #expect(coordinator.enable(uncertain.chat))
+        var requests: [AssistantRequest] = []
+        var fetches = 0
+        let transport = fixture.transport(
+            snapshot: fixture.snapshot(for: [older, latest]),
+            start: { submitted in
+                requests.append(submitted)
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _ in
+                fetches += 1
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            }
+        )
+
+        await coordinator.restartBriefsFromLatest(uncertain.chat, transport: transport)
+        await coordinator.waitForIdleForTesting()
+
+        #expect(requests.count == 2)
+        #expect(requests.first?.clientRequestId == request.clientRequestId)
+        #expect(requests.first?.context.source.instanceId == uncertain.responseID)
+        #expect(requests.last?.context.source.instanceId == latest.responseID)
+        #expect(fetches == 0)
+        let briefIDs = Set(coordinator.briefs(for: uncertain.chat).map(\.source.responseID))
+        #expect(briefIDs == [uncertain.responseID, latest.responseID])
+        #expect(coordinator.state(for: uncertain.chat).phase == .idle)
+        let stored = try await fixture.persistence.snapshot()
+        #expect(stored.receipts.isEmpty)
+        #expect(stored.responseCursorByChatID[uncertain.chat.id] == latest.responseID)
+        #expect(stored.pendingRegenerations.isEmpty)
+    }
+
+    @Test("A relaunched transport-uncertain receipt stays actionable and retries its exact request")
+    func relaunchedUncertainReceiptStaysActionable() async throws {
+        let fixture = try RecoveryFixture()
+        defer { fixture.cleanup() }
+        let uncertain = fixture.source(responseID: "entry-uncertain-relaunch")
+        let latest = fixture.source(
+            responseID: "entry-latest-after-uncertain",
+            text: uncertain.text,
+            responseTimestamp: Date(timeIntervalSince1970: 1_800_000_300),
+            userTimestamp: Date(timeIntervalSince1970: 1_800_000_200)
+        )
+        let request = try ResponseBriefRequestBuilder.request(
+            for: uncertain,
+            model: "provider/brief-model",
+            thinkingLevel: nil,
+            clientRequestID: "uncertain-relaunch-request"
+        )
+        try await fixture.persistence.saveReceipt(.init(
+            id: fixture.legacyGenerationID(for: uncertain, model: "provider/brief-model", thinkingLevel: nil),
+            source: uncertain,
+            request: request,
+            runID: nil,
+            createdAt: .now,
+            status: .needsExplicitRetry
+        ))
+        let coordinator = fixture.coordinator()
+        #expect(coordinator.enable(uncertain.chat))
+        var requests: [AssistantRequest] = []
+        let transport = fixture.transport(
+            snapshot: fixture.snapshot(for: [uncertain, latest]),
+            start: { submitted in
+                requests.append(submitted)
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
+        )
+
+        await coordinator.observe(latest, transport: transport)
+        await coordinator.waitForIdleForTesting()
+
+        // Observation never replays a paid request that may still be running,
+        // but the accepted ownership must stay visibly actionable.
+        #expect(requests.isEmpty)
+        let state = coordinator.state(for: uncertain.chat)
+        guard case let .failed(message) = state.phase else {
+            Issue.record("Expected the actionable uncertain-ownership state")
+            return
+        }
+        #expect(message.contains("may have been accepted"))
+        let owned = try #require(coordinator.source(for: state, in: uncertain.chat))
+        #expect(owned == uncertain)
+
+        await coordinator.retry(owned, transport: transport)
+        await coordinator.waitForIdleForTesting()
+
+        #expect(requests.first?.clientRequestId == request.clientRequestId)
+        #expect(requests.filter { $0.clientRequestId == request.clientRequestId }.count == 1)
+        #expect(requests.contains { $0.context.source.instanceId == latest.responseID })
+        #expect(coordinator.state(for: uncertain.chat).phase == .idle)
+        #expect(coordinator.briefs(for: uncertain.chat).count == 2)
+    }
+
+    @Test("A durable latest-only recovery survives relaunch behind accepted ownership")
+    func durableRecoverySurvivesRelaunchBehindAcceptedOwnership() async throws {
+        let fixture = try RecoveryFixture()
+        defer { fixture.cleanup() }
+        let accepted = fixture.source(responseID: "entry-accepted-owner")
+        let middle = fixture.source(
+            responseID: "entry-middle-history",
+            responseTimestamp: Date(timeIntervalSince1970: 1_800_000_250),
+            userTimestamp: Date(timeIntervalSince1970: 1_800_000_150)
+        )
+        let latest = fixture.source(
+            responseID: "entry-latest-durable",
+            responseTimestamp: Date(timeIntervalSince1970: 1_800_000_350),
+            userTimestamp: Date(timeIntervalSince1970: 1_800_000_250)
+        )
+        let acceptedRequest = try ResponseBriefRequestBuilder.request(
+            for: accepted,
+            model: "provider/brief-model",
+            thinkingLevel: nil
+        )
+        try await fixture.persistence.saveReceipt(.init(
+            id: fixture.legacyGenerationID(for: accepted, model: "provider/brief-model", thinkingLevel: nil),
+            source: accepted,
+            request: acceptedRequest,
+            runID: "agr_synthetic0001",
+            createdAt: .now
+        ))
+        // The predecessor process confirmed a latest-only recovery and saved
+        // it with the new baseline before exiting behind accepted ownership.
+        try await fixture.persistence.saveRecoveryIntent(
+            .init(
+                chatID: latest.chat.id,
+                source: latest,
+                length: .minimal,
+                createdAt: Date(timeIntervalSince1970: 1_800_000_500)
+            ),
+            recordedAt: Date(timeIntervalSince1970: 1_800_000_501)
+        )
+
+        var starts: [String] = []
+        var fetches = 0
+        let relaunched = fixture.coordinator()
+        #expect(relaunched.enable(latest.chat))
+        let transport = fixture.transport(
+            snapshot: fixture.snapshot(for: [accepted, middle, latest]),
+            start: { request in
+                starts.append(request.context.source.instanceId)
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _ in
+                fetches += 1
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            }
+        )
+
+        await relaunched.observeSources([accepted, middle, latest], transport: transport)
+        await relaunched.waitForIdleForTesting()
+
+        #expect(fetches == 1)
+        #expect(starts == [latest.responseID])
+        #expect(relaunched.state(for: latest.chat).phase == .idle)
+        let recordIDs = Set(relaunched.briefs(for: latest.chat).map(\.source.responseID))
+        #expect(recordIDs == [accepted.responseID, latest.responseID])
+        let stored = try await fixture.persistence.snapshot()
+        #expect(stored.pendingRegenerations.isEmpty)
+        #expect(stored.receipts.isEmpty)
+        #expect(stored.responseCursorByChatID[latest.chat.id] == latest.responseID)
+    }
 }
 
 @MainActor
@@ -471,6 +752,25 @@ private final class RecoveryFixture {
                     userTimestamp: userTimestamp
                 )
                 : nil
+        )
+    }
+
+    /// Projects sources through the same `PiConversationReducer` path the app
+    /// uses for a fetched snapshot, so coordinator tests exercise real identity
+    /// evidence rather than hand-assembled projections.
+    func reducedSources(for sources: [ResponseBriefSource]) -> [ResponseBriefSource] {
+        let chat = sources.first?.chat ?? ResponseBriefChatIdentity(
+            machineID: "synthetic-machine",
+            paneID: "w1:p2",
+            sessionID: "synthetic-session"
+        )
+        var reducer = PiConversationReducer()
+        reducer.replace(with: snapshot(for: sources))
+        return ResponseBriefSource.completedSources(
+            turns: reducer.turns,
+            machineID: chat.machineID,
+            paneID: chat.paneID,
+            sessionID: chat.sessionID
         )
     }
 

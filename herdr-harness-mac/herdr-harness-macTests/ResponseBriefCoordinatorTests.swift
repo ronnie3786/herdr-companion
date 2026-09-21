@@ -765,6 +765,188 @@ struct ResponseBriefCoordinatorTests {
         let stored = try await fixture.persistence.snapshot()
         #expect(stored.records.count == 2)
     }
+
+    @Test(
+        "Short and tiny sources generate a valid brief for each length preset",
+        arguments: shortSourcePresetCases
+    )
+    func shortSourcePresetMatrix(_ testCase: ShortSourcePresetCase) async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let coordinator = fixture.coordinator()
+        coordinator.runPollDelay = .zero
+        let source = fixture.source(
+            responseID: "answer-matrix-\(testCase.length.rawValue)-\(testCase.name)",
+            text: testCase.text,
+            expandIfShort: false
+        )
+        var starts = 0
+        let transport = fixture.transport(
+            start: { request in
+                starts += 1
+                #expect(request.responseBriefLength == testCase.length)
+                #expect(request.prompt == ResponseBriefRequestBuilder.lengthPrompt)
+                let requiredText = request.context.items
+                    .filter { $0.priority == "required" }
+                    .map(\.text)
+                    .joined()
+                #expect(requiredText == testCase.text)
+                return fixture.run(status: .completed, response: fixture.oneLineValidJSON)
+            },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.oneLineValidJSON) }
+        )
+
+        // Minimal is already the default; the other presets are applied through
+        // the same app-wide preference before the answer is observed.
+        if testCase.length != .minimal {
+            await coordinator.changeLength(
+                testCase.length,
+                chat: nil,
+                selectedSource: nil,
+                transport: transport
+            )
+        }
+        #expect(coordinator.length == testCase.length)
+        #expect(coordinator.enable(source.chat))
+        await coordinator.observe(source, transport: transport)
+        await coordinator.waitForIdleForTesting()
+
+        #expect(starts == 1)
+        #expect(coordinator.state(for: source.chat).phase == .idle)
+        let record = try #require(coordinator.briefs(for: source.chat).first)
+        #expect(record.source.text == testCase.text)
+        #expect(record.source.sourceHash == source.sourceHash)
+        #expect(record.responseBriefLength == testCase.length)
+        #expect(record.responseBriefLengthPolicyVersion == ResponseBriefLength.policyVersion)
+        #expect(record.briefConformsToCapturedPolicy)
+        #expect(ResponseBriefRailView.selectedRecordPresentation(for: record) == .card)
+        #expect(!coordinator.hasNonconformingBrief(for: source))
+
+        // Relaunch never repeats the accepted work.
+        let restored = ResponseBriefCoordinator(
+            defaults: fixture.defaults,
+            persistence: ResponseBriefPersistence(url: fixture.folder.appending(path: "cache.json"))
+        )
+        restored.runPollDelay = .zero
+        await restored.observe(source, transport: transport)
+        await restored.waitForIdleForTesting()
+        #expect(restored.length == testCase.length)
+        #expect(starts == 1)
+        #expect(restored.briefs(for: source.chat).count == 1)
+        #expect(restored.state(for: source.chat).phase == .idle)
+    }
+
+    @Test("A whitespace-only source never creates a paid request under any preset")
+    func whitespaceOnlySourceNeverSubmits() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let source = fixture.source(
+            responseID: "answer-whitespace",
+            text: "   \n\t  ",
+            expandIfShort: false
+        )
+        var starts = 0
+        let transport = fixture.transport(
+            start: { _ in starts += 1; return fixture.run(status: .completed, response: fixture.validJSON) },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
+        )
+
+        for length in ResponseBriefLength.allCases {
+            let coordinator = fixture.coordinator()
+            await coordinator.changeLength(
+                length,
+                chat: nil,
+                selectedSource: nil,
+                transport: transport
+            )
+            #expect(coordinator.length == length)
+            #expect(coordinator.enable(source.chat))
+            await coordinator.observe(source, transport: transport)
+            await coordinator.waitForIdleForTesting()
+            #expect(coordinator.briefs(for: source.chat).isEmpty)
+            coordinator.disable(source.chat, transport: transport)
+        }
+        #expect(starts == 0)
+    }
+
+    @Test("A previously skipped short answer is not backfilled after the policy upgrade")
+    func previouslySkippedShortHistoryIsNotBackfilled() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let coordinator = fixture.coordinator()
+        coordinator.runPollDelay = .zero
+        let skipped = fixture.source(
+            responseID: "answer-skipped-legacy",
+            text: "Already concise.",
+            expandIfShort: false
+        )
+        let latest = fixture.source(
+            responseID: "answer-upgrade-latest",
+            text: "Synthetic later completed answer.",
+            expandIfShort: false
+        )
+        // The predecessor process observed and skipped the short answer, so its
+        // durable baseline already advanced past it.
+        try await fixture.persistence.advanceCursor(
+            chatID: skipped.chat.id,
+            responseID: skipped.responseID
+        )
+        var starts: [String] = []
+        let transport = fixture.transport(
+            start: { request in
+                starts.append(request.context.source.instanceId)
+                return fixture.run(status: .completed, response: fixture.oneLineValidJSON)
+            },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.oneLineValidJSON) }
+        )
+
+        #expect(coordinator.enable(skipped.chat))
+        await coordinator.observeSources([skipped, latest], transport: transport)
+        await coordinator.waitForIdleForTesting()
+
+        #expect(starts == [latest.responseID])
+        #expect(coordinator.briefs(for: skipped.chat).map(\.source.responseID) == [latest.responseID])
+        #expect(coordinator.state(for: skipped.chat).phase == .idle)
+    }
+
+    @Test("First observation of short history establishes a baseline and only briefs the latest")
+    func firstObservationOfShortHistoryOnlyBriefsLatest() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let coordinator = fixture.coordinator()
+        coordinator.runPollDelay = .zero
+        let firstShort = fixture.source(
+            responseID: "answer-short-history-1",
+            text: "Already concise.",
+            expandIfShort: false
+        )
+        let secondShort = fixture.source(
+            responseID: "answer-short-history-2",
+            text: "Done already.",
+            expandIfShort: false
+        )
+        let latest = fixture.source(
+            responseID: "answer-short-history-latest",
+            text: "Completed.",
+            expandIfShort: false
+        )
+        var starts: [String] = []
+        let transport = fixture.transport(
+            start: { request in
+                starts.append(request.context.source.instanceId)
+                return fixture.run(status: .completed, response: fixture.oneLineValidJSON)
+            },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.oneLineValidJSON) }
+        )
+
+        #expect(coordinator.enable(latest.chat))
+        await coordinator.observeSources([firstShort, secondShort, latest], transport: transport)
+        await coordinator.waitForIdleForTesting()
+
+        // Upgrading must not backfill every previously skipped short answer.
+        #expect(starts == [latest.responseID])
+        #expect(coordinator.briefs(for: latest.chat).map(\.source.responseID) == [latest.responseID])
+    }
 }
 
 @MainActor
@@ -778,6 +960,34 @@ private func waitUntil(
     }
     return condition()
 }
+
+struct ShortSourcePresetCase: Sendable, CustomTestStringConvertible {
+    let name: String
+    let text: String
+    let length: ResponseBriefLength
+
+    var testDescription: String { "\(name) \u{b7} \(length.rawValue)" }
+}
+
+let shortSourcePresetCases: [ShortSourcePresetCase] = {
+    let texts: [(String, String)] = [
+        ("one readable character", "a"),
+        ("two readable characters", "ab"),
+        ("159 readable characters", String(repeating: "a", count: 159)),
+        ("160 readable characters", String(repeating: "a", count: 160)),
+        ("161 readable characters", String(repeating: "a", count: 161)),
+        ("punctuation only", "--- !!! ???"),
+        ("emoji only", "\u{1FABB}\u{1FABB}\u{1FABB}"),
+        ("unspaced unicode", "\u{6771}\u{4EAC}\u{306E}\u{7D50}\u{679C}\u{306F}\u{554F}\u{984C}\u{3042}\u{308A}\u{307E}\u{305B}\u{3093}"),
+    ]
+    var cases: [ShortSourcePresetCase] = []
+    for (name, text) in texts {
+        for length in ResponseBriefLength.allCases {
+            cases.append(ShortSourcePresetCase(name: name, text: text, length: length))
+        }
+    }
+    return cases
+}()
 
 @MainActor
 private final class Fixture {

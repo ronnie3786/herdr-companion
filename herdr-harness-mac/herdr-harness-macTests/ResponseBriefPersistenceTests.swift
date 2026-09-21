@@ -322,6 +322,169 @@ struct ResponseBriefPersistenceTests {
         #expect(state.pendingRegenerations[source.chat.id]?.length == .long)
     }
 
+    @Test("A recovery intent saves atomically with its baseline and coalesces")
+    func recoveryIntentSavesWithBaseline() async throws {
+        let persistence = ResponseBriefPersistence(inMemory: true)
+        let source = makeSource(responseID: "entry-recovery")
+        let first = ResponseBriefPersistence.PendingRegeneration(
+            chatID: source.chat.id,
+            source: source,
+            length: .minimal,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_500)
+        )
+
+        try await persistence.saveRecoveryIntent(
+            first,
+            recordedAt: Date(timeIntervalSince1970: 1_800_000_501)
+        )
+
+        var state = try await persistence.snapshot()
+        #expect(state.responseCursorByChatID[source.chat.id] == source.responseID)
+        #expect(state.baselineAnchors[source.chat.id]?.responseID == source.responseID)
+        #expect(state.pendingRegenerations[source.chat.id]?.createdAt == first.createdAt)
+        #expect(state.pendingRegenerations[source.chat.id]?.length == .minimal)
+
+        let second = ResponseBriefPersistence.PendingRegeneration(
+            chatID: source.chat.id,
+            source: source,
+            length: .long,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_600)
+        )
+        try await persistence.saveRecoveryIntent(
+            second,
+            recordedAt: Date(timeIntervalSince1970: 1_800_000_601)
+        )
+
+        state = try await persistence.snapshot()
+        #expect(state.pendingRegenerations.count == 1)
+        #expect(state.pendingRegenerations[source.chat.id]?.length == .long)
+        #expect(state.pendingRegenerations[source.chat.id]?.createdAt == second.createdAt)
+    }
+
+    @Test("A failed recovery-intent save rolls the baseline and intent back")
+    func recoveryIntentSaveRollsBack() async throws {
+        let folder = temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let blocker = folder.appending(path: "not-a-directory")
+        try Data("block".utf8).write(to: blocker)
+        let persistence = ResponseBriefPersistence(url: blocker.appending(path: "cache.json"))
+        let source = makeSource(responseID: "entry-recovery-rollback")
+
+        var didFail = false
+        do {
+            try await persistence.saveRecoveryIntent(
+                .init(
+                    chatID: source.chat.id,
+                    source: source,
+                    length: .medium,
+                    createdAt: Date(timeIntervalSince1970: 1_800_000_500)
+                ),
+                recordedAt: Date(timeIntervalSince1970: 1_800_000_501)
+            )
+        } catch {
+            didFail = true
+        }
+
+        #expect(didFail)
+        let state = try await persistence.snapshot()
+        #expect(state.pendingRegenerations.isEmpty)
+        #expect(state.responseCursorByChatID[source.chat.id] == nil)
+        #expect(state.baselineAnchors[source.chat.id] == nil)
+    }
+
+    @Test("A replacement receipt commits only while its captured intent is current")
+    func replacementReceiptCommitRevalidatesIntent() async throws {
+        let persistence = ResponseBriefPersistence(inMemory: true)
+        let source = makeSource(responseID: "entry-replacement")
+        let mediumIntent = ResponseBriefPersistence.PendingRegeneration(
+            chatID: source.chat.id,
+            source: source,
+            length: .medium,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_500)
+        )
+        try await persistence.savePendingRegeneration(mediumIntent)
+        let request = try ResponseBriefRequestBuilder.request(
+            for: source,
+            model: nil,
+            thinkingLevel: nil,
+            clientRequestID: "replacement-receipt",
+            length: .medium
+        )
+        let receipt = ResponseBriefPersistence.Receipt(
+            id: "replacement-receipt",
+            source: source,
+            request: request,
+            runID: nil,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_502)
+        )
+
+        // A newer selection supersedes the intent while the earlier request
+        // was still in asynchronous preflight.
+        let longIntent = ResponseBriefPersistence.PendingRegeneration(
+            chatID: source.chat.id,
+            source: source,
+            length: .long,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_600)
+        )
+        try await persistence.savePendingRegeneration(longIntent)
+
+        let supersededCommit = try await persistence.commitReplacementReceipt(
+            receipt,
+            expecting: mediumIntent.replacementKey
+        )
+        #expect(!supersededCommit)
+        var state = try await persistence.snapshot()
+        #expect(state.receipts.isEmpty)
+        #expect(!state.attemptedGenerationIDs.contains(receipt.id))
+        #expect(state.pendingRegenerations[source.chat.id]?.length == .long)
+
+        let currentCommit = try await persistence.commitReplacementReceipt(
+            receipt,
+            expecting: longIntent.replacementKey
+        )
+        #expect(currentCommit)
+        state = try await persistence.snapshot()
+        #expect(state.receipts.map(\.id) == [receipt.id])
+        #expect(state.pendingRegenerations.isEmpty)
+        #expect(state.attemptedGenerationIDs.contains(receipt.id))
+    }
+
+    @Test("A superseded cleanup never removes a newer intent")
+    func supersededCleanupKeepsNewerIntent() async throws {
+        let persistence = ResponseBriefPersistence(inMemory: true)
+        let source = makeSource(responseID: "entry-cleanup")
+        let mediumIntent = ResponseBriefPersistence.PendingRegeneration(
+            chatID: source.chat.id,
+            source: source,
+            length: .medium,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_500)
+        )
+        try await persistence.savePendingRegeneration(mediumIntent)
+        let longIntent = ResponseBriefPersistence.PendingRegeneration(
+            chatID: source.chat.id,
+            source: source,
+            length: .long,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_600)
+        )
+        try await persistence.savePendingRegeneration(longIntent)
+
+        try await persistence.removePendingRegeneration(
+            chatID: source.chat.id,
+            expectingKey: mediumIntent.replacementKey
+        )
+
+        var state = try await persistence.snapshot()
+        #expect(state.pendingRegenerations[source.chat.id]?.length == .long)
+
+        try await persistence.removePendingRegeneration(
+            chatID: source.chat.id,
+            expectingKey: longIntent.replacementKey
+        )
+        state = try await persistence.snapshot()
+        #expect(state.pendingRegenerations.isEmpty)
+    }
+
     @Test("Verified aliases are bounded per chat with the oldest evicted")
     func verifiedAliasesAreBounded() async throws {
         let persistence = ResponseBriefPersistence(inMemory: true)

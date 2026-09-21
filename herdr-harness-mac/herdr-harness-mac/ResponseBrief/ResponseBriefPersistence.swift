@@ -355,8 +355,67 @@ actor ResponseBriefPersistence {
         }
     }
 
+    /// Records the confirmed latest-only recovery intent together with the new
+    /// baseline high-watermark and identity anchor in one atomic write. The
+    /// intent is the same single coalescible slot as a length replacement, so
+    /// recovery work survives a relaunch behind accepted ownership and a later
+    /// selection replaces it instead of accumulating.
+    func saveRecoveryIntent(_ intent: PendingRegeneration, recordedAt: Date) throws {
+        try mutateAtomically {
+            if pendingRegenerations[intent.chatID] == nil,
+               pendingRegenerations.count >= maximumPendingRegenerations {
+                throw ResponseBriefPersistenceError.tooManyPendingRegenerations
+            }
+            pendingRegenerations[intent.chatID] = intent
+            responseCursorByChatID[intent.chatID] = intent.source.responseID
+            baselineAnchors[intent.chatID] = BaselineAnchor(
+                chatID: intent.chatID,
+                responseID: intent.source.responseID,
+                identity: intent.source.identity,
+                recordedAt: recordedAt
+            )
+            try trimEvictableContentToLimits()
+        }
+    }
+
+    /// Converts the coalescible replacement intent into a durable receipt in
+    /// one atomic write. Returns false without saving anything when a newer
+    /// selection replaced the intent while asynchronous preflight was running,
+    /// so a superseded selection can never create a paid submission.
+    func commitReplacementReceipt(
+        _ receipt: Receipt,
+        expecting intentKey: String
+    ) throws -> Bool {
+        var committed = false
+        try mutateAtomically {
+            guard pendingRegenerations[receipt.source.chat.id]?.replacementKey == intentKey else {
+                return
+            }
+            if !receipts.contains(where: { $0.id == receipt.id }),
+               receipts.count(where: { $0.status != .settled }) >= maximumOutstandingReceipts {
+                throw ResponseBriefPersistenceError.tooManyOutstandingRuns
+            }
+            pendingRegenerations.removeValue(forKey: receipt.source.chat.id)
+            receipts.removeAll { $0.id == receipt.id }
+            receipts.append(receipt)
+            attemptedGenerationIDs.insert(receipt.id)
+            try trimEvictableContentToLimits()
+            committed = true
+        }
+        return committed
+    }
+
     func removePendingRegeneration(chatID: String) throws {
         try mutateAtomically {
+            pendingRegenerations.removeValue(forKey: chatID)
+        }
+    }
+
+    /// Removes the intent only if it is still the captured one. A newer
+    /// selection survives an older replacement's cleanup.
+    func removePendingRegeneration(chatID: String, expectingKey: String) throws {
+        try mutateAtomically {
+            guard pendingRegenerations[chatID]?.replacementKey == expectingKey else { return }
             pendingRegenerations.removeValue(forKey: chatID)
         }
     }
@@ -695,6 +754,20 @@ extension ResponseBriefPersistence.Record {
     var capturedConcisionPolicy: ResponseBriefConcisionPolicy? {
         guard let responseBriefLength else { return nil }
         return ResponseBriefConcisionPolicy(source: source.text, length: responseBriefLength)
+    }
+}
+
+extension ResponseBriefPersistence.PendingRegeneration {
+    /// Stable marker for the coalescible intent. It changes whenever a newer
+    /// selection replaces the intent, which lets an in-flight preflight job
+    /// detect that it was superseded before creating paid ownership.
+    var replacementKey: String {
+        [
+            chatID,
+            source.id,
+            length.rawValue,
+            String(createdAt.timeIntervalSinceReferenceDate.bitPattern, radix: 16),
+        ].joined(separator: "|")
     }
 }
 

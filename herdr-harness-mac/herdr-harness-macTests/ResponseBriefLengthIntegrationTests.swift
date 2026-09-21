@@ -490,6 +490,154 @@ struct ResponseBriefLengthIntegrationTests {
         #expect(coordinator.briefs(for: secondChat.chat).count == 2)
         #expect(requests.filter { $0.context.source.instanceId == secondChat.responseID }.count == 1)
     }
+
+    @Test("A replacement superseded during preflight never creates a paid submission")
+    func supersededPreflightReplacementDoesNotSubmit() async throws {
+        let fixture = try LengthFixture()
+        defer { fixture.cleanup() }
+        let coordinator = fixture.coordinator()
+        coordinator.runPollDelay = .zero
+        let source = fixture.source(responseID: "entry-preflight")
+        var requests: [AssistantRequest] = []
+        var capabilitiesContinuation: CheckedContinuation<Void, Never>?
+        var capabilitiesStarted: AsyncStream<Void>.Continuation?
+        let started = AsyncStream<Void> { capabilitiesStarted = $0 }
+        let transport = ResponseBriefTransport(
+            capabilities: { _ in
+                capabilitiesStarted?.yield()
+                await withCheckedContinuation { capabilitiesContinuation = $0 }
+                return fixture.capabilities()
+            },
+            models: { _ in
+                AgentModelCatalogResponse(
+                    ok: true,
+                    models: [fixture.briefModel, fixture.otherModel],
+                    defaultModel: nil
+                )
+            },
+            fetchSnapshot: { _ in throw APIError.invalidResponse },
+            start: { _, request in
+                requests.append(request)
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _, _ in fixture.run(status: .completed, response: fixture.validJSON) },
+            cancel: { _, _ in fixture.run(status: .cancelled, response: nil, error: "cancelled") }
+        )
+        #expect(coordinator.enable(source.chat))
+
+        await coordinator.changeLength(
+            .medium,
+            chat: source.chat,
+            selectedSource: source,
+            transport: transport
+        )
+        var iterator = started.makeAsyncIterator()
+        // Medium is suspended in capability preflight and has not submitted.
+        _ = await iterator.next()
+        #expect(requests.isEmpty)
+
+        await coordinator.changeLength(
+            .long,
+            chat: source.chat,
+            selectedSource: source,
+            transport: transport
+        )
+        #expect(requests.isEmpty)
+        let superseded = try await fixture.persistence.snapshot()
+        #expect(superseded.pendingRegenerations[source.chat.id]?.length == .long)
+
+        capabilitiesContinuation?.resume()
+        await coordinator.waitForIdleForTesting()
+
+        // Only the still-current selection ever reaches the paid endpoint.
+        #expect(requests.map(\.responseBriefLength) == [.long])
+        #expect(coordinator.briefs(for: source.chat).count == 1)
+        let record = try #require(coordinator.briefs(for: source.chat).first)
+        #expect(record.responseBriefLength == .long)
+        #expect(record.briefConformsToCapturedPolicy)
+        let stored = try await fixture.persistence.snapshot()
+        #expect(stored.pendingRegenerations.isEmpty)
+        #expect(stored.receipts.isEmpty)
+    }
+
+    @Test("A length change keeps a transport-uncertain receipt actionable and retryable after relaunch")
+    func relaunchPresentsUncertainReceiptBeforeReplacement() async throws {
+        let fixture = try LengthFixture()
+        defer { fixture.cleanup() }
+        let uncertain = fixture.source(responseID: "entry-uncertain-ui")
+        let latest = fixture.source(
+            responseID: "entry-uncertain-ui-latest",
+            text: uncertain.text,
+            responseTimestamp: Date(timeIntervalSince1970: 1_800_000_300),
+            userTimestamp: Date(timeIntervalSince1970: 1_800_000_200)
+        )
+        let request = try ResponseBriefRequestBuilder.request(
+            for: uncertain,
+            model: "provider/brief-model",
+            thinkingLevel: nil,
+            clientRequestID: "uncertain-ui-request",
+            length: .medium
+        )
+        try await fixture.persistence.saveReceipt(.init(
+            id: "uncertain-ui-receipt",
+            source: uncertain,
+            request: request,
+            runID: nil,
+            createdAt: .now,
+            status: .needsExplicitRetry
+        ))
+
+        let relaunchedPersistence = ResponseBriefPersistence(
+            url: fixture.folder.appending(path: "cache.json")
+        )
+        let relaunched = ResponseBriefCoordinator(
+            defaults: fixture.defaults,
+            persistence: relaunchedPersistence
+        )
+        relaunched.selectModel("provider/brief-model")
+        relaunched.runPollDelay = .zero
+        #expect(relaunched.enable(uncertain.chat))
+        var requests: [AssistantRequest] = []
+        let transport = fixture.transport(
+            start: { submitted in
+                requests.append(submitted)
+                return fixture.run(status: .completed, response: fixture.validJSON)
+            },
+            fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
+        )
+
+        // A length change while an uncertain receipt owns the chat must not
+        // hide that ownership behind an idle state or lose the new selection.
+        await relaunched.changeLength(
+            .long,
+            chat: uncertain.chat,
+            selectedSource: latest,
+            transport: transport
+        )
+        await relaunched.waitForIdleForTesting()
+
+        #expect(requests.isEmpty)
+        let state = relaunched.state(for: uncertain.chat)
+        guard case let .failed(message) = state.phase else {
+            Issue.record("Expected the uncertain-ownership state to stay actionable")
+            return
+        }
+        #expect(message.contains("may have been accepted"))
+        let owned = try #require(relaunched.source(for: state, in: uncertain.chat))
+        #expect(owned == uncertain)
+
+        await relaunched.retry(owned, transport: transport)
+        await relaunched.waitForIdleForTesting()
+
+        #expect(requests.first?.clientRequestId == request.clientRequestId)
+        #expect(requests.filter { $0.clientRequestId == request.clientRequestId }.count == 1)
+        #expect(requests.contains { $0.context.source.instanceId == latest.responseID })
+        let replayed = try #require(
+            relaunched.briefs(for: uncertain.chat).first { $0.source.responseID == uncertain.responseID }
+        )
+        #expect(replayed.responseBriefLength == .medium)
+        #expect(relaunched.state(for: uncertain.chat).phase == .idle)
+    }
 }
 
 @MainActor

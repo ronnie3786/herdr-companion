@@ -63,6 +63,8 @@ PRIVACY_CHECK_SCRIPT = "scripts/check-public-source.py"
 RELEASE_VERSION_FILE = "release/macos.json"
 MAX_CHECK_OUTPUT_CHARS = 1024 * 1024
 MAX_FINDINGS = 50
+MESSAGE_ME_TIMEOUT_SECONDS = 30
+MESSAGE_ME_SCRIPT = Path.home() / ".codex" / "skills" / "message-me" / "scripts" / "message_me.py"
 
 _ATTACHMENT_URL_RE = re.compile(
     r"https://github\.com/(?:user-attachments/[^\s)\]\"'<>]+|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/releases/download/[^\s)\]\"'<>]+)"
@@ -215,6 +217,7 @@ class CodeFactory:
         release_runner: Runner | None = None,
         log: Logger | None = None,
         check_runner: Runner | None = None,
+        message_runner: Runner | None = None,
     ):
         self._settings = settings
         self._store = store
@@ -224,6 +227,7 @@ class CodeFactory:
         self._clock = clock
         self._sleep = sleep
         self._check_runner: Runner = check_runner or subprocess.run
+        self._message_runner: Runner = message_runner or subprocess.run
         self._log: Logger = log or _default_log
         self._lock = threading.RLock()
         self._active: set[int] = set()
@@ -583,6 +587,8 @@ class CodeFactory:
             self._store.update_issue(number, status="blocked", blockedReason=reason, error=None)
         self._store.add_event(number, stage, "warning", f"Blocked ({reason}): {message}"[:20_000], {"reason": reason})
         self._log(f"issue #{number}: blocked at {stage}: {reason}")
+        if reason == "human_question":
+            self._notify_human_question(number, stage, message)
 
     # -- helpers shared by stages ---------------------------------------------------
 
@@ -602,8 +608,54 @@ class CodeFactory:
         return f"origin/{self._settings.base_branch}"
 
     def _dashboard_url(self) -> str:
-        value = self._store.daemon_info().get("dashboardUrl")
-        return value if isinstance(value, str) else ""
+        if self._settings.dashboard_link:
+            return self._settings.dashboard_link
+        daemon = self._store.daemon_info()
+        for key in ("dashboardUrl", "dashboardBindUrl"):
+            value = daemon.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+
+    def _notify_human_question(self, number: int, stage: str, question: str) -> None:
+        """Send a best-effort Message Me alert without changing the blocked outcome."""
+        issue = self._store.get_issue(number) or {}
+        title = self._public(str(issue.get("title") or "Untitled feature"))
+        safe_question = self._public(question)
+        body = (
+            f"Feature #{number}, {title}, is blocked waiting for your response. "
+            f"Question: {safe_question} Reply on the GitHub issue, then choose Retry in the Code Factory Dashboard."
+        )
+        argv = [
+            self._settings.python,
+            str(MESSAGE_ME_SCRIPT),
+            "--title", "Code Factory needs your response",
+            "--sender", "Herdr · Code Factory",
+            "--urgency", "active",
+        ]
+        dashboard_url = self._dashboard_url()
+        if dashboard_url:
+            argv.extend(("--link", dashboard_url))
+        argv.append(body)
+        try:
+            result = self._message_runner(
+                argv, capture_output=True, text=True, timeout=MESSAGE_ME_TIMEOUT_SECONDS, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            detail = f"Message Me notification failed: {_error_text(exc)}"
+            self._store.add_event(number, stage, "warning", detail)
+            self._log(f"issue #{number}: {detail}")
+            return
+        returncode = int(getattr(result, "returncode", 1))
+        if returncode == 0:
+            self._store.add_event(number, stage, "info", "Message Me notification sent")
+            return
+        if returncode == 2:
+            detail = "Message Me stored the alert, but iPhone delivery was not confirmed"
+        else:
+            detail = f"Message Me notification failed with exit status {returncode}"
+        self._store.add_event(number, stage, "warning", detail)
+        self._log(f"issue #{number}: {detail}")
 
     def _public(self, text: str) -> str:
         """Every GitHub-bound text passes here: local paths, tailnet names/addresses, keys and tokens are redacted."""

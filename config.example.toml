@@ -157,6 +157,7 @@ poll_seconds = 10
 # dashboard_host = "tailscale" # A literal IP/host, or "tailscale" to bind the Tailscale IPv4.
 # dashboard_port = 9097
 # dashboard_token = { file = "~/.config/herdr-companion/secrets/code-factory-token" }
+# dashboard_link = "https://factory.example.invalid:9097/" # Optional canonical link for Message Me alerts.
 # release_enabled = true # Requires [deployment.macos_release] on this machine.
 # release_channel = "preview"
 

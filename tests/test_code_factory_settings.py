@@ -45,6 +45,7 @@ class DefaultsTests(unittest.TestCase):
         self.assertEqual(settings.dashboard_host, "tailscale")
         self.assertEqual(settings.dashboard_port, 9097)
         self.assertEqual(settings.dashboard_token, "")
+        self.assertEqual(settings.dashboard_link, "")
         self.assertTrue(settings.release_enabled)
         self.assertEqual(settings.release_channel, "preview")
         self.assertTrue(settings.comment_on_issues)
@@ -101,6 +102,7 @@ class OverrideTests(unittest.TestCase):
             dashboard_host="127.0.0.1",
             dashboard_port="8080",
             dashboard_token="secret-token",
+            dashboard_link="https://factory.example.invalid:9097",
             release_enabled="no",
             release_channel="stable",
             comment_on_issues="0",
@@ -130,6 +132,7 @@ class OverrideTests(unittest.TestCase):
         self.assertEqual(settings.dashboard_host, "127.0.0.1")
         self.assertEqual(settings.dashboard_port, 8080)
         self.assertEqual(settings.dashboard_token, "secret-token")
+        self.assertEqual(settings.dashboard_link, "https://factory.example.invalid:9097/")
         self.assertFalse(settings.release_enabled)
         self.assertEqual(settings.release_channel, "stable")
         self.assertFalse(settings.comment_on_issues)
@@ -195,6 +198,11 @@ class ValidationTests(unittest.TestCase):
         self.assert_invalid(environ(release_channel="nightly"), "release_channel")
         self.assert_invalid(environ(release_enabled="maybe"), "release_enabled")
         self.assert_invalid(environ(comment_on_issues="2"), "comment_on_issues")
+
+    def test_dashboard_link_must_be_a_safe_http_url(self):
+        for value in ("factory.example", "ftp://factory.example/", "https://user:secret@factory.example/", "https://factory.example/?token=x"):
+            with self.subTest(value=value):
+                self.assert_invalid(environ(dashboard_link=value), "dashboard_link")
 
     def test_model_pattern(self):
         self.assert_invalid(environ(planner_model="bad model"), "planner_model")

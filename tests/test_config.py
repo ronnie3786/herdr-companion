@@ -306,6 +306,7 @@ verify_wait_seconds = 1800
 dashboard_host = "tailscale"
 dashboard_port = 9097
 dashboard_token = {{ file = "{token_file}" }}
+dashboard_link = "https://factory.example.invalid:9097/"
 release_enabled = true
 release_channel = "preview"
 comment_on_issues = false
@@ -339,6 +340,7 @@ python = "python3"
             'HERDR_CODE_FACTORY_DASHBOARD_HOST': 'tailscale',
             'HERDR_CODE_FACTORY_DASHBOARD_PORT': '9097',
             'HERDR_CODE_FACTORY_DASHBOARD_TOKEN': 'synthetic-dashboard-token',
+            'HERDR_CODE_FACTORY_DASHBOARD_LINK': 'https://factory.example.invalid:9097/',
             'HERDR_CODE_FACTORY_RELEASE_ENABLED': 'true',
             'HERDR_CODE_FACTORY_RELEASE_CHANNEL': 'preview',
             'HERDR_CODE_FACTORY_COMMENT_ON_ISSUES': 'false',

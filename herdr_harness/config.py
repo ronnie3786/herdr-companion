@@ -111,6 +111,7 @@ ENVIRONMENT_FIELDS = {
         "dashboard_host": "HERDR_CODE_FACTORY_DASHBOARD_HOST",
         "dashboard_port": "HERDR_CODE_FACTORY_DASHBOARD_PORT",
         "dashboard_token": "HERDR_CODE_FACTORY_DASHBOARD_TOKEN",
+        "dashboard_link": "HERDR_CODE_FACTORY_DASHBOARD_LINK",
         "release_enabled": "HERDR_CODE_FACTORY_RELEASE_ENABLED",
         "release_channel": "HERDR_CODE_FACTORY_RELEASE_CHANNEL",
         "comment_on_issues": "HERDR_CODE_FACTORY_COMMENT_ON_ISSUES",

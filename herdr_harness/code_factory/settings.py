@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+import urllib.parse
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Mapping
@@ -116,6 +117,23 @@ def _model(environ: Mapping[str, str], key: str, default: str) -> str:
     return value
 
 
+def _dashboard_link(environ: Mapping[str, str]) -> str:
+    """An optional private dashboard URL used only in operator notifications."""
+    value = _string(environ, "DASHBOARD_LINK", "", maximum=2048)
+    if not value:
+        return ""
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        valid = parsed.scheme in {"http", "https"} and bool(parsed.hostname) and not (
+            parsed.username or parsed.password or parsed.query or parsed.fragment
+        )
+    except ValueError:
+        valid = False
+    if not valid:
+        raise _invalid("code_factory.dashboard_link must be an HTTP(S) URL without credentials, query, or fragment")
+    return value.rstrip("/") + "/"
+
+
 def _authors(environ: Mapping[str, str]) -> tuple[str, ...]:
     raw = environ.get(ENV_PREFIX + "ALLOWED_AUTHORS") or ""
     if len(raw) > 4096:
@@ -174,6 +192,7 @@ class CodeFactorySettings:
     dashboard_host: str = "tailscale"
     dashboard_port: int = 9097
     dashboard_token: str = ""
+    dashboard_link: str = ""
     release_enabled: bool = True
     release_channel: str = "preview"
     comment_on_issues: bool = True
@@ -231,6 +250,7 @@ class CodeFactorySettings:
             dashboard_host=_string(environ, "DASHBOARD_HOST", cls.dashboard_host, maximum=253),
             dashboard_port=_integer(environ, "DASHBOARD_PORT", cls.dashboard_port),
             dashboard_token=_string(environ, "DASHBOARD_TOKEN", cls.dashboard_token, maximum=4096),
+            dashboard_link=_dashboard_link(environ),
             release_enabled=_boolean(environ, "RELEASE_ENABLED", cls.release_enabled),
             release_channel=_choice(environ, "RELEASE_CHANNEL", cls.release_channel, RELEASE_CHANNELS),
             comment_on_issues=_boolean(environ, "COMMENT_ON_ISSUES", cls.comment_on_issues),

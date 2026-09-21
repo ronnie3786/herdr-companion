@@ -431,6 +431,16 @@ class FakeReleaseRunner:
         return SimpleNamespace(returncode=0, stdout=json.dumps({"ok": True, "published": manifest["tag"]}), stderr="")
 
 
+class FakeMessageRunner:
+    def __init__(self):
+        self.calls: list[tuple[list[str], dict[str, Any]]] = []
+        self.returncode = 0
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append((list(argv), kwargs))
+        return SimpleNamespace(returncode=self.returncode, stdout="", stderr="")
+
+
 class PipelineTestCase(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -463,6 +473,7 @@ class PipelineTestCase(unittest.TestCase):
         self.pi = FakePi(self.env)
         self.checks = FakeCheckRunner()
         self.releases = FakeReleaseRunner(self.env)
+        self.messages = FakeMessageRunner()
         self.side_clones: list[Path] = []
         self.store: CodeFactoryStore | None = None
         self.factory = self.make_factory()
@@ -498,6 +509,7 @@ class PipelineTestCase(unittest.TestCase):
         return CodeFactory(
             self.settings, self.store, github=self.github, git=self.repo, pi=self.pi, clock=self.clock,
             sleep=self.clock.sleep, release_runner=self.releases, log=self.logs.append, check_runner=self.checks,
+            message_runner=self.messages,
         )
 
     def sessions(self, number: int | None) -> list[str]:
@@ -727,10 +739,21 @@ class BlockingAndActionTests(PipelineTestCase):
         return self.factory.run_issue(number)
 
     def test_needs_human_blocks_and_retry_resumes(self):
+        dashboard = "https://factory.example.invalid:9097/"
+        self.factory = self.make_factory(dashboard_link=dashboard)
         issue = self.run_to_block()
         self.assertEqual((issue["status"], issue["stage"], issue["blockedReason"]), ("blocked", "plan", "human_question"))
         self.assertIsNone(issue["error"])
         self.assertIn("Which window crashes?", self.github.comments[12][-1])
+        self.assertEqual(len(self.messages.calls), 1)
+        argv, kwargs = self.messages.calls[0]
+        self.assertEqual(argv[:2], [sys.executable, str(Path.home() / ".codex/skills/message-me/scripts/message_me.py")])
+        self.assertEqual(argv[argv.index("--link") + 1], dashboard)
+        self.assertEqual(argv[argv.index("--urgency") + 1], "active")
+        self.assertIn("Feature #12, Crash when opening the HUD, is blocked waiting for your response.", argv[-1])
+        self.assertIn("Which window crashes?", argv[-1])
+        self.assertEqual(kwargs["timeout"], 30)
+        self.assertIn("Message Me notification sent", self.events(12))
         self.assertTrue(Path(issue["worktreePath"]).is_dir(), "the worktree is kept for the retry")
         with self.assertRaises(CodeFactoryError) as caught:
             self.factory.action(12, "cleanup_everything")
@@ -749,6 +772,21 @@ class BlockingAndActionTests(PipelineTestCase):
         self.assertEqual((issue["status"], issue["stage"]), ("active", "release"))
         self.assertEqual(issue["attempts"], 2)
         self.assertEqual(self.sessions(12), ["planner", "planner", "implementer", "implementer", "reviewer"])
+
+    def test_message_me_delivery_failure_does_not_change_blocked_state(self):
+        self.messages.returncode = 2
+        issue = self.run_to_block()
+        self.assertEqual((issue["status"], issue["blockedReason"]), ("blocked", "human_question"))
+        self.assertIn("Message Me stored the alert, but iPhone delivery was not confirmed", self.events(12))
+
+    def test_non_human_blocks_do_not_send_message_me_alerts(self):
+        self.factory = self.make_factory(max_review_rounds="1")
+        self.github.add_issue(12, "Crash when opening the HUD")
+        self.pi.reviews = [{"verdict": "request_changes", "summary": "No.", "blocking": ["x"]}] * 2
+        self.factory.poll_once()
+        issue = self.factory.run_issue(12)
+        self.assertEqual(issue["blockedReason"], "review_rounds_exhausted")
+        self.assertEqual(self.messages.calls, [])
 
     def test_review_rounds_exhausted(self):
         self.factory = self.make_factory(max_review_rounds="1")
@@ -1022,8 +1060,11 @@ class BlockingAndActionTests(PipelineTestCase):
         pickup, question = self.github.comments[12]
         self.assertEqual(pickup, "🤖 Code Factory picked this up.")
         self.assertEqual(self.event_detail(12, "Picked up;"), {"dashboardUrl": f"http://{tailnet_ip}:9097/"})
+        notification = self.messages.calls[-1][0]
+        self.assertEqual(notification[notification.index("--link") + 1], f"http://{tailnet_ip}:9097/")
         for secret in (tailnet_ip, tailnet_host, "PRIVATE KEY", token):
             self.assertNotIn(secret, question)
+            self.assertNotIn(secret, notification[-1])
         self.assertIn("[redacted host]", question)
         self.assertIn("[redacted private key]", question)
         self.assertIn("[redacted credential]", question)

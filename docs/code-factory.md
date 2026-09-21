@@ -35,7 +35,8 @@ This is an experimental personal automation. Read the safety section before enab
    bounded JSON plan: acceptance criteria, at most four sequential tasks with owned paths
    and tests, documentation obligations, and a description of every screenshot for
    implementers that cannot see images. If the issue is ambiguous or unsafe, Astra asks a
-   question instead; the issue is marked **blocked** and the question is posted on it.
+   question instead; the issue is marked **blocked**, the question is posted on it, and
+   Message Me alerts the operator with a link to the Code Factory dashboard.
 6. **DeepSeek implements.** For each task a fresh Pi session on
    `ollama-cloud/deepseek-v4.1-flash:cloud` with thinking `max` implements the task in the
    worktree, writes tests, and commits. The daemon then runs the public-source privacy
@@ -83,6 +84,9 @@ This is an experimental personal automation. Read the safety section before enab
 
 - A git checkout of the repository whose `origin` is the GitHub repository. The daemon
   only creates and removes worktrees from it; it does not modify its working tree.
+- The Message Me skill installed at
+  `~/.codex/skills/message-me/scripts/message_me.py`. A missing or failed notification is
+  recorded as a warning and does not change the feature's blocked state.
 - For releases: the `[deployment.macos_release]` settings, Keychain access for the
   Sparkle key, and the Sparkle tools, exactly as in the release guide. Run one manual
   `prepare` on this Mac first so Keychain prompts are answered interactively.
@@ -100,6 +104,7 @@ allowed_authors = "your-github-login"
 dashboard_host = "127.0.0.1" # Or "tailscale" for plain HTTP on the tailnet address.
 dashboard_port = 9097
 dashboard_token = { file = "~/.config/herdr-companion/secrets/code-factory-token" }
+dashboard_link = "https://factory.example.invalid:9097/" # Canonical private URL for Message Me.
 release_enabled = true
 release_channel = "preview"
 ```
@@ -112,6 +117,11 @@ host name, or a tailnet MagicDNS name when fronted by `tailscale serve`), refuse
 cross-site browser requests, accepts `POST` bodies only as `application/json`, cannot be
 framed, and closes idle connections after 30 s. Its address is recorded in the private
 ledger only; issue comments never link to it.
+
+`dashboard_link` is optional. Set it when Tailscale Serve fronts a loopback-bound
+dashboard so Message Me can open the dashboard from another device. When it is omitted,
+the alert uses the dashboard's bind URL. Dashboard links are sent only through the
+private Message Me alert and never appear in GitHub comments.
 
 ### Check the installation
 
@@ -296,6 +306,7 @@ reported unused runtimes.
 | Issue never leaves **Picked up** | Daemon not running, wrong `allowed_authors`, or missing trigger label. Run `doctor`. |
 | DeepSeek sessions fail immediately | `OLLAMA_API_KEY` is not available to the daemon; add it to `[environment]`. |
 | Planner blocked with a question | Answer on the issue, adjust the description if needed, then **Retry**. |
+| Planner blocks but no alert arrives | Confirm the Message Me skill exists at `~/.codex/skills/message-me/scripts/message_me.py`, then inspect the issue event log for the recorded delivery status. |
 | Release stays **failed** | Read the error in the release card; a red Verify run or a Keychain prompt are the usual causes. Fix, then **Release now**. |
 
 ## Verification

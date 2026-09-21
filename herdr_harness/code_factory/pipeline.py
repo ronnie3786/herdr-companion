@@ -1171,6 +1171,9 @@ class CodeFactory:
         head = issue.get("headSha")
         if not head:
             return "pull_request"
+        pr_number = issue.get("prNumber")
+        if isinstance(pr_number, int) and self._head_moved(number, "verify", pr_number, head):
+            return "verify"
         status = self._wait_for_verify(
             head, lambda value: self._store.update_issue(number, ciStatus=value),
             on_warning=lambda message: self._store.add_event(number, "verify", "warning", message),
@@ -1282,6 +1285,10 @@ class CodeFactory:
 
     def _stage_revise(self, issue: dict[str, Any]) -> str | None:
         number = issue["number"]
+        head = issue.get("headSha") or ""
+        pr_number = issue.get("prNumber")
+        if isinstance(pr_number, int) and self._head_moved(number, "revise", pr_number, head):
+            return "verify"
         paths = self._paths(number)
         cwd = self._ensure_worktree(issue)
         plan = self._plan_for(issue)
@@ -1289,7 +1296,6 @@ class CodeFactory:
         round_number = int(issue["reviewRound"] or 0)
         branch = issue.get("branch") or self._branch(number)
         review = plan.get("last_review") if isinstance(plan.get("last_review"), dict) else None
-        head = issue.get("headSha") or ""
         if head and self._git.head(cwd) != head and self._resolve_optional(head):
             self._git.reset_hard(cwd, head)
         self._discard_leftovers(number, "revise", cwd, "reviser")

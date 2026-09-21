@@ -1114,6 +1114,52 @@ class BlockingAndActionTests(PipelineTestCase):
         self.assertTrue(any(message.startswith("The pull request head moved from") for message in self.events(12)))
         self.assertIn("app/collaborator.txt", self.git(["ls-tree", "--name-only", "-r", "main"], cwd=self.remote))
 
+    def test_verify_adopts_a_pr_head_pushed_after_the_pr_opens(self):
+        self.github.add_issue(12, "Crash when opening the HUD")
+        self.factory.poll_once()
+        moved: dict[str, str] = {}
+        create_pull_request = self.github.create_pull_request
+
+        def create_then_push(*args, **kwargs):
+            pr = create_pull_request(*args, **kwargs)
+            moved["sha"] = self.side_push(
+                "codefactory/issue-12", "app/collaborator.txt", "Fix CI outside the daemon"
+            )
+            self.github.prs[pr["number"]]["headRefOid"] = moved["sha"]
+            return pr
+
+        self.github.create_pull_request = create_then_push
+        issue = self.factory.run_issue(12)
+
+        self.assertEqual((issue["status"], issue["stage"]), ("active", "release"))
+        self.assertEqual(issue["headSha"], moved["sha"])
+        verified = [args[0] for name, args in self.github.calls if name == "verify_status"]
+        self.assertEqual(set(verified), {moved["sha"]}, "the superseded head is never waited on")
+        self.assertNotIn("reviser", self.sessions(12))
+        self.assertTrue(any(message.startswith("The pull request head moved from") for message in self.events(12)))
+
+    def test_revise_adopts_a_pr_head_pushed_after_ci_failure(self):
+        self.github.add_issue(12, "Crash when opening the HUD")
+        self.github.verify_script = ["failure", "failure", "success"]
+        self.factory.poll_once()
+        moved: dict[str, str] = {}
+        failed_run_log = self.github.failed_run_log
+
+        def push_fix_before_revise(sha: str) -> str:
+            moved["sha"] = self.side_push(
+                "codefactory/issue-12", "app/manual-ci-fix.txt", "Fix CI outside the daemon"
+            )
+            self.github.prs[100]["headRefOid"] = moved["sha"]
+            return failed_run_log(sha)
+
+        self.github.failed_run_log = push_fix_before_revise
+        issue = self.factory.run_issue(12)
+
+        self.assertEqual((issue["status"], issue["stage"]), ("active", "release"))
+        self.assertEqual(issue["headSha"], moved["sha"])
+        self.assertNotIn("reviser", self.sessions(12), "the outside fix supersedes stale CI revision work")
+        self.assertTrue(any(message.startswith("The pull request head moved from") for message in self.events(12)))
+
     def test_commit_messages_never_carry_closing_keywords(self):
         plan = good_plan()
         plan["tasks"][0]["title"] = "Fixes #12 crash on launch"

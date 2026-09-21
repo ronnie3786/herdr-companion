@@ -785,7 +785,9 @@ struct HerdrHudChatsTests {
         try await wait { session.thread != nil }
         #expect(session.isRunning)
         #expect(session.exchanges.last?.response == nil)
-        #expect(session.exchanges.last?.id.hasPrefix("hud-pending-") == false)
+        // The accepted run identity is persisted separately while the visible
+        // exchange remains the local placeholder until the run completes.
+        #expect(session.exchanges.last?.id.hasPrefix("hud-pending-") == true)
         let chat = try #require(fixture.chats.chats.first { $0.session === session })
 
         let runner = FakeNoteAIRunner()
@@ -861,7 +863,7 @@ struct HerdrHudChatsTests {
         await task.value
 
         try await fixture.chats.dismiss(chat.id, model: fixture.model)
-        #expect(fixture.chats.chats.isEmpty)
+        #expect(fixture.chats.visibleChats.isEmpty)
         let summary = HudChatSummary(id: rootID, title: "Plan a synthetic water feature",
                                      updatedAt: "2026-09-01T12:00:00Z", latestRunId: rootID, turnCount: 1,
                                      status: .completed, cwd: nil, sessionId: nil, promotedPaneId: nil)
@@ -1226,7 +1228,7 @@ struct HerdrHudChatsTests {
 }
 
 /// The protocol adds no mutable instance state; synthetic server state is locked.
-private final class HudChatsURLProtocol: URLProtocol {
+private final class HudChatsURLProtocol: URLProtocol, @unchecked Sendable {
     struct Start: Sendable {
         let id: String
         let root: String
@@ -1319,7 +1321,17 @@ private final class HudChatsURLProtocol: URLProtocol {
             }
             return nil
         }
-        gate?.wait()
+        if let gate {
+            DispatchQueue.global().async { [self] in
+                gate.wait()
+                completeLoading(url: url, body: body)
+            }
+            return
+        }
+        completeLoading(url: url, body: body)
+    }
+
+    private func completeLoading(url: URL, body: Data) {
         let payload = Self.state.withLock { state -> (Int, Data) in
             let path = url.path
             if path == "/api/v1/agent-runs/models" {

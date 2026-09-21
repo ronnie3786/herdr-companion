@@ -142,6 +142,7 @@ private final class AgentControlSmartRenameURLProtocol: URLProtocol, @unchecked 
         var refreshFails = false
         var renameCount = 0
         var refreshCount = 0
+        var renamedTitle: String?
     }
 
     private static let state = Mutex(State())
@@ -173,7 +174,11 @@ private final class AgentControlSmartRenameURLProtocol: URLProtocol, @unchecked 
         } else if path == "/api/v1/agent-runs/models" {
             response = (200, #"{"ok":true,"models":[{"provider":"synthetic","id":"naming","name":"Synthetic Naming","reasoning":true}],"default":{"provider":"synthetic","id":"naming","name":"Synthetic Naming"}}"#)
         } else if method == "PATCH", path.hasSuffix("/api/v1/panes/p1") {
-            Self.state.withLock { $0.renameCount += 1 }
+            let input = (try? JSONSerialization.jsonObject(with: requestBody())) as? [String: Any]
+            Self.state.withLock {
+                $0.renameCount += 1
+                $0.renamedTitle = input?["label"] as? String
+            }
             response = (200, #"{"ok":true}"#)
         } else if path.hasSuffix("/api/v1/workspaces") {
             let shouldFail = Self.state.withLock { state -> Bool in
@@ -183,7 +188,28 @@ private final class AgentControlSmartRenameURLProtocol: URLProtocol, @unchecked 
             if shouldFail {
                 response = (503, #"{"ok":false,"error":{"code":"synthetic_refresh","message":"Synthetic refresh failed"}}"#)
             } else {
-                response = (200, #"{"ok":true,"workspaces":[{"workspace_id":"w1","number":1,"label":"Synthetic workspace","focused":true,"pane_count":1,"tab_count":1,"active_tab_id":"t1","agent_status":"idle","panes":[{"pane_id":"p1","terminal_id":"term1","workspace_id":"w1","tab_id":"t1","focused":true,"agent_status":"idle","revision":2,"cwd":"/tmp/synthetic","label":"Synthetic refreshed title","agent":"pi","display_agent":"Pi","pi_semantic":{"available":true,"connected":true,"protocol_version":1,"session_id":"synthetic-session"}}]}],"alerts":[]}"#)
+                let title = Self.state.withLock { $0.renamedTitle ?? "Synthetic refreshed title" }
+                let payload: [String: Any] = [
+                    "ok": true,
+                    "workspaces": [[
+                        "workspace_id": "w1", "number": 1, "label": "Synthetic workspace",
+                        "focused": true, "pane_count": 1, "tab_count": 1,
+                        "active_tab_id": "t1", "agent_status": "idle",
+                        "panes": [[
+                            "pane_id": "p1", "terminal_id": "term1", "workspace_id": "w1",
+                            "tab_id": "t1", "focused": true, "agent_status": "idle",
+                            "revision": 2, "cwd": "/tmp/synthetic", "label": title,
+                            "agent": "pi", "display_agent": "Pi",
+                            "pi_semantic": [
+                                "available": true, "connected": true, "protocol_version": 1,
+                                "session_id": "synthetic-session",
+                            ],
+                        ]],
+                    ]],
+                    "alerts": [],
+                ]
+                let data = try! JSONSerialization.data(withJSONObject: payload)
+                response = (200, String(decoding: data, as: UTF8.self))
             }
         } else {
             response = (404, #"{"ok":false,"error":{"code":"not_found","message":"Synthetic route not found"}}"#)
@@ -200,4 +226,19 @@ private final class AgentControlSmartRenameURLProtocol: URLProtocol, @unchecked 
     }
 
     override func stopLoading() {}
+
+    private func requestBody() -> Data {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return Data() }
+        stream.open()
+        defer { stream.close() }
+        var body = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            guard count > 0 else { break }
+            body.append(buffer, count: count)
+        }
+        return body
+    }
 }

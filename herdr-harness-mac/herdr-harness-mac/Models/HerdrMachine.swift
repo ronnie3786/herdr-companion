@@ -115,23 +115,55 @@ struct HerdrMachine: Codable, Identifiable, Equatable, Sendable {
 }
 
 /// Additive response contract for the authenticated configuration roster.
+/// The server's selected machine ID identifies only the companion answering
+/// this authenticated request; it never replaces a saved app connection ID.
 struct HerdrMachineConfigurationResponse: Decodable, Sendable {
     let ok: Bool
     let machines: [HerdrMachineConfigurationRecord]
+    let localMachineId: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case ok, machines, localMachineId
+    }
+
+    init(
+        ok: Bool,
+        machines: [HerdrMachineConfigurationRecord],
+        localMachineId: String? = nil
+    ) {
+        self.ok = ok
+        self.machines = machines
+        self.localMachineId = localMachineId
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try container.decode(Bool.self, forKey: .ok)
+        machines = try container.decode([HerdrMachineConfigurationRecord].self, forKey: .machines)
+        localMachineId = try? container.decode(String.self, forKey: .localMachineId)
+    }
 }
 
-/// Only URL and optional sidebar presentation are consumed. A malformed
-/// optional value is ignored without rejecting the otherwise useful roster.
+/// Only stable record identity, URL, and optional sidebar presentation are
+/// consumed. A malformed optional value is ignored without rejecting the
+/// otherwise useful roster.
 struct HerdrMachineConfigurationRecord: Decodable, Equatable, Sendable {
+    let id: String?
     let url: String
     let sidebarLabel: String?
     let sidebarOrder: Int?
 
     private enum CodingKeys: String, CodingKey {
-        case url, sidebarLabel, sidebarOrder
+        case id, url, sidebarLabel, sidebarOrder
     }
 
-    init(url: String, sidebarLabel: String? = nil, sidebarOrder: Int? = nil) {
+    init(
+        id: String? = nil,
+        url: String,
+        sidebarLabel: String? = nil,
+        sidebarOrder: Int? = nil
+    ) {
+        self.id = id
         self.url = url
         self.sidebarLabel = HerdrMachine.validSidebarLabel(sidebarLabel)
         self.sidebarOrder = HerdrMachine.validSidebarOrder(sidebarOrder)
@@ -139,6 +171,7 @@ struct HerdrMachineConfigurationRecord: Decodable, Equatable, Sendable {
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try? container.decode(String.self, forKey: .id)
         url = (try? container.decode(String.self, forKey: .url)) ?? ""
         sidebarLabel = HerdrMachine.validSidebarLabel(
             try? container.decode(String.self, forKey: .sidebarLabel)

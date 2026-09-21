@@ -764,6 +764,7 @@ class HerdrHTTPTests(unittest.TestCase):
 
     def test_machine_configuration_contract_is_authenticated_and_additive(self):
         self.service.configuration = Mock()
+        self.service.configuration.machine = "build-node"
         self.service.configuration.public_machines.return_value = [
             {
                 "id": "build-node",
@@ -786,11 +787,38 @@ class HerdrHTTPTests(unittest.TestCase):
 
         self.assertEqual(status, 200)
         self.assertTrue(body["ok"])
+        self.assertEqual(body["localMachineId"], "build-node")
         self.assertEqual(body["machines"][0]["sidebarLabel"], "Build")
         self.assertEqual(body["machines"][0]["sidebarOrder"], 2)
         self.assertNotIn("sidebarLabel", body["machines"][1])
         self.assertNotIn("token", json.dumps(body).lower())
         self.service.configuration.public_machines.assert_called_once_with()
+
+    def test_machine_configuration_omits_unverified_local_machine_identity(self):
+        self.service.configuration = Mock()
+        self.service.configuration.machine = "duplicate-node"
+        self.service.configuration.public_machines.return_value = [
+            {"id": "duplicate-node", "name": "One", "url": "https://one.example.invalid"},
+            {"id": "duplicate-node", "name": "Two", "url": "https://two.example.invalid"},
+        ]
+        status, _, body = self.request("/api/v1/config/machines")
+        self.assertEqual(status, 200)
+        self.assertNotIn("localMachineId", body)
+
+        self.service.configuration.machine = "unknown-node"
+        self.service.configuration.public_machines.return_value = [
+            {"id": "known-node", "name": "Known", "url": "https://known.example.invalid"},
+        ]
+        self.assertNotIn("localMachineId", self.request("/api/v1/config/machines")[2])
+
+        self.service.configuration.machine = None
+        self.assertNotIn("localMachineId", self.request("/api/v1/config/machines")[2])
+
+        self.service.configuration = None
+        self.assertEqual(
+            self.request("/api/v1/config/machines")[2],
+            {"ok": True, "machines": []},
+        )
 
     def test_setup_page_is_public_but_api_requires_bearer_token(self):
         with urllib.request.urlopen(self.base + "/", timeout=2) as response:

@@ -1350,7 +1350,15 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 return service.health_response()
             if method == "GET" and tail == ["config", "machines"]:
                 configuration = getattr(service, "configuration", None)
-                return {"ok": True, "machines": configuration.public_machines() if configuration else []}
+                machines = configuration.public_machines() if configuration else []
+                response = {"ok": True, "machines": machines}
+                selected_machine = getattr(configuration, "machine", None)
+                if (
+                    isinstance(selected_machine, str)
+                    and sum(record.get("id") == selected_machine for record in machines) == 1
+                ):
+                    response["localMachineId"] = selected_machine
+                return response
             if method == "GET" and tail == ["result-artifacts"]:
                 return service.list_result_artifacts()
             if method == "POST" and tail == ["result-artifacts"]:

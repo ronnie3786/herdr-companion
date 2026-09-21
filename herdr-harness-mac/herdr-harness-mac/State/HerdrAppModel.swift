@@ -4430,9 +4430,10 @@ final class HerdrAppModel {
         )
     }
 
-    /// Applies only exact, unique origin matches. An authoritative successful
-    /// roster clears stale values for safely unmatched origins, while ambiguous
-    /// local or remote origins retain their cached values for offline use.
+    /// Applies the authenticated server's unique self record to the already-saved
+    /// primary connection, then uses exact, unique origin matches for every other
+    /// connection. An authoritative successful roster clears stale values for
+    /// safely unmatched origins, while ambiguous origins retain cached values.
     func applySidebarMetadata(
         _ response: HerdrMachineConfigurationResponse,
         expectedGeneration: Int,
@@ -4446,8 +4447,18 @@ final class HerdrAppModel {
               machines.first?.urlString == expectedPrimaryURL
         else { return }
 
+        let selfRecordIndices = response.localMachineId.map { localMachineId in
+            response.machines.indices.filter { response.machines[$0].id == localMachineId }
+        } ?? []
+        let selfRecordIndex = selfRecordIndices.count == 1 ? selfRecordIndices[0] : nil
+        let selfRecordOrigin = selfRecordIndex.flatMap {
+            HerdrMachine.normalizedOrigin(response.machines[$0].url)
+        }
+
         var remoteByOrigin: [String: [HerdrMachineConfigurationRecord]] = [:]
-        for record in response.machines {
+        for index in response.machines.indices {
+            if let selfRecordIndex, index == selfRecordIndex { continue }
+            let record = response.machines[index]
             guard let origin = HerdrMachine.normalizedOrigin(record.url) else { continue }
             remoteByOrigin[origin, default: []].append(record)
         }
@@ -4459,8 +4470,15 @@ final class HerdrAppModel {
 
         var updated = machines
         for index in updated.indices {
+            if index == updated.startIndex, let selfRecordIndex {
+                let selfRecord = response.machines[selfRecordIndex]
+                updated[index].sidebarLabel = selfRecord.sidebarLabel
+                updated[index].sidebarOrder = selfRecord.sidebarOrder
+                continue
+            }
             guard let origin = HerdrMachine.normalizedOrigin(updated[index].urlString),
-                  localOriginCounts[origin] == 1
+                  localOriginCounts[origin] == 1,
+                  selfRecordOrigin.map({ $0 != origin }) ?? true
             else { continue }
             let matches = remoteByOrigin[origin] ?? []
             guard matches.count <= 1 else { continue }

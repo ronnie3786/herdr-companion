@@ -129,13 +129,20 @@ saved name. Names, IDs, and roles have no built-in aliases.
 
 At runtime, the first saved connection is the sole configuration authority. The
 Mac asks that companion's authenticated `/api/v1/config/machines` endpoint on
-connection and explicit Refresh, then applies metadata only to already-paired
-computers with unique exact HTTP(S) origins. It never imports connections or
-credentials. After editing the authoritative private TOML, restart that
-companion and refresh or reconnect the Mac app. This workflow requires updated
-companion and Mac software; updating the Mac app alone does not update a server.
-If the endpoint is offline or unavailable, cached labels remain usable. A successful
-legacy roster response with the optional presentation fields absent clears that
+connection and explicit Refresh. The response identifies the companion's unique
+selected roster record, so its presentation applies only to the already-saved
+first connection even when that connection uses localhost or another origin
+alias. This configured server ID never replaces the app's saved ID or URL and is
+never used to identify another paired computer. Remaining computers match only
+by unique exact HTTP(S) origin. Duplicate or unknown self IDs fall back to those
+safe origin rules, and ambiguous self-origin pairings retain cached presentation
+rather than assigning the primary record elsewhere. The app never imports
+connections or credentials. After editing the authoritative private TOML,
+restart that companion and refresh or reconnect the Mac app. This workflow
+requires updated companion and Mac software; updating the Mac app alone does not
+update a server. Older server responses without a self ID continue to use origin
+matching. If the endpoint is offline or unavailable, cached labels remain usable.
+A successful response with absent presentation fields clears safely matched
 metadata and restores complete saved names in default roster order. Four or more
 computers continue to use the existing full-name menu.
 

@@ -5,13 +5,13 @@ import Testing
 @Suite("Machine sidebar metadata sync", .serialized)
 @MainActor
 struct MachineSidebarMetadataSyncTests {
-    @Test("Explicit refresh uses only the primary authority and preserves paired UUID identities")
-    func productionRefreshSyncsByExactOrigin() async throws {
+    @Test("Production refresh identifies a localhost primary and preserves paired UUID identities")
+    func productionRefreshUsesAuthenticatedPrimaryIdentity() async throws {
         let machines = [
             HerdrMachine(
                 id: UUID().uuidString,
                 name: "Locally Paired One",
-                urlString: "https://BUILD.example.test:443/",
+                urlString: "http://localhost:9092",
                 role: "unexpected"
             ),
             HerdrMachine(
@@ -23,7 +23,7 @@ struct MachineSidebarMetadataSyncTests {
         ]
         MetadataURLProtocol.fixture.configure(
             status: 200,
-            body: #"{"ok":true,"machines":[{"id":"private-build-id","name":"Unrelated Server Name","url":"https://build.example.test","role":"node","sidebarLabel":"Build","sidebarOrder":5},{"id":"private-lab-id","name":"Another Server Name","url":"https://LAB.example.test:443/","role":"work","sidebarLabel":"Lab","sidebarOrder":1}]}"#
+            body: #"{"ok":true,"localMachineId":"private-build-id","machines":[{"id":"private-build-id","name":"Unrelated Server Name","url":"https://build.example.test","role":"node","sidebarLabel":"Build","sidebarOrder":5},{"id":"private-lab-id","name":"Another Server Name","url":"https://LAB.example.test:443/","role":"work","sidebarLabel":"Lab","sidebarOrder":1}]}"#
         )
         let context = try makeModel(machines: machines)
         defer { context.cleanup() }
@@ -37,7 +37,7 @@ struct MachineSidebarMetadataSyncTests {
         #expect(context.model.machines.map(\.sidebarLabel) == ["Build", "Lab"])
         #expect(context.model.machines.map(\.sidebarOrder) == [5, 1])
         #expect(SidebarMachineSegmentPresentation.segments(for: context.model.machines).map(\.title) == ["Lab", "Build"])
-        #expect(MetadataURLProtocol.fixture.configHosts() == ["BUILD.example.test"])
+        #expect(MetadataURLProtocol.fixture.configHosts() == ["localhost"])
         #expect(MetadataURLProtocol.fixture.configAuthorizationValues() == ["Bearer primary-token"])
 
         let persisted = try #require(context.defaults.data(forKey: "herdr.machines"))
@@ -58,7 +58,7 @@ struct MachineSidebarMetadataSyncTests {
         ]
         MetadataURLProtocol.fixture.configure(
             status: 200,
-            body: #"{"ok":true,"machines":[{"id":"config-primary","name":"Primary","url":"https://primary.example.test","role":"node"}]}"#
+            body: #"{"ok":true,"localMachineId":"config-primary","machines":[{"id":"config-primary","name":"Primary","url":"https://canonical-primary.example.test","role":"node"}]}"#
         )
         let context = try makeModel(machines: machines)
         defer { context.cleanup() }
@@ -97,12 +97,17 @@ struct MachineSidebarMetadataSyncTests {
                 id: "missing", name: "Missing", urlString: "https://missing.example.test",
                 sidebarLabel: "Cached Missing", sidebarOrder: 2
             ),
+            HerdrMachine(
+                id: "legacy-match", name: "Legacy Match", urlString: "https://legacy.example.test",
+                sidebarLabel: "Cached Legacy", sidebarOrder: 5
+            ),
         ])
         defer { context.cleanup() }
         let primary = try #require(context.model.machines.first)
         let response = HerdrMachineConfigurationResponse(ok: true, machines: [
             .init(url: "https://duplicate.example.test", sidebarLabel: "One", sidebarOrder: 3),
             .init(url: "https://DUPLICATE.example.test:443/", sidebarLabel: "Two", sidebarOrder: 4),
+            .init(url: "https://legacy.example.test", sidebarLabel: "Legacy", sidebarOrder: 6),
         ])
 
         context.model.applySidebarMetadata(
@@ -116,6 +121,108 @@ struct MachineSidebarMetadataSyncTests {
         #expect(context.model.machines[0].sidebarOrder == 1)
         #expect(context.model.machines[1].sidebarLabel == nil)
         #expect(context.model.machines[1].sidebarOrder == nil)
+        #expect(context.model.machines[2].sidebarLabel == "Legacy")
+        #expect(context.model.machines[2].sidebarOrder == 6)
+    }
+
+    @Test("Authenticated self identity applies only to primary and is reserved from origin fallback")
+    func selfIdentityIsPrimaryOnly() throws {
+        let context = try makeModel(machines: [
+            HerdrMachine(
+                id: "local-primary-uuid", name: "Primary", urlString: "http://localhost:9092",
+                sidebarLabel: "Cached Primary", sidebarOrder: 8
+            ),
+            HerdrMachine(
+                id: "server-self-id", name: "Duplicate Pairing", urlString: "https://self.example.test",
+                sidebarLabel: "Cached Duplicate", sidebarOrder: 7
+            ),
+            HerdrMachine(
+                id: "other-local-uuid", name: "Other", urlString: "https://other.example.test"
+            ),
+        ])
+        defer { context.cleanup() }
+        let primary = try #require(context.model.machines.first)
+        let response = HerdrMachineConfigurationResponse(
+            ok: true,
+            machines: [
+                .init(
+                    id: "server-self-id", url: "https://self.example.test",
+                    sidebarLabel: "Authenticated Primary", sidebarOrder: 1
+                ),
+                .init(
+                    id: "other-server-id", url: "https://other.example.test",
+                    sidebarLabel: "Other", sidebarOrder: 2
+                ),
+            ],
+            localMachineId: "server-self-id"
+        )
+
+        context.model.applySidebarMetadata(
+            response,
+            expectedGeneration: context.model.connectionGeneration,
+            expectedPrimaryID: primary.id,
+            expectedPrimaryURL: primary.urlString
+        )
+
+        #expect(context.model.machines[0].id == "local-primary-uuid")
+        #expect(context.model.machines[0].sidebarLabel == "Authenticated Primary")
+        #expect(context.model.machines[0].sidebarOrder == 1)
+        #expect(context.model.machines[1].id == "server-self-id")
+        #expect(context.model.machines[1].sidebarLabel == "Cached Duplicate")
+        #expect(context.model.machines[1].sidebarOrder == 7)
+        #expect(context.model.machines[2].sidebarLabel == "Other")
+        #expect(context.model.machines[2].sidebarOrder == 2)
+    }
+
+    @Test("Duplicate or unknown self claims fall back to unique origin matching")
+    func invalidSelfClaimsDoNotSelectAnArbitraryRecord() throws {
+        let initial = HerdrMachine(
+            id: "saved-primary", name: "Primary", urlString: "https://primary.example.test",
+            sidebarLabel: "Cached", sidebarOrder: 9
+        )
+        let context = try makeModel(machines: [initial])
+        defer { context.cleanup() }
+        let generation = context.model.connectionGeneration
+
+        context.model.applySidebarMetadata(
+            HerdrMachineConfigurationResponse(
+                ok: true,
+                machines: [
+                    .init(
+                        id: "duplicate-self", url: "https://unrelated.example.test",
+                        sidebarLabel: "Must Not Win", sidebarOrder: 1
+                    ),
+                    .init(
+                        id: "duplicate-self", url: initial.urlString,
+                        sidebarLabel: "Unique Origin", sidebarOrder: 2
+                    ),
+                ],
+                localMachineId: "duplicate-self"
+            ),
+            expectedGeneration: generation,
+            expectedPrimaryID: initial.id,
+            expectedPrimaryURL: initial.urlString
+        )
+        #expect(context.model.machines[0].sidebarLabel == "Unique Origin")
+        #expect(context.model.machines[0].sidebarOrder == 2)
+
+        context.model.applySidebarMetadata(
+            HerdrMachineConfigurationResponse(
+                ok: true,
+                machines: [
+                    .init(
+                        id: "known-record", url: initial.urlString,
+                        sidebarLabel: "Unknown Claim Fallback", sidebarOrder: 3
+                    ),
+                ],
+                localMachineId: "missing-record"
+            ),
+            expectedGeneration: generation,
+            expectedPrimaryID: initial.id,
+            expectedPrimaryURL: initial.urlString
+        )
+        #expect(context.model.machines[0].sidebarLabel == "Unknown Claim Fallback")
+        #expect(context.model.machines[0].sidebarOrder == 3)
     }
 
     @Test("Generation primary identity and primary URL guards reject stale results")
@@ -167,7 +274,7 @@ struct MachineSidebarMetadataSyncTests {
     func malformedOptionalPresentationIsIgnored() async throws {
         MetadataURLProtocol.fixture.configure(
             status: 200,
-            body: #"{"ok":true,"machines":[{"url":"https://primary.example.test","sidebarLabel":"Line\nbreak","sidebarOrder":true},{"url":"https://other.example.test","sidebarLabel":17,"sidebarOrder":2147483648}]}"#
+            body: #"{"ok":true,"localMachineId":{"unexpected":true},"machines":[{"id":17,"url":"https://primary.example.test","sidebarLabel":"Line\nbreak","sidebarOrder":true},{"id":false,"url":"https://other.example.test","sidebarLabel":17,"sidebarOrder":2147483648}]}"#
         )
         let configuration = try #require(
             ServerConfiguration(urlString: "https://primary.example.test", token: "test-token")
@@ -176,8 +283,11 @@ struct MachineSidebarMetadataSyncTests {
 
         let response = try await client.fetchMachineConfiguration()
 
+        #expect(response.localMachineId == nil)
         #expect(response.machines.count == 2)
-        #expect(response.machines.allSatisfy { $0.sidebarLabel == nil && $0.sidebarOrder == nil })
+        #expect(response.machines.allSatisfy {
+            $0.id == nil && $0.sidebarLabel == nil && $0.sidebarOrder == nil
+        })
     }
 
     @Test("Origin normalization accepts only exact HTTP(S) origins")

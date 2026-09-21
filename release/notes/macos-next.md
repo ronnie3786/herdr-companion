@@ -22,6 +22,13 @@
 - Grouped tool calls are labeled Clanking. Failures remain indicated in the collapsed header and no longer expand the group automatically.
 - The HUD notes list starts as one Notes icon. Click to expand; click again to minimize. Creating or opening a note still opens its editable card.
 
+## Tab colors
+
+- Settings → Privacy → Tab colors adds **Share tab colors with companions**, off by default and independent of **Allow agent control**. The section shows this Mac's installation ID and per-companion publication status.
+- When enabled, this Mac publishes each known tab's color and effective label — including the palette default when no custom name is set — as a read-only copy so agents can filter and group chats with `herdr-control find chats|tabs --color/--color-label/--color-client/--group-by` and `herdr-hud-chats list|search --scope terminal`. Assignments still live only on this Mac and never synchronize; other clients' colors are never imported, and turning sharing off withdraws the exported values.
+- The `chat.tab-color` agent action is disabled in the relay catalog and the Mac receiver; manual assignment, removal, and label editing are unchanged.
+- Requires a companion advertising `chat-tab-colors-v1` plus the matching installed CLIs. The signed Mac feed installs only the app, so update server packages and CLIs separately; an older companion reports an explicit unsupported result instead of an empty match. See `docs/chat-tab-colors.md` for setup, commands, and limits.
+
 ## PR Review
 
 - A new **PR Review** section under First Mate in the left navigator (⌘8): paste a GitHub pull request link, choose which review, explainer-video and utility skills to run, and get a GitHub-style workspace prepared on the development-role companion: ranked files with a single-category filter, Hide viewed and a Guided reading order; a native diff with **Ask AI** on any selection; a context library for findings, reports, audio, video and links; Agents and Skills tabs; archive instead of delete.
@@ -33,6 +40,8 @@ The configurable computer segments add optional presentation fields and a valida
 
 A separate companion update raises the shared headless-agent timeout, including HUD chat, from ten minutes to one hour by default. A Mac-only update does not change the running server's timeout. Existing explicit overrides remain effective; `HERDR_HARNESS_AGENT_TIMEOUT_SECONDS` supports 1–86,400 seconds through the private configuration's `[environment]` table. Cancellation remains available.
 
+Tab color discovery is likewise additive. A companion without `chat-tab-colors-v1` keeps its existing snapshot shape, and the updated CLIs report an unsupported capability when color options are requested instead of an empty match. A Mac-only update neither installs server packages nor publishes anything until the off-by-default sharing setting is enabled. The local color store, iOS color behavior, and all existing snapshot and saved-HUD behavior are unchanged.
+
 ## Quick verification
 
 1. Toggle Recents on and off; Smart Rename a chat and compare its sidebar/header title. Let a working agent finish and compare the sidebar with its HUD notification.
@@ -42,3 +51,5 @@ A separate companion update raises the shared headless-agent timeout, including 
 5. Toggle Notes twice, create a note, and close its card. Use New workspace and right-click workspace headings to find New tab.
 6. Narrow the sidebar and enlarge the text size: workspace folder titles should stay visibly larger and brighter than the tabs and chats beneath them, with long names truncating at the tail and their counts and chevrons still visible. No server update or new setting is needed.
 7. In a synthetic private roster, give arbitrary computer names optional labels such as Build and Lab, include tied and missing orders, and save the first companion through a localhost URL while its configured roster URL uses a different HTTPS origin. Restart that companion, then Refresh the Mac app. Confirm the first connection receives its exact configured presentation, nonprimary computers match only their unique origins, explicit orders precede unordered machines, ties remain in saved order, unlabeled segments use full names, duplicate labels still select distinct machines, and saved IDs, URLs, names, and selection survive relaunch. Remove a field and Refresh to confirm it clears. A roster of four or more machines keeps the existing full-name menu.
+8. With **Allow agent control** off, enable **Share tab colors with companions**, assign a synthetic color label, and compare `herdr-control find chats --color-label <label>` with `herdr-hud-chats list --scope terminal --color-label <label>`. Disconnect the companion and confirm the last-known values are marked stale; reconnect and confirm they refresh; turn sharing off and confirm the exported values are withdrawn while the local colors remain.
+9. Run `herdr-control --control-machine <id> ui actions`. `chat.tab-color` should be disabled with a read-only reason and `ui invoke chat.tab-color` should fail without changing a color. Manual color editing must still work.

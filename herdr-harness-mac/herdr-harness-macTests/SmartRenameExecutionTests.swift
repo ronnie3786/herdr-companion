@@ -138,6 +138,7 @@ struct SmartRenameExecutionTests {
 
     // MARK: - Fixtures
 
+    @MainActor
     private struct Fixture {
         let model: HerdrAppModel
         let pane: HerdrPane
@@ -303,19 +304,19 @@ private final class SmartRenameExecutionURLProtocol: URLProtocol, @unchecked Sen
         let response: (status: Int, body: String)
         switch (method, path) {
         case (_, "/api/v1/agent-runs/models"):
-            let catalog = state.withLock { state -> String in
+            let catalog = Self.state.withLock { state -> String in
                 state.catalogs += 1
                 return state.fixture.catalogBody
             }
             response = (200, catalog)
         case (_, "/api/v1/agent-runs/prompts"):
-            let available = state.withLock { state -> Bool in
+            let available = Self.state.withLock { state -> Bool in
                 state.prompts += 1
                 return state.fixture.promptsAvailable
             }
             response = available ? (200, #"{"ok":true,"prompts":{}}"#) : (404, Self.notFound)
         case ("POST", "/api/v1/agent-runs"):
-            let behavior = state.withLock { state -> SmartRenameExecutionFixture.StartBehavior in
+            let behavior = Self.state.withLock { state -> SmartRenameExecutionFixture.StartBehavior in
                 state.starts += 1
                 state.startBodies.append(body)
                 return state.fixture.startBehavior
@@ -330,7 +331,7 @@ private final class SmartRenameExecutionURLProtocol: URLProtocol, @unchecked Sen
                 response = (200, Self.runEnvelope(status: "running", response: nil, error: nil))
             }
         case ("GET", "/api/v1/agent-runs/agr_execution0001"):
-            let behavior = state.withLock { state -> SmartRenameExecutionFixture.StartBehavior in
+            let behavior = Self.state.withLock { state -> SmartRenameExecutionFixture.StartBehavior in
                 state.fetches += 1
                 return state.fixture.startBehavior
             }
@@ -350,11 +351,11 @@ private final class SmartRenameExecutionURLProtocol: URLProtocol, @unchecked Sen
                 response = (200, Self.runEnvelope(status: "running", response: nil, error: nil))
             }
         case ("GET", "/api/v1/panes/p1/pi/snapshot"):
-            response = state.withLock { state in
+            response = Self.state.withLock { state in
                 state.fixture.snapshotBody.map { (200, $0) } ?? (404, Self.notFound)
             }
         case ("GET", "/api/v1/panes/p1/output"):
-            response = state.withLock { state in
+            response = Self.state.withLock { state in
                 guard let text = state.fixture.outputText else { return (404, Self.notFound) }
                 return (
                     200,
@@ -363,13 +364,13 @@ private final class SmartRenameExecutionURLProtocol: URLProtocol, @unchecked Sen
             }
         case ("PATCH", "/api/v1/panes/p1"):
             let label = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
-            state.withLock { state in
+            Self.state.withLock { state in
                 state.renames += 1
                 state.renamedLabel = label?["label"] as? String
             }
             response = (200, #"{"ok":true}"#)
         case ("GET", "/api/v1/workspaces"):
-            let (label, sessionID) = state.withLock { state in
+            let (label, sessionID) = Self.state.withLock { state in
                 (state.renamedLabel ?? "Original title", state.fixture.paneSessionID)
             }
             response = (200, Self.workspacesBody(label: label, paneSessionID: sessionID))

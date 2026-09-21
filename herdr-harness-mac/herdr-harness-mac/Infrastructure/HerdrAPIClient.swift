@@ -168,7 +168,9 @@ private struct PRReviewEventsResponse: Decodable, Sendable {
 }
 
 actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient {
-    private let configuration: ServerConfiguration
+    /// Nonisolated so the model can bind refreshed topology to the endpoint
+    /// that produced it without another actor hop.
+    nonisolated let configuration: ServerConfiguration
     private let session: URLSession
     private let cleanupApplyPollInterval: Duration
     private let cleanupApplyConsecutiveFailureLimit: Int

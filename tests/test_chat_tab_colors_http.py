@@ -134,17 +134,42 @@ class ChatTabColorHTTPTests(unittest.TestCase):
         self.service.stop()
         self.store.close()
 
-    def request(self, path, *, method="GET", payload=None, token=MAIN_TOKEN):
+    def request(self, path, *, method="GET", payload=None, token=MAIN_TOKEN, base=None):
         data = None if payload is None else json.dumps(payload).encode("utf-8")
         headers = {"Content-Type": "application/json"} if data is not None else {}
         if token is not None:
             headers["Authorization"] = f"Bearer {token}"
-        request = urllib.request.Request(self.base + path, method=method, data=data, headers=headers)
+        request = urllib.request.Request((base or self.base) + path, method=method, data=data, headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=5) as response:
                 return response.status, json.loads(response.read())
         except urllib.error.HTTPError as exc:
             return exc.code, json.loads(exc.read())
+
+    def start_ephemeral_service(self, state_dir, *, control_store=None):
+        """A service/server pair that owns its lazy control store on disk."""
+
+        service = HerdrService(
+            SyntheticHerdrClient(synthetic_snapshot()),
+            environ={
+                "HOME": str(self.root / "home"),
+                "HERDR_STATE_DIR": str(state_dir),
+                "HERDR_HARNESS_AGENT_RUNS_ROOT": str(self.root / "agent-runs"),
+            },
+            pi_semantic=SyntheticPiSemantic(),
+            control_store=control_store,
+        )
+        server = make_server(service, host="127.0.0.1", port=0, api_token=MAIN_TOKEN)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        def stop():
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+            service.stop()
+
+        return service, f"http://127.0.0.1:{server.server_address[1]}", stop
 
     def publication(self, key, **overrides):
         body = copy.deepcopy(self.fixture["publications"][key])
@@ -329,6 +354,119 @@ class ChatTabColorHTTPTests(unittest.TestCase):
             tab for tab in second_body["snapshot"]["tabs"] if tab["tab_id"] == "ws_synthetic_alpha:t1"
         )
         self.assertEqual(second_tab["chatTabColors"][0]["color"], "rose")
+
+    def test_large_publication_round_trips_before_the_512_kib_contract_limit(self):
+        tabs = [
+            {
+                "workspaceId": "ws_synthetic_alpha",
+                "tabId": f"ws_synthetic_alpha:t{index}",
+                "color": "sage",
+                "label": "Synthetic " + "x" * 1000,
+            }
+            for index in range(1, 81)
+        ]
+        body = self.publication("primary", revision=10, tabs=tabs)
+        canonical = json.dumps(
+            {key: value for key, value in body.items() if key != "publisherToken"},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        self.assertGreater(len(canonical), 64 * 1024)
+        self.assertLess(len(canonical), 512 * 1024)
+
+        status, response = self.request(
+            f"/api/v1/control/chat-tab-colors/{PRIMARY}", method="POST", payload=body
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(response["publication"]["tabCount"], len(tabs))
+        colors, _ = self.snapshot_colors()
+        self.assertEqual(colors["ws_synthetic_alpha:t1"][0]["label"], tabs[0]["label"])
+
+        # An identical larger revision is a heartbeat that only refreshes
+        # lastSeenAt, still above the generic 64 KiB control budget.
+        self.clock.value += 10
+        status, heartbeat = self.request(
+            f"/api/v1/control/chat-tab-colors/{PRIMARY}", method="POST", payload=body
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(heartbeat["publication"]["updatedAt"], "2030-01-01T00:00:00Z")
+        self.assertEqual(heartbeat["publication"]["lastSeenAt"], "2030-01-01T00:00:10Z")
+
+        with patch("herdr_harness.chat_tab_colors.MAX_CHAT_TAB_PUBLICATION_BYTES", 1024):
+            status, rejected = self.request(
+                f"/api/v1/control/chat-tab-colors/{PRIMARY}",
+                method="POST",
+                payload=self.publication("primary", revision=11, tabs=tabs),
+            )
+        self.assertEqual(status, 413)
+        self.assertEqual(rejected["error"]["code"], "body_too_large")
+
+    def test_restarted_companion_reads_durable_publications_without_control_traffic(self):
+        state_dir = self.root / "restart-state"
+        large_label = "Synthetic " + "x" * 1000
+        body = copy.deepcopy(self.fixture["publications"]["primary"])
+        body["tabs"] = [
+            {
+                "workspaceId": "ws_synthetic_alpha",
+                "tabId": f"ws_synthetic_alpha:t{index}",
+                "color": "sage",
+                "label": large_label,
+            }
+            for index in range(1, 81)
+        ]
+
+        first_service, first_base, stop_first = self.start_ephemeral_service(state_dir)
+        try:
+            body["serverId"] = first_service.control_store.server_id
+            status, _ = self.request(
+                f"/api/v1/control/chat-tab-colors/{PRIMARY}",
+                method="POST",
+                payload=body,
+                base=first_base,
+            )
+            self.assertEqual(status, 200)
+        finally:
+            stop_first()
+
+        # A fresh service with no injected store and no prior control request
+        # must still serve the last-known metadata from control.sqlite3.
+        second_service, second_base, stop_second = self.start_ephemeral_service(state_dir)
+        try:
+            status, snapshot = self.request("/api/v1/snapshot", base=second_base)
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                [source["clientId"] for source in snapshot["chatTabColorSources"]],
+                [PRIMARY],
+            )
+            self.assertTrue(snapshot["chatTabColorSources"][0]["enabled"])
+            alpha = next(
+                tab for tab in snapshot["snapshot"]["tabs"] if tab["tab_id"] == "ws_synthetic_alpha:t1"
+            )
+            self.assertEqual(alpha["chatTabColors"][0]["status"], "assigned")
+            self.assertEqual(alpha["chatTabColors"][0]["color"], "sage")
+            self.assertEqual(alpha["chatTabColors"][0]["label"], large_label)
+
+            # The explicit insecure loopback mode keeps its exclusion even when
+            # the durable store contains publications.
+            open_server = make_server(second_service, host="127.0.0.1", port=0, api_token="")
+            open_thread = threading.Thread(target=open_server.serve_forever, daemon=True)
+            open_thread.start()
+            try:
+                open_status, open_snapshot = self.request(
+                    "/api/v1/snapshot",
+                    token=None,
+                    base=f"http://127.0.0.1:{open_server.server_address[1]}",
+                )
+            finally:
+                open_server.shutdown()
+                open_server.server_close()
+                open_thread.join(timeout=2)
+            self.assertEqual(open_status, 200)
+            self.assertNotIn("chatTabColorSources", open_snapshot)
+            for tab in open_snapshot["snapshot"]["tabs"]:
+                self.assertNotIn("chatTabColors", tab)
+        finally:
+            stop_second()
 
     def test_insecure_loopback_snapshot_never_exposes_publications(self):
         status, _ = self.publish("primary")

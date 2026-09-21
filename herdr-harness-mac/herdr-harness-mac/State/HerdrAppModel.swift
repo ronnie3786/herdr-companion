@@ -34,6 +34,15 @@ final class HerdrAppModel {
         var didSweepDelivered = false
     }
 
+    /// Provenance of the cached fleet topology for one machine. Tab color
+    /// publication may export `workspaces` only when a successful refresh
+    /// fetched them for the current connection generation and endpoint; a
+    /// reconfigured machine keeps its cached workspaces until that happens.
+    struct ConfirmedTopology: Equatable {
+        let generation: Int
+        let configuration: ServerConfiguration
+    }
+
     var workspaces: [HerdrWorkspace] = [] {
         didSet { rebuildPaneIndex() }
     }
@@ -121,6 +130,7 @@ final class HerdrAppModel {
             }
         }
     }
+    @ObservationIgnored private(set) var confirmedTopology: [String: ConfirmedTopology] = [:]
     private(set) var activeServerConnection: ActiveServerConnection?
     var machineStates: [String: ConnectionState] = [:]
     var machines: [HerdrMachine]
@@ -197,6 +207,16 @@ final class HerdrAppModel {
     /// reaped-session fallback (a continuation whose underlying pi
     /// session no longer exists, so the server starts a fresh thread).
     var demoForcesFreshThreadForTesting = false
+
+    /// Test-only: record the same topology provenance a successful fleet
+    /// refresh records, without reaching the network.
+    func confirmTopologyForTesting(machineID: String) {
+        guard let configuration = firstMateConfiguration(machineID: machineID) else { return }
+        confirmedTopology[machineID] = ConfirmedTopology(
+            generation: connectionGeneration,
+            configuration: configuration
+        )
+    }
 #endif
     private static var isRunningTests: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
@@ -403,6 +423,14 @@ final class HerdrAppModel {
         machineStates[id] ?? (isDemoMode ? .demo : .disconnected)
     }
 
+    /// Whether the cached workspaces for this machine were fetched by a
+    /// successful refresh for the supplied endpoint at the current connection
+    /// generation. Publication refuses cached topology until this is true.
+    func topologyIsConfirmed(machineID: String, configuration: ServerConfiguration) -> Bool {
+        guard let confirmed = confirmedTopology[machineID] else { return false }
+        return confirmed.generation == connectionGeneration && confirmed.configuration == configuration
+    }
+
     func resultArtifactPhase(id: String) -> AgentResultArtifactPhase {
         if let phase = resultArtifactPhases[id] { return phase }
         return resultArtifactOpenedLedger.contains(id) ? .opened : .available
@@ -601,6 +629,7 @@ final class HerdrAppModel {
         }
         errorMessage = nil
         connectionGeneration += 1
+        confirmedTopology[id] = nil
         return true
     }
 
@@ -3773,6 +3802,10 @@ final class HerdrAppModel {
         }
         let response = try await client.fetchWorkspaces()
         guard expectedGeneration == connectionGeneration else { throw CancellationError() }
+        confirmedTopology[machineID] = ConfirmedTopology(
+            generation: expectedGeneration,
+            configuration: client.configuration
+        )
         var previousAlertIDs: Set<String> = []
         var previousReadAlertIDs: Set<String> = []
         for alert in alerts where alert.machineID == machineID {
@@ -4177,6 +4210,7 @@ final class HerdrAppModel {
         resultArtifactReconciliation = [:]
         runtimes = [:]
         machineStates = [:]
+        confirmedTopology = [:]
         activeServerConnection = nil
         connectionState = .disconnected
         let hadFleetContent = !workspaces.isEmpty || !alerts.isEmpty
@@ -4527,6 +4561,7 @@ final class HerdrAppModel {
         }
         runtimes[id] = nil
         machineStates[id] = nil
+        confirmedTopology[id] = nil
         let workspaceCount = workspaces.count
         let alertCount = alerts.count
         workspaces.removeAll { $0.machineID == id }

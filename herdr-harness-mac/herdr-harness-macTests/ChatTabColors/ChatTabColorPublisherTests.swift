@@ -439,7 +439,7 @@ struct ChatTabColorPublisherTests {
         publisher.stopForTesting()
     }
 
-    @Test("A stale connection generation abandons the in-flight host probe")
+    @Test("A stale connection generation never exports cached topology to the replacement server")
     func staleGenerationIsAbandoned() async throws {
         let (suite, defaults) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -470,11 +470,168 @@ struct ChatTabColorPublisherTests {
             token: "synthetic-token-after"
         ))
         await oldTransport.releaseCapabilities()
-        try await replacementTransport.waitForPublicationCount(1)
-        try await Task.sleep(for: .milliseconds(40))
+        try await replacementTransport.waitForCapabilityCount(1)
+        try await Task.sleep(for: .milliseconds(60))
         #expect(await oldTransport.publicationList().isEmpty)
+        #expect(await replacementTransport.publicationList().isEmpty)
+        #expect(publisher.hostStates.first?.phase == .waitingForConnection)
+
+        // Only a successful topology refresh for the replacement endpoint may
+        // make the cached workspace identities publishable.
+        let configuration = try #require(model.firstMateConfiguration(machineID: machine.id))
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [ChatTabColorTopologyURLProtocol.self]
+        let client = HerdrAPIClient(
+            configuration: configuration,
+            session: URLSession(configuration: sessionConfiguration)
+        )
+        try await model.refresh(
+            machineID: machine.id,
+            using: client,
+            expectedGeneration: model.connectionGeneration
+        )
+        try await replacementTransport.waitForPublicationCount(1)
         let publication = try await requireLastPublication(replacementTransport)
         #expect(publication.request.serverId == "srv_after")
+        #expect(publication.request.enabled)
+        #expect(await oldTransport.publicationList().isEmpty)
+        publisher.stopForTesting()
+    }
+
+    @Test("A previously ambiguous alias that goes offline still blocks publication")
+    func failedAliasStillBlocksPublication() async throws {
+        let (suite, defaults) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let aliasA = HerdrMachine(id: "alias-a", name: "Alias A", urlString: "https://alias-a.example.invalid")
+        let aliasB = HerdrMachine(id: "alias-b", name: "Alias B", urlString: "https://alias-b.example.invalid")
+        let model = makeModel(defaults: defaults, machines: [aliasA, aliasB])
+        model.machineStates[aliasA.id] = .live
+        model.machineStates[aliasB.id] = .live
+        model.workspaces = (
+            DemoData.workspaces.map { $0.stamped(machineID: aliasA.id) }
+                + DemoData.workspaces.map { $0.stamped(machineID: aliasB.id) }
+        )
+        model.chatTabColors.assign(.sage, to: "\(aliasA.id)|w1:t1")
+        model.chatTabColors.assign(.rose, to: "\(aliasB.id)|w1:t1")
+
+        let transportA = ChatTabColorTestTransport(serverID: "srv_shared")
+        let transportB = ChatTabColorTestTransport(serverID: "srv_shared")
+        let publisher = makePublisher(
+            defaults: defaults,
+            storage: RecordingChatTabColorSecretStorage(),
+            transport: transportA,
+            transportFactory: { configuration in
+                configuration.baseURL.host == "alias-b.example.invalid" ? transportB : transportA
+            }
+        )
+        publisher.configure(model: model)
+        publisher.setSharingEnabled(true)
+        try await transportA.waitForCapabilityCount(1)
+        try await transportB.waitForCapabilityCount(1)
+        try await waitForHostPhase(publisher, .ambiguous)
+        #expect(await transportA.publicationList().isEmpty)
+        #expect(await transportB.publicationList().isEmpty)
+
+        // Alias B stops answering after both identities were established. The
+        // remaining reachable alias must not publish its conflicting view just
+        // because the other alias is unavailable.
+        await transportB.setCapabilitiesFailure("Synthetic offline")
+        try await transportB.waitForCapabilityCount(3)
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(await transportA.publicationList().isEmpty)
+        #expect(publisher.hostStates.count == 2)
+        #expect(publisher.hostStates.allSatisfy { $0.phase == .ambiguous })
+
+        // Restoring the alias with matching assignments publishes again.
+        await transportB.setCapabilitiesFailure(nil)
+        model.chatTabColors.assign(.sage, to: "\(aliasB.id)|w1:t1")
+        try await waitForAnyPublication([transportA, transportB])
+        publisher.stopForTesting()
+    }
+
+    @Test("Withdrawal fails over from an offline alias to a reachable one")
+    func withdrawalFailsOverBetweenAliases() async throws {
+        let (suite, defaults) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let aliasA = HerdrMachine(id: "alias-a", name: "Alias A", urlString: "https://alias-a.example.invalid")
+        let aliasB = HerdrMachine(id: "alias-b", name: "Alias B", urlString: "https://alias-b.example.invalid")
+        let model = makeModel(defaults: defaults, machines: [aliasA, aliasB])
+        model.machineStates[aliasA.id] = .live
+        model.machineStates[aliasB.id] = .live
+        model.workspaces = (
+            DemoData.workspaces.map { $0.stamped(machineID: aliasA.id) }
+                + DemoData.workspaces.map { $0.stamped(machineID: aliasB.id) }
+        )
+
+        let transportA = ChatTabColorTestTransport(serverID: "srv_shared")
+        let transportB = ChatTabColorTestTransport(serverID: "srv_shared")
+        // Alias B starts offline, so the first publication can only go through
+        // the first configured alias, A.
+        await transportB.setCapabilitiesFailure("Synthetic offline")
+        let publisher = makePublisher(
+            defaults: defaults,
+            storage: RecordingChatTabColorSecretStorage(),
+            transport: transportA,
+            transportFactory: { configuration in
+                configuration.baseURL.host == "alias-b.example.invalid" ? transportB : transportA
+            }
+        )
+        publisher.configure(model: model)
+        publisher.setSharingEnabled(true)
+        try await transportA.waitForPublicationCount(1)
+        #expect(await transportB.publicationList().isEmpty)
+
+        // B returns and authenticates as the same companion. The unchanged
+        // snapshot stays a heartbeat, so A is still the last transport used.
+        await transportB.setCapabilitiesFailure(nil)
+        try await transportB.waitForCapabilityCount(2)
+        try await Task.sleep(for: .milliseconds(40))
+        #expect(await transportB.publicationList().isEmpty)
+
+        // A goes offline before the user turns sharing off. The clear must fail
+        // over to B instead of being stuck on the unreachable first alias.
+        await transportA.setCapabilitiesFailure("Synthetic offline")
+        publisher.setSharingEnabled(false)
+        try await transportB.waitForPublicationCount(1)
+        try await waitForPublicationRecord(publisher) { !$0.enabled && !$0.pendingClear }
+        let lastPublished = await transportB.lastPublication()
+        let clear = try #require(lastPublished)
+        #expect(clear.request.enabled == false)
+        #expect(clear.request.tabs.isEmpty)
+        #expect(clear.request.revision > 1)
+        publisher.stopForTesting()
+    }
+
+    @Test("A failed publication waits for the retry backoff before trying again")
+    func publicationFailureBacksOff() async throws {
+        let (suite, defaults) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let machine = HerdrMachine(id: "synthetic-a", name: "Synthetic A", urlString: "https://synthetic-a.example.invalid")
+        let model = makeModel(defaults: defaults, machines: [machine])
+        model.machineStates[machine.id] = .live
+        model.workspaces = DemoData.workspaces.map { $0.stamped(machineID: machine.id) }
+
+        let transport = ChatTabColorTestTransport(serverID: "srv_synthetic_alpha")
+        await transport.setPublicationFailure("Synthetic publication failure")
+        let publisher = makePublisher(
+            defaults: defaults,
+            storage: RecordingChatTabColorSecretStorage(),
+            transport: transport,
+            retryBase: .milliseconds(150),
+            retryMaximum: .milliseconds(150)
+        )
+        publisher.configure(model: model)
+        publisher.setSharingEnabled(true)
+        try await transport.waitForPublicationCount(1)
+        try await waitForHostPhase(publisher, .failed)
+        try await Task.sleep(for: .milliseconds(40))
+        #expect(await transport.publicationList().count == 1)
+
+        await transport.setPublicationFailure(nil)
+        try await transport.waitForPublicationCount(2)
+        let publication = try await requireLastPublication(transport)
+        #expect(publication.request.enabled)
+        try await waitForHostPhase(publisher, .shared)
         publisher.stopForTesting()
     }
 
@@ -585,6 +742,9 @@ struct ChatTabColorPublisherTests {
             configuredMachines: machines
         )
         model.hasCompletedSetup = true
+        for machine in machines {
+            model.confirmTopologyForTesting(machineID: machine.id)
+        }
         return model
     }
 
@@ -593,6 +753,8 @@ struct ChatTabColorPublisherTests {
         storage: RecordingChatTabColorSecretStorage,
         transport: ChatTabColorTestTransport,
         heartbeatInterval: TimeInterval = 20,
+        retryBase: Duration = .milliseconds(1),
+        retryMaximum: Duration = .milliseconds(4),
         now: @escaping () -> Date = Date.init,
         transportFactory: ChatTabColorPublisher.TransportFactory? = nil
     ) -> ChatTabColorPublisher {
@@ -601,8 +763,8 @@ struct ChatTabColorPublisherTests {
             secretStorage: storage,
             pollInterval: .milliseconds(5),
             heartbeatInterval: heartbeatInterval,
-            retryBase: .milliseconds(1),
-            retryMaximum: .milliseconds(4),
+            retryBase: retryBase,
+            retryMaximum: retryMaximum,
             allowsPublicationInUnitTests: true,
             now: now,
             transportFactory: transportFactory ?? { _ in transport }
@@ -664,6 +826,37 @@ struct ChatTabColorPublisherTests {
 }
 
 // MARK: - Deterministic doubles
+
+/// Deterministic fleet response used only to confirm a machine's topology
+/// through the real `HerdrAppModel.refresh` path.
+final class ChatTabColorTopologyURLProtocol: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url,
+              let response = HTTPURLResponse(
+                  url: url,
+                  statusCode: 200,
+                  httpVersion: nil,
+                  headerFields: nil
+              )
+        else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+        let data = Data(
+            """
+            {"ok":true,"workspaces":[{"workspace_id":"w1","number":1,"label":"Workspace","focused":true,"pane_count":1,"tab_count":0,"active_tab_id":"","agent_status":"idle","panes":[{"pane_id":"w1:p1","workspace_id":"w1","tab_id":"","focused":true,"agent_status":"idle","revision":1}]}],"alerts":[]}
+            """.utf8
+        )
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
 
 final class MutableClock {
     var now: Date

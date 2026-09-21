@@ -16,6 +16,7 @@ from typing import Any, Callable, Optional
 
 from .chat_tab_colors import (
     CHAT_TAB_STALE_SECONDS,
+    MAX_CHAT_TAB_PUBLICATION_BYTES,
     MAX_CHAT_TAB_PUBLISHERS,
     disable_relay_actions,
     disabled_action_reason,
@@ -900,8 +901,8 @@ class ControlStore:
         tabs = payload.get("tabs") if enabled else []
         if not isinstance(tabs, list):
             tabs = []
-        payload_json = canonical_json(payload)
-        tabs_json = canonical_json(tabs)
+        payload_json = canonical_json(payload, maximum_bytes=MAX_CHAT_TAB_PUBLICATION_BYTES)
+        tabs_json = canonical_json(tabs, maximum_bytes=MAX_CHAT_TAB_PUBLICATION_BYTES)
         with self._lock:
             self._db.execute("BEGIN IMMEDIATE")
             try:

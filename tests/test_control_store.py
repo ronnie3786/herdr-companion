@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from herdr_harness.chat_tab_colors import publication_payload
 from herdr_harness.control_store import ControlStore
-from herdr_harness.control_validation import ControlError, target, validate_json
+from herdr_harness.control_validation import ControlError, canonical_json, target, validate_json
 
 
 CLIENT_ID = "ui_11111111-1111-4111-8111-111111111111"
@@ -344,6 +344,16 @@ class ControlStoreTests(unittest.TestCase):
         ):
             with self.subTest(invalid=invalid), self.assertRaises(ControlError):
                 target({"kind": "pane", "serverURL": invalid})
+
+    def test_canonical_json_bounds_are_call_site_specific(self):
+        large = {"tabs": [{"label": "x" * 1000} for _ in range(80)]}
+        # The generic control budget is unchanged: only the publication path
+        # may opt into the documented 512 KiB contract.
+        with self.assertRaises(ControlError) as default_limit:
+            canonical_json(large)
+        self.assertEqual(default_limit.exception.code, "body_too_large")
+        serialized = canonical_json(large, maximum_bytes=512 * 1024)
+        self.assertGreater(len(serialized.encode("utf-8")), 64 * 1024)
 
     def test_capacity_never_evicts_young_operation_dedupe_receipts(self):
         clock = MutableClock()

@@ -922,13 +922,24 @@ class HerdrService:
         }
         if include_chat_tab_colors:
             publications: list[dict] = []
-            store = getattr(self, "_control_store", None)
-            if store is not None:
+            # Reading the durable store here is what lets a restarted companion
+            # keep serving stale last-known metadata while the publisher is
+            # offline. A store created by this first read with nothing in it
+            # leaves the snapshot's existing shape untouched, exactly as before.
+            if hasattr(self, "_control_store"):
+                with self._lock:
+                    store_preexisting = self._control_store is not None
+                store = self.control_store
                 publications = store.chat_tab_color_publications()
-            # Projection only mutates this response's copy and never imports a
-            # publisher's values into local state. A server that has never used
-            # agent control leaves the snapshot's existing shape untouched.
-            project_snapshot(enriched, publications, include_empty=store is not None)
+                # Projection only mutates this response's copy and never imports
+                # a publisher's values into local state. A companion that has
+                # already initialized agent-control state reports an empty
+                # array per tab.
+                project_snapshot(
+                    enriched,
+                    publications,
+                    include_empty=store_preexisting or bool(publications),
+                )
             response["chatTabColorSources"] = sources_response(publications)
         return response
 

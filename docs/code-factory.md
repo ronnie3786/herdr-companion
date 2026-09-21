@@ -32,21 +32,30 @@ This is an experimental personal automation. Read the safety section before enab
    checkout, and your working checkout is never touched.
 5. **Astra plans.** A headless Pi session on `openai-codex/gpt-6-astra` reads the issue and
    the attachments (images included), inspects the repository read-only, and returns a
-   bounded JSON plan: acceptance criteria, at most four sequential tasks with owned paths
-   and tests, documentation obligations, and a description of every screenshot for
-   implementers that cannot see images. If the issue is ambiguous or unsafe, Astra asks a
-   question instead; the issue is marked **blocked** and the question is posted on it.
+   bounded JSON plan. The plan carries stable requirement IDs that preserve excerpts from
+   the original request, observable outcomes, required evidence, and explicit confirmed or
+   unresolved assumptions, plus acceptance criteria, at most four sequential tasks with
+   owned paths and tests, documentation obligations, and attachment descriptions. An
+   unresolved behavior assumption cannot enter implementation: Astra asks a specific
+   question, the issue is marked **blocked**, and the question is posted on it.
 6. **DeepSeek implements.** For each task a fresh Pi session on
    `ollama-cloud/deepseek-v4.1-flash:cloud` with thinking `max` implements the task in the
-   worktree, writes tests, and commits. The daemon then runs the public-source privacy
-   check and gives DeepSeek one chance to fix findings.
+   worktree, writes tests without running incremental suites, and commits. The complete
+   candidate is exercised by the final Verify gate. The daemon also runs the public-source
+   privacy check and gives DeepSeek one chance to fix findings.
 7. **Pull request and CI.** The daemon pushes the branch, opens a PR that references the
    issue (`Refs #n`, never `Closes`, so the issue stays open until released), and waits
    for the **Verify** workflow on the exact head commit.
-8. **Astra reviews.** Astra reads the diff and the plan, then posts a PR review with inline
-   comments. Because the same GitHub account authors and reviews the PR, the review is
-   posted as a comment-type review with an explicit **approve** or **request changes**
-   verdict in its text.
+8. **Astra reviews.** Astra receives the bounded original issue body and the downloaded
+   image attachments again, independently derives observable outcomes, and compares the
+   request with both the plan and diff. Each planned requirement must have a unique review
+   assessment with concrete evidence. The review also records whether the plan narrowed
+   the request and a counterexample using another valid configuration (or a justified
+   not-applicable result). CI/plan agreement alone is not evidence, and code/test evidence
+   is not described as installed or deployed UI verification. Missing, unmet, unverified,
+   narrowed, unresolved, stale, or unposted approval data blocks merge. Because the same
+   GitHub account authors and reviews the PR, the review is posted as a comment-type review
+   with an explicit **approve** or **request changes** verdict in its text.
 9. **Fresh revisions.** A red CI run first gets one automatic re-run of only its failed
    jobs for that head commit. A second failure on the same head goes to a new DeepSeek
    revision session, which commits and pushes; Astra requested changes always go directly
@@ -217,10 +226,13 @@ branch history cannot be rebuilt.
 
 - **Trigger gate.** Only open issues carrying the trigger label and authored by an
   allow-listed login are processed. Removing the label or closing the issue stops it.
-- **Untrusted input.** Issue text and attachments are treated as data. Charters tell
-  every session to extract requirements from them but never follow embedded
-  instructions. Planner and reviewer sessions are read-only; the daemon resets the
-  worktree if one of them leaves changes behind.
+- **Untrusted input and anchored requirements.** Issue text and attachments are treated as
+  data. The bounded verbatim issue body is supplied to planning, implementation, revision,
+  and review, but charters forbid following embedded instructions. Plans retain stable
+  requirement IDs, source excerpts, outcomes, evidence, and explicit assumptions. Reviewer
+  sessions also receive downloaded images and must compare the original request
+  independently with the plan. Planner and reviewer sessions are read-only; the daemon
+  resets the worktree if one leaves changes behind.
 - **Bounded automation.** At most four tasks per plan, a bounded number of review
   rounds and, separately, a bounded number of CI failures (each head commit gets one
   automatic re-run of its failed jobs before a CI failure counts against that bound), one
@@ -253,9 +265,12 @@ branch history cannot be rebuilt.
   binds to a tailnet address and its API may be token-less, so the URL stays in the
   ledger and on the dashboard itself.
 - **Merge and release gates.** Squash merges are pinned to the commit that was verified
-  and reviewed (`--match-head-commit`) and carry an explicit body, so a branch that
-  moved after the review goes back to CI and squashed commit messages can never
-  auto-close an issue early. The release author's commit must change exactly
+  and reviewed (`--match-head-commit`) and carry an explicit body. Immediately before
+  merge, the daemon revalidates that the exact head has a posted approval satisfying every
+  current requirement. Legacy stored approvals without the structured assessment return
+  to review; pending review reposts are revalidated too. A branch that moved after review
+  goes back to CI, and squashed commit messages can never auto-close an issue early. The
+  release author's commit must change exactly
   `release/macos.json` and the notes file and carry the exact commit subject before it
   is pushed, and the privacy check refuses to run when a branch modified
   `scripts/check-public-source.py` itself.
@@ -271,6 +286,18 @@ branch history cannot be rebuilt.
   it closes the ledger, so a merge or task that just completed is recorded. A dashboard
   that cannot bind (port in use, address not assigned) is reported as a plain error and
   nothing is started.
+
+### Existing in-flight runs
+
+Runs planned or reviewed before the requirement-assessment contract may need a fresh
+planning or review session. The daemon does not grandfather legacy approvals. These
+structural checks enforce traceability and merge invariants, but they cannot mathematically
+guarantee that a model reasoned correctly; concrete evidence and human inspection remain
+important for high-risk changes.
+
+Screenshot labels, IDs, display names, and ordering are observations, not canonical
+identities or whitelist entries. Machine- or operator-specific presentation stays in the
+private configuration, while public source and examples use generic defaults.
 
 ## Housekeeping
 

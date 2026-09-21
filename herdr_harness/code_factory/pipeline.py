@@ -1168,11 +1168,18 @@ class CodeFactory:
 
     @staticmethod
     def _pending_review(plan: Mapping[str, Any], head: str) -> dict[str, Any] | None:
-        """A validated review for ``head`` whose GitHub post failed, so a retry reposts it instead of re-reviewing."""
+        """A currently valid review for ``head`` whose GitHub post failed."""
         review = plan.get("last_review")
-        if isinstance(review, dict) and review and plan.get("last_review_head") == head and plan.get("last_review_posted") is False:
-            return dict(review)
-        return None
+        if not (
+            isinstance(review, dict) and review and plan.get("last_review_head") == head
+            and plan.get("last_review_posted") is False
+        ):
+            return None
+        try:
+            return prompts.validate_review(review, plan)
+        except CodeFactoryError:
+            # Legacy/incomplete stored reviews are never trusted or reposted.
+            return None
 
     def _stage_review(self, issue: dict[str, Any]) -> str | None:
         number = issue["number"]
@@ -1183,6 +1190,18 @@ class CodeFactory:
         paths = self._paths(number)
         cwd = self._ensure_worktree(issue)
         plan = self._plan_for(issue)
+        if not (
+            isinstance(plan.get("requirements_traceability"), list)
+            and plan.get("requirements_traceability")
+            and isinstance(plan.get("assumptions"), list)
+        ):
+            plan.pop("progress", None)
+            self._save_plan(issue, plan, paths)
+            self._store.add_event(
+                number, "review", "warning",
+                "The stored plan predates requirement traceability; returning to planning",
+            )
+            return "plan"
         review = self._pending_review(plan, head)
         if review is not None:
             round_number = max(1, int(issue["reviewRound"] or 0))
@@ -1194,19 +1213,26 @@ class CodeFactory:
                 return None
             self._store.update_issue(number, reviewRound=round_number)
             view = self._issue_view(issue, paths)
+            descriptors = [
+                prompts.attachment_descriptor(file)
+                for file in sorted(paths.attachments.iterdir()) if file.is_file()
+            ]
+            images = [item["path"] for item in descriptors if item["isImage"]]
             self._git.fetch()
             if head and self._git.head(cwd) != head:
                 self._git.reset_hard(cwd, head)
             diff = self._github.pull_request_diff(pr_number)
             result = self._session(
                 issue_number=number, role="reviewer", model=self._settings.planner_model, thinking=self._settings.planner_thinking,
-                prompt=prompts.reviewer_prompt(view, plan, {"number": pr_number, "url": issue.get("prUrl")}, diff,
-                                               issue.get("ciStatus"), plan.get("ci_log"), round_number),
+                prompt=prompts.reviewer_prompt(
+                    view, plan, {"number": pr_number, "url": issue.get("prUrl")}, diff,
+                    issue.get("ciStatus"), plan.get("ci_log"), round_number, descriptors,
+                ),
                 cwd=cwd, name=f"issue-{number} review {round_number}", charter=prompts.REVIEWER_CHARTER,
-                tools=prompts.REVIEWER_TOOLS, paths=paths,
+                tools=prompts.REVIEWER_TOOLS, paths=paths, attachments=images,
             )
             self._restore_clean_worktree(number, "review", cwd, "reviewer")
-            review = prompts.validate_review(prompts.extract_json_block(result.text))
+            review = prompts.validate_review(prompts.extract_json_block(result.text), plan)
             # Persist before posting: a gh failure must not discard a finished Astra round.
             plan.update(last_review=review, last_review_head=head, last_review_posted=False)
             self._save_plan(issue, plan, paths)
@@ -1217,6 +1243,19 @@ class CodeFactory:
         self._save_plan(issue, plan, paths)
         self._store.add_event(number, "review", "success" if review["verdict"] == "approve" else "warning",
                               f"Review round {round_number}: {review['verdict']}", {"blocking": review["blocking"][:20]})
+        if review["needs_human"]:
+            question = review["human_question"] or "The reviewer needs a behavior decision."
+            self._comment(number, "review", prompts.human_question_comment(question))
+            self._block(number, "review", "human_question", question)
+            return None
+        if review["plan_adjustment_assessment"]["narrows_request"]:
+            plan.pop("progress", None)
+            self._save_plan(issue, plan, paths)
+            self._store.add_event(
+                number, "review", "warning",
+                "The review found that the plan narrowed the original request; returning to planning",
+            )
+            return "plan"
         return "merge" if review["verdict"] == "approve" else "revise"
 
     def _stage_revise(self, issue: dict[str, Any]) -> str | None:
@@ -1253,6 +1292,24 @@ class CodeFactory:
         if self._head_moved(number, "merge", pr_number, head):
             return "verify"
         plan = self._plan_for(issue)
+        stored_review = plan.get("last_review")
+        try:
+            review = prompts.validate_review(stored_review, plan)
+        except CodeFactoryError as exc:
+            self._store.add_event(
+                number, "merge", "warning",
+                f"Stored approval is no longer valid ({_error_text(exc)}); returning to review",
+            )
+            return "review"
+        if (
+            review["verdict"] != "approve" or plan.get("last_review_head") != head
+            or plan.get("last_review_posted") is not True
+        ):
+            self._store.add_event(
+                number, "merge", "warning",
+                "No posted approval for the exact pull request head; returning to review",
+            )
+            return "review"
         merged = self._github.merge_pull_request(
             pr_number,
             subject=self._public(prompts.pull_request_title(plan, issue)),

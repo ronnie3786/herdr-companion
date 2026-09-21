@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import SwiftUI
 import Testing
 @testable import herdr_harness_mac
 
@@ -264,6 +266,151 @@ struct PRReviewWindowTests {
         #expect(await client.capabilitiesCallCount == 1)
     }
 
+    @Test("A seeded file survives a mounted files view while its snapshot is loading")
+    func seedSurvivesAsynchronousLoading() async throws {
+        let gate = SyntheticPRReviewGate()
+        let client = SyntheticPRReviewWindowClient(reviewGate: gate)
+        let session = PRReviewWindowSession(
+            target: PRReviewWindowTarget(machineID: "machine-a", reviewID: PRReviewDemo.reviewID)
+        )
+        let seededPath = "Sources/Models/Seed.swift"
+        let seed = PRReviewWindowSeed(
+            tab: .files,
+            selectedPath: seededPath,
+            viewMode: .github,
+            impactFilter: .all,
+            hideViewed: false,
+            search: "",
+            showArchived: false
+        )
+
+        let activation = Task {
+            await session.activate(identity: "machine-a", hostState: .available, client: client, seed: seed)
+        }
+        await gate.waitUntilWaiting()
+
+        // The summaries are already published while the selected snapshot is
+        // still in flight, so the mounted files view sees an empty list first.
+        #expect(session.store.snapshot == nil)
+        #expect(session.store.selectedReview != nil)
+        let window = try await mountFilesView(session.store)
+        defer { window.close() }
+        try await pump(window)
+
+        await gate.release()
+        await activation.value
+        try await pump(window)
+
+        #expect(session.store.selectedPath == seededPath)
+        #expect(session.store.snapshot?.review.id == PRReviewDemo.reviewID)
+    }
+
+    @Test("A re-activation swaps clients without replaying the seed or losing the chosen file")
+    func reconnectionPreservesPresentationAndConsumesSeed() async {
+        let first = SyntheticPRReviewWindowClient()
+        let second = SyntheticPRReviewWindowClient()
+        let session = PRReviewWindowSession(
+            target: PRReviewWindowTarget(machineID: "machine-a", reviewID: PRReviewDemo.reviewID)
+        )
+        let seed = PRReviewWindowSeed(
+            tab: .context,
+            selectedPath: "Sources/Models/Seed.swift",
+            viewMode: .guided,
+            impactFilter: .high,
+            hideViewed: true,
+            search: "Seed",
+            showArchived: true
+        )
+
+        await session.activate(identity: "first", hostState: .available, client: first, seed: seed)
+        #expect(session.store.selectedPath == "Sources/Models/Seed.swift")
+
+        // User-owned state after the first activation must survive a
+        // credential/URL change rather than resetting to the original seed.
+        session.store.selectedPath = "Sources/Storage/SeedStore.swift"
+        session.store.tab = .agents
+
+        await session.activate(identity: "second", hostState: .available, client: second, seed: seed)
+
+        #expect(session.store.selectedPath == "Sources/Storage/SeedStore.swift")
+        #expect(session.store.tab == .agents)
+        #expect(session.store.viewMode == .guided)
+        #expect(session.store.impactFilter == .high)
+        #expect(session.store.search == "Seed")
+        #expect(session.store.showArchived == true)
+        #expect(session.store.snapshot?.review.id == PRReviewDemo.reviewID)
+        #expect(await first.reviewIDs == [PRReviewDemo.reviewID])
+        #expect(await second.reviewIDs == [PRReviewDemo.reviewID])
+
+        await session.store.loadDiff(for: "Sources/Storage/SeedStore.swift")
+        #expect(await second.diffPaths == ["Sources/Storage/SeedStore.swift"])
+        #expect(await first.diffPaths.isEmpty)
+    }
+
+    @Test("Stopping a session rejects its late snapshot and drops document transport")
+    func stopRejectsLateSnapshotAndTransport() async throws {
+        let gate = SyntheticPRReviewGate()
+        let client = SyntheticPRReviewWindowClient(reviewGate: gate)
+        let cache = PRReviewDocumentCache(
+            rootURL: FileManager.default.temporaryDirectory
+                .appending(path: "PRReviewWindowTests-\(UUID().uuidString)")
+        )
+        let session = PRReviewWindowSession(
+            target: PRReviewWindowTarget(machineID: "machine-a", reviewID: PRReviewDemo.reviewID),
+            store: PRReviewStore(documentCache: cache)
+        )
+
+        let activation = Task {
+            await session.activate(identity: "machine-a", hostState: .available, client: client, seed: nil)
+        }
+        await gate.waitUntilWaiting()
+        session.stop()
+        await gate.release()
+        await activation.value
+
+        // The snapshot arrived after the stop and must not be installed.
+        #expect(session.store.snapshot == nil)
+        #expect(await client.reviewIDs == [PRReviewDemo.reviewID])
+
+        session.store.selectedPath = "Sources/Models/Seed.swift"
+        await session.store.loadDiff(for: session.store.selectedPath)
+        #expect(await client.diffPaths.isEmpty)
+
+        var document = PRReviewDemo.snapshot().documents[0]
+        document.id = "prdoc_after_stop"
+        document.contentHash = "after-stop"
+        await #expect(throws: (any Error).self) {
+            try await session.store.localURL(for: document)
+        }
+        #expect(await client.downloadRequests.isEmpty)
+    }
+
+    @Test("A host that becomes unavailable drops the old transport and refuses late snapshots")
+    func unavailableTransitionInvalidatesStore() async {
+        let gate = SyntheticPRReviewGate()
+        let client = SyntheticPRReviewWindowClient(reviewGate: gate)
+        let session = PRReviewWindowSession(
+            target: PRReviewWindowTarget(machineID: "machine-a", reviewID: PRReviewDemo.reviewID)
+        )
+
+        let activation = Task {
+            await session.activate(identity: "available", hostState: .available, client: client, seed: nil)
+        }
+        await gate.waitUntilWaiting()
+
+        await session.activate(identity: "removed", hostState: .missingHost, client: nil, seed: nil)
+        #expect(session.hostState == .missingHost)
+        #expect(!session.canControl)
+
+        await gate.release()
+        await activation.value
+
+        #expect(session.store.snapshot == nil)
+        session.store.selectedPath = "Sources/Models/Seed.swift"
+        await session.store.loadDiff(for: session.store.selectedPath)
+        #expect(await client.diffPaths.isEmpty)
+    }
+
     @Test("Polling starts with activation and stops on close")
     func pollingLifecycle() async {
         let session = PRReviewWindowSession(
@@ -328,6 +475,39 @@ struct PRReviewWindowTests {
         #expect(markdown != otherDocumentKey)
         #expect(markdown == PRReviewDocumentWindow.reuseKey(kind: "markdown", document: document, store: firstHost))
     }
+
+    // MARK: Mounted files view helpers
+
+    private func mountFilesView(_ store: PRReviewStore) async throws -> NSWindow {
+        let size = CGSize(width: 980, height: 620)
+        let hosting = NSHostingView(rootView:
+            PRReviewFilesView(store: store)
+                .frame(width: size.width, height: size.height)
+                .environment(\.colorScheme, .dark)
+        )
+        hosting.frame = CGRect(origin: .zero, size: size)
+        let window = NSWindow(
+            contentRect: hosting.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        window.alphaValue = 0
+        window.orderFrontRegardless()
+        return window
+    }
+
+    private func pump(_ window: NSWindow) async throws {
+        guard let hosting = window.contentView else { return }
+        for _ in 0..<8 {
+            hosting.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(25))
+        }
+    }
 }
 
 /// A request gate for deterministic cancellation and late-response tests.
@@ -362,15 +542,19 @@ actor SyntheticPRReviewWindowClient: PRReviewClient {
     private(set) var reviewIDs: [String] = []
     private(set) var diffPaths: [String] = []
     private let capabilitiesGate: SyntheticPRReviewGate?
+    private let reviewGate: SyntheticPRReviewGate?
     private let capabilitiesError: APIError?
     private let reviewError: APIError?
+    private(set) var downloadRequests: [String] = []
 
     init(
         capabilitiesGate: SyntheticPRReviewGate? = nil,
+        reviewGate: SyntheticPRReviewGate? = nil,
         capabilitiesError: APIError? = nil,
         reviewError: APIError? = nil
     ) {
         self.capabilitiesGate = capabilitiesGate
+        self.reviewGate = reviewGate
         self.capabilitiesError = capabilitiesError
         self.reviewError = reviewError
     }
@@ -395,6 +579,7 @@ actor SyntheticPRReviewWindowClient: PRReviewClient {
     }
     func prReview(id: String) async throws -> PRReviewSnapshot {
         reviewIDs.append(id)
+        if let reviewGate { await reviewGate.wait() }
         if let reviewError { throw reviewError }
         return PRReviewDemo.snapshot(for: id)
     }
@@ -460,7 +645,10 @@ actor SyntheticPRReviewWindowClient: PRReviewClient {
         documentID: String,
         expectedByteSize: Int64,
         to destinationURL: URL
-    ) async throws { throw APIError.invalidResponse }
+    ) async throws {
+        downloadRequests.append(documentID)
+        throw APIError.invalidResponse
+    }
     func prReviewEvents(id: String, after: Int?) async throws -> [PRReviewEvent] { [] }
 
     private func decode<T: Decodable>(_ string: String) throws -> T {

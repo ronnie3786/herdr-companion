@@ -416,11 +416,10 @@ struct PRReviewRenderTests {
 
         let addEntry = try #require(render.textView.lineIndex.entries.first { $0.kind == "add" })
         let delEntry = try #require(render.textView.lineIndex.entries.first { $0.kind == "del" })
-        let graphite = (red: 32.0 / 255, green: 33.0 / 255, blue: 44.0 / 255)
-        let addLine = composite(HerdrDiffStyle.addition, opacity: HerdrDiffStyle.lineOpacity, over: graphite)
-        let delLine = composite(HerdrDiffStyle.deletion, opacity: HerdrDiffStyle.lineOpacity, over: graphite)
-        let addGutter = composite(HerdrDiffStyle.addition, opacity: HerdrDiffStyle.gutterOpacity, over: addLine)
-        let delGutter = composite(HerdrDiffStyle.deletion, opacity: HerdrDiffStyle.gutterOpacity, over: delLine)
+        let addLine = try components(HerdrDiffStyle.lineColor(for: "add"))
+        let delLine = try components(HerdrDiffStyle.lineColor(for: "del"))
+        let addGutter = try components(HerdrDiffStyle.gutterColor(for: "add"))
+        let delGutter = try components(HerdrDiffStyle.gutterColor(for: "del"))
         let addEmphasis = composite(HerdrDiffStyle.addition, opacity: HerdrDiffStyle.emphasisOpacity, over: addLine)
         let delEmphasis = composite(HerdrDiffStyle.deletion, opacity: HerdrDiffStyle.emphasisOpacity, over: delLine)
 
@@ -710,6 +709,18 @@ extension PRReviewRenderTests {
             opacity * Double(color.red) / 255 + (1 - opacity) * base.red,
             opacity * Double(color.green) / 255 + (1 - opacity) * base.green,
             opacity * Double(color.blue) / 255 + (1 - opacity) * base.blue
+        )
+    }
+
+    fileprivate func components(
+        _ color: NSColor?,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) throws -> (red: Double, green: Double, blue: Double) {
+        let resolved = try #require(color?.usingColorSpace(.sRGB), sourceLocation: sourceLocation)
+        return (
+            red: Double(resolved.redComponent),
+            green: Double(resolved.greenComponent),
+            blue: Double(resolved.blueComponent)
         )
     }
 

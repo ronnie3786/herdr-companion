@@ -151,7 +151,8 @@ struct PRReviewWindowRoot: View {
         return PRReviewWindowHostProbe(
             isDemoTarget: isDemoTarget,
             machineExists: machineExists,
-            configurationURL: configuration?.baseURL.absoluteString
+            configurationURL: configuration?.baseURL.absoluteString,
+            connectionGeneration: model.connectionGeneration
         )
     }
 
@@ -168,14 +169,20 @@ struct PRReviewWindowRoot: View {
 }
 
 /// Equality of this probe is what re-activates a window: a pinned host that is
-/// removed and later re-added changes the probe, while the main window's host
-/// selector, selection, or chat navigation does not.
-private struct PRReviewWindowHostProbe: Equatable {
+/// removed and later re-added changes the probe, and a credential or URL edit
+/// bumps `connectionGeneration`, while the main window's host selector,
+/// selection, or chat navigation does not.
+///
+/// The identifier intentionally carries no credential: the pinned connection
+/// is compared through its presence, URL, and the model's configuration
+/// revision, so the token itself never leaves the authenticated configuration.
+struct PRReviewWindowHostProbe: Equatable {
     let isDemoTarget: Bool
     let machineExists: Bool
     let configurationURL: String?
+    let connectionGeneration: Int
 
     var identifier: String {
-        "\(isDemoTarget)|\(machineExists)|\(configurationURL ?? "-")"
+        "\(isDemoTarget)|\(machineExists)|\(configurationURL ?? "-")|\(connectionGeneration)"
     }
 }

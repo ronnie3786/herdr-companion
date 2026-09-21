@@ -50,6 +50,8 @@ final class PRReviewWindowSession {
     private(set) var isPolling = false
 
     @ObservationIgnored private var activationIdentity: String?
+    @ObservationIgnored private var hasConfiguredStore = false
+    @ObservationIgnored private var hasAppliedInitialSeed = false
     @ObservationIgnored private var life = 0
     @ObservationIgnored private var pollingTask: Task<Void, Never>?
     @ObservationIgnored private let pollingInterval: @MainActor (PRReviewStore) -> Duration
@@ -73,8 +75,10 @@ final class PRReviewWindowSession {
     /// SwiftUI calls this from a `task(id:)` probe, so re-activations for the
     /// same identity are no-ops and repeated opening of a target never reseeds
     /// presentation or restarts a second polling loop. A different identity
-    /// (a re-added machine, another connection) replaces the store
-    /// configuration and invalidates every in-flight response from the old one.
+    /// (a credential or URL edit, a re-added machine, another connection)
+    /// replaces the transport and invalidates every in-flight response from the
+    /// old one while this window keeps its tab, filters, and selected file. The
+    /// initial seed is consumed once; a reconnection never replays it.
     func activate(
         identity: String,
         hostState: PRReviewWindowHostState,
@@ -87,11 +91,25 @@ final class PRReviewWindowSession {
         stopPolling()
         self.hostState = hostState
 
-        guard hostState.isUsable else { return }
+        guard hostState.isUsable else {
+            // A removed or unconfigured host must not keep the old client
+            // reachable: late responses would install state and a retained
+            // document window would keep downloading through it.
+            store.invalidateConnection()
+            return
+        }
 
-        store.configure(client: client, machineID: target.machineID, demo: hostState == .demo)
-        store.select(target.reviewID)
-        apply(seed)
+        if hasConfiguredStore {
+            store.reconnect(client: client, machineID: target.machineID, demo: hostState == .demo)
+        } else {
+            hasConfiguredStore = true
+            store.configure(client: client, machineID: target.machineID, demo: hostState == .demo)
+            store.select(target.reviewID)
+            if !hasAppliedInitialSeed {
+                hasAppliedInitialSeed = true
+                apply(seed)
+            }
+        }
 
         let generation = life
         await store.refresh()
@@ -140,12 +158,14 @@ final class PRReviewWindowSession {
         }
     }
 
-    /// Cancels the loop and invalidates any in-flight activation so a window
-    /// that is closing cannot install a late response or restart polling.
+    /// Cancels the loop, invalidates any in-flight request, and drops access
+    /// to the transport so a window that is closing cannot install a late
+    /// response, restart polling, or download through its old client.
     func stop() {
         life &+= 1
         activationIdentity = nil
         stopPolling()
+        store.invalidateConnection()
     }
 
     private func stopPolling() {

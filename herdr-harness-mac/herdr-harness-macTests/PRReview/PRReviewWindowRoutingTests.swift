@@ -77,6 +77,73 @@ struct PRReviewWindowRoutingTests {
         #expect(model.prReviewConfiguration(pinnedMachineID: "review-host") != nil)
     }
 
+    @Test("A token-only credential update re-activates a pinned window without exposing the token")
+    func tokenOnlyUpdateChangesPinnedIdentity() async throws {
+        let defaults = try testDefaults()
+        let credentials = TestCredentialStore()
+        credentials.values["api-token.review-host"] = "synthetic-before-token"
+        let model = HerdrAppModel(
+            credentials: credentials,
+            arguments: ["HerdrTests"],
+            userDefaults: defaults,
+            configuredMachines: []
+        )
+        model.machines = [
+            HerdrMachine(id: "review-host", name: "Review", urlString: "https://review-host.example.invalid"),
+        ]
+        let target = PRReviewWindowTarget(machineID: "review-host", reviewID: PRReviewDemo.reviewID)
+        func probe() -> PRReviewWindowHostProbe {
+            PRReviewWindowHostProbe(
+                isDemoTarget: model.isDemoMode && target.machineID == "demo",
+                machineExists: model.machines.contains { $0.id == target.machineID },
+                configurationURL: model.prReviewConfiguration(pinnedMachineID: target.machineID)?.baseURL.absoluteString,
+                connectionGeneration: model.connectionGeneration
+            )
+        }
+
+        let before = probe()
+        let first = SyntheticPRReviewWindowClient()
+        let session = PRReviewWindowSession(target: target)
+        await session.activate(identity: before.identifier, hostState: .available, client: first, seed: nil)
+        #expect(session.store.snapshot?.review.id == PRReviewDemo.reviewID)
+        #expect(await first.reviewIDs == [PRReviewDemo.reviewID])
+
+        #expect(model.updateMachine(
+            id: "review-host",
+            name: "Review",
+            urlString: "https://review-host.example.invalid",
+            token: "synthetic-after-token"
+        ))
+        let after = probe()
+
+        // A token-only edit keeps the same URL and machine, so the activation
+        // identity must change through the configuration revision instead.
+        #expect(before.machineExists == after.machineExists)
+        #expect(before.configurationURL == after.configurationURL)
+        #expect(before != after)
+        #expect(before.identifier != after.identifier)
+        #expect(!before.identifier.contains("synthetic-before-token"))
+        #expect(!after.identifier.contains("synthetic-after-token"))
+        #expect(PRReviewWindowHostResolver.resolve(
+            isDemoTarget: after.isDemoTarget,
+            targetMachineExists: after.machineExists,
+            hasConfiguration: after.configurationURL != nil
+        ) == .available)
+
+        // Re-activating through the changed probe swaps in a client for the new
+        // credential while keeping the loaded review and its presentation.
+        session.store.selectedPath = "Sources/Models/Seed.swift"
+        let second = SyntheticPRReviewWindowClient()
+        await session.activate(identity: after.identifier, hostState: .available, client: second, seed: nil)
+        #expect(session.store.snapshot?.review.id == PRReviewDemo.reviewID)
+        #expect(session.store.selectedPath == "Sources/Models/Seed.swift")
+        #expect(await second.reviewIDs == [PRReviewDemo.reviewID])
+
+        await session.store.loadDiff(for: "Sources/Models/Seed.swift")
+        #expect(await second.diffPaths == ["Sources/Models/Seed.swift"])
+        #expect(await first.diffPaths.isEmpty)
+    }
+
     @Test("Two active reviews stay open in independent sessions")
     func twoActiveReviewsStayIndependent() async {
         let first = PRReviewWindowSession(

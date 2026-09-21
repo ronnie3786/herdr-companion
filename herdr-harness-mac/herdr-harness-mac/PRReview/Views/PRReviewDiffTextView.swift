@@ -213,8 +213,9 @@ final class PRReviewDiffTextView: NSTextView, NSPopoverDelegate {
         }
     }
 
-    /// Draws a changed row across the document and then overlays the stronger
-    /// line-number gutter for that row.
+    /// Draws a changed row across the document, then paints its line-number
+    /// gutter with the production renderer's separately resolved colour rather
+    /// than layering another translucent tint over the row.
     private func drawRowBackground(
         for entry: PRReviewLineIndex.Entry,
         layoutManager: NSLayoutManager,

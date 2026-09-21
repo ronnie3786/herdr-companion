@@ -130,6 +130,41 @@ final class PRReviewStore {
         error = nil
     }
 
+    /// Replaces the transport for the same machine and review without
+    /// discarding the presentation this window already owns.
+    ///
+    /// A credential, URL, or host re-activation must not reset the open tab,
+    /// filters, or selected file. Bumping the generation rejects every
+    /// in-flight response from the previous client while the refresh reloads
+    /// the same review, so the pinned window keeps its own local state.
+    func reconnect(client: (any PRReviewClient)?, machineID: String?, demo: Bool) {
+        generation &+= 1
+        self.client = client
+        self.machineID = machineID
+        isDemo = demo
+        unconfigured = !demo && (client == nil || machineID == nil)
+        isRefreshing = false
+        loadingDiffIdentity = nil
+        diffLoadError = nil
+        diffLoadErrorIdentity = nil
+    }
+
+    /// Invalidates every in-flight request and drops access to the configured
+    /// client without touching this window's presentation.
+    ///
+    /// A host that becomes unavailable, or a window that stops, must not keep
+    /// a usable transport: a late response from the old client can no longer
+    /// install state, and a retained document window has nothing to retry
+    /// through until the host returns and the window is re-activated.
+    func invalidateConnection() {
+        generation &+= 1
+        client = nil
+        isDemo = false
+        unconfigured = true
+        isRefreshing = false
+        loadingDiffIdentity = nil
+    }
+
     var currentMachineID: String? { machineID }
 
     var selectedReview: PRReviewSummary? {

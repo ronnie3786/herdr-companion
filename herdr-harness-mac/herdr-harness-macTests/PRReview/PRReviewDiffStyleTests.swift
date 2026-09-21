@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Testing
+import WebKit
 @testable import herdr_harness_mac
 
 @MainActor
@@ -8,18 +9,36 @@ import Testing
 struct PRReviewDiffStyleTests {
     // MARK: Shared palette
 
-    @Test("Change colors resolve the production Git RGB values and opacities")
+    @Test("Change colors resolve the production Git mix instead of layering overrides")
     func changeColorsMatchProductionGit() throws {
-        try expect(HerdrDiffStyle.lineColor(for: "add"), red: 46, green: 160, blue: 67, alpha: 0.30)
-        try expect(HerdrDiffStyle.gutterColor(for: "add"), red: 46, green: 160, blue: 67, alpha: 0.42)
+        // Resolved by the pinned @pierre/diffs 1.3.2 dark-scheme formula in
+        // WebKit (the Git segment's engine) over HerdrWebTheme's charcoal
+        // diffs-container for a data-background diff: every row and gutter is
+        // its own color-mix against the surface. The old layering (gutter
+        // opacity over the already-tinted row) would resolve to roughly 0.59
+        // effective change opacity instead.
+        try expect(HerdrDiffStyle.lineColor(for: "add"), red: 35, green: 40, blue: 46, alpha: 1, tolerance: 0.006)
+        try expect(HerdrDiffStyle.gutterColor(for: "add"), red: 35, green: 40, blue: 46, alpha: 1, tolerance: 0.006)
+        try expect(HerdrDiffStyle.lineColor(for: "del"), red: 45, green: 37, blue: 46, alpha: 1, tolerance: 0.006)
+        try expect(HerdrDiffStyle.gutterColor(for: "del"), red: 46, green: 37, blue: 46, alpha: 1, tolerance: 0.006)
         try expect(HerdrDiffStyle.emphasisColor(for: "add"), red: 46, green: 160, blue: 67, alpha: 0.55)
-        try expect(HerdrDiffStyle.lineColor(for: "del"), red: 248, green: 81, blue: 73, alpha: 0.30)
-        try expect(HerdrDiffStyle.gutterColor(for: "del"), red: 248, green: 81, blue: 73, alpha: 0.42)
         try expect(HerdrDiffStyle.emphasisColor(for: "del"), red: 248, green: 81, blue: 73, alpha: 0.55)
         #expect(HerdrDiffStyle.lineColor(for: "context") == nil)
         #expect(HerdrDiffStyle.gutterColor(for: "context") == nil)
         #expect(HerdrDiffStyle.emphasisColor(for: "context") == nil)
         #expect(HerdrDiffStyle.lineColor(for: "hunk") == nil)
+
+        // The gutter is a separate, slightly stronger mix against the base,
+        // never the old translucent layer stacked on the row colour.
+        let addLine = try components(HerdrDiffStyle.lineColor(for: "add"))
+        let addGutter = try components(HerdrDiffStyle.gutterColor(for: "add"))
+        let layeredGutter = composite(
+            HerdrDiffStyle.addition,
+            opacity: HerdrDiffStyle.gutterOpacity,
+            over: addLine
+        )
+        #expect(addGutter.green > addLine.green)
+        #expect(abs(addGutter.green - layeredGutter.green) > 0.05)
     }
 
     // MARK: Intraline emphasis
@@ -252,13 +271,13 @@ struct PRReviewDiffStyleTests {
         let delEntry = try #require(render.textView.lineIndex.entries.first { $0.kind == "del" })
         let contextEntry = try #require(render.textView.lineIndex.entries.first { $0.kind == "context" })
 
-        let graphite = (red: 32.0 / 255, green: 33.0 / 255, blue: 44.0 / 255)
-        let addLine = composite(HerdrDiffStyle.addition, opacity: HerdrDiffStyle.lineOpacity, over: graphite)
-        let delLine = composite(HerdrDiffStyle.deletion, opacity: HerdrDiffStyle.lineOpacity, over: graphite)
-        let addGutter = composite(HerdrDiffStyle.addition, opacity: HerdrDiffStyle.gutterOpacity, over: addLine)
-        let delGutter = composite(HerdrDiffStyle.deletion, opacity: HerdrDiffStyle.gutterOpacity, over: delLine)
+        let addLine = try components(HerdrDiffStyle.lineColor(for: "add"))
+        let delLine = try components(HerdrDiffStyle.lineColor(for: "del"))
+        let addGutter = try components(HerdrDiffStyle.gutterColor(for: "add"))
+        let delGutter = try components(HerdrDiffStyle.gutterColor(for: "del"))
         let addEmphasis = composite(HerdrDiffStyle.addition, opacity: HerdrDiffStyle.emphasisOpacity, over: addLine)
         let delEmphasis = composite(HerdrDiffStyle.deletion, opacity: HerdrDiffStyle.emphasisOpacity, over: delLine)
+        let graphite = try components(NSColor(HerdrTheme.graphite))
 
         let rightEdge = render.textView.bounds.width - 3
         let addRow = try sample(CGPoint(x: rightEdge, y: fragmentRect(for: addEntry, in: render).midY), in: render)
@@ -309,8 +328,7 @@ struct PRReviewDiffStyleTests {
         defer { render.window.close() }
 
         let addEntry = try #require(render.textView.lineIndex.entries.first { $0.kind == "add" })
-        let graphite = (red: 32.0 / 255, green: 33.0 / 255, blue: 44.0 / 255)
-        let addLine = composite(HerdrDiffStyle.addition, opacity: HerdrDiffStyle.lineOpacity, over: graphite)
+        let addLine = try components(HerdrDiffStyle.lineColor(for: "add"))
         let addRow = try sample(
             CGPoint(x: render.textView.bounds.width - 3, y: fragmentRect(for: addEntry, in: render).midY),
             in: render
@@ -330,8 +348,7 @@ struct PRReviewDiffStyleTests {
         defer { render.window.close() }
 
         let delEntry = try #require(render.textView.lineIndex.entries.first { $0.kind == "del" })
-        let graphite = (red: 32.0 / 255, green: 33.0 / 255, blue: 44.0 / 255)
-        let delLine = composite(HerdrDiffStyle.deletion, opacity: HerdrDiffStyle.lineOpacity, over: graphite)
+        let delLine = try components(HerdrDiffStyle.lineColor(for: "del"))
         let delRow = try sample(
             CGPoint(x: render.textView.bounds.width - 3, y: fragmentRect(for: delEntry, in: render).midY),
             in: render
@@ -350,8 +367,7 @@ struct PRReviewDiffStyleTests {
         defer { render.window.close() }
 
         let addEntry = try #require(render.textView.lineIndex.entries.first { $0.kind == "add" })
-        let graphite = (red: 32.0 / 255, green: 33.0 / 255, blue: 44.0 / 255)
-        let addLine = composite(HerdrDiffStyle.addition, opacity: HerdrDiffStyle.lineOpacity, over: graphite)
+        let addLine = try components(HerdrDiffStyle.lineColor(for: "add"))
         let addEmphasis = composite(HerdrDiffStyle.addition, opacity: HerdrDiffStyle.emphasisOpacity, over: addLine)
 
         #expect(render.textView.bounds.width > 420)
@@ -383,8 +399,7 @@ struct PRReviewDiffStyleTests {
         defer { render.window.close() }
 
         let addEntry = try #require(render.textView.lineIndex.entries.first { $0.kind == "add" })
-        let graphite = (red: 32.0 / 255, green: 33.0 / 255, blue: 44.0 / 255)
-        let addLine = composite(HerdrDiffStyle.addition, opacity: HerdrDiffStyle.lineOpacity, over: graphite)
+        let addLine = try components(HerdrDiffStyle.lineColor(for: "add"))
         let addEmphasis = composite(HerdrDiffStyle.addition, opacity: HerdrDiffStyle.emphasisOpacity, over: addLine)
 
         let storage = try #require(render.textView.textStorage)
@@ -398,6 +413,77 @@ struct PRReviewDiffStyleTests {
             in: render
         )
         expect(emphasisPixel.color, matches: addEmphasis, tolerance: 0.05)
+    }
+
+    @Test("Production Git resolution and native rendering agree on the same synthetic patch")
+    func nativeRenderingMatchesProductionGitResolution() async throws {
+        let production = try await resolveProductionGitPixels()
+        let render = try await mount(diffFile(lines: replacementLines()))
+        defer { render.window.close() }
+
+        let addEntry = try #require(render.textView.lineIndex.entries.first { $0.kind == "add" })
+        let delEntry = try #require(render.textView.lineIndex.entries.first { $0.kind == "del" })
+        let contextEntry = try #require(render.textView.lineIndex.entries.first { $0.kind == "context" })
+        let rightEdge = render.textView.bounds.width - 3
+
+        expect(
+            try sample(CGPoint(x: rightEdge, y: fragmentRect(for: addEntry, in: render).midY), in: render),
+            matches: production.addRow,
+            tolerance: 0.02
+        )
+        expect(
+            try sample(CGPoint(x: rightEdge, y: fragmentRect(for: delEntry, in: render).midY), in: render),
+            matches: production.delRow,
+            tolerance: 0.02
+        )
+        expect(
+            try sample(CGPoint(x: rightEdge, y: fragmentRect(for: contextEntry, in: render).midY), in: render),
+            matches: production.context,
+            tolerance: 0.02
+        )
+        expect(
+            try closestPixel(in: gutterRect(for: addEntry, in: render), to: production.addGutter, in: render).color,
+            matches: production.addGutter,
+            tolerance: 0.02
+        )
+        expect(
+            try closestPixel(in: gutterRect(for: delEntry, in: render), to: production.delGutter, in: render).color,
+            matches: production.delGutter,
+            tolerance: 0.02
+        )
+
+        let storage = try #require(render.textView.textStorage)
+        let emphasisRanges = backgroundRanges(in: storage)
+        let addEmphasisRange = try #require(emphasisRanges.first {
+            NSLocationInRange($0.location, entryRange(addEntry))
+        })
+        let delEmphasisRange = try #require(emphasisRanges.first {
+            NSLocationInRange($0.location, entryRange(delEntry))
+        })
+        expect(
+            try closestPixel(
+                in: enclosingRect(for: addEmphasisRange, in: render),
+                to: production.addEmphasis,
+                in: render
+            ).color,
+            matches: production.addEmphasis,
+            tolerance: 0.02
+        )
+        expect(
+            try closestPixel(
+                in: enclosingRect(for: delEmphasisRange, in: render),
+                to: production.delEmphasis,
+                in: render
+            ).color,
+            matches: production.delEmphasis,
+            tolerance: 0.02
+        )
+
+        // The shared palette values themselves are the production resolution.
+        try expect(components(HerdrDiffStyle.lineColor(for: "add")), matches: production.addRow)
+        try expect(components(HerdrDiffStyle.gutterColor(for: "add")), matches: production.addGutter)
+        try expect(components(HerdrDiffStyle.lineColor(for: "del")), matches: production.delRow)
+        try expect(components(HerdrDiffStyle.gutterColor(for: "del")), matches: production.delGutter)
     }
 
     // MARK: Fixtures
@@ -449,13 +535,26 @@ struct PRReviewDiffStyleTests {
         green: Double,
         blue: Double,
         alpha: Double,
+        tolerance: Double = 0.002,
         sourceLocation: SourceLocation = #_sourceLocation
     ) throws {
         let resolved = try #require(color?.usingColorSpace(.sRGB), sourceLocation: sourceLocation)
-        #expect(abs(Double(resolved.redComponent) - red / 255) < 0.002, sourceLocation: sourceLocation)
-        #expect(abs(Double(resolved.greenComponent) - green / 255) < 0.002, sourceLocation: sourceLocation)
-        #expect(abs(Double(resolved.blueComponent) - blue / 255) < 0.002, sourceLocation: sourceLocation)
-        #expect(abs(Double(resolved.alphaComponent) - alpha) < 0.002, sourceLocation: sourceLocation)
+        #expect(abs(Double(resolved.redComponent) - red / 255) < tolerance, sourceLocation: sourceLocation)
+        #expect(abs(Double(resolved.greenComponent) - green / 255) < tolerance, sourceLocation: sourceLocation)
+        #expect(abs(Double(resolved.blueComponent) - blue / 255) < tolerance, sourceLocation: sourceLocation)
+        #expect(abs(Double(resolved.alphaComponent) - alpha) < tolerance, sourceLocation: sourceLocation)
+    }
+
+    private func components(
+        _ color: NSColor?,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) throws -> (red: Double, green: Double, blue: Double) {
+        let resolved = try #require(color?.usingColorSpace(.sRGB), sourceLocation: sourceLocation)
+        return (
+            red: Double(resolved.redComponent),
+            green: Double(resolved.greenComponent),
+            blue: Double(resolved.blueComponent)
+        )
     }
 
     private func expect(
@@ -708,6 +807,158 @@ struct PRReviewDiffStyleTests {
             abs(lhs.red - rhs.red),
             abs(lhs.green - rhs.green),
             abs(lhs.blue - rhs.blue)
+        )
+    }
+
+    // MARK: Production Git resolution
+
+    private struct ProductionPixels {
+        let addRow: (red: Double, green: Double, blue: Double)
+        let addGutter: (red: Double, green: Double, blue: Double)
+        let delRow: (red: Double, green: Double, blue: Double)
+        let delGutter: (red: Double, green: Double, blue: Double)
+        let addEmphasis: (red: Double, green: Double, blue: Double)
+        let delEmphasis: (red: Double, green: Double, blue: Double)
+        let context: (red: Double, green: Double, blue: Double)
+    }
+
+    /// Resolves the pinned @pierre/diffs 1.3.2 dark-scheme formulas for a
+    /// `data-background` diff in WebKit, with the same `diffs-container`
+    /// variables the embedded Git page receives from `HerdrDiffStyle.cssVariables`,
+    /// and reads the composited pixels back from a canvas. This is the
+    /// production Git treatment of the same synthetic patch the native view
+    /// renders; it is not a second copy of the native palette.
+    private func resolveProductionGitPixels() async throws -> ProductionPixels {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let view = WKWebView(frame: .zero, configuration: configuration)
+        defer { view.stopLoading() }
+        view.loadHTMLString(productionProbeHTML, baseURL: nil)
+
+        var values: [[Int]]?
+        for _ in 0..<200 {
+            let json = (try? await view.evaluateJavaScript(
+                "JSON.stringify(window.__herdrProductionPixels ?? null)"
+            )) as? String
+            if let json,
+               let data = json.data(using: .utf8),
+               let decoded = try? JSONDecoder().decode([[Int]].self, from: data),
+               decoded.count == 7 {
+                values = decoded
+                break
+            }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        let resolved = try #require(values, "The production Git colour probe did not resolve in WebKit")
+
+        func channel(_ index: Int) -> (red: Double, green: Double, blue: Double) {
+            let value = resolved[index]
+            return (
+                red: Double(value[0]) / 255,
+                green: Double(value[1]) / 255,
+                blue: Double(value[2]) / 255
+            )
+        }
+        return ProductionPixels(
+            addRow: channel(0),
+            addGutter: channel(1),
+            delRow: channel(2),
+            delGutter: channel(3),
+            addEmphasis: channel(4),
+            delEmphasis: channel(5),
+            context: channel(6)
+        )
+    }
+
+    private var productionProbeHTML: String {
+        """
+        <!doctype html>
+        <html><head><meta charset="utf-8"><style>
+        :root { color-scheme: dark; }
+        diffs-container {
+          --diffs-bg: \(srgbHex(NSColor(HerdrTheme.graphite)));
+          \(HerdrDiffStyle.cssVariables)
+        }
+        </style></head><body>
+        <diffs-container id="production-diff"></diffs-container>
+        <script>
+        (() => {
+          const host = document.getElementById('production-diff');
+          const shadow = host.attachShadow({ mode: 'open' });
+          // The final dark-scheme background-color expressions from the pinned
+          // @pierre/diffs 1.3.2 stylesheet for a data-background diff. The
+          // library chains custom properties; these are its resolved layers.
+          shadow.innerHTML = `
+          <style>
+            :where([data-background]) [data-line] { --mix-dark: 80%; }
+            :where([data-background]) [data-column-number] { --mix-dark: 85%; }
+            :where([data-background]) [data-line][data-line-type="change-addition"] {
+              background-color: color-mix(in lab, var(--diffs-bg) var(--mix-dark), var(--diffs-bg-addition-override));
+            }
+            :where([data-background]) [data-line][data-line-type="change-deletion"] {
+              background-color: color-mix(in lab, var(--diffs-bg) var(--mix-dark), var(--diffs-bg-deletion-override));
+            }
+            :where([data-background]) [data-column-number][data-line-type="change-addition"] {
+              background-color: color-mix(in lab, var(--diffs-bg) var(--mix-dark), var(--diffs-bg-addition-number-override));
+            }
+            :where([data-background]) [data-column-number][data-line-type="change-deletion"] {
+              background-color: color-mix(in lab, var(--diffs-bg) var(--mix-dark), var(--diffs-bg-deletion-number-override));
+            }
+            [data-line-type="change-addition"] [data-diff-span] {
+              background-color: var(--diffs-bg-addition-emphasis-override);
+            }
+            [data-line-type="change-deletion"] [data-diff-span] {
+              background-color: var(--diffs-bg-deletion-emphasis-override);
+            }
+          </style>
+          <pre data-background><code>
+            <div data-gutter>
+              <div data-line-type="change-addition" data-column-number="2" id="add-gutter"></div>
+              <div data-line-type="change-deletion" data-column-number="1" id="del-gutter"></div>
+            </div>
+            <div data-content>
+              <div data-line data-line-type="change-addition" id="add-line"><span data-diff-span id="add-span">word</span></div>
+              <div data-line data-line-type="change-deletion" id="del-line"><span data-diff-span id="del-span">word</span></div>
+              <div data-line id="context-line"></div>
+            </div>
+          </code></pre>`;
+          const canvas = document.createElement('canvas');
+          canvas.width = 1;
+          canvas.height = 1;
+          const context = canvas.getContext('2d');
+          const pixel = (...layers) => {
+            context.clearRect(0, 0, 1, 1);
+            for (const layer of layers) {
+              context.fillStyle = layer;
+              context.fillRect(0, 0, 1, 1);
+            }
+            const data = context.getImageData(0, 0, 1, 1).data;
+            return [data[0], data[1], data[2]];
+          };
+          const background = (id) => getComputedStyle(shadow.getElementById(id)).backgroundColor;
+          const base = getComputedStyle(host).getPropertyValue('--diffs-bg').trim();
+          window.__herdrProductionPixels = [
+            pixel(base, background('add-line')),
+            pixel(base, background('add-gutter')),
+            pixel(base, background('del-line')),
+            pixel(base, background('del-gutter')),
+            pixel(base, background('add-line'), background('add-span')),
+            pixel(base, background('del-line'), background('del-span')),
+            pixel(base, background('context-line'))
+          ];
+        })();
+        </script>
+        </body></html>
+        """
+    }
+
+    private func srgbHex(_ color: NSColor) -> String {
+        let resolved = color.usingColorSpace(.sRGB) ?? color
+        return String(
+            format: "#%02x%02x%02x",
+            Int((resolved.redComponent * 255).rounded()),
+            Int((resolved.greenComponent * 255).rounded()),
+            Int((resolved.blueComponent * 255).rounded())
         )
     }
 

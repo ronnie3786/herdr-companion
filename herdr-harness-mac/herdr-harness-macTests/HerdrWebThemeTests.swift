@@ -12,6 +12,10 @@ struct HerdrWebThemeTests {
         #expect(HerdrDiffStyle.lineOpacity == 0.30)
         #expect(HerdrDiffStyle.gutterOpacity == 0.42)
         #expect(HerdrDiffStyle.emphasisOpacity == 0.55)
+        // The dark-scheme surface weights @pierre/diffs 1.3.2 mixes into a
+        // data-background diff; the native resolved colors depend on them.
+        #expect(HerdrDiffStyle.lineSurfaceWeight == 0.80)
+        #expect(HerdrDiffStyle.gutterSurfaceWeight == 0.85)
 
         let css = HerdrWebTheme.css
         for variable in [

@@ -13,6 +13,7 @@
 - Back and Forward remember Chat/Git segment switches on the same pane, including returning to Git after visiting another pane or screen.
 - New workspace is a labeled sidebar action. Hover a machine row for a folder-plus button that opens creation directly on that machine, without another machine selection. Workspace headings in Unread and Starred expose the same right-click menu as the workspace tree, including New tab.
 - Workspace folders are easier to pick out of the sidebar: 14-point semibold titles in the brighter text color, 14-point mist folder icons, and taller folder rows while tabs, chats, machines, and group labels keep their compact styling. Long names still truncate at the tail with their counts, chevrons, tooltips, and accessibility information intact. This visibility change needs no server update and adds no new setting.
+- The computer segment bar uses compact labels—All plus short names such as Work, Dev, and Studio—while each segment selects the same original machine and the saved selection survives relaunch. Full configured names stay in the segment tooltips, and each segment announces its visible short label. This is sidebar presentation only: machine records, roles, URLs, credentials, the larger-fleet menu, and the zero-machine hidden state are unchanged. No server update or configuration migration is needed.
 
 ## Chat and HUD
 
@@ -33,3 +34,4 @@ The Mac UI changes require no API contract change. A separate companion update r
 4. Open a conversation with a failed tool call: Clanking should remain collapsed and show the failure count.
 5. Toggle Notes twice, create a note, and close its card. Use New workspace and right-click workspace headings to find New tab.
 6. Narrow the sidebar and enlarge the text size: workspace folder titles should stay visibly larger and brighter than the tabs and chats beneath them, with long names truncating at the tail and their counts and chevrons still visible. No server update or new setting is needed.
+7. With a synthetic two- or three-machine roster, confirm the computer segments read All, Work, Dev, and Studio. Selecting each one scopes chats to that machine, and each segment's tooltip shows its full configured machine name. Select a machine, relaunch, and confirm it is still selected; then restore All. A roster of four or more machines keeps the existing menu picker.

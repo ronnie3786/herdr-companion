@@ -415,25 +415,34 @@ struct HerdrSidebarView: View {
     }
 
     private var segmentedMachinePicker: some View {
-        Picker("Machine", selection: machineScopeBinding) {
+        let segments = SidebarMachineSegmentPresentation.segments(for: model.machines)
+        return Picker("Machine", selection: machineScopeBinding) {
             Text("All")
                 .tag(MachineScope.all)
                 .help("All machines")
                 .accessibilityLabel("All machines")
-            ForEach(model.machines) { machine in
-                Text(machine.name)
+            ForEach(segments) { segment in
+                Text(segment.title)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .tag(MachineScope.machine(machine.id))
-                    .help(machine.name)
-                    .accessibilityLabel(machine.name)
+                    .tag(MachineScope.machine(segment.id))
+                    .help(segment.name)
+                    .accessibilityLabel(segment.title)
             }
         }
         .labelsHidden()
         .pickerStyle(.segmented)
         .frame(maxWidth: .infinity)
         .accessibilityIdentifier("sidebar-machine-picker")
-        .accessibilityValue(scopeTitle)
+        .accessibilityValue(segmentedScopeTitle(segments))
+    }
+
+    private func segmentedScopeTitle(_ segments: [SidebarMachineSegmentPresentation.Segment]) -> String {
+        if case let .machine(id) = model.machineScope,
+           let segment = segments.first(where: { $0.id == id }) {
+            return segment.title
+        }
+        return "All machines"
     }
 
     private var machineMenuPicker: some View {
@@ -1055,6 +1064,7 @@ struct HerdrSidebarView: View {
         return model.machines.count == 1 ? model.machines.first?.id : nil
     }
 
+    /// Full machine name used by the large-fleet menu and other full-name chrome.
     private var scopeTitle: String {
         if case let .machine(id) = model.machineScope,
            let machine = model.machines.first(where: { $0.id == id }) {

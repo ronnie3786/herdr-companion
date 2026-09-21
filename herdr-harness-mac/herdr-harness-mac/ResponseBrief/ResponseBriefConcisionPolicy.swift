@@ -6,12 +6,14 @@ struct ResponseBriefConcisionPolicy: Equatable, Sendable {
         let sourceWords: Int
         let maximumVisibleCharacters: Int
         let maximumVisibleWords: Int
-
-        var shouldGenerate: Bool { readableCharacters > 160 }
+        let shouldGenerate: Bool
     }
 
     let metrics: SourceMetrics
 
+    /// Legacy policy for requests that omit a length selection. Existing
+    /// callers keep the historical 160-readable-character generation threshold
+    /// and the exact pre-preset ceilings.
     init(source: String) {
         let readable = Self.readableSourceText(source)
         let readableCharacters = readable.unicodeScalars.count(where: Self.isLetterOrNumber)
@@ -20,7 +22,28 @@ struct ResponseBriefConcisionPolicy: Equatable, Sendable {
             readableCharacters: readableCharacters,
             sourceWords: sourceWords,
             maximumVisibleCharacters: min(240, readableCharacters / 4),
-            maximumVisibleWords: sourceWords < 40 ? 40 : min(40, sourceWords / 4)
+            maximumVisibleWords: ResponseBriefLength.baseVisibleWords(sourceWords: sourceWords),
+            shouldGenerate: readableCharacters > 160
+        )
+    }
+
+    /// Explicit preset policy. Any non-whitespace source is eligible, tiny
+    /// sources keep a usable nonempty budget, and there is no minimum output
+    /// length: the summary may be arbitrarily short.
+    init(source: String, length: ResponseBriefLength) {
+        let readable = Self.readableSourceText(source)
+        let readableCharacters = readable.unicodeScalars.count(where: Self.isLetterOrNumber)
+        let sourceWords = Self.wordCount(readable)
+        let budgets = length.budgets(
+            readableCharacters: readableCharacters,
+            sourceWords: sourceWords
+        )
+        metrics = SourceMetrics(
+            readableCharacters: budgets.readableCharacters,
+            sourceWords: budgets.sourceWords,
+            maximumVisibleCharacters: budgets.maximumVisibleCharacters,
+            maximumVisibleWords: budgets.maximumVisibleWords,
+            shouldGenerate: !source.allSatisfy(\.isWhitespace)
         )
     }
 
@@ -254,5 +277,9 @@ extension ResponseBrief {
 
     func conformsToConcisionPolicy(source: String) -> Bool {
         ResponseBriefConcisionPolicy(source: source).accepts(self)
+    }
+
+    func conformsToConcisionPolicy(source: String, length: ResponseBriefLength) -> Bool {
+        ResponseBriefConcisionPolicy(source: source, length: length).accepts(self)
     }
 }

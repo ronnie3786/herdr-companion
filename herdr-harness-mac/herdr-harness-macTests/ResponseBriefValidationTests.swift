@@ -173,6 +173,112 @@ struct ResponseBriefValidationTests {
         #expect(brief.visibleGeneratedStrings == ["Direct result."])
     }
 
+    @Test("Explicit presets scale the legacy ceilings by exactly two and three")
+    func explicitPresetMultipliers() {
+        let source = String(repeating: "a", count: 200)
+        #expect(ResponseBriefConcisionPolicy(source: source).metrics.maximumVisibleCharacters == 50)
+        #expect(ResponseBriefConcisionPolicy(source: source, length: .minimal).metrics.maximumVisibleCharacters == 50)
+        #expect(ResponseBriefConcisionPolicy(source: source, length: .medium).metrics.maximumVisibleCharacters == 100)
+        #expect(ResponseBriefConcisionPolicy(source: source, length: .long).metrics.maximumVisibleCharacters == 150)
+
+        let wordy = Array(repeating: "ab", count: 200).joined(separator: " ")
+        #expect(ResponseBriefConcisionPolicy(source: wordy).metrics.maximumVisibleWords == 40)
+        #expect(ResponseBriefConcisionPolicy(source: wordy, length: .minimal).metrics.maximumVisibleWords == 40)
+        #expect(ResponseBriefConcisionPolicy(source: wordy, length: .medium).metrics.maximumVisibleWords == 80)
+        #expect(ResponseBriefConcisionPolicy(source: wordy, length: .long).metrics.maximumVisibleWords == 120)
+    }
+
+    @Test("Explicit minimal preserves legacy ceilings for previously eligible sources")
+    func explicitMinimalPreservesLegacyCeilings() {
+        let sources = [
+            String(repeating: "a", count: 161),
+            Array(repeating: "ab", count: 200).joined(separator: " "),
+            String(repeating: "界", count: 500),
+        ]
+        for source in sources {
+            let legacy = ResponseBriefConcisionPolicy(source: source).metrics
+            let minimal = ResponseBriefConcisionPolicy(source: source, length: .minimal).metrics
+            #expect(legacy.shouldGenerate)
+            #expect(minimal.maximumVisibleCharacters == legacy.maximumVisibleCharacters)
+            #expect(minimal.maximumVisibleWords == legacy.maximumVisibleWords)
+        }
+    }
+
+    @Test("Tiny sources become eligible with a usable budget and no minimum output")
+    func tinySourcesGetUsableBudget() throws {
+        for source in ["a", "🪻🪻🪻", String(repeating: "b", count: 160)] {
+            let policy = ResponseBriefConcisionPolicy(source: source, length: .minimal)
+            #expect(policy.metrics.shouldGenerate)
+            #expect(policy.metrics.maximumVisibleCharacters == 40)
+            #expect(policy.metrics.maximumVisibleWords == 40)
+            try policy.validate(ResponseBrief(version: 1, title: "T", summary: "Done.", points: [], details: []))
+        }
+        #expect(!ResponseBriefConcisionPolicy(source: "a").metrics.shouldGenerate)
+        #expect(!ResponseBriefConcisionPolicy(source: "   \n").metrics.shouldGenerate)
+        #expect(!ResponseBriefConcisionPolicy(source: "   \n", length: .minimal).metrics.shouldGenerate)
+    }
+
+    @Test("Explicit minimal accepts forty visible scalars for a one-character source and rejects forty-one")
+    func minimalTinyBoundary() throws {
+        let accepted = briefJSON(summary: String(repeating: "b", count: 40))
+        let rejected = briefJSON(summary: String(repeating: "b", count: 41))
+
+        _ = try ResponseBrief.decodeValidated(Data(accepted.utf8), source: "a", length: .minimal)
+        #expect(throws: ResponseBriefValidationError.notConcise) {
+            try ResponseBrief.decodeValidated(Data(rejected.utf8), source: "a", length: .minimal)
+        }
+        // The same output stays ineligible under the legacy no-selection path.
+        #expect(throws: ResponseBriefValidationError.notConcise) {
+            try ResponseBrief.decodeValidated(Data(accepted.utf8), source: "a")
+        }
+    }
+
+    @Test("Long budgets are attainable inside the structural string bounds")
+    func longBudgetIsAttainable() throws {
+        #expect(ResponseBriefLength.maximumVisibleCharacters == 720)
+        #expect(ResponseBriefLength.maximumVisibleWords == 120)
+        #expect(ResponseBriefLength.maximumVisibleCharacters <= ResponseBriefLimits.maximumSummaryCharacters)
+
+        let source = String(repeating: "z", count: 3_000)
+        let summary = Array(repeating: "aaaaaaa", count: 100).joined(separator: " ")
+        let point = Array(repeating: "b", count: 12).joined(separator: " ")
+        let firstLabel = Array(repeating: "c", count: 4).joined(separator: " ")
+        let secondLabel = Array(repeating: "d", count: 4).joined(separator: " ")
+        let json = """
+        {"version":1,"title":"Boundary","summary":"\(summary)","points":[{"text":"\(point)","startLine":1,"endLine":1}],"details":[{"label":"\(firstLabel)","kind":"detail","startLine":1,"endLine":1},{"label":"\(secondLabel)","kind":"table","startLine":1,"endLine":1}]}
+        """
+        #expect(summary.count <= ResponseBriefLimits.maximumSummaryCharacters)
+
+        let brief = try ResponseBrief.decodeValidated(Data(json.utf8), source: source, length: .long)
+        let visible = brief.visibleGeneratedStrings.joined(separator: " ")
+        #expect(ResponseBriefConcisionPolicy.nonWhitespaceScalarCount(visible) == 720)
+        #expect(ResponseBriefConcisionPolicy.wordCount(visible) == 120)
+        #expect(throws: ResponseBriefValidationError.notConcise) {
+            try ResponseBrief.decodeValidated(Data(json.utf8), source: source, length: .medium)
+        }
+    }
+
+    @Test("Swift explicit length policy matches the shared Python fixture corpus")
+    func sharedLengthPolicyParity() throws {
+        let repositoryRoot = URL(filePath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let data = try Data(contentsOf: repositoryRoot.appending(path: "tests/fixtures/response_brief_lengths.json"))
+        let fixtures = try JSONDecoder().decode([ResponseBriefLengthFixture].self, from: data)
+
+        #expect(!fixtures.isEmpty)
+        #expect(Set(fixtures.map(\.length)) == Set(ResponseBriefLength.options))
+        for fixture in fixtures {
+            let length = try #require(ResponseBriefLength(rawValue: fixture.length))
+            let metrics = ResponseBriefConcisionPolicy(source: fixture.source, length: length).metrics
+            #expect(metrics.readableCharacters == fixture.readableCharacters)
+            #expect(metrics.sourceWords == fixture.sourceWords)
+            #expect(metrics.maximumVisibleCharacters == fixture.maximumVisibleCharacters)
+            #expect(metrics.maximumVisibleWords == fixture.maximumVisibleWords)
+        }
+    }
+
     @Test("Swift concision policy matches the shared Python fixture corpus")
     func sharedPolicyParity() throws {
         let repositoryRoot = URL(filePath: #filePath)
@@ -203,6 +309,10 @@ struct ResponseBriefValidationTests {
     private func decode(_ json: String) throws -> ResponseBrief {
         try ResponseBrief.decodeValidated(Data(json.utf8), source: source)
     }
+
+    private func briefJSON(summary: String) -> String {
+        "{\"version\":1,\"title\":\"T\",\"summary\":\"\(summary)\",\"points\":[],\"details\":[]}"
+    }
 }
 
 private struct ResponseBriefPolicyFixture: Decodable {
@@ -213,4 +323,14 @@ private struct ResponseBriefPolicyFixture: Decodable {
     let maximumVisibleCharacters: Int
     let maximumVisibleWords: Int
     let shouldGenerate: Bool
+}
+
+private struct ResponseBriefLengthFixture: Decodable {
+    let name: String
+    let source: String
+    let length: String
+    let readableCharacters: Int
+    let sourceWords: Int
+    let maximumVisibleCharacters: Int
+    let maximumVisibleWords: Int
 }

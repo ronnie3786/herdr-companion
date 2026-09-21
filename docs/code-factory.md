@@ -35,9 +35,14 @@ This is an experimental personal automation. Read the safety section before enab
    bounded JSON plan. The plan carries stable requirement IDs that preserve excerpts from
    the original request, observable outcomes, required evidence, and explicit confirmed or
    unresolved assumptions, plus acceptance criteria, at most four sequential tasks with
-   owned paths and tests, documentation obligations, and attachment descriptions. An
-   unresolved behavior assumption cannot enter implementation: Astra asks a specific
-   question, the issue is marked **blocked**, the question is posted on it, and Message Me
+   owned paths and tests, documentation obligations, and attachment descriptions. Astra
+   resolves ordinary low- and medium-risk ambiguity from repository evidence, established
+   best practices, the safest reversible choice, and the ideal user experience. Those choices
+   are recorded as confirmed inferred assumptions instead of becoming operator questions.
+   Human input is reserved for high-risk authority boundaries involving security or privacy,
+   credentials or access, destructive or irreversible data loss, money or legal/compliance
+   obligations, or external production impact when no safe reversible path exists. At that
+   point Astra asks one specific question, the issue is marked **blocked**, and Message Me
    alerts the operator with a link to the Code Factory dashboard. On **Retry**, planning
    refreshes the issue body and recent replies from allow-listed operators while excluding
    Code Factory's own comments, so an answer becomes part of the next plan.
@@ -56,7 +61,9 @@ This is an experimental personal automation. Read the safety section before enab
    the request and a counterexample using another valid configuration (or a justified
    not-applicable result). CI/plan agreement alone is not evidence, and code/test evidence
    is not described as installed or deployed UI verification. Missing, unmet, unverified,
-   narrowed, unresolved, stale, or unposted approval data blocks merge. A narrowing finding
+   narrowed, unresolved, stale, or unposted approval data blocks merge. Ordinary reversible
+   findings go to a reviser with Astra's recommended best-practice fix; review asks a human
+   only for the same high-risk authority boundaries used during planning. A narrowing finding
    starts a fresh plan with the original request and bounded prior review evidence (requirement
    assessments, narrowing explanation, blocking findings, and human question) as explicitly
    delimited untrusted context. The planner must account for rejected assumptions and any
@@ -68,8 +75,8 @@ This is an experimental personal automation. Read the safety section before enab
 9. **Fresh revisions.** A red CI run first gets one automatic re-run of only its failed
    jobs for that head commit. A second failure on the same head goes to a new DeepSeek
    revision session, which commits and pushes. Astra implementation findings go to a
-   revision session; a rejected/narrowed plan returns to planning, and unresolved behavior
-   questions block for the issue-description decision instead of asking a reviser to guess.
+   revision session; a rejected/narrowed plan returns to planning, and only high-risk authority
+   questions block for an issue-description decision instead of using a safe reversible fix.
    Astra's requested-change loop is bounded by
    `max_review_rounds`, while repeated CI failures are bounded separately by
    `max_ci_failures`. Exhausting either blocks the issue for a human with

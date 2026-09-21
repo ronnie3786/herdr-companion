@@ -94,6 +94,8 @@ def good_plan(**overrides) -> dict[str, Any]:
         "human_question": None,
     }
     plan.update(overrides)
+    if plan.get("needs_human") and "risk" not in overrides:
+        plan["risk"] = "high"
     return plan
 
 

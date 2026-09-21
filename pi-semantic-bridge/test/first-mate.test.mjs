@@ -1,19 +1,19 @@
 import { createJiti } from "jiti";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 const jiti = createJiti(import.meta.url);
-const { createFirstMateExtension, spoolRequestId } = await jiti.import("../extensions/first-mate.ts");
+const { FIRST_MATE_EXTENSION_PATH, createFirstMateExtension, spoolRequestId } = await jiti.import("../extensions/first-mate.ts");
 
 function fixture(role = "worker", overrides = {}) {
   const root = mkdtempSync(join(tmpdir(), "herdr-first-mate-extension-"));
-  const job = { id: "synthetic-job", kind: role, ...overrides };
+  const job = { id: "synthetic-job", kind: role, extension: FIRST_MATE_EXTENSION_PATH, ...overrides };
   writeFileSync(join(root, "job.json"), JSON.stringify(job));
   const tools = new Map(), handlers = new Map(), messages = [];
   const pi = { registerTool(t) { tools.set(t.name, t); }, on(name, fn) { handlers.set(name,fn); }, sendUserMessage(...args) { messages.push(args); } };
-  createFirstMateExtension({ HERDR_FIRST_MATE_JOB_DIR: root, HERDR_FIRST_MATE_ROLE: role, HERDR_FIRST_MATE_CONTEXT_TARGET: "150000" })(pi);
+  createFirstMateExtension({ HERDR_FIRST_MATE_JOB_DIR: root, HERDR_FIRST_MATE_MANAGED_ROLE: role, HERDR_FIRST_MATE_CONTEXT_TARGET: "150000" })(pi);
   const ctx = { sessionManager: { getSessionId: () => "native-synthetic", getSessionFile: () => join(root,"session.jsonl") }, getContextUsage: () => ({tokens:150001,contextWindow:200000}) };
   return { root, tools, handlers, messages, ctx, cleanup: () => rmSync(root,{recursive:true,force:true}) };
 }
@@ -22,16 +22,44 @@ test("ordinary Pi sessions gain no First Mate tools", () => {
   createFirstMateExtension({})({registerTool() { assert.fail("unexpected tool"); }});
 });
 
-test("coordinator exposes bounded shell inspection with asynchronous orchestration", () => {
+test("legacy role identity and a non-selected extension copy remain dormant", () => {
+  const root = mkdtempSync(join(tmpdir(), "herdr-first-mate-extension-"));
+  try {
+    writeFileSync(join(root, "job.json"), JSON.stringify({id:"synthetic-job",kind:"coordinator",extension:FIRST_MATE_EXTENSION_PATH}));
+    const registered = [];
+    createFirstMateExtension({HERDR_FIRST_MATE_JOB_DIR:root,HERDR_FIRST_MATE_ROLE:"coordinator"})({registerTool(tool) { registered.push(tool.name); }});
+    assert.deepEqual(registered, []);
+    writeFileSync(join(root, "job.json"), JSON.stringify({id:"synthetic-job",kind:"coordinator",extension:join(root,"other-first-mate.ts")}));
+    writeFileSync(join(root,"other-first-mate.ts"), "// synthetic stale copy\n");
+    createFirstMateExtension({HERDR_FIRST_MATE_JOB_DIR:root,HERDR_FIRST_MATE_MANAGED_ROLE:"coordinator"})({registerTool(tool) { registered.push(tool.name); }});
+    assert.deepEqual(registered, []);
+  } finally { rmSync(root,{recursive:true,force:true}); }
+});
+
+test("canonical extension identity accepts a symlink spelling of the selected module", () => {
+  const root = mkdtempSync(join(tmpdir(), "herdr-first-mate-alias-"));
+  const alias = join(root, "selected-first-mate.ts");
+  symlinkSync(FIRST_MATE_EXTENSION_PATH, alias);
+  const f = fixture("coordinator", {extension:alias});
+  try {
+    assert.ok(f.tools.has("fm_status"));
+    assert.ok(f.tools.has("fm_read_document"));
+  } finally {
+    f.cleanup();
+    rmSync(root,{recursive:true,force:true});
+  }
+});
+
+test("coordinator exposes evidence and orchestration while normal tools remain unrestricted", () => {
   const f = fixture("coordinator");
   try {
     assert.ok(f.tools.has("fm_status"));
     assert.ok(f.tools.has("fm_delegate")); assert.ok(f.tools.has("fm_complete_stage")); assert.ok(f.tools.has("fm_resolve_gate"));
     assert.ok(!f.tools.has("fm_outcome"));
-    assert.ok(!f.tools.has("fm_read_document")); assert.ok(!f.tools.has("fm_read_session"));
-    for (const toolName of ["read","bash","grep","find","ls"]) assert.equal(f.handlers.get("tool_call")({toolName}), undefined);
-    for (const toolName of ["edit","write"]) assert.equal(f.handlers.get("tool_call")({toolName}).block, true);
+    assert.ok(f.tools.has("fm_read_document")); assert.ok(f.tools.has("fm_read_session"));
+    for (const toolName of ["read","bash","edit","write","grep","find","ls","synthetic_third_party"]) assert.equal(f.handlers.get("tool_call")({toolName}), undefined);
     assert.equal(f.handlers.get("tool_call")({toolName:"fm_invented_tool"}).block, true);
+    assert.equal(f.handlers.get("tool_call")({toolName:"fm_outcome"}).block, true);
     assert.equal(f.handlers.get("tool_call")({toolName:"fm_delegate"}), undefined);
   } finally { f.cleanup(); }
 });
@@ -46,20 +74,20 @@ test("writable workers retain execution and detailed evidence capabilities", () 
   } finally { f.cleanup(); }
 });
 
-test("read-only workers can inspect with bash but cannot use direct mutation tools", () => {
+test("read-only workers retain normal tools while workspace policy remains instructional", () => {
   const f = fixture("worker", {workspace_mode:"read_only"});
   try {
-    for (const toolName of ["write","edit","some_unrelated_tool"]) assert.equal(f.handlers.get("tool_call")({toolName}).block, true);
-    for (const toolName of ["read","bash","grep","find","ls"]) assert.equal(f.handlers.get("tool_call")({toolName}), undefined);
+    for (const toolName of ["read","bash","edit","write","grep","find","ls","synthetic_third_party"]) assert.equal(f.handlers.get("tool_call")({toolName}), undefined);
     assert.equal(f.handlers.get("tool_call")({toolName:"fm_read_document"}), undefined);
+    assert.equal(f.handlers.get("tool_call")({toolName:"fm_begin_stage"}).block, true);
   } finally { f.cleanup(); }
 });
 
-test("advisor can inspect with bash while direct mutations stay unavailable", () => {
+test("advisor retains normal tools but cannot use another role's workflow actions", () => {
   const f = fixture("advisor");
   try {
-    for (const toolName of ["read","bash","grep","find","ls"]) assert.equal(f.handlers.get("tool_call")({toolName}), undefined);
-    for (const toolName of ["edit","write","fm_delegate"]) assert.equal(f.handlers.get("tool_call")({toolName}).block, true);
+    for (const toolName of ["read","bash","edit","write","grep","find","ls","synthetic_third_party"]) assert.equal(f.handlers.get("tool_call")({toolName}), undefined);
+    assert.equal(f.handlers.get("tool_call")({toolName:"fm_delegate"}).block, true);
     assert.equal(f.handlers.get("tool_call")({toolName:"fm_advice"}), undefined);
   } finally { f.cleanup(); }
 });

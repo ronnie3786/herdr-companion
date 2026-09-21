@@ -47,14 +47,13 @@ not inherit the companion control token.
 
 - Coordinator: read reference-oriented status, begin one human-authorized major
   stage, delegate, steer, retry, revise affected work, resolve explicit human
-  gates, complete a stage and finish the feature. It also has Pi's read, search,
-  listing and bash tools, project context and applicable skills for short local
-  CLI lookups. Its exact tool set excludes direct edit/write tools, Document and
-  transcript readers, and unrelated extension tools.
+  gates, complete a stage and finish the feature. It can also read bounded
+  feature Documents and saved sessions. Pi's normal configured tools, extensions,
+  skills, prompt templates and project context remain available.
 - Worker: read feature evidence, delegate scoped children, yield until their
   outcomes, retry a direct child, report a verdict with documents, request a
   human decision, produce a checkpoint and acknowledge a predecessor's handoff.
-- Advisor: read evidence, use the normal inspection and bash tools when needed,
+- Advisor: read evidence, use normal configured tools when needed,
   return a bounded intervention decision or assemble an independent recovery
   brief when the stopped predecessor cannot summarize.
 
@@ -68,20 +67,26 @@ a stage. If the evidence needs substantial reconciliation, it delegates that
 reconciliation to a lead or reviewer before completing the stage. It does not
 turn a request for detail into a long untracked response.
 
-Coordinators can use ordinary bash for brief routing diagnostics and CLI lookups,
-but their charter keeps substantive work in tracked assignments and prohibits
-changes to project source, commits and branches. The Pi process uses a replacement
-`--system-prompt` charter and an exact tool set. Current launch policy and charter
-are applied on every new dispatch, including turns in an existing saved
-coordinator session. Read-only planners and reviewers also receive normal bash;
-`read_only` expresses the requirement to leave the shared workspace unchanged,
-not a security sandbox or shell-command allowlist. Their explicit Pi tool set and
-extension hook still omit direct edit/write and unrelated tools. Writable
+Coordinators can use normal tools for brief routing diagnostics and CLI lookups,
+but their charter keeps substantive work in tracked assignments. The Pi process
+uses a replacement `--system-prompt` charter without restricting normal tool or
+resource discovery. Current launch policy and charter are applied on every new
+dispatch, including turns in an existing saved coordinator session. `read_only`
+expresses the requirement to leave the shared workspace unchanged, not a security
+sandbox or tool capability boundary. Writable
 assignments use private Git worktrees and `codex/first-mate-…` branches. An explicit
 source assignment selects the actual implementation/integration worktree for
 review. Review verdicts are tied to its clean commit revision. A changed review
 source cannot complete a stage using stale evidence. Branches and worktrees are
 retained until an explicit cleanup decision.
+
+Managed dispatches set `HERDR_FIRST_MATE_MANAGED_ROLE`, never the legacy role
+variable. The selected extension also verifies that its real module path matches
+the extension recorded in the private job. This leaves an older configured First
+Mate copy dormant while every other configured extension remains loaded. The
+companion runtime and bundled Pi extension must therefore be upgraded together;
+already running legacy dispatches keep their original process policy until they
+end.
 
 A clean Git checkout is required for successful implementation and revision-bound
 review; exploratory planning can inspect an existing dirty checkout. A plan is
@@ -165,9 +170,9 @@ spool callbacks and SQLite transactions. They cover stage checkpoints, seven
 independent reviewers, restart, exact document authorship, bounded missing-outcome
 recovery, fresh successor acknowledgement, worktree isolation, role scoping and
 idempotent delegation. They also cover the coordinator's replacement prompt,
-resumed-session charter and extension refresh, role-specific shell access and
-direct-write restrictions, reference-oriented input, worker evidence capabilities
-and question/answer continuity across rotation.
+resumed-session charter and extension refresh, normal configured tool access,
+role-specific First Mate workflow actions, reference-oriented input, worker
+evidence capabilities and question/answer continuity across rotation.
 Acceptance tests inject claim-creation crash gaps and
 exercise paused handoffs, cancellation, direction changes and context rotation.
 

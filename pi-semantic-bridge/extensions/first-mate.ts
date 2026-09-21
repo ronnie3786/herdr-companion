@@ -5,14 +5,16 @@
 import { Type } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createHash, randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const documentSchema = Type.Object({
   title: Type.String(), content: Type.String(),
   media_type: Type.Optional(Type.String()),
 });
 const text = (description: string) => Type.String({ description });
+export const FIRST_MATE_EXTENSION_PATH = realpathSync(fileURLToPath(import.meta.url));
 
 export function spoolRequestId(jobId: string, toolCallId: string): string {
   return createHash("sha256").update(`${jobId}\0${toolCallId}`).digest("hex");
@@ -27,22 +29,32 @@ export function atomicJSON(path: string, value: unknown): void {
 export function createFirstMateExtension(environment: NodeJS.ProcessEnv = process.env) {
   return (pi: ExtensionAPI): void => {
     const directory = environment.HERDR_FIRST_MATE_JOB_DIR;
-    const role = environment.HERDR_FIRST_MATE_ROLE;
+    const role = environment.HERDR_FIRST_MATE_MANAGED_ROLE;
     if (!directory || !["coordinator", "worker", "advisor"].includes(role ?? "")) return;
     const root = resolve(directory);
     const job = JSON.parse(readFileSync(join(root, "job.json"), "utf8"));
     if (job.kind !== role || typeof job.id !== "string") throw new Error("Invalid First Mate execution scope");
+    try {
+      if (realpathSync(resolve(String(job.extension ?? ""))) !== FIRST_MATE_EXTENSION_PATH) return;
+    } catch {
+      return;
+    }
     mkdirSync(join(root, "requests"), { recursive: true, mode: 0o700 });
     mkdirSync(join(root, "responses"), { recursive: true, mode: 0o700 });
     let retired = false;
     let checkpointRequested = false;
     let successorAcknowledged = !job.handoff_id;
-    const inspectionTools = ["read", "bash", "grep", "find", "ls"];
-    const coordinatorTools = new Set([
-      ...inspectionTools,
+    const roleTools = new Set(role === "coordinator" ? [
       "fm_status", "fm_delegate", "fm_begin_stage", "fm_recover",
       "fm_resolve_gate", "fm_steer", "fm_retry", "fm_complete_stage",
-      "fm_revise", "fm_finish_feature",
+      "fm_revise", "fm_finish_feature", "fm_read_document", "fm_read_session",
+    ] : role === "worker" ? [
+      "fm_status", "fm_read_document", "fm_read_session", "fm_outcome",
+      "fm_handoff", "fm_acknowledge_handoff", "fm_request_human",
+      "fm_delegate", "fm_retry", "fm_wait_for_children",
+    ] : [
+      "fm_status", "fm_read_document", "fm_read_session", "fm_advice",
+      "fm_recovery_brief",
     ]);
 
     const identity = (ctx: ExtensionContext) => ({
@@ -79,12 +91,10 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
       },
     });
     register("fm_status", role === "coordinator"
-      ? "Read the authoritative reference-oriented router status. Detailed evidence stays with tracked workers; no polling is necessary."
+      ? "Read the authoritative reference-oriented router status. Use bounded evidence readers directly and delegate substantial reconciliation; no polling is necessary."
       : "Read authoritative feature status, assignments, outcomes and retained document references. No model polling is necessary.", Type.Object({}));
-    if (role !== "coordinator") {
-      register("fm_read_document", "Read a retained source document belonging to this feature before evaluating or synthesizing its evidence.", Type.Object({ document_id: text("Exact document ID"), offset: Type.Optional(Type.Integer({ minimum: 0 })), length: Type.Optional(Type.Integer({ minimum: 1000, maximum: 80000 })) }));
-      register("fm_read_session", "Inspect a retained native Pi conversation belonging to this feature when the actual execution evidence is needed.", Type.Object({ native_session_id: text("Exact native session ID"), before: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })), message_index: Type.Optional(Type.Integer({ minimum: 0 })), text_offset: Type.Optional(Type.Integer({ minimum: 0 })), text_length: Type.Optional(Type.Integer({ minimum: 1000, maximum: 80000 })) }));
-    }
+    register("fm_read_document", "Read a retained source document belonging to this feature before evaluating or synthesizing its evidence.", Type.Object({ document_id: text("Exact document ID"), offset: Type.Optional(Type.Integer({ minimum: 0 })), length: Type.Optional(Type.Integer({ minimum: 1000, maximum: 80000 })) }));
+    register("fm_read_session", "Inspect a retained native Pi conversation belonging to this feature when the actual execution evidence is needed.", Type.Object({ native_session_id: text("Exact native session ID"), before: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })), message_index: Type.Optional(Type.Integer({ minimum: 0 })), text_offset: Type.Optional(Type.Integer({ minimum: 0 })), text_length: Type.Optional(Type.Integer({ minimum: 1000, maximum: 80000 })) }));
     if (role === "coordinator" || role === "worker") {
       register("fm_delegate", "Queue an independent saved Pi worker in the current authorized stage. This returns immediately. Delegate long work; never wait or poll.", Type.Object({
         title: text("Assignment title"), role: text("Specialist role"),
@@ -159,14 +169,8 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
       if (!successorAcknowledged && !["fm_acknowledge_handoff", "fm_status", "read", "ls", "find", "grep"].includes(event.toolName)) {
         return { block: true, reason: "Inspect the handoff and workspace, then acknowledge with fm_acknowledge_handoff before executing work." };
       }
-      if (role === "worker" && job.workspace_mode === "read_only" && ![...inspectionTools, "fm_status", "fm_read_document", "fm_read_session", "fm_outcome", "fm_handoff", "fm_acknowledge_handoff", "fm_request_human", "fm_delegate", "fm_retry", "fm_wait_for_children"].includes(event.toolName)) {
-        return { block: true, reason: "This assignment must leave the shared workspace unchanged. Use bash and read tools only for inspection, or ask First Mate for an isolated worktree assignment." };
-      }
-      if (role === "coordinator" && !coordinatorTools.has(event.toolName)) {
-        return { block: true, reason: "First Mate delegates execution through fm_delegate. Keep this conversation available for the human." };
-      }
-      if (role === "advisor" && ![...inspectionTools, "fm_status", "fm_read_document", "fm_read_session", "fm_advice", "fm_recovery_brief"].includes(event.toolName)) {
-        return { block: true, reason: "The advisor is read-only and returns judgment through fm_advice." };
+      if (event.toolName.startsWith("fm_") && !roleTools.has(event.toolName)) {
+        return { block: true, reason: "This First Mate workflow action is unavailable to the current role." };
       }
     });
   };

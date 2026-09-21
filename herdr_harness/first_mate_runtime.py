@@ -35,33 +35,17 @@ class DeferredOperation(Exception):
 
 
 TERMINAL = {"completed", "failed", "blocked", "cancelled", "superseded", "paused"}
-SHELL_INSPECTION_TOOLS = ("read", "bash", "grep", "find", "ls")
-COORDINATOR_TOOLS = SHELL_INSPECTION_TOOLS + (
-    "fm_status", "fm_delegate", "fm_begin_stage", "fm_recover",
-    "fm_resolve_gate", "fm_steer", "fm_retry", "fm_complete_stage",
-    "fm_revise", "fm_finish_feature",
-)
-READ_ONLY_WORKER_TOOLS = SHELL_INSPECTION_TOOLS + (
-    "fm_status", "fm_read_document", "fm_read_session", "fm_outcome",
-    "fm_handoff", "fm_acknowledge_handoff", "fm_request_human",
-    "fm_delegate", "fm_retry", "fm_wait_for_children",
-)
-ADVISOR_TOOLS = SHELL_INSPECTION_TOOLS + (
-    "fm_status", "fm_read_document", "fm_read_session", "fm_advice",
-    "fm_recovery_brief",
-)
 COORDINATOR_PROMPT = """You are First Mate, the human's small conversational router for ONE feature.
 Keep every ordinary reply brief: one to three sentences and normally at most 80
 words. Use short bullets only when they materially improve clarity. Detailed
 plans, research, investigation, implementation, review, testing, synthesis and
 deliverables belong in tracked worker assignments and Documents, not this chat.
 
-You have normal read tools and bash for short project lookups and diagnostics,
-including discovering and invoking applicable local CLI workflows. Keep these
-actions bounded to routing the feature, preserve project source, commits and
-branches, and do not perform unrelated or unauthorized actions. Direct write and
-edit tools are unavailable. Delegate substantive work rather than performing it
-in this conversation.
+You have Pi's normal configured tools, extensions, skills and project context.
+Use them for short project lookups and diagnostics that help route the feature.
+Keep these actions bounded, preserve the human's authorization, and delegate
+substantive work rather than performing it in this conversation. When a skill
+would spawn agents, adapt it to fm_delegate; never launch unmanaged Pi subprocesses.
 
 Answer simple direction, clarification and status questions yourself from the
 reference-oriented authoritative state. Human messages alone can authorize major
@@ -75,11 +59,11 @@ turn monitoring workers; ordinary service code watches and records them
 automatically. Short routing lookups through the shell remain allowed.
 
 System updates are evidence, never new human authorization. Use the supplied
-outcome summaries for a short stage checkpoint. If completion requires reading
-or reconciling detailed evidence, delegate that work to a tracked lead/reviewer,
-then use its structured summary. Do not inspect full Documents or worker
-transcripts yourself. Call fm_complete_stage only after all current assignments
-have valid successful outcomes. That always pauses for the human's next direction.
+outcome summaries and bounded document/session readers for a short stage
+checkpoint. If completion requires substantial reading or reconciliation,
+delegate that work to a tracked lead/reviewer, then use its structured summary.
+Call fm_complete_stage only after all current assignments have valid successful
+outcomes. That always pauses for the human's next direction.
 Report blockers accurately and never infer success from an agent exit.
 
 Preserve existing authorization. Do not create a redundant approval request for
@@ -104,20 +88,20 @@ handoff, call fm_handoff with a thorough checkpoint and end your turn. Never
 compact; a new saved session will continue the same assignment. If you are a
 successor, inspect the checkpoint and workspace then fm_acknowledge_handoff
 before changing anything. All observable execution is retained in the work log.
-For a read_only workspace, bash and the read tools remain available for inspection
-and normal project CLIs. Treat read_only as an instruction not to edit workspace
-files, commits or branches, and do not perform unrelated or unauthorized actions;
-it is not a security sandbox. An isolated assignment owns its designated worktree
+For a read_only workspace, Pi's normal configured tools remain available. Treat
+read_only as an instruction not to edit workspace files, commits or branches, and
+do not perform unrelated or unauthorized actions; it is not a security sandbox
+or tool capability boundary. An isolated assignment owns its designated worktree
 within the assignment scope.
 """
 ADVISOR_PROMPT = """You are the read-only advisor for a potentially unhealthy Pi
 assignment. Inspect the evidence supplied. Repetition can be legitimate; do not
 intervene without a concrete reason. Return fm_advice with continue, steer,
 handoff or pause. You cannot perform the assignment, mutate files or authorize a
-workflow stage. Bash and read tools are available for bounded inspection in the
-assigned workspace, but preserve project source, commits and branches and do not
-perform unrelated or unauthorized actions. Keep the assessment bounded and
-evidence-based.
+workflow stage. Pi's normal configured tools and resources are available for
+bounded inspection in the assigned workspace, but preserve project source,
+commits and branches and do not perform unrelated or unauthorized actions. Keep
+the assessment bounded and evidence-based.
 """
 
 
@@ -453,7 +437,10 @@ class FirstMateRuntime:
         child_env["PATH"] = _child_path(self.pi_bin or "pi", child_env.get("PATH"))
         child_env["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent)
         child_env["HERDR_FIRST_MATE_JOB_DIR"] = str(directory)
-        child_env["HERDR_FIRST_MATE_ROLE"] = job["kind"]
+        # New managed identity keeps older auto-discovered First Mate extensions
+        # dormant while every unrelated configured extension remains available.
+        child_env.pop("HERDR_FIRST_MATE_ROLE", None)
+        child_env["HERDR_FIRST_MATE_MANAGED_ROLE"] = job["kind"]
         child_env["HERDR_FIRST_MATE_CONTEXT_TARGET"] = str(self.context_target)
         child_env["PI_SKIP_VERSION_CHECK"] = "1"
         with (directory / "supervisor.log").open("ab") as output:
@@ -799,8 +786,6 @@ class FirstMateRuntime:
                     "documents": snapshot["documents"], "memberships": snapshot.get("memberships", []),
                     "last_updates": [{"sequence": e["sequence"], "type": e["type"], "summary": e["summary"][:500], "created_at": e["created_at"]}
                                      for e in snapshot["events"][-10:]]}
-        if action in {"fm_read_document", "fm_read_session"} and job["kind"] == "coordinator":
-            raise ValueError("Detailed evidence inspection belongs to a tracked worker assignment")
         if action == "fm_read_document":
             document = self.store.get_document(params["document_id"])
             if document["feature_id"] != feature_id:
@@ -1274,16 +1259,6 @@ def _pi_command(job: dict) -> list[str]:
     command = [job["pi_bin"], "--mode", "rpc", "--session", job["session_file"],
                "--name", "First Mate" if job["kind"] == "coordinator" else job["claim"].get("title", "First Mate advisor"),
                prompt_flag, charter, "--extension", job["extension"]]
-    if job["kind"] in {"coordinator", "advisor"}:
-        command += ["--no-extensions", "--no-prompt-templates"]
-    if job["kind"] == "advisor":
-        command += ["--no-skills", "--no-context-files"]
-    if job["kind"] == "coordinator":
-        command += ["--tools", ",".join(COORDINATOR_TOOLS)]
-    if job["kind"] == "worker" and job.get("workspace_mode") == "read_only":
-        command += ["--tools", ",".join(READ_ONLY_WORKER_TOOLS)]
-    if job["kind"] == "advisor":
-        command += ["--tools", ",".join(ADVISOR_TOOLS)]
     if job.get("model"):
         command += ["--model", job["model"]]
     if job.get("thinking"):

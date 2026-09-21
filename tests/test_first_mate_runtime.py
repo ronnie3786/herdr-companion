@@ -15,9 +15,8 @@ import time
 import unittest
 from unittest.mock import patch
 
-from herdr_harness.first_mate_runtime import (ADVISOR_TOOLS, COORDINATOR_PROMPT,
-    COORDINATOR_TOOLS, READ_ONLY_WORKER_TOOLS, SHELL_INSPECTION_TOOLS,
-    WORKER_PROMPT, FirstMateRuntime, _coordinator_state, _ledger_event, _locked,
+from herdr_harness.first_mate_runtime import (COORDINATOR_PROMPT, WORKER_PROMPT,
+    FirstMateRuntime, _coordinator_state, _ledger_event, _locked,
     _pi_command, _read_json, _records, _write_json)
 from herdr_harness.first_mate_store import FirstMateStore, FirstMateError
 
@@ -198,7 +197,7 @@ class FirstMateRuntimeTests(unittest.TestCase):
                 self.assertNotIn('--model', argv)
                 self.assertNotIn('--thinking', argv)
 
-    def test_coordinator_uses_replacement_charter_shell_tools_skills_and_project_context(self):
+    def test_coordinator_uses_replacement_charter_with_normal_pi_resources(self):
         feature = self.feature()
         claim = self.store.claim_message(feature['id'], self.runtime.owner)
         job = self.runtime._new_job(feature, kind='coordinator', prompt='Hello', claim=claim)
@@ -206,17 +205,13 @@ class FirstMateRuntimeTests(unittest.TestCase):
         command = _pi_command(job)
         self.assertEqual(command[command.index('--system-prompt') + 1], COORDINATOR_PROMPT)
         self.assertNotIn('--append-system-prompt', command)
-        tools = command[command.index('--tools') + 1].split(',')
-        self.assertEqual(tools, list(COORDINATOR_TOOLS))
-        self.assertEqual(tools[:len(SHELL_INSPECTION_TOOLS)], list(SHELL_INSPECTION_TOOLS))
-        self.assertIn('bash', tools)
-        self.assertNotIn('edit', tools)
-        self.assertNotIn('write', tools)
-        self.assertNotIn('fm_read_document', tools)
-        self.assertNotIn('fm_read_session', tools)
-        self.assertNotIn('--no-skills', command)
-        self.assertNotIn('--no-context-files', command)
-        self.assertNotIn('--no-builtin-tools', command)
+        self.assertIn('one to three sentences', COORDINATOR_PROMPT)
+        self.assertIn('adapt it to fm_delegate', COORDINATOR_PROMPT)
+        for flag in ('--tools', '--exclude-tools', '--no-tools', '--no-builtin-tools',
+                     '--no-extensions', '--no-skills', '--no-context-files',
+                     '--no-prompt-templates'):
+            self.assertNotIn(flag, command)
+        self.assertEqual(command[command.index('--extension') + 1], job['extension'])
 
     def test_worker_launch_keeps_evidence_tools_and_worker_charter(self):
         job = {'kind':'worker','pi_bin':'pi','session_file':'/tmp/synthetic-session.jsonl',
@@ -225,16 +220,12 @@ class FirstMateRuntimeTests(unittest.TestCase):
         command = _pi_command(job)
         self.assertEqual(command[command.index('--append-system-prompt') + 1], WORKER_PROMPT)
         self.assertNotIn('--system-prompt', command)
-        tools = command[command.index('--tools') + 1].split(',')
-        self.assertEqual(tools, list(READ_ONLY_WORKER_TOOLS))
-        self.assertIn('bash', tools)
-        self.assertNotIn('edit', tools)
-        self.assertNotIn('write', tools)
-        self.assertIn('fm_read_document', tools)
-        self.assertIn('fm_read_session', tools)
-        self.assertIn('fm_delegate', tools)
+        for flag in ('--tools', '--exclude-tools', '--no-tools', '--no-builtin-tools',
+                     '--no-extensions', '--no-skills', '--no-context-files',
+                     '--no-prompt-templates'):
+            self.assertNotIn(flag, command)
 
-    def test_every_role_and_workspace_mode_launches_with_bash(self):
+    def test_every_role_and_workspace_mode_uses_normal_pi_tool_and_resource_profile(self):
         base = {'pi_bin':'pi','session_file':'/tmp/synthetic-session.jsonl',
                 'claim':{'title':'Synthetic assignment'},'extension':'/tmp/first-mate.ts'}
         jobs = [
@@ -246,14 +237,10 @@ class FirstMateRuntimeTests(unittest.TestCase):
         for job in jobs:
             with self.subTest(kind=job['kind'], workspace_mode=job.get('workspace_mode')):
                 command = _pi_command(job)
-                if '--tools' in command:
-                    self.assertIn('bash', command[command.index('--tools') + 1].split(','))
-                else:
-                    self.assertNotIn('--no-tools', command)
-                    self.assertNotIn('--no-builtin-tools', command)
-        advisor_command = _pi_command(jobs[-1])
-        self.assertEqual(advisor_command[advisor_command.index('--tools') + 1].split(','), list(ADVISOR_TOOLS))
-        self.assertNotIn('--no-builtin-tools', advisor_command)
+                for flag in ('--tools', '--exclude-tools', '--no-tools', '--no-builtin-tools',
+                             '--no-extensions', '--no-skills', '--no-context-files',
+                             '--no-prompt-templates'):
+                    self.assertNotIn(flag, command)
 
     def test_coordinator_input_is_current_scope_and_reference_oriented(self):
         snapshot = {
@@ -297,14 +284,41 @@ class FirstMateRuntimeTests(unittest.TestCase):
         self.assertNotIn('/private/current', rendered)
         self.assertIn('doc-current', rendered)
 
-    def test_coordinator_cannot_open_detailed_evidence_directly(self):
+    def test_coordinator_evidence_readers_are_paginated_and_feature_scoped(self):
+        def evidence(feature, suffix):
+            human = self.store.claim_message(feature['id'], 'owner-' + suffix)
+            visit = self.store.start_visit(feature['id'], 'planning', 'Planning', 'stage-' + suffix, 1, human['id'])
+            assignment = self.store.create_assignment(visit['id'], {
+                'title':'Evidence '+suffix, 'role':'reviewer', 'prompt':'Inspect',
+                'request_id':'assignment-'+suffix, 'input_revision':1})
+            claim = self.store.claim_assignment(assignment['id'], 'worker-' + suffix)
+            worker = self.runtime._new_job(feature, kind='worker', prompt='Inspect', claim=claim)
+            native = 'native-' + suffix
+            self.runtime._bind(worker, native, worker['session_file'])
+            assignment = self.store.get_assignment(assignment['id'])
+            document = self.store._document(assignment, 'Long evidence', suffix * 1300)
+            rows = [{'type':'session','id':native}]
+            rows.append({'type':'message','message':{'role':'assistant','content':[{'type':'text','text':suffix * 1300}]}})
+            Path(worker['session_file']).write_text(''.join(json.dumps(row)+'\n' for row in rows))
+            return human, document, native
+
         feature = self.feature()
-        claim = self.store.claim_message(feature['id'], self.runtime.owner)
+        claim, document, native = evidence(feature, 'a')
+        other = self.store.create_feature({'title':'Other','goal':'Other evidence','cwd':str(self.cwd),'request_id':'other-evidence'})
+        _, other_document, other_native = evidence(other, 'b')
         job = {'feature_id':feature['id'],'kind':'coordinator','claim':claim}
-        with self.assertRaisesRegex(ValueError, 'tracked worker'):
-            self.runtime._tool(job, 'fm_read_document', {'document_id':'synthetic'}, 'read-document')
-        with self.assertRaisesRegex(ValueError, 'tracked worker'):
-            self.runtime._tool(job, 'fm_read_session', {'native_session_id':'synthetic'}, 'read-session')
+
+        page = self.runtime._tool(job, 'fm_read_document', {'document_id':document['id'], 'length':1000}, 'read-document')
+        self.assertEqual(len(page['content']), 1000)
+        self.assertEqual(page['next_offset'], 1000)
+        session = self.runtime._tool(job, 'fm_read_session', {
+            'native_session_id':native, 'message_index':0, 'text_length':1000}, 'read-session')
+        self.assertEqual(len(session['messages'][0]['text']), 1000)
+        self.assertEqual(session['messages'][0]['next_text_offset'], 1000)
+        with self.assertRaisesRegex(FirstMateError, 'another feature'):
+            self.runtime._tool(job, 'fm_read_document', {'document_id':other_document['id']}, 'cross-document')
+        with self.assertRaisesRegex(FirstMateError, 'another feature'):
+            self.runtime._tool(job, 'fm_read_session', {'native_session_id':other_native}, 'cross-session')
 
     def test_rotation_retains_coordinator_question_with_terse_human_answer(self):
         feature = self.feature()
@@ -532,7 +546,8 @@ class FirstMateRuntimeTests(unittest.TestCase):
             self.runtime._launch(job)
         child = spawn.call_args.kwargs['env']
         self.assertNotIn('HERDR_HARNESS_API_TOKEN', child)
-        self.assertEqual(child['HERDR_FIRST_MATE_ROLE'],'coordinator')
+        self.assertNotIn('HERDR_FIRST_MATE_ROLE', child)
+        self.assertEqual(child['HERDR_FIRST_MATE_MANAGED_ROLE'],'coordinator')
         self.assertEqual(spawn.call_args.kwargs['cwd'], feature['cwd'])
         self.assertEqual(child['PATH'].split(os.pathsep)[0], str(self.fake.parent))
         self.assertTrue(child['PATH'].endswith(configured_path))

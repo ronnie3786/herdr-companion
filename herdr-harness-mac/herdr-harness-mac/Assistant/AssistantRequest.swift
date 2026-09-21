@@ -1,7 +1,10 @@
 import Foundation
 
 struct AssistantRequest: Codable, Sendable {
-    struct Scope: Codable, Sendable { var expectedRootPath: String? }
+    struct Scope: Codable, Sendable {
+        var expectedRootPath: String? = nil
+        var reviewId: String? = nil
+    }
     var prompt: String
     var profile = "contextual-question-v1"
     var mode = "ask"

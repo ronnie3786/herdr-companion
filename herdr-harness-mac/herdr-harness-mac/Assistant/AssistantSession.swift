@@ -7,6 +7,8 @@ final class AssistantSession {
     let machineID: String
     let paneID: String?
     let rootPath: String?
+    let profile: String
+    let scopeReviewId: String?
     var context: AssistantContext
     var currentContext: AssistantContext
     var draft = ""
@@ -23,13 +25,25 @@ final class AssistantSession {
     @ObservationIgnored private var operation: Task<Void, Never>?
     @ObservationIgnored private var stopRequested = false
     @ObservationIgnored private var isPreparing = false
+    @ObservationIgnored private var queuedDraft: String?
 
-    init(title: String, machineID: String, paneID: String?, rootPath: String?, context: AssistantContext,
-         transport: AssistantTransport, persistence: AssistantPersistence) {
+    init(
+        title: String,
+        machineID: String,
+        paneID: String?,
+        rootPath: String?,
+        context: AssistantContext,
+        transport: AssistantTransport,
+        persistence: AssistantPersistence,
+        profile: String = "contextual-question-v1",
+        scopeReviewId: String? = nil
+    ) {
         self.title = title
         self.machineID = machineID
         self.paneID = paneID
         self.rootPath = rootPath
+        self.profile = profile
+        self.scopeReviewId = scopeReviewId
         self.context = context
         self.currentContext = context
         self.transport = transport
@@ -52,8 +66,8 @@ final class AssistantSession {
         }
         do {
             let capabilities = try await transport.capabilities()
-            guard capabilities.profiles.contains("contextual-question-v1") else {
-                error = "Update this machine's companion server to use contextual questions."
+            guard capabilities.profiles.contains(profile) else {
+                error = "Update this machine's companion server to use this question profile."
                 return
             }
             isReady = true
@@ -62,15 +76,30 @@ final class AssistantSession {
                 isRunning = true
                 operation = Task { await observe(latest.id) }
             }
+            submitQueuedDraftIfPossible()
         } catch { self.error = "Contextual questions are unavailable: \(error.localizedDescription)" }
     }
 
     func submit() {
         guard canSend, !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        pending = AssistantRequest(prompt: draft, paneId: paneID, scope: .init(expectedRootPath: rootPath),
+        pending = AssistantRequest(prompt: draft, profile: profile, paneId: paneID,
+                                   scope: .init(expectedRootPath: rootPath, reviewId: scopeReviewId),
                                    context: context, continueFromRunId: latest?.id,
                                    model: selectedModel.isEmpty ? nil : selectedModel)
         retrySubmission()
+    }
+
+    /// A selection popover closes before its session has necessarily loaded its
+    /// capabilities, so retain the question until the normal send gate opens.
+    func submitDraftWhenReady(_ value: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        queuedDraft = value
+        Task { [weak self] in
+            guard let self else { return }
+            await self.prepare()
+            self.submitQueuedDraftIfPossible()
+        }
     }
 
     func retrySubmission() {
@@ -196,6 +225,13 @@ final class AssistantSession {
     }
 
     func saveDraft() { Task { _ = await save() } }
+
+    private func submitQueuedDraftIfPossible() {
+        guard let queuedDraft, canSend else { return }
+        self.queuedDraft = nil
+        draft = queuedDraft
+        submit()
+    }
 
     @discardableResult private func save() async -> Bool {
         do {

@@ -19,6 +19,7 @@ from typing import Any, Mapping, Optional
 from . import attachments, issue_reports, response_audio, result_artifacts, voice
 from .active_work import ActiveWorkError
 from .first_mate_store import FirstMateError
+from .pr_review_store import PRReviewError
 from .agent_runs import AgentRunError, MAX_ATTACHMENTS, MODEL_PATTERN, THINKING_LEVELS
 from .alerts import utc_now
 from .issue_reports import IssueReportError
@@ -269,6 +270,12 @@ def _string(
     return text
 
 
+def _pr_review_media_type(value: str) -> str:
+    if len(value) > 255 or any(ord(character) < 32 or ord(character) == 127 for character in value) or not re.fullmatch(r"[A-Za-z0-9!#$&^_.+\-]+/[A-Za-z0-9!#$&^_.+\-]+", value):
+        raise HTTPValidationError("content_type is invalid")
+    return value
+
+
 def _optional_cwd(body: dict) -> Optional[str]:
     if "cwd" not in body or body.get("cwd") is None:
         return None
@@ -402,6 +409,7 @@ def api_description() -> dict:
         "capabilities": [
             "pane-retirement-v1",
             "first-mate-v1",
+            "pr-review-v1",
             "pi-session-context-v1",
             "agent-control-v1",
             "discovery-v1",
@@ -415,6 +423,9 @@ def api_description() -> dict:
             "uiClients": "/api/v1/ui/clients",
             "firstMate": "/api/v1/first-mate/features",
             "firstMateCapabilities": "/api/v1/first-mate/capabilities",
+            "prReviews": "/api/v1/pr-reviews",
+            "prReview": "/api/v1/pr-reviews/{reviewId}",
+            "prReviewCapabilities": "/api/v1/pr-reviews/capabilities",
             "issueReports": "/api/v1/issue-reports",
             "issueReportCapabilities": "/api/v1/issue-reports/capabilities",
             "network": "/api/v1/network",
@@ -512,6 +523,7 @@ def api_description() -> dict:
             "POST /api/v1/active-work/ingestions",
             "POST /api/v1/response-audio/prepare|speech",
             "POST /api/v1/result-artifacts",
+            "POST|PUT|DELETE /api/v1/pr-reviews",
             "POST /api/v1/quick-sessions/pi",
             "POST /api/v1/agent-runs",
             "POST /api/v1/agent-runs/{runId}/cancel|promote",
@@ -527,6 +539,7 @@ def api_description() -> dict:
         ],
         "sseEvents": [
             "notes.changed",
+            "pr_review.updated",
             "snapshot.updated",
             "alert.created",
             "alert.updated",
@@ -838,7 +851,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 agent_run_create = method == "POST" and segments == ["api", "v1", "agent-runs"]
                 issue_report_create = method == "POST" and segments == ["api", "v1", "issue-reports"]
                 voice_upload = method == "POST" and segments[2:] == ["voice", "transcriptions"]
-                if attachment_upload or agent_run_create:
+                pr_review_upload = method == "POST" and len(segments) == 5 and segments[:3] == ["api", "v1", "pr-reviews"] and segments[4] == "documents"
+                if attachment_upload or agent_run_create or pr_review_upload:
                     maximum = attachments.MAX_ATTACHMENT_JSON_BYTES
                 elif issue_report_create:
                     maximum = issue_reports.MAX_ISSUE_REPORT_JSON_BYTES
@@ -848,7 +862,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     maximum = MAX_NOTE_BYTES * MAX_NOTES
                 else:
                     maximum = MAX_BODY_BYTES
-                body = self._read_json(maximum=maximum) if method in {"POST", "PATCH", "DELETE"} else {}
+                body = self._read_json(maximum=maximum) if method in {"POST", "PUT", "PATCH", "DELETE"} else {}
                 response = self._route(method, segments, query, body)
                 if response is not None:
                     if isinstance(response, tuple):
@@ -878,6 +892,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             except ActiveWorkError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except FirstMateError as exc:
+                self._error(exc.status, exc.code, str(exc))
+            except PRReviewError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except IssueReportError as exc:
                 error: dict[str, Any] = {"code": exc.code, "message": str(exc)}
@@ -1074,6 +1090,145 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 limit = _query_int(query, "limit", default=100, minimum=1, maximum=100)
                 return service.first_mate.session(tail[1], before=before, limit=limit)
             raise HTTPValidationError("First Mate endpoint not found", code="not_found", status=404)
+
+        def _serve_pr_review_document(self, review_id: str, document_id: str) -> None:
+            with service.pr_review.open_document(review_id, document_id) as content:
+                document = content.document
+                filename = str(document.get("filename") or "document")
+                fallback = re.sub(r"[^A-Za-z0-9._ -]", "_", filename).strip(" .") or "document"
+                disposition = (
+                    "inline"
+                    if content.media_type in {"text/html", "text/markdown", "text/plain"}
+                    else "attachment"
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", _pr_review_media_type(content.media_type))
+                self.send_header("Content-Length", str(content.byte_size))
+                self.send_header("Content-Disposition", f'{disposition}; filename="{fallback[:160]}"')
+                self._common_headers()
+                self.end_headers()
+                handle = content.handle
+                while True:
+                    chunk = handle.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+
+        def _pr_review_route(self, method: str, tail: list[str], query: dict, body: dict):
+            store = service.pr_review_store
+            runtime = service.pr_review
+            if method == "GET" and tail == ["capabilities"]:
+                return {"ok": True, "capabilities": ["pr-review-v1"], **runtime.capabilities(), "skills": store.skills()}
+            if tail == ["skills"]:
+                if method == "GET":
+                    return {"ok": True, "skills": store.skills()}
+                if method == "POST":
+                    allowed = {"id", "title", "kind", "prompt_template", "command_template", "outputs", "description", "request_id"}
+                    if set(body) - allowed:
+                        raise HTTPValidationError("Skill contains an unsupported field")
+                    return {"ok": True, "skill": store.add_skill(body)}, 201
+            if len(tail) == 2 and tail[0] == "skills" and method == "DELETE":
+                if set(body) != {"request_id"}:
+                    raise HTTPValidationError("Skill contains an unsupported field")
+                return {"ok": True, "skills": store.disable_skill(_identifier(tail[1], "skill_id"), _string(body.get("request_id"), "request_id", maximum=200))}
+            if not tail:
+                if method == "GET":
+                    scope = (query.get("scope") or ["active"])[0]
+                    if scope not in {"active", "archived", "all"}:
+                        raise HTTPValidationError("scope is invalid")
+                    return {"ok": True, "reviews": store.list_reviews(scope)}
+                if method == "POST":
+                    if set(body) - {"url", "request_id", "skill_ids", "actor"}:
+                        raise HTTPValidationError("Review contains an unsupported field")
+                    review = runtime.create_review(_string(body.get("url"), "url", maximum=4096), _string(body.get("request_id"), "request_id", maximum=200), body.get("skill_ids") or [], body.get("actor") or "")
+                    return {"ok": True, "review": review}, 201
+                raise HTTPValidationError("PR Review endpoint not found", code="not_found", status=404)
+            review_id = _identifier(tail[0], "review_id")
+            rest = tail[1:]
+            if not rest and method == "GET":
+                return {"ok": True, **store.snapshot(review_id)}
+            if rest in (["archive"], ["unarchive"]) and method == "POST":
+                if set(body) != {"request_id"}:
+                    raise HTTPValidationError("Archive contains an unsupported field")
+                return {"ok": True, "review": store.archive(review_id, _string(body["request_id"], "request_id", maximum=200), rest == ["archive"])}
+            if rest == ["refresh"] and method == "POST":
+                if set(body) != {"request_id"}:
+                    raise HTTPValidationError("Refresh contains an unsupported field")
+                return {"ok": True, "review": runtime.refresh_review(review_id, body["request_id"])}, 202
+            if rest == ["diff"] and method == "GET":
+                return {"ok": True, **runtime.diff(review_id, (query.get("path") or [None])[0])}
+            if rest == ["file"] and method == "GET":
+                path = _string((query.get("path") or [None])[0], "path", maximum=4096)
+                if path.startswith("/") or any(part == ".." for part in path.split("/")):
+                    raise HTTPValidationError("path must stay within the review checkout")
+                side = (query.get("side") or ["after"])[0]
+                if side not in {"before", "after"}:
+                    raise HTTPValidationError("side is invalid")
+                return {"ok": True, **runtime.file_text(review_id, path, side, _query_int(query, "start", default=1, minimum=1, maximum=10**9), _query_int(query, "end", default=10**9, minimum=1, maximum=10**9))}
+            if rest == ["findings"] and method == "GET":
+                return {"ok": True, **runtime.findings_for_path(review_id, _string((query.get("path") or [None])[0], "path", maximum=4096))}
+            if rest == ["runs"] and method == "POST":
+                if set(body) - {"skill_id", "request_id", "actor"}:
+                    raise HTTPValidationError("Run contains an unsupported field")
+                run = runtime.start_run(review_id, _identifier(body.get("skill_id"), "skill_id"), _string(body.get("request_id"), "request_id", maximum=200), body.get("actor") or "")
+                return {"ok": True, "run": run}, 202
+            if len(rest) >= 2 and rest[0] == "runs":
+                run_id = _identifier(rest[1], "run_id")
+                if len(rest) == 2 and method == "GET":
+                    return {"ok": True, "run": store.run(review_id, run_id)}
+                if rest[2:] == ["finish"] and method == "POST":
+                    if set(body) - {"state", "note", "request_id"}:
+                        raise HTTPValidationError("Finish contains an unsupported field")
+                    return {"ok": True, "run": runtime.finish_run(review_id, run_id, _string(body.get("state"), "state", maximum=20), body.get("note") or "", _string(body.get("request_id"), "request_id", maximum=200))}
+                if rest[2:] == ["output"] and method == "GET":
+                    return {"ok": True, **runtime.run_output(review_id, run_id, _query_int(query, "lines", default=200, minimum=1, maximum=10000))}
+            if len(rest) >= 3 and rest[0] == "skills" and rest[2] == "mark" and method == "POST":
+                if set(body) - {"state", "note", "actor", "request_id"}:
+                    raise HTTPValidationError("Mark contains an unsupported field")
+                return {"ok": True, "skill": store.mark(review_id, _identifier(rest[1], "skill_id"), _string(body.get("state"), "state", maximum=20), _string(body.get("request_id"), "request_id", maximum=200), body.get("actor") or "", body.get("note") or "")}
+            if rest == ["rank"] and method == "POST":
+                if set(body) != {"request_id"}:
+                    raise HTTPValidationError("Rank contains an unsupported field")
+                return {"ok": True, "review": runtime.rank_review(review_id, _string(body["request_id"], "request_id", maximum=200))}, 202
+            if rest == ["rankings"] and method == "PUT":
+                if set(body) != {"files", "request_id"}:
+                    raise HTTPValidationError("Rankings contains an unsupported field")
+                return {"ok": True, "files": runtime.set_rankings(review_id, body.get("files"), _string(body.get("request_id"), "request_id", maximum=200))}
+            if rest == ["viewed"] and method == "POST":
+                if set(body) - {"paths", "viewed", "sync_github", "request_id"}:
+                    raise HTTPValidationError("Viewed contains an unsupported field")
+                if type(body.get("viewed")) is not bool:
+                    raise HTTPValidationError("viewed must be a boolean")
+                files = runtime.set_viewed(review_id, body.get("paths"), body["viewed"], bool(body.get("sync_github", True)), _string(body.get("request_id"), "request_id", maximum=200))
+                return {"ok": True, "files": files}
+            if rest == ["viewed", "sync"] and method == "POST":
+                if set(body) != {"request_id"}:
+                    raise HTTPValidationError("Viewed sync contains an unsupported field")
+                return {"ok": True, "files": runtime.sync_viewed(review_id, _string(body["request_id"], "request_id", maximum=200))}
+            if rest == ["documents"]:
+                if method == "GET":
+                    return {"ok": True, "documents": store.documents(review_id)}
+                if method == "POST":
+                    allowed = {"filename", "content_type", "data_base64", "title", "request_id", "url", "path"}
+                    if set(body) - allowed:
+                        raise HTTPValidationError("Document contains an unsupported field")
+                    request_id = _string(body.get("request_id"), "request_id", maximum=200)
+                    if "data_base64" in body:
+                        document = runtime.add_document_upload(review_id, _string(body.get("filename"), "filename", maximum=512), _pr_review_media_type(_string(body.get("content_type"), "content_type", maximum=256)), _string(body.get("data_base64"), "data_base64", maximum=attachments.MAX_ATTACHMENT_JSON_BYTES), body.get("title") or "", "user", request_id)
+                    elif "url" in body:
+                        document = runtime.add_document_link(review_id, _string(body.get("url"), "url", maximum=4096), _string(body.get("title", ""), "title", maximum=512, allow_empty=True), "user", request_id)
+                    else:
+                        document = runtime.add_document_path(review_id, _string(body.get("path"), "path", maximum=4096), body.get("title") or "", "cli", request_id)
+                    return {"ok": True, "document": document}, 201
+            if len(rest) >= 2 and rest[0] == "documents":
+                if len(rest) == 2 and method == "GET":
+                    return {"ok": True, "document": store.document(review_id, _identifier(rest[1], "document_id"))}
+                if rest[2:] == ["content"] and method == "GET":
+                    self._serve_pr_review_document(review_id, _identifier(rest[1], "document_id"))
+                    return None
+            if rest == ["events"] and method == "GET":
+                return {"ok": True, **store.events(review_id, _query_int(query, "after", default=0, minimum=0, maximum=10**9))}
+            raise HTTPValidationError("PR Review endpoint not found", code="not_found", status=404)
 
         def _control_route(
             self,
@@ -1300,6 +1455,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 return response
             if tail[:1] == ["first-mate"]:
                 return self._first_mate_route(method, tail[1:], query, body)
+            if tail[:1] == ["pr-reviews"]:
+                return self._pr_review_route(method, tail[1:], query, body)
             if method == "GET" and tail == ["issue-reports", "capabilities"]:
                 return service.issue_reports.capabilities()
             if method == "POST" and tail == ["issue-reports"]:
@@ -2654,6 +2811,9 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
 
         def do_POST(self) -> None:
             self._dispatch("POST")
+
+        def do_PUT(self) -> None:
+            self._dispatch("PUT")
 
         def do_PATCH(self) -> None:
             self._dispatch("PATCH")

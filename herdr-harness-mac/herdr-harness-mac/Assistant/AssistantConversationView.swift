@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AssistantConversationView: View {
     @Bindable var session: AssistantSession
+    var openInWindow: (() -> Void)? = nil
     @State private var showsHandoff = false
     @State private var addedContext = ""
     @FocusState private var composerFocused: Bool
@@ -13,6 +14,9 @@ struct AssistantConversationView: View {
                 Spacer()
                 Button("New question", systemImage: "square.and.pencil", action: session.newQuestion)
                     .disabled(session.isRunning || session.pending != nil || session.latest?.status.isTerminal == false)
+                if let openInWindow {
+                    Button("Open in window", systemImage: "macwindow", action: openInWindow)
+                }
             }
             Text(session.title).herdrFont(.subheadline).foregroundStyle(HerdrTheme.mist)
             DisclosureGroup("Context · \(session.context.items.count) items") {
@@ -43,7 +47,9 @@ struct AssistantConversationView: View {
                 }
                 Text("Reopen Ask from its source to capture a fresh snapshot.").herdrFont(.caption).foregroundStyle(HerdrTheme.mist)
             }
-            Text("Answers use the supplied context. Actions continue in an agent.")
+            Text(session.profile == "pr-review-question-v1"
+                 ? "Answers may read the pinned checkout on the development machine. Findings are reference only."
+                 : "Answers use the supplied context. Actions continue in an agent.")
                 .herdrFont(.caption).foregroundStyle(HerdrTheme.mist)
             Divider()
             ScrollView {

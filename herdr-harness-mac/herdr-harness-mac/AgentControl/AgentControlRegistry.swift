@@ -14,7 +14,7 @@ enum AgentControlRegistry {
                 "inspector": enumString(["overview", "agents", "documents", "workflow"]),
             ]), targetKinds: ["pane", "workspace", "tab", "first-mate", "hud-chat"], effect: "navigation", enabled: enabled, reason: disabledReason),
             descriptor("ui.segment", "Open app segment", schema: schema(properties: [
-                "segment": enumString(["chat", "terminal", "git", "skills", "workspace", "active-work", "first-mate", "fleet", "attention", "activity"]),
+                "segment": enumString(["chat", "terminal", "git", "skills", "workspace", "active-work", "pr-review", "first-mate", "fleet", "attention", "activity"]),
             ], required: ["segment"]), targetKinds: [], effect: "navigation", enabled: enabled, reason: disabledReason),
             descriptor("ui.back", "Go back", schema: emptySchema, targetKinds: [], effect: "navigation", enabled: enabled, reason: disabledReason),
             descriptor("ui.forward", "Go forward", schema: emptySchema, targetKinds: [], effect: "navigation", enabled: enabled, reason: disabledReason),
@@ -38,6 +38,16 @@ enum AgentControlRegistry {
                 "provider": ["type": .string("string")],
                 "modelId": ["type": .string("string")],
             ], required: ["provider", "modelId"]), targetKinds: ["pane"], effect: "mutation", enabled: enabled, reason: disabledReason),
+            descriptor("pr-review.open", "Open PR review", schema: schema(properties: ["review_id": stringRule(), "tab": enumString(["files","context","agents","skills"])], required:["review_id"]), targetKinds: [], effect: "navigation", enabled: enabled, reason: disabledReason),
+            descriptor("pr-review.select-file", "Select PR review file", schema: schema(properties:["path":stringRule()],required:["path"]), targetKinds: [], effect: "navigation", enabled: enabled, reason: disabledReason),
+            descriptor("pr-review.scroll-to-line", "Scroll to PR review line", schema: schema(properties:["path":stringRule(),"line":integerRule(),"side":enumString(["before","after"])],required:["path","line"]), targetKinds: [], effect: "navigation", enabled: enabled, reason: disabledReason),
+            descriptor("pr-review.highlight-lines", "Highlight PR review lines", schema: schema(properties:["path":stringRule(),"start":integerRule(),"end":integerRule(),"side":enumString(["before","after"])],required:["path","start","end"]), targetKinds: [], effect: "navigation", enabled: enabled, reason: disabledReason),
+            descriptor("pr-review.clear-highlight", "Clear PR review highlight", schema: emptySchema, targetKinds: [], effect: "navigation", enabled: enabled, reason: disabledReason),
+            descriptor("pr-review.set-filter", "Set PR review filter", schema: schema(properties:["impact":enumString(["all","high","medium","low","unranked"])],required:["impact"]), targetKinds: [], effect: "navigation", enabled: enabled, reason: disabledReason),
+            descriptor("pr-review.set-view-mode", "Set PR review view mode", schema: schema(properties:["mode":enumString(["github","guided"])],required:["mode"]), targetKinds: [], effect: "navigation", enabled: enabled, reason: disabledReason),
+            descriptor("pr-review.set-tab", "Set PR review tab", schema: schema(properties:["tab":enumString(["files","context","agents","skills"])],required:["tab"]), targetKinds: [], effect: "navigation", enabled: enabled, reason: disabledReason),
+            descriptor("pr-review.set-viewed", "Set PR review viewed state", schema: schema(properties:["path":stringRule(),"viewed":booleanRule()],required:["path","viewed"]), targetKinds: [], effect: "mutation", enabled: enabled, reason: disabledReason),
+            descriptor("pr-review.state", "Read PR review state", schema: emptySchema, targetKinds: [], effect: "read", enabled: enabled, reason: disabledReason),
         ]
     }
 
@@ -64,9 +74,8 @@ enum AgentControlRegistry {
             throw AgentControlCommandError.invalid("Missing parameter: \(missing.sorted().joined(separator: ", "))")
         }
         for (key, value) in parameters {
-            guard case .string = value else {
-                throw AgentControlCommandError.invalid("Parameter \(key) must be a string.")
-            }
+            let type = (properties[key].flatMap { rule -> String? in if case let .object(values) = rule { return values["type"]?.stringValue }; return nil }) ?? "string"
+            switch type { case "string": guard case .string = value else { throw AgentControlCommandError.invalid("Parameter \(key) must be a string.") }; case "integer": guard case let .number(number) = value, number.rounded() == number, abs(number) <= 1_000_000 else { throw AgentControlCommandError.invalid("Parameter \(key) must be an integer.") }; case "boolean": guard case .bool = value else { throw AgentControlCommandError.invalid("Parameter \(key) must be a boolean.") }; default: throw AgentControlCommandError.invalid("Parameter \(key) has an invalid schema.") }
             if case let .object(rule)? = properties[key], case let .array(allowed)? = rule["enum"],
                !allowed.contains(value) {
                 throw AgentControlCommandError.invalid("Parameter \(key) has an unsupported value.")
@@ -121,4 +130,7 @@ enum AgentControlRegistry {
             "enum": .array(values.map(PiJSONValue.string)),
         ]
     }
+    private static func stringRule() -> [String: PiJSONValue] { ["type": .string("string")] }
+    private static func integerRule() -> [String: PiJSONValue] { ["type": .string("integer")] }
+    private static func booleanRule() -> [String: PiJSONValue] { ["type": .string("boolean")] }
 }

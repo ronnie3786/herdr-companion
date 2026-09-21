@@ -6,12 +6,14 @@ final class AssistantDemo {
     private var runs: [String: HeadlessAgentRun] = [:]
     var transport: AssistantTransport {
         AssistantTransport(
-            capabilities: { AssistantCapabilities(profiles: ["contextual-question-v1"]) },
+            capabilities: { AssistantCapabilities(profiles: ["contextual-question-v1", "pr-review-question-v1"]) },
             start: { request in
                 let id = "agr_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12).lowercased()
                 let data = try JSONSerialization.data(withJSONObject: [
                     "id": id, "status": "completed", "prompt": request.prompt,
-                    "response": "This demo answer uses the context attached to your question. **Inspect Context** to see the captured source, or add another excerpt before a follow-up. No commands were executed.",
+                    "response": request.profile == "pr-review-question-v1"
+                        ? "This demo answer read the checkout context attached to your question. No commands were executed."
+                        : "This demo answer uses the context attached to your question. **Inspect Context** to see the captured source, or add another excerpt before a follow-up. No commands were executed.",
                     "createdAt": Date.now.ISO8601Format(), "threadRootRunId": request.continueFromRunId ?? id,
                 ])
                 let run = try JSONDecoder().decode(HeadlessAgentRun.self, from: data)

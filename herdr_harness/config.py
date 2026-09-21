@@ -85,6 +85,15 @@ ENVIRONMENT_FIELDS = {
         "message_hub_url": "HERDR_FIRST_MATE_MESSAGE_HUB_URL",
         "message_hub_token": "HERDR_FIRST_MATE_MESSAGE_HUB_TOKEN", "app_url": "HERDR_FIRST_MATE_APP_URL",
     },
+    "pr_review": {
+        "workspace_label": "HERDR_PR_REVIEW_WORKSPACE_LABEL", "workspace_root": "HERDR_PR_REVIEW_WORKSPACE_ROOT",
+        "checkout_root": "HERDR_PR_REVIEW_CHECKOUT_ROOT", "store_path": "HERDR_HARNESS_PR_REVIEW_STORE_PATH",
+        "runs_root": "HERDR_HARNESS_PR_REVIEW_RUNS_ROOT", "runner": "HERDR_PR_REVIEW_RUNNER",
+        "model": "HERDR_PR_REVIEW_MODEL", "thinking_level": "HERDR_PR_REVIEW_THINKING",
+        "auto_rank": "HERDR_PR_REVIEW_AUTO_RANK", "sync_viewed_to_github": "HERDR_PR_REVIEW_SYNC_VIEWED",
+        "gh_timeout_seconds": "HERDR_PR_REVIEW_GH_TIMEOUT_SECONDS", "pi_binary": "HERDR_PR_REVIEW_PI_BIN",
+        "claude_binary": "HERDR_PR_REVIEW_CLAUDE_BIN",
+    },
     "integrations": {
         "github_repository": "HERDR_REVIEW_REPOSITORY", "jira_url": "HERDR_JIRA_URL",
         "review_model": "HERDR_REVIEW_MODEL", "review_assessor": "HERDR_REVIEW_ASSESSOR",
@@ -293,7 +302,7 @@ def load_configuration(
                 data = tomllib.load(handle)
         except (OSError, tomllib.TOMLDecodeError):
             raise ConfigurationError("Herdr configuration could not be read as valid TOML") from None
-        allowed_sections = {"version", "machine", "server", "fleet", "providers", "active_work", "first_mate", "remote_activity", "integrations", "code_factory", "push", "apple", "deployment", "environment", "machines"}
+        allowed_sections = {"version", "machine", "server", "fleet", "providers", "active_work", "first_mate", "pr_review", "remote_activity", "integrations", "code_factory", "push", "apple", "deployment", "environment", "machines"}
         if set(data) - allowed_sections:
             raise ConfigurationError("Unrecognized top-level configuration section; use the Herdr cluster configuration sample")
         if data.get("version", 1) != 1:
@@ -387,6 +396,7 @@ def load_configuration(
             "ALERT_STORE_PATH": "alerts.json", "STAR_STORE_PATH": "stars.json",
             "PI_STORE_PATH": "pi-semantic.sqlite3", "ACTIVE_WORK_STORE_PATH": "active-work.sqlite3",
             "FIRST_MATE_STORE_PATH": "first-mate.sqlite3", "FIRST_MATE_RUNS_ROOT": "first-mate-runs",
+            "PR_REVIEW_STORE_PATH": "pr-review.sqlite3", "PR_REVIEW_RUNS_ROOT": "pr-review-runs",
             "CLEANUP_RUNS_ROOT": "cleanup/runs", "AGENT_RUNS_ROOT": "agent-runs",
             "ATTACHMENTS_DIR": "uploads", "NOTES_STORE_PATH": "notes.sqlite3",
             "PANE_SEEN_STORE_PATH": "pane-first-seen.json", "SESSION_LABEL_STORE_PATH": "session-labels.json",

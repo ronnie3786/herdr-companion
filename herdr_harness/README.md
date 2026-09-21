@@ -13,7 +13,7 @@ semantics, headless runs, result artifacts, Active Work, Fleet, cleanup, and opt
 voice/push providers. GitHub and Jira use configured local CLIs. Models and speech
 providers have no private defaults.
 
-`herdr-notes --help` and `herdr-active-work --help` describe the agent commands.
+`herdr-notes --help`, `herdr-active-work --help` and `herdr-pr-review --help` describe the agent commands.
 They support `--config` and `--machine`, respect token scopes, reject redirects,
 and report concurrent-edit conflicts. Optional sync/review commands need explicit
 integration configuration. Release packages include board/web assets and Pi

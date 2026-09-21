@@ -125,8 +125,11 @@ struct ShellNavigationHistoryTests {
         #expect(HerdrDetailScope.pickerCases.contains(.fleet))
         #expect(HerdrDetailScope.pickerSelection(for: .fleet) == .fleet)
         #expect(HerdrDetailScope.pickerSelection(for: .attention) == .attention)
-        // First Mate has its own feature sidebar; the other destinations remain segments.
-        #expect(HerdrDetailScope.pickerCases == HerdrDetailScope.allCases.filter { $0 != .firstMate })
+        #expect(
+            HerdrDetailScope.pickerCases == HerdrDetailScope.allCases.filter {
+                $0 != .firstMate && $0 != .prReview
+            }
+        )
 
         try withModel { model, shell, firstPane, _, _, _ in
             shell.openPane(id: firstPane.id, model: model)
@@ -138,6 +141,19 @@ struct ShellNavigationHistoryTests {
             #expect(shell.goBack(model: model))
             #expect(shell.detailScope == .session)
             #expect(model.selectedPaneID == firstPane.id)
+        }
+    }
+
+    @Test("PR Review has no picker segment but still records navigation")
+    func prReviewUsesNavigatorAndRecordsNavigation() throws {
+        #expect(HerdrDetailScope.pickerSelection(for: .prReview) == nil)
+
+        try withModel { model, shell, firstPane, _, _, _ in
+            shell.openPane(id: firstPane.id, model: model)
+            shell.show(.prReview, model: model)
+
+            #expect(shell.detailScope == .prReview)
+            #expect(shell.history.current == .prReview)
         }
     }
 

@@ -14,4 +14,8 @@ struct ServerCapabilities: Decodable, Sendable {
     var supportsIssueReports: Bool {
         capabilities?.contains("issue-reports-v1") == true
     }
+
+    var supportsPRReview: Bool {
+        capabilities?.contains("pr-review-v1") == true
+    }
 }

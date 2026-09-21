@@ -25,10 +25,23 @@ test("ordinary Pi sessions gain no First Mate tools", () => {
 test("coordinator exposes only asynchronous orchestration and cannot execute commands", () => {
   const f = fixture("coordinator");
   try {
+    assert.ok(f.tools.has("fm_status"));
     assert.ok(f.tools.has("fm_delegate")); assert.ok(f.tools.has("fm_complete_stage")); assert.ok(f.tools.has("fm_resolve_gate"));
     assert.ok(!f.tools.has("fm_outcome"));
+    assert.ok(!f.tools.has("fm_read_document")); assert.ok(!f.tools.has("fm_read_session"));
     assert.equal(f.handlers.get("tool_call")({toolName:"bash"}).block, true);
+    assert.equal(f.handlers.get("tool_call")({toolName:"fm_invented_tool"}).block, true);
     assert.equal(f.handlers.get("tool_call")({toolName:"fm_delegate"}), undefined);
+  } finally { f.cleanup(); }
+});
+
+test("writable workers retain execution and detailed evidence capabilities", () => {
+  const f = fixture("worker", {workspace_mode:"isolated"});
+  try {
+    assert.ok(f.tools.has("fm_status")); assert.ok(f.tools.has("fm_read_document")); assert.ok(f.tools.has("fm_read_session"));
+    assert.ok(f.tools.has("fm_delegate")); assert.ok(f.tools.has("fm_outcome"));
+    assert.equal(f.handlers.get("tool_call")({toolName:"bash"}), undefined);
+    assert.equal(f.handlers.get("tool_call")({toolName:"write"}), undefined);
   } finally { f.cleanup(); }
 });
 

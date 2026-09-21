@@ -2,7 +2,7 @@
 
 First Mate uses a dedicated coordinator role with brief replies and delegates substantial planning, investigation, implementation, and review to tracked workers. Detailed work remains in agent sessions and retained documents. Existing saved coordinator conversations receive the updated role on their next dispatch.
 
-The browser First Mate view renders assistant markdown, retained markdown documents, and saved assistant messages with styled prose and code. User text stays literal, and embedded HTML is escaped.
+The browser First Mate view renders assistant markdown, retained markdown documents, and saved assistant messages with styled prose and code. User text stays literal, and embedded HTML is escaped. Its main conversation now shows human and coordinator replies, matching the native apps; worker updates remain available through the workspace and saved history.
 
 ## Compatibility and setup
 

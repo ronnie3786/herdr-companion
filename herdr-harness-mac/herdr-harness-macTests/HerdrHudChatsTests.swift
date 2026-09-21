@@ -985,7 +985,7 @@ struct HerdrHudChatsTests {
         #expect(current.displayTitle == "Manual Title")
     }
 
-    @Test("HUD naming resolves the selected machine's catalog and configured effort")
+    @Test("HUD naming resolves the selected machine's catalog and rejects a missing preference")
     func hudRenameUsesSelectedMachineCatalog() async throws {
         let alpha = HerdrMachine(id: "alpha", name: "Alpha", urlString: "https://alpha.example.invalid")
         let beta = HerdrMachine(id: "beta", name: "Beta", urlString: "https://beta.example.invalid")
@@ -999,6 +999,36 @@ struct HerdrHudChatsTests {
         let seeded = try seedPendingChat(fixture, machineID: "beta", prompt: "Synthetic beta task")
 
         let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Should not run"}"#)
+        await #expect(throws: SmartRenameModelRoutingError.modelUnavailable(
+            machineName: "Beta",
+            model: "alpha/alpha-only"
+        )) {
+            try await fixture.chats.smartRename(seeded.chat.id, model: fixture.model, runner: runner)
+        }
+
+        #expect(runner.calls.isEmpty)
+        #expect(fixture.chats.chats.first { $0.id == seeded.chat.id }?.title == "Synthetic beta task")
+        #expect(fixture.chats.smartRenamingChatIDs.isEmpty)
+        #expect(HudChatsURLProtocol.catalogHosts() == ["beta.example.invalid"])
+        #expect(fixture.defaults.string(forKey: AgentModelSettings.smartRenameModelKey) == "alpha/alpha-only")
+        #expect(fixture.defaults.string(forKey: AgentModelSettings.smartRenameThinkingLevelKey) == "high")
+    }
+
+    @Test("HUD naming sends an offered selection and selected effort unchanged")
+    func hudRenameSendsOfferedSelectionUnchanged() async throws {
+        let alpha = HerdrMachine(id: "alpha", name: "Alpha", urlString: "https://alpha.example.invalid")
+        let beta = HerdrMachine(id: "beta", name: "Beta", urlString: "https://beta.example.invalid")
+        let fixture = try Fixture(machines: [alpha, beta], catalogByHost: [
+            "alpha.example.invalid": #"{"ok":true,"models":[{"provider":"alpha","id":"alpha-only","name":"Alpha Only","reasoning":true}],"default":{"provider":"alpha","id":"alpha-only","name":"Alpha Only"}}"#,
+            "beta.example.invalid": #"{"ok":true,"models":[{"provider":"beta","id":"beta-only","name":"Beta Only","reasoning":true}],"default":{"provider":"beta","id":"beta-only","name":"Beta Only"}}"#,
+        ])
+        defer { fixture.cleanUp() }
+        fixture.defaults.set("beta/beta-only", forKey: AgentModelSettings.smartRenameModelKey)
+        fixture.defaults.set("high", forKey: AgentModelSettings.smartRenameThinkingLevelKey)
+        let seeded = try seedPendingChat(fixture, machineID: "beta", prompt: "Synthetic beta task")
+
+        let runner = FakeNoteAIRunner()
         runner.mode = .succeed(#"{"title":"Synthetic Beta Task"}"#)
         let notice = try await fixture.chats.smartRename(seeded.chat.id, model: fixture.model, runner: runner)
 
@@ -1006,20 +1036,41 @@ struct HerdrHudChatsTests {
         #expect(call.machineID == "beta")
         #expect(call.model == "beta/beta-only")
         #expect(call.thinkingLevel == "high")
-        #expect(notice?.contains("alpha/alpha-only") == true)
-        #expect(notice?.contains("Beta") == true)
+        #expect(notice == nil)
+        #expect(fixture.chats.chats.first { $0.id == seeded.chat.id }?.displayTitle == "Synthetic Beta Task")
         #expect(HudChatsURLProtocol.catalogHosts() == ["beta.example.invalid"])
-        #expect(fixture.defaults.string(forKey: AgentModelSettings.smartRenameModelKey) == "alpha/alpha-only")
-        #expect(fixture.defaults.string(forKey: AgentModelSettings.smartRenameThinkingLevelKey) == "high")
     }
 
-    @Test("A non-reasoning naming model receives Off without rewriting the saved effort")
-    func nonReasoningNamingModelReceivesOff() async throws {
+    @Test("A non-reasoning naming model rejects non-Off effort and keeps the saved effort")
+    func nonReasoningNamingModelRejectsNonOffEffort() async throws {
         let fixture = try Fixture(catalogByHost: [
             "hud.example.invalid": #"{"ok":true,"models":[{"provider":"synthetic","id":"legacy","name":"Legacy","reasoning":false}],"default":{"provider":"synthetic","id":"legacy","name":"Legacy"}}"#,
         ])
         defer { fixture.cleanUp() }
         fixture.defaults.set("high", forKey: AgentModelSettings.smartRenameThinkingLevelKey)
+        let seeded = try seedPendingChat(fixture, prompt: "Synthetic legacy model task")
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Should not run"}"#)
+        await #expect(throws: SmartRenameModelRoutingError.thinkingLevelUnsupported(
+            machineName: "Example Mac",
+            model: "synthetic/legacy",
+            level: .high
+        )) {
+            try await fixture.chats.smartRename(seeded.chat.id, model: fixture.model, runner: runner)
+        }
+        #expect(runner.calls.isEmpty)
+        #expect(fixture.chats.chats.first { $0.id == seeded.chat.id }?.title == "Synthetic legacy model task")
+        #expect(fixture.defaults.string(forKey: AgentModelSettings.smartRenameThinkingLevelKey) == "high")
+    }
+
+    @Test("A non-reasoning naming model runs with Off when Off is selected")
+    func nonReasoningNamingModelRunsWithOff() async throws {
+        let fixture = try Fixture(catalogByHost: [
+            "hud.example.invalid": #"{"ok":true,"models":[{"provider":"synthetic","id":"legacy","name":"Legacy","reasoning":false}],"default":{"provider":"synthetic","id":"legacy","name":"Legacy"}}"#,
+        ])
+        defer { fixture.cleanUp() }
+        fixture.defaults.set("off", forKey: AgentModelSettings.smartRenameThinkingLevelKey)
         let seeded = try seedPendingChat(fixture, prompt: "Synthetic legacy model task")
 
         let runner = FakeNoteAIRunner()
@@ -1030,7 +1081,50 @@ struct HerdrHudChatsTests {
         #expect(call.model == "synthetic/legacy")
         #expect(call.thinkingLevel == "off")
         #expect(notice == nil)
-        #expect(fixture.defaults.string(forKey: AgentModelSettings.smartRenameThinkingLevelKey) == "high")
+        #expect(fixture.chats.chats.first { $0.id == seeded.chat.id }?.displayTitle == "Synthetic Legacy Task")
+        #expect(fixture.defaults.string(forKey: AgentModelSettings.smartRenameThinkingLevelKey) == "off")
+    }
+
+    @Test("A whitespace-only HUD context is rejected with context-oriented wording")
+    func whitespaceOnlyContextIsRejected() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let seeded = try seedPendingChat(fixture, prompt: "   \n\t ")
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Should not run"}"#)
+        await #expect(throws: HerdrHudChats.SmartRenameError.unavailable) {
+            try await fixture.chats.smartRename(seeded.chat.id, model: fixture.model, runner: runner)
+        }
+        #expect(runner.calls.isEmpty)
+        #expect(
+            HerdrHudChats.SmartRenameError.unavailable.errorDescription
+                == "This HUD chat has no readable context to name yet."
+        )
+        #expect(fixture.chats.chats.first { $0.id == seeded.chat.id }?.displayTitle == "   ") // title fallback uses the raw prompt prefix
+        #expect(fixture.chats.smartRenamingChatIDs.isEmpty)
+    }
+
+    @Test("A HUD naming-run failure names the selection and machine and keeps the title")
+    func hudExecutionFailurePreservesTitle() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let seeded = try seedPendingChat(fixture, prompt: "Synthetic HUD failure task")
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .throwing(HudChatsFixtureError(message: "Synthetic provider failure"))
+        await #expect(throws: SmartRenameExecutionError(
+            machineName: "Example Mac",
+            model: "synthetic/naming",
+            thinkingLevel: .low,
+            reason: "Synthetic provider failure"
+        )) {
+            try await fixture.chats.smartRename(seeded.chat.id, model: fixture.model, runner: runner)
+        }
+
+        #expect(runner.calls.count == 1)
+        #expect(fixture.chats.chats.first { $0.id == seeded.chat.id }?.title == "Synthetic HUD failure task")
+        #expect(fixture.chats.smartRenamingChatIDs.isEmpty)
     }
 
     @Test("Catalog failures preserve the title and explain what to fix")
@@ -1225,6 +1319,11 @@ struct HerdrHudChatsTests {
             try? FileManager.default.removeItem(at: directory)
         }
     }
+}
+
+private struct HudChatsFixtureError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
 }
 
 /// The protocol adds no mutable instance state; synthetic server state is locked.

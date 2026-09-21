@@ -2028,13 +2028,18 @@ final class HerdrAppModel {
         let charter = await supportsPromptOverrides(machineID: pane.machineID)
             ? "You name conversations. Use only supplied text. Never call tools. Return only the requested JSON object."
             : nil
-        let response = try await runner.run(
-            prompt: SmartPaneTitle.prompt(context: context), machineID: pane.machineID,
-            mode: .ask, model: resolution.modelID,
-            thinkingLevel: resolution.thinkingLevel.rawValue,
-            systemPrompt: charter, deadline: .seconds(60),
-            appModel: self, onProgress: { _ in }
-        )
+        let response: String
+        do {
+            response = try await runner.run(
+                prompt: SmartPaneTitle.prompt(context: context), machineID: pane.machineID,
+                mode: .ask, model: resolution.modelID,
+                thinkingLevel: resolution.thinkingLevel.rawValue,
+                systemPrompt: charter, deadline: .seconds(60),
+                appModel: self, onProgress: { _ in }
+            )
+        } catch {
+            throw SmartRenameModelRouting.executionError(error, resolution: resolution)
+        }
         try Task.checkCancellation()
         guard let current = self.pane(id: pane.id),
               identity.matches(
@@ -2089,23 +2094,33 @@ final class HerdrAppModel {
 
     /// One shared context path for pane and color-group naming. Prefers a
     /// matching semantic conversation (with an acknowledged submission merged
-    /// in while the snapshot lags), falls back to bounded shell output for
-    /// nonsemantic panes, and finally uses pane/tab/workspace metadata. Returns
-    /// nil only when the target genuinely has no readable context.
+    /// in while the snapshot lags), falls back to bounded shell output whenever
+    /// the conversation is empty or unreadable — even when Pi semantic metadata
+    /// exists — and finally uses pane/tab/workspace metadata. Returns nil only
+    /// when the target genuinely has no readable context.
     func smartRenameContext(for pane: HerdrPane) async throws -> String? {
         let acceptedPrompt = acceptedPrompt(for: pane)
-        let conversation: String
+        var conversation = ""
         if let expectedSessionID = pane.piSemantic?.sessionID {
             conversation = try await smartRenameConversationContext(
                 for: pane,
                 expectedSessionID: expectedSessionID
             )
-        } else {
-            conversation = try await smartRenameTerminalContext(for: pane)
         }
         let merged = SmartPaneTitle.mergedContext(conversation: conversation, acceptedPrompt: acceptedPrompt)
-        if !merged.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if SmartPaneTitle.hasReadableText(merged) {
             return merged
+        }
+        // A snapshot that is empty, unavailable, or belongs to another session
+        // must not hide terminal activity. The accepted-prompt merge above is a
+        // no-op here because it would already have returned.
+        let terminal = try await smartRenameTerminalContext(for: pane)
+        let terminalMerged = SmartPaneTitle.mergedContext(
+            conversation: terminal,
+            acceptedPrompt: acceptedPrompt
+        )
+        if SmartPaneTitle.hasReadableText(terminalMerged) {
+            return terminalMerged
         }
         guard let metadata = smartRenameMetadataContext(for: pane) else { return nil }
         return SmartPaneTitle.mergedContext(conversation: metadata, acceptedPrompt: acceptedPrompt)
@@ -2258,13 +2273,18 @@ final class HerdrAppModel {
             let charter = await supportsPromptOverrides(machineID: source.machineID)
                 ? "You name chat groups. Use only supplied text. Never call tools. Return only the requested JSON object."
                 : nil
-            let response = try await runner.run(
-                prompt: SmartChatColorTitle.prompt(context: context), machineID: source.machineID,
-                mode: .ask, model: resolution.modelID,
-                thinkingLevel: resolution.thinkingLevel.rawValue,
-                systemPrompt: charter, deadline: .seconds(60),
-                appModel: self, onProgress: { _ in }
-            )
+            let response: String
+            do {
+                response = try await runner.run(
+                    prompt: SmartChatColorTitle.prompt(context: context), machineID: source.machineID,
+                    mode: .ask, model: resolution.modelID,
+                    thinkingLevel: resolution.thinkingLevel.rawValue,
+                    systemPrompt: charter, deadline: .seconds(60),
+                    appModel: self, onProgress: { _ in }
+                )
+            } catch {
+                throw SmartRenameModelRouting.executionError(error, resolution: resolution)
+            }
             try Task.checkCancellation()
             let currentIDs = Set(workspaces.flatMap(\.panes)
                 .filter { chatTabColors.color(for: $0.scopedTabID) == color }.map(\.id))

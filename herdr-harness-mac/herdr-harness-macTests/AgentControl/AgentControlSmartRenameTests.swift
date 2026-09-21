@@ -3,7 +3,7 @@ import Synchronization
 import Testing
 @testable import herdr_harness_mac
 
-// Both cases configure one process-wide URLProtocol fixture. Serialize them so
+// These cases configure one process-wide URLProtocol fixture. Serialize them so
 // suspension during a request cannot replace another case's response state.
 @Suite("Agent control Smart Rename refresh", .serialized)
 @MainActor
@@ -50,8 +50,8 @@ struct AgentControlSmartRenameTests {
         #expect(fixture.model.toastMessage?.hasPrefix("Smart Rename failed") == false)
     }
 
-    @Test("A fallback model notice is surfaced without losing the rename result")
-    func fallbackNoticeIsSurfaced() async throws {
+    @Test("A missing naming selection is reported without renaming or rewriting the preference")
+    func missingSelectionIsReportedWithoutRenaming() async throws {
         let fixture = try makeFixture(refreshFails: false)
         defer {
             fixture.defaults.removePersistentDomain(forName: fixture.suite)
@@ -59,15 +59,49 @@ struct AgentControlSmartRenameTests {
         }
         fixture.defaults.set("beta/beta-only", forKey: AgentModelSettings.quickChatModelKey)
         let runner = FakeNoteAIRunner()
-        runner.mode = .succeed(#"{"title":"Synthetic notice title"}"#)
+        runner.mode = .succeed(#"{"title":"Should not run"}"#)
 
         await fixture.model.smartRename(fixture.pane, runner: runner)
 
-        let call = try #require(runner.calls.first)
-        #expect(call.model == "synthetic/naming")
-        #expect(fixture.model.pane(id: fixture.pane.id)?.displayTitle == "Synthetic notice title")
-        #expect(fixture.model.toastMessage?.contains("Pane renamed") == true)
-        #expect(fixture.model.toastMessage?.contains("beta/beta-only") == true)
+        let counts = AgentControlSmartRenameURLProtocol.counts()
+        #expect(counts.renames == 0)
+        #expect(counts.refreshes == 0)
+        #expect(runner.calls.isEmpty)
+        #expect(fixture.model.pane(id: fixture.pane.id)?.displayTitle == "Original title")
+        let toast = try #require(fixture.model.toastMessage)
+        #expect(toast.hasPrefix("Smart Rename failed"))
+        #expect(toast.contains("beta/beta-only"))
+        #expect(toast.contains("Desktop"))
+        #expect(toast.contains("Settings"))
+        #expect(fixture.defaults.string(forKey: AgentModelSettings.quickChatModelKey) == "beta/beta-only")
+    }
+
+    @Test("A naming-run failure is an actionable typed receipt that never mutates the pane")
+    func failedRunReceiptPreservesTitle() async throws {
+        let fixture = try makeFixture(refreshFails: false)
+        defer {
+            fixture.defaults.removePersistentDomain(forName: fixture.suite)
+            AgentControlSmartRenameURLProtocol.reset()
+        }
+        let runner = FakeNoteAIRunner()
+        runner.mode = .throwing(AgentControlSmartRenameFixtureError(message: "Synthetic provider failure"))
+
+        do {
+            _ = try await fixture.model.smartRenameForAgentControl(fixture.pane, runner: runner) {}
+            Issue.record("Expected the naming-run failure to throw")
+        } catch let error as SmartRenameExecutionError {
+            #expect(error.machineName == "Desktop")
+            #expect(error.model == "synthetic/naming")
+            #expect(error.thinkingLevel == .low)
+            #expect(error.reason == "Synthetic provider failure")
+        }
+
+        let counts = AgentControlSmartRenameURLProtocol.counts()
+        #expect(counts.renames == 0)
+        #expect(counts.refreshes == 0)
+        #expect(runner.calls.count == 1)
+        #expect(fixture.model.pane(id: fixture.pane.id)?.displayTitle == "Original title")
+        #expect(!fixture.model.smartRenamingPaneIDs.contains(fixture.pane.id))
     }
 
     private func makeFixture(refreshFails: Bool) throws -> (
@@ -135,6 +169,11 @@ struct AgentControlSmartRenameTests {
         ).stamped(machineID: machine.id)]
         return (model, pane, defaults, suite)
     }
+}
+
+private struct AgentControlSmartRenameFixtureError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
 }
 
 private final class AgentControlSmartRenameURLProtocol: URLProtocol, @unchecked Sendable {

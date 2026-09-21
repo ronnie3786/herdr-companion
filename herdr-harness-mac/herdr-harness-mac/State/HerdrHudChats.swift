@@ -65,7 +65,7 @@ final class HerdrHudChats {
 
         var errorDescription: String? {
             switch self {
-            case .unavailable: "This HUD chat does not have enough conversation to name yet."
+            case .unavailable: "This HUD chat has no readable context to name yet."
             case .busy: "Smart Rename is already running for this HUD chat."
             case .changed: "The HUD chat changed while Smart Rename was running. Try again."
             case .invalidTitle: "Smart Rename did not return a valid short title."
@@ -154,9 +154,9 @@ final class HerdrHudChats {
     }
 
     /// Runs a separate, bounded naming ask against the chat's own machine and
-    /// applies the result title. The returned notice explains a transparent
-    /// model fallback; errors keep the original title. Cancellation preserves
-    /// the title and duplicate requests are refused.
+    /// applies the result title. A missing selection or failed run throws and
+    /// keeps the original title; cancellation preserves the title and duplicate
+    /// requests are refused.
     @discardableResult
     func smartRename(
         _ id: String,
@@ -173,7 +173,9 @@ final class HerdrHudChats {
         else { throw SmartRenameError.unavailable }
 
         let context = Self.renameContext(for: chat.session)
-        guard !context.isEmpty else { throw SmartRenameError.unavailable }
+        guard SmartPaneTitle.hasReadableText(context) else {
+            throw SmartRenameError.unavailable
+        }
         let expectedSession = chat.session
         let expectedTitle = chat.title
         let expectedConversation = Self.conversationSnapshot(of: chat.session)
@@ -187,17 +189,22 @@ final class HerdrHudChats {
         let charter = await model.supportsPromptOverrides(machineID: machineID)
             ? "You name conversations. Use only supplied text. Never call tools. Return only the requested JSON object."
             : nil
-        let response = try await runner.run(
-            prompt: SmartPaneTitle.prompt(context: context),
-            machineID: machineID,
-            mode: .ask,
-            model: resolution.modelID,
-            thinkingLevel: resolution.thinkingLevel.rawValue,
-            systemPrompt: charter,
-            deadline: .seconds(60),
-            appModel: model,
-            onProgress: { _ in }
-        )
+        let response: String
+        do {
+            response = try await runner.run(
+                prompt: SmartPaneTitle.prompt(context: context),
+                machineID: machineID,
+                mode: .ask,
+                model: resolution.modelID,
+                thinkingLevel: resolution.thinkingLevel.rawValue,
+                systemPrompt: charter,
+                deadline: .seconds(60),
+                appModel: model,
+                onProgress: { _ in }
+            )
+        } catch {
+            throw SmartRenameModelRouting.executionError(error, resolution: resolution)
+        }
         try Task.checkCancellation()
         guard let index = chats.firstIndex(where: { $0.id == id }),
               chats[index].session === expectedSession,
@@ -474,7 +481,11 @@ final class HerdrHudChats {
             ? Array(exchanges.prefix(1)) + Array(exchanges.suffix(8))
             : exchanges
         return selected.flatMap { exchange -> [String] in
-            var messages = ["User: \(exchange.prompt.prefix(1500))"]
+            var messages: [String] = []
+            let prompt = exchange.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !prompt.isEmpty {
+                messages.append("User: \(prompt.prefix(1500))")
+            }
             if let response = exchange.response?.trimmingCharacters(in: .whitespacesAndNewlines),
                !response.isEmpty {
                 messages.append("Assistant: \(response.prefix(1500))")

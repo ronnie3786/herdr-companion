@@ -99,6 +99,12 @@ struct SmartPaneTitleTests {
         #expect(merged.hasPrefix("User: A synthetic accepted prompt"))
     }
 
+    @Test func treatsWhitespaceOnlyContextAsEmpty() {
+        #expect(SmartPaneTitle.hasReadableText("User: synthetic goal"))
+        #expect(!SmartPaneTitle.hasReadableText(""))
+        #expect(!SmartPaneTitle.hasReadableText(" \n\t "))
+    }
+
     @Test func stripsTerminalEscapesAndControlSequences() {
         let raw = "\u{1B}[31mFailing\u{1B}[0m test \u{1B}]0;window title\u{7}\u{8}tail\u{0D}"
         #expect(SmartPaneTitle.strippingTerminalEscapes(raw) == "Failing test tail")

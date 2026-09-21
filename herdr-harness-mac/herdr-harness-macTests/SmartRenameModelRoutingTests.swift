@@ -18,6 +18,7 @@ struct SmartRenameModelRoutingTests {
         )
         #expect(resolution.modelID == "alpha/offered")
         #expect(resolution.thinkingLevel == .medium)
+        #expect(resolution.machineName == "Alpha")
         #expect(resolution.notice == nil)
     }
 
@@ -32,6 +33,7 @@ struct SmartRenameModelRoutingTests {
         )
         #expect(resolution.modelID == "alpha/default")
         #expect(resolution.thinkingLevel == .low)
+        #expect(resolution.machineName == "Alpha")
         #expect(resolution.notice == nil)
     }
 
@@ -48,19 +50,20 @@ struct SmartRenameModelRoutingTests {
         #expect(resolution.notice == nil)
     }
 
-    @Test("An unavailable preference falls back to the machine default with a notice")
-    func unavailablePreferenceFallsBackWithNotice() throws {
+    @Test("A missing explicit selection is rejected instead of substituted")
+    func missingPreferenceIsRejected() {
         let fallback = model(provider: "alpha", id: "default", reasoning: true)
-        let resolution = try SmartRenameModelRouting.resolveCatalog(
-            preference: "beta/beta-only",
-            thinkingLevel: .high,
-            catalog: catalog(models: [fallback], defaultModel: identity(fallback)),
-            machineName: "Alpha"
-        )
-        #expect(resolution.modelID == "alpha/default")
-        #expect(resolution.thinkingLevel == .high)
-        #expect(resolution.notice?.contains("beta/beta-only") == true)
-        #expect(resolution.notice?.contains("Alpha") == true)
+        #expect(throws: SmartRenameModelRoutingError.modelUnavailable(
+            machineName: "Alpha",
+            model: "beta/beta-only"
+        )) {
+            try SmartRenameModelRouting.resolveCatalog(
+                preference: "beta/beta-only",
+                thinkingLevel: .high,
+                catalog: catalog(models: [fallback], defaultModel: identity(fallback)),
+                machineName: "Alpha"
+            )
+        }
     }
 
     @Test("An omitted declared default lets Pi choose automatically")
@@ -74,28 +77,34 @@ struct SmartRenameModelRoutingTests {
         )
         #expect(resolution.modelID == nil)
         #expect(resolution.thinkingLevel == .low)
+        #expect(resolution.machineName == "Alpha")
         #expect(resolution.notice == nil)
     }
 
-    @Test("Unavailable preference plus omitted default also lets Pi choose")
-    func unavailablePreferenceWithOmittedDefaultLetsPiChoose() throws {
+    @Test("A missing preference is rejected even when the machine declares no default")
+    func missingPreferenceWithOmittedDefaultIsRejected() {
         let offered = model(provider: "alpha", id: "offered", reasoning: true)
-        let resolution = try SmartRenameModelRouting.resolveCatalog(
-            preference: "beta/beta-only",
-            thinkingLevel: .medium,
-            catalog: catalog(models: [offered], defaultModel: nil),
-            machineName: "Alpha"
-        )
-        #expect(resolution.modelID == nil)
-        #expect(resolution.thinkingLevel == .medium)
-        #expect(resolution.notice?.contains("beta/beta-only") == true)
+        #expect(throws: SmartRenameModelRoutingError.modelUnavailable(
+            machineName: "Alpha",
+            model: "beta/beta-only"
+        )) {
+            try SmartRenameModelRouting.resolveCatalog(
+                preference: "beta/beta-only",
+                thinkingLevel: .medium,
+                catalog: catalog(models: [offered], defaultModel: nil),
+                machineName: "Alpha"
+            )
+        }
     }
 
     @Test("A declared default missing from the catalog is an actionable configuration error")
     func declaredDefaultMissingFromCatalog() {
         let offered = model(provider: "alpha", id: "offered", reasoning: true)
         let declared = identity(model(provider: "alpha", id: "missing", reasoning: true, name: "Ghost Model"))
-        #expect(throws: SmartRenameModelRoutingError.defaultModelUnavailable(machineName: "Alpha", model: "Ghost Model")) {
+        #expect(throws: SmartRenameModelRoutingError.defaultModelUnavailable(
+            machineName: "Alpha",
+            model: "Ghost Model"
+        )) {
             try SmartRenameModelRouting.resolveCatalog(
                 preference: nil,
                 thinkingLevel: .low,
@@ -103,7 +112,16 @@ struct SmartRenameModelRoutingTests {
                 machineName: "Alpha"
             )
         }
-        #expect(throws: SmartRenameModelRoutingError.defaultModelUnavailable(machineName: "Alpha", model: "Ghost Model")) {
+    }
+
+    @Test("A missing preference is reported before a broken declared default")
+    func missingPreferenceTakesPrecedenceOverBrokenDefault() {
+        let offered = model(provider: "alpha", id: "offered", reasoning: true)
+        let declared = identity(model(provider: "alpha", id: "missing", reasoning: true, name: "Ghost Model"))
+        #expect(throws: SmartRenameModelRoutingError.modelUnavailable(
+            machineName: "Alpha",
+            model: "beta/beta-only"
+        )) {
             try SmartRenameModelRouting.resolveCatalog(
                 preference: "beta/beta-only",
                 thinkingLevel: .low,
@@ -138,12 +156,29 @@ struct SmartRenameModelRoutingTests {
         }
     }
 
-    @Test("A non-reasoning resolved preference forces Off")
-    func nonReasoningPreferenceForcesOff() throws {
+    @Test("A non-reasoning model rejects a non-Off effort with an actionable error")
+    func nonReasoningPreferenceRejectsNonOffEffort() {
+        let offered = model(provider: "alpha", id: "legacy", reasoning: false)
+        #expect(throws: SmartRenameModelRoutingError.thinkingLevelUnsupported(
+            machineName: "Alpha",
+            model: "alpha/legacy",
+            level: .max
+        )) {
+            try SmartRenameModelRouting.resolveCatalog(
+                preference: offered.id,
+                thinkingLevel: .max,
+                catalog: catalog(models: [offered], defaultModel: identity(offered)),
+                machineName: "Alpha"
+            )
+        }
+    }
+
+    @Test("A non-reasoning model permits Off")
+    func nonReasoningPreferencePermitsOff() throws {
         let offered = model(provider: "alpha", id: "legacy", reasoning: false)
         let resolution = try SmartRenameModelRouting.resolveCatalog(
             preference: offered.id,
-            thinkingLevel: .max,
+            thinkingLevel: .off,
             catalog: catalog(models: [offered], defaultModel: identity(offered)),
             machineName: "Alpha"
         )
@@ -152,12 +187,24 @@ struct SmartRenameModelRoutingTests {
         #expect(resolution.notice == nil)
     }
 
-    @Test("A non-reasoning fallback default also forces Off")
-    func nonReasoningFallbackForcesOff() throws {
+    @Test("A non-reasoning machine default permits Off and rejects a higher effort")
+    func nonReasoningDefaultOnlyPermitsOff() throws {
         let fallback = model(provider: "alpha", id: "legacy", reasoning: false)
+        #expect(throws: SmartRenameModelRoutingError.thinkingLevelUnsupported(
+            machineName: "Alpha",
+            model: "alpha/legacy",
+            level: .high
+        )) {
+            try SmartRenameModelRouting.resolveCatalog(
+                preference: nil,
+                thinkingLevel: .high,
+                catalog: catalog(models: [fallback], defaultModel: identity(fallback)),
+                machineName: "Alpha"
+            )
+        }
         let resolution = try SmartRenameModelRouting.resolveCatalog(
-            preference: "beta/beta-only",
-            thinkingLevel: .high,
+            preference: nil,
+            thinkingLevel: .off,
             catalog: catalog(models: [fallback], defaultModel: identity(fallback)),
             machineName: "Alpha"
         )
@@ -205,17 +252,22 @@ struct SmartRenameModelRoutingTests {
         )
         #expect(beta.modelID == "beta/beta-only")
         #expect(beta.thinkingLevel == .low)
+        #expect(beta.machineName == "Beta")
         #expect(beta.notice == nil)
 
         // The same preference is unavailable on alpha, whose own catalog wins
-        // over anything the selected source machine displays.
-        let alpha = try await SmartRenameModelRouting.resolve(
-            settings: settings,
-            executionMachineID: "alpha",
-            appModel: fixture.model
-        )
-        #expect(alpha.modelID == "alpha/shared")
-        #expect(alpha.notice?.contains("beta/beta-only") == true)
+        // over anything the selected source machine displays. It is rejected
+        // rather than replaced by alpha/shared.
+        await #expect(throws: SmartRenameModelRoutingError.modelUnavailable(
+            machineName: "Alpha",
+            model: "beta/beta-only"
+        )) {
+            try await SmartRenameModelRouting.resolve(
+                settings: settings,
+                executionMachineID: "alpha",
+                appModel: fixture.model
+            )
+        }
     }
 
     @Test("Empty naming settings inherit the Agent model, then the machine default")
@@ -249,39 +301,69 @@ struct SmartRenameModelRoutingTests {
         #expect(own.modelID == "beta/beta-only")
     }
 
-    @Test("An unavailable preference is retained in settings while the request falls back")
-    func unavailablePreferenceIsRetained() async throws {
+    @Test("A missing inherited Agent selection fails without rewriting either preference")
+    func missingInheritedSelectionIsRejected() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.defaults.removePersistentDomain(forName: fixture.suite) }
+        var settings = AgentModelSettings.load(from: fixture.defaults)
+        settings.quickChatModel = "beta/beta-only"
+
+        await #expect(throws: SmartRenameModelRoutingError.modelUnavailable(
+            machineName: "Alpha",
+            model: "beta/beta-only"
+        )) {
+            try await SmartRenameModelRouting.resolve(
+                settings: settings,
+                executionMachineID: "alpha",
+                appModel: fixture.model
+            )
+        }
+        #expect(settings.quickChatModel == "beta/beta-only")
+        #expect(settings.effectiveSmartRenameModel == "beta/beta-only")
+    }
+
+    @Test("A missing explicit selection fails without rewriting the saved preference")
+    func missingExplicitSelectionIsRejected() async throws {
         let fixture = try makeFixture()
         defer { fixture.defaults.removePersistentDomain(forName: fixture.suite) }
         var settings = AgentModelSettings.load(from: fixture.defaults)
         settings.smartRenameModel = "beta/beta-only"
 
-        let resolution = try await SmartRenameModelRouting.resolve(
-            settings: settings,
-            executionMachineID: "alpha",
-            appModel: fixture.model
-        )
-        #expect(resolution.modelID == "alpha/shared")
-        #expect(resolution.notice?.contains("beta/beta-only") == true)
+        await #expect(throws: SmartRenameModelRoutingError.modelUnavailable(
+            machineName: "Alpha",
+            model: "beta/beta-only"
+        )) {
+            try await SmartRenameModelRouting.resolve(
+                settings: settings,
+                executionMachineID: "alpha",
+                appModel: fixture.model
+            )
+        }
         #expect(settings.smartRenameModel == "beta/beta-only")
         #expect(settings.effectiveSmartRenameModel == "beta/beta-only")
     }
 
-    @Test("A non-reasoning execution-machine model forces Off through the async resolver")
-    func asyncNonReasoningModelForcesOff() async throws {
+    @Test("A non-reasoning execution-machine model rejects non-Off effort without rewriting it")
+    func asyncNonReasoningModelRejectsNonOffEffort() async throws {
         let fixture = try makeFixture()
         defer { fixture.defaults.removePersistentDomain(forName: fixture.suite) }
         var settings = AgentModelSettings.load(from: fixture.defaults)
         settings.smartRenameModel = "alpha/legacy"
         settings.smartRenameThinkingLevel = .max
 
-        let resolution = try await SmartRenameModelRouting.resolve(
-            settings: settings,
-            executionMachineID: "alpha",
-            appModel: fixture.model
-        )
-        #expect(resolution.modelID == "alpha/legacy")
-        #expect(resolution.thinkingLevel == .off)
+        await #expect(throws: SmartRenameModelRoutingError.thinkingLevelUnsupported(
+            machineName: "Alpha",
+            model: "alpha/legacy",
+            level: .max
+        )) {
+            try await SmartRenameModelRouting.resolve(
+                settings: settings,
+                executionMachineID: "alpha",
+                appModel: fixture.model
+            )
+        }
+        #expect(settings.smartRenameModel == "alpha/legacy")
+        #expect(settings.smartRenameThinkingLevel == .max)
     }
 
     @Test("A catalog fetch failure surfaces an actionable error")
@@ -296,6 +378,74 @@ struct SmartRenameModelRoutingTests {
                 executionMachineID: "gamma",
                 appModel: fixture.model
             )
+        }
+    }
+
+    // MARK: - Execution failure wrapping
+
+    @Test("A naming-run failure names the selection and the execution companion")
+    func executionFailureNamesSelectionAndCompanion() throws {
+        let resolution = SmartRenameModelResolution(
+            modelID: "alpha/offered",
+            thinkingLevel: .low,
+            machineName: "Alpha",
+            notice: nil
+        )
+        let wrapped = SmartRenameModelRouting.executionError(
+            SmartRenameFixtureError(message: "Synthetic provider failure"),
+            resolution: resolution
+        )
+        let error = try #require(wrapped as? SmartRenameExecutionError)
+        #expect(error.machineName == "Alpha")
+        #expect(error.model == "alpha/offered")
+        #expect(error.thinkingLevel == .low)
+        let description = try #require(error.errorDescription)
+        #expect(description.contains("alpha/offered"))
+        #expect(description.contains("Low"))
+        #expect(description.contains("Alpha"))
+        #expect(description.contains("Settings"))
+        #expect(description.contains("Synthetic provider failure"))
+    }
+
+    @Test("An omitted model is described as the machine's Pi default")
+    func omittedModelIsDescribedAsPiDefault() throws {
+        let resolution = SmartRenameModelResolution(
+            modelID: nil,
+            thinkingLevel: .off,
+            machineName: "Alpha",
+            notice: nil
+        )
+        let error = try #require(
+            SmartRenameModelRouting.executionError(
+                SmartRenameFixtureError(message: "Synthetic start failure"),
+                resolution: resolution
+            ) as? SmartRenameExecutionError
+        )
+        let description = try #require(error.errorDescription)
+        #expect(description.contains("Pi default"))
+        #expect(description.contains("Off"))
+        #expect(description.contains("Alpha"))
+    }
+
+    @Test("Cancellation and cancelled note runs pass through unwrapped")
+    func cancellationPassesThroughUnwrapped() {
+        let resolution = SmartRenameModelResolution(
+            modelID: "alpha/offered",
+            thinkingLevel: .low,
+            machineName: "Alpha",
+            notice: nil
+        )
+        #expect(SmartRenameModelRouting.executionError(
+            CancellationError(),
+            resolution: resolution
+        ) is CancellationError)
+        let cancelled = SmartRenameModelRouting.executionError(
+            HerdrNoteAIError.cancelled,
+            resolution: resolution
+        )
+        guard let noteError = cancelled as? HerdrNoteAIError, case .cancelled = noteError else {
+            Issue.record("A cancelled note run must not be reworded as an execution failure")
+            return
         }
     }
 
@@ -363,6 +513,11 @@ struct SmartRenameModelRoutingTests {
     ) -> AgentModelCatalogResponse {
         AgentModelCatalogResponse(ok: ok, models: models, defaultModel: defaultModel)
     }
+}
+
+private struct SmartRenameFixtureError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
 }
 
 /// Answers the agent-model catalog route from each machine's own host. Alpha

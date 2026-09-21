@@ -9,6 +9,12 @@ enum SmartPaneTitle {
     /// Hard ceiling on raw output scanned before it is bounded to lines.
     static let maxTerminalCharacters = 128_000
 
+    /// Whether naming input actually carries readable text. Whitespace-only
+    /// context is genuinely empty and must not be sent as a naming prompt.
+    static func hasReadableText(_ context: String) -> Bool {
+        !context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     static func context(from snapshot: PiConversationSnapshot) -> String {
         var reducer = PiConversationReducer()
         reducer.replace(with: snapshot)

@@ -123,7 +123,7 @@ struct SmartChatColorRenameTests {
         #expect(fixture.model.toastMessage?.lowercased().contains("conversation") != true)
     }
 
-    @Test("The naming ask executes on the first sampled pane's machine with its own catalog")
+    @Test("A preference missing on the first sampled pane's machine fails without renaming")
     func twoMachineRoutingUsesFirstSampledPane() async throws {
         var configuration = ChatColorFixtureConfiguration()
         configuration.catalogByPort = [
@@ -141,6 +141,41 @@ struct SmartChatColorRenameTests {
         fixture.defaults.set("beta/beta-only", forKey: AgentModelSettings.quickChatModelKey)
 
         let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Should not run"}"#)
+        await fixture.model.smartRenameChatColor(.sage, runner: runner)
+
+        // The first sampled controllable pane is on alpha, so only alpha's
+        // catalog is consulted and its missing preference is never replaced
+        // with alpha/alpha-only.
+        let fetches = ChatColorFixtureURLProtocol.catalogFetchPorts()
+        #expect(fetches[9411] == 1)
+        #expect(fetches[9412] == nil)
+        #expect(runner.calls.isEmpty)
+        #expect(fixture.model.chatTabColors.label(for: .sage) == "Sage")
+        #expect(fixture.model.toastMessage?.contains("beta/beta-only") == true)
+        #expect(fixture.model.toastMessage?.contains("Alpha") == true)
+        #expect(fixture.model.toastMessage?.contains("Settings") == true)
+        #expect(fixture.defaults.string(forKey: AgentModelSettings.quickChatModelKey) == "beta/beta-only")
+    }
+
+    @Test("An offered preference renames the label on the first sampled pane's machine")
+    func offeredPreferenceRenamesOnExecutionMachine() async throws {
+        var configuration = ChatColorFixtureConfiguration()
+        configuration.catalogByPort = [
+            9411: #"{"ok":true,"models":[{"provider":"alpha","id":"alpha-only","name":"Alpha Only","reasoning":true}],"default":{"provider":"alpha","id":"alpha-only","name":"Alpha Only"}}"#,
+            9412: #"{"ok":true,"models":[{"provider":"beta","id":"beta-only","name":"Beta Only","reasoning":true}],"default":{"provider":"beta","id":"beta-only","name":"Beta Only"}}"#,
+        ]
+        let fixture = try makeFixture(
+            configuration,
+            machines: [
+                (id: "alpha", name: "Alpha", urlString: "http://127.0.0.1:9411"),
+                (id: "beta", name: "Beta", urlString: "http://127.0.0.1:9412"),
+            ]
+        )
+        defer { tearDown(fixture) }
+        fixture.defaults.set("alpha/alpha-only", forKey: AgentModelSettings.quickChatModelKey)
+
+        let runner = FakeNoteAIRunner()
         runner.mode = .succeed(#"{"title":"Synthetic group"}"#)
         await fixture.model.smartRenameChatColor(.sage, runner: runner)
 
@@ -148,14 +183,29 @@ struct SmartChatColorRenameTests {
         #expect(call.machineID == "alpha")
         #expect(call.model == "alpha/alpha-only")
         #expect(call.thinkingLevel == "low")
-        let fetches = ChatColorFixtureURLProtocol.catalogFetchPorts()
-        #expect(fetches[9411] == 1)
-        #expect(fetches[9412] == nil)
-        // The unavailable preference is not rewritten and the notice survives.
-        #expect(fixture.model.toastMessage?.contains("beta/beta-only") == true)
-        #expect(fixture.model.toastMessage?.contains("Alpha") == true)
-        #expect(fixture.defaults.string(forKey: AgentModelSettings.quickChatModelKey) == "beta/beta-only")
         #expect(fixture.model.chatTabColors.label(for: .sage) == "Synthetic group")
+        #expect(fixture.model.toastMessage == "Color label renamed")
+        #expect(ChatColorFixtureURLProtocol.catalogFetchPorts()[9411] == 1)
+    }
+
+    @Test("A naming-run failure names the selection and preserves the shared label")
+    func executionFailurePreservesTheLabel() async throws {
+        let fixture = try makeFixture()
+        defer { tearDown(fixture) }
+        let runner = FakeNoteAIRunner()
+        runner.mode = .throwing(ChatColorFixtureError(message: "Synthetic provider failure"))
+        await fixture.model.smartRenameChatColor(.sage, runner: runner)
+
+        #expect(runner.calls.count == 1)
+        #expect(fixture.model.chatTabColors.label(for: .sage) == "Sage")
+        #expect(fixture.model.chatTabColors.smartRenaming.isEmpty)
+        let toast = try #require(fixture.model.toastMessage)
+        #expect(toast.hasPrefix("Smart Rename failed"))
+        #expect(toast.contains("synthetic/naming"))
+        #expect(toast.contains("Low"))
+        #expect(toast.contains("Desktop"))
+        #expect(toast.contains("Synthetic provider failure"))
+        #expect(toast.contains("Settings"))
     }
 
     @Test("Group input stays bounded and injected text stays data")
@@ -250,6 +300,11 @@ struct SmartChatColorRenameTests {
         fixture.defaults.removePersistentDomain(forName: fixture.suite)
         ChatColorFixtureURLProtocol.reset()
     }
+}
+
+private struct ChatColorFixtureError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
 }
 
 private struct ChatColorFixtureConfiguration: Sendable {

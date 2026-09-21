@@ -227,7 +227,7 @@ struct SmartPaneRenameTests {
         #expect(SmartRenameFixtureURLProtocol.counts().renames == 1)
     }
 
-    @Test("Naming resolves models and executes on the pane's own machine")
+    @Test("A preference missing on the pane's execution machine fails without renaming")
     func twoMachineRouting() async throws {
         var configuration = SmartRenameFixtureConfiguration()
         configuration.paneLabel = "Beta pane"
@@ -240,22 +240,136 @@ struct SmartPaneRenameTests {
         fixture.defaults.set("alpha/alpha-only", forKey: AgentModelSettings.quickChatModelKey)
 
         let runner = FakeNoteAIRunner()
-        runner.mode = .succeed(#"{"title":"Beta naming"}"#)
+        runner.mode = .succeed(#"{"title":"Should not run"}"#)
         await fixture.model.smartRename(fixture.pane, runner: runner)
 
-        let call = try #require(runner.calls.first)
-        #expect(call.machineID == "beta")
-        #expect(call.model == "beta/beta-only")
-        #expect(call.thinkingLevel == "low")
+        // Only the execution machine's catalog is fetched, and even the
+        // missing preference is not substituted with beta/beta-only.
         let fetches = SmartRenameFixtureURLProtocol.catalogFetchPorts()
         #expect(fetches[9412] == 1)
         #expect(fetches[9411] == nil)
-        // The unavailable preference falls back with an actionable notice
-        // instead of being rewritten.
+        #expect(runner.calls.isEmpty)
+        #expect(SmartRenameFixtureURLProtocol.counts().renames == 0)
+        #expect(fixture.model.pane(id: fixture.pane.id)?.displayTitle == "Beta pane")
         #expect(fixture.model.toastMessage?.contains("alpha/alpha-only") == true)
         #expect(fixture.model.toastMessage?.contains("Beta") == true)
+        #expect(fixture.model.toastMessage?.contains("Settings") == true)
         #expect(fixture.defaults.string(forKey: AgentModelSettings.quickChatModelKey) == "alpha/alpha-only")
+    }
+
+    @Test("A preference missing on the execution machine fails before any context fetch")
+    func missingSelectionFailsBeforeContextFetch() async throws {
+        var configuration = SmartRenameFixtureConfiguration()
+        configuration.paneLabel = "Original title"
+        configuration.snapshotBody = #"{"available":true,"session":{"id":"synthetic-session"},"entries":[]}"#
+        let fixture = try makeFixture(configuration)
+        defer { tearDown(fixture) }
+        fixture.defaults.set("ghost/model", forKey: AgentModelSettings.quickChatModelKey)
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Should not run"}"#)
+        await fixture.model.smartRename(fixture.pane, runner: runner)
+
+        #expect(runner.calls.isEmpty)
+        #expect(SmartRenameFixtureURLProtocol.counts().snapshots == 0)
+        #expect(SmartRenameFixtureURLProtocol.counts().renames == 0)
+        #expect(fixture.model.pane(id: fixture.pane.id)?.displayTitle == "Original title")
+        #expect(fixture.model.toastMessage?.contains("ghost/model") == true)
+        #expect(fixture.model.toastMessage?.contains("Desktop") == true)
+        #expect(fixture.model.toastMessage?.contains("Settings") == true)
+        #expect(fixture.defaults.string(forKey: AgentModelSettings.quickChatModelKey) == "ghost/model")
+    }
+
+    @Test("An unavailable semantic snapshot falls through to bounded terminal output")
+    func unavailableSemanticSnapshotUsesTerminalOutput() async throws {
+        var configuration = SmartRenameFixtureConfiguration()
+        configuration.paneSessionID = "synthetic-session"
+        configuration.paneLabel = "Semantic pane"
+        configuration.snapshotBody = #"{"available":false,"session":{"id":"synthetic-session"},"entries":[]}"#
+        configuration.outputText = "\u{1B}[32m$ npm run build\u{1B}[0m\n> synthetic bundle complete"
+        let fixture = try makeFixture(configuration)
+        defer { tearDown(fixture) }
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Synthetic bundle build"}"#)
+        await fixture.model.smartRename(fixture.pane, runner: runner)
+
+        let counts = SmartRenameFixtureURLProtocol.counts()
+        #expect(counts.snapshots == 1)
+        #expect(counts.outputs == 1)
+        #expect(counts.renames == 1)
+        let call = try #require(runner.calls.first)
+        #expect(call.prompt.contains("npm run build"))
+        #expect(call.prompt.contains("synthetic bundle complete"))
+        #expect(!call.prompt.contains("\u{1B}"))
+        #expect(fixture.model.toastMessage == "Pane renamed")
+    }
+
+    @Test("A failed semantic snapshot falls through to bounded terminal output")
+    func failedSemanticSnapshotUsesTerminalOutput() async throws {
+        var configuration = SmartRenameFixtureConfiguration()
+        configuration.paneSessionID = "synthetic-session"
+        configuration.paneLabel = "Semantic pane"
+        configuration.snapshotBody = nil
+        configuration.outputText = "$ git status\nOn branch synthetic"
+        let fixture = try makeFixture(configuration)
+        defer { tearDown(fixture) }
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Synthetic git status"}"#)
+        await fixture.model.smartRename(fixture.pane, runner: runner)
+
+        let counts = SmartRenameFixtureURLProtocol.counts()
+        #expect(counts.snapshots == 1)
+        #expect(counts.outputs == 1)
+        #expect(counts.renames == 1)
+        let call = try #require(runner.calls.first)
+        #expect(call.prompt.contains("git status"))
+    }
+
+    @Test("A semantic pane with no snapshot or output is named from metadata")
+    func semanticPaneWithoutTerminalFallsBackToMetadata() async throws {
+        var configuration = SmartRenameFixtureConfiguration()
+        configuration.paneSessionID = "synthetic-session"
+        configuration.paneLabel = "Semantic pane"
+        configuration.snapshotBody = nil
+        configuration.outputText = nil
+        let fixture = try makeFixture(configuration)
+        defer { tearDown(fixture) }
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Synthetic semantic pane"}"#)
+        await fixture.model.smartRename(fixture.pane, runner: runner)
+
+        #expect(SmartRenameFixtureURLProtocol.counts().outputs == 1)
         #expect(SmartRenameFixtureURLProtocol.counts().renames == 1)
+        let call = try #require(runner.calls.first)
+        #expect(call.prompt.contains("Semantic pane"))
+        #expect(call.prompt.contains("Pane metadata"))
+    }
+
+    @Test("A naming-run failure identifies the selection and machine and preserves the title")
+    func executionFailureIdentifiesSelectionAndPreservesTitle() async throws {
+        var configuration = SmartRenameFixtureConfiguration()
+        configuration.paneLabel = "Original title"
+        configuration.snapshotBody = #"{"available":true,"session":{"id":"synthetic-session"},"entries":[]}"#
+        let fixture = try makeFixture(configuration)
+        defer { tearDown(fixture) }
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .throwing(SmartRenamePaneFixtureError(message: "Synthetic provider failure"))
+        await fixture.model.smartRename(fixture.pane, runner: runner)
+
+        #expect(runner.calls.count == 1)
+        #expect(SmartRenameFixtureURLProtocol.counts().renames == 0)
+        #expect(fixture.model.pane(id: fixture.pane.id)?.displayTitle == "Original title")
+        let toast = try #require(fixture.model.toastMessage)
+        #expect(toast.hasPrefix("Smart Rename failed"))
+        #expect(toast.contains("synthetic/naming"))
+        #expect(toast.contains("Low"))
+        #expect(toast.contains("Desktop"))
+        #expect(toast.contains("Synthetic provider failure"))
+        #expect(toast.contains("Settings"))
     }
 
     @Test("A second Smart Rename for the same pane is ignored while one is running")
@@ -479,6 +593,11 @@ struct SmartPaneRenameTests {
         defaults.removePersistentDomain(forName: suite)
         SmartRenameFixtureURLProtocol.reset()
     }
+}
+
+private struct SmartRenamePaneFixtureError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
 }
 
 private struct SmartRenameFixtureConfiguration: Sendable {

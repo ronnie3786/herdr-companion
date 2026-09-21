@@ -26,9 +26,14 @@ struct PRReviewContainerView: View {
                     }
                     .pickerStyle(.segmented)
                     .tint(HerdrTheme.controlAccent)
-                    .padding(10)
+                    .frame(maxWidth: 560)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("pr-review-mode-picker")
                     content(review)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .layoutPriority(1)
                 } else if store.unconfigured || store.unsupported {
                     ContentUnavailableView(store.error ?? "PR Review is unavailable", systemImage: "arrow.triangle.pull")
                         .accessibilityIdentifier("pr-review-unavailable")
@@ -57,9 +62,11 @@ struct PRReviewContainerView: View {
     }
 
     private func header(_ review: PRReviewSummary) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                Text(review.title).herdrFont(size: 30, weight: .semibold, relativeTo: .largeTitle).lineLimit(1)
+                Text(PRReviewHeaderText.title(for: review))
+                    .herdrFont(size: 20, weight: .semibold, relativeTo: .title2)
+                    .lineLimit(1)
                 Spacer()
                 Button("Refresh") { Task { await store.refreshReview() } }.disabled(!canControl)
                 Button(review.archivedAt == nil ? "Archive" : "Unarchive") {
@@ -67,12 +74,14 @@ struct PRReviewContainerView: View {
                 }.disabled(!canControl)
             }
             HStack(spacing: 10) {
-                Button("\(review.owner)/\(review.repo) #\(review.number)") {
+                Button(PRReviewHeaderText.label(for: review)) {
                     if let url = URL(string: review.url) { openURL(url) }
                 }.buttonStyle(.link)
-                Text("\(review.headRef) → \(review.baseRef)")
+                if !review.headRef.isEmpty, !review.baseRef.isEmpty {
+                    Text("\(review.headRef) → \(review.baseRef)")
+                }
                 Text("+\(review.additions) −\(review.deletions) · \(review.changedFiles) files")
-                Text("by \(review.author)")
+                if !review.author.isEmpty { Text("by \(review.author)") }
                 Text(review.status.rawValue.capitalized).padding(.horizontal, 6).padding(.vertical, 2)
                     .background(HerdrTheme.elevated, in: .capsule)
                 rankingChip(review)
@@ -86,7 +95,9 @@ struct PRReviewContainerView: View {
                     .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.compactRadius))
             }
         }
-        .padding(HerdrTheme.cardPadding)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func rankingChip(_ review: PRReviewSummary) -> some View {
@@ -102,6 +113,7 @@ struct PRReviewContainerView: View {
         case .files:
             PRReviewFilesView(
                 store: store,
+                canControl: canControl,
                 openURL: openURL,
                 askAI: askAI,
                 questionDraftChanged: questionDraftChanged
@@ -113,5 +125,21 @@ struct PRReviewContainerView: View {
         case .skills:
             PRReviewSkillsView(store: store, setAddingSkill: setAddingSkill)
         }
+    }
+
+}
+
+enum PRReviewHeaderText {
+    static func title(for review: PRReviewSummary) -> String {
+        let title = review.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? label(for: review) : title
+    }
+
+    static func label(for review: PRReviewSummary) -> String {
+        let repository = [review.owner, review.repo].filter { !$0.isEmpty }.joined(separator: "/")
+        if !repository.isEmpty, review.number > 0 { return "\(repository) #\(review.number)" }
+        if review.number > 0 { return "Pull request #\(review.number)" }
+        if !repository.isEmpty { return repository }
+        return "Pull request review"
     }
 }

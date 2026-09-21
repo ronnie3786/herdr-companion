@@ -9,6 +9,15 @@ struct PRReviewConnectionIdentity: Equatable {
     let machineRevision: Int
 }
 
+struct PRReviewDiffRequestIdentity: Equatable, Hashable, Sendable {
+    let generation: Int
+    let machineID: String?
+    let reviewID: String
+    let path: String
+    let baseSHA: String
+    let headSHA: String
+}
+
 @MainActor
 @Observable
 final class PRReviewStore {
@@ -23,6 +32,10 @@ final class PRReviewStore {
     var selectedReviewID: String?
     var snapshot: PRReviewSnapshot?
     var diff: PRReviewDiff?
+    private(set) var diffLoadError: String?
+    private(set) var diffLoadErrorIdentity: PRReviewDiffRequestIdentity?
+    private(set) var loadingDiffIdentity: PRReviewDiffRequestIdentity?
+    private(set) var completedDiffIdentity: PRReviewDiffRequestIdentity?
     var selectedPath: String?
     var tab: PRReviewTab = .files
     var viewMode: PRReviewViewMode = .github
@@ -84,6 +97,10 @@ final class PRReviewStore {
         selectedReviewID = nil
         snapshot = nil
         diff = nil
+        diffLoadError = nil
+        diffLoadErrorIdentity = nil
+        loadingDiffIdentity = nil
+        completedDiffIdentity = nil
         selectedPath = nil
         hasLoaded = false
         unsupported = false
@@ -105,6 +122,10 @@ final class PRReviewStore {
         selectedReviewID = id
         snapshot = nil
         diff = nil
+        diffLoadError = nil
+        diffLoadErrorIdentity = nil
+        loadingDiffIdentity = nil
+        completedDiffIdentity = nil
         selectedPath = nil
         error = nil
     }
@@ -252,21 +273,75 @@ final class PRReviewStore {
         }
     }
 
+    var currentDiffRequestIdentity: PRReviewDiffRequestIdentity? {
+        guard let selectedReviewID, let selectedPath else { return nil }
+        return PRReviewDiffRequestIdentity(
+            generation: generation,
+            machineID: machineID,
+            reviewID: selectedReviewID,
+            path: selectedPath,
+            baseSHA: (snapshot?.review ?? selectedReview)?.baseSHA ?? "",
+            headSHA: (snapshot?.review ?? selectedReview)?.headSHA ?? ""
+        )
+    }
+
+    var currentDiffLoadError: String? {
+        guard diffLoadErrorIdentity == currentDiffRequestIdentity else { return nil }
+        return diffLoadError
+    }
+
     func loadDiff(for path: String?) async {
-        guard let selectedReviewID else { return }
+        guard let path,
+              let selectedReviewID,
+              let identity = currentDiffRequestIdentity,
+              identity.path == path
+        else { return }
+        loadingDiffIdentity = identity
+        if completedDiffIdentity == identity {
+            completedDiffIdentity = nil
+        }
+        if diffLoadErrorIdentity == identity {
+            diffLoadError = nil
+            diffLoadErrorIdentity = nil
+        }
+        defer {
+            if loadingDiffIdentity == identity {
+                loadingDiffIdentity = nil
+            }
+        }
         if isDemo {
+            guard currentDiffRequestIdentity == identity else { return }
             diff = PRReviewDemo.diff()
+            completedDiffIdentity = identity
             return
         }
         guard let client else { return }
-        let loadReviewID = selectedReviewID
         do {
             let value = try await client.prReviewDiff(id: selectedReviewID, path: path)
-            guard selectedReviewID == loadReviewID else { return }
+            guard !Task.isCancelled,
+                  currentDiffRequestIdentity == identity
+            else { return }
+            guard (value.reviewID.isEmpty || value.reviewID == identity.reviewID),
+                  (identity.baseSHA.isEmpty || value.baseSHA == identity.baseSHA),
+                  (identity.headSHA.isEmpty || value.headSHA == identity.headSHA)
+            else {
+                diffLoadError = "The companion returned a diff for a different review revision. Retry after the review refresh finishes."
+                diffLoadErrorIdentity = identity
+                completedDiffIdentity = identity
+                return
+            }
             diff = value
-            error = nil
+            completedDiffIdentity = identity
+            diffLoadError = nil
+            diffLoadErrorIdentity = nil
         } catch {
-            if !HerdrCancellation.isCancellation(error) { record(error) }
+            guard currentDiffRequestIdentity == identity,
+                  !Task.isCancelled,
+                  !HerdrCancellation.isCancellation(error)
+            else { return }
+            diffLoadError = error.localizedDescription
+            diffLoadErrorIdentity = identity
+            completedDiffIdentity = identity
         }
     }
 

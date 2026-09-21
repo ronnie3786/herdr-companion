@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import Testing
 @testable import herdr_harness_mac
@@ -29,6 +30,157 @@ struct PRReviewRenderTests {
         }
 
         result.expectSubstantial()
+    }
+
+    @Test(
+        "Files layout bounds the rail and displays native code",
+        arguments: [CGFloat(1240), 1720]
+    )
+    func filesLayoutShowsCode(width: CGFloat) async throws {
+        let size = CGSize(width: width, height: width < 1500 ? 820 : 1060)
+        let store = demoStore()
+        let hosting = NSHostingView(rootView:
+            PRReviewContainerView(store: store, canControl: true)
+                .frame(width: size.width, height: size.height)
+                .environment(\.colorScheme, .dark)
+        )
+        hosting.frame = CGRect(origin: .zero, size: size)
+        let window = NSWindow(
+            contentRect: hosting.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        window.alphaValue = 0
+        window.orderFrontRegardless()
+        defer { window.close() }
+
+        for _ in 0..<8 {
+            hosting.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(25))
+        }
+
+        let split = try #require(descendants(hosting).compactMap { $0 as? NSSplitView }.first)
+        let rail = try #require(split.subviews.first)
+        let diffPane = try #require(split.subviews.last)
+        let textView = try #require(descendants(hosting).compactMap { $0 as? PRReviewDiffTextView }.first)
+
+        #expect(rail.frame.width >= PRReviewFilesLayout.minimumRailWidth - 1)
+        #expect(rail.frame.width <= PRReviewFilesLayout.maximumRailWidth + 1)
+        #expect(diffPane.frame.width > rail.frame.width)
+        #expect(split.frame.height > size.height * 0.72)
+        #expect(textView.string.contains("struct SeedCatalog {}"))
+        #expect(textView.isLineVisible(2, side: .after))
+        #expect(textView.enclosingScrollView?.hasVerticalScroller == true)
+        #expect(textView.enclosingScrollView?.hasHorizontalScroller == true)
+    }
+
+    @Test("Deleted and partial file views keep available code visible")
+    func deletedAndPartialFilesShowNativeText() async throws {
+        for mode in ["deleted", "partial"] {
+            let store = PRReviewStore()
+            store.configure(client: nil, machineID: "synthetic-host", demo: false)
+            store.select(PRReviewDemo.reviewID)
+            var snapshot = PRReviewDemo.snapshot()
+            var diff = PRReviewDemo.diff()
+            if mode == "deleted" {
+                snapshot.files[0].status = "deleted"
+                diff.files[0].status = "deleted"
+                diff.files[0].hunks = [diff.files[0].hunks[1]]
+            } else {
+                diff.truncated = true
+                diff.files[0].truncated = true
+            }
+            store.receive(snapshot)
+            store.selectedPath = snapshot.files[0].path
+            store.diff = diff
+
+            let size = CGSize(width: 980, height: 620)
+            let hosting = NSHostingView(rootView:
+                PRReviewDiffView(store: store)
+                    .frame(width: size.width, height: size.height)
+                    .environment(\.colorScheme, .dark)
+            )
+            hosting.frame = CGRect(origin: .zero, size: size)
+            let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = hosting
+            window.alphaValue = 0
+            window.orderFrontRegardless()
+            defer { window.close() }
+
+            for _ in 0..<8 {
+                hosting.layoutSubtreeIfNeeded()
+                window.displayIfNeeded()
+                await Task.yield()
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            let textView = try #require(descendants(hosting).compactMap { $0 as? PRReviewDiffTextView }.first)
+            #expect(!textView.string.isEmpty, "\(mode) review should keep available code visible")
+            if mode == "deleted" {
+                #expect(textView.string.contains("-old"))
+            } else {
+                #expect(textView.string.contains("struct SeedCatalog {}"))
+            }
+        }
+    }
+
+    @Test("Preparing, failure, empty, filtered, and ready states stay distinct")
+    func resolvesFilesPresentationStates() {
+        #expect(PRReviewFilesPresentation.resolve(
+            status: .preparing, reviewError: nil, hasSnapshot: false, fileCount: 0, visibleFileCount: 0
+        ) == .preparing)
+        #expect(PRReviewFilesPresentation.resolve(
+            status: .failed, reviewError: "Synthetic checkout failure", hasSnapshot: true, fileCount: 0, visibleFileCount: 0
+        ) == .failed("Synthetic checkout failure"))
+        #expect(PRReviewFilesPresentation.resolve(
+            status: .ready, reviewError: nil, hasSnapshot: false, fileCount: 0, visibleFileCount: 0
+        ) == .loading)
+        #expect(PRReviewFilesPresentation.resolve(
+            status: .ready, reviewError: nil, hasSnapshot: true, fileCount: 0, visibleFileCount: 0
+        ) == .noFiles)
+        #expect(PRReviewFilesPresentation.resolve(
+            status: .ready, reviewError: nil, hasSnapshot: true, fileCount: 2, visibleFileCount: 0
+        ) == .noFilterMatches)
+        #expect(PRReviewFilesPresentation.resolve(
+            status: .ready, reviewError: nil, hasSnapshot: true, fileCount: 2, visibleFileCount: 1
+        ) == .content)
+    }
+
+    @Test("Blank review titles fall back to a useful pull request label")
+    func blankReviewTitleFallback() {
+        var review = PRReviewDemo.snapshot().review
+        review.title = "  "
+        #expect(PRReviewHeaderText.title(for: review) == "example-owner/garden-planner #42")
+        review.owner = ""
+        review.repo = ""
+        #expect(PRReviewHeaderText.title(for: review) == "Pull request #42")
+    }
+
+    @Test("A ready review selects its first visible file")
+    func readyReviewSelectsVisibleFile() async throws {
+        let store = demoStore()
+        store.selectedPath = nil
+        let size = CGSize(width: 980, height: 620)
+        let hosting = NSHostingView(rootView: PRReviewFilesView(store: store).frame(width: size.width, height: size.height))
+        hosting.frame = CGRect(origin: .zero, size: size)
+        let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        window.alphaValue = 0
+        window.orderFrontRegardless()
+        defer { window.close() }
+        for _ in 0..<8 {
+            hosting.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        #expect(store.selectedPath == store.orderedFiles.first?.path)
     }
 
     @Test("Context tab renders demo review data")
@@ -112,5 +264,9 @@ struct PRReviewRenderTests {
         store.selectedPath = PRReviewDemo.snapshot().files[0].path
         store.diff = PRReviewDemo.diff()
         return store
+    }
+
+    private func descendants(_ view: NSView) -> [NSView] {
+        [view] + view.subviews.flatMap(descendants)
     }
 }

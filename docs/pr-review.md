@@ -1,6 +1,6 @@
 # PR Review
 
-Status: macOS 0.27.0-beta.1 with companion 0.27.0b3 (2026-09-21).
+Status: macOS 0.27.1-beta.1 with companion 0.27.0b3 (2026-09-21).
 Product intent lives in [pr-review-assistant.md](pr-review-assistant.md).
 
 PR Review turns a GitHub pull request link into an AI-assisted review workspace inside the
@@ -87,7 +87,9 @@ marks a file viewed (also on GitHub when syncing is enabled). **Rank files** re-
 `herdr-pr-review set-rankings` lets an agent supply its own.
 
 **Diff and Ask AI.** The diff is native: old and new line numbers, full-width tinting for added,
-removed and hunk-header lines. Select code and choose **Ask AI** (floating button or right-click).
+removed and hunk-header lines. Deleted text files show their removal hunks. Long files scroll vertically
+and horizontally. If the patch is truncated, Herdr shows every available hunk with a partial-diff
+notice and a link to the full diff. Select code and choose **Ask AI** (floating button or right-click).
 The question carries the file, the exact selection, whether it is on the before or after side,
 the line range, up to 40 surrounding lines, the PR summary, and the review agents' findings for
 that file as reference only. Answers come from the `pr-review-question-v1` profile: a Pi run

@@ -793,22 +793,37 @@ final class AgentControlController {
             return .completed(["presentation": .string("summary"), "operationState": .string("started")])
         case "chat.smart-rename":
             let pane = try await targetedPane(command.target, model: model, context: context)
-            guard pane.supportsPiSemanticChat else {
-                throw AgentControlCommandError.unavailable("This pane has no live semantic Pi session to rename.")
-            }
             guard !model.smartRenamingPaneIDs.contains(pane.id) else {
                 throw AgentControlCommandError.conflict("Smart Rename is already running for this pane.")
             }
-            let outcome = try await model.smartRenameForAgentControl(pane) {
-                try self.validateExecutionContext(context)
+            let outcome: HerdrAppModel.SmartRenamePaneOutcome
+            do {
+                outcome = try await model.smartRenameForAgentControl(pane) {
+                    try self.validateExecutionContext(context)
+                }
+            } catch let error as AgentControlCommandError {
+                throw error
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // Routing and context failures carry actionable messages while
+                // the receiver contract requires an AgentControlCommandError.
+                throw AgentControlCommandError.failed(error.localizedDescription)
             }
             switch outcome {
-            case let .refreshed(title):
-                return .completed(["operationState": .string("finished"), "title": .string(title)])
-            case let .renamedNeedsRefresh(title, message):
-                throw AgentControlCommandError.failed(
-                    "The pane was renamed to “\(title)”, but updated workspace state could not be refreshed: \(message)"
-                )
+            case let .refreshed(title, notice):
+                var result: [String: PiJSONValue] = [
+                    "operationState": .string("finished"),
+                    "title": .string(title),
+                ]
+                if let notice, !notice.isEmpty {
+                    result["notice"] = .string(notice)
+                }
+                return .completed(result)
+            case let .renamedNeedsRefresh(title, message, notice):
+                var text = "The pane was renamed to “\(title)”, but updated workspace state could not be refreshed: \(message)"
+                if let notice, !notice.isEmpty { text += " \(notice)" }
+                throw AgentControlCommandError.failed(text)
             }
         case "chat.mark-unread":
             let pane = try await targetedPane(command.target, model: model, context: context)

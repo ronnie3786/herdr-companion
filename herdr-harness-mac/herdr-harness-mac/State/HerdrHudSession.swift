@@ -109,6 +109,12 @@ final class HerdrHudSession {
     @ObservationIgnored private var restoreTask: Task<Void, Never>?
     @ObservationIgnored private var historyObservationTask: Task<Void, Never>?
     @ObservationIgnored private var hasStartedSessionActivity = false
+    /// Fires after an accepted run or a history load establishes this session's
+    /// durable conversation identity. The owning HUD collection uses it to
+    /// attach a title that was created while the first turn was still an
+    /// unaccepted placeholder. This is a notification seam only: it cannot
+    /// change what the session does.
+    @ObservationIgnored var onHistoryIdentityEstablished: (() -> Void)?
 
     let responseAudioPlayer = ResponseAudioPlayer()
     private(set) var exchanges: [HerdrHudExchange] = []
@@ -116,6 +122,14 @@ final class HerdrHudSession {
     private(set) var latestPromotableExchangeID: String?
     private(set) var thread: HerdrHudThread?
     private var historyRootRunID: String?
+    /// The exact local submission placeholder whose accepted run established
+    /// each durable history identity (`machineID:rootRunID`) this session has
+    /// observed. Smart Rename's pending-title adoption consults this mapping so
+    /// a remembered title can only attach to the submission that produced the
+    /// root — a failed earlier submission still listed in the transcript or a
+    /// later turn can never claim it. Not persisted: acceptance and history
+    /// loading re-establish it within the owning session.
+    @ObservationIgnored private(set) var acceptedSubmissionIDsByHistoryIdentity: [String: String] = [:]
     private(set) var isLoadingHistory = false
     private(set) var needsHistoryRefresh = false
     private(set) var isEnding = false
@@ -320,6 +334,14 @@ final class HerdrHudSession {
         if let thread { return "\(thread.machineID):\(thread.rootRunID)" }
         guard let exchange = exchanges.first, !exchange.id.hasPrefix("hud-") else { return nil }
         return "\(exchange.machineID):\(historyRootRunID ?? exchange.id)"
+    }
+
+    /// The submission placeholder whose accepted run established
+    /// `historyIdentity`, if this session observed that acceptance or adopted
+    /// the placeholder from saved history. Pending-title adoption may attach a
+    /// title only to this exact submission.
+    func acceptedSubmissionID(forHistoryIdentity historyIdentity: String) -> String? {
+        acceptedSubmissionIDsByHistoryIdentity[historyIdentity]
     }
 
     private enum HistoryRefreshKind {
@@ -668,6 +690,7 @@ final class HerdrHudSession {
             includesWorkingDirectory: isNewRoot,
             capabilitiesChecked: isNewRoot && !workingFolder.isHome,
             submissionOwnerID: ownerID,
+            submissionID: pendingID,
             model: model
         )
         guard let index = exchanges.firstIndex(where: { $0.id == pendingID }) else {
@@ -1169,6 +1192,7 @@ final class HerdrHudSession {
             includesWorkingDirectory: startsNewRoot,
             capabilitiesChecked: startsNewRoot && !workingFolder.isHome,
             submissionOwnerID: ownerID,
+            submissionID: isUnacceptedPlaceholder ? exchange.id : nil,
             model: model
         ) else {
             if submissionWasCancelled(ownerID) {
@@ -1324,6 +1348,7 @@ final class HerdrHudSession {
             || exchanges.last?.status.isTerminal == false
         let localByID = Dictionary(uniqueKeysWithValues: exchanges.map { ($0.id, $0) })
         let serverRunIDs = Set(turns.map(\.id))
+        let newestLocalExchangeID = exchanges.last?.id
         let acceptedPendingExchange = isSameConversation && thread?.lastRunID == page.latestRunId
             ? exchanges.last(where: { local in
                 local.id.hasPrefix("hud-pending-")
@@ -1371,6 +1396,17 @@ final class HerdrHudSession {
             lastRunID: page.latestRunId,
             turnCount: turns.count
         ) : nil
+        if let acceptedPendingExchange,
+           acceptedPendingExchange.id == newestLocalExchangeID,
+           acceptedSubmissionIDsByHistoryIdentity["\(machineID):\(page.rootRunId)"] == nil {
+            // Record the exact submission whose accepted run owns this root.
+            // Pending-title adoption matches this mapping instead of any
+            // placeholder that happens to remain in the transcript. Only the
+            // newest local turn can be the accepted run; an older retained
+            // placeholder with the same prompt text never is.
+            acceptedSubmissionIDsByHistoryIdentity["\(machineID):\(page.rootRunId)"] = acceptedPendingExchange.id
+        }
+        onHistoryIdentityEstablished?()
         selectedMachineID = machineID
         selectedWorkingFolder = HerdrHudWorkingFolder(path: historyWorkingFolder)
         workingFolderStore.remember(
@@ -1451,6 +1487,7 @@ final class HerdrHudSession {
         markExchangesChanged()
         thread = nil
         historyRootRunID = nil
+        acceptedSubmissionIDsByHistoryIdentity = [:]
         needsHistoryRefresh = false
         selectedWorkingFolder = .home
         await persistence.remove()
@@ -1585,6 +1622,7 @@ final class HerdrHudSession {
         includesWorkingDirectory: Bool = true,
         capabilitiesChecked: Bool = false,
         submissionOwnerID ownerID: UUID? = nil,
+        submissionID: String? = nil,
         model: HerdrAppModel
     ) async -> HeadlessAgentRun? {
         elapsedSeconds = 0
@@ -1647,10 +1685,17 @@ final class HerdrHudSession {
         // a relaunched app can observe the real run rather than resubmit it.
         if let run = controller.run {
             let root = run.threadRootRunId ?? run.id
+            let isNewRoot = thread?.rootRunID != root
             historyRootRunID = root
-            let count = thread?.rootRunID == root ? (thread?.turnCount ?? 0) + 1 : 1
+            let count = isNewRoot ? 1 : (thread?.turnCount ?? 0) + 1
             thread = HerdrHudThread(machineID: machineID, rootRunID: root,
                                    lastRunID: run.id, turnCount: count)
+            if isNewRoot, let submissionID {
+                // Bind the new root to the exact submission that established
+                // it so a pending title is adopted only by that submission.
+                acceptedSubmissionIDsByHistoryIdentity["\(machineID):\(root)"] = submissionID
+            }
+            onHistoryIdentityEstablished?()
             workingFolderStore.remember(
                 folder: HerdrHudWorkingFolder(path: workingFolderPath),
                 for: machineID,

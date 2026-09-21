@@ -115,7 +115,9 @@ struct HerdrHudChatBubbleView: View {
     private func smartRename() {
         Task {
             do {
-                try await controller.chats?.smartRename(chat.id, model: model)
+                // A successful rename returns no notice under the strict
+                // selection policy; every failure surfaces here instead.
+                _ = try await controller.chats?.smartRename(chat.id, model: model)
             } catch is CancellationError {
                 return
             } catch {

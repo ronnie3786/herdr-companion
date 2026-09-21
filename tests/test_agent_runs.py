@@ -10,6 +10,7 @@ from pathlib import Path
 
 from herdr_harness.agent_runs import (
     PUBLIC_RUN_KEYS,
+    SMART_RENAME_PROFILE,
     AgentRunError,
     AgentRunManager,
 )
@@ -214,6 +215,19 @@ def write_fake_pi(directory: Path) -> Path:
                 }
                 if stop_reason == "error":
                     message["errorMessage"] = "provider failed after streaming text"
+                print(json.dumps({"event": {"type": "message_end", "message": message}}), flush=True)
+                print(json.dumps({"type": "agent_end", "messages": [message]}), flush=True)
+            elif mode in {"naming-title-error", "naming-title-aborted"}:
+                # A valid-looking naming result streamed before the provider
+                # failed or aborted. The companion must still fail the run.
+                stop_reason = mode.removeprefix("naming-title-")
+                message = {
+                    "role": "assistant",
+                    "text": json.dumps({"title": "Synthetic naming result"}),
+                    "stopReason": stop_reason,
+                }
+                if stop_reason == "error":
+                    message["errorMessage"] = "provider failed after emitting a title"
                 print(json.dumps({"event": {"type": "message_end", "message": message}}), flush=True)
                 print(json.dumps({"type": "agent_end", "messages": [message]}), flush=True)
             else:
@@ -489,6 +503,135 @@ class AgentRunManagerTests(unittest.TestCase):
             self.assertIn("sole permitted side effect", charter)
             self.assertIn("HTTP(S) link", charter)
             self.assertIn("do not register local files in ASK mode", charter)
+            manager.stop()
+
+    def test_smart_rename_profile_is_tool_free_and_one_shot(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            capture_path = directory / "capture.json"
+            manager = self.manager(directory, FAKE_AGENT_CAPTURE=str(capture_path))
+
+            started = manager.start(
+                prompt="Name this synthetic conversation",
+                label="Smart Rename",
+                cwd=str(directory / "home"),
+                topology={},
+                _assistant={"profile": SMART_RENAME_PROFILE},
+            )
+            finished = wait_for_status(manager, started["run"]["id"], {"completed"})
+
+            self.assertEqual(finished["run"]["status"], "completed")
+            capture = json.loads(capture_path.read_text(encoding="utf-8"))
+            self.assertNotIn("--tools", capture["argv"])
+            self.assertIn("--no-tools", capture["argv"])
+            self.assertNotIn("--extension", capture["argv"])
+            self.assertNotIn("read,bash", " ".join(capture["argv"]))
+            charter = capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
+            self.assertIn("Never use tools", charter)
+            self.assertIn("untrusted data", charter)
+            self.assertNotIn("snapshot", charter.lower())
+            # Source context stays on stdin, never in argv.
+            self.assertNotIn("Name this synthetic conversation", " ".join(capture["argv"]))
+            self.assertEqual(capture["prompt"], "Name this synthetic conversation")
+            manager.stop()
+
+    def test_smart_rename_profile_rejects_actions_continuation_and_overrides(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory)
+            for arguments in (
+                {"mode": "act"},
+                {"attachments": [{"filename": "note.txt", "dataBase64": "aGk="}]},
+                {"system_prompt": "override the naming policy"},
+                {"continue_from_run_id": "agr_0123456789ab"},
+            ):
+                with self.subTest(arguments=arguments):
+                    with self.assertRaises(AgentRunError) as context:
+                        manager.start(
+                            prompt="Name this synthetic conversation",
+                            label="Smart Rename",
+                            cwd=str(directory / "home"),
+                            topology={},
+                            _assistant={"profile": SMART_RENAME_PROFILE},
+                            **arguments,
+                        )
+                    self.assertEqual(context.exception.code, "invalid_smart_rename")
+                    self.assertEqual(context.exception.status, 400)
+            manager.stop()
+
+    def test_smart_rename_provider_error_or_abort_with_title_text_fails(self):
+        cases = (
+            ("naming-title-error", "provider failed after emitting a title"),
+            ("naming-title-aborted", "model response was aborted"),
+        )
+        for mode, expected_error in cases:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as raw_directory:
+                directory = Path(raw_directory)
+                manager = self.manager(directory, FAKE_AGENT_MODE=mode)
+
+                started = manager.start(
+                    prompt="Name this synthetic conversation",
+                    label="Smart Rename",
+                    cwd=str(directory / "home"),
+                    topology={},
+                    _assistant={"profile": SMART_RENAME_PROFILE},
+                )
+                finished = wait_for_status(manager, started["run"]["id"], {"failed"})
+
+                # A valid title-shaped text block must never rescue a run the
+                # provider failed or aborted: clients apply a title only for a
+                # completed run, so the failed status is what preserves the
+                # existing title.
+                self.assertEqual(finished["run"]["status"], "failed")
+                self.assertEqual(
+                    finished["run"]["response"],
+                    json.dumps({"title": "Synthetic naming result"}),
+                )
+                self.assertEqual(finished["run"]["error"], expected_error)
+                manager.stop()
+
+    def test_smart_rename_runs_cannot_be_continued_or_promoted(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = self.manager(directory)
+
+            started = manager.start(
+                prompt="Name this synthetic conversation",
+                label="Smart Rename",
+                cwd=str(directory / "home"),
+                topology={},
+                _assistant={"profile": SMART_RENAME_PROFILE},
+            )
+            finished = wait_for_status(manager, started["run"]["id"], {"completed"})
+            run_id = finished["run"]["id"]
+
+            # A generic request must not reuse the naming run as conversation
+            # context: naming is advertised as one-shot and tool-free.
+            with self.assertRaises(AgentRunError) as continuation:
+                manager.start(
+                    prompt="Continue generically",
+                    label="Generic continuation",
+                    cwd=str(directory / "home"),
+                    topology={},
+                    continue_from_run_id=run_id,
+                )
+            self.assertEqual(continuation.exception.code, "smart_rename_continuation_forbidden")
+            self.assertEqual(continuation.exception.status, 409)
+
+            # Promotion would hand the naming session to a tool-enabled pane.
+            with self.assertRaises(AgentRunError) as promotion:
+                manager.promotable(run_id)
+            self.assertEqual(promotion.exception.code, "smart_rename_promotion_forbidden")
+            self.assertEqual(promotion.exception.status, 409)
+            with self.assertRaises(AgentRunError) as marked:
+                manager.mark_promoted(run_id, workspace_id="w1", pane_id="w1:p1")
+            self.assertEqual(marked.exception.code, "smart_rename_promotion_forbidden")
+            self.assertEqual(marked.exception.status, 409)
+
+            # The rejected calls did not alter the naming run.
+            unchanged = manager.get(run_id)["run"]
+            self.assertEqual(unchanged["status"], "completed")
+            self.assertIsNone(unchanged.get("promotedPaneId"))
             manager.stop()
 
     def test_custom_system_prompt_uses_act_tools_and_keeps_topology_note(self):

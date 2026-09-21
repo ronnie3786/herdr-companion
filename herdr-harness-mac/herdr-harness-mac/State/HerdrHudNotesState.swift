@@ -4,6 +4,14 @@ import Observation
 
 // MARK: - AI runner seam
 
+/// Server-enforced headless-run profiles the app can request. Smart Rename
+/// must use `smartRename`: the companion executes that profile with `--no-tools`
+/// and no extension, so naming can never read the machine even if untrusted
+/// terminal or conversation text tries to steer the model into it.
+enum HerdrNoteAIProfiles {
+    static let smartRename = "smart-rename-v1"
+}
+
 @MainActor
 protocol HerdrNoteAIRunner {
     func run(
@@ -13,6 +21,7 @@ protocol HerdrNoteAIRunner {
         model: String?,
         thinkingLevel: String?,
         systemPrompt: String?,
+        profile: String?,
         deadline: Duration,
         appModel: HerdrAppModel,
         onProgress: @escaping @MainActor (HerdrNoteRunProgress) -> Void
@@ -65,10 +74,22 @@ struct HerdrLiveNoteAIRunner: HerdrNoteAIRunner {
         model: String?,
         thinkingLevel: String?,
         systemPrompt: String?,
+        profile: String?,
         deadline: Duration,
         appModel: HerdrAppModel,
         onProgress: @escaping @MainActor (HerdrNoteRunProgress) -> Void
     ) async throws -> String {
+        if profile == HerdrNoteAIProfiles.smartRename {
+            // Feature-detect the enforced tool-free profile before dispatching.
+            // An older companion would route the unknown profile to its
+            // contextual-question path and could still run it with tools, so a
+            // naming request must never be sent there.
+            guard await appModel.supportsToolFreeNaming(machineID: machineID) else {
+                throw HerdrNoteAIError.startFailed(
+                    "this companion does not support tool-free Smart Rename yet; update its companion server, then try again"
+                )
+            }
+        }
         let controller = HeadlessAgentController()
         await controller.submit(
             prompt: prompt,
@@ -77,6 +98,7 @@ struct HerdrLiveNoteAIRunner: HerdrNoteAIRunner {
             agentModel: model,
             thinkingLevel: thinkingLevel,
             systemPrompt: systemPrompt,
+            profile: profile,
             model: appModel
         )
         guard controller.run != nil else {
@@ -539,7 +561,7 @@ final class HerdrHudNotesState {
             do {
                 let systemPrompt = await model.supportsPromptOverrides(machineID: machineID) ? HerdrNoteAIPrompts.noToolsCharter : nil
                 let prompt = HerdrPromptTemplate.render(self.promptSettings.text(for: .notesCleanup), values: ["note": HerdrNoteAIParsing.fenceSafe(noteText)])
-                let response = try await self.aiRunner.run(prompt: prompt, machineID: machineID, mode: .ask, model: self.agentSettings.effectiveNotesModel, thinkingLevel: self.agentSettings.notesThinkingLevel.rawValue, systemPrompt: systemPrompt, deadline: .seconds(60), appModel: model, onProgress: { [weak self] progress in self?.reportRunProgress(progress, for: id) })
+                let response = try await self.aiRunner.run(prompt: prompt, machineID: machineID, mode: .ask, model: self.agentSettings.effectiveNotesModel, thinkingLevel: self.agentSettings.notesThinkingLevel.rawValue, systemPrompt: systemPrompt, profile: nil, deadline: .seconds(60), appModel: model, onProgress: { [weak self] progress in self?.reportRunProgress(progress, for: id) })
                 guard let freshIndex = self.notes.firstIndex(where: { $0.id == id }) else { return }
                 guard HerdrNotesSyncJournal.sameContent(self.notes[freshIndex], note) else {
                     self.setError("Note changed while AI was working. Try again.", for: id)
@@ -587,7 +609,7 @@ final class HerdrHudNotesState {
                 // which is what pushed real runs past the deadline.
                 let systemPrompt = await model.supportsPromptOverrides(machineID: machineID) ? HerdrNoteAIPrompts.planningCharter : nil
                 let prompt = HerdrPromptTemplate.render(self.promptSettings.text(for: .notesSmartActions), values: ["note": HerdrNoteAIParsing.fenceSafe(noteText)])
-                let response = try await self.aiRunner.run(prompt: prompt, machineID: machineID, mode: .ask, model: self.agentSettings.effectiveNotesModel, thinkingLevel: self.agentSettings.notesThinkingLevel.rawValue, systemPrompt: systemPrompt, deadline: .seconds(120), appModel: model, onProgress: { [weak self] progress in self?.reportRunProgress(progress, for: id) })
+                let response = try await self.aiRunner.run(prompt: prompt, machineID: machineID, mode: .ask, model: self.agentSettings.effectiveNotesModel, thinkingLevel: self.agentSettings.notesThinkingLevel.rawValue, systemPrompt: systemPrompt, profile: nil, deadline: .seconds(120), appModel: model, onProgress: { [weak self] progress in self?.reportRunProgress(progress, for: id) })
                 guard let freshIndex = self.notes.firstIndex(where: { $0.id == id }) else { return }
                 guard HerdrNotesSyncJournal.sameContent(self.notes[freshIndex], note) else {
                     self.setError("Note changed while AI was working. Try again.", for: id)

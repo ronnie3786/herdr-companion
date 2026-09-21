@@ -38,14 +38,16 @@ def fail(message: str, code: str = "invalid_assistant_context", status: int = 40
 
 
 def capabilities() -> dict:
+    from .agent_runs import SMART_RENAME_PROFILE
     from .response_briefs import MAX_OUTPUT_BYTES, PROFILE as RESPONSE_BRIEF_PROFILE
 
-    return {"ok": True, "profiles": [PROFILE, PR_REVIEW_PROFILE, "hud-chat-v1", RESPONSE_BRIEF_PROFILE], "contextVersions": [1],
+    return {"ok": True, "profiles": [PROFILE, PR_REVIEW_PROFILE, "hud-chat-v1", RESPONSE_BRIEF_PROFILE, SMART_RENAME_PROFILE], "contextVersions": [1],
             "hudChats": {"retention": "indefinite", "tools": "normal-pi", "history": "/api/v1/hud-chats"},
             "hudChatWorkingDirectory": True,
             "prReviewQuestions": {"version": 1, "tools": "read-only-in-checkout", "scope": "reviewId"},
             "responseBriefs": {"version": 1, "tools": "none", "oneShot": True,
                                "maxOutputBytes": MAX_OUTPUT_BYTES, "requiresParentSessionId": True},
+            "smartRename": {"version": 1, "tools": "none", "oneShot": True},
             "tools": "supplied-context-only", "strictContinuation": True,
             "idempotency": True, "history": True, "observation": ["poll"],
             "maxContextBytes": MAX_CONTEXT_BYTES, "maxItemBytes": MAX_ITEM_BYTES}

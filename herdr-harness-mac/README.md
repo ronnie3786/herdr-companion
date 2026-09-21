@@ -239,8 +239,72 @@ The preference also applies to HUD chat responses. HUD Clanking stays collapsed
 until you expand it, even when a tool fails. Running HUD chats have a yellow border.
 
 Right-click a HUD chat and choose **Smart Rename** to generate a short title from
-its conversation. The title is saved on this Mac and retained when reopening that
-conversation from history.
+its conversation. A successfully submitted prompt is enough: naming does not wait
+for the agent's first reply, and a reply, tool activity, or completion arriving
+while the naming ask runs does not cancel it. The title is saved on this Mac and
+retained when reopening that conversation from history, including when the title
+was created before the first run was accepted.
+
+### Smart Rename
+
+Smart Rename is the shared naming path for pane titles, color-group labels, and
+HUD chat titles on Mac. It runs a separate, bounded run in the companion's
+enforced tool-free `smart-rename-v1` profile: the companion executes it with
+`--no-tools` and no extension, accepts only a prompt, model, and thinking level,
+and never submits a prompt to the source agent or shell.
+
+- **Preferences:** **Settings → Agents → Smart Rename** chooses the naming model
+  and thinking level. An empty model follows the Agent model, then the execution
+  machine's Pi default; thinking defaults to **Low**. These defaults are
+  unchanged from earlier releases, and the Smart Rename choice does not affect
+  Agent, HUD, or Notes settings.
+- **Execution machine:** each rename resolves the model catalog and runs on the
+  machine that owns the target pane or HUD chat. A color-group label runs on the
+  machine of the first successfully sampled controllable pane. The Settings
+  machine menu only changes which catalog is browsable; it never redirects a
+  rename.
+- **Selection fidelity:** the rename honors the saved model and thinking level
+  exactly on the machine that owns the target. A non-blank selection the
+  execution machine does not offer, a declared default missing from its own
+  catalog, an unreadable or empty catalog, and a non-reasoning model paired with
+  an effort above **Off** all stop before any naming request. The current title
+  stays, the saved preference is not rewritten, and the error names the selection
+  and companion and points to Settings or that companion's provider
+  configuration. A failure during the naming run is reported the same way; no
+  other model, thinking level, or machine is substituted.
+- **Selection defaults:** an empty Smart Rename model follows the Agent model,
+  then the execution machine's Pi default; thinking defaults to **Low**. An
+  explicit selection is sent unchanged, including **Off**. Model catalogs expose
+  only a reasoning flag, so unknown effort ranges are never guessed.
+- **Context:** a submitted prompt, the readable Pi conversation, a bounded
+  terminal window (the last 160 lines, escape sequences stripped), or
+  pane/tab/workspace/folder metadata. An unavailable, empty, or mismatched Pi
+  snapshot falls through to terminal output and metadata rather than blocking
+  the rename or importing another session's transcript. All supplied text is
+  treated as untrusted data. A genuinely context-free target keeps its title and
+  says so instead of requiring a conversation.
+- **Guards:** duplicate renames are refused, cancellation keeps the old title,
+  and a manual title edit, replaced terminal or session, changed machine, a newer
+  accepted submission on the target, removed chat, or changed color-group
+  membership wins over a late result. Streaming and shell activity do not
+  invalidate a rename.
+- **Persistence:** pane titles are renamed through the companion and are server
+  state for that pane, so every connected client sees them. Color-group labels
+  and HUD title overrides are local app state on this Mac and are not synced to
+  other clients; HUD titles carry into local saved history, including a title
+  created before its first run was accepted.
+
+Model catalogs describe what a companion's Pi installation offers. They are not
+proof of provider credentials, quota, or service health, and every provider used
+must work in the environment of the companion that executes the rename. Smart
+Rename reuses the existing Pi snapshot, terminal-output, agent-model, and
+headless-agent APIs, and it requires the execution companion to advertise the
+`smart-rename-v1` profile from its agent-run capabilities endpoint. A companion
+that does not advertise it is never sent a naming request: the rename stops, the
+current title stays, and the error asks for that companion's server to be
+updated. This adds no migration and changes no companion configuration.
+
+See [Smart Rename behavior and verification](../docs/smart-rename.md).
 
 The Git view offers **Open Git in New Window**. Its separate, resizable window stays
 with the originating pane and machine when you switch chats in the main window.

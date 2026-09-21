@@ -36,7 +36,9 @@ This is an experimental personal automation. Read the safety section before enab
    and tests, documentation obligations, and a description of every screenshot for
    implementers that cannot see images. If the issue is ambiguous or unsafe, Astra asks a
    question instead; the issue is marked **blocked**, the question is posted on it, and
-   Message Me alerts the operator with a link to the Code Factory dashboard.
+   Message Me alerts the operator with a link to the Code Factory dashboard. On **Retry**,
+   planning refreshes the issue body and recent replies from allow-listed operators while
+   excluding Code Factory's own comments, so an answer becomes part of the next plan.
 6. **DeepSeek implements.** For each task a fresh Pi session on
    `ollama-cloud/deepseek-v4.1-flash:cloud` with thinking `max` implements the task in the
    worktree, writes tests, and commits. The daemon then runs the public-source privacy

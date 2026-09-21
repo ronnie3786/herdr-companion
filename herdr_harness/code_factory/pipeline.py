@@ -670,21 +670,28 @@ class CodeFactory:
         except CodeFactoryError as exc:
             self._store.add_event(number, stage, "warning", f"Could not comment on the issue: {_error_text(exc)}")
 
-    def _issue_view(self, issue: Mapping[str, Any], paths: RunPaths) -> dict[str, Any]:
+    def _issue_view(self, issue: Mapping[str, Any], paths: RunPaths, *, refresh: bool = False) -> dict[str, Any]:
         """The issue as prompt builders expect it (title, verbatim body, url, kind, labels)."""
         body = ""
         data: dict[str, Any] = {}
-        try:
-            data = json.loads(paths.issue_json.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            data = {}
+        if not refresh:
+            try:
+                data = json.loads(paths.issue_json.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                data = {}
         if not isinstance(data, dict) or not isinstance(data.get("body"), str):
             data = self._github.get_issue(issue["number"])
             self._write_json(paths.issue_json, data)
         body = data.get("body") if isinstance(data.get("body"), str) else ""
+        allowed = {login.lower() for login in self.allowed_authors()}
+        comments = [
+            item for item in (data.get("comments") if isinstance(data.get("comments"), list) else [])
+            if isinstance(item, Mapping) and _author_login(item).lower() in allowed
+        ]
         return {
             "number": issue["number"], "title": issue["title"], "body": body, "url": issue["url"],
             "kind": issue["kind"], "author": issue["author"], "labels": issue.get("labels") or [],
+            "comments": comments,
         }
 
     @staticmethod
@@ -1048,7 +1055,9 @@ class CodeFactory:
         number = issue["number"]
         paths = self._paths(number)
         cwd = self._ensure_worktree(issue)
-        view = self._issue_view(issue, paths)
+        # A retry after a human question must see replies and description edits made
+        # after intake; the cached issue snapshot is deliberately refreshed here.
+        view = self._issue_view(issue, paths, refresh=True)
         descriptors = [prompts.attachment_descriptor(file) for file in sorted(paths.attachments.iterdir()) if file.is_file()]
         images = [item["path"] for item in descriptors if item["isImage"]]
         hints = [

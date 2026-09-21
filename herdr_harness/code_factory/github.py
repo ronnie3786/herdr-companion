@@ -32,6 +32,7 @@ BRANCH_PATTERN = re.compile(r"^[A-Za-z0-9._/-]{1,200}$")
 SHA_PATTERN = re.compile(r"^[0-9a-f]{7,64}$")
 COLOR_PATTERN = re.compile(r"^[0-9A-Fa-f]{6}$")
 ISSUE_FIELDS = "number,title,body,author,labels,url,createdAt,updatedAt"
+ISSUE_VIEW_FIELDS = ISSUE_FIELDS + ",comments,state"
 PR_VIEW_FIELDS = "number,url,state,headRefOid,mergedAt,mergeCommit,baseRefName,headRefName,title"
 RUN_FIELDS = "status,conclusion,databaseId,url"
 VERIFY_WORKFLOW = "Verify"
@@ -233,7 +234,7 @@ class GitHubClient:
     def get_issue(self, number: int) -> dict[str, Any]:
         payload = self._json([
             "issue", "view", str(_number(number)), "--repo", self.repository,
-            "--json", ISSUE_FIELDS + ",state",
+            "--json", ISSUE_VIEW_FIELDS,
         ])
         if not isinstance(payload, dict):
             raise _failed(f"gh issue view #{number} returned no issue")

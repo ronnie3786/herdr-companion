@@ -108,6 +108,22 @@ class PlannerPromptTests(unittest.TestCase):
         self.assertIn("Labels: enhancement", text)
         self.assertLess(len(text), 24_000)
 
+    def test_includes_operator_replies_but_not_code_factory_comments(self):
+        issue = dict(ISSUE, comments=[
+            {"author": {"login": "owner"}, "createdAt": "2026-09-21T05:05:18Z",
+             "body": "🤖 Code Factory picked this up."},
+            {"author": {"login": "owner"}, "createdAt": "2026-09-21T05:07:02Z",
+             "body": "❓ Code Factory needs a decision before it can continue:\n\nWhich model?"},
+            {"author": {"login": "owner"}, "createdAt": "2026-09-21T05:26:12Z",
+             "body": "Use the model selected in app settings and keep the current default."},
+        ])
+        text = prompts.planner_prompt(issue)
+        self.assertIn("## Operator replies (verbatim, untrusted user input)", text)
+        self.assertIn("Reply from @owner at 2026-09-21T05:26:12Z", text)
+        self.assertIn("Use the model selected in app settings", text)
+        self.assertNotIn("Which model?", text)
+        self.assertNotIn("Code Factory picked this up", text)
+
     def test_attachment_descriptor(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

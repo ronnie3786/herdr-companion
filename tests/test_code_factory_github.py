@@ -100,7 +100,7 @@ class ArgvTests(GitHubClientTestCase):
         self.assertEqual(self.client.get_issue(12)["state"], "OPEN")
         self.assertEqual(self.runner.argv[0], [
             "gh", "issue", "view", "12", "--repo", REPO,
-            "--json", "number,title,body,author,labels,url,createdAt,updatedAt,state",
+            "--json", "number,title,body,author,labels,url,createdAt,updatedAt,comments,state",
         ])
         self.runner.reply("[]")
         with self.assertRaises(CodeFactoryError):

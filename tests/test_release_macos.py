@@ -322,15 +322,23 @@ class PublishTransactionTests(unittest.TestCase):
     def test_draft_lookup_uses_numeric_id_and_paginates(self):
         first_page = [{"tag_name": f"older-{n}", "id": n} for n in range(100)]
         draft = {"id": 101, "tag_name": "preview", "draft": True}
-        with patch.object(release, "api", side_effect=[first_page, [draft], draft]) as api:
+        with patch.object(release, "api", side_effect=[first_page, [draft], draft]) as api, patch.object(release, "SLEEP") as sleep_mock:
             self.assertEqual(release.release_by_tag("preview"), draft)
+        sleep_mock.assert_not_called()
         self.assertEqual([call.args[0] for call in api.call_args_list], [
             "releases?per_page=100&page=1", "releases?per_page=100&page=2", "releases/101"
         ])
 
     def test_missing_release_lookup_fails_closed(self):
-        with patch.object(release, "api", return_value=[]), self.assertRaisesRegex(release.ReleaseError, "missing"):
+        with patch.object(release, "api", return_value=[]), patch.object(release, "SLEEP") as sleep_mock, self.assertRaisesRegex(release.ReleaseError, "missing"):
             release.release_by_tag("missing")
+        self.assertEqual(sleep_mock.call_count, 7)
+
+    def test_release_lookup_retries_before_finding_draft(self):
+        draft = {"id": 101, "tag_name": "preview", "draft": True}
+        with patch.object(release, "api", side_effect=[[], [draft], draft]), patch.object(release, "SLEEP") as sleep_mock:
+            self.assertEqual(release.release_by_tag("preview"), draft)
+        self.assertEqual(sleep_mock.call_count, 1)
 
     def exercise(self, *, resume=False, competing_tag=False, restore_missing=False):
         with tempfile.TemporaryDirectory() as directory:

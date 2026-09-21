@@ -88,7 +88,9 @@ struct AgentModelSettings: Equatable, Sendable {
 
     /// The naming model preference actually sent, if any. An empty Smart
     /// Rename choice follows the Agent model; an empty Agent choice means the
-    /// execution machine's Pi default.
+    /// execution machine's Pi default. A non-empty value is returned verbatim
+    /// even when a catalog does not offer it: callers report the mismatch and
+    /// never substitute another model or rewrite this preference.
     var effectiveSmartRenameModel: String? {
         if !smartRenameModel.isEmpty { return smartRenameModel }
         if !quickChatModel.isEmpty { return quickChatModel }

@@ -144,6 +144,104 @@ struct AgentModelSettingsStoreTests {
     }
 
     @MainActor
+    @Test("Both Smart Rename controls survive store recreation")
+    func smartRenameControlsSurviveStoreRecreation() throws {
+        let suiteName = "AgentModelSettingsStoreTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = AgentModelSettingsStore(defaults: defaults)
+        store.smartRenameModel = "provider/naming-model"
+        store.smartRenameThinkingLevel = .medium
+
+        let recreated = AgentModelSettingsStore(defaults: defaults)
+        #expect(recreated.smartRenameModel == "provider/naming-model")
+        #expect(recreated.smartRenameThinkingLevel == .medium)
+        #expect(recreated.effectiveSmartRenameModel == "provider/naming-model")
+        #expect(recreated.smartRenameThinkingLevel != AgentModelSettings.builtInSmartRenameThinkingLevel)
+
+        recreated.smartRenameThinkingLevel = .off
+        let offAgain = AgentModelSettingsStore(defaults: defaults)
+        #expect(offAgain.smartRenameThinkingLevel == .off)
+        #expect(offAgain.smartRenameModel == "provider/naming-model")
+    }
+
+    @Test("An unavailable saved model is loaded and saved verbatim, never rewritten")
+    func unavailableSavedModelIsPreserved() throws {
+        let suiteName = "AgentModelSettingsStoreTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("ghost/vendor-naming", forKey: AgentModelSettings.smartRenameModelKey)
+        defaults.set(PiThinkingLevel.high.rawValue, forKey: AgentModelSettings.smartRenameThinkingLevelKey)
+
+        var settings = AgentModelSettings.load(from: defaults)
+        // The store has no catalog knowledge; an unavailable id is just text
+        // that must survive a save/load cycle unchanged.
+        #expect(settings.smartRenameModel == "ghost/vendor-naming")
+        #expect(settings.effectiveSmartRenameModel == "ghost/vendor-naming")
+        #expect(settings.smartRenameThinkingLevel == .high)
+        settings.save(to: defaults)
+
+        let reloaded = AgentModelSettings.load(from: defaults)
+        #expect(reloaded.smartRenameModel == "ghost/vendor-naming")
+        #expect(reloaded.smartRenameThinkingLevel == .high)
+        #expect(defaults.string(forKey: AgentModelSettings.smartRenameModelKey) == "ghost/vendor-naming")
+    }
+
+    @MainActor
+    @Test("Changing Smart Rename fields leaves every unrelated preference unchanged")
+    func smartRenameChangesLeaveUnrelatedPreferences() throws {
+        let suiteName = "AgentModelSettingsStoreTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = AgentModelSettingsStore(defaults: defaults)
+
+        store.hudModel = "hud/one"
+        store.quickChatModel = "agent/two"
+        store.visionModel = "vision/three"
+        store.hudThinkingLevel = .high
+        store.quickChatThinkingLevel = .off
+        store.notesModel = "notes/four"
+        store.notesThinkingLevel = .low
+        let before = AgentModelSettings.load(from: defaults)
+
+        store.smartRenameModel = "naming/five"
+        store.smartRenameThinkingLevel = .xhigh
+        let after = AgentModelSettings.load(from: defaults)
+
+        #expect(after.smartRenameModel == "naming/five")
+        #expect(after.smartRenameThinkingLevel == .xhigh)
+        #expect(after.hudModel == before.hudModel)
+        #expect(after.quickChatModel == before.quickChatModel)
+        #expect(after.visionModel == before.visionModel)
+        #expect(after.hudThinkingLevel == before.hudThinkingLevel)
+        #expect(after.quickChatThinkingLevel == before.quickChatThinkingLevel)
+        #expect(after.notesModel == before.notesModel)
+        #expect(after.notesThinkingLevel == before.notesThinkingLevel)
+        #expect(store.effectiveSmartRenameModel == "naming/five")
+    }
+
+    @MainActor
+    @Test("A store with an empty Smart Rename model inherits the Agent model until set")
+    func storeInheritsTheAgentModel() throws {
+        let suiteName = "AgentModelSettingsStoreTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("provider/agent-model", forKey: AgentModelSettings.quickChatModelKey)
+
+        let store = AgentModelSettingsStore(defaults: defaults)
+        #expect(store.smartRenameModel == "")
+        #expect(store.effectiveSmartRenameModel == "provider/agent-model")
+
+        store.smartRenameModel = "provider/naming-model"
+        #expect(store.effectiveSmartRenameModel == "provider/naming-model")
+
+        store.smartRenameModel = ""
+        #expect(store.effectiveSmartRenameModel == "provider/agent-model")
+        #expect(store.quickChatModel == "provider/agent-model")
+    }
+
+    @MainActor
     @Test("The store persists Smart Rename fields without changing existing settings")
     func storePersistsSmartRenameWithoutChangingExistingSettings() throws {
         let suiteName = "AgentModelSettingsStoreTests-\(UUID().uuidString)"

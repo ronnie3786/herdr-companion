@@ -8,8 +8,6 @@ struct HerdrHudChatBubbleView: View {
     @State private var showsDismissalError = false
     @State private var renameError: String?
     @State private var showsRenameError = false
-    @State private var renameNotice: String?
-    @State private var showsRenameNotice = false
 
     private var isReady: Bool {
         chat.session.hasUnseenAnswer && !chat.session.isRunning
@@ -100,11 +98,6 @@ struct HerdrHudChatBubbleView: View {
         } message: {
             Text(renameError ?? "")
         }
-        .alert("Smart Rename used a fallback", isPresented: $showsRenameNotice) {
-            Button("OK") { renameNotice = nil }
-        } message: {
-            Text(renameNotice ?? "")
-        }
     }
 
     private var outlineColor: Color {
@@ -122,11 +115,9 @@ struct HerdrHudChatBubbleView: View {
     private func smartRename() {
         Task {
             do {
-                if let notice = try await controller.chats?.smartRename(chat.id, model: model),
-                   !notice.isEmpty {
-                    renameNotice = notice
-                    showsRenameNotice = true
-                }
+                // A successful rename returns no notice under the strict
+                // selection policy; every failure surfaces here instead.
+                _ = try await controller.chats?.smartRename(chat.id, model: model)
             } catch is CancellationError {
                 return
             } catch {

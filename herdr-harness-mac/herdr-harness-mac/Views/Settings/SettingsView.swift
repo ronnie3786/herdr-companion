@@ -44,7 +44,8 @@ struct SettingsView: View {
         hudController: HerdrHudController,
         updates: HerdrUpdateController,
         agentControl: AgentControlController,
-        initialPane: SettingsPane = .general
+        initialPane: SettingsPane = .general,
+        initialSmartRenameCatalogMachineID: String? = nil
     ) {
         self.model = model
         self.fontScale = fontScale
@@ -56,6 +57,7 @@ struct SettingsView: View {
         self.updates = updates
         self.agentControl = agentControl
         _selectedPane = State(initialValue: initialPane)
+        _smartRenameCatalogMachineID = State(initialValue: initialSmartRenameCatalogMachineID)
     }
 
     var body: some View {
@@ -522,8 +524,10 @@ struct SettingsView: View {
     }
 
     /// Smart Rename's model/effort policy. The machine menu only changes which
-    /// companion's catalog is browsable; the rename itself always validates
-    /// against the machine that executes it.
+    /// companion's catalog is browsable; the rename itself always resolves
+    /// against the machine that executes it. An unavailable or
+    /// known-incompatible saved selection warns here and fails at execution
+    /// instead of being substituted or rewritten.
     private var smartRenameSection: some View {
         Section {
             if !model.machines.isEmpty {
@@ -534,6 +538,12 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.menu)
                 .accessibilityIdentifier("settings-smart-rename-source-picker")
+
+                Text(SmartRenameSettingsPresentation.catalogSourceFootnote)
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.mist)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("settings-smart-rename-source-note")
             }
 
             LabeledContent("Smart Rename model") {
@@ -557,17 +567,17 @@ struct SettingsView: View {
             .pickerStyle(.menu)
             .accessibilityIdentifier("settings-smart-rename-thinking-picker")
 
-            if let notice = smartRenameResolutionNotice {
-                Label(notice, systemImage: "exclamationmark.triangle.fill")
+            if let warning = smartRenameResolutionWarning {
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
                     .herdrFont(.caption)
                     .foregroundStyle(HerdrTheme.alert)
                     .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("settings-smart-rename-stale")
+                    .accessibilityIdentifier("settings-smart-rename-warning")
             }
         } header: {
             Text("Smart Rename")
         } footer: {
-            Text("A separate bounded ask names the pane; it never becomes a prompt in the chat or shell. An empty model follows the Agent model above, then the execution machine's Pi default. The model list can come from any connected companion, but availability is checked on the machine that runs the rename; an unavailable choice falls back to that machine's default without changing the saved preference. Naming uses Low effort by default, and Off when the resolved model cannot reason.")
+            Text(SmartRenameSettingsPresentation.sectionFooter)
         }
         .task(id: smartRenameCatalogSourceID) {
             await loadSmartRenameModels(sourceID: smartRenameCatalogSourceID)
@@ -594,23 +604,16 @@ struct SettingsView: View {
         return model.machines.first { $0.id == sourceID }?.name ?? sourceID
     }
 
-    /// The displayed catalog answers the same questions the runtime resolver
-    /// will ask the execution machine, so Settings can explain a fallback or a
-    /// broken declared default before the user runs Smart Rename.
-    private var smartRenameResolutionNotice: String? {
-        guard let catalog = smartRenameCatalog else { return nil }
-        do {
-            return try SmartRenameModelRouting.resolveCatalog(
-                preference: agentSettings.effectiveSmartRenameModel,
-                thinkingLevel: agentSettings.smartRenameThinkingLevel,
-                catalog: catalog,
-                machineName: smartRenameCatalogMachineName
-            ).notice
-        } catch let error as SmartRenameModelRoutingError {
-            return error.localizedDescription
-        } catch {
-            return nil
-        }
+    /// The displayed strict-policy warning for the browsed catalog: a missing
+    /// saved model, an unusable declared default, or a known-incompatible
+    /// thinking level. No warning means the selection would run there as-is.
+    private var smartRenameResolutionWarning: String? {
+        SmartRenameSettingsPresentation.resolutionWarning(
+            catalog: smartRenameCatalog,
+            preference: agentSettings.effectiveSmartRenameModel,
+            thinkingLevel: agentSettings.smartRenameThinkingLevel,
+            browsedCatalogMachineName: smartRenameCatalogMachineName
+        )
     }
 
     @ViewBuilder
@@ -646,8 +649,19 @@ struct SettingsView: View {
                 Button("Retry") { retry() }
                     .accessibilityIdentifier(retryIdentifier)
             } else {
+                let models = catalog?.models ?? []
+                if !selection.wrappedValue.isEmpty,
+                   !models.contains(where: { $0.id == selection.wrappedValue }) {
+                    // Keep a saved choice that this catalog does not offer
+                    // visible and selectable, never silently cleared. The
+                    // section's strict-policy warning explains the failure.
+                    Text("\(PiModelDisplayName.short(fullID: selection.wrappedValue)) — not offered here")
+                        .disabled(true)
+                        .accessibilityIdentifier("model-menu-unavailable-\(selection.wrappedValue)")
+                    Divider()
+                }
                 PiModelMenuContent(
-                    models: catalog?.models ?? [],
+                    models: models,
                     favorites: modelFavorites,
                     isSelected: { $0.id == selection.wrappedValue },
                     select: { selection.wrappedValue = $0.id }
@@ -987,6 +1001,45 @@ struct SettingsView: View {
                         .foregroundStyle(HerdrTheme.mist)
                 }
             }
+        }
+    }
+}
+
+/// Copy and warning preview for the Smart Rename settings section. Kept apart
+/// from the view so tests can assert the strict selection-fidelity policy
+/// without depending on rendered pixels.
+enum SmartRenameSettingsPresentation {
+    /// The Model list from picker only selects whose catalog the model menu
+    /// browses. It is never the execution target, and a listed model is not a
+    /// provider health check.
+    static let catalogSourceFootnote = "Chooses only whose model catalog this menu browses. Every rename still resolves the model and thinking level on the machine that owns the target, and a listed model does not prove its provider is configured or working."
+
+    /// The strict policy: no conversation is required, the saved selection is
+    /// honored exactly, and a missing or incompatible selection stops the
+    /// rename instead of being substituted or silently rewritten.
+    static let sectionFooter = "A separate bounded ask names the pane or chat; it never becomes a prompt in the chat or shell. An empty model follows the Agent model above, then the execution machine's Pi default. If the execution machine does not offer the saved selection, or the catalog marks the model as non-reasoning and the level is not Off, the rename stops with an actionable error, keeps the current title, and leaves the saved preference unchanged; no other model or machine is substituted. Naming defaults to Low thinking."
+
+    /// The missing-model or incompatible-thinking warning for the browsed
+    /// catalog, or nil when the saved selection would run there as-is.
+    static func resolutionWarning(
+        catalog: AgentModelCatalogResponse?,
+        preference: String?,
+        thinkingLevel: PiThinkingLevel,
+        browsedCatalogMachineName: String
+    ) -> String? {
+        guard let catalog else { return nil }
+        do {
+            _ = try SmartRenameModelRouting.resolveCatalog(
+                preference: preference,
+                thinkingLevel: thinkingLevel,
+                catalog: catalog,
+                machineName: browsedCatalogMachineName
+            )
+            return nil
+        } catch let error as SmartRenameModelRoutingError {
+            return error.localizedDescription
+        } catch {
+            return nil
         }
     }
 }

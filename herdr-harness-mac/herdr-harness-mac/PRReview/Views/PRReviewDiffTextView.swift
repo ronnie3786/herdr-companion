@@ -90,18 +90,13 @@ final class PRReviewDiffTextView: NSTextView, NSPopoverDelegate {
     }
 
     override func drawBackground(in rect: NSRect) {
-        guard let layoutManager, let textContainer else {
-            super.drawBackground(in: rect)
-            return
-        }
+        // The base surface must be painted first; the text view's own
+        // background drawing would otherwise cover every change highlight.
+        super.drawBackground(in: rect)
+        guard let layoutManager, let textContainer else { return }
 
         for entry in lineIndex.entries {
-            guard let color = rowColor(for: entry.kind) else { continue }
-            drawFullWidthBackground(
-                color: color.withAlphaComponent(0.16),
-                glyphRange: layoutManager.glyphRange(forCharacterRange: entry.range, actualCharacterRange: nil),
-                textContainer: textContainer
-            )
+            drawRowBackground(for: entry, layoutManager: layoutManager, textContainer: textContainer)
         }
         if let highlight {
             let matching = lineIndex.entries.filter { entry in
@@ -118,7 +113,6 @@ final class PRReviewDiffTextView: NSTextView, NSPopoverDelegate {
                 textContainer: textContainer
             )
         }
-        super.drawBackground(in: rect)
     }
 
     func scrollToLine(_ line: Int, side: PRReviewSide) {
@@ -210,10 +204,43 @@ final class PRReviewDiffTextView: NSTextView, NSPopoverDelegate {
 
     private func rowColor(for kind: String) -> NSColor? {
         switch kind {
-        case "add": NSColor(HerdrTheme.diffAdd)
-        case "del": NSColor(HerdrTheme.diffRemove)
-        case "hunk": NSColor(HerdrTheme.diffHunk)
-        default: nil
+        case "add", "del":
+            return HerdrDiffStyle.lineColor(for: kind)
+        case "hunk":
+            return NSColor(HerdrTheme.diffHunk).withAlphaComponent(0.16)
+        default:
+            return nil
+        }
+    }
+
+    /// Draws a changed row across the document and then overlays the stronger
+    /// line-number gutter for that row.
+    private func drawRowBackground(
+        for entry: PRReviewLineIndex.Entry,
+        layoutManager: NSLayoutManager,
+        textContainer: NSTextContainer
+    ) {
+        guard let lineColor = rowColor(for: entry.kind) else { return }
+        let glyphRange = layoutManager.glyphRange(forCharacterRange: entry.range, actualCharacterRange: nil)
+        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { _, usedRect, _, _, _ in
+            let origin = self.textContainerOrigin
+            let fragment = usedRect.offsetBy(dx: origin.x, dy: origin.y)
+            lineColor.setFill()
+            NSRect(x: 0, y: fragment.minY, width: self.bounds.width, height: fragment.height).fill()
+        }
+
+        guard let gutterColor = HerdrDiffStyle.gutterColor(for: entry.kind), entry.gutterLength > 0 else { return }
+        let gutterGlyphs = layoutManager.glyphRange(
+            forCharacterRange: NSRange(location: entry.utf16Offset, length: entry.gutterLength),
+            actualCharacterRange: nil
+        )
+        layoutManager.enumerateEnclosingRects(
+            forGlyphRange: gutterGlyphs,
+            withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
+            in: textContainer
+        ) { rect, _ in
+            gutterColor.setFill()
+            rect.offsetBy(dx: self.textContainerOrigin.x, dy: self.textContainerOrigin.y).fill()
         }
     }
 
@@ -469,6 +496,10 @@ struct PRReviewDiffText: NSViewRepresentable {
 }
 
 enum PRReviewDiffRenderer {
+    /// Emphasis is presentation polish; a pathological patch must not stall the
+    /// diff, so only the first replacement pairs keep word-level emphasis.
+    static let maximumEmphasisPairs = 256
+
     static func render(
         file: PRReviewDiffFile,
         fontScale: HerdrFontScale = .medium
@@ -485,11 +516,21 @@ enum PRReviewDiffRenderer {
             old: Int?,
             new: Int?,
             kind: String,
-            codeColor: NSColor
+            codeColor: NSColor,
+            emphasis: [Range<Int>] = []
         ) {
             let offset = result.length
             result.append(NSAttributedString(string: gutter, attributes: [.font: font, .foregroundColor: gutterColor]))
+            let codeStart = result.length
             result.append(NSAttributedString(string: code + "\n", attributes: [.font: font, .foregroundColor: codeColor]))
+            if let emphasisColor = HerdrDiffStyle.emphasisColor(for: kind) {
+                for range in emphasis where range.count > 0 {
+                    let location = codeStart + 1 + range.lowerBound
+                    let nsRange = NSRange(location: location, length: range.count)
+                    guard NSMaxRange(nsRange) <= result.length else { continue }
+                    result.addAttribute(.backgroundColor, value: emphasisColor, range: nsRange)
+                }
+            }
             entries.append(.init(
                 utf16Offset: offset,
                 length: ((gutter + code + "\n") as NSString).length,
@@ -501,9 +542,11 @@ enum PRReviewDiffRenderer {
             ))
         }
 
+        var emphasisPairs = 0
         for hunk in file.hunks {
             append(gutter: "", code: hunk.header, side: nil, old: nil, new: nil, kind: "hunk", codeColor: NSColor(HerdrTheme.diffHunk))
-            for line in hunk.lines {
+            let emphases = emphasisByLine(for: hunk.lines, pairs: &emphasisPairs)
+            for (index, line) in hunk.lines.enumerated() {
                 let side: PRReviewSide? = line.kind == "del" ? .before : .after
                 let old = line.oldNumber.map(String.init) ?? ""
                 let new = line.newNumber.map(String.init) ?? ""
@@ -517,9 +560,45 @@ enum PRReviewDiffRenderer {
                 default: color = NSColor(HerdrTheme.text)
                 }
                 append(gutter: gutter, code: prefix + line.text, side: side, old: line.oldNumber, new: line.newNumber,
-                       kind: line.kind, codeColor: color)
+                       kind: line.kind, codeColor: color, emphasis: emphases[index] ?? [])
             }
         }
         return (result, PRReviewLineIndex(entries: entries))
+    }
+
+    /// Word-level emphasis for maximal removed runs immediately followed by
+    /// added runs. The pair budget is shared across the whole file so rendering
+    /// stays bounded, and earlier replacements always win.
+    private static func emphasisByLine(
+        for lines: [PRReviewDiffLine],
+        pairs: inout Int
+    ) -> [Int: [Range<Int>]] {
+        var result: [Int: [Range<Int>]] = [:]
+        var index = 0
+        while index < lines.count {
+            guard lines[index].kind == "del" else {
+                index += 1
+                continue
+            }
+            let delStart = index
+            while index < lines.count, lines[index].kind == "del" { index += 1 }
+            let delEnd = index
+            let addStart = index
+            while index < lines.count, lines[index].kind == "add" { index += 1 }
+            let addEnd = index
+            guard addStart < addEnd else { continue }
+
+            for offset in 0..<min(delEnd - delStart, addEnd - addStart) {
+                guard pairs < maximumEmphasisPairs else { return result }
+                pairs += 1
+                guard let emphasis = PRReviewIntralineDiff.emphasis(
+                    old: lines[delStart + offset].text,
+                    new: lines[addStart + offset].text
+                ), !emphasis.isEmpty else { continue }
+                result[delStart + offset] = emphasis.old
+                result[addStart + offset] = emphasis.new
+            }
+        }
+        return result
     }
 }

@@ -3,7 +3,7 @@ import SwiftUI
 import Testing
 @testable import herdr_harness_mac
 
-@Suite("PR Review diff text")
+@Suite("PR Review diff text", .serialized)
 struct PRReviewDiffTextTests {
     @Test("Unchanged diff identity preserves the attributed text selection") @MainActor
     func unchangedRenderIdentitySkipsTextReplacement() {
@@ -83,6 +83,80 @@ struct PRReviewDiffTextTests {
         #expect(rendered.index.entries.contains {
             $0.kind == "del" && $0.side == .before && $0.oldLine == 8 && $0.newLine == nil
         })
+    }
+
+    @Test("Word emphasis reaches the native text view without changing source text")
+    @MainActor
+    func wordEmphasisReachesNativeTextView() async throws {
+        let file = PRReviewDiffFile(
+            path: "Sources/Garden/Planting.swift",
+            oldPath: nil,
+            status: "modified",
+            additions: 1,
+            deletions: 1,
+            binary: false,
+            truncated: false,
+            hunks: [
+                PRReviewDiffHunk(
+                    oldStart: 1,
+                    oldLines: 2,
+                    newStart: 1,
+                    newLines: 2,
+                    header: "@@ -1,2 +1,2 @@",
+                    lines: [
+                        PRReviewDiffLine(kind: "del", oldNumber: 1, newNumber: nil, text: "let seed = oldValue"),
+                        PRReviewDiffLine(kind: "add", oldNumber: nil, newNumber: 1, text: "let seed = newValue"),
+                    ]
+                )
+            ]
+        )
+        let size = CGSize(width: 640, height: 240)
+        let hosting = NSHostingView(rootView:
+            PRReviewDiffText(file: file)
+                .frame(width: size.width, height: size.height)
+                .environment(\.colorScheme, .dark)
+        )
+        hosting.frame = CGRect(origin: .zero, size: size)
+        let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        window.alphaValue = 0
+        window.orderFrontRegardless()
+        defer { window.close() }
+
+        for _ in 0..<8 {
+            hosting.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(25))
+        }
+
+        let textView = try #require(descendants(hosting).compactMap { $0 as? PRReviewDiffTextView }.first)
+        let storage = try #require(textView.textStorage)
+        #expect(storage.string.contains("-let seed = oldValue\n"))
+        #expect(storage.string.contains("+let seed = newValue\n"))
+
+        var backgroundRanges: [NSRange] = []
+        storage.enumerateAttribute(
+            .backgroundColor,
+            in: NSRange(location: 0, length: storage.length)
+        ) { value, range, _ in
+            if value != nil { backgroundRanges.append(range) }
+        }
+        #expect(backgroundRanges.count == 2)
+
+        let entry = try #require(textView.lineIndex.entries.first { $0.kind == "add" })
+        #expect(entry.side == .after)
+        #expect(entry.newLine == 1)
+
+        let selection = try #require(textView.lineIndex.selection(
+            path: file.path,
+            oldPath: file.oldPath ?? "",
+            text: storage.string as NSString,
+            range: NSRange(location: 0, length: storage.length)
+        ))
+        #expect(selection.text.contains("oldValue"))
+        #expect(selection.text.contains("newValue"))
     }
 
     @Test("Long code expands the native document in both scrolling directions") @MainActor

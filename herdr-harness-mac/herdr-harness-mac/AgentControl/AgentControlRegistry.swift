@@ -1,6 +1,13 @@
 import Foundation
 
 enum AgentControlRegistry {
+    /// Mutations agents may never perform regardless of the global toggle.
+    /// Tab colors are the user's personal organization data and the companion
+    /// contract keeps them read-only.
+    static let permanentlyDisabledActions: [String: String] = [
+        "chat.tab-color": "Tab colors are read-only through agent control; edit them in the app.",
+    ]
+
     private static let emptySchema: [String: PiJSONValue] = [
         "type": .string("object"),
         "properties": .object([:]),
@@ -49,6 +56,13 @@ enum AgentControlRegistry {
             descriptor("pr-review.set-viewed", "Set PR review viewed state", schema: schema(properties:["path":stringRule(),"viewed":booleanRule()],required:["path","viewed"]), targetKinds: [], effect: "mutation", enabled: enabled, reason: disabledReason),
             descriptor("pr-review.state", "Read PR review state", schema: emptySchema, targetKinds: [], effect: "read", enabled: enabled, reason: disabledReason),
         ]
+        .map { descriptor in
+            guard let reason = permanentlyDisabledActions[descriptor.id] else { return descriptor }
+            var copy = descriptor
+            copy.enabled = false
+            copy.disabledReason = reason
+            return copy
+        }
     }
 
     static func validate(action: String, parameters: [String: PiJSONValue]) throws {

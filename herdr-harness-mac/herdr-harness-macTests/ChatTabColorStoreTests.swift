@@ -12,6 +12,39 @@ struct ChatTabColorStoreTests {
         try test(ChatTabColorStore(defaults: defaults), defaults)
     }
 
+    @Test("Two aliases of one companion keep independent scoped assignments")
+    func aliasIsolation() {
+        withStore { store, defaults in
+            store.assign(.sage, to: "alias-a|w1:t1")
+            #expect(store.color(for: "alias-a|w1:t1") == .sage)
+            #expect(store.color(for: "alias-b|w1:t1") == nil)
+            #expect(store.rename(.sage, to: "Synthetic Workstream"))
+            #expect(store.label(for: .sage) == "Synthetic Workstream")
+            let restored = ChatTabColorStore(defaults: defaults)
+            #expect(restored.color(for: "alias-a|w1:t1") == .sage)
+            #expect(restored.color(for: "alias-b|w1:t1") == nil)
+            #expect(restored.label(for: .sage) == "Synthetic Workstream")
+        }
+    }
+
+    @Test("Reading effective values never rewrites the persisted store")
+    func readsArePure() {
+        withStore { store, defaults in
+            store.assign(.iris, to: "desktop|w1:t1")
+            let before = canonicalJSON(defaults.dictionary(forKey: "herdr.chatTabColors.v1"))
+            _ = store.color(for: "desktop|w1:t1")
+            _ = store.color(for: "desktop|w2:t1")
+            _ = store.label(for: .iris)
+            _ = store.label(for: .slate)
+            #expect(canonicalJSON(defaults.dictionary(forKey: "herdr.chatTabColors.v1")) == before)
+        }
+    }
+
+    private func canonicalJSON(_ object: Any?) -> Data? {
+        guard let object else { return nil }
+        return try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    }
+
     @Test("Six stable colors have default labels, persist, and can be removed")
     func persistence() {
         withStore { store, defaults in

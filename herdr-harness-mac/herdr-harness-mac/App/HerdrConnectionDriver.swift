@@ -26,6 +26,10 @@ final class HerdrConnectionDriver {
     /// Starts the event stream, and restarts it when the server identity
     /// changes. Idempotent, so the window may call it on every appearance.
     func syncConnection(model: HerdrAppModel) {
+        // Tab color publication belongs to the process too. A closed window
+        // must not stop sharing, and Settings can toggle it without one.
+        model.chatTabColorPublisher.configure(model: model)
+
         guard model.hasCompletedSetup else {
             connectionTask?.cancel()
             connectionTask = nil

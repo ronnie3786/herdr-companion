@@ -20,13 +20,35 @@ struct AgentControlRegistryTests {
     }
 
     @Test("All advertised actions have strict object schemas and truthful disabled reasons")
-    func descriptors() {
+    func descriptors() throws {
         let enabled = AgentControlRegistry.actions(enabled: true)
         #expect(enabled.map(\.id).contains("ui.open"))
         #expect(enabled.map(\.id).contains("chat.summarize"))
         #expect(enabled.allSatisfy { $0.parameters["additionalProperties"] == .bool(false) })
         let disabled = AgentControlRegistry.actions(enabled: false, disabledReason: "off")
-        #expect(disabled.allSatisfy { !$0.enabled && $0.disabledReason == "off" })
+        #expect(disabled.filter { $0.id != "chat.tab-color" }.allSatisfy { !$0.enabled && $0.disabledReason == "off" })
+        let tabColor = try #require(disabled.first { $0.id == "chat.tab-color" })
+        #expect(!tabColor.enabled)
+        #expect(tabColor.disabledReason == AgentControlRegistry.permanentlyDisabledActions["chat.tab-color"])
+        #expect(tabColor.disabledReason?.contains("read-only") == true)
+        #expect(enabled.first { $0.id == "chat.tab-color" }?.disabledReason == tabColor.disabledReason)
+    }
+
+    @Test("chat.tab-color is permanently disabled and rejects a direct execution attempt")
+    func tabColorIsReadOnly() {
+        do {
+            try AgentControlRegistry.validate(action: "chat.tab-color", parameters: ["color": .string("sage")])
+            Issue.record("Expected chat.tab-color to be rejected")
+        } catch let error as AgentControlCommandError {
+            #expect(error.code == "action_disabled")
+            #expect(error.message.contains("read-only"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        // Manual editing helpers remain available to the app itself.
+        #expect(!AgentControlRegistry.actions(enabled: true)
+            .filter { $0.id != "chat.tab-color" }
+            .contains { !$0.enabled })
     }
 
     @Test("Camel-case command decoding preserves exact wire route identity and omits local generation")

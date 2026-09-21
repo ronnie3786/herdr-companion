@@ -141,6 +141,9 @@ final class HerdrAppModel {
 
     private let userDefaults: UserDefaults
     let chatTabColors: ChatTabColorStore
+    /// Process-owned publication of this Mac's opt-in tab colors. The store
+    /// above stays authoritative; this controller only sends copies.
+    let chatTabColorPublisher: ChatTabColorPublisher
     /// Local sidebar reminder only; never creates alerts or HUD notifications.
     private(set) var manuallyUnreadPaneIDs: Set<String> = []
     @ObservationIgnored private let resultArtifactOpenedLedger: AgentResultArtifactOpenedLedger
@@ -232,7 +235,8 @@ final class HerdrAppModel {
         arguments: [String] = ProcessInfo.processInfo.arguments,
         userDefaults: UserDefaults = .standard,
         resultArtifactOpener: AgentResultArtifactOpener? = nil,
-        configuredMachines: [HerdrMachine] = HerdrMachine.configuredMachines()
+        configuredMachines: [HerdrMachine] = HerdrMachine.configuredMachines(),
+        chatTabColorSecretStorage: any AgentControlSecretStorage = KeychainAgentControlSecretStorage()
     ) {
         self.credentials = credentials
         self.userDefaults = userDefaults
@@ -247,6 +251,10 @@ final class HerdrAppModel {
             persistence: ResponseBriefPersistence(inMemory: isolateResponseBriefs)
         )
         chatTabColors = ChatTabColorStore(defaults: userDefaults)
+        chatTabColorPublisher = ChatTabColorPublisher(
+            defaults: userDefaults,
+            secretStorage: chatTabColorSecretStorage
+        )
         promptHistory = PromptHistoryStore(userDefaults: userDefaults)
         let resultArtifactOpenedLedger = AgentResultArtifactOpenedLedger(userDefaults: userDefaults)
         self.resultArtifactOpenedLedger = resultArtifactOpenedLedger

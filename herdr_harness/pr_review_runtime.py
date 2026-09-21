@@ -471,6 +471,14 @@ class PRReviewRuntime:
             return f"/skill:{skill_id}{prompt[len(legacy):]}"
         return prompt
 
+    @staticmethod
+    def _runner_args(runner: str, prompt: str, *, print_mode: bool = False) -> list[str]:
+        args = ["--no-approve"] if runner == "pi" else []
+        if print_mode:
+            args.append("-p")
+        args.append(prompt)
+        return args
+
     def _snapshot_outputs(self, worktree: Path, outputs: list[str]) -> list[str]:
         result = self._run(["git", "-C", str(worktree), "ls-files", "--others", "--exclude-standard"], cwd=worktree, kind="git")
         candidates = [line for line in (result.stdout or "").splitlines() if line]
@@ -508,6 +516,7 @@ class PRReviewRuntime:
             return
         runner = self.environ.get("HERDR_PR_REVIEW_RUNNER", "pi")
         prompt = self._runner_prompt(self._render(str(skill.get("prompt_template") or ""), review, run_id), str(skill["id"]), runner)
+        interactive_args = self._runner_args(runner, prompt)
         override_name = {"pi": "HERDR_PR_REVIEW_PI_BIN", "claude": "HERDR_PR_REVIEW_CLAUDE_BIN"}.get(runner)
         runner_bin = _resolve_binary(self.environ, override_name, runner) if override_name else None
         executable = runner_bin or runner
@@ -531,10 +540,10 @@ class PRReviewRuntime:
                     # Persist ownership before a native request can make the pane live.
                     self.store.update_run(review_id, run_id, launch="none", command=prompt, workspace_id=workspace_id, tab_id=tab_id, pane_id=pane_id, output_snapshot_json=json.dumps(snapshot), started_at=_now(), state="running")
                     try:
-                        self._native("agent.start", {"pane_id": pane_id, "name": f"prr-{run_id[5:13]}", "kind": runner, "args": [prompt], "timeout_ms": 30_000})
+                        self._native("agent.start", {"pane_id": pane_id, "name": f"prr-{run_id[5:13]}", "kind": runner, "args": interactive_args, "timeout_ms": 30_000})
                         launch = "agent"
                     except Exception:
-                        self._native("pane.send_input", {"pane_id": pane_id, "text": shlex.join([executable, prompt]), "keys": ["enter"]})
+                        self._native("pane.send_input", {"pane_id": pane_id, "text": shlex.join([executable, *interactive_args]), "keys": ["enter"]})
                         launch = "input"
                     self.store.update_run(review_id, run_id, launch=launch)
                     self.store.add_event(review_id, "run.started", "Skill run started", {"run_id": run_id})
@@ -545,7 +554,7 @@ class PRReviewRuntime:
         log_path = run_dir / "output.log"
         log = log_path.open("w", encoding="utf-8")
         try:
-            process = self.popen([executable, "-p", prompt], cwd=str(worktree), env=self._child_environment(pi_bin=runner_bin if runner == "pi" else None), stdout=log, stderr=subprocess.STDOUT, text=True)
+            process = self.popen([executable, *self._runner_args(runner, prompt, print_mode=True)], cwd=str(worktree), env=self._child_environment(pi_bin=runner_bin if runner == "pi" else None), stdout=log, stderr=subprocess.STDOUT, text=True)
         except OSError as exc:
             log.close()
             self.store.update_run(review_id, run_id, state="failed", error=_trim_error(exc, "Review runner could not start"), finished_at=_now())
@@ -655,7 +664,7 @@ class PRReviewRuntime:
                     if pane is None and snapshot:
                         self.store.update_run(review["id"], run["id"], state="ended", note="Pane closed before the run reported an outcome", finished_at=_now())
                         changed = True
-                    elif pane is not None and str(pane.get("agent_status") or (pane.get("agent_info") or {}).get("agent_status") or "") in {"done", "idle"}:
+                    elif pane is not None and str(pane.get("agent_status") or (pane.get("agent_info") or {}).get("agent_status") or "") == "done":
                         started = run.get("started_at")
                         try:
                             age = datetime.now(timezone.utc) - datetime.fromisoformat(str(started).replace("Z", "+00:00"))

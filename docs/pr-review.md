@@ -1,6 +1,6 @@
 # PR Review
 
-Status: macOS 0.27.0-beta.1 with companion 0.27.0b2 (2026-09-21).
+Status: macOS 0.27.0-beta.1 with companion 0.27.0b3 (2026-09-21).
 Product intent lives in [pr-review-assistant.md](pr-review-assistant.md).
 
 PR Review turns a GitHub pull request link into an AI-assisted review workspace inside the
@@ -21,7 +21,10 @@ On the review host:
    `github-pr-explainer-video-v2`, `tech-explainer-video`, `pr-explainer-dev-manager`,
    `mark-generated-and-test-viewed-in-pull-request`. Pi discovers shared skills in
    `~/.agents/skills/` and invokes them with `/skill:<name>`. Selected skills use
-   the host's existing Pi provider and model settings.
+   the host's existing global Pi provider and model settings. Install selected
+   skills globally: managed review runs ignore checkout-local Pi settings,
+   extensions, and skills, so reviewing a new checkout does not require granting
+   it project trust.
 4. Optionally add a `[pr_review]` table to the private configuration
    (see [config.example.toml](../config.example.toml)). Every key has a default:
 
@@ -70,6 +73,11 @@ new runs; it keeps the original skill selection.
 Companion 0.27.0b2 also defaults skill runs to Pi. Existing stored slash-command
 templates are translated to Pi's `/skill:<name>` syntax at launch, including queued
 runs created by older companions. Freeform prompts remain unchanged.
+
+Starting with companion 0.27.0b3, Pi runs use `--no-approve` to continue with global
+resources without a project-trust prompt. An idle agent pane is not evidence that
+the skill completed; automatic completion requires the terminal's explicit `done`
+status. You can still finish a run manually from Agents.
 
 **Files.** Files carry an AI impact (High, Medium, Low, or unranked) with a one-line reason.
 Filter to one impact at a time, hide viewed files, search, and switch between GitHub order and

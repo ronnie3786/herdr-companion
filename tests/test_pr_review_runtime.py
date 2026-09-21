@@ -273,6 +273,14 @@ class PRReviewRuntimeTests(unittest.TestCase):
         self.assertEqual(normalize("/comprehensive-pr-review 42", "comprehensive-pr-review", "claude"),
                          "/comprehensive-pr-review 42")
 
+    def test_runner_args_suppress_pi_project_trust_only(self):
+        prompt = "/skill:comprehensive-pr-review 42"
+        self.assertEqual(PRReviewRuntime._runner_args("pi", prompt), ["--no-approve", prompt])
+        self.assertEqual(PRReviewRuntime._runner_args("pi", prompt, print_mode=True),
+                         ["--no-approve", "-p", prompt])
+        self.assertEqual(PRReviewRuntime._runner_args("claude", prompt), [prompt])
+        self.assertEqual(PRReviewRuntime._runner_args("claude", prompt, print_mode=True), ["-p", prompt])
+
     def test_create_review_prepares_once_for_replays(self):
         calls = []
         started = threading.Event()
@@ -615,7 +623,7 @@ class PRReviewRuntimeTests(unittest.TestCase):
         self.assertEqual(stored["command"], "/skill:comprehensive-pr-review 42")
         started = next(params for method, params in service.calls if method == "agent.start")
         self.assertEqual(started["kind"], "pi")
-        self.assertEqual(started["args"], ["/skill:comprehensive-pr-review 42"])
+        self.assertEqual(started["args"], ["--no-approve", "/skill:comprehensive-pr-review 42"])
         self.assertLess([name for name, _ in service.calls].index("pane.split"), [name for name, _ in service.calls].index("agent.start"))
         self.assertIn("run.started", self._event_types(review["id"]))
 
@@ -629,7 +637,7 @@ class PRReviewRuntimeTests(unittest.TestCase):
         runtime = PRReviewRuntime(service, self.store, environ={"HERDR_PR_REVIEW_AUTO_RANK": "false", "HERDR_PR_REVIEW_PI_BIN": str(pi)}, runtime_root=self.temp.name, runner=self.runner)
         run = runtime.start_run(review["id"], "comprehensive-pr-review", "input-fallback")
         sent = next(params for method, params in service.calls if method == "pane.send_input")
-        self.assertEqual(sent["text"], shlex.join([str(pi.resolve()), "/skill:comprehensive-pr-review 42"]))
+        self.assertEqual(sent["text"], shlex.join([str(pi.resolve()), "--no-approve", "/skill:comprehensive-pr-review 42"]))
         self.assertEqual(sent["keys"], ["enter"])
         self.assertEqual(self.store.run(review["id"], run["id"])["launch"], "input")
 
@@ -648,7 +656,7 @@ class PRReviewRuntimeTests(unittest.TestCase):
         pi_bin = str(pi.resolve())
         runtime = PRReviewRuntime(service, self.store, environ={"HERDR_PR_REVIEW_AUTO_RANK": "false", "HERDR_PR_REVIEW_PI_BIN": pi_bin}, runtime_root=self.temp.name, runner=self.runner, popen=popen)
         run = runtime.start_run(review["id"], "comprehensive-pr-review", "shell-fallback")
-        self.assertEqual(popen_calls[0][0], [pi_bin, "-p", "/skill:comprehensive-pr-review 42"])
+        self.assertEqual(popen_calls[0][0], [pi_bin, "--no-approve", "-p", "/skill:comprehensive-pr-review 42"])
         self.assertEqual(popen_calls[0][1]["cwd"], str(worktree))
         self.assertEqual(popen_calls[0][1]["env"]["PI_SKIP_VERSION_CHECK"], "1")
         self.assertFalse(any(key.startswith("HERDR_") for key in popen_calls[0][1]["env"]))
@@ -713,10 +721,12 @@ class PRReviewRuntimeTests(unittest.TestCase):
         old = (datetime.now(timezone.utc) - timedelta(seconds=61)).isoformat().replace("+00:00", "Z")
         missing = self.store.create_run(review["id"], "comprehensive-pr-review", "missing-pane")
         done = self.store.create_run(review["id"], "comprehensive-pr-review", "done-pane")
+        idle = self.store.create_run(review["id"], "comprehensive-pr-review", "idle-pane")
         ok = self.store.create_run(review["id"], "comprehensive-pr-review", "shell-ok")
         bad = self.store.create_run(review["id"], "comprehensive-pr-review", "shell-bad")
         self.store.update_run(review["id"], missing["id"], state="running", launch="agent", pane_id="gone", started_at=old)
         self.store.update_run(review["id"], done["id"], state="running", launch="agent", pane_id="done", started_at=old)
+        self.store.update_run(review["id"], idle["id"], state="running", launch="agent", pane_id="idle", started_at=old)
         self.store.update_run(review["id"], ok["id"], state="running", launch="shell")
         self.store.update_run(review["id"], bad["id"], state="running", launch="shell")
         logs = []
@@ -725,11 +735,16 @@ class PRReviewRuntimeTests(unittest.TestCase):
             log.parent.mkdir(parents=True, exist_ok=True)
             logs.append(log.open("w", encoding="utf-8"))
         self.runtime._processes = {ok["id"]: (FakeProcess(0), logs[0]), bad["id"]: (FakeProcess(1), logs[1])}
-        self.service.refresh_snapshot = lambda **_kwargs: {"panes": [{"pane_id": "done", "agent_status": "done"}]}
+        self.service.refresh_snapshot = lambda **_kwargs: {"panes": [
+            {"pane_id": "done", "agent_status": "done"},
+            {"pane_id": "idle", "agent_status": "idle"},
+        ]}
         self.runtime.reconcile()
         self.assertEqual(self.store.run(review["id"], missing["id"])["state"], "ended")
         self.assertEqual(self.store.run(review["id"], missing["id"])["note"], "Pane closed before the run reported an outcome")
         self.assertEqual(self.store.run(review["id"], done["id"])["state"], "finished")
+        self.assertEqual(self.store.run(review["id"], idle["id"])["state"], "running")
+        self.assertIsNone(self.store.run(review["id"], idle["id"])["finished_at"])
         self.assertEqual(self.store.run(review["id"], ok["id"])["state"], "finished")
         self.assertEqual(self.store.run(review["id"], bad["id"])["state"], "failed")
 

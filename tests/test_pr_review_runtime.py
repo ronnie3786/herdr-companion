@@ -242,6 +242,37 @@ class PRReviewRuntimeTests(unittest.TestCase):
         self.runtime._save_document(review["id"], "large.md", b"Sources/Garden.swift\n" + b"x" * (4 * 1024 * 1024), "text/markdown", "Large", "user", "large")
         self.assertEqual(self.runtime.findings_for_path(review["id"], "Sources/Garden.swift"), {"path": "Sources/Garden.swift", "text": "", "document_ids": []})
 
+    def test_capabilities_default_to_configured_pi_binary(self):
+        bin_dir = Path(self.temp.name) / "synthetic-bin"
+        bin_dir.mkdir()
+        gh = bin_dir / "gh"
+        pi = bin_dir / "custom-pi"
+        for executable in (gh, pi):
+            executable.write_text("", encoding="utf-8")
+            executable.chmod(0o700)
+        runtime = PRReviewRuntime(self.service, self.store, environ={"PATH": str(bin_dir), "HERDR_PR_REVIEW_PI_BIN": str(pi)}, runtime_root=self.temp.name, runner=self.runner)
+
+        capabilities = runtime.capabilities()
+
+        self.assertTrue(capabilities["available"])
+        self.assertEqual(capabilities["runner"], "pi")
+        self.assertTrue(capabilities["runner_available"])
+        self.assertTrue(capabilities["pi_available"])
+
+    def test_pi_prompt_normalization_is_limited_to_selected_skill_command(self):
+        normalize = PRReviewRuntime._runner_prompt
+        self.assertEqual(normalize("/comprehensive-pr-review 42", "comprehensive-pr-review", "pi"),
+                         "/skill:comprehensive-pr-review 42")
+        self.assertEqual(normalize("/comprehensive-pr-review", "comprehensive-pr-review", "pi"),
+                         "/skill:comprehensive-pr-review")
+        self.assertEqual(normalize("/custom-review\nextra", "custom-review", "pi"),
+                         "/skill:custom-review\nextra")
+        for prompt in ("/skill:comprehensive-pr-review 42", "/comprehensive-pr-reviewer 42",
+                       " /comprehensive-pr-review 42", "Review pull request 42"):
+            self.assertEqual(normalize(prompt, "comprehensive-pr-review", "pi"), prompt)
+        self.assertEqual(normalize("/comprehensive-pr-review 42", "comprehensive-pr-review", "claude"),
+                         "/comprehensive-pr-review 42")
+
     def test_create_review_prepares_once_for_replays(self):
         calls = []
         started = threading.Event()
@@ -579,17 +610,26 @@ class PRReviewRuntimeTests(unittest.TestCase):
         self.assertEqual(observed["tab_id"], "tab")
         self.assertEqual(observed["pane_id"], "new-pane")
         self.assertTrue(observed["started_at"])
-        self.assertEqual(self.store.run(review["id"], run["id"])["launch"], "agent")
+        stored = self.store.run(review["id"], run["id"])
+        self.assertEqual(stored["launch"], "agent")
+        self.assertEqual(stored["command"], "/skill:comprehensive-pr-review 42")
+        started = next(params for method, params in service.calls if method == "agent.start")
+        self.assertEqual(started["kind"], "pi")
+        self.assertEqual(started["args"], ["/skill:comprehensive-pr-review 42"])
         self.assertLess([name for name, _ in service.calls].index("pane.split"), [name for name, _ in service.calls].index("agent.start"))
         self.assertIn("run.started", self._event_types(review["id"]))
 
     def test_agent_start_failure_sends_shell_quoted_input(self):
         review, _ = self._ready_review(workspace_id="workspace", tab_id="tab", anchor_pane_id="anchor")
         service = LaunchService(agent_error=True)
-        runtime = PRReviewRuntime(service, self.store, environ={"HERDR_PR_REVIEW_AUTO_RANK": "false", "HERDR_PR_REVIEW_RUNNER": "synthetic runner"}, runtime_root=self.temp.name, runner=self.runner)
+        pi = Path(self.temp.name) / "bin with space" / "pi"
+        pi.parent.mkdir()
+        pi.write_text("", encoding="utf-8")
+        pi.chmod(0o700)
+        runtime = PRReviewRuntime(service, self.store, environ={"HERDR_PR_REVIEW_AUTO_RANK": "false", "HERDR_PR_REVIEW_PI_BIN": str(pi)}, runtime_root=self.temp.name, runner=self.runner)
         run = runtime.start_run(review["id"], "comprehensive-pr-review", "input-fallback")
         sent = next(params for method, params in service.calls if method == "pane.send_input")
-        self.assertEqual(sent["text"], "synthetic runner " + shlex.quote("/comprehensive-pr-review 42"))
+        self.assertEqual(sent["text"], shlex.join([str(pi.resolve()), "/skill:comprehensive-pr-review 42"]))
         self.assertEqual(sent["keys"], ["enter"])
         self.assertEqual(self.store.run(review["id"], run["id"])["launch"], "input")
 
@@ -602,17 +642,23 @@ class PRReviewRuntimeTests(unittest.TestCase):
             popen_calls.append((argv, kwargs))
             return FakeProcess()
 
-        runtime = PRReviewRuntime(service, self.store, environ={"HERDR_PR_REVIEW_AUTO_RANK": "false", "HERDR_PR_REVIEW_RUNNER": "synthetic-runner"}, runtime_root=self.temp.name, runner=self.runner, popen=popen)
+        pi = Path(self.temp.name) / "synthetic-pi"
+        pi.write_text("", encoding="utf-8")
+        pi.chmod(0o700)
+        pi_bin = str(pi.resolve())
+        runtime = PRReviewRuntime(service, self.store, environ={"HERDR_PR_REVIEW_AUTO_RANK": "false", "HERDR_PR_REVIEW_PI_BIN": pi_bin}, runtime_root=self.temp.name, runner=self.runner, popen=popen)
         run = runtime.start_run(review["id"], "comprehensive-pr-review", "shell-fallback")
-        self.assertEqual(popen_calls[0][0], ["synthetic-runner", "-p", "/comprehensive-pr-review 42"])
+        self.assertEqual(popen_calls[0][0], [pi_bin, "-p", "/skill:comprehensive-pr-review 42"])
         self.assertEqual(popen_calls[0][1]["cwd"], str(worktree))
+        self.assertEqual(popen_calls[0][1]["env"]["PI_SKIP_VERSION_CHECK"], "1")
+        self.assertFalse(any(key.startswith("HERDR_") for key in popen_calls[0][1]["env"]))
         self.assertEqual(self.store.run(review["id"], run["id"])["launch"], "shell")
         runtime._processes[run["id"]][1].close()
 
         def fail_popen(*_args, **_kwargs):
             raise OSError("synthetic popen failure")
 
-        failed_runtime = PRReviewRuntime(LaunchService(split_error=True), self.store, environ={"HERDR_PR_REVIEW_AUTO_RANK": "false"}, runtime_root=self.temp.name, runner=self.runner, popen=fail_popen)
+        failed_runtime = PRReviewRuntime(LaunchService(split_error=True), self.store, environ={"HERDR_PR_REVIEW_AUTO_RANK": "false", "HERDR_PR_REVIEW_PI_BIN": pi_bin}, runtime_root=self.temp.name, runner=self.runner, popen=fail_popen)
         failed = failed_runtime.start_run(review["id"], "comprehensive-pr-review", "popen-failure")
         stored = self.store.run(review["id"], failed["id"])
         self.assertEqual(stored["state"], "failed")

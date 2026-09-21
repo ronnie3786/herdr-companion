@@ -16,10 +16,12 @@ On the review host:
    `pr-review-question-v1` question profile.
 2. Authenticate `gh` for the GitHub account that can read the pull requests you review, and
    install the `gh autoview` extension if you use the mark-viewed utility.
-3. Install the review skills for the agent runner (`claude` by default) so these names
+3. Install the review skills for the agent runner (`pi` by default) so these names
    resolve: `ios-review-remote-pr`, `comprehensive-pr-review`, `github-pr-explainer-video`,
    `github-pr-explainer-video-v2`, `tech-explainer-video`, `pr-explainer-dev-manager`,
-   `mark-generated-and-test-viewed-in-pull-request`.
+   `mark-generated-and-test-viewed-in-pull-request`. Pi discovers shared skills in
+   `~/.agents/skills/` and invokes them with `/skill:<name>`. Selected skills use
+   the host's existing Pi provider and model settings.
 4. Optionally add a `[pr_review]` table to the private configuration
    (see [config.example.toml](../config.example.toml)). Every key has a default:
 
@@ -30,7 +32,7 @@ On the review host:
 | `checkout_root` | `<state_dir>/pr-review-runs/checkouts` | Shared repository clones plus one worktree per review. |
 | `store_path` | `<state_dir>/pr-review.sqlite3` | SQLite ledger of reviews, files, runs, marks, documents, events. |
 | `runs_root` | `<state_dir>/pr-review-runs` | Per-review private files: PR metadata, diff, documents, run logs. |
-| `runner` | `claude` | Agent launched for skill runs (`claude` or `pi`). |
+| `runner` | `pi` | Agent launched for skill runs. An explicitly configured `claude` runner remains supported. |
 | `model`, `thinking_level` | Pi default, `medium` | Model used for impact ranking and Ask AI answers. |
 | `auto_rank` | `true` | Rank files automatically after a review is prepared. |
 | `sync_viewed_to_github` | `true` | Push viewed toggles to GitHub through the GraphQL API. |
@@ -64,6 +66,10 @@ the failed stage; use **Refresh** to retry with the original queued skills. Time
 commands stop their whole process group so Git children cannot keep writing after failure.
 On older companions, submitting the same PR with **Add without running** resumes interrupted preparation without adding
 new runs; it keeps the original skill selection.
+
+Companion 0.27.0b2 also defaults skill runs to Pi. Existing stored slash-command
+templates are translated to Pi's `/skill:<name>` syntax at launch, including queued
+runs created by older companions. Freeform prompts remain unchanged.
 
 **Files.** Files carry an AI impact (High, Medium, Low, or unranked) with a one-line reason.
 Filter to one impact at a time, hide viewed files, search, and switch between GitHub order and

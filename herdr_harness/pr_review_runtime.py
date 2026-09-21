@@ -222,8 +222,9 @@ class PRReviewRuntime:
         return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value or "")
 
     def capabilities(self) -> dict[str, Any]:
-        runner = self.environ.get("HERDR_PR_REVIEW_RUNNER", "claude")
-        runner_bin = _resolve_binary(self.environ, "HERDR_PR_REVIEW_PI_BIN" if runner == "pi" else "HERDR_PR_REVIEW_CLAUDE_BIN", runner)
+        runner = self.environ.get("HERDR_PR_REVIEW_RUNNER", "pi")
+        override_name = {"pi": "HERDR_PR_REVIEW_PI_BIN", "claude": "HERDR_PR_REVIEW_CLAUDE_BIN"}.get(runner)
+        runner_bin = _resolve_binary(self.environ, override_name, runner) if override_name else None
         pi_bin = _resolve_binary(self.environ, "HERDR_PR_REVIEW_PI_BIN", "pi")
         gh_bin = shutil.which("gh", path=self.environ.get("PATH"))
         reason = ""
@@ -461,6 +462,15 @@ class PRReviewRuntime:
     def _render(self, template: str, review: Mapping[str, Any], run_id: str) -> str:
         return template.format(number=review["number"], url=review["url"], owner=review["owner"], repo=review["repo"], review_id=review["id"], run_id=run_id, checkout=review.get("checkout_path") or "")
 
+    @staticmethod
+    def _runner_prompt(prompt: str, skill_id: str, runner: str) -> str:
+        if runner != "pi":
+            return prompt
+        legacy = f"/{skill_id}"
+        if prompt == legacy or (prompt.startswith(legacy) and prompt[len(legacy):len(legacy) + 1].isspace()):
+            return f"/skill:{skill_id}{prompt[len(legacy):]}"
+        return prompt
+
     def _snapshot_outputs(self, worktree: Path, outputs: list[str]) -> list[str]:
         result = self._run(["git", "-C", str(worktree), "ls-files", "--others", "--exclude-standard"], cwd=worktree, kind="git")
         candidates = [line for line in (result.stdout or "").splitlines() if line]
@@ -496,8 +506,11 @@ class PRReviewRuntime:
             thread.start()
             self._changed(review_id)
             return
-        prompt = self._render(str(skill.get("prompt_template") or ""), review, run_id)
-        runner = self.environ.get("HERDR_PR_REVIEW_RUNNER", "claude")
+        runner = self.environ.get("HERDR_PR_REVIEW_RUNNER", "pi")
+        prompt = self._runner_prompt(self._render(str(skill.get("prompt_template") or ""), review, run_id), str(skill["id"]), runner)
+        override_name = {"pi": "HERDR_PR_REVIEW_PI_BIN", "claude": "HERDR_PR_REVIEW_CLAUDE_BIN"}.get(runner)
+        runner_bin = _resolve_binary(self.environ, override_name, runner) if override_name else None
+        executable = runner_bin or runner
         workspace_id = review.get("workspace_id")
         tab_id = review.get("tab_id")
         anchor = review.get("anchor_pane_id")
@@ -521,7 +534,7 @@ class PRReviewRuntime:
                         self._native("agent.start", {"pane_id": pane_id, "name": f"prr-{run_id[5:13]}", "kind": runner, "args": [prompt], "timeout_ms": 30_000})
                         launch = "agent"
                     except Exception:
-                        self._native("pane.send_input", {"pane_id": pane_id, "text": f"{runner} {shlex.quote(prompt)}", "keys": ["enter"]})
+                        self._native("pane.send_input", {"pane_id": pane_id, "text": shlex.join([executable, prompt]), "keys": ["enter"]})
                         launch = "input"
                     self.store.update_run(review_id, run_id, launch=launch)
                     self.store.add_event(review_id, "run.started", "Skill run started", {"run_id": run_id})
@@ -532,7 +545,7 @@ class PRReviewRuntime:
         log_path = run_dir / "output.log"
         log = log_path.open("w", encoding="utf-8")
         try:
-            process = self.popen([runner, "-p", prompt], cwd=str(worktree), env=self._child_environment(), stdout=log, stderr=subprocess.STDOUT, text=True)
+            process = self.popen([executable, "-p", prompt], cwd=str(worktree), env=self._child_environment(pi_bin=runner_bin if runner == "pi" else None), stdout=log, stderr=subprocess.STDOUT, text=True)
         except OSError as exc:
             log.close()
             self.store.update_run(review_id, run_id, state="failed", error=_trim_error(exc, "Review runner could not start"), finished_at=_now())

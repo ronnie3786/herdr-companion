@@ -1,4 +1,6 @@
+import sqlite3
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from herdr_harness.pr_review_store import PRReviewError, PRReviewStore
@@ -100,5 +102,29 @@ class PRReviewStoreTests(unittest.TestCase):
         snapshot_events = self.store.snapshot(review["id"])["events"]
         self.assertLessEqual(len(snapshot_events), 100)
         self.assertEqual(snapshot_events[-1]["type"], "synthetic.later")
+
+    def test_close_waits_for_the_shared_connection_lock(self):
+        store = PRReviewStore(Path(self.temp.name) / 'closing.sqlite3')
+        entered, release = threading.Event(), threading.Event()
+
+        def hold_lock():
+            with store._lock:
+                entered.set()
+                release.wait(timeout=5)
+
+        holder = threading.Thread(target=hold_lock, name='store-lock-holder')
+        holder.start()
+        self.assertTrue(entered.wait(timeout=2), 'the lock holder did not acquire the connection lock')
+        closer = threading.Thread(target=store.close, name='store-closer')
+        closer.start()
+        self.assertFalse(closer.join(timeout=0.5), 'close must wait for the shared connection lock')
+        release.set()
+        closer.join(timeout=2)
+        holder.join(timeout=2)
+        self.assertFalse(closer.is_alive(), 'close did not finish after the lock was released')
+        try:
+            store.close()
+        except sqlite3.ProgrammingError:
+            pass
 
 if __name__ == '__main__': unittest.main()

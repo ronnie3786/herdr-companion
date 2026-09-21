@@ -53,6 +53,7 @@ class FakeHTTPService:
             "agents": [],
             "layouts": [],
         }
+        self.snapshot_scopes = []
 
     def health_response(self):
         return {
@@ -76,7 +77,8 @@ class FakeHTTPService:
         self.calls.append(("response_audio.speech", {"text": text}))
         return {"ok": True, "audioBase64": "SUQz", "contentType": "audio/mpeg"}
 
-    def snapshot_response(self):
+    def snapshot_response(self, *, include_chat_tab_colors=True):
+        self.snapshot_scopes.append(include_chat_tab_colors)
         return {"ok": True, "snapshot": self.snapshot, "generatedAt": "2026-08-11T00:00:00Z"}
 
     def workspaces_response(self):
@@ -969,6 +971,28 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(workspaces["workspaces"][0]["tabs"], [])
         self.assertIn("alerts", workspaces)
         self.assertIn("starredPaneIds", workspaces)
+
+    def test_snapshot_tab_colors_follow_the_authenticated_scope(self):
+        self.assertEqual(self.request("/api/v1/snapshot", token="test-secret")[0], 200)
+        self.assertEqual(self.service.snapshot_scopes[-1], True)
+        self.assertEqual(self.request("/api/v1/snapshot", token=None)[0], 401)
+
+        open_service = FakeHTTPService()
+        open_server = make_server(open_service, host="127.0.0.1", port=0, api_token="")
+        open_thread = threading.Thread(target=open_server.serve_forever, daemon=True)
+        open_thread.start()
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{open_server.server_address[1]}/api/v1/snapshot", timeout=2
+            ) as response:
+                body = json.loads(response.read())
+                self.assertEqual(response.status, 200)
+        finally:
+            open_server.shutdown()
+            open_server.server_close()
+            open_thread.join(timeout=1)
+        self.assertEqual(open_service.snapshot_scopes, [False])
+        self.assertNotIn("chatTabColorSources", body)
 
     def test_pane_star_route_validates_and_forwards(self):
         status, _, body = self.request(

@@ -103,6 +103,15 @@ def receiver_token(value: Any) -> str:
     return text
 
 
+def publisher_token(value: Any) -> str:
+    """Validate a chat-tab-color publisher secret bound on first publication."""
+
+    text = short_string(value, "publisherToken", maximum=64)
+    if not _RECEIVER_TOKEN_RE.fullmatch(text):
+        raise ControlError("publisherToken must be 64 lowercase hexadecimal characters")
+    return text
+
+
 def _json_depth(value: Any, depth: int = 0) -> int:
     if depth > MAX_JSON_DEPTH:
         return depth

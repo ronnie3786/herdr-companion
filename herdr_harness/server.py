@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
-from . import attachments, issue_reports, response_audio, result_artifacts, voice
+from . import attachments, chat_tab_colors, issue_reports, response_audio, result_artifacts, voice
 from .active_work import ActiveWorkError
 from .first_mate_store import FirstMateError
 from .pr_review_store import PRReviewError
@@ -31,6 +31,7 @@ from .control_validation import (
     action_id as control_action_id,
     client_id as control_client_id,
     instance_id as control_instance_id,
+    publisher_token as control_publisher_token,
     receiver_token as control_receiver_token,
     request_id as control_request_id,
     require_fields as control_require_fields,
@@ -413,12 +414,14 @@ def api_description() -> dict:
             "pi-session-context-v1",
             "agent-control-v1",
             "discovery-v1",
+            "chat-tab-colors-v1",
             "issue-reports-v1",
         ],
         "endpoints": {
             "health": "/api/v1/health",
             "controlCapabilities": "/api/v1/control/capabilities",
             "controlActions": "/api/v1/control/actions",
+            "chatTabColors": "/api/v1/control/chat-tab-colors/{clientId}",
             "discovery": "/api/v1/discovery",
             "uiClients": "/api/v1/ui/clients",
             "firstMate": "/api/v1/first-mate/features",
@@ -534,6 +537,7 @@ def api_description() -> dict:
             "POST /api/v1/fleet/sync",
             "POST /api/v1/fleet/items/{itemId}/action",
             "POST /api/v1/control/actions",
+            "POST /api/v1/control/chat-tab-colors/{clientId}",
             "POST /api/v1/ui/clients/register|{clientId}/poll|{clientId}/commands",
             "POST /api/v1/ui/clients/{clientId}/commands/{requestId}/result",
         ],
@@ -1247,10 +1251,51 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     "ok": True,
                     "version": 1,
                     "serverId": server_id,
-                    "capabilities": ["agent-control-v1", "discovery-v1"],
+                    "capabilities": ["agent-control-v1", "discovery-v1", "chat-tab-colors-v1"],
+                    "chatTabColorStaleAfterSeconds": chat_tab_colors.CHAT_TAB_STALE_SECONDS,
+                }
+            if (
+                method == "POST"
+                and len(tail) == 3
+                and tail[:2] == ["control", "chat-tab-colors"]
+            ):
+                control_require_fields(
+                    body,
+                    allowed=chat_tab_colors.PUBLICATION_BODY_FIELDS,
+                    required={
+                        "serverId",
+                        "publisherToken",
+                        "platform",
+                        "clientName",
+                        "enabled",
+                        "revision",
+                        "tabs",
+                    },
+                    label="tab color publication",
+                )
+                publication = store.publish_chat_tab_colors(
+                    client_id=control_client_id(tail[2]),
+                    publisher_token=control_publisher_token(body.get("publisherToken")),
+                    payload=chat_tab_colors.publication_payload(body),
+                )
+                return {
+                    "ok": True,
+                    "serverId": server_id,
+                    "publication": chat_tab_colors.publication_response(publication),
                 }
             if method == "GET" and tail == ["discovery"]:
-                allowed = {"kind", "q", "ticket", "sort", "limit", "offset"}
+                allowed = {
+                    "kind",
+                    "q",
+                    "ticket",
+                    "sort",
+                    "limit",
+                    "offset",
+                    "color",
+                    "colorLabel",
+                    "colorClientId",
+                    "chatScope",
+                }
                 if set(query) - allowed or any(len(values) != 1 for values in query.values()):
                     raise ControlError("Discovery query contains an unsupported or repeated parameter")
                 kind = (query.get("kind") or ["all"])[0]
@@ -1266,6 +1311,10 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     sort=sort,
                     limit=limit,
                     offset=offset,
+                    color=(query.get("color") or [None])[0],
+                    color_label=(query.get("colorLabel") or [None])[0],
+                    color_client_id=(query.get("colorClientId") or [None])[0],
+                    chat_scope=(query.get("chatScope") or [None])[0],
                 )
             if method == "POST" and tail == ["control", "inspect"]:
                 control_require_fields(body, allowed={"target"}, required={"target"}, label="inspect request")
@@ -1408,7 +1457,12 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             if tail == ["control", "actions"] and method == "GET":
                 if query:
                     raise ControlError("Actions does not accept query parameters")
-                return {"ok": True, "actions": service.control_resources.actions()}
+                return {
+                    "ok": True,
+                    "actions": chat_tab_colors.disable_relay_actions(
+                        service.control_resources.actions()
+                    ),
+                }
             if tail == ["control", "actions"] and method == "POST":
                 control_require_fields(
                     body,
@@ -1419,9 +1473,13 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 dry_run = body.get("dryRun", False)
                 if not isinstance(dry_run, bool):
                     raise ControlError("dryRun must be a boolean")
+                action = control_action_id(body.get("action"))
+                disabled = chat_tab_colors.disabled_action_reason(action)
+                if disabled is not None:
+                    raise ControlError(disabled, code="action_disabled", status=409)
                 normalized = {
                     "requestId": control_request_id(body.get("requestId")),
-                    "action": control_action_id(body.get("action")),
+                    "action": action,
                     "parameters": body.get("parameters"),
                 }
                 if "dryRun" in body:
@@ -1618,7 +1676,11 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 port = int(self.server.server_address[1])
                 return service.network_response(port, host_header=self.headers.get("Host", ""))
             if method == "GET" and tail == ["snapshot"]:
-                return service.snapshot_response()
+                # Published tab colors are authenticated data. The explicit
+                # insecure loopback mode never receives them.
+                return service.snapshot_response(
+                    include_chat_tab_colors=getattr(self, "_authorization_scope", "open") == "main"
+                )
             if method == "GET" and tail == ["workspaces"]:
                 return service.workspaces_response()
             if method == "GET" and len(tail) == 2 and tail[0] == "workspaces":

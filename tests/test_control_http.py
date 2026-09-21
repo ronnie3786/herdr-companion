@@ -89,7 +89,11 @@ class ControlHTTPTests(unittest.TestCase):
         self.assertEqual(self.request(base, path, token=SCOPED_TOKEN)[0], 401)
         status, body = self.request(base, path, token=MAIN_TOKEN)
         self.assertEqual(status, 200)
-        self.assertEqual(body["capabilities"], ["agent-control-v1", "discovery-v1"])
+        self.assertEqual(
+            body["capabilities"],
+            ["agent-control-v1", "discovery-v1", "chat-tab-colors-v1"],
+        )
+        self.assertEqual(body["chatTabColorStaleAfterSeconds"], 60)
         self.assertTrue(body["serverId"].startswith("srv_"))
 
     def test_control_stays_closed_when_legacy_insecure_local_mode_is_open(self):
@@ -180,6 +184,32 @@ class ControlHTTPTests(unittest.TestCase):
         )
         self.assertEqual(first, second)
         self.assertEqual(first[1]["command"]["status"], "completed")
+
+    def test_chat_tab_color_publication_requires_the_main_bearer(self):
+        _, base = self.start_server(
+            api_token=MAIN_TOKEN,
+            environ={"HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN": SCOPED_TOKEN},
+        )
+        payload = {
+            "serverId": "srv_placeholder",
+            "publisherToken": "a" * 64,
+            "platform": "macos",
+            "clientName": "Synthetic Companion",
+            "enabled": True,
+            "revision": 1,
+            "tabs": [],
+        }
+        path = f"/api/v1/control/chat-tab-colors/{CLIENT_ID}"
+        self.assertEqual(self.request(base, path, method="POST", payload=payload)[0], 401)
+        self.assertEqual(
+            self.request(base, path, method="POST", payload=payload, token=SCOPED_TOKEN)[0],
+            401,
+        )
+        encoded = f"/api/v1/%63ontrol/chat-tab-colors/{CLIENT_ID}"
+        self.assertEqual(
+            self.request(base, encoded, method="POST", payload=payload, token=SCOPED_TOKEN)[0],
+            401,
+        )
 
     def test_registration_and_commands_reject_unknown_fields_and_schema_errors(self):
         _, base = self.start_server(api_token=MAIN_TOKEN)

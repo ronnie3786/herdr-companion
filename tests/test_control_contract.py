@@ -20,6 +20,7 @@ from herdr_harness.service import HerdrService
 
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "agent-control-v1.json"
+CHAT_TAB_COLOR_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "chat-tab-colors-v1.json"
 
 
 class SyntheticHerdrClient:
@@ -190,6 +191,7 @@ class AgentControlWireContractTests(unittest.TestCase):
         environment = {
             "HOME": str(self.root),
             "HERDR_STATE_DIR": str(self.root / "state"),
+            "HERDR_HARNESS_AGENT_RUNS_ROOT": str(self.root / "agent-runs"),
         }
         self.service = HerdrService(
             SyntheticHerdrClient(snapshot),
@@ -400,6 +402,113 @@ class AgentControlWireContractTests(unittest.TestCase):
         self.assertFalse(response["ok"])
         self.assertEqual(response["error"]["code"], "receiver_unauthorized")
         self.assertNotIn(self.fixture["receiverToken"], json.dumps(response))
+
+    def test_chat_tab_color_publication_snapshot_and_discovery_contract(self):
+        colors = json.loads(CHAT_TAB_COLOR_FIXTURE_PATH.read_text(encoding="utf-8"))
+        client = colors["clients"]["primary"]
+        target = self.fixture["target"]
+        request_body = {
+            "serverId": colors["serverId"],
+            "publisherToken": client["publisherToken"],
+            "platform": client["platform"],
+            "clientName": client["clientName"],
+            "enabled": True,
+            "revision": colors["publications"]["primary"]["revision"],
+            "tabs": [
+                {
+                    "workspaceId": target["workspaceId"],
+                    "tabId": target["tabId"],
+                    "color": "sage",
+                    "label": colors["labels"]["shared"],
+                }
+            ],
+        }
+        path = f"/api/v1/control/chat-tab-colors/{client['clientId']}"
+        status, registered = request_json(
+            self.http_opener,
+            self.server_url + path,
+            method="POST",
+            payload=request_body,
+            token=self.fixture["apiBearer"],
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(registered["serverId"], self.fixture["serverId"])
+        self.assertEqual(
+            registered["publication"],
+            {
+                "clientId": client["clientId"],
+                "platform": "macos",
+                "clientName": client["clientName"],
+                "enabled": True,
+                "revision": 7,
+                "tabCount": 1,
+                "updatedAt": colors["expected"]["publishedAt"],
+                "lastSeenAt": colors["expected"]["publishedAt"],
+                "stale": False,
+            },
+        )
+        self.assertNotIn("publisherToken", json.dumps(registered))
+        self.assertNotIn(client["publisherToken"], json.dumps(registered))
+
+        status, snapshot = request_json(
+            self.http_opener, self.server_url + "/api/v1/snapshot", token=self.fixture["apiBearer"]
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            snapshot["chatTabColorSources"],
+            [
+                {
+                    "clientId": client["clientId"],
+                    "platform": "macos",
+                    "clientName": client["clientName"],
+                    "enabled": True,
+                    "revision": 7,
+                    "updatedAt": colors["expected"]["publishedAt"],
+                    "lastSeenAt": colors["expected"]["publishedAt"],
+                    "stale": False,
+                }
+            ],
+        )
+        tab = next(
+            item for item in snapshot["snapshot"]["tabs"] if item["tab_id"] == target["tabId"]
+        )
+        self.assertEqual(
+            tab["chatTabColors"],
+            [
+                {
+                    "clientId": client["clientId"],
+                    "color": "sage",
+                    "label": colors["labels"]["shared"],
+                    "status": "assigned",
+                    "updatedAt": colors["expected"]["publishedAt"],
+                    "lastSeenAt": colors["expected"]["publishedAt"],
+                    "stale": False,
+                }
+            ],
+        )
+        self.assertEqual(tab["label"], "Synthetic Contract Tab")
+        self.assertNotIn("chatTabColors", snapshot["snapshot"]["panes"][0])
+
+        status, discovery = request_json(
+            self.http_opener,
+            self.server_url + "/api/v1/discovery?kind=chats&color=sage",
+            token=self.fixture["apiBearer"],
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual([item["id"] for item in discovery["results"]], [target["paneId"]])
+        result = discovery["results"][0]
+        self.assertEqual(result["chatTabColors"][0]["label"], colors["labels"]["shared"])
+        self.assertEqual(result["target"]["paneId"], target["paneId"])
+        self.assertNotIn("chatTabColors", result["target"])
+        self.assertTrue(discovery["coverage"]["chatTabColors"]["searched"])
+
+        status, capabilities = request_json(
+            self.http_opener,
+            self.server_url + "/api/v1/control/capabilities",
+            token=self.fixture["apiBearer"],
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("chat-tab-colors-v1", capabilities["capabilities"])
 
 
 if __name__ == "__main__":

@@ -1146,7 +1146,7 @@ final class AgentControlController {
         }
         try Self.validateFirstMateHostSwitch(
             store: shell.firstMate,
-            currentMachineID: shell.firstMateMachineID,
+            currentMachineID: shell.activeFirstMateMachineID,
             targetMachineID: machineID
         )
 
@@ -1164,6 +1164,7 @@ final class AgentControlController {
         // view whose connection task must recognize this configuration as the
         // one already installed rather than clearing the received feature.
         shell.configureFirstMateIfNeeded(
+            machineID: machineID,
             configuration: configuration,
             connectionGeneration: model.connectionGeneration,
             isDemo: false,
@@ -1422,7 +1423,7 @@ final class AgentControlController {
         // Settings and a fresh HUD composer have no current navigable target;
         // never report a pane that is merely visible in a background window.
         guard window == .main else { return nil }
-        if segment == "first-mate", let machineID = shell.firstMateMachineID,
+        if segment == "first-mate", let machineID = shell.activeFirstMateMachineID,
            let featureID = shell.firstMate.selectedFeatureID,
            let serverID = serverID(for: machineID) {
             return AgentControlTarget(kind: "first-mate", serverId: serverID, machineId: machineID, featureId: featureID)

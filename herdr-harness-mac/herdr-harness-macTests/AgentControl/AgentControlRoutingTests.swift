@@ -398,6 +398,7 @@ struct AgentControlRoutingTests {
                 selectionAtWindowOpen = shell.firstMate.selectedFeatureID
                 shell.firstMate.draft = "draft created while rebuilding the window"
                 repeatedConfigurationChanged = shell.configureFirstMateIfNeeded(
+                    machineID: machine.id,
                     configuration: configuration,
                     connectionGeneration: model.connectionGeneration,
                     isDemo: false,

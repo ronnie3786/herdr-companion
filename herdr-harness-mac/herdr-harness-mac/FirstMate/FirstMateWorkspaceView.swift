@@ -3,26 +3,43 @@ import SwiftUI
 struct FirstMateWorkspaceView: View {
     @Bindable var store: FirstMateStore
     let canControl: Bool
+    var owningMachineName: String? = nil
+    var allowsDirectCreate = true
     @Environment(\.colorScheme) private var scheme
     var body: some View {
-        Group {
-            if let snapshot = store.snapshot {
-                HSplitView {
-                    FirstMateChatView(store: store, snapshot: snapshot, canControl: canControl)
-                        .frame(minWidth: 330, idealWidth: 480, maxWidth: .infinity)
-                    FirstMateInspectorView(store: store, snapshot: snapshot)
-                        .frame(minWidth: 340, idealWidth: 465, maxWidth: .infinity)
+        VStack(spacing: 0) {
+            if let owningMachineName {
+                HStack(spacing: 7) {
+                    Image(systemName: "desktopcomputer")
+                    Text(owningMachineName).herdrFont(.caption, weight: .semibold)
+                    Spacer()
                 }
-            } else {
-                ContentUnavailableView {
-                    Label(store.unsupported ? "First Mate needs a server update" : "A First Mate for every feature", systemImage: "sailboat")
-                } description: {
-                    Text(store.error ?? "Start with a ticket or an idea. Keep the plan, independent agents, and evidence in one conversation.")
-                } actions: {
-                    if !store.unsupported {
-                        Button("New feature") { store.isCreating = true }.disabled(!canControl)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(FirstMatePalette(scheme: scheme).surface)
+                .overlay(alignment: .bottom) { Divider() }
+                .accessibilityIdentifier("first-mate-owning-machine")
+            }
+            Group {
+                if let snapshot = store.snapshot {
+                    HSplitView {
+                        FirstMateChatView(store: store, snapshot: snapshot, canControl: canControl)
+                            .frame(minWidth: 330, idealWidth: 480, maxWidth: .infinity)
+                        FirstMateInspectorView(store: store, snapshot: snapshot)
+                            .frame(minWidth: 340, idealWidth: 465, maxWidth: .infinity)
                     }
-                    Button("Refresh") { Task { await store.refresh() } }
+                } else {
+                    ContentUnavailableView {
+                        Label(store.unsupported ? "First Mate needs a server update" : "A First Mate for every feature", systemImage: "sailboat")
+                    } description: {
+                        Text(store.error ?? "Start with a ticket or an idea. Keep the plan, independent agents, and evidence in one conversation.")
+                    } actions: {
+                        if !store.unsupported, allowsDirectCreate {
+                            Button("New feature") { store.isCreating = true }.disabled(!canControl)
+                        }
+                        Button("Refresh") { Task { await store.refresh() } }
+                    }
                 }
             }
         }

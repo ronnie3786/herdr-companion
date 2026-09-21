@@ -498,7 +498,15 @@ final class HerdrAppModel {
     }
 
     func firstMateConfiguration(machineID: String?) -> ServerConfiguration? {
-        guard !isDemoMode, let machine = machines.first(where: { $0.id == machineID }) ?? machines.first else { return nil }
+        guard !isDemoMode else { return nil }
+        let machine: HerdrMachine
+        if let machineID {
+            guard let exactMachine = machines.first(where: { $0.id == machineID }) else { return nil }
+            machine = exactMachine
+        } else {
+            guard let firstMachine = machines.first else { return nil }
+            machine = firstMachine
+        }
         let token = machine.id == "ui-test" ? runtimes[machine.id]?.connection?.configuration.token ?? "" : credentials.value(for: "api-token.\(machine.id)")
         return ServerConfiguration(urlString: machine.urlString, token: token)
     }

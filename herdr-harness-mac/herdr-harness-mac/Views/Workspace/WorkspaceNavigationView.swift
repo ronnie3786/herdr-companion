@@ -6,6 +6,28 @@ private struct FirstMateNavigationRequestIdentity: Equatable {
     let controlMachineID: String?
     let controlFeatureID: String?
     let controlInspector: FirstMateInspector?
+    let createMachineID: String?
+}
+
+private struct FirstMateDetailConnectionIdentity: Hashable {
+    let machineID: String?
+    let urlString: String?
+    let token: String?
+    let generation: Int
+    let isDemo: Bool
+}
+
+private struct FirstMateFleetTaskIdentity: Hashable {
+    struct Machine: Hashable {
+        let id: String
+        let name: String
+        let urlString: String
+        let token: String
+    }
+
+    let isActive: Bool
+    let generation: Int
+    let machines: [Machine]
 }
 
 private struct PRReviewPollingIdentity: Equatable {
@@ -35,13 +57,28 @@ struct WorkspaceNavigationView: View {
                 if shell.detailScope == .firstMate {
                     VStack(spacing: 0) {
                         if !model.isDemoMode {
-                            Picker("Companion host", selection: Binding(get: { shell.firstMateMachineID ?? model.machines.first?.id ?? "" }, set: { shell.firstMateMachineID = $0 })) {
+                            Picker("Companion host", selection: firstMateScopeSelection) {
+                                Text("All Machines").tag(FirstMateMachineScope.all)
                                 ForEach(model.machines) { machine in
-                                    Text(machine.name).tag(machine.id)
+                                    Text(machine.name).tag(FirstMateMachineScope.machine(machine.id))
                                 }
                             }.padding(12).accessibilityIdentifier("first-mate-host")
                         }
-                        FirstMateSidebarView(store: shell.firstMate, back: { shell.show(.session, model: model) }, canControl: model.isDemoMode || firstMateConfiguration != nil, leaveDemo: model.leaveDemo)
+                        if resolvedFirstMateScope == .all, !model.isDemoMode {
+                            FirstMateFleetSidebarView(
+                                index: shell.firstMateFleet,
+                                appearanceStore: shell.firstMate,
+                                selectedMachineID: shell.activeFirstMateMachineID,
+                                selectedFeatureID: shell.firstMate.selectedFeatureID,
+                                createMachines: firstMateConfiguredMachines,
+                                back: { shell.show(.session, model: model) },
+                                openFeature: shell.openFirstMateFeatureFromFleet,
+                                createFeature: shell.createFirstMateFeature,
+                                refresh: { Task { await shell.firstMateFleet.refresh() } }
+                            )
+                        } else {
+                            FirstMateSidebarView(store: shell.firstMate, back: { shell.show(.session, model: model) }, canControl: firstMateCanControl, leaveDemo: model.leaveDemo)
+                        }
                     }
                 } else if shell.detailScope == .prReview {
                     VStack(spacing: 0) {
@@ -77,15 +114,12 @@ struct WorkspaceNavigationView: View {
                 .toolbar { detailToolbar }
         }
         .navigationSplitViewStyle(.balanced)
-        .task(id: FirstMateConnectionIdentity(
-            configuration: firstMateConfiguration,
-            generation: model.connectionGeneration,
-            isDemo: model.isDemoMode
-        )) {
+        .task(id: firstMateDetailConnectionIdentity) {
             // Connection changes own store configuration. The process-owned
             // guard also makes this safe when closing and recreating the main
             // window starts a fresh SwiftUI task for the same connection.
             shell.configureFirstMateIfNeeded(
+                machineID: firstMateDetailMachineID,
                 configuration: firstMateConfiguration,
                 connectionGeneration: model.connectionGeneration,
                 isDemo: model.isDemoMode
@@ -94,6 +128,32 @@ struct WorkspaceNavigationView: View {
             await applyFirstMateNavigationRequest()
             if model.isDemoMode, ProcessInfo.processInfo.arguments.contains("-HerdrFirstMateDemo") {
                 shell.show(.firstMate, model: model)
+            }
+        }
+        .task(id: firstMateFleetTaskIdentity) {
+            shell.reconcileFirstMateStores(
+                configurations: firstMateConfigurations,
+                connectionGeneration: model.connectionGeneration,
+                isDemo: model.isDemoMode
+            )
+            guard firstMateFleetTaskIdentity.isActive else {
+                shell.firstMateFleet.deactivate()
+                return
+            }
+            let lifecycle = shell.firstMateFleet.activate(
+                sources: firstMateFleetSources,
+                connectionGeneration: model.connectionGeneration
+            )
+            defer { shell.firstMateFleet.deactivate(lifecycle: lifecycle) }
+            await shell.firstMateFleet.refresh(lifecycle: lifecycle)
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: shell.firstMateFleet.pollingInterval)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                await shell.firstMateFleet.refresh(lifecycle: lifecycle)
             }
         }
         .task(id: PRReviewConnectionIdentity(configuration: prReviewConfiguration, generation: model.connectionGeneration, isDemo: model.isDemoMode, machineRevision: prReviewMachineID?.hashValue ?? model.prReviewMachineRevision)) {
@@ -129,7 +189,8 @@ struct WorkspaceNavigationView: View {
             requestID: shell.firstMateOpenRequest?.id,
             controlMachineID: shell.pendingFirstMateControlTarget?.machineID,
             controlFeatureID: shell.pendingFirstMateControlTarget?.featureID,
-            controlInspector: shell.pendingFirstMateControlTarget?.inspector
+            controlInspector: shell.pendingFirstMateControlTarget?.inspector,
+            createMachineID: shell.pendingFirstMateCreateMachineID
         )) {
             await applyFirstMateNavigationRequest()
         }
@@ -154,8 +215,101 @@ struct WorkspaceNavigationView: View {
         }
     }
 
+    private var resolvedFirstMateScope: FirstMateMachineScope {
+        if model.isDemoMode { return .machine("demo") }
+        if let scope = shell.firstMateScope {
+            if case .machine(let machineID) = scope,
+               !model.machines.contains(where: { $0.id == machineID }) {
+                return model.machines.first.map { .machine($0.id) } ?? .all
+            }
+            return scope
+        }
+        return firstMateDetailMachineID.map(FirstMateMachineScope.machine) ?? .all
+    }
+
+    private var firstMateDetailMachineID: String? {
+        if model.isDemoMode { return "demo" }
+        if let machineID = shell.firstMateMachineID,
+           model.machines.contains(where: { $0.id == machineID }) { return machineID }
+        if case .machine(let machineID) = shell.firstMateScope,
+           model.machines.contains(where: { $0.id == machineID }) { return machineID }
+        return model.machines.first?.id
+    }
+
     private var firstMateConfiguration: ServerConfiguration? {
-        model.firstMateConfiguration(machineID: shell.firstMateMachineID)
+        model.firstMateConfiguration(machineID: firstMateDetailMachineID)
+    }
+
+    private var activeFirstMateMachine: HerdrMachine? {
+        guard let activeFirstMateMachineID = shell.activeFirstMateMachineID else { return nil }
+        return model.machines.first { $0.id == activeFirstMateMachineID }
+    }
+
+    private var firstMateCanControl: Bool {
+        firstMateConnectionIsReady && (model.isDemoMode || firstMateConfiguration != nil)
+    }
+
+    private var firstMateConnectionIsReady: Bool {
+        shell.isActiveFirstMateConnection(
+            machineID: firstMateDetailMachineID,
+            configuration: firstMateConfiguration,
+            connectionGeneration: model.connectionGeneration,
+            isDemo: model.isDemoMode
+        )
+    }
+
+    private var firstMateConfigurations: [String: ServerConfiguration] {
+        Dictionary(uniqueKeysWithValues: model.machines.compactMap { machine in
+            model.firstMateConfiguration(machineID: machine.id).map { (machine.id, $0) }
+        })
+    }
+
+    private var firstMateConfiguredMachines: [HerdrMachine] {
+        model.machines.filter { firstMateConfigurations[$0.id] != nil }
+    }
+
+    private var firstMateFleetSources: [FirstMateFleetSource] {
+        firstMateConfiguredMachines.compactMap { machine in
+            guard let configuration = firstMateConfigurations[machine.id] else { return nil }
+            return FirstMateFleetSource(
+                machine: machine,
+                configuration: configuration,
+                client: HerdrAPIClient(configuration: configuration)
+            )
+        }
+    }
+
+    private var firstMateDetailConnectionIdentity: FirstMateDetailConnectionIdentity {
+        .init(
+            machineID: firstMateDetailMachineID,
+            urlString: firstMateConfiguration?.baseURL.absoluteString,
+            token: firstMateConfiguration?.token,
+            generation: model.connectionGeneration,
+            isDemo: model.isDemoMode
+        )
+    }
+
+    private var firstMateFleetTaskIdentity: FirstMateFleetTaskIdentity {
+        .init(
+            isActive: shell.detailScope == .firstMate && resolvedFirstMateScope == .all && !model.isDemoMode,
+            generation: model.connectionGeneration,
+            machines: firstMateConfiguredMachines.compactMap { machine in
+                guard let configuration = firstMateConfigurations[machine.id] else { return nil }
+                return .init(
+                    id: machine.id,
+                    name: machine.name,
+                    urlString: configuration.baseURL.absoluteString,
+                    token: configuration.token
+                )
+            }
+        )
+    }
+
+    private var firstMateScopeSelection: Binding<FirstMateMachineScope> {
+        Binding(
+            get: { resolvedFirstMateScope },
+            set: { shell.selectFirstMateScope($0) }
+        )
     }
 
     private var prReviewMachineID: String? {
@@ -189,25 +343,44 @@ struct WorkspaceNavigationView: View {
     private func applyFirstMateNavigationRequest() async {
         if !Task.isCancelled, let request = shell.firstMateOpenRequest,
            request.id != shell.firstMateAppliedRequestID,
+           firstMateConnectionIsReady,
            request.serverURL == firstMateConfiguration?.baseURL.absoluteString {
             // A deeplink can race the connection task. Refreshing here is safe:
             // the connection task also applies the still-pending request after
             // its own configure/refresh completes.
-            await shell.firstMate.refresh()
-            guard !Task.isCancelled else { return }
-            shell.firstMate.select(request.featureID)
-            shell.firstMate.inspector = request.graph ? .workflow : request.tab
-            shell.firstMate.graphMode = request.graph
-            shell.firstMateAppliedRequestID = request.id
-            await shell.firstMate.refresh()
+            let store = shell.firstMate
+            await store.refresh()
+            if !Task.isCancelled,
+               shell.firstMate === store,
+               firstMateConnectionIsReady,
+               shell.firstMateOpenRequest?.id == request.id {
+                store.select(request.featureID)
+                store.inspector = request.graph ? .workflow : request.tab
+                store.graphMode = request.graph
+                await store.refresh()
+                if !Task.isCancelled,
+                   shell.firstMate === store,
+                   firstMateConnectionIsReady,
+                   shell.firstMateOpenRequest?.id == request.id {
+                    shell.firstMateAppliedRequestID = request.id
+                }
+            }
         }
         if !Task.isCancelled, let target = shell.pendingFirstMateControlTarget,
-           target.machineID == shell.firstMateMachineID,
+           target.machineID == firstMateDetailMachineID,
+           firstMateConnectionIsReady,
            shell.firstMate.features.contains(where: { $0.id == target.featureID }) {
             shell.firstMate.select(target.featureID)
             shell.firstMate.inspector = target.inspector
             shell.firstMate.graphMode = target.inspector == .workflow
             shell.pendingFirstMateControlTarget = nil
+        }
+        if !Task.isCancelled, let machineID = shell.pendingFirstMateCreateMachineID,
+           machineID == firstMateDetailMachineID,
+           firstMateConnectionIsReady,
+           firstMateCanControl {
+            shell.firstMate.isCreating = true
+            shell.pendingFirstMateCreateMachineID = nil
         }
     }
 
@@ -251,7 +424,13 @@ struct WorkspaceNavigationView: View {
                 )
             }
         case .firstMate:
-            FirstMateWorkspaceView(store: shell.firstMate, canControl: model.isDemoMode || firstMateConfiguration != nil)
+            FirstMateWorkspaceView(
+                store: shell.firstMate,
+                canControl: firstMateCanControl,
+                owningMachineName: resolvedFirstMateScope == .all ? activeFirstMateMachine?.name : nil,
+                allowsDirectCreate: resolvedFirstMateScope != .all
+            )
+            .id(shell.firstMateStoreID)
         case .prReview:
             PRReviewContainerView(
                 store: shell.prReview,

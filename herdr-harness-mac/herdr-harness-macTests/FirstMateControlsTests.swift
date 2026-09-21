@@ -42,12 +42,14 @@ struct FirstMateControlsTests {
         let defaults = try #require(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
         let credentials = TestCredentialStore()
-        let model = HerdrAppModel(credentials: credentials, arguments: ["test"], userDefaults: defaults)
+        let model = HerdrAppModel(credentials: credentials, arguments: ["test"], userDefaults: defaults, configuredMachines: [])
         #expect(model.addMachine(name: "One", urlString: "https://one.example.test", token: "one-token"))
         #expect(model.addMachine(name: "Two", urlString: "https://two.example.test", token: "two-token"))
         let before = model.machines
         let second = try #require(before.last)
         #expect(model.firstMateConfiguration(machineID: second.id)?.token == "two-token")
+        #expect(model.firstMateConfiguration(machineID: "missing-machine") == nil)
+        #expect(model.firstMateConfiguration(machineID: nil)?.token == "one-token")
         #expect(model.machines == before)
     }
 

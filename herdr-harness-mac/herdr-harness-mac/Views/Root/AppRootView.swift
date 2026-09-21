@@ -80,15 +80,21 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
 @Observable
 final class HerdrShellState {
     var detailScope: HerdrDetailScope = .session
-    let firstMate = FirstMateStore()
+    private(set) var firstMate = FirstMateStore()
+    let firstMateFleet = FirstMateFleetIndex()
     let prReview = PRReviewStore()
     var firstMateMachineID: String?
+    var firstMateScope: FirstMateMachineScope?
+    private(set) var activeFirstMateMachineID: String?
     var prReviewMachineID: String?
     var prReviewOpenRequest: PRReviewOpenRequest?
     var prReviewAppliedRequestID: UUID?
     var firstMateOpenRequest: FirstMateOpenRequest?
     var firstMateAppliedRequestID: UUID?
-    @ObservationIgnored private var configuredFirstMateConnectionIdentity: FirstMateConnectionIdentity?
+    @ObservationIgnored private var firstMateStores: [String: FirstMateStore] = [:]
+    @ObservationIgnored private var configuredFirstMateConnectionIdentities: [String: FirstMateConnectionIdentity] = [:]
+    @ObservationIgnored private var firstMateCacheGeneration: Int?
+    @ObservationIgnored private var firstMateCacheIsDemo: Bool?
     @ObservationIgnored private var configuredPRReviewConnectionIdentity: PRReviewConnectionIdentity?
     private(set) var paneModeFocusRequest = 0
     private(set) var agentControlPaneMode: PaneDetailMode?
@@ -98,6 +104,7 @@ final class HerdrShellState {
     var agentControlWindow: AgentControlWindow = .main
     var piSessionSummaryRequest: PiSessionSummaryRequest?
     var pendingFirstMateControlTarget: (machineID: String, featureID: String, inspector: FirstMateInspector)?
+    var pendingFirstMateCreateMachineID: String?
     var isCreatingWorkspace = false
     var isCreatingPRReview = false
     var isAddingPRReviewSkill = false
@@ -141,26 +148,136 @@ final class HerdrShellState {
     /// an authenticated configuration and is never part of agent-control UI state.
     @discardableResult
     func configureFirstMateIfNeeded(
+        machineID: String? = nil,
         configuration: ServerConfiguration?,
         connectionGeneration: Int,
         isDemo: Bool,
         client: (any FirstMateClient)? = nil
     ) -> Bool {
+        resetFirstMateCacheIfNeeded(connectionGeneration: connectionGeneration, isDemo: isDemo)
+        let key = isDemo ? "demo" : machineID ?? configuration?.baseURL.absoluteString ?? "unconfigured"
         let identity = FirstMateConnectionIdentity(
             configuration: configuration,
             generation: connectionGeneration,
             isDemo: isDemo
         )
-        guard identity != configuredFirstMateConnectionIdentity else { return false }
+        let appearance = firstMate.isDark
+        if identity == configuredFirstMateConnectionIdentities[key], let store = firstMateStores[key] {
+            store.isDark = appearance
+            firstMate = store
+            activeFirstMateMachineID = machineID ?? (isDemo ? "demo" : nil)
+            return false
+        }
         let configuredClient: (any FirstMateClient)?
         if let client {
             configuredClient = client
         } else {
             configuredClient = configuration.map { HerdrAPIClient(configuration: $0) }
         }
-        firstMate.configure(client: configuredClient, demo: isDemo)
-        configuredFirstMateConnectionIdentity = identity
+        if let oldStore = firstMateStores[key] {
+            oldStore.configure(client: nil, demo: false)
+        }
+        let store = FirstMateStore()
+        store.isDark = appearance
+        store.configure(client: configuredClient, demo: isDemo)
+        firstMateStores[key] = store
+        configuredFirstMateConnectionIdentities[key] = identity
+        firstMate = store
+        activeFirstMateMachineID = machineID ?? (isDemo ? "demo" : nil)
         return true
+    }
+
+    func reconcileFirstMateStores(
+        configurations: [String: ServerConfiguration],
+        connectionGeneration: Int,
+        isDemo: Bool
+    ) {
+        resetFirstMateCacheIfNeeded(connectionGeneration: connectionGeneration, isDemo: isDemo)
+        guard !isDemo else { return }
+        var evictedActiveStore = false
+        for key in Array(firstMateStores.keys) {
+            let expectedConfiguration = configurations[key]
+            let configuredIdentity = configuredFirstMateConnectionIdentities[key]
+            guard expectedConfiguration == nil || configuredIdentity?.configuration != expectedConfiguration else { continue }
+            firstMateStores[key]?.configure(client: nil, demo: false)
+            firstMateStores[key] = nil
+            configuredFirstMateConnectionIdentities[key] = nil
+            evictedActiveStore = evictedActiveStore || key == activeFirstMateMachineID
+        }
+        if evictedActiveStore || activeFirstMateMachineID.map({ configurations[$0] == nil }) == true {
+            let previousMachineID = activeFirstMateMachineID
+            self.activeFirstMateMachineID = nil
+            if firstMateMachineID == previousMachineID, previousMachineID.map({ configurations[$0] == nil }) == true {
+                firstMateMachineID = nil
+            }
+        }
+        if let desiredMachineID = firstMateMachineID, configurations[desiredMachineID] == nil {
+            firstMateMachineID = nil
+            if firstMateScope == .machine(desiredMachineID) { firstMateScope = nil }
+            firstMateOpenRequest = nil
+        }
+        if let target = pendingFirstMateControlTarget, configurations[target.machineID] == nil {
+            pendingFirstMateControlTarget = nil
+        }
+        if let target = pendingFirstMateCreateMachineID, configurations[target] == nil {
+            pendingFirstMateCreateMachineID = nil
+        }
+    }
+
+    var firstMateStoreID: ObjectIdentifier { ObjectIdentifier(firstMate) }
+
+    func isActiveFirstMateConnection(
+        machineID: String?,
+        configuration: ServerConfiguration?,
+        connectionGeneration: Int,
+        isDemo: Bool
+    ) -> Bool {
+        let key = isDemo ? "demo" : machineID ?? configuration?.baseURL.absoluteString ?? "unconfigured"
+        let expectedIdentity = FirstMateConnectionIdentity(
+            configuration: configuration,
+            generation: connectionGeneration,
+            isDemo: isDemo
+        )
+        return activeFirstMateMachineID == (machineID ?? (isDemo ? "demo" : nil))
+            && firstMateStores[key] === firstMate
+            && configuredFirstMateConnectionIdentities[key] == expectedIdentity
+    }
+
+    func selectFirstMateScope(_ scope: FirstMateMachineScope) {
+        firstMateOpenRequest = nil
+        pendingFirstMateControlTarget = nil
+        pendingFirstMateCreateMachineID = nil
+        firstMateScope = scope
+        if case .machine(let machineID) = scope { firstMateMachineID = machineID }
+    }
+
+    func openFirstMateFeatureFromFleet(machineID: String, featureID: String) {
+        firstMateOpenRequest = nil
+        pendingFirstMateCreateMachineID = nil
+        firstMateScope = .all
+        firstMateMachineID = machineID
+        pendingFirstMateControlTarget = (machineID, featureID, .overview)
+    }
+
+    func createFirstMateFeature(on machineID: String) {
+        firstMateOpenRequest = nil
+        pendingFirstMateControlTarget = nil
+        firstMateScope = .all
+        firstMateMachineID = machineID
+        pendingFirstMateCreateMachineID = machineID
+    }
+
+    private func resetFirstMateCacheIfNeeded(connectionGeneration: Int, isDemo: Bool) {
+        guard firstMateCacheGeneration != connectionGeneration || firstMateCacheIsDemo != isDemo else { return }
+        let appearance = firstMate.isDark
+        for store in firstMateStores.values { store.configure(client: nil, demo: false) }
+        firstMateStores = [:]
+        configuredFirstMateConnectionIdentities = [:]
+        firstMate = FirstMateStore()
+        firstMate.isDark = appearance
+        activeFirstMateMachineID = nil
+        firstMateCacheGeneration = connectionGeneration
+        firstMateCacheIsDemo = isDemo
     }
 
     @discardableResult
@@ -271,6 +388,9 @@ final class HerdrShellState {
         inspector: FirstMateInspector,
         model: HerdrAppModel
     ) {
+        firstMateOpenRequest = nil
+        pendingFirstMateCreateMachineID = nil
+        firstMateScope = .machine(machineID)
         firstMateMachineID = machineID
         pendingFirstMateControlTarget = (machineID, featureID, inspector)
         show(.firstMate, model: model)
@@ -749,7 +869,7 @@ struct AppRootView: View {
                 isShowingExternalPiError = true
                 return
             }
-            shell.firstMateMachineID = machine.id
+            shell.selectFirstMateScope(.machine(machine.id))
             shell.firstMateOpenRequest = request
             shell.show(.firstMate, model: model)
             return

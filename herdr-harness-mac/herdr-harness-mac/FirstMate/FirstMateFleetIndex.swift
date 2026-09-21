@@ -1,0 +1,168 @@
+import Foundation
+import Observation
+
+struct FirstMateFleetSource {
+    let machine: HerdrMachine
+    let configuration: ServerConfiguration
+    let client: any FirstMateClient
+}
+
+struct FirstMateFleetHost: Identifiable, Equatable, Sendable {
+    let machineID: String
+    var machineName: String
+    var features: [FirstMateFeature]
+    var isLoading: Bool
+    var error: String?
+    var unsupported: Bool
+    var lastUpdated: Date?
+
+    var id: String { machineID }
+}
+
+@MainActor @Observable
+final class FirstMateFleetIndex {
+    private struct Configuration: Equatable {
+        let connectionGeneration: Int
+        let machines: [Machine]
+
+        struct Machine: Equatable {
+            let id: String
+            let name: String
+            let configuration: ServerConfiguration
+        }
+    }
+
+    private struct FetchResult: Sendable {
+        let machineID: String
+        let features: [FirstMateFeature]?
+        let error: String?
+        let unsupported: Bool
+    }
+
+    var search = ""
+    private(set) var hosts: [FirstMateFleetHost] = []
+    @ObservationIgnored var pollingInterval: Duration = .seconds(10)
+    @ObservationIgnored private var clients: [String: any FirstMateClient] = [:]
+    @ObservationIgnored private var configuration: Configuration?
+    @ObservationIgnored private var lifecycle = 0
+    @ObservationIgnored private var refreshGeneration = 0
+
+    var filteredHosts: [FirstMateFleetHost] {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return hosts }
+        return hosts.compactMap { host in
+            var filtered = host
+            filtered.features = host.features.filter {
+                $0.title.localizedCaseInsensitiveContains(query)
+                    || $0.goal.localizedCaseInsensitiveContains(query)
+                    || ($0.workItemID?.localizedCaseInsensitiveContains(query) ?? false)
+                    || host.machineName.localizedCaseInsensitiveContains(query)
+            }
+            return filtered.features.isEmpty ? nil : filtered
+        }
+    }
+
+    var hasLoadedAnyHost: Bool {
+        hosts.contains { !$0.isLoading && ($0.lastUpdated != nil || $0.error != nil || $0.unsupported) }
+    }
+
+    @discardableResult
+    func activate(sources: [FirstMateFleetSource], connectionGeneration: Int) -> Int {
+        lifecycle &+= 1
+        refreshGeneration &+= 1
+        let next = Configuration(
+            connectionGeneration: connectionGeneration,
+            machines: sources.map {
+                .init(id: $0.machine.id, name: $0.machine.name, configuration: $0.configuration)
+            }
+        )
+        if next != configuration {
+            configuration = next
+            hosts = sources.map {
+                FirstMateFleetHost(
+                    machineID: $0.machine.id,
+                    machineName: $0.machine.name,
+                    features: [],
+                    isLoading: false,
+                    error: nil,
+                    unsupported: false,
+                    lastUpdated: nil
+                )
+            }
+        }
+        clients = Dictionary(uniqueKeysWithValues: sources.map { ($0.machine.id, $0.client) })
+        return lifecycle
+    }
+
+    func deactivate(lifecycle expectedLifecycle: Int? = nil) {
+        if let expectedLifecycle, expectedLifecycle != lifecycle { return }
+        lifecycle &+= 1
+        refreshGeneration &+= 1
+        clients = [:]
+        for index in hosts.indices { hosts[index].isLoading = false }
+    }
+
+    func refresh(lifecycle expectedLifecycle: Int) async {
+        guard !Task.isCancelled, expectedLifecycle == lifecycle else { return }
+        refreshGeneration &+= 1
+        let token = refreshGeneration
+        let requests = hosts.compactMap { host -> (String, any FirstMateClient)? in
+            guard let client = clients[host.machineID] else { return nil }
+            return (host.machineID, client)
+        }
+        for index in hosts.indices {
+            hosts[index].isLoading = clients[hosts[index].machineID] != nil
+            hosts[index].error = nil
+            hosts[index].unsupported = false
+        }
+
+        await withTaskGroup(of: FetchResult.self) { group in
+            for (machineID, client) in requests {
+                group.addTask {
+                    do {
+                        let response = try await client.fetchFirstMateFeatures()
+                        guard response.ok else { throw APIError.invalidResponse }
+                        return FetchResult(machineID: machineID, features: response.features, error: nil, unsupported: false)
+                    } catch is CancellationError {
+                        return FetchResult(machineID: machineID, features: nil, error: nil, unsupported: false)
+                    } catch {
+                        let unsupported: Bool
+                        if case APIError.server(let status, _) = error {
+                            unsupported = status == 404 || status == 501
+                        } else {
+                            unsupported = false
+                        }
+                        return FetchResult(
+                            machineID: machineID,
+                            features: nil,
+                            error: unsupported ? "This companion needs First Mate support." : error.localizedDescription,
+                            unsupported: unsupported
+                        )
+                    }
+                }
+            }
+            for await result in group {
+                guard !Task.isCancelled,
+                      expectedLifecycle == lifecycle, token == refreshGeneration,
+                      let index = hosts.firstIndex(where: { $0.machineID == result.machineID }),
+                      clients[result.machineID] != nil
+                else { continue }
+                hosts[index].isLoading = false
+                if let features = result.features {
+                    hosts[index].features = features
+                    hosts[index].lastUpdated = .now
+                    hosts[index].error = nil
+                    hosts[index].unsupported = false
+                } else if result.error != nil {
+                    hosts[index].error = result.error
+                    hosts[index].unsupported = result.unsupported
+                }
+            }
+        }
+    }
+
+    func refresh() async {
+        let activeLifecycle = lifecycle
+        await refresh(lifecycle: activeLifecycle)
+    }
+}

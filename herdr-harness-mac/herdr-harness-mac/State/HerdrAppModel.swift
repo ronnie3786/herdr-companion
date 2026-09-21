@@ -115,6 +115,7 @@ final class HerdrAppModel {
             if connectionGeneration != oldValue {
                 cancelDeferredRefreshes()
                 discardPendingQuickPaneRoutes()
+                acceptedPrompts.removeAll()
             }
         }
     }
@@ -168,6 +169,12 @@ final class HerdrAppModel {
     /// map lets `acknowledgeUnreadAlerts` post once per episode.
     @ObservationIgnored private var lastAckedDoneEpisodeByPaneID: [String: String] = [:]
     @ObservationIgnored private var promptOverrideSupport: [String: (generation: Int, supported: Bool, probedAt: Date)] = [:]
+    /// Latest successfully accepted prompt per pane/session, memory-only, so a
+    /// Smart Rename asked for right after a submission can name the pane before
+    /// its semantic snapshot catches up. Never persisted, never read from the
+    /// pane-only `promptHistory`, and validated against the pane's current
+    /// terminal/workspace/tab/session and connection generation before use.
+    @ObservationIgnored private var acceptedPrompts: [AcceptedPromptRecord] = []
     @ObservationIgnored private var lastPresentedConnectionError: String?
     @ObservationIgnored private var lastBadgeCount: Int?
     @ObservationIgnored private var paneIndex: [String: PaneLocation] = [:]
@@ -1490,6 +1497,7 @@ final class HerdrAppModel {
         to pane: HerdrPane
     ) async throws {
         let submittedAt = Date.now
+        let generation = connectionGeneration
         noteUserInteraction(machineID: pane.machineID)
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
         #if DEBUG
@@ -1506,10 +1514,12 @@ final class HerdrAppModel {
         else { throw APIError.invalidResponse }
         try await client.sendPiPrompt(paneID: pane.paneID, text: prompt, disposition: disposition)
         promptHistory.record(prompt, paneID: pane.id, submittedAt: submittedAt)
+        recordAcceptedPrompt(prompt, for: pane, generation: generation)
     }
 
     func sendPiPrompt(paneID scopedPaneID: String, text: String) async throws {
         let submittedAt = Date.now
+        let generation = connectionGeneration
         guard let scope = MachineScopedID.split(scopedPaneID) else {
             throw APIError.invalidResponse
         }
@@ -1519,8 +1529,12 @@ final class HerdrAppModel {
                 machineID: machines.first(where: { $0.id == scope.machineID })?.name ?? scope.machineID
             )
         }
+        let pane = self.pane(id: scopedPaneID)
         try await client.sendPiPrompt(paneID: scope.rawID, text: text, disposition: .prompt)
         promptHistory.record(text, paneID: scopedPaneID, submittedAt: submittedAt)
+        if let pane {
+            recordAcceptedPrompt(text, for: pane, generation: generation)
+        }
     }
 
     func abortPiConversation(for pane: HerdrPane) async throws {
@@ -1575,6 +1589,7 @@ final class HerdrAppModel {
 
     func sendPrompt(_ text: String, to pane: HerdrPane) async -> Bool {
         let submittedAt = Date.now
+        let generation = connectionGeneration
         noteUserInteraction(machineID: pane.machineID)
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return false }
@@ -1595,6 +1610,7 @@ final class HerdrAppModel {
             }
             toastMessage = "Sent to \(pane.displayAgentName)"
             promptHistory.record(prompt, paneID: pane.id, submittedAt: submittedAt)
+            recordAcceptedPrompt(prompt, for: pane, generation: generation)
             return true
         } catch {
             errorMessage = error.localizedDescription
@@ -1840,29 +1856,92 @@ final class HerdrAppModel {
     }
 
     enum SmartRenamePaneOutcome: Equatable {
-        case refreshed(title: String)
-        case renamedNeedsRefresh(title: String, message: String)
+        case refreshed(title: String, notice: String?)
+        case renamedNeedsRefresh(title: String, message: String, notice: String?)
     }
 
     private(set) var smartRenamingPaneIDs: Set<String> = []
     private var paneRenameRevisions: [String: UUID] = [:]
 
+    /// Identity captured before any asynchronous naming work. Ordinary output
+    /// revisions are deliberately absent so streaming and shell activity do
+    /// not invalidate a rename, while replacement, session changes, manual
+    /// renames, and connection changes do.
+    private struct PaneMutationIdentity {
+        let machineID: String
+        let scopedPaneID: String
+        let terminalID: String
+        let workspaceID: String
+        let tabID: String
+        let sessionID: String?
+        let label: String?
+        let title: String?
+        let connectionGeneration: Int
+        let renameRevision: UUID?
+
+        init(pane: HerdrPane, connectionGeneration: Int, renameRevision: UUID?) {
+            machineID = pane.machineID
+            scopedPaneID = pane.id
+            terminalID = pane.terminalID
+            workspaceID = pane.workspaceID
+            tabID = pane.tabID
+            sessionID = pane.piSemantic?.sessionID
+            label = pane.label
+            title = pane.title
+            self.connectionGeneration = connectionGeneration
+            self.renameRevision = renameRevision
+        }
+
+        func matches(_ pane: HerdrPane, connectionGeneration: Int, renameRevision: UUID?) -> Bool {
+            machineID == pane.machineID
+                && scopedPaneID == pane.id
+                && terminalID == pane.terminalID
+                && workspaceID == pane.workspaceID
+                && tabID == pane.tabID
+                && sessionID == pane.piSemantic?.sessionID
+                && label == pane.label
+                && title == pane.title
+                && self.connectionGeneration == connectionGeneration
+                && self.renameRevision == renameRevision
+        }
+    }
+
+    private struct AcceptedPromptRecord: Equatable {
+        let machineID: String
+        let scopedPaneID: String
+        let terminalID: String
+        let workspaceID: String
+        let tabID: String
+        let sessionID: String?
+        let connectionGeneration: Int
+        let text: String
+    }
+
+    private static let maxAcceptedPromptRecords = 128
+    private static let maxAcceptedPromptCharacters = 4_000
+
     func smartRename(_ pane: HerdrPane, runner: any HerdrNoteAIRunner = HerdrLiveNoteAIRunner()) async {
-        guard canControl(machineID: pane.machineID), pane.piSemantic?.sessionID != nil,
-              !smartRenamingPaneIDs.contains(pane.id) else { return }
+        guard canControl(machineID: pane.machineID), !smartRenamingPaneIDs.contains(pane.id) else { return }
         toastMessage = "Finding a smart title…"
         do {
             switch try await smartRenameForAgentControl(pane, runner: runner) {} {
-            case .refreshed:
-                toastMessage = "Pane renamed"
-            case let .renamedNeedsRefresh(title, message):
-                toastMessage = "Pane renamed to “\(title)”, but the app couldn't refresh it: \(message)"
+            case let .refreshed(_, notice):
+                toastMessage = Self.smartRenameSuccessMessage(notice: notice)
+            case let .renamedNeedsRefresh(title, message, notice):
+                var text = "Pane renamed to “\(title)”, but the app couldn't refresh it: \(message)"
+                if let notice, !notice.isEmpty { text += " \(notice)" }
+                toastMessage = text
             }
         } catch is CancellationError {
             // Cancellation before the mutation preserves the existing title.
         } catch {
             toastMessage = "Smart Rename failed: \(error.localizedDescription)"
         }
+    }
+
+    private static func smartRenameSuccessMessage(notice: String?) -> String {
+        guard let notice, !notice.isEmpty else { return "Pane renamed" }
+        return "Pane renamed. \(notice)"
     }
 
     /// Throwing Smart Rename outcome used by agent control. The validation
@@ -1873,35 +1952,50 @@ final class HerdrAppModel {
         runner: any HerdrNoteAIRunner = HerdrLiveNoteAIRunner(),
         validateBeforeMutation: @MainActor () throws -> Void
     ) async throws -> SmartRenamePaneOutcome {
-        guard canControl(machineID: pane.machineID), pane.piSemantic?.sessionID != nil else {
-            throw AgentControlCommandError.unavailable("This pane has no controllable semantic Pi session.")
+        guard canControl(machineID: pane.machineID) else {
+            throw AgentControlCommandError.unavailable("Reconnect before renaming this pane.")
         }
         guard smartRenamingPaneIDs.insert(pane.id).inserted else {
             throw AgentControlCommandError.conflict("Smart Rename is already running for this pane.")
         }
         defer { smartRenamingPaneIDs.remove(pane.id) }
-        let revision = paneRenameRevisions[pane.id]
-        let snapshot = try await fetchPiConversationSnapshot(for: pane)
-        let context = SmartPaneTitle.context(from: snapshot)
-        guard snapshot.available, !context.isEmpty else {
-            throw AgentControlCommandError.unavailable("This Pi session has no conversation to name yet.")
+
+        // Capture identity before any model, context, or AI work so ordinary
+        // output revisions can be ignored while replacement, session changes,
+        // manual renames, and connection changes are rejected.
+        let identity = PaneMutationIdentity(
+            pane: pane,
+            connectionGeneration: connectionGeneration,
+            renameRevision: paneRenameRevisions[pane.id]
+        )
+        // Model availability resolves against the machine that will execute
+        // the naming ask, never the primary machine's catalog.
+        let resolution = try await SmartRenameModelRouting.resolve(
+            settings: AgentModelSettings.load(from: userDefaults),
+            executionMachineID: pane.machineID,
+            appModel: self
+        )
+        guard let context = try await smartRenameContext(for: pane), !context.isEmpty else {
+            throw AgentControlCommandError.unavailable("This pane has no readable context to name yet.")
         }
-        let settings = AgentModelSettings.load(from: userDefaults)
         let charter = await supportsPromptOverrides(machineID: pane.machineID)
             ? "You name conversations. Use only supplied text. Never call tools. Return only the requested JSON object."
             : nil
         let response = try await runner.run(
             prompt: SmartPaneTitle.prompt(context: context), machineID: pane.machineID,
-            mode: .ask, model: settings.quickChatModel.isEmpty ? nil : settings.quickChatModel,
-            thinkingLevel: "low", systemPrompt: charter, deadline: .seconds(60),
+            mode: .ask, model: resolution.modelID,
+            thinkingLevel: resolution.thinkingLevel.rawValue,
+            systemPrompt: charter, deadline: .seconds(60),
             appModel: self, onProgress: { _ in }
         )
         try Task.checkCancellation()
         guard let current = self.pane(id: pane.id),
-              current.piSemantic?.sessionID == pane.piSemantic?.sessionID,
-              current.displayTitle == pane.displayTitle,
-              paneRenameRevisions[pane.id] == revision else {
-            throw AgentControlCommandError.conflict("The chat changed while Smart Rename was running.")
+              identity.matches(
+                  current,
+                  connectionGeneration: connectionGeneration,
+                  renameRevision: paneRenameRevisions[pane.id]
+              ) else {
+            throw AgentControlCommandError.conflict("The pane changed while Smart Rename was running.")
         }
         guard let title = SmartPaneTitle.parse(response) else {
             throw AgentControlCommandError.failed("Smart Rename did not return a valid short title.")
@@ -1920,7 +2014,11 @@ final class HerdrAppModel {
         // with the server's title rather than guessing that SSE will arrive.
         do {
             guard generation == connectionGeneration else {
-                return .renamedNeedsRefresh(title: title, message: "The companion connection changed after the rename.")
+                return .renamedNeedsRefresh(
+                    title: title,
+                    message: "The companion connection changed after the rename.",
+                    notice: resolution.notice
+                )
             }
             try await refresh(
                 machineID: current.machineID,
@@ -1930,21 +2028,151 @@ final class HerdrAppModel {
             )
             guard generation == connectionGeneration,
                   let refreshed = self.pane(id: current.id) else {
-                return .renamedNeedsRefresh(title: title, message: "The renamed pane was not present in the refreshed workspace state.")
+                return .renamedNeedsRefresh(
+                    title: title,
+                    message: "The renamed pane was not present in the refreshed workspace state.",
+                    notice: resolution.notice
+                )
             }
-            return .refreshed(title: refreshed.displayTitle)
+            return .refreshed(title: refreshed.displayTitle, notice: resolution.notice)
         } catch {
-            return .renamedNeedsRefresh(title: title, message: error.localizedDescription)
+            return .renamedNeedsRefresh(title: title, message: error.localizedDescription, notice: resolution.notice)
+        }
+    }
+
+    /// One shared context path for pane and color-group naming. Prefers a
+    /// matching semantic conversation (with an acknowledged submission merged
+    /// in while the snapshot lags), falls back to bounded shell output for
+    /// nonsemantic panes, and finally uses pane/tab/workspace metadata. Returns
+    /// nil only when the target genuinely has no readable context.
+    func smartRenameContext(for pane: HerdrPane) async throws -> String? {
+        let acceptedPrompt = acceptedPrompt(for: pane)
+        let conversation: String
+        if let expectedSessionID = pane.piSemantic?.sessionID {
+            conversation = try await smartRenameConversationContext(
+                for: pane,
+                expectedSessionID: expectedSessionID
+            )
+        } else {
+            conversation = try await smartRenameTerminalContext(for: pane)
+        }
+        let merged = SmartPaneTitle.mergedContext(conversation: conversation, acceptedPrompt: acceptedPrompt)
+        if !merged.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return merged
+        }
+        guard let metadata = smartRenameMetadataContext(for: pane) else { return nil }
+        return SmartPaneTitle.mergedContext(conversation: metadata, acceptedPrompt: acceptedPrompt)
+    }
+
+    private func smartRenameConversationContext(
+        for pane: HerdrPane,
+        expectedSessionID: String
+    ) async throws -> String {
+        do {
+            let snapshot = try await fetchPiConversationSnapshot(for: pane)
+            guard snapshot.available else { return "" }
+            // A snapshot that names a different session is another
+            // conversation: reject it rather than blending its transcript into
+            // this pane's title.
+            if let snapshotSessionID = SmartPaneTitle.sessionID(from: snapshot),
+               snapshotSessionID != expectedSessionID {
+                return ""
+            }
+            return SmartPaneTitle.context(from: snapshot)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // A snapshot that is not available yet falls back to the accepted
+            // prompt and metadata.
+            return ""
+        }
+    }
+
+    private func smartRenameTerminalContext(for pane: HerdrPane) async throws -> String {
+        do {
+            let output = try await fetchOutput(for: pane)
+            return SmartPaneTitle.terminalContext(from: output)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return ""
+        }
+    }
+
+    private func smartRenameMetadataContext(for pane: HerdrPane) -> String? {
+        let workspace = workspace(containing: pane)
+        let tab = workspace?.tabs.first { $0.id == pane.scopedTabID }
+        return SmartPaneTitle.metadataContext(
+            paneLabel: pane.label,
+            paneTitle: pane.title,
+            terminalTitle: pane.terminalTitleStripped,
+            sessionTitle: pane.sessionTitle,
+            workspaceLabel: workspace?.label,
+            tabLabel: tab?.label,
+            workingDirectory: pane.displayPath
+        )
+    }
+
+    /// Remember an acknowledged submission so Smart Rename can use it before
+    /// the semantic snapshot catches up. Only called after the server accepted
+    /// the prompt; unsent drafts and failed submissions never reach here.
+    private func recordAcceptedPrompt(_ text: String, for pane: HerdrPane, generation: Int) {
+        let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty, generation == connectionGeneration,
+              let current = self.pane(id: pane.id),
+              current.terminalID == pane.terminalID,
+              current.workspaceID == pane.workspaceID,
+              current.tabID == pane.tabID,
+              current.piSemantic?.sessionID == pane.piSemantic?.sessionID else { return }
+        pruneAcceptedPrompts()
+        let record = AcceptedPromptRecord(
+            machineID: current.machineID,
+            scopedPaneID: current.id,
+            terminalID: current.terminalID,
+            workspaceID: current.workspaceID,
+            tabID: current.tabID,
+            sessionID: current.piSemantic?.sessionID,
+            connectionGeneration: generation,
+            text: String(prompt.prefix(Self.maxAcceptedPromptCharacters))
+        )
+        acceptedPrompts.removeAll {
+            $0.scopedPaneID == record.scopedPaneID && $0.sessionID == record.sessionID
+        }
+        acceptedPrompts.append(record)
+        if acceptedPrompts.count > Self.maxAcceptedPromptRecords {
+            acceptedPrompts.removeFirst(acceptedPrompts.count - Self.maxAcceptedPromptRecords)
+        }
+    }
+
+    private func acceptedPrompt(for pane: HerdrPane) -> String? {
+        pruneAcceptedPrompts()
+        return acceptedPrompts.last { record in
+            record.connectionGeneration == connectionGeneration
+                && record.machineID == pane.machineID
+                && record.scopedPaneID == pane.id
+                && record.terminalID == pane.terminalID
+                && record.workspaceID == pane.workspaceID
+                && record.tabID == pane.tabID
+                && record.sessionID == pane.piSemantic?.sessionID
+        }?.text
+    }
+
+    private func pruneAcceptedPrompts() {
+        acceptedPrompts.removeAll { record in
+            record.connectionGeneration != connectionGeneration
+                || self.pane(id: record.scopedPaneID) == nil
         }
     }
 
     /// Name the shared color label, never the underlying tabs or conversations.
+    /// Sampling is deterministic and tab-fair, and the naming ask runs on the
+    /// machine of the first successfully sampled controllable pane.
     func smartRenameChatColor(_ color: ChatTabColor, runner: any HerdrNoteAIRunner = HerdrLiveNoteAIRunner()) async {
         let panes = workspaces.flatMap(\.panes)
             .filter { chatTabColors.color(for: $0.scopedTabID) == color }
             .sorted { $0.id < $1.id }
-        let readable = panes.filter { $0.piSemantic?.sessionID != nil && canControl(machineID: $0.machineID) }
-        guard !readable.isEmpty, chatTabColors.beginSmartRename(color) else { return }
+        let controllable = panes.filter { canControl(machineID: $0.machineID) }
+        guard !controllable.isEmpty, chatTabColors.beginSmartRename(color) else { return }
         defer { chatTabColors.endSmartRename(color) }
         let revision = chatTabColors.revision(for: color)
         toastMessage = "Finding a label for \(chatTabColors.label(for: color))…"
@@ -1954,35 +2182,40 @@ final class HerdrAppModel {
                 let tab = workspace?.tabs.first { $0.id == pane.scopedTabID }
                 return "Tab: \((tab?.label ?? "Untitled").prefix(80)); Chat: \(pane.displayTitle.prefix(80))"
             }.joined(separator: "\n")
-            // Give each tab a turn before taking extra panes from a single tab.
+            // Give each tab a turn before taking extra panes from a single tab,
+            // and keep the sample order deterministic for reproducible routing.
             var seenTabs: Set<String> = []
-            let representatives = readable.filter { seenTabs.insert($0.scopedTabID).inserted }
-            let extra = readable.filter { pane in !representatives.contains(where: { $0.id == pane.id }) }
+            let representatives = controllable.filter { seenTabs.insert($0.scopedTabID).inserted }
+            let extra = controllable.filter { pane in !representatives.contains(where: { $0.id == pane.id }) }
             var loaded: [HerdrPane] = []
             for pane in (representatives + extra).prefix(6) {
                 try Task.checkCancellation()
                 do {
-                    let snapshot = try await fetchPiConversationSnapshot(for: pane)
-                    let text = SmartChatColorTitle.conversationContext(from: snapshot)
-                    if snapshot.available, !text.isEmpty {
-                        context += "\nChat \(pane.displayTitle.prefix(80)):\n\(text)"
-                        loaded.append(pane)
-                    }
+                    guard let text = try await smartRenameContext(for: pane), !text.isEmpty else { continue }
+                    context += "\nChat \(pane.displayTitle.prefix(80)):\n\(SmartChatColorTitle.compact(text))"
+                    loaded.append(pane)
                 } catch is CancellationError { throw CancellationError() }
                 catch { continue } // One unavailable sibling must not hide the others.
             }
             guard let source = loaded.first else {
-                toastMessage = "This color group has no readable Pi conversation to name yet."
+                toastMessage = "This color group has no readable context to name yet."
                 return
             }
-            let settings = AgentModelSettings.load(from: userDefaults)
+            // The naming ask executes on the sampled pane's machine, not the
+            // primary/selected catalog machine.
+            let resolution = try await SmartRenameModelRouting.resolve(
+                settings: AgentModelSettings.load(from: userDefaults),
+                executionMachineID: source.machineID,
+                appModel: self
+            )
             let charter = await supportsPromptOverrides(machineID: source.machineID)
                 ? "You name chat groups. Use only supplied text. Never call tools. Return only the requested JSON object."
                 : nil
             let response = try await runner.run(
                 prompt: SmartChatColorTitle.prompt(context: context), machineID: source.machineID,
-                mode: .ask, model: settings.quickChatModel.isEmpty ? nil : settings.quickChatModel,
-                thinkingLevel: "low", systemPrompt: charter, deadline: .seconds(60),
+                mode: .ask, model: resolution.modelID,
+                thinkingLevel: resolution.thinkingLevel.rawValue,
+                systemPrompt: charter, deadline: .seconds(60),
                 appModel: self, onProgress: { _ in }
             )
             try Task.checkCancellation()
@@ -1990,8 +2223,12 @@ final class HerdrAppModel {
                 .filter { chatTabColors.color(for: $0.scopedTabID) == color }.map(\.id))
             guard chatTabColors.revision(for: color) == revision,
                   currentIDs == Set(panes.map(\.id)),
-                  loaded.allSatisfy({ old in
-                      pane(id: old.id)?.piSemantic?.sessionID == old.piSemantic?.sessionID
+                  loaded.allSatisfy({ entry in
+                      guard let current = pane(id: entry.id) else { return false }
+                      return current.terminalID == entry.terminalID
+                          && current.piSemantic?.sessionID == entry.piSemantic?.sessionID
+                          && current.label == entry.label
+                          && current.title == entry.title
                   }) else {
                 toastMessage = "Color group changed while naming it. Your changes were kept."
                 return
@@ -2001,7 +2238,7 @@ final class HerdrAppModel {
                 return
             }
             chatTabColors.rename(color, to: title)
-            toastMessage = "Color label renamed"
+            toastMessage = resolution.notice.map { "Color label renamed. \($0)" } ?? "Color label renamed"
         } catch is CancellationError {
             // Keep the previous label on cancellation.
         } catch {

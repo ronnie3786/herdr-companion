@@ -50,6 +50,26 @@ struct AgentControlSmartRenameTests {
         #expect(fixture.model.toastMessage?.hasPrefix("Smart Rename failed") == false)
     }
 
+    @Test("A fallback model notice is surfaced without losing the rename result")
+    func fallbackNoticeIsSurfaced() async throws {
+        let fixture = try makeFixture(refreshFails: false)
+        defer {
+            fixture.defaults.removePersistentDomain(forName: fixture.suite)
+            AgentControlSmartRenameURLProtocol.reset()
+        }
+        fixture.defaults.set("beta/beta-only", forKey: AgentModelSettings.quickChatModelKey)
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Synthetic notice title"}"#)
+
+        await fixture.model.smartRename(fixture.pane, runner: runner)
+
+        let call = try #require(runner.calls.first)
+        #expect(call.model == "synthetic/naming")
+        #expect(fixture.model.pane(id: fixture.pane.id)?.displayTitle == "Synthetic notice title")
+        #expect(fixture.model.toastMessage?.contains("Pane renamed") == true)
+        #expect(fixture.model.toastMessage?.contains("beta/beta-only") == true)
+    }
+
     private func makeFixture(refreshFails: Bool) throws -> (
         model: HerdrAppModel,
         pane: HerdrPane,
@@ -149,7 +169,9 @@ private final class AgentControlSmartRenameURLProtocol: URLProtocol, @unchecked 
         let method = request.httpMethod ?? "GET"
         let response: (status: Int, body: String)
         if path.hasSuffix("/api/v1/panes/p1/pi/snapshot") {
-            response = (200, #"{"available":true,"entries":[{"type":"message","id":"a","message":{"role":"user","content":[{"type":"text","text":"Rename this synthetic conversation"}]}}]}"#)
+            response = (200, #"{"available":true,"session":{"id":"synthetic-session"},"entries":[{"type":"message","id":"a","message":{"role":"user","content":[{"type":"text","text":"Rename this synthetic conversation"}]}}]}"#)
+        } else if path == "/api/v1/agent-runs/models" {
+            response = (200, #"{"ok":true,"models":[{"provider":"synthetic","id":"naming","name":"Synthetic Naming","reasoning":true}],"default":{"provider":"synthetic","id":"naming","name":"Synthetic Naming"}}"#)
         } else if method == "PATCH", path.hasSuffix("/api/v1/panes/p1") {
             Self.state.withLock { $0.renameCount += 1 }
             response = (200, #"{"ok":true}"#)

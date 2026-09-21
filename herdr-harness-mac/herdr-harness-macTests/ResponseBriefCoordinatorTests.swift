@@ -134,7 +134,7 @@ struct ResponseBriefCoordinatorTests {
         var cancelContinuation: AsyncStream<String>.Continuation?
         let didCancel = AsyncStream<String> { cancelContinuation = $0 }
         let transport = ResponseBriefTransport(
-            capabilities: { _ in AssistantCapabilities(profiles: ["response-brief-v1"]) },
+            capabilities: { _ in fixture.capabilities() },
             models: { _ in AgentModelCatalogResponse(ok: true, models: [fixture.briefModel], defaultModel: nil) },
             fetchSnapshot: { _ in throw APIError.invalidResponse },
             start: { _, _ in
@@ -276,7 +276,7 @@ struct ResponseBriefCoordinatorTests {
         let source = fixture.source(responseID: "answer-model", text: "line one\nline two")
         var starts = 0
         let transport = ResponseBriefTransport(
-            capabilities: { _ in AssistantCapabilities(profiles: ["response-brief-v1"]) },
+            capabilities: { _ in fixture.capabilities() },
             models: { _ in AgentModelCatalogResponse(ok: true, models: [], defaultModel: nil) },
             fetchSnapshot: { _ in throw APIError.invalidResponse },
             start: { _, _ in starts += 1; return fixture.run(status: .completed, response: fixture.validJSON) },
@@ -357,7 +357,7 @@ struct ResponseBriefCoordinatorTests {
         var starts = 0
         var cancellations = 0
         let transport = ResponseBriefTransport(
-            capabilities: { _ in AssistantCapabilities(profiles: ["response-brief-v1"]) },
+            capabilities: { _ in fixture.capabilities() },
             models: { _ in AgentModelCatalogResponse(ok: true, models: [fixture.briefModel], defaultModel: nil) },
             fetchSnapshot: { _ in throw APIError.invalidResponse },
             start: { _, _ in
@@ -388,8 +388,8 @@ struct ResponseBriefCoordinatorTests {
         #expect(!message.contains("was cancelled"))
     }
 
-    @Test("A short source advances the baseline without starting a model request, including after relaunch")
-    func shortSourceSkipsGenerationAcrossRelaunch() async throws {
+    @Test("A short completed source generates once and does not repeat across relaunch")
+    func shortSourceGeneratesOnceAcrossRelaunch() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
         let source = fixture.source(responseID: "answer-short", text: "Already concise.", expandIfShort: false)
@@ -407,8 +407,9 @@ struct ResponseBriefCoordinatorTests {
         await first.observeSources([source], transport: transport)
         await first.waitForIdleForTesting()
 
-        #expect(starts == 0)
-        #expect(first.state(for: source.chat).phase == .alreadyConcise)
+        #expect(starts == 1)
+        #expect(first.state(for: source.chat).phase == .idle)
+        #expect(first.briefs(for: source.chat).count == 1)
 
         let restored = ResponseBriefCoordinator(
             defaults: fixture.defaults,
@@ -417,8 +418,8 @@ struct ResponseBriefCoordinatorTests {
         await restored.observeSources([source], transport: transport)
         await restored.waitForIdleForTesting()
 
-        #expect(starts == 0)
-        #expect(restored.state(for: source.chat).phase == .alreadyConcise)
+        #expect(starts == 1)
+        #expect(restored.briefs(for: source.chat).count == 1)
     }
 
     @Test("An accepted short-source receipt is reconciled instead of stranded")
@@ -454,7 +455,8 @@ struct ResponseBriefCoordinatorTests {
 
         #expect(starts == 0)
         #expect(fetches == 1)
-        #expect(coordinator.state(for: source.chat).phase == .alreadyConcise)
+        #expect(coordinator.state(for: source.chat).phase == .idle)
+        #expect(coordinator.briefs(for: source.chat).count == 1)
         let stored = try await fixture.persistence.snapshot()
         #expect(stored.receipts.isEmpty)
     }
@@ -578,8 +580,8 @@ struct ResponseBriefCoordinatorTests {
         #expect(stored.receipts.first?.status == .settled)
     }
 
-    @Test("Regenerating a historical short source neither dispatches nor replaces the actual latest source")
-    func historicalShortRegenerationPreservesLatestSource() async throws {
+    @Test("Regenerating a historical short source creates a deliberate brief for that exact source")
+    func historicalShortRegenerationTargetsThatSource() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
         let coordinator = fixture.coordinator()
@@ -589,10 +591,10 @@ struct ResponseBriefCoordinatorTests {
             text: "Concise historical answer.",
             expandIfShort: false
         )
-        var starts = 0
+        var starts: [String] = []
         let transport = fixture.transport(
-            start: { _ in
-                starts += 1
+            start: { request in
+                starts.append(request.context.source.instanceId)
                 return fixture.run(status: .completed, response: fixture.validJSON)
             },
             fetch: { _ in fixture.run(status: .completed, response: fixture.validJSON) }
@@ -604,10 +606,12 @@ struct ResponseBriefCoordinatorTests {
         await coordinator.regenerate(historicalShort, transport: transport)
         await coordinator.waitForIdleForTesting()
 
-        #expect(starts == 1)
+        #expect(starts == [latest.responseID, historicalShort.responseID])
         let state = coordinator.state(for: latest.chat)
-        #expect(state.sourceID == latest.id)
+        #expect(state.sourceID == historicalShort.id)
         #expect(state.phase == .idle)
+        #expect(coordinator.briefs(for: latest.chat).map(\.source.responseID).contains(historicalShort.responseID))
+        #expect(!coordinator.hasNonconformingBrief(for: historicalShort))
     }
 
     @Test("Regenerating a short source still reconciles its accepted receipt")
@@ -647,6 +651,8 @@ struct ResponseBriefCoordinatorTests {
 
         #expect(starts == 0)
         #expect(fetches == 1)
+        #expect(coordinator.state(for: source.chat).phase == .idle)
+        #expect(coordinator.briefs(for: source.chat).count == 1)
         let stored = try await fixture.persistence.snapshot()
         #expect(stored.receipts.isEmpty)
     }
@@ -747,7 +753,6 @@ struct ResponseBriefCoordinatorTests {
         #expect(coordinator.briefs(for: source.chat).count == 1)
         #expect(coordinator.briefs(for: source.chat).first?.brief == verbose)
         #expect(coordinator.hasNonconformingBrief(for: source))
-
         await coordinator.regenerate(source, transport: transport)
         await coordinator.waitForIdleForTesting()
 
@@ -873,12 +878,25 @@ private final class Fixture {
         fetch: @escaping (String) async throws -> HeadlessAgentRun
     ) -> ResponseBriefTransport {
         ResponseBriefTransport(
-            capabilities: { _ in AssistantCapabilities(profiles: ["response-brief-v1"]) },
+            capabilities: { _ in self.capabilities() },
             models: { _ in AgentModelCatalogResponse(ok: true, models: [self.briefModel], defaultModel: nil) },
             fetchSnapshot: { _ in throw APIError.invalidResponse },
             start: { _, request in try await start(request) },
             fetch: { _, id in try await fetch(id) },
             cancel: { _, id in self.run(status: .cancelled, response: nil, error: "cancelled \(id)") }
+        )
+    }
+
+    func capabilities(advertisesLengthPolicy: Bool = true) -> AssistantCapabilities {
+        AssistantCapabilities(
+            profiles: ["response-brief-v1"],
+            responseBriefs: advertisesLengthPolicy
+                ? .init(
+                    version: 1,
+                    lengthPolicyVersion: ResponseBriefLength.policyVersion,
+                    lengthOptions: ResponseBriefLength.options
+                )
+                : nil
         )
     }
 

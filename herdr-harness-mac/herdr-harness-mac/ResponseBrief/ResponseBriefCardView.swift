@@ -7,13 +7,13 @@ struct ResponseBriefCardView: View {
     static func defaultVisibleGeneratedStrings(
         for record: ResponseBriefPersistence.Record
     ) -> [String] {
-        guard record.brief.conformsToConcisionPolicy(source: record.source.text) else { return [] }
+        guard record.briefConformsToCapturedPolicy else { return [] }
         return record.brief.visibleGeneratedStrings
     }
 
     @ViewBuilder
     var body: some View {
-        if record.brief.conformsToConcisionPolicy(source: record.source.text) {
+        if record.briefConformsToCapturedPolicy {
             VStack(alignment: .leading, spacing: 12) {
                 Text(record.brief.summary)
                     .herdrFont(.body)
@@ -77,5 +77,17 @@ private extension ResponseBrief.Detail.Kind {
         case .code: "chevron.left.forwardslash.chevron.right"
         case .detail: "doc.text.magnifyingglass"
         }
+    }
+}
+
+extension ResponseBriefPersistence.Record {
+    /// Whether the saved brief satisfies the policy it was generated under.
+    /// Legacy records without captured length metadata fall back to the
+    /// predecessor policy, never to whichever length is selected later.
+    var briefConformsToCapturedPolicy: Bool {
+        if let policy = capturedConcisionPolicy {
+            return policy.accepts(brief)
+        }
+        return brief.conformsToConcisionPolicy(source: source.text)
     }
 }

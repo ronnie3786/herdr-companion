@@ -3,7 +3,6 @@ import SwiftUI
 struct ResponseBriefRailView: View {
     enum SelectedRecordPresentation: Equatable {
         case card
-        case alreadyConcise
         case regenerateNeeded
     }
 
@@ -15,7 +14,10 @@ struct ResponseBriefRailView: View {
             return records.max { $0.createdAt < $1.createdAt }
         }
         return records
-            .filter { $0.source.id == source.id }
+            .filter {
+                $0.source.id == source.id
+                    || ResponseBriefIdentity.match($0.source, source) != nil
+            }
             .max { $0.createdAt < $1.createdAt }
     }
 
@@ -42,17 +44,12 @@ struct ResponseBriefRailView: View {
     static func selectedRecordPresentation(
         for record: ResponseBriefPersistence.Record
     ) -> SelectedRecordPresentation {
-        guard ResponseBriefConcisionPolicy(source: record.source.text).metrics.shouldGenerate else {
-            return .alreadyConcise
-        }
-        return record.brief.conformsToConcisionPolicy(source: record.source.text)
-            ? .card
-            : .regenerateNeeded
+        record.briefConformsToCapturedPolicy ? .card : .regenerateNeeded
     }
 
     static func stateNeedsAttention(_ state: ResponseBriefCoordinator.ChatState) -> Bool {
         switch state.phase {
-        case .idle, .alreadyConcise:
+        case .idle:
             false
         default:
             true
@@ -91,6 +88,7 @@ struct ResponseBriefRailView: View {
     @State private var detailSelection: ResponseBriefDetailSelection?
     @State private var cacheError: String?
     @State private var confirmsCacheClear = false
+    @State private var confirmsBaselineRestart = false
     @State private var showsSourceInformation = false
 
     var body: some View {
@@ -134,6 +132,16 @@ struct ResponseBriefRailView: View {
         } message: {
             Text("This removes locally stored briefs and originals. It does not affect the source Pi chats.")
         }
+        .confirmationDialog(
+            "Restart briefs from the latest response?",
+            isPresented: $confirmsBaselineRestart,
+            titleVisibility: .visible
+        ) {
+            Button("Restart from latest", action: restartFromLatest)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Older completed responses that could not be matched will be skipped and will not be generated. Briefs resume from the latest completed response.")
+        }
         .sheet(item: $detailSelection, content: ResponseBriefDetailView.init)
         .accessibilityIdentifier("response-brief-rail")
     }
@@ -150,7 +158,7 @@ struct ResponseBriefRailView: View {
             Spacer()
             Menu("Brief actions", systemImage: "ellipsis.circle") {
                 if let latestSource,
-                   ResponseBriefConcisionPolicy(source: latestSource.text).metrics.shouldGenerate {
+                   ResponseBriefConcisionPolicy(source: latestSource.text, length: coordinator.length).metrics.shouldGenerate {
                     Button("Regenerate latest response", systemImage: "arrow.clockwise") {
                         Task { await coordinator.regenerate(latestSource, transport: transport) }
                     }
@@ -217,6 +225,8 @@ struct ResponseBriefRailView: View {
             }
             .disabled(chat == nil)
 
+            lengthMenu
+
             if let chat, !coordinator.isEnabled(chat) {
                 Text("Choose a model before enabling; changes apply to this experiment.")
                     .herdrFont(.caption)
@@ -276,8 +286,6 @@ struct ResponseBriefRailView: View {
                     ScrollView {
                         ResponseBriefCardView(record: record, openDetail: openDetail)
                     }
-                case .alreadyConcise:
-                    alreadyConciseLabel
                 case .regenerateNeeded:
                     regenerateControl(for: record.source)
                 }
@@ -310,15 +318,9 @@ struct ResponseBriefRailView: View {
                 .herdrFont(.callout)
             }
             .accessibilityLabel("Creating response brief")
-        case .alreadyConcise:
-            alreadyConciseLabel
         case .regenerateNeeded:
             if let source = source(for: state) {
-                if ResponseBriefConcisionPolicy(source: source.text).metrics.shouldGenerate {
-                    regenerateControl(for: source)
-                } else {
-                    alreadyConciseLabel
-                }
+                regenerateControl(for: source)
             } else {
                 statusLabel(
                     "This brief needs regeneration.",
@@ -332,6 +334,23 @@ struct ResponseBriefRailView: View {
                 systemImage: "arrow.down.circle",
                 color: HerdrTheme.warning
             )
+        case let .upgradeRequired(message):
+            VStack(alignment: .leading, spacing: 8) {
+                statusLabel(message, systemImage: "arrow.down.circle", color: HerdrTheme.warning)
+                if let source = source(for: state) {
+                    Button("Retry after updating", systemImage: "arrow.clockwise") {
+                        Task { await coordinator.retry(source, transport: transport) }
+                    }
+                }
+            }
+        case let .baselineUnmatched(message):
+            VStack(alignment: .leading, spacing: 8) {
+                statusLabel(message, systemImage: "exclamationmark.triangle", color: HerdrTheme.alert)
+                Button("Restart briefs from latest response", systemImage: "arrow.triangle.2.circlepath") {
+                    confirmsBaselineRestart = true
+                }
+                .accessibilityHint("Starts a new saved baseline at the latest completed response. Unmatched older responses will not be generated.")
+            }
         case .oversized:
             statusLabel(
                 "This response exceeds the bounded request; use the full original.",
@@ -365,18 +384,10 @@ struct ResponseBriefRailView: View {
         }
     }
 
-    private var alreadyConciseLabel: some View {
-        statusLabel(
-            "The original response is already concise.",
-            systemImage: "checkmark.circle",
-            color: HerdrTheme.muted
-        )
-    }
-
     private func regenerateControl(for source: ResponseBriefSource) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             statusLabel(
-                "This saved brief needs a shorter replacement.",
+                "Regenerate this response with the current length and model.",
                 systemImage: "arrow.clockwise.circle",
                 color: HerdrTheme.warning
             )
@@ -445,6 +456,29 @@ struct ResponseBriefRailView: View {
             Label(selectedThinkingLabel, systemImage: "brain")
         }
         .help("Brief thinking level — independent of this chat’s setting")
+    }
+
+    /// The app-wide brief length control, distinct from Thinking. Choosing a
+    /// value regenerates the currently selected source (or the latest).
+    private var lengthMenu: some View {
+        Menu {
+            ForEach(ResponseBriefLength.allCases, id: \.rawValue) { option in
+                Button {
+                    changeLength(to: option)
+                } label: {
+                    if coordinator.length == option {
+                        Label(option.displayName, systemImage: "checkmark")
+                    } else {
+                        Text(option.displayName)
+                    }
+                }
+            }
+        } label: {
+            Label("Length · \(coordinator.length.displayName)", systemImage: "text.alignleft")
+        }
+        .help("App-wide brief length. Changing it regenerates the current brief.")
+        .accessibilityLabel("Brief length")
+        .accessibilityIdentifier("response-brief-length")
     }
 
     private var recordPicker: some View {
@@ -525,10 +559,7 @@ struct ResponseBriefRailView: View {
         guard let latestSource, let selectedRecord,
               selectedRecord.source.id != latestSource.id
         else { return nil }
-        if ResponseBriefConcisionPolicy(source: latestSource.text).metrics.shouldGenerate {
-            return "Pinned to a prior response; the latest response needs its own concise brief."
-        }
-        return "Pinned to a prior response; the latest original is already concise."
+        return "Pinned to a prior response; the latest response is separate from this selection."
     }
 
     private var sourceInformationText: String {
@@ -539,12 +570,13 @@ struct ResponseBriefRailView: View {
 
     private var contextOmissionNote: String? {
         guard let latestSource,
-              ResponseBriefConcisionPolicy(source: latestSource.text).metrics.shouldGenerate,
+              ResponseBriefConcisionPolicy(source: latestSource.text, length: coordinator.length).metrics.shouldGenerate,
               let request = try? ResponseBriefRequestBuilder.request(
                 for: latestSource,
                 model: coordinator.selectedModel,
                 thinkingLevel: coordinator.thinkingLevel,
-                clientRequestID: "preview-context-request"
+                clientRequestID: "preview-context-request",
+                length: coordinator.length
               )
         else { return nil }
         return ResponseBriefRequestBuilder.optionalContextOmissionNote(
@@ -585,11 +617,37 @@ struct ResponseBriefRailView: View {
     private func selectLatestIfNeeded() {
         if followsLatest {
             selectedRecordID = Self.latestRecord(in: chatRecords, for: latestSource)?.id
-        } else if selectedRecordID == nil
-                    || !chatRecords.contains(where: { $0.id == selectedRecordID }) {
+        } else if let current = selectedRecordID,
+                  let pinned = chatRecords.first(where: { $0.id == current }) {
+            // A deliberate replacement for the pinned source becomes the
+            // visible selection without switching the pin to the latest.
+            if let newest = Self.latestRecord(in: chatRecords, for: pinned.source),
+               newest.id != current {
+                selectedRecordID = newest.id
+            }
+        } else {
             selectedRecordID = nil
             followsLatest = true
         }
+    }
+
+    /// Targets the currently selected source, falling back to the latest
+    /// completed source, through one coordinator action.
+    private func changeLength(to option: ResponseBriefLength) {
+        let target = selectedRecord?.source ?? latestSource
+        Task {
+            await coordinator.changeLength(
+                option,
+                chat: chat,
+                selectedSource: target,
+                transport: transport
+            )
+        }
+    }
+
+    private func restartFromLatest() {
+        guard let chat else { return }
+        Task { await coordinator.restartBriefsFromLatest(chat, transport: transport) }
     }
 
     private func recordPickerLabel(_ record: ResponseBriefPersistence.Record) -> String {

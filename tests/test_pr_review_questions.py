@@ -56,7 +56,10 @@ class PRReviewQuestionTests(unittest.TestCase):
         self.assertNotIn("--extension", capture["argv"])
         self.assertIn("--no-approve", capture["argv"])
         self.assertEqual(capture["cwd"], str(self.checkout.resolve()))
-        self.assertIn("reference only", capture["argv"][capture["argv"].index("--append-system-prompt") + 1])
+        charter = capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
+        self.assertIn("reference only", charter)
+        self.assertNotIn("herdr-companion-awareness", charter)
+        self.assertEqual(capture["herdrAgentRunProfile"], "pr-review-question-v1")
 
         follow = copy.deepcopy(self.request)
         follow.update({

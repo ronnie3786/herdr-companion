@@ -24,7 +24,7 @@ def main():
         env = {"HOME": directory, "PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "en_US.UTF-8", "PYTHONUNBUFFERED": "1"}
         def run(code, *arguments):
             return subprocess.check_output([python, "-I", "-c", code, *arguments], cwd=root, env=env, stderr=subprocess.STDOUT, timeout=30).decode()
-        resources = json.loads(run("import json; import herdr_harness; from herdr_harness.resources import pi_extension_path, configuration_example; from pathlib import Path; p=Path(herdr_harness.__file__).parent; print(json.dumps({'installed': 'site-packages' in str(p), 'pi': (pi_extension_path({})/'extensions/send-to-herdr.ts').is_file(), 'sample': configuration_example().is_file(), 'web': (p/'static/herdr-web/index.html').is_file()}))"))
+        resources = json.loads(run("import json; import herdr_harness; from herdr_harness.resources import pi_extension_path, configuration_example; from herdr_harness.agent_docs import docs_root; from pathlib import Path; p=Path(herdr_harness.__file__).parent; d=docs_root(); print(json.dumps({'installed': 'site-packages' in str(p), 'pi': (pi_extension_path({})/'extensions/send-to-herdr.ts').is_file(), 'awareness': (pi_extension_path({})/'extensions/companion-awareness.ts').is_file(), 'guides': all((d/name).is_file() for name in ('overview.md','control.md','first-mate.md','api.md')), 'sample': configuration_example().is_file(), 'web': (p/'static/herdr-web/index.html').is_file()}))"))
         assert all(resources.values()), resources
         lineage = run("from herdr_harness.resources import pi_extension_path; p=pi_extension_path({}); assert (p/'lib/session-lineage.ts').is_file(); assert '../lib/session-lineage' in (p/'extensions/pi-semantic-bridge.ts').read_text(); assert (p/'extensions/session-context-discovery.ts').is_file(); print('ok')")
         assert lineage.strip() == "ok"
@@ -32,6 +32,10 @@ def main():
         assert session_context_entry.strip() == "ok"
         pr_review_entry = run("from importlib.metadata import distribution; eps=distribution('herdr-companion').entry_points; assert any(e.name == 'herdr-pr-review' and e.value == 'herdr_harness.commands:pr_review' for e in eps); print('ok')")
         assert pr_review_entry.strip() == "ok"
+        docs_entry = run("from importlib.metadata import distribution; eps=distribution('herdr-companion').entry_points; assert any(e.name == 'herdr-docs' and e.value == 'herdr_harness.agent_docs:main' for e in eps); print('ok')")
+        assert docs_entry.strip() == "ok"
+        docs_cli = json.loads(run("import json, subprocess, sys; from pathlib import Path; cwd=Path.cwd(); empty=not any(cwd.iterdir()); exe=Path(sys.executable).with_name('herdr-docs'); help_text=subprocess.check_output([str(exe),'--help'], cwd=cwd, text=True); listing=subprocess.check_output([str(exe),'list'], cwd=cwd, text=True); topic=subprocess.check_output([str(exe),'read','overview'], cwd=cwd, text=True); first_mate=subprocess.check_output([str(exe),'read','first-mate'], cwd=cwd, text=True); first_mate_path=Path(subprocess.check_output([str(exe),'path','first-mate'], cwd=cwd, text=True).strip()); print(json.dumps({'empty': empty, 'help': 'Read Herdr Companion agent references offline' in help_text, 'topics': len(json.loads(listing)['topics']), 'overview': topic.startswith('# Herdr Companion agent overview'), 'firstMate': first_mate.startswith('# First Mate agent reference'), 'firstMatePath': first_mate_path.is_absolute() and first_mate_path.is_file()}))"))
+        assert all(docs_cli.values()) and docs_cli["topics"] == 4, docs_cli
         first_mate = json.loads(run("""
 import json
 from pathlib import Path
@@ -104,7 +108,7 @@ store.close()
         assert process.returncode == 0, "Installed server returned a nonzero exit status"
         assert not list((root / ".local/share/herdr-companion/connections").glob("*.json"))
         assert token not in log.read_text(), "Server log contains a credential"
-    print("Installed wheel: resources, First Mate runtime/extension, CLI entry points, authenticated API, web assets, isolated state, and clean shutdown passed.")
+    print("Installed wheel: resources and offline guides, First Mate runtime/extension, CLI entry points, authenticated API, web assets, isolated state, and clean shutdown passed.")
 
 
 if __name__ == "__main__":

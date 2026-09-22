@@ -3,7 +3,10 @@
 `herdr-first-mate` is installed with the companion wheel. It uses the same
 private `--config` and `--machine` selection as `herdr-notes` and returns JSON.
 It calls the authenticated First Mate API; it never simulates an agent response.
-The upstream `herdr` terminal CLI remains independent.
+The upstream `herdr` terminal CLI remains independent. Managed First Mate agents
+should use their scoped `fm_*` tools for their own workflow rather than routing
+lifecycle operations through this external CLI. See the offline summary with
+`herdr-docs read first-mate` and [agent awareness](../agent-awareness.md).
 
 ```sh
 herdr-first-mate --config /path/to/config.toml --machine desktop capabilities

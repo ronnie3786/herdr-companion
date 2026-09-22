@@ -120,6 +120,8 @@ class ResponseBriefTests(unittest.TestCase):
         self.assertNotIn(self.request["prompt"], " ".join(argv))
         self.assertNotIn("Sensitive source line one.", " ".join(argv))
         charter = argv[argv.index("--append-system-prompt") + 1]
+        self.assertNotIn("herdr-companion-awareness", charter)
+        self.assertEqual(capture["herdrAgentRunProfile"], response_briefs.PROFILE)
         self.assertIn(response_briefs.OUTPUT_SCHEMA, charter)
         self.assertIn(
             "Concatenate the required Original response parts literally in context order, "

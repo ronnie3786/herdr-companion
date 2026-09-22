@@ -6,14 +6,27 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 const jiti = createJiti(import.meta.url);
 const { FIRST_MATE_EXTENSION_PATH, createFirstMateExtension, spoolRequestId } = await jiti.import("../extensions/first-mate.ts");
+const { COMPANION_AWARENESS_MARKER } = await jiti.import("../lib/companion-awareness.ts");
 
 function fixture(role = "worker", overrides = {}) {
   const root = mkdtempSync(join(tmpdir(), "herdr-first-mate-extension-"));
-  const job = { id: "synthetic-job", kind: role, extension: FIRST_MATE_EXTENSION_PATH, ...overrides };
+  const job = {
+    id: "synthetic-job",
+    kind: role,
+    feature_id: "fmf_synthetic-feature",
+    claim: {id:"fma_synthetic-assignment", generation:3, metadata:{parent_assignment_id:"fma_synthetic-parent"}},
+    extension: FIRST_MATE_EXTENSION_PATH,
+    ...overrides,
+  };
   writeFileSync(join(root, "job.json"), JSON.stringify(job));
   const tools = new Map(), handlers = new Map(), messages = [];
   const pi = { registerTool(t) { tools.set(t.name, t); }, on(name, fn) { handlers.set(name,fn); }, sendUserMessage(...args) { messages.push(args); } };
-  createFirstMateExtension({ HERDR_FIRST_MATE_JOB_DIR: root, HERDR_FIRST_MATE_MANAGED_ROLE: role, HERDR_FIRST_MATE_CONTEXT_TARGET: "150000" })(pi);
+  try {
+    createFirstMateExtension({ HERDR_FIRST_MATE_JOB_DIR: root, HERDR_FIRST_MATE_MANAGED_ROLE: role, HERDR_FIRST_MATE_CONTEXT_TARGET: "150000" })(pi);
+  } catch (error) {
+    rmSync(root,{recursive:true,force:true});
+    throw error;
+  }
   const ctx = { sessionManager: { getSessionId: () => "native-synthetic", getSessionFile: () => join(root,"session.jsonl") }, getContextUsage: () => ({tokens:150001,contextWindow:200000}) };
   return { root, tools, handlers, messages, ctx, cleanup: () => rmSync(root,{recursive:true,force:true}) };
 }
@@ -48,6 +61,59 @@ test("canonical extension identity accepts a symlink spelling of the selected mo
     f.cleanup();
     rmSync(root,{recursive:true,force:true});
   }
+});
+
+test("validated First Mate roles inject exact scoped identity without job-body leakage", () => {
+  for (const role of ["coordinator", "worker", "advisor"]) {
+    const f = fixture(role, {prompt:"PRIVATE full assignment body", cwd:"/private/synthetic/worktree"});
+    try {
+      const result = f.handlers.get("before_agent_start")({systemPrompt:"role charter"});
+      assert.ok(result.systemPrompt.startsWith("role charter\n\n"));
+      assert.match(result.systemPrompt, /Herdr Companion/);
+      assert.match(result.systemPrompt, new RegExp(`role=${role}`));
+      assert.match(result.systemPrompt, /feature=fmf_synthetic-feature/);
+      assert.match(result.systemPrompt, /job=synthetic-job/);
+      assert.match(result.systemPrompt, /fm_delegate/);
+      assert.match(result.systemPrompt, /never unmanaged Pi subprocesses/);
+      assert.match(result.systemPrompt, /yield rather than polling/);
+      assert.match(result.systemPrompt, /external authenticated operator CLI/);
+      assert.match(result.systemPrompt, /agent-docs\/first-mate\.md/);
+      const awareness = result.systemPrompt.slice(result.systemPrompt.indexOf(COMPANION_AWARENESS_MARKER));
+      assert.ok(awareness.trim().split(/\s+/u).length >= 150 && awareness.trim().split(/\s+/u).length <= 220);
+      assert.equal(result.systemPrompt.split(COMPANION_AWARENESS_MARKER).length - 1, 1);
+      assert.doesNotMatch(result.systemPrompt, /PRIVATE full assignment body|private\/synthetic\/worktree/);
+      if (role === "worker") {
+        assert.match(result.systemPrompt, /assignment=fma_synthetic-assignment/);
+        assert.match(result.systemPrompt, /generation=3/);
+        assert.match(result.systemPrompt, /parent-assignment=fma_synthetic-parent/);
+      } else {
+        assert.doesNotMatch(result.systemPrompt, /assignment=fma_synthetic-assignment/);
+      }
+      assert.equal(f.handlers.get("before_agent_start")({systemPrompt:result.systemPrompt}), undefined);
+    } finally { f.cleanup(); }
+  }
+});
+
+test("root worker with explicit null parent keeps tools and awareness without parent identity", () => {
+  const f = fixture("worker", {
+    claim: {id:"fma_synthetic-root", generation:0, metadata:{parent_assignment_id:null}},
+  });
+  try {
+    assert.ok(f.tools.has("fm_status"));
+    assert.ok(f.tools.has("fm_delegate"));
+    const result = f.handlers.get("before_agent_start")({systemPrompt:"worker charter"});
+    assert.match(result.systemPrompt, /role=worker/);
+    assert.match(result.systemPrompt, /assignment=fma_synthetic-root/);
+    assert.match(result.systemPrompt, /generation=0/);
+    assert.doesNotMatch(result.systemPrompt, /parent-assignment=/);
+  } finally { f.cleanup(); }
+});
+
+test("invalid scoped First Mate identity is rejected after extension ownership validation", () => {
+  assert.throws(() => fixture("worker", {feature_id:"bad\nfeature"}), /Invalid First Mate feature identity/);
+  assert.throws(() => fixture("worker", {
+    claim: {id:"fma_synthetic-root", generation:0, metadata:{parent_assignment_id:"bad\nparent"}},
+  }), /Invalid First Mate parent assignment identity/);
 });
 
 test("coordinator exposes evidence and orchestration while normal tools remain unrestricted", () => {

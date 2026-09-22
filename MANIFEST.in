@@ -1,6 +1,7 @@
 include config.example.toml LICENSE THIRD_PARTY_NOTICES.md
 recursive-include pi-semantic-bridge/extensions *.ts
 recursive-include pi-semantic-bridge/lib *.ts
+recursive-include pi-semantic-bridge/agent-docs *.md
 include pi-semantic-bridge/package.json
 recursive-include herdr_harness/static *
 recursive-include herdr_harness/workflows *.json

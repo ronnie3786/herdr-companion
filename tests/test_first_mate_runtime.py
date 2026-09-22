@@ -262,6 +262,9 @@ class FirstMateRuntimeTests(unittest.TestCase):
         self.assertIn('architect review', WORKER_PROMPT)
         self.assertIn('routine code review', WORKER_PROMPT)
         self.assertIn('NEVER re-route', WORKER_PROMPT)
+        self.assertIn('immutable request history', WORKER_PROMPT)
+        self.assertIn('top-level assignment.model_selection from fm_status', WORKER_PROMPT)
+        self.assertIn('Never fill actuals from a', WORKER_PROMPT)
         for flag in ('--tools', '--exclude-tools', '--no-tools', '--no-builtin-tools',
                      '--no-extensions', '--no-skills', '--no-context-files',
                      '--no-prompt-templates'):
@@ -695,6 +698,102 @@ class FirstMateRuntimeTests(unittest.TestCase):
         self.assertEqual(projected['operational']['model_profile'], 'architect')
         self.assertEqual(projected['model_selection']['requested_model'], 'synthetic/architect')
         self.assertIsNone(projected['model_selection']['actual_model'])
+
+    def test_worker_status_exposes_only_validated_live_architect_selection(self):
+        feature = self.feature()
+        self.runtime.environ.update({
+            'HERDR_FIRST_MATE_ARCHITECT_MODEL': 'synthetic/architect',
+            'HERDR_FIRST_MATE_ARCHITECT_THINKING': 'high',
+        })
+        human = self.store.claim_message(feature['id'], self.runtime.owner)
+        self.store.start_visit(feature['id'], 'planning', 'Planning',
+                               'start-live-evidence', 1, human['id'])
+        coordinator = {'feature_id': feature['id'], 'kind': 'coordinator', 'claim': human}
+        assignment = self.runtime._tool(coordinator, 'fm_delegate', {
+            'title': 'Architecture audit', 'role': 'architect',
+            'prompt': 'Audit the implementation architecture', 'model_profile': 'architect',
+            'workspace_mode': 'read_only'}, 'live-evidence-assignment')
+        queued_selection = dict(assignment['metadata']['model_selection'])
+        self.assertIsNone(queued_selection['actual_model'])
+        self.assertIsNone(queued_selection['actual_thinking'])
+
+        claim = self.store.claim_assignment(assignment['id'], self.runtime.owner)
+        worker_input = self.runtime._worker_input(feature, claim)
+        self.assertIn('immutable dispatch-request history', worker_input)
+        self.assertIn('not live observed startup evidence', worker_input)
+        job = self.runtime._new_job(feature, kind='worker', prompt=worker_input, claim=claim)
+        native_id = 'native-live-architect'
+        self.runtime._bind(job, native_id, job['session_file'])
+        Path(job['session_file']).write_text(json.dumps({
+            'type': 'session', 'id': native_id, 'version': 3,
+            'cwd': str(self.cwd), 'timestamp': '2026-01-01T00:00:00Z'}) + '\n')
+
+        # A requested pin and bound session are not observations by themselves.
+        missing = self.runtime._tool(job, 'fm_status', {}, 'status-before-observation')
+        missing_selection = next(item for item in missing['assignments']
+                                 if item['id'] == assignment['id'])['model_selection']
+        self.assertEqual(missing_selection['requested_model'], 'synthetic/architect')
+        self.assertIsNone(missing_selection['actual_model'])
+        self.assertIsNone(missing_selection['actual_thinking'])
+
+        initial_state = {
+            'type': 'response', 'command': 'get_state', 'id': 'initial-state',
+            'success': True, 'time': '2026-01-01T00:00:01Z',
+            'data': {
+                'sessionId': native_id, 'sessionFile': job['session_file'],
+                'model': {'provider': 'synthetic', 'id': 'architect'},
+                'thinkingLevel': 'high',
+            },
+        }
+        (self.runtime._job_dir(job) / 'events.jsonl').write_text(
+            json.dumps(initial_state) + '\n')
+        self.runtime._observe(job)
+
+        status = self.runtime._tool(job, 'fm_status', {}, 'status-after-observation')
+        visible = next(item for item in status['assignments']
+                       if item['id'] == assignment['id'])
+        self.assertNotIn('prompt', visible)
+        self.assertEqual(visible['model_selection'], {
+            'profile': 'architect', 'requested_model': 'synthetic/architect',
+            'requested_thinking': 'high', 'actual_model': 'synthetic/architect',
+            'actual_thinking': 'high', 'source': 'host_policy'})
+        advisor_status = self.runtime._tool(
+            {'feature_id': feature['id'], 'kind': 'advisor', 'claim': {}},
+            'fm_status', {}, 'advisor-status-after-observation')
+        advisor_visible = next(item for item in advisor_status['assignments']
+                               if item['id'] == assignment['id'])
+        self.assertEqual(advisor_visible['model_selection'], visible['model_selection'])
+
+        retained = self.runtime._tool(job, 'fm_read_session', {
+            'native_session_id': native_id}, 'read-observed-session')
+        self.assertEqual(retained['model_selection'], visible['model_selection'])
+        self.assertEqual(retained['session']['model_selection'], visible['model_selection'])
+        self.assertEqual(self.store.get_assignment(assignment['id'])['metadata']['model_selection'],
+                         queued_selection)
+
+        # Conflicting feature ownership invalidates even a genuine saved
+        # observation instead of leaking or reusing its identity.
+        other = self.store.create_feature({
+            'title': 'Other synthetic feature', 'goal': 'Unrelated work',
+            'cwd': str(self.cwd), 'request_id': 'other-live-evidence'})
+        other_claim = self.store.claim_message(other['id'], self.runtime.owner)
+        alias = self.runtime._new_job(other, kind='coordinator', prompt='Unrelated',
+                                      claim=other_claim)
+        alias['session_file'] = job['session_file']
+        self.runtime._save_job(alias)
+        _write_json(self.runtime._job_dir(alias) / 'started.json', {'pid': 7})
+
+        conflicted = self.runtime._tool(job, 'fm_status', {}, 'status-conflicted')
+        conflicted_selection = next(item for item in conflicted['assignments']
+                                    if item['id'] == assignment['id'])['model_selection']
+        self.assertEqual(conflicted_selection['requested_model'], 'synthetic/architect')
+        self.assertIsNone(conflicted_selection['actual_model'])
+        self.assertIsNone(conflicted_selection['actual_thinking'])
+        with self.assertRaisesRegex(ValueError, 'conflicting First Mate ownership'):
+            self.runtime._tool(job, 'fm_read_session', {
+                'native_session_id': native_id}, 'read-conflicted-session')
+        self.assertEqual(self.store.get_assignment(assignment['id'])['metadata']['model_selection'],
+                         queued_selection)
 
     def test_architect_retry_continuation_and_handoff_dispatches_resolve_current_pin(self):
         feature = self.feature()

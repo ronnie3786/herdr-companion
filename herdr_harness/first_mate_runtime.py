@@ -107,7 +107,11 @@ host's pinned role policy; always use the typed model_profile. If the requested
 architect pin is unavailable or Pi reports a mismatched identity or effort, that
 review is blocked: NEVER re-route it through planning or execution. Acknowledge
 the requested role and pin, and claim an actual model only from model_selection
-actual evidence.
+actual evidence. Queued workspace metadata is immutable request history: nested
+model_selection actual fields may be null and do not prove startup failed. Use
+top-level assignment.model_selection from fm_status or model_selection from
+fm_read_session for authoritative observed actuals. Never fill actuals from a
+requested pin, an assistant claim or environment metadata.
 Do not launch unmanaged Pi subprocesses from scripts or skills. If a skill needs
 independent agents, adapt its steps to fm_delegate. Children remain within your
 current authorized stage. After dispatching children, call fm_wait_for_children
@@ -1023,7 +1027,8 @@ class FirstMateRuntime:
     def _worker_input(feature: dict, claim: dict) -> str:
         return (f"Feature: {feature['title']}\nGoal: {feature['goal']}\nPlan revision: {claim['input_revision']}\n"
                 f"Assignment: {claim['title']}\nRole: {claim['role']}\n\n{claim['prompt']}\n\n"
-                "Workspace metadata: " + json.dumps(claim.get("metadata", {})) + "\n"
+                "Queued workspace metadata (immutable dispatch-request history; nested model_selection actual fields are not live observed startup evidence): "
+                + json.dumps(claim.get("metadata", {})) + "\n"
                 "For an isolated implementation, commit finished changes on the private assignment branch to establish an exact revision for review. Never merge or push without explicit authorization. "
                 "Return textual deliverables using fm_outcome and an evidence-based verdict. Do not advance another workflow stage.")
 
@@ -1126,13 +1131,17 @@ class FirstMateRuntime:
         feature = self.store.get_feature(feature_id)
         claim = job["claim"]
         if action == "fm_status":
-            snapshot = self.store.snapshot(feature_id)
             if job["kind"] == "coordinator":
+                snapshot = self.store.snapshot(feature_id)
                 status = self._coordinator_projection(snapshot, claim)
                 status["last_updates"] = [{"sequence": event["sequence"], "type": event["type"],
                                             "summary": event["summary"][:500], "created_at": event["created_at"]}
                                            for event in snapshot["events"][-10:]]
                 return status
+            # Workers and advisors need the same validated requested/actual model
+            # evidence as the public runtime snapshot, not frozen queued metadata.
+            # Build that usage/session projection once for this status request.
+            snapshot = self.snapshot(feature_id)
             return {"feature": snapshot["feature"], "visits": snapshot["visits"],
                     "assignments": [{key: value for key, value in a.items() if key != "prompt"} for a in snapshot["assignments"]],
                     "documents": snapshot["documents"], "memberships": snapshot.get("memberships", []),

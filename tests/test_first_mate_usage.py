@@ -100,6 +100,24 @@ class FirstMateUsageParserTests(unittest.TestCase):
         result = self.accountant.public_summary(self.accountant.session_usage(path, "native-settled-errors"))
         self.assertEqual((result["cost_usd"], result["status"], result["usage_records"]), (2.0, "complete", 2))
 
+    def test_latest_validated_native_selection_wins_over_startup_state(self):
+        path = self.root / "changed-model.jsonl"
+        write_session(path, "native-changed", [
+            assistant("first", provider="synthetic", model="startup"),
+            {"type": "model_change", "id": "change", "provider": "synthetic", "modelId": "later"},
+            {"type": "thinking_level_change", "id": "thinking", "thinkingLevel": "xhigh"},
+        ])
+        parsed = self.accountant.session_usage(path, "native-changed")
+        selection = FirstMateRuntime._selection({
+            "kind": "worker", "actual_model": "synthetic/startup", "actual_thinking": "low",
+            "model_selection": {"profile": "execution", "requested_model": "synthetic/requested",
+                                "requested_thinking": "high", "actual_model": None,
+                                "actual_thinking": None, "source": "host_policy"}}, parsed)
+        self.assertEqual(selection["requested_model"], "synthetic/requested")
+        self.assertEqual((selection["actual_model"], selection["actual_thinking"]),
+                         ("synthetic/later", "xhigh"))
+        self.assertNotIn("_actual_model", self.accountant.public_summary(parsed))
+
     def test_extended_message_roles_do_not_change_usage_coverage(self):
         path = self.root / "extended-message-roles.jsonl"
         write_session(path, "native-extended-roles", [
@@ -440,9 +458,13 @@ class FirstMateUsageInventoryTests(unittest.TestCase):
         visit = self.stage()
         predecessor, predecessor_job = self.worker(visit, "handoff-before", cost=1.25)
         handoff = self.store.begin_handoff(predecessor["id"], predecessor["generation"], "handoff", "Synthetic checkpoint")
+        self.runtime.environ["HERDR_FIRST_MATE_WORKER_MODEL"] = "synthetic/current-worker"
+        self.runtime.environ["HERDR_FIRST_MATE_WORKER_THINKING"] = "high"
         claim = {**predecessor, "dispatch_id": "handoff:" + handoff["id"]}
         successor = self.runtime._new_job(self.feature, kind="worker", prompt="Continue", claim=claim,
                                           parent_job=predecessor_job, handoff_id=handoff["id"])
+        self.assertEqual((successor["model"], successor["thinking"]),
+                         ("synthetic/current-worker", "high"))
         _write_json(self.runtime._job_dir(successor) / "started.json", {"pid": 5})
         write_session(Path(successor["session_file"]), "native-handoff-after", [assistant("after", 2.75)])
         self.runtime._bind(successor, "native-handoff-after", successor["session_file"])

@@ -6,6 +6,7 @@ import selectors
 import subprocess
 import time
 from .child_environment import agent_environment
+from .first_mate_routing import resolve_dispatch_policy
 from .first_mate_store import FirstMateError
 
 
@@ -54,9 +55,22 @@ def read_model_catalog(pi_bin, environ, cwd):
                     models.append({"id": provider + "/" + identity,
                                    "name": str(model.get("name") or identity)[:300],
                                    "provider": provider, "reasoning": bool(model.get("reasoning"))})
-                return {"models": sorted(models, key=lambda m: (m["provider"], m["name"])),
-                        "default_model": environ.get("HERDR_FIRST_MATE_MODEL", ""),
-                        "thinking_levels": ["off", "minimal", "low", "medium", "high", "xhigh", "max"]}
+                result = {"models": sorted(models, key=lambda m: (m["provider"], m["name"])),
+                          "default_model": environ.get("HERDR_FIRST_MATE_MODEL", ""),
+                          "thinking_levels": ["off", "minimal", "low", "medium", "high", "xhigh", "max"]}
+                policies = {
+                    "coordinator": resolve_dispatch_policy(kind="coordinator", feature={}, claim={}, environ=environ),
+                    "planning": resolve_dispatch_policy(kind="worker", feature={},
+                                                         claim={"metadata": {"model_profile": "planning"}}, environ=environ),
+                    "execution": resolve_dispatch_policy(kind="worker", feature={},
+                                                          claim={"metadata": {"model_profile": "execution"}}, environ=environ),
+                }
+                routing = {name: {"model": policy.requested_model,
+                                  "thinking": policy.requested_thinking}
+                           for name, policy in policies.items()}
+                if any(value for policy in routing.values() for value in policy.values()):
+                    result["routing"] = routing
+                return result
     except (OSError, ValueError, TypeError, AttributeError):
         pass
     finally:

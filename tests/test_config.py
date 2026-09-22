@@ -68,10 +68,20 @@ state_dir = "state"
 [first_mate]
 context_target = 120000
 max_workers = 4
+coordinator_thinking = "low"
+planner_model = "synthetic/planner"
+planner_thinking = "high"
+worker_model = "synthetic/worker"
+worker_thinking = "medium"
 message_hub_url = "https://messages.example.invalid/api/v1/messages"
 ''')
         self.assertEqual(config.environ['HERDR_FIRST_MATE_CONTEXT_TARGET'], '120000')
         self.assertEqual(config.environ['HERDR_FIRST_MATE_MAX_WORKERS'], '4')
+        self.assertEqual(config.environ['HERDR_FIRST_MATE_COORDINATOR_THINKING'], 'low')
+        self.assertEqual(config.environ['HERDR_FIRST_MATE_PLANNER_MODEL'], 'synthetic/planner')
+        self.assertEqual(config.environ['HERDR_FIRST_MATE_PLANNER_THINKING'], 'high')
+        self.assertEqual(config.environ['HERDR_FIRST_MATE_WORKER_MODEL'], 'synthetic/worker')
+        self.assertEqual(config.environ['HERDR_FIRST_MATE_WORKER_THINKING'], 'medium')
         self.assertEqual(config.environ['HERDR_HARNESS_FIRST_MATE_RUNS_ROOT'], str(self.root.resolve() / 'state/first-mate-runs'))
         self.assertNotIn('HERDR_FIRST_MATE_MESSAGE_HUB_TOKEN', config.environ)
 

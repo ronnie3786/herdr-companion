@@ -100,6 +100,7 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
         title: text("Assignment title"), role: text("Specialist role"),
         prompt: text("Complete assignment including scope, required deliverables, acceptance criteria and explicit human gates"),
         model: Type.Optional(Type.String()),
+        model_profile: Type.Optional(Type.Union([Type.Literal("planning"), Type.Literal("execution")], { description: "Explicit routing role. Omit to use only the current stage key: planning maps to planning, every other stage maps to execution." })),
         workspace_mode: Type.Union([Type.Literal("read_only"), Type.Literal("isolated")], { description: "Read-only planner/reviewer or private Git worktree for implementation/testing" }),
         source_assignment_id: Type.Optional(text("Assignment whose actual worktree and commit should be the baseline, especially for integration and review")),
       }));

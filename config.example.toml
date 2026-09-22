@@ -122,6 +122,13 @@ thinking_level = "high"
 # Each feature gets a saved Pi coordinator and independent worker sessions.
 # Pi must be available to the server with a configured provider/login.
 # model = "your-provider/your-model" # Omit to use Pi's configured default.
+# coordinator_thinking = "low"
+# planner_model = "your-provider/your-planning-model"
+# planner_thinking = "high"
+# worker_model = "your-provider/your-execution-model"
+# worker_thinking = "medium"
+# Role defaults belong in the operator's private configuration. A feature can
+# override only its coordinator selection for the next coordinator turn.
 max_workers = 8
 context_target = 150000
 stall_seconds = 600

@@ -61,6 +61,8 @@ test("coordinator exposes evidence and orchestration while normal tools remain u
     assert.equal(f.handlers.get("tool_call")({toolName:"fm_invented_tool"}).block, true);
     assert.equal(f.handlers.get("tool_call")({toolName:"fm_outcome"}).block, true);
     assert.equal(f.handlers.get("tool_call")({toolName:"fm_delegate"}), undefined);
+    const profile = f.tools.get("fm_delegate").parameters.properties.model_profile;
+    assert.deepEqual(profile.anyOf.map((item) => item.const), ["planning", "execution"]);
   } finally { f.cleanup(); }
 });
 

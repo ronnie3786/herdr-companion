@@ -231,6 +231,8 @@ class FirstMateUsage:
         gaps = False
         header_seen = False
         seen: dict[str, str] = {}
+        actual_model = None
+        actual_thinking = None
         # Scalar accumulators avoid retaining one summary object per usage record.
         model_rows: dict[tuple[str | None, str | None], dict] = {}
 
@@ -286,6 +288,23 @@ class FirstMateUsage:
                         header_seen = True
                         continue
 
+                    if entry.get("type") == "model_change":
+                        model_value = entry.get("model")
+                        if isinstance(model_value, dict):
+                            provider = model_value.get("provider")
+                            model_id = model_value.get("id") or model_value.get("modelId")
+                        else:
+                            provider = entry.get("provider")
+                            model_id = entry.get("modelId") or entry.get("model")
+                        if isinstance(provider, str) and provider and isinstance(model_id, str) and model_id:
+                            actual_model = provider + "/" + model_id
+                        continue
+                    if entry.get("type") == "thinking_level_change":
+                        level = entry.get("thinkingLevel") or entry.get("thinking_level") or entry.get("level")
+                        if isinstance(level, str) and level:
+                            actual_thinking = level
+                        continue
+
                     identity = entry.get("id")
                     canonical = hashlib.sha256(json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
                     key = "id:" + identity if isinstance(identity, str) and identity else "hash:" + canonical
@@ -306,6 +325,11 @@ class FirstMateUsage:
                             expected_usage = True
                             usage = message.get("usage")
                             provider, model = message.get("provider"), message.get("model")
+                            if isinstance(provider, str) and provider and isinstance(model, str) and model:
+                                actual_model = provider + "/" + model
+                            level = message.get("thinkingLevel") or message.get("thinking_level")
+                            if isinstance(level, str) and level:
+                                actual_thinking = level
                         elif message.get("role") == "toolResult" and "usage" in message:
                             expected_usage = True
                             usage = message.get("usage")
@@ -387,6 +411,8 @@ class FirstMateUsage:
             return summary
 
         summary.update(totals)
+        summary["_actual_model"] = actual_model
+        summary["_actual_thinking"] = actual_thinking
         summary["usage_records"] = usage_records
         summary["missing_cost_records"] = missing_costs
         if usage_records == 0 and not gaps:
@@ -519,7 +545,8 @@ class FirstMateUsage:
                 if existing["path"] != source["path"]:
                     existing["summary"] = self._stale(existing["summary"])
                 continue
-            accounted[identity] = {**source, "native_id": native_id, "summary": parsed}
+            accounted[identity] = {**source, "native_id": native_id, "summary": parsed,
+                                   "identity_conflict": cross_feature or len(expected_ids) > 1}
 
         assignment_sources: dict[str, set[str]] = {identity: set() for identity in assignment_by_id}
         public_sessions = []
@@ -572,6 +599,24 @@ class FirstMateUsage:
                     break
             if parent_session_id:
                 public["parent_session_id"] = parent_session_id
+            requested = dict((representative or {}).get("model_selection") or {})
+            validated_history = bool(summary.get("_identity_valid")) and not summary.get("stale")
+            state_fallback_allowed = not source.get("identity_conflict")
+            actual_model = ((summary.get("_actual_model") if validated_history else None)
+                            or ((representative or {}).get("actual_model") if state_fallback_allowed else None))
+            actual_thinking = ((summary.get("_actual_thinking") if validated_history else None)
+                               or ((representative or {}).get("actual_thinking") if state_fallback_allowed else None))
+            if requested or actual_model or actual_thinking:
+                if not requested:
+                    requested = {
+                        "profile": "coordinator" if kind == "coordinator" else "execution",
+                        "requested_model": str((representative or {}).get("model") or ""),
+                        "requested_thinking": str((representative or {}).get("thinking") or ""),
+                        "source": "pi_default",
+                    }
+                requested["actual_model"] = actual_model if isinstance(actual_model, str) and actual_model else None
+                requested["actual_thinking"] = actual_thinking if isinstance(actual_thinking, str) and actual_thinking else None
+                public["model_selection"] = requested
             public["usage"] = self.public_summary(summary)
             public_sessions.append(public)
 

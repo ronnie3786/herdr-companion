@@ -585,6 +585,42 @@ class FirstMateRuntimeTests(unittest.TestCase):
         self.assertEqual(persisted['previous_extension'], '/private/old-package/extensions/first-mate.ts')
         self.assertIn('extension_selected_at', persisted)
 
+    def test_unstarted_policy_refreshes_but_started_policy_stays_frozen(self):
+        feature = self.feature()
+        claim = self.store.claim_message(feature['id'], self.runtime.owner)
+        self.runtime.environ['HERDR_FIRST_MATE_MODEL'] = 'synthetic/before'
+        job = self.runtime._new_job(feature, kind='coordinator', prompt='Hello', claim=claim)
+        self.runtime.environ['HERDR_FIRST_MATE_MODEL'] = 'synthetic/after'
+        with patch('herdr_harness.first_mate_runtime.subprocess.Popen') as spawn:
+            self.runtime._launch(job)
+        persisted = _read_json(self.runtime._job_dir(job) / 'job.json')
+        self.assertEqual(persisted['model_selection']['requested_model'], 'synthetic/after')
+        self.assertEqual(persisted['previous_model_selection']['requested_model'], 'synthetic/before')
+
+        _write_json(self.runtime._job_dir(job) / 'started.json', {'pid': 123})
+        self.runtime.environ['HERDR_FIRST_MATE_MODEL'] = 'synthetic/later'
+        with patch('herdr_harness.first_mate_runtime.subprocess.Popen') as spawn:
+            self.runtime._launch(persisted)
+        spawn.assert_not_called()
+        self.assertEqual(_read_json(self.runtime._job_dir(job) / 'job.json')['model'], 'synthetic/after')
+
+    def test_explicit_and_stage_default_profiles_persist_for_nested_routing(self):
+        feature = self.feature()
+        human = self.store.claim_message(feature['id'], self.runtime.owner)
+        self.store.start_visit(feature['id'], 'planning', 'Planning', 'start-profile', 1, human['id'])
+        coordinator = {'feature_id': feature['id'], 'kind': 'coordinator', 'claim': human}
+        planned = self.runtime._tool(coordinator, 'fm_delegate', {
+            'title': 'Plan', 'role': 'planner', 'prompt': 'Plan', 'workspace_mode': 'read_only'}, 'plan-profile')
+        explicit = self.runtime._tool(coordinator, 'fm_delegate', {
+            'title': 'Execute', 'role': 'implementer', 'prompt': 'Execute',
+            'model_profile': 'execution', 'workspace_mode': 'read_only'}, 'execution-profile')
+        self.assertEqual(planned['metadata']['model_profile'], 'planning')
+        self.assertEqual(explicit['metadata']['model_profile'], 'execution')
+        with self.assertRaisesRegex(ValueError, 'planning or execution'):
+            self.runtime._tool(coordinator, 'fm_delegate', {
+                'title': 'Bad', 'role': 'reviewer', 'prompt': 'Inspect',
+                'model_profile': {'invalid': True}, 'workspace_mode': 'read_only'}, 'bad-profile')
+
     def test_started_or_locked_job_keeps_recorded_extension(self):
         feature = self.feature()
         claim = self.store.claim_message(feature['id'], self.runtime.owner)
@@ -603,10 +639,14 @@ class FirstMateRuntimeTests(unittest.TestCase):
         self.assertEqual(_read_json(directory / 'job.json')['extension'], job['extension'])
 
         (directory / 'started.json').unlink()
-        with patch('herdr_harness.first_mate_runtime._locked', return_value=True), \
-             patch('herdr_harness.first_mate_runtime.subprocess.Popen') as spawn:
+        lock = (directory / 'writer.lock').open('a')
+        import fcntl
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with patch('herdr_harness.first_mate_runtime.subprocess.Popen') as spawn:
             self.runtime._launch(job)
         spawn.assert_not_called()
         self.assertEqual(_read_json(directory / 'job.json')['extension'], job['extension'])
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        lock.close()
 
 if __name__ == '__main__': unittest.main()

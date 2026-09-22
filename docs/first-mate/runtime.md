@@ -35,12 +35,28 @@ attributed to a feature.
 The Pi supervisor is a detached Python module using Pi's documented JSONL RPC.
 It maintains a saved session even if the first model request fails.
 
+Every dispatch uses a typed `coordinator`, `planning`, or `execution` routing
+profile. `fm_delegate` can choose planning or execution explicitly. When omitted,
+only an exact current visit `stage_key` of `planning` selects planning; every
+other stage selects execution. The resolved profile is stored with the assignment,
+including nested delegation, without classifying free-form titles or prompts.
+
+Feature coordinator settings override host coordinator fields for the next turn.
+A configured planning or execution model wins over the legacy assignment model.
+Without a configured role model, routing falls back through the assignment model,
+the legacy host `first_mate.model`, and finally Pi's default. Role effort is passed
+when configured; otherwise Pi selects it. Advisors use execution policy.
+
 Saved Pi JSONL is streamed from the private runtime sessions root and validated
 against its session header. Assistant usage, explicit tool-result usage,
 compaction usage and branch-summary usage are counted; compaction `retainedTail`
 is not re-counted. A compaction or branch summary without usage lowers coverage.
 Entry IDs deduplicate repeated records. Recorded message/usage provider and model
 fields drive historical grouping; configured model settings are never substituted.
+Public `model_selection` keeps requested values separate from actual values. Actual
+model and effort come only from Pi `get_state` or identity-validated saved-session
+metadata. Later validated native changes supersede startup observations. Unknown
+actual values remain `null`; selection metadata never contains transcript text.
 Partial final lines wait for completion. Missing, malformed, identity-mismatched,
 escaped, negative, boolean, unsafe-integer and non-finite data lower coverage
 without exposing transcript content or breaking feature reads. Canonical path and
@@ -82,6 +98,10 @@ previous path when it changed. A started or writer-locked dispatch keeps its
 recorded extension and tools until its process ends. A supervisor launch receipt
 that lacks a final outcome is reported as unknown rather than automatically
 re-executed. A process exiting successfully does not complete an assignment.
+Extension and routing refresh share the dispatch writer lock. An unstarted spool
+can adopt current policy immediately before launch; a started or writer-locked
+dispatch remains immutable. Retries, continuations, advisors, and handoff
+successors are new dispatches and resolve current policy.
 
 ## Agent tools
 
@@ -248,7 +268,10 @@ ignored build directory.
 
 Use the operator's private companion configuration. Relevant environment values
 are `HERDR_HARNESS_FIRST_MATE_RUNS_ROOT`, `HERDR_STATE_DIR`,
-`HERDR_FIRST_MATE_MODEL`, `HERDR_FIRST_MATE_MAX_WORKERS`,
+`HERDR_FIRST_MATE_MODEL`, `HERDR_FIRST_MATE_COORDINATOR_THINKING`,
+`HERDR_FIRST_MATE_PLANNER_MODEL`, `HERDR_FIRST_MATE_PLANNER_THINKING`,
+`HERDR_FIRST_MATE_WORKER_MODEL`, `HERDR_FIRST_MATE_WORKER_THINKING`,
+`HERDR_FIRST_MATE_MAX_WORKERS`,
 `HERDR_FIRST_MATE_CONTEXT_TARGET`, `HERDR_FIRST_MATE_STALL_SECONDS`, and
 `HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS`. The default runtime directory is
 `$HERDR_STATE_DIR/first-mate-runs`, falling back to

@@ -27,6 +27,7 @@ from .agent_runs import _assistant_text, _child_path, _resolve_pi_bin
 from .alerts import utc_now
 from .child_environment import agent_environment
 from .resources import pi_extension_path
+from .first_mate_routing import delegation_profile, resolve_dispatch_policy
 from .first_mate_store import FirstMateError
 from .first_mate_usage import FirstMateUsage
 
@@ -54,7 +55,10 @@ workflow stages. Interpret ordinary English thoughtfully and ask one focused que
 when a necessary choice is genuinely ambiguous. Within an authorized stage,
 delegate substantive work through fm_delegate. Give each worker complete scope,
 acceptance criteria, required Documents, the exact revision to inspect when
-applicable, and any internal human gates. Acknowledge dispatch briefly, then end
+applicable, and any internal human gates. Set model_profile to planning for
+planning work, and execution for code, review, testing, or other execution work.
+The host role policy controls the configured model and effort for that profile.
+Acknowledge dispatch briefly, then end
 your turn. Never poll, wait, perform substantive assignment work, or consume a
 turn monitoring workers; ordinary service code watches and records them
 automatically. Short routing lookups through the shell remain allowed.
@@ -80,6 +84,9 @@ with an honest verdict and textual documents. A final answer or process exit is
 NOT a completion report. Report needs_changes, blocked or failed when appropriate.
 Never silently skip an explicit human gate. Do not merge, deploy, publish or
 delete branches/worktrees without exact authorization. Use fm_delegate for any specialist or sub-agent work so every child is tracked.
+Set model_profile to planning for planning work, and execution for code, review,
+testing, or other execution work. The host role policy controls the configured
+model and effort for that profile.
 Do not launch unmanaged Pi subprocesses from scripts or skills. If a skill needs
 independent agents, adapt its steps to fm_delegate. Children remain within your
 current authorized stage. After dispatching children, call fm_wait_for_children
@@ -311,6 +318,49 @@ class FirstMateRuntime:
                 self._catalog_at = time.monotonic()
             return self._catalog_cache
 
+    def _stage_key(self, feature: Mapping[str, Any]) -> str | None:
+        visit_id = feature.get("current_visit_id")
+        if not visit_id:
+            return None
+        return next((visit.get("stage_key") for visit in self.store.snapshot(feature["id"])["visits"]
+                     if visit.get("id") == visit_id), None)
+
+    def _policy(self, feature: Mapping[str, Any], *, kind: str,
+                claim: Mapping[str, Any]):
+        metadata = claim.get("metadata") if isinstance(claim.get("metadata"), Mapping) else {}
+        needs_stage = kind == "worker" and metadata.get("model_profile") is None
+        return resolve_dispatch_policy(kind=kind, feature=feature, claim=claim,
+                                       environ=self.environ,
+                                       stage_key=self._stage_key(feature) if needs_stage else None)
+
+    def _apply_policy(self, job: dict, feature: Mapping[str, Any]) -> None:
+        policy = self._policy(feature, kind=job["kind"], claim=job["claim"])
+        job["model"] = policy.requested_model
+        job["thinking"] = policy.requested_thinking
+        job["model_selection"] = policy.selection()
+        if job["kind"] == "coordinator":
+            job["model_settings_revision"] = feature.get("model_settings_revision", 0)
+
+    @staticmethod
+    def _selection(job: Mapping[str, Any] | None, parsed: Mapping[str, Any] | None = None) -> dict | None:
+        selection = dict(job.get("model_selection", {})) if job else {}
+        validated_history = bool((parsed or {}).get("_identity_valid")) and not (parsed or {}).get("stale")
+        actual_model = ((parsed or {}).get("_actual_model") if validated_history else None) or (job or {}).get("actual_model")
+        actual_thinking = ((parsed or {}).get("_actual_thinking") if validated_history else None) or (job or {}).get("actual_thinking")
+        if not selection and not actual_model and not actual_thinking:
+            return None
+        if not selection:
+            kind = (job or {}).get("kind")
+            selection = {
+                "profile": "coordinator" if kind == "coordinator" else "execution",
+                "requested_model": str((job or {}).get("model") or ""),
+                "requested_thinking": str((job or {}).get("thinking") or ""),
+                "source": "pi_default",
+            }
+        selection["actual_model"] = actual_model if isinstance(actual_model, str) and actual_model else None
+        selection["actual_thinking"] = actual_thinking if isinstance(actual_thinking, str) and actual_thinking else None
+        return selection
+
     def _usage_account(self, feature: dict, *, assignments: list[dict] | None = None,
                        jobs: list[dict] | None = None,
                        ledger_sessions: list[dict] | None = None) -> dict:
@@ -329,24 +379,53 @@ class FirstMateRuntime:
         result = []
         for feature in self.store.list_features(view):
             account = self._usage_account(feature, jobs=jobs, ledger_sessions=ledger_sessions)
-            result.append({**feature, "usage": account["usage"]})
+            selection = self._policy(feature, kind="coordinator", claim={}).selection()
+            result.append({**feature, "usage": account["usage"], "model_selection": selection})
         return result
 
     def feature(self, feature_id: str) -> dict:
         feature = self.store.get_feature(feature_id)
-        return {**feature, "usage": self._usage_account(feature)["usage"]}
+        selection = self._policy(feature, kind="coordinator", claim={}).selection()
+        return {**feature, "usage": self._usage_account(feature)["usage"],
+                "model_selection": selection}
 
     def snapshot(self, feature_id: str) -> dict:
         snapshot = self.store.snapshot(feature_id)
         account = self._usage_account(snapshot["feature"], assignments=snapshot["assignments"])
         result = dict(snapshot)
-        result["feature"] = {**snapshot["feature"], "usage": account["usage"]}
-        result["assignments"] = [
-            {**assignment,
-             "usage": account["assignment_usage"][assignment["id"]],
-             "subtree_usage": account["subtree_usage"][assignment["id"]]}
-            for assignment in snapshot["assignments"]
-        ]
+        feature_selection = self._policy(snapshot["feature"], kind="coordinator", claim={}).selection()
+        result["feature"] = {**snapshot["feature"], "usage": account["usage"],
+                             "model_selection": feature_selection}
+        jobs = self._jobs()
+        assignment_jobs: dict[str, list[dict]] = {}
+        for job in jobs:
+            if job.get("kind") == "worker" and job.get("claim", {}).get("id"):
+                assignment_jobs.setdefault(job["claim"]["id"], []).append(job)
+        assignment_sessions: dict[str, list[dict]] = {}
+        for session in account["sessions"]:
+            if session.get("assignment_id"):
+                assignment_sessions.setdefault(session["assignment_id"], []).append(session)
+        result["assignments"] = []
+        for assignment in snapshot["assignments"]:
+            latest_job = max(assignment_jobs.get(assignment["id"], []),
+                             key=lambda job: (job.get("claim", {}).get("generation", 0), job.get("created_at", "")),
+                             default=None)
+            latest_session = max(assignment_sessions.get(assignment["id"], []),
+                                 key=lambda session: (session.get("generation", 0), session.get("created_at", "")),
+                                 default=None)
+            selection = (dict(latest_job.get("model_selection", {})) if latest_job else {}) or self._policy(
+                snapshot["feature"], kind="worker", claim=assignment).selection()
+            historical = (latest_session or {}).get("model_selection")
+            if historical:
+                selection = {**selection,
+                             "actual_model": historical.get("actual_model"),
+                             "actual_thinking": historical.get("actual_thinking")}
+            result["assignments"].append({
+                **assignment,
+                "usage": account["assignment_usage"][assignment["id"]],
+                "subtree_usage": account["subtree_usage"][assignment["id"]],
+                "model_selection": selection,
+            })
         result["sessions"] = account["sessions"][:1000]
         result["sessions_truncated"] = len(account["sessions"]) > 1000
         return result
@@ -464,17 +543,34 @@ class FirstMateRuntime:
 
     def _launch(self, job: dict) -> None:
         directory = self._job_dir(job)
-        if (directory / "started.json").exists() or _locked(directory / "writer.lock"):
+        refresh_lock = (directory / "writer.lock").open("a")
+        try:
+            fcntl.flock(refresh_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            refresh_lock.close()
             return
-        # An unlaunched spool may outlive a package upgrade. Refresh only before
-        # its first writer starts so recovered jobs receive the current policy;
-        # running and previously-started dispatches retain exact provenance.
-        current_extension = str(self.extension) if self.extension else job.get("extension")
-        if current_extension and job.get("extension") != current_extension:
-            job["previous_extension"] = job.get("extension")
-            job["extension"] = current_extension
-            job["extension_selected_at"] = utc_now()
+        try:
+            if (directory / "started.json").exists():
+                return
+            # Refresh under the dispatch lock. A supervisor reads job.json only
+            # after acquiring this same lock, so it cannot launch stale policy.
+            current_extension = str(self.extension) if self.extension else job.get("extension")
+            if current_extension and job.get("extension") != current_extension:
+                job["previous_extension"] = job.get("extension")
+                job["extension"] = current_extension
+                job["extension_selected_at"] = utc_now()
+            previous_selection = job.get("model_selection")
+            previous_revision = job.get("model_settings_revision")
+            self._apply_policy(job, self.store.get_feature(job["feature_id"]))
+            if previous_selection != job.get("model_selection"):
+                job["previous_model_selection"] = previous_selection
+                job["model_selected_at"] = utc_now()
+            if previous_revision != job.get("model_settings_revision"):
+                job["previous_model_settings_revision"] = previous_revision
             self._save_job(job)
+        finally:
+            fcntl.flock(refresh_lock, fcntl.LOCK_UN)
+            refresh_lock.close()
         child_env = agent_environment({**os.environ, **self.environ}, integration=False)
         child_env["PATH"] = _child_path(self.pi_bin or "pi", child_env.get("PATH"))
         child_env["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent)
@@ -521,14 +617,8 @@ class FirstMateRuntime:
                "timeout_seconds": _bounded(self.environ, "HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS", 180, 30, 600) if kind in {"coordinator", "advisor"} else 86400, "handoff_id": handoff_id,
                "parent_job_id": parent_job["id"] if parent_job else None,
                "workspace_mode": claim.get("metadata", {}).get("workspace_mode", "read_only"),
-               "model": claim.get("model") or self.environ.get("HERDR_FIRST_MATE_MODEL", ""),
                "charter": {"coordinator": COORDINATOR_PROMPT, "worker": WORKER_PROMPT, "advisor": ADVISOR_PROMPT}[kind]}
-        if kind == "coordinator":
-            # Refresh at durable job creation. Existing jobs keep their original settings.
-            settings = self.store.get_feature(feature["id"])
-            job["model"] = settings.get("coordinator_model") or self.environ.get("HERDR_FIRST_MATE_MODEL", "")
-            job["thinking"] = settings.get("coordinator_thinking", "")
-            job["model_settings_revision"] = settings.get("model_settings_revision", 0)
+        self._apply_policy(job, self.store.get_feature(feature["id"]))
         if kind == "worker":
             if claim.get("attempt", 0) > 1 and not handoff_id:
                 predecessors = [j for j in self._jobs() if j["kind"] == "worker" and j["claim"]["id"] == claim["id"]]
@@ -772,6 +862,25 @@ class FirstMateRuntime:
                 if kind == "response" and event.get("command") == "get_state" and event.get("success"):
                     data = event.get("data", {})
                     self._bind(job, data.get("sessionId", ""), data.get("sessionFile", ""))
+                    raw_model = data.get("model") or data.get("currentModel")
+                    model = raw_model if isinstance(raw_model, dict) else {}
+                    provider = model.get("provider") or data.get("provider")
+                    identity = model.get("id") or model.get("modelId") or data.get("modelId")
+                    actual_model = (provider + "/" + identity
+                                    if isinstance(provider, str) and isinstance(identity, str)
+                                    and provider and identity else
+                                    raw_model if isinstance(raw_model, str) and "/" in raw_model else None)
+                    actual_thinking = data.get("thinkingLevel") or data.get("thinking_level")
+                    changed = False
+                    if actual_model and job.get("actual_model") != actual_model:
+                        job["actual_model"] = actual_model
+                        changed = True
+                    if isinstance(actual_thinking, str) and actual_thinking and job.get("actual_thinking") != actual_thinking:
+                        job["actual_thinking"] = actual_thinking
+                        changed = True
+                    if changed:
+                        job["model_observed_at"] = event.get("time") or utc_now()
+                        self._save_job(job)
                 elif kind == "session_started":
                     self._bind(job, event.get("native_session_id", ""), event.get("session_file", ""))
                 if kind == "checkpoint_requested" and not job.get("handoff_deadline"):
@@ -868,10 +977,13 @@ class FirstMateRuntime:
                 ancestor = self.store.get_assignment(ancestor["metadata"]["parent_assignment_id"])
             if depth >= 4:
                 raise FirstMateError("Nested delegation is limited to four levels; ask First Mate to reorganize this work")
-            parameters = {**params, "source_assignment_id": params.get("source_assignment_id") or parent["id"]}
-            metadata = {**self._workspace(feature, parameters, request_id), "parent_assignment_id": parent["id"]}
+            profile = delegation_profile(params.get("model_profile"), stage_key=self._stage_key(feature))
+            parameters = {**params, "model_profile": profile,
+                          "source_assignment_id": params.get("source_assignment_id") or parent["id"]}
+            metadata = {**self._workspace(feature, parameters, request_id),
+                        "parent_assignment_id": parent["id"], "model_profile": profile}
             return self.store.create_assignment(feature["current_visit_id"], {
-                **params, "metadata": metadata, "request_id": request_id, "input_revision": feature["revision"]})
+                **parameters, "metadata": metadata, "request_id": request_id, "input_revision": feature["revision"]})
         if action == "fm_retry" and job["kind"] == "worker":
             child = self.store.get_assignment(params["assignment_id"])
             if child["feature_id"] != feature_id or child.get("metadata", {}).get("parent_assignment_id") != claim["id"]:
@@ -896,9 +1008,12 @@ class FirstMateRuntime:
             if action == "fm_delegate":
                 if not feature.get("current_visit_id") or feature["status"] != "running":
                     raise ValueError("No active human-authorized stage is available")
-                metadata = self._workspace(feature, params, request_id)
+                profile = delegation_profile(params.get("model_profile"), stage_key=self._stage_key(feature))
+                parameters = {**params, "model_profile": profile}
+                metadata = {**self._workspace(feature, parameters, request_id),
+                            "model_profile": profile}
                 return self.store.create_assignment(feature["current_visit_id"], {
-                    **params, "metadata": metadata, "request_id": request_id, "input_revision": feature["revision"]})
+                    **parameters, "metadata": metadata, "request_id": request_id, "input_revision": feature["revision"]})
             if action == "fm_recover":
                 assignment = self.store.get_assignment(params["assignment_id"])
                 if assignment["feature_id"] != feature_id:
@@ -1291,8 +1406,8 @@ class FirstMateRuntime:
                 or any(len(path_features.get(path, set())) > 1 for path in claim_paths)):
             raise ValueError("Saved session identity has conflicting First Mate ownership")
 
-        selected = next((claim for claim in reversed(claims) if claim[0] == "job"), claims[-1])
-        _, _, path, feature_id, kind = selected
+        selected_source = next((claim for claim in reversed(claims) if claim[0] == "job"), claims[-1])
+        source_kind, selected_record, path, feature_id, kind = selected_source
         path.relative_to((self.root / "sessions").resolve())
         rows, _ = _records(path)
         header = next((row for row in rows if row.get("type") == "session"), {})
@@ -1311,13 +1426,17 @@ class FirstMateRuntime:
         end = total if before is None else max(0, min(total, int(before)))
         count = max(1, min(100, int(limit)))
         start = max(0, end - count)
-        selected = [{**m, "index": start + index} for index, m in enumerate(messages[start:end])]
-        usage = self.usage.public_summary(self.usage.session_usage(path, native_session_id))
-        return {"ok": True, "native_session_id": native_session_id, "messages": selected,
+        selected_messages = [{**m, "index": start + index} for index, m in enumerate(messages[start:end])]
+        parsed_usage = self.usage.session_usage(path, native_session_id)
+        usage = self.usage.public_summary(parsed_usage)
+        model_selection = self._selection(selected_record if source_kind == "job" else {"kind": kind},
+                                          parsed_usage)
+        return {"ok": True, "native_session_id": native_session_id, "messages": selected_messages,
                 "next_before": start if start else None, "total_messages": total,
-                "usage": usage,
+                "usage": usage, "model_selection": model_selection,
                 "session": {"native_session_id": native_session_id, "feature_id": feature_id,
-                            "session_file": str(path), "kind": kind, "usage": usage}}
+                            "session_file": str(path), "kind": kind, "usage": usage,
+                            "model_selection": model_selection}}
 
 
 def _pi_command(job: dict) -> list[str]:
@@ -1343,9 +1462,6 @@ def _pi_command(job: dict) -> list[str]:
 
 def run_detached(directory: Path) -> int:
     """One dispatch's process owner. Never started twice for the same job."""
-    job = _read_json(directory / "job.json")
-    if not job:
-        return 2
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     lock = (directory / "writer.lock").open("a")
     try:
@@ -1354,6 +1470,11 @@ def run_detached(directory: Path) -> int:
         return 0
     if (directory / "started.json").exists():
         return 0
+    # Read dispatch policy only after acquiring the same lock used by the
+    # manager's final pre-launch refresh.
+    job = _read_json(directory / "job.json")
+    if not job:
+        return 2
     # A second lock protects the exact Pi conversation, including across turns
     # and accidental duplicate service instances with different runtime locks.
     session_lock = Path(job["session_file"] + ".lock").open("a")

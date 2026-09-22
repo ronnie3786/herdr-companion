@@ -98,8 +98,16 @@ print(json.dumps({'id':'catalog','success':True,'data':{'models':[{'provider':'s
 sys.stdin.read()
 ''')
         executable.chmod(0o700)
-        catalog = read_model_catalog(str(executable), {'PATH': os.environ['PATH']}, self.temp.name)
+        catalog = read_model_catalog(str(executable), {
+            'PATH': os.environ['PATH'], 'HERDR_FIRST_MATE_MODEL': 'synthetic/host',
+            'HERDR_FIRST_MATE_COORDINATOR_THINKING': 'low',
+            'HERDR_FIRST_MATE_PLANNER_THINKING': 'high',
+            'HERDR_FIRST_MATE_WORKER_MODEL': 'synthetic/worker'}, self.temp.name)
         self.assertEqual(catalog['models'], [{'id': 'synthetic/model', 'name': 'Test Model', 'provider': 'synthetic', 'reasoning': True}])
+        self.assertEqual(catalog['routing'], {
+            'coordinator': {'model': 'synthetic/host', 'thinking': 'low'},
+            'planning': {'model': 'synthetic/host', 'thinking': 'high'},
+            'execution': {'model': 'synthetic/worker', 'thinking': ''}})
         self.assertNotIn('private', json.dumps(catalog))
 
 if __name__ == '__main__': unittest.main()

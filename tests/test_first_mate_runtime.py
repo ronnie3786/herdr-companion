@@ -249,6 +249,7 @@ class FirstMateRuntimeTests(unittest.TestCase):
                      '--no-extensions', '--no-skills', '--no-context-files',
                      '--no-prompt-templates'):
             self.assertNotIn(flag, command)
+        self.assertNotIn('--herdr-parent-session-id', command)
         self.assertEqual(command[command.index('--extension') + 1], job['extension'])
 
     def test_worker_launch_keeps_evidence_tools_and_worker_charter(self):
@@ -269,6 +270,8 @@ class FirstMateRuntimeTests(unittest.TestCase):
                      '--no-extensions', '--no-skills', '--no-context-files',
                      '--no-prompt-templates'):
             self.assertNotIn(flag, command)
+        # Legacy durable jobs remain launchable without inventing ancestry.
+        self.assertNotIn('--herdr-parent-session-id', command)
 
     def test_every_role_and_workspace_mode_uses_normal_pi_tool_and_resource_profile(self):
         base = {'pi_bin':'pi','session_file':'/tmp/synthetic-session.jsonl',
@@ -580,24 +583,221 @@ class FirstMateRuntimeTests(unittest.TestCase):
         with path.open('ab') as output: output.write(b'"two"}\n')
         self.assertEqual(_records(path,offset)[0],[{'type':'two'}])
 
+    def test_managed_dispatches_capture_authoritative_native_session_lineage(self):
+        stale_feature = self.feature()
+        human = self.store.claim_message(stale_feature['id'], self.runtime.owner)
+        coordinator_job = self.runtime._new_job(
+            stale_feature, kind='coordinator', prompt='Route', claim=human)
+        self.assertIsNone(coordinator_job['parent_session_id'])
+        self.runtime._bind(
+            coordinator_job, 'native-current-coordinator', coordinator_job['session_file'])
+        visit = self.store.start_visit(
+            stale_feature['id'], 'planning', 'Planning', 'lineage-stage', 1, human['id'])
+
+        parent = self.store.create_assignment(visit['id'], {
+            'title':'Parent', 'role':'planner', 'prompt':'Plan',
+            'request_id':'lineage-parent', 'input_revision':1})
+        parent_claim = self.store.claim_assignment(parent['id'], self.runtime.owner)
+        # The stale create_feature result has no native coordinator ID. The
+        # durable dispatch must use the freshly bound store authority instead.
+        parent_job = self.runtime._new_job(
+            stale_feature, kind='worker', prompt='Plan', claim=parent_claim)
+        self.assertEqual(parent_job['parent_session_id'], 'native-current-coordinator')
+        self.assertEqual(parent_job['parent_session_source'], 'coordinator_session')
+        parent_command = _pi_command(parent_job)
+        self.assertEqual(parent_command.count('--herdr-parent-session-id'), 1)
+        self.assertEqual(
+            parent_command[parent_command.index('--herdr-parent-session-id') + 1],
+            'native-current-coordinator')
+        self.runtime._bind(parent_job, 'native-immediate-parent', parent_job['session_file'])
+
+        child = self.store.create_assignment(visit['id'], {
+            'title':'Child', 'role':'reviewer', 'prompt':'Inspect',
+            'metadata':{'parent_assignment_id':parent['id']},
+            'request_id':'lineage-child', 'input_revision':1})
+        child_claim = self.store.claim_assignment(child['id'], self.runtime.owner)
+        child_job = self.runtime._new_job(
+            stale_feature, kind='worker', prompt='Inspect', claim=child_claim)
+        self.assertEqual(child_job['parent_session_id'], 'native-immediate-parent')
+        self.assertEqual(child_job['parent_session_source'], 'parent_assignment_session')
+        self.assertEqual(
+            _pi_command(child_job)[_pi_command(child_job).index('--herdr-parent-session-id') + 1],
+            'native-immediate-parent')
+
+        advisor = self.runtime._new_job(
+            stale_feature, kind='advisor', prompt='Assess',
+            claim={'id':'lineage-advisor'}, parent_job=parent_job)
+        self.assertEqual(advisor['parent_session_id'], 'native-immediate-parent')
+        self.assertEqual(advisor['parent_session_source'], 'target_worker_session')
+        self.assertEqual(
+            _pi_command(advisor)[_pi_command(advisor).index('--herdr-parent-session-id') + 1],
+            'native-immediate-parent')
+
+        continuation_claim = {**parent_claim, 'dispatch_id':'lineage-continuation'}
+        continuation = self.runtime._new_job(
+            stale_feature, kind='worker', prompt='Continue',
+            claim=continuation_claim, parent_job=parent_job)
+        handoff = self.runtime._new_job(
+            stale_feature, kind='worker', prompt='Handoff',
+            claim={**parent_claim, 'dispatch_id':'lineage-handoff'},
+            parent_job=parent_job, handoff_id='synthetic-lineage-handoff')
+        for successor in (continuation, handoff):
+            self.assertEqual(successor['parent_session_id'], 'native-current-coordinator')
+            self.assertEqual(successor['parent_session_source'],
+                             'predecessor_captured_parent')
+            self.assertNotEqual(successor['parent_session_id'],
+                                parent_job['native_session_id'])
+
+        # A predecessor written before lineage metadata existed remains usable;
+        # the fresh successor resolves the same current managing authority.
+        legacy_parent = {**parent_job, 'id':'legacy-lineage-parent'}
+        legacy_parent.pop('parent_session_id')
+        legacy_parent.pop('parent_session_source')
+        self.runtime._save_job(legacy_parent)
+        legacy_successor = self.runtime._new_job(
+            stale_feature, kind='worker', prompt='Legacy handoff',
+            claim={**parent_claim, 'dispatch_id':'legacy-lineage-successor'},
+            parent_job=legacy_parent, handoff_id='legacy-lineage-handoff')
+        self.assertEqual(legacy_successor['parent_session_id'],
+                         'native-current-coordinator')
+
+    def test_unbound_current_worker_can_receive_parentless_advisor_without_routing_changes(self):
+        feature = self.feature()
+        human = self.store.claim_message(feature['id'], self.runtime.owner)
+        visit = self.store.start_visit(
+            feature['id'], 'planning', 'Planning', 'unbound-advisor-stage', 1,
+            human['id'])
+        assignment = self.store.create_assignment(visit['id'], {
+            'title':'Unbound worker', 'role':'planner', 'prompt':'Plan',
+            'request_id':'unbound-advisor-worker', 'input_revision':1})
+        claim = self.store.claim_assignment(assignment['id'], self.runtime.owner)
+        worker = self.runtime._new_job(
+            feature, kind='worker', prompt='Plan', claim=claim)
+        self.assertIsNone(worker.get('native_session_id'))
+        self.assertIsNone(self.store.get_assignment(assignment['id'])['native_session_id'])
+
+        self.runtime.environ.update({
+            'HERDR_FIRST_MATE_WORKER_MODEL':'synthetic/execution',
+            'HERDR_FIRST_MATE_WORKER_THINKING':'high',
+        })
+        advisor = self.runtime._new_job(
+            feature, kind='advisor', prompt='Diagnose startup',
+            claim={'id':'unbound-worker-advisor'}, parent_job=worker)
+        self.assertIsNone(advisor['parent_session_id'])
+        self.assertEqual(advisor['parent_session_source'], 'target_without_session')
+        self.assertEqual(advisor['model_selection'], {
+            'profile':'execution', 'requested_model':'synthetic/execution',
+            'requested_thinking':'high', 'actual_model':None,
+            'actual_thinking':None, 'source':'host_policy'})
+        command = _pi_command(advisor)
+        self.assertNotIn('--herdr-parent-session-id', command)
+        self.assertEqual(command[command.index('--model') + 1], 'synthetic/execution')
+        self.assertEqual(command[command.index('--thinking') + 1], 'high')
+
+        stale = {
+            **worker, 'id':'stale-unbound-worker',
+            'claim':{**worker['claim'], 'generation':worker['claim']['generation'] - 1},
+        }
+        self.runtime._save_job(stale)
+        with self.assertRaisesRegex(FirstMateError, 'current assignment generation'):
+            self.runtime._new_job(
+                feature, kind='advisor', prompt='Reject stale target',
+                claim={'id':'stale-unbound-advisor'}, parent_job=stale)
+
+        job_only = {
+            **worker, 'id':'job-only-native-worker',
+            'native_session_id':'native-only-in-job',
+        }
+        self.runtime._save_job(job_only)
+        with self.assertRaisesRegex(FirstMateError, 'current bound native session'):
+            self.runtime._new_job(
+                feature, kind='advisor', prompt='Reject mismatched target',
+                claim={'id':'job-only-native-advisor'}, parent_job=job_only)
+
+        self.runtime._bind(worker, 'native-current-worker', worker['session_file'])
+        assignment_only = {**worker, 'id':'assignment-only-native-worker'}
+        assignment_only.pop('native_session_id')
+        self.runtime._save_job(assignment_only)
+        with self.assertRaisesRegex(FirstMateError, 'current bound native session'):
+            self.runtime._new_job(
+                feature, kind='advisor', prompt='Reject incomplete target',
+                claim={'id':'assignment-only-native-advisor'},
+                parent_job=assignment_only)
+
+        wrong_bound = {
+            **worker, 'id':'wrong-bound-worker',
+            'native_session_id':'native-wrong-worker',
+        }
+        self.runtime._save_job(wrong_bound)
+        with self.assertRaisesRegex(FirstMateError, 'current bound native session'):
+            self.runtime._new_job(
+                feature, kind='advisor', prompt='Reject wrong bound target',
+                claim={'id':'wrong-bound-advisor'}, parent_job=wrong_bound)
+
+    def test_managed_lineage_rejects_cross_feature_or_self_parent_and_never_fabricates_root(self):
+        feature = self.feature()
+        human = self.store.claim_message(feature['id'], self.runtime.owner)
+        visit = self.store.start_visit(
+            feature['id'], 'planning', 'Planning', 'lineage-validation-stage', 1,
+            human['id'])
+        parent = self.store.create_assignment(visit['id'], {
+            'title':'Parent', 'role':'planner', 'prompt':'Plan',
+            'request_id':'lineage-validation-parent', 'input_revision':1})
+        parent_claim = self.store.claim_assignment(parent['id'], self.runtime.owner)
+        parent_job = self.runtime._new_job(
+            feature, kind='worker', prompt='Plan', claim=parent_claim)
+        self.assertIsNone(parent_job['parent_session_id'])
+        self.assertNotIn('--herdr-parent-session-id', _pi_command(parent_job))
+        self.runtime._bind(parent_job, 'native-validation-parent', parent_job['session_file'])
+
+        other = self.store.create_feature({
+            'title':'Other', 'goal':'Other goal', 'cwd':str(self.cwd),
+            'request_id':'lineage-validation-other'})
+        invalid = {
+            'id':'synthetic-cross-feature-child', 'dispatch_id':'cross-feature-dispatch',
+            'metadata':{'parent_assignment_id':parent['id']}}
+        with self.assertRaisesRegex(FirstMateError, 'another feature'):
+            self.runtime._new_job(other, kind='worker', prompt='Invalid', claim=invalid)
+
+        self_parent = {
+            'id':'synthetic-self-parent', 'dispatch_id':'self-parent-dispatch',
+            'metadata':{'parent_assignment_id':'synthetic-self-parent'}}
+        with self.assertRaisesRegex(FirstMateError, 'own parent'):
+            self.runtime._new_job(feature, kind='worker', prompt='Invalid',
+                                  claim=self_parent)
+
+        malformed = {**parent_job, 'parent_session_id':'not a parent/id'}
+        with self.assertRaisesRegex(ValueError, 'invalid'):
+            _pi_command(malformed)
+        self_parent_command = {
+            **parent_job, 'parent_session_id':'native-validation-parent',
+            'native_session_id':'native-validation-parent'}
+        with self.assertRaisesRegex(ValueError, 'own parent'):
+            _pi_command(self_parent_command)
+
     def test_child_environment_does_not_receive_companion_control_token(self):
         feature = self.feature()
         claim = self.store.claim_message(feature['id'], self.runtime.owner)
         job = self.runtime._new_job(feature,kind='coordinator',prompt='Hello',claim=claim)
         self.runtime.environ['HERDR_HARNESS_API_TOKEN']='synthetic-control-token'
+        self.runtime.environ['HERDR_PI_PARENT_SESSION_ID']='ambient-server-session'
         configured_path = '/synthetic/cli/bin:/usr/bin:/bin'
         self.runtime.environ['PATH'] = configured_path
         with patch('herdr_harness.first_mate_runtime.subprocess.Popen') as spawn:
             self.runtime._launch(job)
         child = spawn.call_args.kwargs['env']
         self.assertNotIn('HERDR_HARNESS_API_TOKEN', child)
+        self.assertNotIn('HERDR_PI_PARENT_SESSION_ID', child)
         self.assertNotIn('HERDR_FIRST_MATE_ROLE', child)
         self.assertEqual(child['HERDR_FIRST_MATE_MANAGED_ROLE'],'coordinator')
         self.assertEqual(
             Path(spawn.call_args.kwargs['cwd']).resolve(),
             Path(feature['cwd']).resolve(),
         )
-        self.assertEqual(child['PATH'].split(os.pathsep)[0], str(self.fake.parent))
+        self.assertEqual(
+            Path(child['PATH'].split(os.pathsep)[0]).resolve(),
+            self.fake.parent.resolve(),
+        )
         self.assertTrue(child['PATH'].endswith(configured_path))
 
     def test_unstarted_persisted_job_refreshes_extension_before_launch(self):

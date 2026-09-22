@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import sys
@@ -37,6 +38,9 @@ from .first_mate_store import FirstMateError
 from .first_mate_usage import FirstMateUsage
 
 MAX_RECORD = 4 * 1024 * 1024
+_PI_SESSION_ID = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
+
+
 class DeferredOperation(Exception):
     """A durable request is waiting for a verified executor stop."""
 
@@ -769,6 +773,110 @@ class FirstMateRuntime:
             # the daemon thread is not required for execution or recovery.
             threading.Thread(target=child.wait, name="first-mate-reap", daemon=True).start()
 
+    @staticmethod
+    def _valid_pi_parent_session_id(value: Any) -> bool:
+        return (isinstance(value, str) and 0 < len(value) <= 256
+                and _PI_SESSION_ID.fullmatch(value) is not None)
+
+    def _owned_parent_session(self, native_id: Any, feature_id: str,
+                              *, assignment_id: str | None | object = ...) -> str:
+        if not self._valid_pi_parent_session_id(native_id):
+            raise FirstMateError("Managed Pi parent has an invalid native session ID")
+        session = self.store.get_session(native_id)
+        if session["feature_id"] != feature_id:
+            raise FirstMateError("Managed Pi parent belongs to another feature")
+        if assignment_id is not ... and session.get("assignment_id") != assignment_id:
+            raise FirstMateError("Managed Pi parent does not own the expected execution")
+        return native_id
+
+    def _persisted_parent_job(self, feature_id: str, parent_job: Mapping[str, Any]) -> dict:
+        parent_id = parent_job.get("id")
+        persisted = (_read_json(self.jobs_root / str(parent_id) / "job.json")
+                     if isinstance(parent_id, str) and parent_id else None)
+        if not isinstance(persisted, dict) or persisted.get("id") != parent_id:
+            raise FirstMateError("Managed parent dispatch is not durably recorded")
+        if persisted.get("feature_id") != feature_id:
+            raise FirstMateError("Managed parent dispatch belongs to another feature")
+        return persisted
+
+    def _job_parent_session(self, feature: Mapping[str, Any], *, kind: str,
+                            claim: Mapping[str, Any], parent_job: dict | None) -> tuple[str | None, str]:
+        """Resolve a new dispatch's Pi parent only from the managed session ledger."""
+        feature_id = feature["id"]
+        if kind == "coordinator":
+            # Pi restores any ancestry already saved in a resumed coordinator.
+            # Fresh coordinators are human-created roots, never children of the
+            # companion service process that happened to launch them.
+            return None, "saved_session_or_root"
+        if kind == "advisor":
+            if parent_job is None:
+                return None, "direct_root"
+            target_job = self._persisted_parent_job(feature_id, parent_job)
+            if target_job.get("kind") != "worker":
+                raise FirstMateError("Advisor target is not a managed worker dispatch")
+            target_claim = target_job.get("claim", {})
+            target_id = target_claim.get("id")
+            target = self.store.get_assignment(target_id)
+            if target["feature_id"] != feature_id:
+                raise FirstMateError("Advisor target assignment belongs to another feature")
+            if (target_claim.get("generation") != target.get("generation")
+                    or target_job.get("owner") != target.get("owner")):
+                raise FirstMateError("Advisor target does not own the current assignment generation")
+            native_id = target_job.get("native_session_id")
+            assignment_native_id = target.get("native_session_id")
+            if native_id is None and assignment_native_id is None:
+                # Startup/recovery diagnostics must remain available when the
+                # claimed worker failed before Pi established any conversation.
+                return None, "target_without_session"
+            if native_id is None or assignment_native_id is None or assignment_native_id != native_id:
+                raise FirstMateError("Advisor target does not have a current bound native session")
+            return (self._owned_parent_session(native_id, feature_id,
+                                               assignment_id=target_id),
+                    "target_worker_session")
+        if kind != "worker":
+            raise FirstMateError("Unsupported managed Pi dispatch kind")
+
+        if parent_job is not None:
+            predecessor = self._persisted_parent_job(feature_id, parent_job)
+            if predecessor.get("kind") != "worker" or predecessor.get("claim", {}).get("id") != claim.get("id"):
+                raise FirstMateError("Worker continuation does not match its predecessor assignment")
+            # A continuation or handoff stays beside its predecessor under the
+            # same managing session. It must never become its own child.
+            if "parent_session_id" in predecessor:
+                captured = predecessor.get("parent_session_id")
+                if captured is None:
+                    return None, "predecessor_captured_root"
+                if captured == predecessor.get("native_session_id"):
+                    raise FirstMateError("Worker continuation cannot be parented to itself")
+                return (self._owned_parent_session(captured, feature_id),
+                        "predecessor_captured_parent")
+
+        metadata = claim.get("metadata") if isinstance(claim.get("metadata"), Mapping) else {}
+        parent_assignment_id = metadata.get("parent_assignment_id")
+        if parent_assignment_id is not None:
+            if not isinstance(parent_assignment_id, str) or not parent_assignment_id:
+                raise FirstMateError("Nested worker has an invalid parent assignment ID")
+            if parent_assignment_id == claim.get("id"):
+                raise FirstMateError("Worker assignment cannot be its own parent")
+            parent = self.store.get_assignment(parent_assignment_id)
+            if parent["feature_id"] != feature_id:
+                raise FirstMateError("Parent assignment belongs to another feature")
+            native_id = parent.get("native_session_id")
+            if not native_id:
+                raise FirstMateError("Parent assignment has no bound native Pi session")
+            return (self._owned_parent_session(native_id, feature_id,
+                                               assignment_id=parent_assignment_id),
+                    "parent_assignment_session")
+
+        # Re-read the feature rather than trusting the create/reconcile snapshot:
+        # coordinator binding can race with assignment dispatch preparation.
+        current_feature = self.store.get_feature(feature_id)
+        native_id = current_feature.get("native_session_id")
+        if not native_id:
+            return None, "direct_root"
+        return (self._owned_parent_session(native_id, feature_id, assignment_id=None),
+                "coordinator_session")
+
     def _new_job(self, feature: dict, *, kind: str, prompt: str, claim: dict,
                  parent_job: dict | None = None, handoff_id: str | None = None) -> dict:
         # Assignment dispatch IDs and inbox message IDs are durable identities.
@@ -783,29 +891,35 @@ class FirstMateRuntime:
             if existing:
                 return existing
             break
-        session = (Path(feature["session_file"]) if kind == "coordinator" and feature.get("session_file")
+        current_feature = self.store.get_feature(feature["id"])
+        parent_session_id, parent_session_source = self._job_parent_session(
+            current_feature, kind=kind, claim=claim, parent_job=parent_job)
+        session = (Path(current_feature["session_file"])
+                   if kind == "coordinator" and current_feature.get("session_file")
                    else self.root / "sessions" / identifier / "session.jsonl")
-        if kind == "coordinator" and not feature.get("native_session_id"):
-            checkpoint = _read_json(self.root / "checkpoints" / (feature["id"] + ".json"))
+        if kind == "coordinator" and not current_feature.get("native_session_id"):
+            checkpoint = _read_json(self.root / "checkpoints" / (current_feature["id"] + ".json"))
             if checkpoint:
                 prompt += "\n\nRetained First Mate checkpoint from the predecessor conversation. Use it as evidence; current authoritative state above takes precedence:\n" + json.dumps(checkpoint, ensure_ascii=False)
         session.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        job = {"id": identifier, "kind": kind, "feature_id": feature["id"], "cwd": feature["cwd"],
+        job = {"id": identifier, "kind": kind, "feature_id": current_feature["id"], "cwd": current_feature["cwd"],
                "session_file": str(session), "prompt": prompt, "claim": claim, "owner": claim.get("owner") or self.owner,
                "pi_bin": self.pi_bin, "extension": str(self.extension), "created_at": utc_now(),
                "context_target": self.context_target,
                "timeout_seconds": _bounded(self.environ, "HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS", 180, 30, 600) if kind in {"coordinator", "advisor"} else 86400, "handoff_id": handoff_id,
                "parent_job_id": parent_job["id"] if parent_job else None,
+               "parent_session_id": parent_session_id,
+               "parent_session_source": parent_session_source,
                "workspace_mode": claim.get("metadata", {}).get("workspace_mode", "read_only"),
                "charter": {"coordinator": COORDINATOR_PROMPT, "worker": WORKER_PROMPT, "advisor": ADVISOR_PROMPT}[kind]}
-        self._apply_policy(job, self.store.get_feature(feature["id"]))
+        self._apply_policy(job, current_feature)
         if kind == "worker":
             if claim.get("attempt", 0) > 1 and not handoff_id:
                 predecessors = [j for j in self._jobs() if j["kind"] == "worker" and j["claim"]["id"] == claim["id"]]
                 if predecessors:
                     previous = max(predecessors, key=lambda j: j["claim"]["generation"])
                     job["prompt"] += "\n\nPrior execution recovery checkpoint:\n" + previous.get("recovery_brief", "Inspect the retained predecessor session before repeating any side effects: " + str(previous.get("native_session_id")))
-            job["cwd"] = claim.get("metadata", {}).get("worktree_path") or feature["cwd"]
+            job["cwd"] = claim.get("metadata", {}).get("worktree_path") or current_feature["cwd"]
             if parent_job:
                 job["cwd"] = parent_job["cwd"]
                 job["workspace_mode"] = parent_job.get("workspace_mode", job["workspace_mode"])
@@ -1708,6 +1822,13 @@ def _pi_command(job: dict) -> list[str]:
     command = [job["pi_bin"], "--mode", "rpc", "--session", job["session_file"],
                "--name", "First Mate" if job["kind"] == "coordinator" else job["claim"].get("title", "First Mate advisor"),
                prompt_flag, charter, "--extension", job["extension"]]
+    parent_session_id = job.get("parent_session_id")
+    if parent_session_id is not None:
+        if not FirstMateRuntime._valid_pi_parent_session_id(parent_session_id):
+            raise ValueError("Managed Pi parent session ID is invalid")
+        if parent_session_id == job.get("native_session_id"):
+            raise ValueError("Managed Pi session cannot be its own parent")
+        command += ["--herdr-parent-session-id", parent_session_id]
     if job.get("model"):
         command += ["--model", job["model"]]
     if job.get("thinking"):

@@ -53,7 +53,8 @@ private struct ResponseAudioButton: View {
                 }
             }
             .foregroundStyle(tint)
-            .frame(width: 44, height: 44)
+            .padding(6)
+            .frame(minWidth: 44, minHeight: 44)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)

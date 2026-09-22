@@ -193,11 +193,17 @@ struct PiComposerOptionsLayout: Layout {
         if modelVisible {
             let reservedThinking = thinkingVisible ? thinkingWidth + Self.spacing : 0
             let availableWidth = max(Self.modelMinimumWidth, width - reservedThinking)
-            let modelWidth = min(
+            let modelWidthBudget = min(
                 availableWidth,
                 max(Self.modelMinimumWidth, naturalSizes[0].width)
             )
-            let size = subviews[0].sizeThatFits(ProposedViewSize(width: modelWidth, height: nil))
+            let size = subviews[0].sizeThatFits(
+                ProposedViewSize(width: modelWidthBudget, height: nil)
+            )
+            let modelWidth = min(
+                modelWidthBudget,
+                max(Self.modelMinimumWidth, size.width)
+            )
             frames[0] = CGRect(x: x, y: y, width: modelWidth, height: size.height)
             x += modelWidth + (thinkingVisible ? Self.spacing : 0)
             rowHeight = max(rowHeight, size.height)

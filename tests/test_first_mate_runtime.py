@@ -801,7 +801,7 @@ class FirstMateRuntimeTests(unittest.TestCase):
     def test_delegation_replay_freezes_coordinator_and_nested_requested_selection(self):
         feature = self.feature()
         human = self.store.claim_message(feature['id'], self.runtime.owner)
-        self.store.start_visit(feature['id'], 'planning', 'Planning', 'start-replay', 1, human['id'])
+        visit = self.store.start_visit(feature['id'], 'planning', 'Planning', 'start-replay', 1, human['id'])
         coordinator = {'feature_id': feature['id'], 'kind': 'coordinator', 'claim': human}
         self.runtime.environ['HERDR_FIRST_MATE_ARCHITECT_MODEL'] = 'synthetic/architect-a'
         params = {'title': 'Architecture review', 'role': 'reviewer',
@@ -832,7 +832,7 @@ class FirstMateRuntimeTests(unittest.TestCase):
             'metadata': legacy_workspace})
         # The pre-upgrade coordinator added model_profile after reading its old
         # workspace plan, before persisting the assignment receipt.
-        legacy_receipt = self.store.create_assignment(feature['current_visit_id'], {
+        legacy_receipt = self.store.create_assignment(visit['id'], {
             **legacy_parameters, 'metadata': {**legacy_workspace, 'model_profile': 'planning'},
             'request_id': 'legacy-replay', 'input_revision': feature['revision']})
         legacy_first = self.runtime._tool(coordinator, 'fm_delegate', legacy_input, 'legacy-replay')
@@ -1019,8 +1019,10 @@ class FirstMateRuntimeTests(unittest.TestCase):
         child_claim = self.store.claim_assignment(child['id'], self.runtime.owner)
         child_job = self.runtime._new_job(feature, kind='worker', prompt='Inspect', claim=child_claim)
         self.runtime._bind(child_job, 'real-child-native', child_job['session_file'])
-        self.store.record_outcome(child['id'], child_claim['generation'], 'real-child-native', 1,
-                                  'success', 'Inspected', 'real-child-outcome')
+        self.store.record_outcome(
+            child['id'], child_claim['generation'], 'real-child-native', 1,
+            'success', 'Inspected', 'real-child-outcome',
+            code_revision=child_claim['metadata']['expected_code_revision'])
         parent_job['waiting_children'] = 'Await child'
         self.runtime.environ.pop('HERDR_FIRST_MATE_ARCHITECT_MODEL')
         jobs_before = {job['id'] for job in self.runtime._jobs()}

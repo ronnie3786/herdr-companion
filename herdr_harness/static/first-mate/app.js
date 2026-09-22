@@ -127,7 +127,7 @@
     try {
       const list=await api(`features${state.showArchived?'?view=all':''}`); if(!current())return;
       state.features=list.features||[];
-      if(!state.selected || !state.features.some(feature=>feature.id===state.selected)) state.selected=state.features[0]?.id||null;
+      if(!state.selected) state.selected=state.features[0]?.id||null;
       renderFeatures();
       if(state.selected) {
         const selected=state.selected; const detail=await api(`features/${encodeURIComponent(selected)}`);

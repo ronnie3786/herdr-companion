@@ -263,7 +263,7 @@ struct PromptComposerView: View {
             skillsPalette.dismiss()
             isShowingMoreTools = false
             showsTerminalKeys = false
-            if persistedDictation == nil { localDraftContainsDictation = false }
+            if case .none = persistedDictation { localDraftContainsDictation = false }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {

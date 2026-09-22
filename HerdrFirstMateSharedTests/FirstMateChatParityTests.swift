@@ -336,26 +336,29 @@ struct FirstMateChatParityTests {
         #expect(proposal.settings.confirmSessionModelChange == nil)
 
         var state = FirstMateModelSettingsProposalState()
-        let staged = try #require(state.stage(
+        let stagedProposal = state.stage(
             feature: feature,
             context: context,
             model: "synthetic/reasoner",
             thinking: "high",
             safeSettingsSupported: true,
             requestID: "state-request"
-        ))
-        let retried = try #require(state.stage(
+        )
+        let staged = try #require(stagedProposal)
+        let retriedProposal = state.stage(
             feature: feature,
             context: context,
             model: "synthetic/reasoner",
             thinking: "high",
             safeSettingsSupported: true,
             requestID: "must-not-replace"
-        ))
+        )
+        let retried = try #require(retriedProposal)
         #expect(staged.settings == retried.settings)
         #expect(retried.settings.requestID == "state-request")
         #expect(state.needsConfirmation)
-        #expect(state.proposalForSubmission() == nil)
+        let unconfirmedSubmission = state.proposalForSubmission()
+        #expect(unconfirmedSubmission == nil)
 
         // A busy-state or outside dismissal does not imply consent. An ordinary
         // retry must still reopen confirmation instead of yielding a payload.
@@ -369,49 +372,58 @@ struct FirstMateChatParityTests {
             hasQueuedWork: false,
             operationInFlight: false
         ) == .coordinatorBusy)
-        #expect(state.proposalForSubmission() == nil)
-        let confirmed = try #require(state.proposalForSubmission(userConfirmed: true))
+        let retrySubmission = state.proposalForSubmission()
+        #expect(retrySubmission == nil)
+        let confirmedSubmission = state.proposalForSubmission(userConfirmed: true)
+        let confirmed = try #require(confirmedSubmission)
         #expect(confirmed.settings.confirmSessionModelChange == true)
         #expect(!state.needsConfirmation)
-        let uncertainRetry = try #require(state.proposalForSubmission())
+        let uncertainRetrySubmission = state.proposalForSubmission()
+        let uncertainRetry = try #require(uncertainRetrySubmission)
         #expect(confirmed.settings == uncertainRetry.settings)
         #expect(uncertainRetry.settings.requestID == "state-request")
 
         var invalidatedFeature = feature
         invalidatedFeature.modelSettingsRevision = 5
-        #expect(state.invalidateUnless(
+        let didInvalidate = state.invalidateUnless(
             feature: invalidatedFeature,
             currentContext: context,
             safeSettingsSupported: true
-        ))
+        )
+        #expect(didInvalidate)
         #expect(state.proposal == nil)
-        #expect(state.proposalForSubmission() == nil)
+        let invalidatedSubmission = state.proposalForSubmission()
+        #expect(invalidatedSubmission == nil)
 
-        _ = try #require(state.stage(
+        let cancelledProposal = state.stage(
             feature: feature,
             context: context,
             model: "synthetic/reasoner",
             thinking: "high",
             safeSettingsSupported: true,
             requestID: "cancelled-request"
-        ))
+        )
+        _ = try #require(cancelledProposal)
         state.cancel()
         #expect(state.proposal == nil)
-        #expect(state.proposalForSubmission() == nil)
+        let cancelledSubmission = state.proposalForSubmission()
+        #expect(cancelledSubmission == nil)
 
         var initialSession = feature
         initialSession.nativeSessionID = nil
         var initialState = FirstMateModelSettingsProposalState()
-        let initial = try #require(initialState.stage(
+        let stagedInitialProposal = initialState.stage(
             feature: initialSession,
             context: context,
             model: "synthetic/reasoner",
             thinking: "high",
             safeSettingsSupported: false,
             requestID: "initial-request"
-        ))
+        )
+        let initial = try #require(stagedInitialProposal)
         #expect(!initial.requiresConfirmation)
-        #expect(initialState.proposalForSubmission() == initial)
+        let initialSubmission = initialState.proposalForSubmission()
+        #expect(initialSubmission == initial)
         let initialObject = try #require(
             JSONSerialization.jsonObject(with: JSONEncoder().encode(initial.settings)) as? [String: Any]
         )

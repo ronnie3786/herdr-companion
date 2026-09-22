@@ -402,7 +402,7 @@ test('agent and saved-session rows distinguish observed routing from requested r
     },
   }];
   snapshot.sessions = [{
-    native_session_id: 'planner', role: 'planner', kind: 'worker', status: 'queued', generation: 1,
+    native_session_id: 'planner', assignment_id: 'worker', role: 'planner', kind: 'worker', status: 'queued', generation: 1,
     ownership_status: 'queued', model_selection: {
       profile: 'planning', requested_model: 'unsafe/<planner>', requested_thinking: 'xhigh',
       actual_model: null, actual_thinking: null, source: 'host_policy',
@@ -414,8 +414,8 @@ test('agent and saved-session rows distinguish observed routing from requested r
   assert.match(html, /title="Actual synthetic\/observed-worker · high"/);
   assert.doesNotMatch(html, /requested-worker · low/);
 
-  await app.click({ tab: 'Agents' });
-  html = app.element('#workspace').innerHTML;
+  await app.click({ agent: 'worker' });
+  html = app.element('#dialog-body').innerHTML;
   assert.match(html, /Requested &lt;planner&gt; · xhigh/);
   assert.match(html, /title="Requested unsafe\/&lt;planner&gt; · xhigh"/);
   assert.doesNotMatch(html, /unsafe\/<planner>/);

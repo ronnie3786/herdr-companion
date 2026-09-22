@@ -450,6 +450,7 @@ struct WorkspaceNavigationView: View {
             FirstMateWorkspaceView(
                 model: model,
                 store: shell.firstMate,
+                modelFavorites: modelFavorites,
                 canControl: firstMateCanControl,
                 owningMachineID: firstMateGitOwnerMachineID,
                 gitOwnerIsReady: firstMateGitOwnerMachineID != nil && firstMateConnectionIsReady,

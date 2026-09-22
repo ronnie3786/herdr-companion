@@ -68,6 +68,114 @@ struct FirstMateTests {
         #expect(store.snapshot?.documents == original.documents)
     }
 
+    @Test("Partial acknowledgements distinguish explicit session rotation from omitted legacy metadata")
+    func partialAcknowledgementSessionPresence() throws {
+        let store = FirstMateStore()
+        var original = FirstMateDemo.features(step: 0)[0]
+        original.feature.nativeSessionID = "session-before-rotation"
+        original.feature.coordinatorContext = .init(
+            nativeSessionID: "session-before-rotation",
+            status: .measured,
+            tokens: 42_000,
+            contextWindow: 200_000,
+            handoffTargetTokens: 160_000
+        )
+        store.receive(original)
+        store.select(original.feature.id)
+
+        let encoded = try JSONEncoder().encode(original.feature)
+        var featureObject = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        featureObject["revision"] = original.feature.revision + 1
+        featureObject["native_session_id"] = NSNull()
+        featureObject.removeValue(forKey: "coordinator_context")
+        let explicitNullData = try JSONSerialization.data(withJSONObject: ["ok": true, "feature": featureObject])
+        let explicitNull = try JSONDecoder().decode(FirstMateSnapshot.self, from: explicitNullData)
+        #expect(explicitNull.feature.includesNativeSessionID)
+        store.receive(explicitNull)
+        #expect(store.snapshot?.feature.nativeSessionID == nil)
+        #expect(store.snapshot?.feature.coordinatorContext == nil)
+
+        let legacyStore = FirstMateStore()
+        legacyStore.receive(original)
+        legacyStore.select(original.feature.id)
+        featureObject.removeValue(forKey: "native_session_id")
+        featureObject["revision"] = original.feature.revision + 2
+        let omittedData = try JSONSerialization.data(withJSONObject: ["ok": true, "feature": featureObject])
+        let omitted = try JSONDecoder().decode(FirstMateSnapshot.self, from: omittedData)
+        #expect(!omitted.feature.includesNativeSessionID)
+        legacyStore.receive(omitted)
+        #expect(legacyStore.snapshot?.feature.nativeSessionID == "session-before-rotation")
+        #expect(legacyStore.snapshot?.feature.coordinatorContext?.tokens == 42_000)
+    }
+
+    @Test("Delayed partial acknowledgements cannot resurrect rotated coordinator identity")
+    func delayedPartialAcknowledgementSessionIdentity() throws {
+        let store = FirstMateStore()
+        var original = FirstMateDemo.features(step: 0)[0]
+        original.feature.updatedAt = "2030-01-01T12:00:00Z"
+        original.feature.nativeSessionID = "session-old"
+        original.feature.coordinatorContext = .init(
+            nativeSessionID: "session-old",
+            status: .measured,
+            tokens: 40_000,
+            contextWindow: 200_000,
+            handoffTargetTokens: 160_000
+        )
+        store.receive(original)
+        store.select(original.feature.id)
+
+        var successor = original
+        successor.feature.updatedAt = "2030-01-01T12:02:00Z"
+        successor.feature.nativeSessionID = "session-successor"
+        successor.feature.coordinatorContext = .init(
+            nativeSessionID: "session-successor",
+            status: .measured,
+            tokens: 2_000,
+            contextWindow: 200_000,
+            handoffTargetTokens: 160_000
+        )
+        store.receive(successor)
+
+        var delayedFeature = original.feature
+        delayedFeature.updatedAt = "2030-01-01T12:01:00Z"
+        delayedFeature.status = "paused"
+        let delayedObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(delayedFeature))
+        let delayedData = try JSONSerialization.data(withJSONObject: ["ok": true, "feature": delayedObject])
+        let delayed = try JSONDecoder().decode(FirstMateSnapshot.self, from: delayedData)
+        #expect(!delayed.hasDetails)
+        store.receive(delayed)
+        #expect(store.snapshot?.feature.status == "paused")
+        #expect(store.snapshot?.feature.updatedAt == "2030-01-01T12:02:00Z")
+        #expect(store.snapshot?.feature.nativeSessionID == "session-successor")
+        #expect(store.snapshot?.feature.coordinatorContext?.nativeSessionID == "session-successor")
+
+        var cleared = successor
+        cleared.feature.updatedAt = "2030-01-01T12:03:00Z"
+        cleared.feature.nativeSessionID = nil
+        cleared.feature.coordinatorContext = nil
+        store.receive(cleared)
+        store.receive(delayed)
+        #expect(store.snapshot?.feature.updatedAt == "2030-01-01T12:03:00Z")
+        #expect(store.snapshot?.feature.nativeSessionID == nil)
+        #expect(store.snapshot?.feature.coordinatorContext == nil)
+
+        var newestFeature = cleared.feature
+        newestFeature.updatedAt = "2030-01-01T12:04:00Z"
+        newestFeature.nativeSessionID = "session-newest"
+        newestFeature.coordinatorContext = .init(
+            nativeSessionID: "session-newest",
+            status: .measured,
+            tokens: 1_000,
+            contextWindow: 200_000,
+            handoffTargetTokens: 160_000
+        )
+        let newestObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(newestFeature))
+        let newestData = try JSONSerialization.data(withJSONObject: ["ok": true, "feature": newestObject])
+        store.receive(try JSONDecoder().decode(FirstMateSnapshot.self, from: newestData))
+        #expect(store.snapshot?.feature.nativeSessionID == "session-newest")
+        #expect(store.snapshot?.feature.coordinatorContext?.nativeSessionID == "session-newest")
+    }
+
     @Test("Feature drafts stay separate and a host change clears sensitive state")
     func draftAndConnectionIsolation() {
         let store = FirstMateStore()
@@ -84,6 +192,22 @@ struct FirstMateTests {
         #expect(store.features.isEmpty)
         #expect(store.draft.isEmpty)
         #expect(store.snapshot == nil)
+    }
+
+    @Test("A captured composer binding cannot write into a newly selected feature")
+    func capturedComposerBinding() {
+        let store = FirstMateStore()
+        store.configure(client: nil, demo: true)
+        let first = store.features[0].id
+        let second = store.features[1].id
+        let firstContext = store.operationContext
+        store.setComposerDraft("Original feature", for: firstContext)
+        store.select(second)
+        store.setComposerDraft("Late original edit", for: firstContext)
+        #expect(store.draft.isEmpty)
+        store.setComposerDraft("Second feature", for: store.operationContext)
+        store.select(first)
+        #expect(store.draft == "Late original edit")
     }
 
     @Test("A failed message retry reuses its request ID and preserves the draft")

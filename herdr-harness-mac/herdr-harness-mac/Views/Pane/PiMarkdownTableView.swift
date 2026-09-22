@@ -48,6 +48,7 @@ struct PiMarkdownTableView: View {
         .accessibilityLabel(
             "Table with \(table.headers.count) columns and \(table.rows.count) rows"
         )
+        .environment(\.chatProsePalette, .chat)
     }
 
     private func tableRow(

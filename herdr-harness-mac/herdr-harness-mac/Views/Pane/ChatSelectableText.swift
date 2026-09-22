@@ -10,6 +10,7 @@ struct ChatSelectableText: NSViewRepresentable {
     @Environment(\.self) private var environment
     @Environment(\.saveChatQuote) private var saveQuote
     @Environment(\.chatQuoteSource) private var source
+    @Environment(\.chatProsePalette) private var palette
 
     func makeCoordinator() -> ChatTextLinkDelegate {
         ChatTextLinkDelegate(openURL: environment.openURL)
@@ -18,8 +19,8 @@ struct ChatSelectableText: NSViewRepresentable {
     func makeNSView(context: Context) -> ChatTextLayoutView {
         let view = ChatTextLayoutView()
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        view.textView.linkTextAttributes = [.foregroundColor: NSColor(HerdrTheme.accent)]
-        view.textView.selectedTextAttributes = [.backgroundColor: NSColor(HerdrTheme.accent).withAlphaComponent(0.3)]
+        view.textView.linkTextAttributes = [.foregroundColor: NSColor(palette.accent)]
+        view.textView.selectedTextAttributes = [.backgroundColor: NSColor(palette.accent).withAlphaComponent(0.3)]
         return view
     }
 
@@ -27,12 +28,14 @@ struct ChatSelectableText: NSViewRepresentable {
         let view = layoutView.textView
         context.coordinator.openURL = environment.openURL
         view.delegate = context.coordinator
+        view.linkTextAttributes = [.foregroundColor: NSColor(palette.accent)]
+        view.selectedTextAttributes = [.backgroundColor: NSColor(palette.accent).withAlphaComponent(0.3)]
         let baseFont = font.resolve(in: environment.fontResolutionContext).ctFont as NSFont
         let result = NSMutableAttributedString(attributedString: NSAttributedString(text))
         let fullRange = NSRange(location: 0, length: result.length)
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = lineSpacing
-        result.addAttributes([.font: baseFont, .foregroundColor: NSColor(HerdrTheme.text), .paragraphStyle: paragraph], range: fullRange)
+        result.addAttributes([.font: baseFont, .foregroundColor: NSColor(palette.text), .paragraphStyle: paragraph], range: fullRange)
         for run in text.runs {
             let range = NSRange(run.range, in: text)
             var runFont = run.font.map { $0.resolve(in: environment.fontResolutionContext).ctFont as NSFont } ?? baseFont

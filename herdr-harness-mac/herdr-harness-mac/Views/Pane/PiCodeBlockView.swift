@@ -73,6 +73,7 @@ struct PiCodeBlockView: View {
             RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
                 .stroke(HerdrTheme.separator, lineWidth: 1)
         }
+        .environment(\.chatProsePalette, .chat)
     }
 
     private var codeWidth: CGFloat {

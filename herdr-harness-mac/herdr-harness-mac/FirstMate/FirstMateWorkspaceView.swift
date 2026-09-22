@@ -9,6 +9,7 @@ private enum FirstMateWorkspaceMode: String, CaseIterable, Identifiable {
 struct FirstMateWorkspaceView: View {
     @Bindable var model: HerdrAppModel
     @Bindable var store: FirstMateStore
+    let modelFavorites: ModelFavoritesStore
     let canControl: Bool
     let owningMachineID: String?
     let gitOwnerIsReady: Bool
@@ -75,7 +76,13 @@ struct FirstMateWorkspaceView: View {
                         }
                     } else {
                         HSplitView {
-                            FirstMateChatView(store: store, snapshot: snapshot, canControl: canControl)
+                            FirstMateChatView(
+                                store: store,
+                                model: model,
+                                snapshot: snapshot,
+                                canControl: canControl,
+                                modelFavorites: modelFavorites
+                            )
                                 .frame(minWidth: 330, idealWidth: 480, maxWidth: .infinity)
                             FirstMateInspectorView(store: store, snapshot: snapshot)
                                 .frame(minWidth: 340, idealWidth: 465, maxWidth: .infinity)
@@ -113,6 +120,10 @@ struct FirstMateWorkspaceView: View {
                     .id(resource.id)
             }
         }
+        .task(id: "\(store.lifecycle.opaqueID):\(canControl)") {
+            store.setControlAvailability(canControl)
+        }
+        .onDisappear { store.setControlAvailability(false) }
         .accessibilityIdentifier("first-mate-workspace")
     }
 

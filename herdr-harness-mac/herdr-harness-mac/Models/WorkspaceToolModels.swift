@@ -246,15 +246,64 @@ struct UploadedAttachment: Codable, Equatable, Hashable, Identifiable, Sendable 
     var workspaceID: String?
     var createdAt: String
 
+    init(
+        id: String,
+        filename: String,
+        originalFilename: String,
+        contentType: String,
+        size: Int,
+        path: String,
+        workspaceID: String?,
+        createdAt: String
+    ) {
+        self.id = id
+        self.filename = filename
+        self.originalFilename = originalFilename
+        self.contentType = contentType
+        self.size = size
+        self.path = path
+        self.workspaceID = workspaceID
+        self.createdAt = createdAt
+    }
+
     enum CodingKeys: String, CodingKey {
-        case id
-        case filename
-        case originalFilename = "original_filename"
-        case contentType = "content_type"
-        case size
-        case path
-        case workspaceID = "workspace_id"
-        case createdAt = "created_at"
+        case id, filename, size, path
+        case originalFilename
+        case originalFilenameSnake = "original_filename"
+        case contentType
+        case contentTypeSnake = "content_type"
+        case workspaceIDCamel = "workspaceId"
+        case workspaceIDSnake = "workspace_id"
+        case createdAt
+        case createdAtSnake = "created_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        filename = try container.decode(String.self, forKey: .filename)
+        originalFilename = try container.decodeIfPresent(String.self, forKey: .originalFilename)
+            ?? container.decode(String.self, forKey: .originalFilenameSnake)
+        contentType = try container.decodeIfPresent(String.self, forKey: .contentType)
+            ?? container.decode(String.self, forKey: .contentTypeSnake)
+        size = try container.decode(Int.self, forKey: .size)
+        path = try container.decode(String.self, forKey: .path)
+        workspaceID = try container.decodeIfPresent(String.self, forKey: .workspaceIDCamel)
+            ?? container.decodeIfPresent(String.self, forKey: .workspaceIDSnake)
+        createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
+            ?? container.decode(String.self, forKey: .createdAtSnake)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(filename, forKey: .filename)
+        try container.encode(originalFilename, forKey: .originalFilenameSnake)
+        try container.encode(contentType, forKey: .contentTypeSnake)
+        try container.encode(size, forKey: .size)
+        try container.encode(path, forKey: .path)
+        try container.encodeIfPresent(workspaceID, forKey: .workspaceIDSnake)
+        try container.encode(createdAt, forKey: .createdAtSnake)
     }
 }
 

@@ -9,6 +9,8 @@ protocol FirstMateClient: Sendable {
     func fetchFirstMateFeature(_ id: String) async throws -> FirstMateSnapshot
     func createFirstMateFeature(title: String, goal: String, cwd: String, requestID: String) async throws -> FirstMateSnapshot
     func sendFirstMateMessage(featureID: String, text: String, requestID: String) async throws -> FirstMateSnapshot
+    func uploadFirstMateAttachment(featureID: String, fileURL: URL, contentType: String) async throws -> AttachmentUploadResponse
+    func transcribeFirstMateVoice(fileURL: URL) async throws -> VoiceTranscriptionResponse
     func performFirstMateAction(featureID: String, action: String, requestID: String) async throws -> FirstMateSnapshot
     func setFirstMateArchived(featureID: String, archived: Bool, reason: FirstMateArchiveReason?, requestID: String) async throws -> FirstMateSnapshot
     func fetchFirstMateDocument(_ id: String) async throws -> FirstMateDocumentResponse
@@ -24,6 +26,9 @@ struct FirstMateCapabilities: Decodable, Sendable {
     var ok: Bool
     var capabilities: [String]
     var supportsArchive: Bool { capabilities.contains("first-mate-archive-v1") }
+    var supportsAttachments: Bool { capabilities.contains("first-mate-attachments-v1") }
+    var supportsContext: Bool { capabilities.contains("first-mate-context-v1") }
+    var supportsSafeModelSettings: Bool { capabilities.contains("first-mate-safe-model-settings-v1") }
 }
 
 struct FirstMateDocumentResponse: Decodable, Sendable {
@@ -78,9 +83,14 @@ struct FirstMateModelSettings: Encodable, Equatable, Sendable {
     var thinking: String
     var expectedSettingsRevision: Int
     var requestID: String
+    var expectedSessionID: String? = nil
+    var confirmSessionModelChange: Bool? = nil
+
     enum CodingKeys: String, CodingKey {
         case model, thinking
         case expectedSettingsRevision = "expected_settings_revision", requestID = "request_id"
+        case expectedSessionID = "expected_session_id"
+        case confirmSessionModelChange = "confirm_session_model_change"
     }
 }
 
@@ -96,6 +106,12 @@ extension FirstMateClient {
     }
     func fetchFirstMateModels() async throws -> FirstMateModelCatalog { throw APIError.invalidResponse }
     func setFirstMateModel(featureID: String, settings: FirstMateModelSettings) async throws -> FirstMateSnapshot {
+        throw APIError.invalidResponse
+    }
+    func uploadFirstMateAttachment(featureID: String, fileURL: URL, contentType: String) async throws -> AttachmentUploadResponse {
+        throw APIError.invalidResponse
+    }
+    func transcribeFirstMateVoice(fileURL: URL) async throws -> VoiceTranscriptionResponse {
         throw APIError.invalidResponse
     }
 }

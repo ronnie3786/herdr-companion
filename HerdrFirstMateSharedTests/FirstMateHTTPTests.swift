@@ -61,6 +61,35 @@ struct FirstMateHTTPTests {
         #expect(object["request_id"] as? String == "model-123")
     }
 
+    #if os(macOS)
+    @Test("Feature attachments use the bounded authenticated feature route")
+    func featureAttachment() async throws {
+        let (client, session) = try makeClient()
+        defer { session.invalidateAndCancel() }
+        let url = FileManager.default.temporaryDirectory.appending(path: "first-mate-http-synthetic.txt")
+        try Data("synthetic attachment".utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let response = try await client.uploadFirstMateAttachment(
+            featureID: "feature:123",
+            fileURL: url,
+            contentType: "text/plain"
+        )
+        #expect(response.attachment?.path == "first-mate:feature:123/attachment-1")
+        let request = try #require(FirstMateURLProtocol.recorder.requests().last)
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.path == "/api/v1/first-mate/features/feature:123/attachments")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer first-mate-test-token")
+        let body = try #require(request.httpBody)
+        let object = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(object["filename"] as? String == url.lastPathComponent)
+        #expect(object["content_type"] as? String == "text/plain")
+        #expect(Data(base64Encoded: try #require(object["data_base64"] as? String)) == Data("synthetic attachment".utf8))
+        #expect(object["workspace_id"] == nil)
+        #expect(object["path"] == nil)
+    }
+    #endif
+
     @Test("Reading a retained session sends the exact identity and earlier-page cursor")
     func savedSessionAndDocuments() async throws {
         let (client, session) = try makeClient()
@@ -171,6 +200,8 @@ private final class FirstMateURLProtocol: URLProtocol {
                 data = Data(#"{"ok":true,"capabilities":["first-mate-v1","first-mate-archive-v1"]}"#.utf8)
             } else if url.path == "/api/v1/first-mate/models" {
                 data = Data(#"{"ok":true,"models":[{"id":"synthetic/reasoner","name":"Reasoner","provider":"synthetic","reasoning":true}],"default_model":"synthetic/default","thinking_levels":["off","high"]}"#.utf8)
+            } else if url.path.hasSuffix("/attachments") {
+                data = Data(#"{"ok":true,"attachment":{"id":"attachment-1","filename":"first-mate-http-synthetic.txt","originalFilename":"first-mate-http-synthetic.txt","contentType":"text/plain","size":20,"path":"first-mate:feature:123/attachment-1","workspaceId":"first-mate:feature:123","createdAt":"2030-01-01T12:00:00Z"}}"#.utf8)
             } else if url.path.contains("/sessions/") {
                 data = Data(#"{"ok":true,"native_session_id":"native-session:123","messages":[{"role":"assistant","text":"Saved review result"}],"next_before":140,"total_messages":340,"usage":{"currency":"USD","cost_usd":0.004,"status":"complete","input_tokens":100,"output_tokens":20,"cache_read_tokens":30,"cache_write_tokens":0,"total_tokens":150,"usage_records":2,"missing_cost_records":0,"session_count":1,"known_cost_sessions":1,"models":[],"updated_at":"2026-09-21T20:00:00Z"}}"#.utf8)
             } else if url.path.contains("/documents/") {

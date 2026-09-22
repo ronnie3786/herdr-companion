@@ -34,11 +34,13 @@ enum ComposerToolRowFit: Equatable, Sendable {
 ///   browses Photos) plus drag-and-drop onto the composer.
 struct PromptComposerView: View {
     @Bindable var model: HerdrAppModel
-    let pane: HerdrPane
-    let workspace: HerdrWorkspace
+    let pane: HerdrPane?
+    let workspace: HerdrWorkspace?
+    let destination: PromptComposerDestination
     @Binding var draft: String
     @Binding var attachments: [TerminalAttachment]
     @Binding var quotes: [ChatQuote]
+    let persistedDictation: Binding<Bool>?
     let focusRequest: Int
     let dismissFocusRequest: Int
     let piConfiguration: PiPromptComposerConfiguration?
@@ -66,7 +68,7 @@ struct PromptComposerView: View {
     @State private var hapticPulse = HerdrHapticPulse()
     @State private var quickVoiceCapture = HerdrQuickVoiceCapture()
     @State private var isCTACapture = false
-    @State private var draftContainsDictation = false
+    @State private var localDraftContainsDictation = false
     @State private var isLockPulsing = false
     @State private var skillsPalette = ComposerSkillsPalette()
     @State private var didLoadSkills = false
@@ -88,12 +90,49 @@ struct PromptComposerView: View {
         quotes: Binding<[ChatQuote]> = .constant([]),
         codePasteboard: NSPasteboard = .general
     ) {
+        let destinationID = "pane:\(pane.id):generation:\(model.connectionGeneration)"
         self.model = model
         self.pane = pane
         self.workspace = workspace
+        self.destination = PromptComposerDestination(
+            id: destinationID,
+            canControl: piConfiguration?.isConnected ?? model.canControl,
+            isSubmitting: piConfiguration?.isSubmitting ?? model.isSending,
+            isBusy: piConfiguration?.isCompacting ?? false,
+            placeholder: piConfiguration?.placeholder(for: piConfiguration?.preferredDisposition ?? .prompt)
+                ?? (pane.agentStatus == .unknown ? "run or type into this shell" : "message \(pane.displayAgentName)"),
+            sendAccessibilityLabel: piConfiguration?.preferredDisposition.label ?? "Send",
+            sendAccessibilityHint: piConfiguration == nil
+                ? "Sends the prompt to this terminal"
+                : "Sends using \(piConfiguration?.preferredDisposition.label.lowercased() ?? "prompt") mode",
+            supportsAttachments: true,
+            supportsVoice: true,
+            supportsPaneTools: true,
+            isCurrent: {
+                destinationID == "pane:\(pane.id):generation:\(model.connectionGeneration)"
+                    && model.pane(id: pane.id) != nil
+            },
+            acceptsCompletion: {
+                destinationID == "pane:\(pane.id):generation:\(model.connectionGeneration)"
+                    && model.pane(id: pane.id) != nil
+            },
+            upload: { url, contentType in
+                try await model.uploadAttachment(from: url, contentType: contentType, to: workspace)
+            },
+            transcribe: { url in try await model.transcribeVoiceNote(at: url) },
+            submit: { message in
+                if let piConfiguration {
+                    return await piConfiguration.submit(message, piConfiguration.preferredDisposition)
+                }
+                return await model.sendPrompt(message, to: pane)
+            },
+            reportError: { model.errorMessage = $0 },
+            reportToast: { model.toastMessage = $0 }
+        )
         _draft = draft
         _attachments = attachments
         _quotes = quotes
+        persistedDictation = nil
         self.focusRequest = focusRequest
         self.dismissFocusRequest = dismissFocusRequest
         self.piConfiguration = piConfiguration
@@ -105,8 +144,40 @@ struct PromptComposerView: View {
         _disposition = State(initialValue: piConfiguration?.preferredDisposition ?? .prompt)
     }
 
+    init(
+        model: HerdrAppModel,
+        destination: PromptComposerDestination,
+        draft: Binding<String>,
+        attachments: Binding<[TerminalAttachment]>,
+        quotes: Binding<[ChatQuote]>,
+        containsDictation: Binding<Bool>? = nil,
+        focusRequest: Int = 0,
+        dismissFocusRequest: Int = 0,
+        modelFavorites: ModelFavoritesStore,
+        codePasteboard: NSPasteboard = .general
+    ) {
+        self.model = model
+        pane = nil
+        workspace = nil
+        self.destination = destination
+        _draft = draft
+        _attachments = attachments
+        _quotes = quotes
+        persistedDictation = containsDictation
+        self.focusRequest = focusRequest
+        self.dismissFocusRequest = dismissFocusRequest
+        piConfiguration = nil
+        responseAudioPlayer = nil
+        activateResponseAudio = nil
+        toolRowFit = .automatic
+        self.modelFavorites = modelFavorites
+        self.codePasteboard = codePasteboard
+        _disposition = State(initialValue: .prompt)
+    }
+
     private var stagedConversationReferences: [ConversationContextReference] {
-        model.conversationReferences(for: pane.id)
+        guard let pane else { return [] }
+        return model.conversationReferences(for: pane.id)
     }
 
     var body: some View {
@@ -120,6 +191,7 @@ struct PromptComposerView: View {
                     removeQuote: { id in quotes.removeAll { $0.id == id } },
                     conversationReferences: stagedConversationReferences,
                     removeConversationReference: { id in
+                        guard let pane else { return }
                         model.removeConversationReference(id, from: pane.id)
                     }
                 )
@@ -186,6 +258,13 @@ struct PromptComposerView: View {
         .onDisappear {
             quickVoiceCapture.cancel()
         }
+        .onChange(of: destination.id) {
+            quickVoiceCapture.cancel()
+            skillsPalette.dismiss()
+            isShowingMoreTools = false
+            showsTerminalKeys = false
+            if persistedDictation == nil { localDraftContainsDictation = false }
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {
                 quickVoiceCapture.cancel()
@@ -209,12 +288,12 @@ struct PromptComposerView: View {
         }
         .onChange(of: draft) { _, updatedDraft in
             if updatedDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                draftContainsDictation = false
+                setDraftContainsDictation(false)
             }
             updateSkillsPalette()
         }
         .onChange(of: isFocused) { _, focused in
-            if focused {
+            if focused, let pane {
                 model.acknowledgeUnreadAlerts(for: pane)
             } else {
                 // Leaving the field is as clear a "not now" as pressing escape.
@@ -222,7 +301,7 @@ struct PromptComposerView: View {
             }
         }
         .onChange(of: focusRequest) {
-            model.acknowledgeUnreadAlerts(for: pane)
+            if let pane { model.acknowledgeUnreadAlerts(for: pane) }
             isFocused = true
         }
         .onChange(of: dismissFocusRequest) {
@@ -241,26 +320,24 @@ struct PromptComposerView: View {
             case let .success(urls):
                 queueAttachments(urls, ownership: .userSelected)
             case let .failure(error):
-                model.errorMessage = error.localizedDescription
+                destination.reportError(error.localizedDescription)
             }
         }
         .dropDestination(for: URL.self) { urls, _ in
-            guard canControl else { return false }
+            guard destination.supportsAttachments, canControl, destination.isCurrent() else { return false }
             queueAttachments(urls, ownership: .userSelected)
             return true
         } isTargeted: { isTargeted in
-            isFileDropTargeted = isTargeted
+            isFileDropTargeted = destination.supportsAttachments && isTargeted
         }
         .dropDestination(for: ConversationContextTransfer.self) { transfers, _ in
-            guard canControl, !isSubmitting, !isPiCompacting, let transfer = transfers.first else {
-                return false
-            }
-            Task {
-                await model.addConversationContext(transfer, toDestinationPaneID: pane.id)
-            }
+            guard destination.supportsPaneTools,
+                  canControl, !isSubmitting, !isPiCompacting,
+                  let pane, let transfer = transfers.first else { return false }
+            Task { await model.addConversationContext(transfer, toDestinationPaneID: pane.id) }
             return true
         } isTargeted: { isTargeted in
-            isConversationDropTargeted = isTargeted
+            isConversationDropTargeted = destination.supportsPaneTools && isTargeted
         }
         .overlay {
             if isFileDropTargeted || isConversationDropTargeted {
@@ -274,18 +351,23 @@ struct PromptComposerView: View {
             HerdrVoiceNoteRecorderSheet(
                 save: { url in
                     isShowingVoiceRecorder = false
+                    guard destination.acceptsCompletion() else {
+                        removeTemporarySources([url], ownership: .appTemporary)
+                        return
+                    }
                     queueAttachments([url], ownership: .appTemporary)
                 },
                 transcribe: { url in
-                    try await model.transcribeVoiceNote(at: url)
+                    try await destination.transcribe(url)
                 },
                 insertTranscript: { result in
                     isShowingVoiceRecorder = false
+                    guard destination.acceptsCompletion() else { return }
                     appendTranscript(result.text)
                     hapticPulse.fire(.transcriptionSucceeded)
-                    model.toastMessage = result.usedFallback
+                    destination.reportToast(result.usedFallback
                         ? "Parakeet unavailable · transcribed with Apple Speech"
-                        : "Transcribed with \(result.provider.rawValue)"
+                        : "Transcribed with \(result.provider.rawValue)")
                 },
                 cancel: { isShowingVoiceRecorder = false }
             )
@@ -293,7 +375,8 @@ struct PromptComposerView: View {
         .sheet(isPresented: $isShowingFileSearch) {
             WorkspaceFileSearchSheet(
                 load: { query in
-                    try await model.searchFiles(in: workspace, query: query)
+                    guard let workspace else { throw APIError.invalidResponse }
+                    return try await model.searchFiles(in: workspace, query: query)
                 },
                 select: { file in
                     appendToken("`\(file.path)`")
@@ -354,7 +437,9 @@ struct PromptComposerView: View {
                         showsStatusLabel: false
                     )
                 }
-                terminalKeysToggle
+                if destination.supportsPaneTools {
+                    terminalKeysToggle
+                }
             }
             .fixedSize(horizontal: true, vertical: false)
             .frame(maxWidth: stacksControls || !showsPiOptionsBar ? .infinity : nil, alignment: .trailing)
@@ -377,6 +462,8 @@ struct PromptComposerView: View {
                     pasteCodeBlock: pasteCodeBlock,
                     showsTitles: true,
                     showsContextTools: false,
+                    showsAttach: destination.supportsAttachments,
+                    showsVoice: destination.supportsVoice,
                     canPasteCode: !isSubmitting && canControl && !isPiCompacting
                 )
                 .fixedSize(horizontal: true, vertical: false)
@@ -441,7 +528,7 @@ struct PromptComposerView: View {
                 Text("Prompt tools")
                     .herdrFont(.headline, weight: .semibold)
                     .foregroundStyle(HerdrTheme.text)
-                if pane.supportsPiSemanticChat {
+                if destination.supportsPaneTools, let pane, pane.supportsPiSemanticChat {
                     ComposerPiMaintenanceActions(
                         isEnabled: canControl && piConfiguration?.isConnected == true && !isPiCompacting && !isSubmitting,
                         compact: {
@@ -477,18 +564,21 @@ struct PromptComposerView: View {
                     showsAttach: false,
                     showsCode: false,
                     showsVoice: false,
+                    showsContextTools: destination.supportsPaneTools,
                     isVertical: true
                 )
-                Button("Start voice dictation", systemImage: "mic", action: startLockedVoiceCapture)
-                    .buttonStyle(.plain)
-                    .herdrFont(.caption)
-                    .foregroundStyle(HerdrTheme.mist)
-                    .frame(minHeight: HerdrTheme.minHitTarget)
-                    .disabled(quickVoiceCapture.phase != .idle || !canControl || isPiCompacting)
-                Text("Click Voice for a note. Hold to dictate, and keep holding to lock recording.")
-                    .herdrFont(.caption)
-                    .foregroundStyle(HerdrTheme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
+                if destination.supportsVoice {
+                    Button("Start voice dictation", systemImage: "mic", action: startLockedVoiceCapture)
+                        .buttonStyle(.plain)
+                        .herdrFont(.caption)
+                        .foregroundStyle(HerdrTheme.mist)
+                        .frame(minHeight: HerdrTheme.minHitTarget)
+                        .disabled(quickVoiceCapture.phase != .idle || !canControl || isPiCompacting)
+                    Text("Click Voice for a note. Hold to dictate, and keep holding to lock recording.")
+                        .herdrFont(.caption)
+                        .foregroundStyle(HerdrTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .padding(16)
             .frame(width: 270)
@@ -544,18 +634,21 @@ struct PromptComposerView: View {
         .accessibilityIdentifier("composer-tool-row")
     }
 
+    @ViewBuilder
     private func keyRow(
         showsLabels: Bool,
         keys: [TerminalPresetKey] = TerminalPresetKey.deckRow,
         overflow: [TerminalPresetKey] = []
     ) -> some View {
-        TerminalKeyDeck(
-            model: model,
-            pane: pane,
-            keys: keys,
-            overflow: overflow,
-            showsLabels: showsLabels
-        )
+        if let pane {
+            TerminalKeyDeck(
+                model: model,
+                pane: pane,
+                keys: keys,
+                overflow: overflow,
+                showsLabels: showsLabels
+            )
+        }
     }
 
     private var composerInput: some View {
@@ -673,26 +766,30 @@ struct PromptComposerView: View {
         if let piConfiguration {
             return piConfiguration.placeholder(for: effectiveDisposition)
         }
-        return pane.agentStatus == .unknown
-            ? "run or type into this shell"
-            : "message \(pane.displayAgentName)"
+        return destination.placeholder
     }
 
-    private var canControl: Bool {
-        piConfiguration?.isConnected ?? model.canControl
+    private var canControl: Bool { destination.canControl }
+
+    private var draftContainsDictation: Bool {
+        persistedDictation?.wrappedValue ?? localDraftContainsDictation
     }
 
-    private var isSubmitting: Bool {
-        piConfiguration?.isSubmitting ?? model.isSending
+    private func setDraftContainsDictation(_ value: Bool) {
+        if let persistedDictation {
+            persistedDictation.wrappedValue = value
+        } else {
+            localDraftContainsDictation = value
+        }
     }
 
-    private var isPiCompacting: Bool {
-        piConfiguration?.isCompacting ?? false
-    }
+    private var isSubmitting: Bool { destination.isSubmitting }
+
+    private var isPiCompacting: Bool { destination.isBusy }
 
     private var sendAccessibilityHint: String {
-        guard piConfiguration != nil else { return "Sends the prompt to this terminal" }
-        return "Sends using \(effectiveDisposition.label.lowercased()) mode"
+        if piConfiguration != nil { return "Sends using \(effectiveDisposition.label.lowercased()) mode" }
+        return destination.sendAccessibilityHint
     }
 
     private var effectiveDisposition: PiPromptDisposition {
@@ -703,27 +800,15 @@ struct PromptComposerView: View {
     }
 
     private var canSend: Bool {
-        let hasText = hasDraftText
-        let hasAttachment = hasUploadedAttachment
-        let isUploading = attachments.contains { item in
-            item.status == .uploading
-        }
-        let dispositionIsAvailable = piConfiguration?.availableDispositions.contains(effectiveDisposition) ?? true
-        return (hasText || hasAttachment || !quotes.isEmpty || !model.conversationReferences(for: pane.id).isEmpty)
-            && !isUploading
-            && !isSubmitting
-            && canControl
-            && dispositionIsAvailable
-    }
-
-    private var hasDraftText: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var hasUploadedAttachment: Bool {
-        attachments.contains { item in
-            item.status == .uploaded && item.uploadedPath != nil
-        }
+        PromptComposerSubmission.isReady(
+            draft: draft,
+            attachments: attachments,
+            quoteCount: quotes.count,
+            conversationReferenceCount: stagedConversationReferences.count,
+            isSubmitting: isSubmitting,
+            canControl: canControl,
+            dispositionIsAvailable: piConfiguration?.availableDispositions.contains(effectiveDisposition) ?? true
+        )
     }
 
     private var isCTALockedCapture: Bool {
@@ -753,7 +838,8 @@ struct PromptComposerView: View {
     private var trailingComposerAccessibilityLabel: String {
         if isCTALockedCapture { return "Stop voice dictation" }
         if isCTATranscribing { return "Transcribing voice dictation" }
-        return effectiveDisposition.label
+        if piConfiguration != nil { return effectiveDisposition.label }
+        return destination.sendAccessibilityLabel
     }
 
     private var trailingComposerAccessibilityHint: String {
@@ -820,10 +906,14 @@ struct PromptComposerView: View {
               !isLoadingSkills,
               ComposerSkillsPalette.tokenStart(in: Array(draft), caret: draft.count) != nil
         else { return }
+        guard destination.supportsPaneTools, let workspace else { return }
         isLoadingSkills = true
+        let destinationID = destination.id
         Task {
-            defer { isLoadingSkills = false }
-            guard let response = try? await model.fetchSkills(for: workspace) else { return }
+            defer { if destination.id == destinationID { isLoadingSkills = false } }
+            guard let response = try? await model.fetchSkills(for: workspace),
+                  destination.id == destinationID,
+                  destination.acceptsCompletion() else { return }
             didLoadSkills = true
             skillsPalette.replaceSkills(
                 response.resolvedProjectSkills + response.resolvedUserSkills
@@ -866,7 +956,7 @@ struct PromptComposerView: View {
             if await ComposerCodeBlockPaste.paste(into: $draft, pasteboard: codePasteboard, selection: selection) {
                 isFocused = true
             } else {
-                model.toastMessage = "Copy some text before pasting a code block"
+                destination.reportToast("Copy some text before pasting a code block")
             }
         }
     }
@@ -876,7 +966,7 @@ struct PromptComposerView: View {
         guard !cleaned.isEmpty else { return }
         let existing = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         draft = existing.isEmpty ? cleaned : "\(existing)\n\n\(cleaned)"
-        draftContainsDictation = true
+        setDraftContainsDictation(true)
         isFocused = true
     }
 
@@ -899,23 +989,25 @@ struct PromptComposerView: View {
     private func completeQuickVoiceCapture() {
         Task {
             hapticPulse.fire(.recordingStopped)
+            let destinationID = destination.id
             let outcome = await quickVoiceCapture.endHold { url in
-                try await model.transcribeVoiceNote(at: url)
+                try await destination.transcribe(url)
             }
+            guard destination.id == destinationID, destination.acceptsCompletion() else { return }
             switch outcome {
             case .cancelled:
                 break
             case .tooShort:
-                model.toastMessage = "Hold the mic to dictate"
+                destination.reportToast("Hold the mic to dictate")
             case let .transcript(result):
                 appendTranscript(result.text)
                 hapticPulse.fire(.transcriptionSucceeded)
-                model.toastMessage = result.usedFallback
+                destination.reportToast(result.usedFallback
                     ? "Parakeet unavailable · transcribed with Apple Speech"
-                    : "Transcribed with \(result.provider.rawValue)"
+                    : "Transcribed with \(result.provider.rawValue)")
             case let .failure(message):
                 hapticPulse.fire(.failed)
-                model.errorMessage = message
+                destination.reportError(message)
             }
             isCTACapture = false
         }
@@ -952,6 +1044,11 @@ struct PromptComposerView: View {
         ownership: AttachmentSourceOwnership
     ) {
         guard !urls.isEmpty else { return }
+        guard destination.supportsAttachments, destination.acceptsCompletion() else {
+            removeTemporarySources(urls, ownership: ownership)
+            destination.reportError("Attachments are unavailable for this destination.")
+            return
+        }
         do {
             let candidates = try urls.map {
                 try AttachmentPolicy.candidate(for: $0, ownership: ownership)
@@ -963,7 +1060,7 @@ struct PromptComposerView: View {
             enqueue(candidates)
         } catch {
             removeTemporarySources(urls, ownership: ownership)
-            model.errorMessage = error.localizedDescription
+            destination.reportError(error.localizedDescription)
         }
     }
 
@@ -986,24 +1083,30 @@ struct PromptComposerView: View {
 
     private func upload(_ item: TerminalAttachment) {
         let url = item.sourceURL
+        let destinationID = destination.id
         Task {
             do {
-                let uploaded = try await model.uploadAttachment(
-                    from: url,
-                    contentType: contentType(for: url),
-                    to: workspace
-                )
-                updateAttachment(item.id) { current in
-                    current.uploaded = uploaded
-                    current.error = nil
-                    current.status = .uploaded
+                let uploaded = try await destination.upload(url, contentType(for: url))
+                guard destination.id == destinationID, destination.acceptsCompletion() else {
+                    item.removeSourceFileIfOwned()
+                    return
                 }
+                attachments = PromptComposerSubmission.applyingUploadSuccess(
+                    uploaded,
+                    itemID: item.id,
+                    to: attachments
+                )
                 item.removeSourceFileIfOwned()
             } catch {
-                updateAttachment(item.id) { current in
-                    current.error = error.localizedDescription
-                    current.status = .failed
+                guard destination.id == destinationID, destination.acceptsCompletion() else {
+                    item.removeSourceFileIfOwned()
+                    return
                 }
+                attachments = PromptComposerSubmission.applyingUploadFailure(
+                    error.localizedDescription,
+                    itemID: item.id,
+                    to: attachments
+                )
             }
         }
     }
@@ -1042,24 +1145,19 @@ struct PromptComposerView: View {
     }
 
     private func send() {
-        guard canSend else { return }
+        guard canSend, destination.isCurrent() else { return }
+        let destinationID = destination.id
+        let draftToSend = draft
+        let attachmentsToSend = attachments.filter { $0.status == .uploaded && $0.uploadedPath != nil }
         let quotesToSend = quotes
-        let referencesToSend = model.conversationReferences(for: pane.id)
-        let text = ChatQuote.prompt(draft.trimmingCharacters(in: .whitespacesAndNewlines), quotes: quotesToSend)
-        let paths = attachments.compactMap(\.uploadedPath)
-        let attachmentBlock = paths.isEmpty
-            ? ""
-            : paths.map { "Attachment: `\($0)`" }.joined(separator: "\n")
-        var message = [text, attachmentBlock]
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n\n")
-        if draftContainsDictation,
-           !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            message += "\n\n(transcribed audio, please account for incorrect names or typos)"
-        }
-        message = ConversationContextReference.prompt(
-            currentRequest: message,
-            references: referencesToSend
+        let referencesToSend = stagedConversationReferences
+        let sentDictation = draftContainsDictation
+        let message = PromptComposerSubmission.payload(
+            draft: draftToSend,
+            attachments: attachmentsToSend,
+            quotes: quotesToSend,
+            references: referencesToSend,
+            containsDictation: sentDictation
         )
         let piConfiguration = self.piConfiguration
         let disposition = effectiveDisposition
@@ -1068,20 +1166,35 @@ struct PromptComposerView: View {
             let didSend = if let piConfiguration {
                 await piConfiguration.submit(message, disposition)
             } else {
-                await model.sendPrompt(message, to: pane)
+                await destination.submit(message)
             }
+            guard destination.id == destinationID, destination.acceptsCompletion() else { return }
 
             if didSend {
-                draft = ""
-                draftContainsDictation = false
-                attachments.forEach { $0.removeSourceFileIfOwned() }
-                attachments = []
-                let sentQuoteIDs = Set(quotesToSend.map(\.id))
-                quotes.removeAll { sentQuoteIDs.contains($0.id) }
-                let sentReferenceIDs = Set(referencesToSend.map(\.id))
-                model.removeConversationReferences(sentReferenceIDs, from: pane.id)
+                var currentDraft = draft
+                var currentAttachments = attachments
+                var currentQuotes = quotes
+                var currentContainsDictation = draftContainsDictation
+                PromptComposerSubmission.consumeAccepted(
+                    sentDraft: draftToSend,
+                    sentAttachmentIDs: Set(attachmentsToSend.map(\.id)),
+                    sentQuoteIDs: Set(quotesToSend.map(\.id)),
+                    sentContainsDictation: sentDictation,
+                    draft: &currentDraft,
+                    attachments: &currentAttachments,
+                    quotes: &currentQuotes,
+                    containsDictation: &currentContainsDictation
+                )
+                draft = currentDraft
+                attachments = currentAttachments
+                quotes = currentQuotes
+                setDraftContainsDictation(currentContainsDictation)
+                if let pane {
+                    let sentReferenceIDs = Set(referencesToSend.map(\.id))
+                    model.removeConversationReferences(sentReferenceIDs, from: pane.id)
+                }
                 hapticPulse.fire(.promptSent)
-            } else if piConfiguration != nil {
+            } else {
                 hapticPulse.fire(.failed)
             }
         }

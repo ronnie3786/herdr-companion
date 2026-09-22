@@ -7,6 +7,7 @@ struct PiMarkdownBlockView: View {
     /// identifier that is unique across the timeline.
     var ownerID: String = ""
     @Environment(\.herdrFontScale) private var fontScale
+    @Environment(\.chatProsePalette) private var palette
 
     var body: some View {
         switch block {
@@ -15,7 +16,7 @@ struct PiMarkdownBlockView: View {
                 text,
                 font: HerdrProse.font(.body, scale: fontScale),
                 inlineCodeFont: HerdrProse.inlineCodeFont(.body, scale: fontScale),
-                inlineCodeColor: HerdrProse.inlineCodeColor
+                inlineCodeColor: palette.accent
             )
                 .lineSpacing(HerdrProse.lineSpacing(.body, scale: fontScale))
         case let .heading(_, level, text):
@@ -23,7 +24,7 @@ struct PiMarkdownBlockView: View {
                 text,
                 font: headingFont(level),
                 inlineCodeFont: HerdrProse.inlineCodeFont(headingRole(level), scale: fontScale),
-                inlineCodeColor: HerdrProse.inlineCodeColor
+                inlineCodeColor: palette.accent
             )
                 .lineSpacing(2)
                 .accessibilityAddTraits(.isHeader)
@@ -37,14 +38,14 @@ struct PiMarkdownBlockView: View {
                 text,
                 font: HerdrProse.font(.quote, scale: fontScale),
                 inlineCodeFont: HerdrProse.inlineCodeFont(.quote, scale: fontScale),
-                inlineCodeColor: HerdrProse.inlineCodeColor
+                inlineCodeColor: palette.accent
             )
                 .lineSpacing(HerdrProse.lineSpacing(.quote, scale: fontScale))
-                .foregroundStyle(HerdrTheme.mist)
+                .foregroundStyle(palette.secondaryText)
                 .padding(.leading, 14)
                 .overlay(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(HerdrTheme.accent.opacity(0.5))
+                    .fill(palette.accent.opacity(0.5))
                     .frame(width: 2)
                     .accessibilityHidden(true)
                 }
@@ -52,7 +53,7 @@ struct PiMarkdownBlockView: View {
             PiMarkdownTableView(table: table)
         case .thematicBreak:
             Rectangle()
-                .fill(HerdrTheme.separator)
+                .fill(palette.separator)
                 .frame(height: 1)
                 .padding(.vertical, 10)
                 .accessibilityHidden(true)

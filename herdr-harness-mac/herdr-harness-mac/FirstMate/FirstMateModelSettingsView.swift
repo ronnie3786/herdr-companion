@@ -161,8 +161,10 @@ struct FirstMateModelSettingsView: View {
             try await store.saveModelSettings(settings, expectedContext: context)
             dismiss()
         } catch {
-            if case APIError.server(let status, _) = error, status == 409 {
-                self.error = "Settings changed elsewhere. Reload, then choose and save again."
+            if case APIError.server(let status, let message) = error, status == 409 {
+                self.error = message.isEmpty
+                    ? "The server rejected this model change. Reload the feature and try again."
+                    : message
             } else { self.error = error.localizedDescription }
         }
     }

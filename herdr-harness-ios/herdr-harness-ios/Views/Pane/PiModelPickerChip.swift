@@ -42,7 +42,6 @@ struct PiModelPickerChip: View {
             } label: {
                 controlLabel
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
             .disabled(!isEnabled)
             .accessibilityIdentifier("pi-chat-model")
             .composerLayoutMeasurement(id: "pi-chat-model", label: accessibilityLabel)
@@ -58,15 +57,29 @@ struct PiModelPickerChip: View {
     }
 
     private var controlLabel: some View {
-        Text(visibleText)
-            .font(.footnote.weight(.medium))
-            .lineLimit(1)
-            .truncationMode(.middle)
-            .foregroundStyle(isInteractive ? HerdrTheme.mauve : HerdrTheme.mist)
-            .composerLayoutMeasurement(id: "pi-chat-model-value", label: visibleText)
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .contentShape(.rect)
-            .opacity(isInteractive && !isEnabled ? 0.48 : 1)
+        HStack(spacing: 4) {
+            Text(visibleText)
+                .font(.footnote.weight(.medium))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .composerLayoutMeasurement(id: "pi-chat-model-value", label: visibleText)
+
+            if isInteractive {
+                Image(systemName: "chevron.down")
+                    .font(.footnote.weight(.semibold))
+                    .imageScale(.small)
+                    .fixedSize()
+                    .accessibilityHidden(true)
+                    .composerLayoutMeasurement(
+                        id: "pi-chat-model-chevron",
+                        label: "chevron.down"
+                    )
+            }
+        }
+        .foregroundStyle(isInteractive ? HerdrTheme.mauve : HerdrTheme.mist)
+        .frame(minWidth: 44, minHeight: 44, alignment: .leading)
+        .contentShape(.rect)
+        .opacity(isInteractive && !isEnabled ? 0.48 : 1)
     }
 
     private var visibleText: String {

@@ -11,14 +11,16 @@ This follow-up to `77a9c8a` replaces the separate pane-mode row from the origina
 - Conversation rows are flat and use the complete reading width. The decorative
   turn rail, dots, and reserved leading gutter are removed without changing lazy
   row identity, working groups, streaming updates, errors, or transcript windowing.
-- Model, Thinking, Listen, and TL;DR retain separate semantic actions, live
-  capability/catalog/playback state, full VoiceOver labels, and 44-point touch
-  targets. Their visible content is now small plain text without decorative icons,
-  chevrons, capsules, borders, or spinners. Common values share one 44-point row
-  at 320–430 point widths; a long model takes the remaining width, while
-  accessibility text sizes stack instead of overlapping or wrapping values.
-  Active audio text accurately changes to Stop, Pause, or Resume, and hidden audio
-  reserves no space.
+- Model and Thinking retain separate semantic actions, live capability/catalog
+  state, full VoiceOver labels, and 44-point touch targets. They are small plain-text
+  pickers grouped at the leading edge, with a down chevron immediately after each
+  interactive value. Read-only values omit the chevron. Listen and TL;DR remain
+  independent 44-point actions at the trailing edge but render only speaker and
+  quote icons; preparing, playing, and paused states use spinner, pause, and play
+  indicators without visible action words. Common values share one 44-point row at
+  320–430 point widths; a long model truncates within the available leading budget,
+  while accessibility text sizes stack instead of overlapping or wrapping values.
+  Hidden audio reserves no space and does not separate Thinking from Model.
 - The large in-content pane header is removed. A tail-truncated one-line inline
   navigation title retains the full accessible title. Agent name, idle status,
   standalone star, and machine/workspace/tab breadcrumb no longer consume chat
@@ -61,28 +63,31 @@ ownership, retry behavior, and origin-pane submission cleanup remain enforced.
 These are in-memory composer attachments, not persisted attachment drafts.
 
 No server, Mac app, Pi bridge, authentication, or wire-contract changes are
-required. The earlier local-color and unsent-text draft behavior remains intact.
+required. The build 43 picker-chevron and trailing icon presentation is iOS-only.
+The earlier local-color and unsent-text draft behavior remains intact.
 
 ## Verification
 
-Build 42 adds deterministic coverage for the plain-text Model, Thinking, Listen,
-and TL;DR row at 320/375/402/430 points and default/Accessibility 3 text sizes,
-including loading, setting, disabled, catalog error, empty catalog, read-only,
-preparing, playing, and paused states. It checks 44-point targets, non-overlap,
-visible and accessible action labels, a two-point options-to-editor gap, and a
-synthetic full-composer capture. Existing coverage continues to check rail-free
+Build 43 extends the deterministic 320/375/402/430-point and
+Default/Accessibility 3 matrix for adjacent leading pickers, interactive-only
+chevrons, trailing icon glyphs, hidden audio, loading, setting, disabled, catalog
+error, empty catalog, read-only, preparing, playing, and paused states. It checks
+44-point targets, non-overlap, accessible action labels, real glyph geometry, a
+two-point options-to-editor gap, a synthetic full-composer capture, and independent
+server-free UI interaction with both menus. Build 42 introduced the underlying
+plain-control matrix. Existing coverage continues to check rail-free
 row geometry, one-line title geometry, removed header/status/breadcrumb chrome,
 Pane actions ownership of star and Last prompt, nonnil prompt
 presentation/copy/dismiss,
 composed synthetic conversation imagery, and navigation policy plus Agents,
-Attention, Activity, and iPad split-detail routes. Those tests are authored but intentionally not run
-until the final reviewed-candidate gate. The gate must also run the existing
+Attention, Activity, and iPad split-detail routes. Those tests are authored but
+intentionally not run until the final reviewed-candidate gate. The gate must also run the existing
 attachment layouts, navigator/notes regressions, native unit suite, focused UI
 suite, public-source guard, and signed device archive/package checks.
 
 The earlier attachment follow-up was verified with Xcode 26.2, 349 unit tests,
 10 UI tests, and its native render matrix. That older evidence is not evidence
-for build 42. A physical-device connected-Pi smoke test remains necessary after
-installation; automated checks do not certify the complete iPad, VoiceOver, or
+for builds 42 or 43. A physical-device connected-Pi smoke test remains necessary
+after installation; automated checks do not certify the complete iPad, VoiceOver, or
 media-service matrix. Private captures, configuration, signing identities,
 archives, and installation destinations stay outside source.

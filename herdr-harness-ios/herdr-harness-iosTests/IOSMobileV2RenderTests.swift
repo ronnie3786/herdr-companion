@@ -16,7 +16,7 @@ final class IOSMobileV2RenderTests: XCTestCase {
         let expectedModelValue: String
         let expectedThinkingValue: String
         let expectedAudioLabels: [String]?
-        let expectedAudioTitles: [String]?
+        let expectedAudioGlyphs: [String]?
         let expectsCompactCommonCase: Bool
     }
 
@@ -66,6 +66,18 @@ final class IOSMobileV2RenderTests: XCTestCase {
                         fixture: fixture,
                         context: context
                     )
+                    let pickerFrames = [
+                        try XCTUnwrap(render.element(identifier: "pi-chat-model")).frame,
+                        try XCTUnwrap(render.element(identifier: "pi-chat-thinking")).frame,
+                    ]
+                    for pickerFrame in pickerFrames {
+                        for audioFrame in audioFrames {
+                            XCTAssertFalse(
+                                pickerFrame.intersects(audioFrame),
+                                "Leading pickers must not overlap trailing audio: \(context)"
+                            )
+                        }
+                    }
 
                     if fixture.expectsCompactCommonCase, dynamicType.name == "default" {
                         XCTAssertLessThanOrEqual(
@@ -136,7 +148,7 @@ final class IOSMobileV2RenderTests: XCTestCase {
     private var optionsFixtures: [OptionsFixture] {
         [
             fixture(name: "short-high", model: "Sample Pro", thinking: .high, compact: true),
-            fixture(name: "standard-low", model: "Synthetic Standard", thinking: .low, compact: true),
+            fixture(name: "standard-low", model: "Sample Standard", thinking: .low, compact: true),
             fixture(
                 name: "long-extra-high",
                 model: "Synthetic reasoning model with a deliberately long display name",
@@ -161,7 +173,7 @@ final class IOSMobileV2RenderTests: XCTestCase {
                 expectedModelValue: "Loading…",
                 expectedThinkingValue: "High",
                 expectedAudioLabels: idleAudioLabels,
-                expectedAudioTitles: ["Listen", "TL;DR"],
+                expectedAudioGlyphs: idleAudioGlyphs,
                 expectsCompactCommonCase: false
             ),
             OptionsFixture(
@@ -176,7 +188,7 @@ final class IOSMobileV2RenderTests: XCTestCase {
                 expectedModelValue: "Synthetic Standard, setting",
                 expectedThinkingValue: "High, setting",
                 expectedAudioLabels: idleAudioLabels,
-                expectedAudioTitles: ["Listen", "TL;DR"],
+                expectedAudioGlyphs: idleAudioGlyphs,
                 expectsCompactCommonCase: false
             ),
             OptionsFixture(
@@ -190,7 +202,7 @@ final class IOSMobileV2RenderTests: XCTestCase {
                 expectedModelValue: "Synthetic Standard",
                 expectedThinkingValue: "Extra High",
                 expectedAudioLabels: nil,
-                expectedAudioTitles: nil,
+                expectedAudioGlyphs: nil,
                 expectsCompactCommonCase: false
             ),
             OptionsFixture(
@@ -205,7 +217,7 @@ final class IOSMobileV2RenderTests: XCTestCase {
                 expectedModelValue: "Not reported",
                 expectedThinkingValue: "High",
                 expectedAudioLabels: nil,
-                expectedAudioTitles: nil,
+                expectedAudioGlyphs: nil,
                 expectsCompactCommonCase: false
             ),
             OptionsFixture(
@@ -219,7 +231,7 @@ final class IOSMobileV2RenderTests: XCTestCase {
                 expectedModelValue: "Not reported",
                 expectedThinkingValue: "High",
                 expectedAudioLabels: nil,
-                expectedAudioTitles: nil,
+                expectedAudioGlyphs: nil,
                 expectsCompactCommonCase: false
             ),
             OptionsFixture(
@@ -234,32 +246,36 @@ final class IOSMobileV2RenderTests: XCTestCase {
                 expectedModelValue: "Synthetic Standard",
                 expectedThinkingValue: "High",
                 expectedAudioLabels: nil,
-                expectedAudioTitles: nil,
+                expectedAudioGlyphs: nil,
                 expectsCompactCommonCase: false
             ),
             audioStateFixture(
                 name: "preparing",
                 phase: .preparing(.listen),
                 labels: ["Stop preparing response audio", "Listen to response summary"],
-                titles: ["Stop", "TL;DR"]
+                glyphs: ["progress", "text.quote"]
             ),
             audioStateFixture(
                 name: "playing",
                 phase: .playing(.listen),
                 labels: ["Pause response audio", "Listen to response summary"],
-                titles: ["Pause", "TL;DR"]
+                glyphs: ["pause.fill", "text.quote"]
             ),
             audioStateFixture(
                 name: "paused",
                 phase: .paused(.listen),
                 labels: ["Resume response audio", "Listen to response summary"],
-                titles: ["Resume", "TL;DR"]
+                glyphs: ["play.fill", "text.quote"]
             ),
         ]
     }
 
     private var idleAudioLabels: [String] {
         ["Listen to response", "Listen to response summary"]
+    }
+
+    private var idleAudioGlyphs: [String] {
+        ["speaker.wave.2.fill", "text.quote"]
     }
 
     private func fixture(
@@ -279,7 +295,7 @@ final class IOSMobileV2RenderTests: XCTestCase {
             expectedModelValue: model,
             expectedThinkingValue: thinking.displayName,
             expectedAudioLabels: audioVisible ? idleAudioLabels : nil,
-            expectedAudioTitles: audioVisible ? ["Listen", "TL;DR"] : nil,
+            expectedAudioGlyphs: audioVisible ? idleAudioGlyphs : nil,
             expectsCompactCommonCase: compact
         )
     }
@@ -288,7 +304,7 @@ final class IOSMobileV2RenderTests: XCTestCase {
         name: String,
         phase: ResponseAudioPlaybackPhase,
         labels: [String],
-        titles: [String]
+        glyphs: [String]
     ) -> OptionsFixture {
         OptionsFixture(
             name: name,
@@ -303,7 +319,7 @@ final class IOSMobileV2RenderTests: XCTestCase {
             expectedModelValue: "Sample Pro",
             expectedThinkingValue: "High",
             expectedAudioLabels: labels,
-            expectedAudioTitles: titles,
+            expectedAudioGlyphs: glyphs,
             expectsCompactCommonCase: true
         )
     }
@@ -342,8 +358,31 @@ final class IOSMobileV2RenderTests: XCTestCase {
             XCTAssertGreaterThan(value.frame.height, 0, "A rendered picker value must remain visible: \(context)")
             XCTAssertTrue(control.frame.insetBy(dx: -0.5, dy: -0.5).contains(value.frame), context)
         }
+        try assertPickerChevron(
+            render,
+            identifier: "pi-chat-model-chevron",
+            expected: fixture.configuration.supportsModelMenu,
+            valueFrame: modelValue.frame,
+            controlFrame: model.frame,
+            context: context
+        )
+        try assertPickerChevron(
+            render,
+            identifier: "pi-chat-thinking-chevron",
+            expected: fixture.configuration.supportsThinkingMenu,
+            valueFrame: thinkingValue.frame,
+            controlFrame: thinking.frame,
+            context: context
+        )
         XCTAssertFalse(model.frame.intersects(thinking.frame), "Independent pickers must not overlap: \(context)")
         if dynamicType.name == "default" {
+            XCTAssertEqual(model.frame.midY, thinking.frame.midY, accuracy: 1, "Pickers share a row: \(context)")
+            XCTAssertEqual(
+                thinking.frame.minX - model.frame.maxX,
+                PiComposerOptionsLayout.spacing,
+                accuracy: 1,
+                "Thinking must immediately follow Model, including when audio is hidden: \(context)"
+            )
             XCTAssertLessThanOrEqual(model.frame.height, 46, "Model remains a single quiet value row: \(context)")
             XCTAssertLessThanOrEqual(thinking.frame.height, 46, "Thinking remains a single quiet value row: \(context)")
         }
@@ -359,6 +398,34 @@ final class IOSMobileV2RenderTests: XCTestCase {
         )
     }
 
+    private func assertPickerChevron(
+        _ render: IOSNativeRenderHarness.HostedRender,
+        identifier: String,
+        expected: Bool,
+        valueFrame: CGRect,
+        controlFrame: CGRect,
+        context: String
+    ) throws {
+        guard expected else {
+            XCTAssertNil(render.element(identifier: identifier), "Read-only values have no chevron: \(context)")
+            return
+        }
+        let chevron = try XCTUnwrap(render.element(identifier: identifier))
+        XCTAssertEqual(chevron.label, "chevron.down", context)
+        XCTAssertGreaterThan(chevron.frame.width, 0, "Chevron remains visible: \(context)")
+        XCTAssertGreaterThanOrEqual(
+            chevron.frame.minX,
+            valueFrame.maxX + 2,
+            "Chevron must follow its value rather than move to the far edge: \(context)"
+        )
+        XCTAssertLessThanOrEqual(
+            chevron.frame.minX,
+            valueFrame.maxX + 6,
+            "Chevron stays adjacent to its value: \(context)"
+        )
+        XCTAssertTrue(controlFrame.insetBy(dx: -0.5, dy: -0.5).contains(chevron.frame), context)
+    }
+
     @discardableResult
     private func assertAudioLayout(
         _ render: IOSNativeRenderHarness.HostedRender,
@@ -366,19 +433,21 @@ final class IOSMobileV2RenderTests: XCTestCase {
         context: String
     ) throws -> [CGRect] {
         guard let expectedLabels = fixture.expectedAudioLabels,
-              let expectedTitles = fixture.expectedAudioTitles
+              let expectedGlyphs = fixture.expectedAudioGlyphs
         else {
             XCTAssertNil(render.element(identifier: "pi-response-audio-listen"), context)
             XCTAssertNil(render.element(identifier: "pi-response-audio-tldr"), context)
+            XCTAssertNil(render.element(identifier: "pi-response-audio-listen-glyph"), context)
+            XCTAssertNil(render.element(identifier: "pi-response-audio-tldr-glyph"), context)
             return []
         }
 
         let listen = try XCTUnwrap(render.element(identifier: "pi-response-audio-listen"))
         let summary = try XCTUnwrap(render.element(identifier: "pi-response-audio-tldr"))
-        let listenTitle = try XCTUnwrap(render.element(identifier: "pi-response-audio-listen-value"))
-        let summaryTitle = try XCTUnwrap(render.element(identifier: "pi-response-audio-tldr-value"))
+        let listenGlyph = try XCTUnwrap(render.element(identifier: "pi-response-audio-listen-glyph"))
+        let summaryGlyph = try XCTUnwrap(render.element(identifier: "pi-response-audio-tldr-glyph"))
         let controls = [listen, summary]
-        let values = [listenTitle, summaryTitle]
+        let glyphs = [listenGlyph, summaryGlyph]
 
         for (index, control) in controls.enumerated() {
             assertMinimumControlFrame(
@@ -388,11 +457,20 @@ final class IOSMobileV2RenderTests: XCTestCase {
                 context: context
             )
             XCTAssertEqual(control.label, expectedLabels[index], "Accurate audio action label: \(context)")
-            XCTAssertEqual(values[index].label, expectedTitles[index], "Accurate visible action text: \(context)")
-            XCTAssertGreaterThan(values[index].frame.width, 0, "Audio title remains visible: \(context)")
-            XCTAssertTrue(control.frame.insetBy(dx: -0.5, dy: -0.5).contains(values[index].frame))
+            XCTAssertEqual(glyphs[index].label, expectedGlyphs[index], "Accurate visible audio glyph: \(context)")
+            XCTAssertGreaterThan(glyphs[index].frame.width, 0, "Audio glyph remains visible: \(context)")
+            XCTAssertLessThan(glyphs[index].frame.width, control.frame.width, "Audio remains icon-only: \(context)")
+            XCTAssertTrue(control.frame.insetBy(dx: -0.5, dy: -0.5).contains(glyphs[index].frame))
         }
+        XCTAssertNil(render.element(identifier: "pi-response-audio-listen-value"), context)
+        XCTAssertNil(render.element(identifier: "pi-response-audio-tldr-value"), context)
         XCTAssertFalse(listen.frame.intersects(summary.frame), "Audio controls must not overlap: \(context)")
+        XCTAssertEqual(
+            summary.frame.maxX,
+            render.bounds.maxX - 12,
+            accuracy: 1,
+            "Audio actions remain at the trailing edge: \(context)"
+        )
         return controls.map(\.frame)
     }
 

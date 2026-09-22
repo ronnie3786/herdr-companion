@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 @main
@@ -9,10 +10,20 @@ struct HerdrHarnessApp: App {
 
     var body: some Scene {
         WindowGroup {
-            AppRootView(model: model)
-                .environment(herdPulse)
-                .preferredColorScheme(model.selectedTab == .firstMate ? firstMateAppearance.colorScheme : .dark)
-                .tint(HerdrTheme.accent)
+            Group {
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("-HerdrPiOptionsFixture") {
+                    PiOptionsUITestFixtureView()
+                } else {
+                    AppRootView(model: model)
+                }
+                #else
+                AppRootView(model: model)
+                #endif
+            }
+            .environment(herdPulse)
+            .preferredColorScheme(model.selectedTab == .firstMate ? firstMateAppearance.colorScheme : .dark)
+            .tint(HerdrTheme.accent)
         }
     }
 }

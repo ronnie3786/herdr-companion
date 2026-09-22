@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// Lays out Model, Thinking, then optional response audio against the width the
-/// composer actually proposes. Thinking keeps its intrinsic label width and the
-/// model receives the remainder; ideal model-name width never selects a stack.
+/// Lays out an intrinsic leading Model/Thinking group and optional trailing
+/// response-audio controls against the width the composer actually proposes.
+/// Long model names receive only the remaining budget and truncate in place.
 struct PiComposerOptionsLayout: Layout {
-    static let modelMinimumWidth: CGFloat = 96
+    static let modelMinimumWidth: CGFloat = 44
     static let thinkingMinimumWidth: CGFloat = 44
     static let spacing: CGFloat = 4
 
@@ -43,19 +43,23 @@ struct PiComposerOptionsLayout: Layout {
         let modelVisible = isVisible(0, sizes: naturalSizes)
         let thinkingVisible = isVisible(1, sizes: naturalSizes)
         let audioVisible = isVisible(2, sizes: naturalSizes)
-        let fallbackWidth = naturalSizes.reduce(CGFloat.zero) { $0 + $1.width }
-            + CGFloat(max(0, naturalSizes.count - 1)) * Self.spacing
-        let width = max(0, proposal.width ?? fallbackWidth)
+        let modelNaturalWidth = modelVisible
+            ? max(Self.modelMinimumWidth, naturalSizes[0].width)
+            : 0
         let thinkingWidth = thinkingVisible
             ? max(Self.thinkingMinimumWidth, naturalSizes[1].width)
             : 0
-        let controlsMinimumWidth = (modelVisible ? Self.modelMinimumWidth : 0)
+        let controlsNaturalWidth = modelNaturalWidth
             + thinkingWidth
             + (modelVisible && thinkingVisible ? Self.spacing : 0)
         let audioWidth = audioVisible ? naturalSizes[2].width : 0
-        let inlineMinimumWidth = controlsMinimumWidth
-            + audioWidth
-            + ((modelVisible || thinkingVisible) && audioVisible ? Self.spacing : 0)
+        let audioGap = (modelVisible || thinkingVisible) && audioVisible ? Self.spacing : 0
+        let fallbackWidth = controlsNaturalWidth + audioGap + audioWidth
+        let width = max(0, proposal.width ?? fallbackWidth)
+        let controlsMinimumWidth = (modelVisible ? Self.modelMinimumWidth : 0)
+            + thinkingWidth
+            + (modelVisible && thinkingVisible ? Self.spacing : 0)
+        let inlineMinimumWidth = controlsMinimumWidth + audioGap + audioWidth
 
         if isAccessibilitySize || controlsMinimumWidth > width {
             return stackedPlan(width: width, subviews: subviews, naturalSizes: naturalSizes)
@@ -86,9 +90,12 @@ struct PiComposerOptionsLayout: Layout {
         let thinkingVisible = isVisible(1, sizes: naturalSizes)
         let audioVisible = isVisible(2, sizes: naturalSizes)
         let audioWidth = audioVisible ? naturalSizes[2].width : 0
-        let controlsWidth = width
-            - audioWidth
-            - ((modelVisible || thinkingVisible) && audioVisible ? Self.spacing : 0)
+        let controlsWidth = max(
+            0,
+            width
+                - audioWidth
+                - ((modelVisible || thinkingVisible) && audioVisible ? Self.spacing : 0)
+        )
         var frames = emptyFrames(count: subviews.count)
         let controlHeight = placeControlRow(
             width: controlsWidth,
@@ -185,7 +192,11 @@ struct PiComposerOptionsLayout: Layout {
 
         if modelVisible {
             let reservedThinking = thinkingVisible ? thinkingWidth + Self.spacing : 0
-            let modelWidth = max(Self.modelMinimumWidth, width - reservedThinking)
+            let availableWidth = max(Self.modelMinimumWidth, width - reservedThinking)
+            let modelWidth = min(
+                availableWidth,
+                max(Self.modelMinimumWidth, naturalSizes[0].width)
+            )
             let size = subviews[0].sizeThatFits(ProposedViewSize(width: modelWidth, height: nil))
             frames[0] = CGRect(x: x, y: y, width: modelWidth, height: size.height)
             x += modelWidth + (thinkingVisible ? Self.spacing : 0)
@@ -193,7 +204,7 @@ struct PiComposerOptionsLayout: Layout {
         }
         if thinkingVisible {
             let availableWidth = max(0, width - x)
-            let itemWidth = modelVisible ? availableWidth : min(width, thinkingWidth)
+            let itemWidth = min(availableWidth, thinkingWidth)
             let size = subviews[1].sizeThatFits(ProposedViewSize(width: itemWidth, height: nil))
             frames[1] = CGRect(x: x, y: y, width: itemWidth, height: size.height)
             rowHeight = max(rowHeight, size.height)

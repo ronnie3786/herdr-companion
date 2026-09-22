@@ -25,7 +25,6 @@ struct PiThinkingLevelChip: View {
             } label: {
                 controlLabel
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
             .disabled(!isEnabled)
             .accessibilityIdentifier("pi-chat-thinking")
             .composerLayoutMeasurement(id: "pi-chat-thinking", label: accessibilityLabel)
@@ -41,15 +40,29 @@ struct PiThinkingLevelChip: View {
     }
 
     private var controlLabel: some View {
-        Text(visibleText)
-            .font(.footnote)
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .foregroundStyle(isInteractive ? HerdrTheme.mauve : HerdrTheme.mist)
-            .composerLayoutMeasurement(id: "pi-chat-thinking-value", label: visibleText)
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .contentShape(.rect)
-            .opacity(isInteractive && !isEnabled ? 0.48 : 1)
+        HStack(spacing: 4) {
+            Text(visibleText)
+                .font(.footnote)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .composerLayoutMeasurement(id: "pi-chat-thinking-value", label: visibleText)
+
+            if isInteractive {
+                Image(systemName: "chevron.down")
+                    .font(.footnote.weight(.semibold))
+                    .imageScale(.small)
+                    .fixedSize()
+                    .accessibilityHidden(true)
+                    .composerLayoutMeasurement(
+                        id: "pi-chat-thinking-chevron",
+                        label: "chevron.down"
+                    )
+            }
+        }
+        .foregroundStyle(isInteractive ? HerdrTheme.mauve : HerdrTheme.mist)
+        .frame(minWidth: 44, minHeight: 44, alignment: .leading)
+        .contentShape(.rect)
+        .opacity(isInteractive && !isEnabled ? 0.48 : 1)
     }
 
     private var visibleText: String {

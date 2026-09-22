@@ -31,16 +31,30 @@ private struct ResponseAudioButton: View {
 
     var body: some View {
         Button(action: activate) {
-            Text(title)
-                .font(.footnote.weight(isActive ? .medium : .regular))
-                .lineLimit(1)
-                .foregroundStyle(tint)
-                .composerLayoutMeasurement(
-                    id: "pi-response-audio-\(action.rawValue)-value",
-                    label: title
-                )
-                .frame(minWidth: 44, minHeight: 44)
-                .contentShape(.rect)
+            Group {
+                if isPreparing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(tint)
+                        .accessibilityHidden(true)
+                        .composerLayoutMeasurement(
+                            id: "pi-response-audio-\(action.rawValue)-glyph",
+                            label: "progress"
+                        )
+                } else {
+                    Label(accessibilityLabel, systemImage: systemImage)
+                        .labelStyle(.iconOnly)
+                        .font(.footnote.weight(isActive ? .medium : .regular))
+                        .accessibilityHidden(true)
+                        .composerLayoutMeasurement(
+                            id: "pi-response-audio-\(action.rawValue)-glyph",
+                            label: systemImage
+                        )
+                }
+            }
+            .foregroundStyle(tint)
+            .frame(width: 44, height: 44)
+            .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)
@@ -62,13 +76,12 @@ private struct ResponseAudioButton: View {
         return false
     }
 
-    private var title: String {
-        guard isActive else { return action.title }
+    private var systemImage: String {
+        guard isActive else { return action.systemImage }
         return switch phase {
-        case .preparing: "Stop"
-        case .playing: "Pause"
-        case .paused: "Resume"
-        case .unavailable, .checking, .idle: action.title
+        case .playing: "pause.fill"
+        case .paused: "play.fill"
+        case .preparing, .unavailable, .checking, .idle: action.systemImage
         }
     }
 

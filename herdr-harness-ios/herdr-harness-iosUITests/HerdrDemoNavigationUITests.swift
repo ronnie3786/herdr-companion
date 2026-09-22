@@ -12,6 +12,48 @@ final class HerdrDemoNavigationUITests: XCTestCase {
     }
 
     @MainActor
+    func testModelAndThinkingMenusOpenIndependentlyInSyntheticFixture() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-HerdrDemoMode", "-HerdrPiOptionsFixture"]
+        app.launch()
+
+        let model = app.descendants(matching: .any)["pi-chat-model"]
+        let thinking = app.descendants(matching: .any)["pi-chat-thinking"]
+        XCTAssertTrue(model.waitForExistence(timeout: 5))
+        XCTAssertTrue(thinking.waitForExistence(timeout: 5))
+        XCTAssertTrue(model.isHittable)
+        XCTAssertTrue(thinking.isHittable)
+        XCTAssertGreaterThanOrEqual(model.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(thinking.frame.width, 44)
+
+        model.tap()
+        let standard = app.buttons["Sample Standard"]
+        XCTAssertTrue(standard.waitForExistence(timeout: 3))
+        standard.tap()
+        let updatedModel = app.descendants(matching: .any).matching(
+            NSPredicate(
+                format: "identifier == %@ AND label CONTAINS %@",
+                "pi-chat-model",
+                "Sample Standard"
+            )
+        ).firstMatch
+        XCTAssertTrue(updatedModel.waitForExistence(timeout: 3))
+
+        thinking.tap()
+        let extraHigh = app.buttons["Extra High"]
+        XCTAssertTrue(extraHigh.waitForExistence(timeout: 3))
+        extraHigh.tap()
+        let updatedThinking = app.descendants(matching: .any).matching(
+            NSPredicate(
+                format: "identifier == %@ AND label CONTAINS %@",
+                "pi-chat-thinking",
+                "Extra High"
+            )
+        ).firstMatch
+        XCTAssertTrue(updatedThinking.waitForExistence(timeout: 3))
+    }
+
+    @MainActor
     func testPaneModesLiveInMenuAndTerminalKeysAreOptIn() throws {
         let app = launchDemoPane(paneID: "demo1|w1:p2")
 

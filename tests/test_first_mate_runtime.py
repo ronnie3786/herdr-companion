@@ -560,7 +560,10 @@ class FirstMateRuntimeTests(unittest.TestCase):
         self.assertNotIn('HERDR_HARNESS_API_TOKEN', child)
         self.assertNotIn('HERDR_FIRST_MATE_ROLE', child)
         self.assertEqual(child['HERDR_FIRST_MATE_MANAGED_ROLE'],'coordinator')
-        self.assertEqual(spawn.call_args.kwargs['cwd'], feature['cwd'])
+        self.assertEqual(
+            Path(spawn.call_args.kwargs['cwd']).resolve(),
+            Path(feature['cwd']).resolve(),
+        )
         self.assertEqual(child['PATH'].split(os.pathsep)[0], str(self.fake.parent))
         self.assertTrue(child['PATH'].endswith(configured_path))
 

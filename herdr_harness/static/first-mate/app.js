@@ -192,9 +192,12 @@
     } else if(state.tab==='Agents'){
       const coordinators=d.sessions.filter(s=>s.kind==='coordinator'||(!s.kind&&s.role==='first_mate'));
       const advisors=d.sessions.filter(s=>s.kind==='advisor');
+      const assignmentIDs=new Set(d.assignments.map(a=>a.id));
+      const standaloneWorkers=d.sessions.filter(s=>s.kind!=='coordinator'&&s.kind!=='advisor'&&s.role!=='first_mate'&&(!s.assignment_id||!assignmentIDs.has(s.assignment_id)));
       html='<h2>The crew</h2><p class="eyebrow">Independent sessions, grouped by the work they own.</p>';
       if(coordinators.length)html+=`<div class="section-title"><h3>First Mate coordinator</h3><small>${coordinators.length} saved sessions</small></div>${sessionRows(coordinators)}`;
       if(advisors.length)html+=`<div class="section-title"><h3>Advisors</h3><small>${advisors.length} saved sessions</small></div>${sessionRows(advisors)}`;
+      if(standaloneWorkers.length)html+=`<div class="section-title"><h3>Saved worker sessions</h3><small>${standaloneWorkers.length} sessions</small></div>${sessionRows(standaloneWorkers)}`;
       html+=d.visits.map(v=>`<div class="section-title"><h3>${escape(v.title||label(v.stage_key))}</h3></div>${agentRows(d.assignments.filter(a=>(a.visit_ids||[a.visit_id]).includes(v.id)))}`).join('');
       if(d.sessions_truncated)html+='<p class="eyebrow">Showing recent saved sessions. Earlier sessions remain retained on the companion host.</p>';
     }

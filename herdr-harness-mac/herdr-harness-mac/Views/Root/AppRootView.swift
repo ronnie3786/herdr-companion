@@ -88,7 +88,8 @@ final class HerdrShellState {
     let prReviewDocumentResources: PRReviewDocumentResources
     let prReview: PRReviewStore
     var firstMateMachineID: String?
-    var firstMateScope: FirstMateMachineScope?
+    // Start in the fleet view; explicit host choices stay in effect until changed.
+    var firstMateScope: FirstMateMachineScope? = .all
     private(set) var activeFirstMateMachineID: String?
     var prReviewMachineID: String?
     var prReviewOpenRequest: PRReviewOpenRequest?

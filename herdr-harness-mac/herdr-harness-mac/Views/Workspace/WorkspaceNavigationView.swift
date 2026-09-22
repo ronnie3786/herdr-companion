@@ -211,14 +211,10 @@ struct WorkspaceNavigationView: View {
 
     private var resolvedFirstMateScope: FirstMateMachineScope {
         if model.isDemoMode { return .machine("demo") }
-        if let scope = shell.firstMateScope {
-            if case .machine(let machineID) = scope,
-               !model.machines.contains(where: { $0.id == machineID }) {
-                return model.machines.first.map { .machine($0.id) } ?? .all
-            }
-            return scope
-        }
-        return firstMateDetailMachineID.map(FirstMateMachineScope.machine) ?? .all
+        return FirstMateMachineScope.resolved(
+            shell.firstMateScope,
+            availableMachineIDs: model.machines.map(\.id)
+        )
     }
 
     private var firstMateDetailMachineID: String? {

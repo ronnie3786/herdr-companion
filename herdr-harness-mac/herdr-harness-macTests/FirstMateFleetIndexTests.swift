@@ -156,6 +156,21 @@ struct FirstMateFleetIndexTests {
         #expect(shell.firstMate !== storeB)
     }
 
+    @Test("Companion host defaults to All Machines without losing explicit host choices")
+    func defaultCompanionHostScope() {
+        let shell = HerdrShellState(userDefaults: isolatedDefaults())
+        let hosts = ["alpha", "beta"]
+        #expect(shell.firstMateScope == .all)
+        #expect(FirstMateMachineScope.resolved(shell.firstMateScope, availableMachineIDs: hosts) == .all)
+
+        shell.selectFirstMateScope(.machine("beta"))
+        #expect(FirstMateMachineScope.resolved(shell.firstMateScope, availableMachineIDs: hosts) == .machine("beta"))
+        // Removing a saved host must not silently select a different host.
+        #expect(FirstMateMachineScope.resolved(shell.firstMateScope, availableMachineIDs: ["alpha"]) == .all)
+        #expect(FirstMateMachineScope.resolved(nil, availableMachineIDs: hosts) == .all)
+        #expect(FirstMateMachineScope.resolved(nil, availableMachineIDs: []) == .all)
+    }
+
     @Test("All Machines selection keeps aggregate scope and requires an exact create host")
     func aggregateScopeActions() throws {
         let shell = HerdrShellState(userDefaults: isolatedDefaults())

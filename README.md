@@ -353,6 +353,11 @@ Git workbench. The workspace picker defaults to the project checkout and lists
 only exact worktrees recorded for that feature's assignments; see
 [First Mate Git](docs/first-mate/git.md).
 
+On Mac, **Companion host** starts at **All Machines**, showing features grouped by
+host. Choose a specific host to filter the list; creating a feature from the
+combined view still requires choosing its destination host. An explicit host
+selection remains in effect until you change it.
+
 The companion server runs the durable queue, execution watcher, bounded recovery,
 and work log. Closing the Mac window does not stop the work. The optional browser
 view is served at `/first-mate/` and uses the same authenticated API and records.

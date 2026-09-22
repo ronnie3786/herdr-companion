@@ -190,7 +190,7 @@ class FakeGitHub:
             "number": number, "title": title, "body": body, "author": {"login": author},
             "labels": [{"name": name} for name in labels], "url": f"https://github.com/{REPOSITORY}/issues/{number}",
             "createdAt": "2026-09-18T10:00:00Z", "updatedAt": "2026-09-18T10:00:00Z", "state": state,
-            "comments": [],
+            "comments": [], "closedByPullRequestsReferences": [],
         }
         self.issues[number] = issue
         return issue
@@ -1570,6 +1570,47 @@ class DiscoveryTests(PipelineTestCase):
         self.assertEqual(self.github.labels_removed[4], [], "closed issues keep their labels")
         self.assertEqual(self.store.get_issue(6)["status"], "active", "issues merged by us are not retired")
         self.assertIsNotNone(self.store.daemon_info()["lastPollAt"])
+
+    def test_poll_reconciles_blocked_and_skipped_requests_delivered_by_another_pr(self):
+        self.factory = self.make_factory(release_enabled="false")
+        for number, status in ((4, "blocked"), (5, "skipped")):
+            remote = self.github.add_issue(number, f"Delivered request {number}", state="CLOSED")
+            remote["labels"].append({"name": "released"})
+            remote["closedByPullRequestsReferences"] = [{"number": 200 + number}]
+            self.github.prs[200 + number] = {
+                "number": 200 + number,
+                "url": f"https://github.com/{REPOSITORY}/pull/{200 + number}",
+                "state": "MERGED",
+                "mergedAt": "2026-09-22T02:17:08Z",
+                "mergeCommit": {"oid": f"deadbeef{number}"},
+            }
+            self.store.upsert_issue({
+                "number": number,
+                "title": f"Delivered request {number}",
+                "status": status,
+                "stage": "review",
+                "blockedReason": "review_rounds_exhausted" if status == "blocked" else None,
+                "prNumber": 100 + number,
+                "prUrl": f"https://github.com/{REPOSITORY}/pull/{100 + number}",
+            })
+
+        counts = self.factory.poll_once()
+
+        self.assertEqual(counts["reconciled"], 2)
+        self.assertEqual(counts["skipped"], 0)
+        for number in (4, 5):
+            issue = self.store.get_issue(number)
+            self.assertEqual((issue["status"], issue["stage"]), ("done", "done"))
+            self.assertEqual(issue["prNumber"], 200 + number)
+            self.assertEqual(issue["prUrl"], f"https://github.com/{REPOSITORY}/pull/{200 + number}")
+            self.assertEqual(issue["mergeSha"], f"deadbeef{number}")
+            self.assertEqual(issue["finishedAt"], "2026-09-22T02:17:08Z")
+            self.assertIsNone(issue["blockedReason"])
+            self.assertIn("released", issue["labels"])
+            self.assertIn(
+                f"Reconciled from GitHub: delivered by merged PR #{200 + number}",
+                self.events(number),
+            )
 
     def test_login_is_used_when_no_allow_list(self):
         self.factory = self.make_factory(allowed_authors="")

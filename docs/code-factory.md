@@ -89,7 +89,11 @@ This is an experimental personal automation. Read the safety section before enab
    unlimited retry loop.
 10. **Merge and cleanup.** On approval the PR is squash-merged with its remote branch
     deleted, and the worktree and local branch are removed immediately. The dashboard
-    shows a checkmark once the worktree is gone.
+    shows a checkmark once the worktree is gone. If a request is instead delivered by a
+    consolidated or replacement PR, the poller follows GitHub's authoritative
+    issue-closing relationship, replaces the stale per-issue PR link, and marks the
+    dashboard request done. This also repairs older blocked or skipped ledger entries;
+    it never infers delivery from a closed issue alone.
 11. **Release.** Merged issues wait for the next release batch. A DeepSeek session in a
     fresh worktree runs `scripts/release-macos.py bump` (patch for bug-only batches,
     minor when a feature is included, on the configured channel), writes the release

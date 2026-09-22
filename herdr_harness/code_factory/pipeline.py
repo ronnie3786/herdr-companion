@@ -407,7 +407,7 @@ class CodeFactory:
         """Discover labeled issues, queue new/resumable ones, retire closed ones, kick releases."""
         counts: dict[str, Any] = {
             "discovered": 0, "eligible": 0, "new": 0, "resumed": 0, "ignored": 0, "skipped": 0,
-            "queued": [], "releaseStarted": False, "releaseDeferred": False,
+            "reconciled": 0, "queued": [], "releaseStarted": False, "releaseDeferred": False,
         }
         listed = self._github.list_issues(self._settings.trigger_label)
         counts["discovered"] = len(listed)
@@ -444,16 +444,22 @@ class CodeFactory:
                 if self._submit(number) or not self.started:
                     counts["resumed"] += 1
                     counts["queued"].append(number)
-        for issue in self._store.list_issues("active"):
+        for issue in self._store.list_issues():
             number = issue["number"]
-            if number in open_numbers or issue["stage"] in TERMINAL_STAGES or self.is_running(number):
+            if issue["status"] == "done" or number in open_numbers or self.is_running(number):
                 continue
             try:
                 remote = self._github.get_issue(number)
             except CodeFactoryError as exc:
                 self._log(f"issue #{number}: state check failed: {_error_text(exc)}")
                 continue
-            if str(remote.get("state") or "").upper() == "CLOSED" and not issue.get("mergeSha"):
+            if str(remote.get("state") or "").upper() != "CLOSED":
+                continue
+            merged = self._merged_closing_pull_request(remote)
+            if merged is not None:
+                self._reconcile_external_merge(issue, remote, merged)
+                counts["reconciled"] += 1
+            elif issue["status"] == "active" and issue["stage"] not in TERMINAL_STAGES and not issue.get("mergeSha"):
                 self._store.add_event(number, issue["stage"], "warning", "Issue was closed on GitHub; skipping")
                 self._skip_issue(issue, remove_label=False)
                 counts["skipped"] += 1
@@ -468,6 +474,66 @@ class CodeFactory:
                               "use the release_now action to retry immediately")
         self._store.set_daemon("last_poll_at", utc_now())
         return counts
+
+    def _merged_closing_pull_request(self, remote: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Return the newest merged PR that GitHub says closed ``remote``.
+
+        A request can be delivered by a consolidated or replacement PR rather than the
+        per-issue PR stored in the ledger. GitHub's issue relationship is authoritative;
+        fetching each referenced PR also avoids trusting the abbreviated relationship
+        object returned by ``gh issue view``.
+        """
+        references = remote.get("closedByPullRequestsReferences")
+        items = references if isinstance(references, list) else []
+        numbers = sorted({
+            item["number"] for item in items
+            if isinstance(item, Mapping) and isinstance(item.get("number"), int)
+            and not isinstance(item.get("number"), bool) and item["number"] > 0
+        }, reverse=True)
+        for number in numbers:
+            try:
+                pull = self._github.pull_request(number)
+            except CodeFactoryError as exc:
+                self._log(f"issue #{remote.get('number')}: closing PR #{number} check failed: {_error_text(exc)}")
+                continue
+            if str(pull.get("state") or "").upper() == "MERGED" or pull.get("mergedAt"):
+                return pull
+        return None
+
+    def _reconcile_external_merge(
+        self,
+        issue: Mapping[str, Any],
+        remote: Mapping[str, Any],
+        pull: Mapping[str, Any],
+    ) -> None:
+        """Mark stale pipeline state done when GitHub proves another PR delivered it."""
+        number = issue["number"]
+        pr_number = pull.get("number")
+        if isinstance(pr_number, bool) or not isinstance(pr_number, int) or pr_number <= 0:
+            return
+        merge_commit = pull.get("mergeCommit")
+        merge_sha = merge_commit.get("oid") if isinstance(merge_commit, Mapping) else None
+        labels = _label_names(remote) or list(issue.get("labels") or [])
+        pr_url = str(pull.get("url") or f"https://github.com/{self._settings.repository}/pull/{pr_number}")[:500]
+        self._store.update_issue(
+            number,
+            labels=labels,
+            status="done",
+            stage="done",
+            prNumber=pr_number,
+            prUrl=pr_url,
+            mergeSha=str(merge_sha or issue.get("mergeSha") or "") or None,
+            error=None,
+            blockedReason=None,
+            finishedAt=str(pull.get("mergedAt") or utc_now()),
+        )
+        self._store.add_event(
+            number,
+            "done",
+            "success",
+            f"Reconciled from GitHub: delivered by merged PR #{pr_number}",
+            {"prNumber": pr_number, "prUrl": pr_url, "mergeSha": merge_sha},
+        )
 
     def _release_retry_due(self) -> bool:
         """False while the last failed batch is inside its exponential backoff window.

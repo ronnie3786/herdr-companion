@@ -18,6 +18,12 @@ The Git page stays mounted during companion catalog refreshes and transient
 terminal reconnects, so the open diff, selection, and scroll position do not
 flash back to a loading screen. Use **Refresh Git workspaces** to update the
 catalog explicitly; the workbench continues to poll Git status on its own.
+Native feature refreshes also preserve the embedded document: its identity uses
+the actual API configuration and route rather than serialized JSON key order.
+This prevents repeated “Reading working tree…” screens after successful loads.
+Real URL, credential, feature, or workspace changes still load the new target.
+This correction applies to pane Git and pop-out Git views too, without a server
+update.
 
 The picker never guesses the newest worker, borrows the active Chat pane, uses a
 terminal's current directory, or creates a shell. Concurrent workers are distinct
@@ -74,6 +80,11 @@ authenticated native web container.
 - [ ] Stop only the terminal-pane connection while leaving the companion API
       reachable and confirm the open Git page, diff, and scroll position stay
       visible across reconnects and **Refresh Git workspaces**.
+- [ ] Leave the same feature on Git for at least 30 seconds while native feature
+      refreshes continue; confirm the initial “Reading working tree…” state does
+      not return and the selected diff and scroll position remain. Repeat in a
+      pop-out and pane Git. With navigation instrumentation, the document time
+      origin should stay fixed even while Git status requests continue.
 - [ ] Disconnect/reconnect the owning companion and confirm the same target reloads.
 - [ ] Verify an older companion shows the compatibility message.
 - [ ] Verify VoiceOver labels for Chat/Git, workspace, refresh, pop-out, stage,

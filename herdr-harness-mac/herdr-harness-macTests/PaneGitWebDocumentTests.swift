@@ -41,6 +41,68 @@ struct PaneGitWebDocumentTests {
         #expect(document.bootstrapScript.contains("\"hostIsLocal\""))
     }
 
+    @Test("Equivalent configuration keeps Git document identity and bootstrap stable", arguments: [false, true])
+    func stableIdentity(firstMate: Bool) throws {
+        let configuration = try #require(
+            ServerConfiguration(urlString: "https://git.example.invalid/base", token: "synthetic-token")
+        )
+        func document() -> PaneGitWebDocument {
+            if firstMate {
+                return PaneGitWebDocument(
+                    configuration: configuration,
+                    firstMateTarget: .init(machineID: "desktop", featureID: "feature-one", workspaceID: "project")
+                )
+            }
+            return PaneGitWebDocument(configuration: configuration, workspaceID: "w1", paneID: "w1:p1")
+        }
+        let original = document()
+        for _ in 0..<100 {
+            let rebuilt = document()
+            #expect(rebuilt == original)
+            #expect(rebuilt.bootstrapScript == original.bootstrapScript)
+        }
+        // Canonical output is an explicit contract, not a lucky encoding loop.
+        let script = original.bootstrapScript
+        let hostKey = try #require(script.range(of: "\"hostIsLocal\":"))
+        let serverKey = try #require(script.range(of: "\"serverUrl\":"))
+        let tokenKey = try #require(script.range(of: "\"token\":"))
+        #expect(hostKey.lowerBound < serverKey.lowerBound)
+        #expect(serverKey.lowerBound < tokenKey.lowerBound)
+    }
+
+    @Test("Real connection and Git route changes remain distinct documents")
+    func changedIdentity() throws {
+        let configuration = try #require(
+            ServerConfiguration(urlString: "https://git.example.invalid/base", token: "synthetic-token")
+        )
+        let rotated = try #require(
+            ServerConfiguration(urlString: configuration.baseURL.absoluteString, token: "rotated-synthetic-token")
+        )
+        let moved = try #require(
+            ServerConfiguration(urlString: "https://other.example.invalid/base", token: configuration.token)
+        )
+        let movedPath = try #require(
+            ServerConfiguration(urlString: "https://git.example.invalid/other", token: configuration.token)
+        )
+        let target = FirstMateGitWindowTarget(machineID: "desktop", featureID: "feature-one", workspaceID: "project")
+        let original = PaneGitWebDocument(configuration: configuration, firstMateTarget: target)
+        for changedConfiguration in [rotated, moved, movedPath] {
+            let changed = PaneGitWebDocument(configuration: changedConfiguration, firstMateTarget: target)
+            #expect(changed != original)
+            #expect(changed.bootstrapScript != original.bootstrapScript)
+        }
+        for changedTarget in [
+            FirstMateGitWindowTarget(machineID: "desktop", featureID: "feature-two", workspaceID: "project"),
+            FirstMateGitWindowTarget(machineID: "desktop", featureID: "feature-one", workspaceID: "worker-one"),
+        ] {
+            #expect(PaneGitWebDocument(configuration: configuration, firstMateTarget: changedTarget) != original)
+        }
+        let pane = PaneGitWebDocument(configuration: configuration, workspaceID: "w1", paneID: "w1:p1")
+        #expect(pane != original)
+        #expect(PaneGitWebDocument(configuration: configuration, workspaceID: "w1", paneID: "w1:p2") != pane)
+        #expect(PaneGitWebDocument(configuration: configuration, workspaceID: "w2", paneID: "w1:p1") != pane)
+    }
+
     @Test("Navigation is limited to the configured Herdr origin")
     func originPolicy() throws {
         let origin = PaneGitWebOrigin(url: try #require(URL(string: "https://herdr.example.test")))

@@ -2,8 +2,18 @@ import Foundation
 
 struct PaneGitWebDocument: Equatable {
     let url: URL
-    let bootstrapScript: String
     let allowedOrigin: PaneGitWebOrigin
+    private let nativeConfiguration: NativeConfiguration
+
+    // Navigation identity is semantic, never the incidental order of JSON keys.
+    // Only serialize when installing the script into a new web document.
+    var bootstrapScript: String { Self.makeBootstrapScript(nativeConfiguration) }
+
+    private struct NativeConfiguration: Encodable, Equatable {
+        let token: String
+        let serverUrl: String
+        let hostIsLocal: Bool
+    }
 
     init(
         configuration: ServerConfiguration,
@@ -37,8 +47,9 @@ struct PaneGitWebDocument: Equatable {
         pageComponents?.percentEncodedFragment = routeComponents.percentEncodedQuery
 
         url = pageComponents?.url ?? pageURL
-        bootstrapScript = Self.makeBootstrapScript(
-            configuration: configuration,
+        nativeConfiguration = NativeConfiguration(
+            token: configuration.token,
+            serverUrl: configuration.baseURL.absoluteString,
             hostIsLocal: Self.harnessRunsOnThisMachine(configuration.baseURL)
         )
         allowedOrigin = PaneGitWebOrigin(url: configuration.baseURL)
@@ -72,22 +83,10 @@ struct PaneGitWebDocument: Equatable {
         return names
     }
 
-    private static func makeBootstrapScript(
-        configuration: ServerConfiguration,
-        hostIsLocal: Bool
-    ) -> String {
-        struct NativeConfiguration: Encodable {
-            let token: String
-            let serverUrl: String
-            let hostIsLocal: Bool
-        }
-
-        let nativeConfiguration = NativeConfiguration(
-            token: configuration.token,
-            serverUrl: configuration.baseURL.absoluteString,
-            hostIsLocal: hostIsLocal
-        )
-        let data = try? JSONEncoder().encode(nativeConfiguration)
+    private static func makeBootstrapScript(_ nativeConfiguration: NativeConfiguration) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try? encoder.encode(nativeConfiguration)
         let json = data.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         return """
         Object.defineProperty(window, "__HERDR_NATIVE_CONFIG__", {

@@ -410,16 +410,36 @@ class FirstMateRuntime:
             latest_job = max(assignment_jobs.get(assignment["id"], []),
                              key=lambda job: (job.get("claim", {}).get("generation", 0), job.get("created_at", "")),
                              default=None)
-            latest_session = max(assignment_sessions.get(assignment["id"], []),
+            if latest_job:
+                selection = dict(latest_job.get("model_selection") or {})
+                if not selection:
+                    persisted_model = str(latest_job.get("model") or "")
+                    persisted_thinking = str(latest_job.get("thinking") or "")
+                    claim_model = str(latest_job.get("claim", {}).get("model") or "")
+                    profile = latest_job.get("claim", {}).get("metadata", {}).get("model_profile")
+                    if not isinstance(profile, str) or profile not in {"planning", "execution"}:
+                        profile = "execution"
+                    source = ("assignment_override" if claim_model and claim_model == persisted_model else
+                              "host_policy" if persisted_model or persisted_thinking else "pi_default")
+                    selection = {"profile": profile, "requested_model": persisted_model,
+                                 "requested_thinking": persisted_thinking,
+                                 "actual_model": None, "actual_thinking": None,
+                                 "source": source}
+                exact_native_id = latest_job.get("native_session_id")
+            else:
+                selection = self._policy(snapshot["feature"], kind="worker", claim=assignment).selection()
+                exact_native_id = assignment.get("native_session_id")
+            latest_session = max((session for session in assignment_sessions.get(assignment["id"], [])
+                                  if exact_native_id and session.get("native_session_id") == exact_native_id),
                                  key=lambda session: (session.get("generation", 0), session.get("created_at", "")),
                                  default=None)
-            selection = (dict(latest_job.get("model_selection", {})) if latest_job else {}) or self._policy(
-                snapshot["feature"], kind="worker", claim=assignment).selection()
             historical = (latest_session or {}).get("model_selection")
             if historical:
                 selection = {**selection,
                              "actual_model": historical.get("actual_model"),
                              "actual_thinking": historical.get("actual_thinking")}
+            else:
+                selection = {**selection, "actual_model": None, "actual_thinking": None}
             result["assignments"].append({
                 **assignment,
                 "usage": account["assignment_usage"][assignment["id"]],

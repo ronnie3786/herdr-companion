@@ -476,6 +476,36 @@ class FirstMateUsageInventoryTests(unittest.TestCase):
         after = next(row for row in detail["sessions"] if row["native_session_id"] == "native-handoff-after")
         self.assertEqual(after["parent_session_id"], "native-handoff-before")
 
+    def test_new_unbound_dispatch_does_not_borrow_predecessor_actual_model(self):
+        visit = self.stage()
+        assignment, predecessor = self.worker(visit, "predecessor-model-a", cost=1.0)
+        self.runtime.environ["HERDR_FIRST_MATE_WORKER_MODEL"] = "synthetic/requested-b"
+        successor = self.runtime._new_job(self.feature, kind="worker", prompt="Retry",
+                                          claim={**assignment, "generation": assignment["generation"] + 1,
+                                                 "dispatch_id": "new-dispatch-b"},
+                                          parent_job=predecessor)
+        detail = self.runtime.snapshot(self.feature["id"])["assignments"][0]["model_selection"]
+        self.assertEqual(detail["requested_model"], "synthetic/requested-b")
+        self.assertIsNone(detail["actual_model"])
+        self.assertIsNone(detail["actual_thinking"])
+        self.assertFalse((self.runtime._job_dir(successor) / "started.json").exists())
+
+    def test_legacy_job_uses_persisted_request_after_host_policy_changes(self):
+        visit = self.stage()
+        assignment, job = self.worker(visit, "legacy-selection", cost=1.0)
+        write_session(Path(job["session_file"]), "native-legacy-selection", [
+            assistant("legacy", provider="synthetic", model="requested-a")])
+        job.pop("model_selection", None)
+        job["model"] = "synthetic/requested-a"
+        job["thinking"] = "low"
+        self.runtime._save_job(job)
+        self.runtime.environ["HERDR_FIRST_MATE_WORKER_MODEL"] = "synthetic/current-b"
+        self.runtime.environ["HERDR_FIRST_MATE_WORKER_THINKING"] = "high"
+        detail = self.runtime.snapshot(self.feature["id"])["assignments"][0]["model_selection"]
+        self.assertEqual((detail["requested_model"], detail["requested_thinking"]),
+                         ("synthetic/requested-a", "low"))
+        self.assertEqual(detail["actual_model"], "synthetic/requested-a")
+
     def test_ledger_only_session_remains_exactly_openable_after_job_spool_is_absent(self):
         visit = self.stage()
         _, job = self.worker(visit, "ledger-only", cost=2.25)

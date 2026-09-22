@@ -27,14 +27,18 @@ def parser(environ):
     p.add_argument("--base-url", default=environ.get("HERDR_HARNESS_URL") or "http://127.0.0.1:9092")
     p.add_argument("--token-file")
     commands = p.add_subparsers(dest="command", required=True)
-    for name in ("list", "capabilities", "models"):
+    feature_list = commands.add_parser("list")
+    list_scope = feature_list.add_mutually_exclusive_group()
+    list_scope.add_argument("--archived", action="store_true", help="List archived features only")
+    list_scope.add_argument("--all", action="store_true", help="List active and archived features")
+    for name in ("capabilities", "models"):
         commands.add_parser(name)
     create = commands.add_parser("create")
     for field in ("title", "goal", "cwd"):
         create.add_argument("--" + field, required=True)
     create.add_argument("--work-item-id")
     create.add_argument("--request-id", default=None)
-    for name in ("get", "agents", "documents", "messages", "events", "send", "pause", "resume", "cancel", "open"):
+    for name in ("get", "agents", "documents", "messages", "events", "send", "pause", "resume", "cancel", "archive", "unarchive", "open"):
         sub = commands.add_parser(name)
         sub.add_argument("feature_id")
         if name == "events":
@@ -43,10 +47,12 @@ def parser(environ):
             body = sub.add_mutually_exclusive_group(required=True)
             body.add_argument("--text")
             body.add_argument("--text-file", help="UTF-8 file, or - for stdin")
-        if name in ("send", "pause", "resume", "cancel"):
+        if name in ("send", "pause", "resume", "cancel", "archive", "unarchive"):
             sub.add_argument("--request-id", default=None)
         if name in ("pause", "resume", "cancel"):
             sub.add_argument("--expected-revision", type=int)
+        if name == "archive":
+            sub.add_argument("--reason", choices=("test/synthetic", "duplicate", "no longer relevant", "superseded", "other"))
         if name == "open":
             sub.add_argument("--tab", choices=("overview", "agents", "documents", "workflow"), default="overview")
             sub.add_argument("--graph", action="store_true")
@@ -68,7 +74,10 @@ def parser(environ):
 def execute(args, client, *, stdin, launch):
     quote = lambda value: urllib.parse.quote(value, safe="")
     if args.command in ("capabilities", "models"): return client.request("GET", "/" + args.command)
-    if args.command == "list": return client.request("GET", "/features")
+    if args.command == "list":
+        view = "all" if args.all else "archived" if args.archived else "active"
+        query = "" if view == "active" else "?" + urllib.parse.urlencode({"view": view})
+        return client.request("GET", "/features" + query)
     if args.command == "create":
         body = {k: getattr(args, k) for k in ("title", "goal", "cwd")}
         body["request_id"] = args.request_id or str(uuid.uuid4())
@@ -93,6 +102,10 @@ def execute(args, client, *, stdin, launch):
     if args.command in ("pause", "resume", "cancel"):
         body = {"action": args.command, "request_id": args.request_id or str(uuid.uuid4())}
         if args.expected_revision is not None: body["expected_revision"] = args.expected_revision
+        return client.request("POST", path + "/actions", body)
+    if args.command in ("archive", "unarchive"):
+        body = {"action": args.command, "request_id": args.request_id or str(uuid.uuid4())}
+        if args.command == "archive" and args.reason is not None: body["reason"] = args.reason
         return client.request("POST", path + "/actions", body)
     result = client.request("GET", path)
     if args.command == "open":

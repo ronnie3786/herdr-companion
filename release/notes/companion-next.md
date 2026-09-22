@@ -1,4 +1,14 @@
-# Next companion update — unreleased
+# Next companion update, unreleased
+
+## First Mate archive
+
+- Adds `first-mate-archive-v1` as an additive authenticated API capability.
+- First Mate feature lists default to active records and accept deterministic `archived` and `all` views.
+- Archive and unarchive are idempotent actions on the existing feature actions route. Optional reasons are validated as test/synthetic, duplicate, no longer relevant, superseded, or other.
+- Archive is independent of workflow status. It retains visits, assignments, documents, sessions, events, Active Work linkage, and work item identity. Running work continues, while default lists and attention counts exclude archived features.
+- Existing databases migrate additively. Older clients safely ignore the new nullable fields.
+
+## Tab color discovery
 
 Tab colors and labels can now be discovered without changing any client's local
 store. Companion capabilities, endpoints, and `GET /api/v1` advertise
@@ -38,3 +48,5 @@ whose colors should be discoverable. A Mac app update alone does not install or
 update companion server packages or CLIs. See `docs/chat-tab-colors.md` and
 `docs/chat-tab-color-api.md` for setup, commands, freshness, and error
 semantics. This note does not perform any deployment.
+
+Update the companion separately from the Mac app. No server cutover is performed by installing a native app update.

@@ -12,6 +12,11 @@ first. Search by title or goal, or create a feature with its goal and repository
 folder on the selected host. Existing workspace folders are available as shortcuts.
 The existing **Agents** tab remains available for ordinary Pi conversations.
 
+Long-press a feature to archive it. The confirmation offers an optional reason,
+states that all records are retained, and explicitly says when work continues.
+Use **Show archived** in First Mate options to reveal an Archived section with an
+Unarchive button on every card.
+
 On iPhone, a feature opens its conversation. Use the feature controls to inspect
 Overview, Workflow, Agents, or Documents, then return to the same conversation.
 On iPad, the feature list stays in a sidebar and an inspector uses the available

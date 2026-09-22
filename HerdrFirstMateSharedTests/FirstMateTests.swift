@@ -115,6 +115,36 @@ struct FirstMateTests {
         #expect(!store.isDemo)
     }
 
+    @Test("Archive support is capability-gated and active lists hide archived features")
+    func archiveState() async {
+        let client = FirstMateTestClient()
+        let store = FirstMateStore()
+        store.configure(client: client, demo: false)
+        await store.refresh()
+        let id = store.features[0].id
+        store.draft = "Retain this archived feature draft"
+        #expect(store.archiveSupported)
+        #expect(await store.setArchived(featureID: id, archived: true, reason: .testSynthetic))
+        #expect(store.features.isEmpty)
+        #expect(store.draft.isEmpty)
+        store.showArchived = true
+        await store.refresh()
+        #expect(store.archivedFeatures.map(\.id) == [id])
+        #expect(store.archivedFeatures[0].archiveReason == FirstMateArchiveReason.testSynthetic.rawValue)
+        #expect(store.draft == "Retain this archived feature draft")
+        #expect(await store.setArchived(featureID: id, archived: false))
+        #expect(store.activeFeatures.map(\.id) == [id])
+        #expect(await client.archiveRequests == ["archive", "unarchive"])
+
+        let older = FirstMateTestClient(archiveCapability: false)
+        store.configure(client: older, demo: false)
+        await store.refresh()
+        #expect(!store.archiveSupported)
+        #expect(!(await store.setArchived(featureID: id, archived: true)))
+        #expect(store.error?.contains("Update this companion") == true)
+        #expect(await older.archiveRequests.isEmpty)
+    }
+
     @Test("Opening a resource requests its saved session identity")
     func opensExactSession() async throws {
         let client = FirstMateTestClient()
@@ -335,6 +365,8 @@ private actor FirstMateTestClient: FirstMateClient {
     let holdList: Bool
     let mismatchedMutation: Bool
     let mismatchedSession: Bool
+    let archiveCapability: Bool
+    private var isArchived = false
     private var listContinuation: CheckedContinuation<Void, Never>?
     var isWaitingForList: Bool { listContinuation != nil }
     private var earlierContinuation: CheckedContinuation<Void, Never>?
@@ -342,24 +374,41 @@ private actor FirstMateTestClient: FirstMateClient {
     var messageRequests: [String] = []
     var actionRequests: [String] = []
     var creationRequests: [String] = []
+    var archiveRequests: [String] = []
     var lastSessionID: String?
-    init(unsupported: Bool = false, paginated: Bool = false, holdEarlier: Bool = false, holdList: Bool = false, mismatchedMutation: Bool = false, mismatchedSession: Bool = false) {
+    init(unsupported: Bool = false, paginated: Bool = false, holdEarlier: Bool = false, holdList: Bool = false, mismatchedMutation: Bool = false, mismatchedSession: Bool = false, archiveCapability: Bool = true) {
         self.unsupported = unsupported
         self.paginated = paginated
         self.holdEarlier = holdEarlier
         self.holdList = holdList
         self.mismatchedMutation = mismatchedMutation
         self.mismatchedSession = mismatchedSession
+        self.archiveCapability = archiveCapability
     }
     func releaseList() { listContinuation?.resume(); listContinuation = nil }
     func releaseEarlier() { earlierContinuation?.resume(); earlierContinuation = nil }
 
+    func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities {
+        if unsupported { throw APIError.server(status: 404, message: "Not found") }
+        return .init(ok: true, capabilities: archiveCapability ? ["first-mate-v1", "first-mate-archive-v1"] : ["first-mate-v1"])
+    }
     func fetchFirstMateFeatures() async throws -> FirstMateFeatureList {
+        try await fetchFirstMateFeatures(scope: .active)
+    }
+    func fetchFirstMateFeatures(scope: FirstMateFeatureScope) async throws -> FirstMateFeatureList {
         if unsupported { throw APIError.server(status: 404, message: "Not found") }
         if holdList { await withCheckedContinuation { listContinuation = $0 } }
-        return .init(ok: true, features: [FirstMateDemo.features(step: 0)[0].feature])
+        var feature = FirstMateDemo.features(step: 0)[0].feature
+        feature.archivedAt = isArchived ? FirstMateDemo.timestamp : nil
+        feature.archiveReason = isArchived ? FirstMateArchiveReason.testSynthetic.rawValue : nil
+        return .init(ok: true, features: scope == .active && isArchived ? [] : [feature])
     }
-    func fetchFirstMateFeature(_ id: String) async throws -> FirstMateSnapshot { FirstMateDemo.features(step: 0)[0] }
+    func fetchFirstMateFeature(_ id: String) async throws -> FirstMateSnapshot {
+        var snapshot = FirstMateDemo.features(step: 0)[0]
+        snapshot.feature.archivedAt = isArchived ? FirstMateDemo.timestamp : nil
+        snapshot.feature.archiveReason = isArchived ? FirstMateArchiveReason.testSynthetic.rawValue : nil
+        return snapshot
+    }
     func createFirstMateFeature(title: String, goal: String, cwd: String, requestID: String) async throws -> FirstMateSnapshot {
         creationRequests.append(requestID)
         return FirstMateDemo.newFeature(title: title, goal: goal, cwd: cwd)
@@ -373,6 +422,14 @@ private actor FirstMateTestClient: FirstMateClient {
     func performFirstMateAction(featureID: String, action: String, requestID: String) async throws -> FirstMateSnapshot {
         actionRequests.append(requestID)
         return FirstMateDemo.features(step: 0)[0]
+    }
+    func setFirstMateArchived(featureID: String, archived: Bool, reason: FirstMateArchiveReason?, requestID: String) async throws -> FirstMateSnapshot {
+        archiveRequests.append(archived ? "archive" : "unarchive")
+        isArchived = archived
+        var snapshot = FirstMateDemo.features(step: 0)[0]
+        snapshot.feature.archivedAt = archived ? FirstMateDemo.timestamp : nil
+        snapshot.feature.archiveReason = archived ? reason?.rawValue : nil
+        return snapshot
     }
     func fetchFirstMateDocument(_ id: String) async throws -> FirstMateDocumentResponse {
         .init(ok: true, document: FirstMateDemo.features(step: 0)[0].documents[0])

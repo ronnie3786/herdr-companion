@@ -411,6 +411,7 @@ def api_description() -> dict:
             "pane-retirement-v1",
             "first-mate-v1",
             "first-mate-usage-v1",
+            "first-mate-archive-v1",
             "pr-review-v1",
             "pi-session-context-v1",
             "agent-control-v1",
@@ -1045,12 +1046,15 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             snapshot_view = runtime.snapshot if hasattr(runtime, "snapshot") else store.snapshot
             features_view = runtime.list_features if hasattr(runtime, "list_features") else store.list_features
             if method == "GET" and tail == ["capabilities"]:
-                return {"ok": True, "capabilities": ["first-mate-v1", "first-mate-model-settings-v1", "first-mate-usage-v1"], **runtime.capabilities()}
+                return {"ok": True, "capabilities": ["first-mate-v1", "first-mate-model-settings-v1", "first-mate-usage-v1", "first-mate-archive-v1"], **runtime.capabilities()}
             if method == "GET" and tail == ["models"]:
                 return {"ok": True, **service.first_mate.model_catalog()}
             if tail == ["features"]:
                 if method == "GET":
-                    return {"ok": True, "features": features_view()}
+                    view = (query.get("view") or ["active"])[0]
+                    if view not in {"active", "archived", "all"}:
+                        raise HTTPValidationError("Invalid feature view", code="invalid_request")
+                    return {"ok": True, "features": features_view(view)}
                 if method == "POST":
                     if set(body) - {"title", "goal", "cwd", "request_id", "work_item_id"}:
                         raise HTTPValidationError("Feature contains an unsupported field")
@@ -1077,10 +1081,19 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     service.first_mate_changed(feature_id)
                     return {"ok": True, "message": message, "feature": feature_view(feature_id)}, 202
                 if tail[2:] == ["actions"] and method == "POST":
-                    if set(body) - {"action", "request_id", "expected_revision"}:
+                    if set(body) - {"action", "request_id", "expected_revision", "reason"}:
                         raise HTTPValidationError("Action contains an unsupported field")
                     action = _string(body.get("action"), "action", maximum=32)
-                    if action not in {"pause", "resume", "cancel"}:
+                    if action in {"archive", "unarchive"}:
+                        if "expected_revision" in body or (action == "unarchive" and "reason" in body):
+                            raise HTTPValidationError("Archive action contains an unsupported field")
+                        request_id = _string(body.get("request_id"), "request_id", maximum=200)
+                        payload = {"request_id": request_id}
+                        if body.get("reason") is not None:
+                            payload["reason"] = _string(body.get("reason"), "reason", maximum=32)
+                        store.set_archived(feature_id, action == "archive", payload)
+                        return {"ok": True, "feature": feature_view(feature_id)}
+                    if action not in {"pause", "resume", "cancel"} or "reason" in body:
                         raise HTTPValidationError("Use a message to direct the next stage", code="first_mate_action_invalid")
                     request_id = _string(body.get("request_id"), "request_id", maximum=200)
                     runtime.action(feature_id, action, request_id, expected_revision=body.get("expected_revision"))

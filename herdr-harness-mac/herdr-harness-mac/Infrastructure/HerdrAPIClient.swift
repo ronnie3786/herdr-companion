@@ -197,12 +197,20 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient {
         try await request(path: "/api/v1/first-mate/models")
     }
 
+    func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities {
+        try await request(path: "/api/v1/first-mate/capabilities")
+    }
+
     func setFirstMateModel(featureID: String, settings: FirstMateModelSettings) async throws -> FirstMateSnapshot {
         try await request(path: firstMatePath("features", id: featureID) + "/model-settings", method: "POST", body: settings)
     }
 
     func fetchFirstMateFeatures() async throws -> FirstMateFeatureList {
         try await request(path: "/api/v1/first-mate/features")
+    }
+
+    func fetchFirstMateFeatures(scope: FirstMateFeatureScope) async throws -> FirstMateFeatureList {
+        try await request(path: "/api/v1/first-mate/features", query: [URLQueryItem(name: "view", value: scope.rawValue)])
     }
 
     func fetchFirstMateFeature(_ id: String) async throws -> FirstMateSnapshot {
@@ -225,6 +233,13 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient {
         try await request(path: firstMatePath("features", id: featureID) + "/actions", method: "POST", body: [
             "action": action, "request_id": requestID,
         ])
+    }
+
+    func setFirstMateArchived(featureID: String, archived: Bool, reason: FirstMateArchiveReason?, requestID: String) async throws -> FirstMateSnapshot {
+        var body = ["request_id": requestID]
+        if archived, let reason { body["reason"] = reason.rawValue }
+        body["action"] = archived ? "archive" : "unarchive"
+        return try await request(path: firstMatePath("features", id: featureID) + "/actions", method: "POST", body: body)
     }
 
     func fetchFirstMateDocument(_ id: String) async throws -> FirstMateDocumentResponse {

@@ -174,6 +174,18 @@ class FirstMateRuntimeTests(unittest.TestCase):
     def feature(self, goal='Plan the synthetic feature'):
         return self.store.create_feature({'title':'Synthetic feature','goal':goal,'cwd':str(self.cwd),'request_id':'create'})
 
+    def test_archived_nonterminal_feature_remains_in_internal_reconciliation(self):
+        feature = self.feature()
+        self.store.set_archived(feature['id'], True, {'request_id': 'archive-running'})
+        self.assertEqual(self.runtime.list_features(), [])
+        self.assertEqual([item['id'] for item in self.runtime.list_features('all')], [feature['id']])
+        launched = []
+        with patch.object(self.runtime, '_launch', side_effect=launched.append), \
+             patch.object(self.runtime, 'capabilities', return_value={'available': True}):
+            self.runtime.reconcile()
+        self.assertEqual([job['feature_id'] for job in launched], [feature['id']])
+        self.assertEqual(launched[0]['kind'], 'coordinator')
+
     def until(self, predicate, timeout=12):
         deadline = time.time() + timeout
         while time.time() < deadline:

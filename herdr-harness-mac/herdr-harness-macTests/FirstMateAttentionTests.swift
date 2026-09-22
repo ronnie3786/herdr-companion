@@ -63,6 +63,17 @@ struct FirstMateAttentionTests {
         #expect(FirstMateAttention.count(hosts: [cached, freshEmpty]) == 1)
     }
 
+    @Test("Archived features never contribute attention, even in an all-features response")
+    func archivedFeaturesDoNotCount() {
+        var awaiting = feature(id: "archived-awaiting", status: "awaiting_direction")
+        awaiting.archivedAt = "2026-09-21T20:00:00Z"
+        var blocked = feature(id: "archived-blocked", status: "blocked")
+        blocked.archivedAt = "2026-09-21T20:01:00Z"
+        let active = feature(id: "active-awaiting", status: "awaiting_direction")
+        #expect(FirstMateAttention.count(hosts: [host(id: "alpha", features: [awaiting, blocked, active])]) == 1)
+        #expect(FirstMateAttention.count(hosts: [host(id: "alpha", features: [awaiting, blocked])]) == 0)
+    }
+
     private func host(id: String, features: [FirstMateFeature]) -> FirstMateFleetHost {
         FirstMateFleetHost(
             machineID: id,

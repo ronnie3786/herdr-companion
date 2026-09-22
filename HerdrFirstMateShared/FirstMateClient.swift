@@ -2,12 +2,15 @@ import Foundation
 
 protocol FirstMateClient: Sendable {
     func fetchFirstMateModels() async throws -> FirstMateModelCatalog
+    func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities
     func setFirstMateModel(featureID: String, settings: FirstMateModelSettings) async throws -> FirstMateSnapshot
     func fetchFirstMateFeatures() async throws -> FirstMateFeatureList
+    func fetchFirstMateFeatures(scope: FirstMateFeatureScope) async throws -> FirstMateFeatureList
     func fetchFirstMateFeature(_ id: String) async throws -> FirstMateSnapshot
     func createFirstMateFeature(title: String, goal: String, cwd: String, requestID: String) async throws -> FirstMateSnapshot
     func sendFirstMateMessage(featureID: String, text: String, requestID: String) async throws -> FirstMateSnapshot
     func performFirstMateAction(featureID: String, action: String, requestID: String) async throws -> FirstMateSnapshot
+    func setFirstMateArchived(featureID: String, archived: Bool, reason: FirstMateArchiveReason?, requestID: String) async throws -> FirstMateSnapshot
     func fetchFirstMateDocument(_ id: String) async throws -> FirstMateDocumentResponse
     func fetchFirstMateSession(_ id: String, before: Int?) async throws -> FirstMateSessionResponse
 }
@@ -15,6 +18,12 @@ protocol FirstMateClient: Sendable {
 struct FirstMateFeatureList: Decodable, Sendable {
     var ok: Bool
     var features: [FirstMateFeature]
+}
+
+struct FirstMateCapabilities: Decodable, Sendable {
+    var ok: Bool
+    var capabilities: [String]
+    var supportsArchive: Bool { capabilities.contains("first-mate-archive-v1") }
 }
 
 struct FirstMateDocumentResponse: Decodable, Sendable {
@@ -74,6 +83,15 @@ struct FirstMateModelSettings: Encodable, Equatable, Sendable {
 }
 
 extension FirstMateClient {
+    func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities {
+        .init(ok: true, capabilities: [])
+    }
+    func fetchFirstMateFeatures(scope: FirstMateFeatureScope) async throws -> FirstMateFeatureList {
+        try await fetchFirstMateFeatures()
+    }
+    func setFirstMateArchived(featureID: String, archived: Bool, reason: FirstMateArchiveReason?, requestID: String) async throws -> FirstMateSnapshot {
+        throw APIError.invalidResponse
+    }
     func fetchFirstMateModels() async throws -> FirstMateModelCatalog { throw APIError.invalidResponse }
     func setFirstMateModel(featureID: String, settings: FirstMateModelSettings) async throws -> FirstMateSnapshot {
         throw APIError.invalidResponse

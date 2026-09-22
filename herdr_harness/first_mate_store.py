@@ -42,13 +42,16 @@ def _text(value: Any, name: str, maximum: int = 200000, optional: bool = False) 
     return value
 
 
+ARCHIVE_REASONS = {"test/synthetic", "duplicate", "no longer relevant", "superseded", "other"}
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS fm_schema(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS fm_features(
  id TEXT PRIMARY KEY, title TEXT NOT NULL, goal TEXT NOT NULL, cwd TEXT NOT NULL,
  status TEXT NOT NULL, current_visit_id TEXT, revision INTEGER NOT NULL,
  work_item_id TEXT, coordinator_owner TEXT, native_session_id TEXT, session_file TEXT,
- created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+ archived_at TEXT, archive_reason TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS fm_visits(
  id TEXT PRIMARY KEY, feature_id TEXT NOT NULL REFERENCES fm_features(id),
  stage_key TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL, revision INTEGER NOT NULL,
@@ -137,6 +140,11 @@ class FirstMateStore:
             if name not in columns:
                 self._db.execute(f"ALTER TABLE fm_features ADD COLUMN {name} {definition}")
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(3,?)", (_now(),))
+        columns = {row[1] for row in self._db.execute("PRAGMA table_info(fm_features)")}
+        for name in ("archived_at", "archive_reason"):
+            if name not in columns:
+                self._db.execute(f"ALTER TABLE fm_features ADD COLUMN {name} TEXT")
+        self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(4,?)", (_now(),))
 
     def close(self) -> None:
         with self._lock:
@@ -266,9 +274,49 @@ class FirstMateStore:
         with self._lock:
             return self._one("fm_features", feature_id)
 
-    def list_features(self) -> list[dict]:
+    def list_features(self, view: str = "active") -> list[dict]:
+        if view not in {"active", "archived", "all"}:
+            raise FirstMateError("Invalid feature view", code="invalid_request", status=400)
+        where = {
+            "active": "WHERE archived_at IS NULL",
+            "archived": "WHERE archived_at IS NOT NULL",
+            "all": "",
+        }[view]
         with self._lock:
-            return [self._decode(r) for r in self._db.execute("SELECT * FROM fm_features ORDER BY updated_at DESC,id")]
+            return [self._decode(r) for r in self._db.execute(
+                f"SELECT * FROM fm_features {where} ORDER BY updated_at DESC,id"
+            )]
+
+    def set_archived(self, feature_id: str, archived: bool, payload: Mapping[str, Any]) -> dict:
+        body = dict(payload)
+        allowed = {"request_id", "reason"} if archived else {"request_id"}
+        if set(body) != allowed and not (archived and set(body) == {"request_id"}):
+            raise FirstMateError("Invalid archive fields", code="invalid_request", status=400)
+        request_id = _text(body.get("request_id"), "request_id", 200)
+        reason = body.get("reason") if archived else None
+        if reason is not None and (not isinstance(reason, str) or reason not in ARCHIVE_REASONS):
+            raise FirstMateError("Invalid archive reason", code="invalid_request", status=400)
+        scope = ("archive:" if archived else "unarchive:") + feature_id
+        with self._transaction():
+            cached = self._receipt(scope, request_id, body)
+            if cached is not None:
+                return cached
+            feature = self._one("fm_features", feature_id)
+            if archived and feature["archived_at"] is None:
+                archived_at = _now()
+                self._db.execute(
+                    "UPDATE fm_features SET archived_at=?,archive_reason=? WHERE id=?",
+                    (archived_at, reason, feature_id),
+                )
+                self._event(feature_id, "feature.archived", "Feature archived", {"reason": reason})
+            elif not archived and feature["archived_at"] is not None:
+                previous_reason = feature["archive_reason"]
+                self._db.execute(
+                    "UPDATE fm_features SET archived_at=NULL,archive_reason=NULL WHERE id=?",
+                    (feature_id,),
+                )
+                self._event(feature_id, "feature.unarchived", "Feature unarchived", {"previous_reason": previous_reason})
+            return self._save_receipt(scope, request_id, body, self._one("fm_features", feature_id))
 
     def list_session_records(self, feature_id: str | None = None) -> list[dict]:
         """Return the complete managed session ledger for internal accounting.

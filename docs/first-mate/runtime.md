@@ -4,6 +4,15 @@ First Mate is one saved Pi conversation per feature. The companion service owns
 its message queue, assignments, process receipts, work log and human checkpoints.
 The Mac app and web inspector read that state and can close without stopping work.
 
+Archiving is a separate persisted presentation axis. `archived_at` and the
+optional validated `archive_reason` never replace workflow status or revision.
+Active lists and attention counts omit archived features, while explicit archived
+and all views remain available. Reconciliation deliberately reads all features,
+so archiving a running feature does not stop, pause, cancel, resume, or otherwise
+steer its coordinator or workers. Unarchive restores list visibility without
+changing the workflow. No visits, assignments, documents, sessions, events,
+Active Work linkage, or work item identity are deleted.
+
 ## Runtime boundary
 
 `FirstMateRuntime(store, environ=..., runtime_root=...)` exposes `start()`, `stop()`,

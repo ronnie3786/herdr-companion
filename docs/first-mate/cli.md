@@ -8,6 +8,8 @@ The upstream `herdr` terminal CLI remains independent.
 ```sh
 herdr-first-mate --config /path/to/config.toml --machine desktop capabilities
 herdr-first-mate list
+herdr-first-mate list --archived
+herdr-first-mate list --all
 herdr-first-mate create --title "Timer" --goal "Plan a daily timer" \
   --cwd /absolute/path/on/host --request-id timer-create-1
 herdr-first-mate send FEATURE_ID --text-file instruction.txt --request-id timer-plan-1
@@ -20,6 +22,8 @@ herdr-first-mate document DOCUMENT_ID
 herdr-first-mate session NATIVE_SESSION_ID --limit 100
 herdr-first-mate pause FEATURE_ID --request-id timer-pause-1 --expected-revision 1
 herdr-first-mate resume FEATURE_ID --request-id timer-resume-1
+herdr-first-mate archive FEATURE_ID --reason superseded --request-id timer-archive-1
+herdr-first-mate unarchive FEATURE_ID --request-id timer-unarchive-1
 herdr-first-mate open FEATURE_ID --graph
 ```
 
@@ -29,6 +33,13 @@ body for that logical request. Commands never automatically retry mutations.
 A conflict exits 4; other errors exit 2 and produce an error JSON object on
 stderr. Successful output goes to stdout. Session pages include `next_before`;
 pass that value to `session --before` to read earlier messages.
+
+The default list contains active features. `list --archived` returns only archived
+features and `list --all` returns both in deterministic update order. Archive is
+not a lifecycle action: it retains status, workflow revision, visits, assignments,
+documents, saved sessions, events, Active Work linkage and `work_item_id`. Running
+work continues. Reasons are optional; supported values are `test/synthetic`,
+`duplicate`, `no longer relevant`, `superseded`, and `other`.
 
 `open` verifies the feature exists, then asks macOS to navigate the installed
 Herdr app. It does not claim the app has finished navigating. Use `--tab agents`,
@@ -93,3 +104,13 @@ The authenticated API adds `GET /api/v1/first-mate/models` and
 CLI versions can continue using the server. New apps retain chat on older servers
 and explain that model controls require a companion update. The Mac updater does
 not install the companion package; update that component separately.
+
+## Archive contract
+
+Companions advertising `first-mate-archive-v1` accept `active`, `archived`, or
+`all` through `GET /api/v1/first-mate/features?view=...`. Archive and unarchive
+use the existing `POST /api/v1/first-mate/features/:id/actions` route with
+`action`, `request_id`, and an optional archive `reason`. Mutations are
+idempotent and do not wake, pause, cancel, resume, or otherwise steer agents.
+The archive fields are additive, so older clients ignore them safely. New native
+clients keep archive controls unavailable when the capability is absent.

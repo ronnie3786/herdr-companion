@@ -6,10 +6,11 @@ struct FirstMateFeatureListView: View {
     let openFeature: (String) -> Void
     @Environment(\.colorScheme) private var scheme
     @AppStorage("herdr.firstMate.appearance") private var appearance = FirstMateAppearance.system
+    @State private var archiveCandidate: FirstMateFeature? = nil
 
     private var palette: FirstMatePalette { FirstMatePalette(scheme: scheme) }
-    private var waiting: [FirstMateFeature] { store.filteredFeatures.filter { ["awaiting_direction", "blocked"].contains($0.status) } }
-    private var otherFeatures: [FirstMateFeature] { store.filteredFeatures.filter { !["awaiting_direction", "blocked"].contains($0.status) } }
+    private var waiting: [FirstMateFeature] { store.activeFeatures.filter { ["awaiting_direction", "blocked"].contains($0.status) } }
+    private var otherFeatures: [FirstMateFeature] { store.activeFeatures.filter { !["awaiting_direction", "blocked"].contains($0.status) } }
 
     var body: some View {
         ScrollView {
@@ -24,6 +25,7 @@ struct FirstMateFeatureListView: View {
                 } else {
                     featureSection("Needs your direction", features: waiting)
                     featureSection(waiting.isEmpty ? "Your features" : "Everything else", features: otherFeatures)
+                    if store.showArchived { featureSection("Archived", features: store.archivedFeatures) }
                 }
             }
             .padding(20)
@@ -42,6 +44,9 @@ struct FirstMateFeatureListView: View {
                     .accessibilityIdentifier("first-mate-new-feature")
             }
         }
+        .sheet(item: $archiveCandidate) { feature in
+            FirstMateMobileArchiveSheet(store: store, feature: feature)
+        }
         .accessibilityIdentifier("first-mate-feature-list")
     }
 
@@ -53,11 +58,11 @@ struct FirstMateFeatureListView: View {
             Text("One conversation. A team working behind it.")
                 .font(.subheadline)
                 .foregroundStyle(palette.secondaryText)
-            if !store.features.isEmpty {
+            if !store.activeFeatures.isEmpty {
                 HStack(spacing: 8) {
-                    Label("\(store.features.count) features", systemImage: "square.stack.3d.up")
+                    Label("\(store.activeFeatures.count) features", systemImage: "square.stack.3d.up")
                     Text("·").accessibilityHidden(true)
-                    Text("\(store.features.count { ["running", "coordinating", "recovering"].contains($0.status) }) working")
+                    Text("\(store.activeFeatures.count { ["running", "coordinating", "recovering"].contains($0.status) }) working")
                 }
                 .font(.caption)
                 .foregroundStyle(palette.secondaryText)
@@ -97,6 +102,12 @@ struct FirstMateFeatureListView: View {
             }
             Button("Refresh features", systemImage: "arrow.clockwise") { Task { await store.refresh() } }
                 .disabled(store.isRefreshing)
+            Button(store.archiveSupported ? (store.showArchived ? "Hide archived" : "Show archived") : "Archive requires companion update", systemImage: "archivebox") {
+                store.showArchived.toggle()
+                Task { await store.refresh() }
+            }
+            .disabled(!store.archiveSupported)
+            .accessibilityIdentifier("first-mate-show-archived")
             if store.isDemo {
                 Button("Next demo scenario", systemImage: "forward.end", action: store.advanceDemo)
             }
@@ -127,11 +138,32 @@ struct FirstMateFeatureListView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(palette.secondaryText)
                 ForEach(features) { feature in
-                    Button { openFeature(feature.id) } label: {
-                        FirstMateFeatureCard(feature: feature, snapshot: store.snapshots[feature.id])
+                    VStack(spacing: 8) {
+                        Button { openFeature(feature.id) } label: {
+                            FirstMateFeatureCard(feature: feature, snapshot: store.snapshots[feature.id])
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("first-mate-feature-\(feature.id)")
+                        if feature.isArchived {
+                            Button("Unarchive", systemImage: "arrow.uturn.backward") {
+                                Task { _ = await store.setArchived(featureID: feature.id, archived: false) }
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(!model.firstMateCanControl || !store.archiveSupported || store.isSending)
+                            .accessibilityIdentifier("first-mate-unarchive-\(feature.id)")
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("first-mate-feature-\(feature.id)")
+                    .contextMenu {
+                        if feature.isArchived {
+                            Button("Unarchive", systemImage: "arrow.uturn.backward") {
+                                Task { _ = await store.setArchived(featureID: feature.id, archived: false) }
+                            }
+                            .disabled(!model.firstMateCanControl || !store.archiveSupported || store.isSending)
+                        } else {
+                            Button("Archive…", systemImage: "archivebox") { archiveCandidate = feature }
+                                .disabled(!model.firstMateCanControl || !store.archiveSupported || store.isSending)
+                        }
+                    }
                 }
             }
         }
@@ -159,6 +191,53 @@ struct FirstMateFeatureListView: View {
                 Text("Bring a ticket or an idea. Your First Mate will shape a plan with you, delegate the work, and come back for your direction.")
             } actions: {
                 Button("New feature") { store.isCreating = true }.buttonStyle(.borderedProminent)
+            }
+        }
+    }
+}
+
+private struct FirstMateMobileArchiveSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Bindable var store: FirstMateStore
+    let feature: FirstMateFeature
+    @State private var reason: FirstMateArchiveReason? = nil
+
+    private var workContinues: Bool {
+        ["running", "coordinating", "recovering"].contains(feature.status)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text(workContinues
+                         ? "Work continues after archiving. The feature leaves the active list, while all visits, assignments, documents, sessions, events, status, and Active Work linkage are retained."
+                         : "The feature leaves the active list, while all visits, assignments, documents, sessions, events, status, and Active Work linkage are retained.")
+                }
+                Section("Optional reason") {
+                    Picker("Reason", selection: $reason) {
+                        Text("No reason").tag(nil as FirstMateArchiveReason?)
+                        ForEach(FirstMateArchiveReason.allCases) { value in
+                            Text(value.title).tag(value as FirstMateArchiveReason?)
+                        }
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                }
+            }
+            .navigationTitle("Archive feature?")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Archive", role: .destructive) {
+                        Task {
+                            if await store.setArchived(featureID: feature.id, archived: true, reason: reason) { dismiss() }
+                        }
+                    }
+                    .disabled(!store.archiveSupported || store.isSending)
+                    .accessibilityIdentifier("first-mate-confirm-archive")
+                }
             }
         }
     }

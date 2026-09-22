@@ -5,7 +5,7 @@
 <header class="titlebar"><div class="brand"><strong>Herdr</strong><span>First Mate</span></div><div class="top-actions"><span id="connection" role="status">Connecting</span><button id="connect">Connection</button><button id="theme" aria-label="Switch theme">Dark mode</button></div></header>
 <div id="notice" role="status" hidden></div>
 <main class="shell">
-<aside class="sidebar" aria-label="Features"><div class="sidebar-heading"><h2>Features</h2><button id="new" aria-label="New feature">＋</button></div><div id="features"></div><footer>One feature. One First Mate.<br>You choose what comes next.</footer></aside>
+<aside class="sidebar" aria-label="Features"><div class="sidebar-heading"><h2>Features</h2><button id="new" aria-label="New feature">＋</button></div><label class="archive-toggle"><input id="show-archived" type="checkbox"> Show archived</label><div id="features"></div><footer>One feature. One First Mate.<br>You choose what comes next.</footer></aside>
 <section class="conversation" aria-label="First Mate conversation"><header id="feature-header"><h1>Your First Mate</h1><p>Select a feature or start something new.</p></header><div id="messages" role="log" aria-label="Conversation"></div><form id="composer"><label for="prompt">Message First Mate</label><textarea id="prompt" rows="3" placeholder="Tell First Mate what you want to work on…" required></textarea><div class="composer-bottom"><span id="chat-status">Ready when you are</span><button type="submit" id="send">Send</button></div></form></section>
 <section class="inspector" aria-label="Feature workspace"><nav id="tabs" aria-label="Feature views"></nav><div id="workspace"></div></section>
 </main>

@@ -2,6 +2,12 @@
 
 Use your configured Herdr Mac build with sample sessions. Check off each item after trying it.
 
+## First Mate archive
+
+- [ ] Right-click an inactive feature in the First Mate sidebar and choose **Archive…**. Leave the reason at **No reason** and confirm. The dialog must say records are retained; the feature leaves the default list without changing its workflow status.
+- [ ] Archive a synthetic running feature. The confirmation must explicitly say work continues. Verify its assignments continue, then enable **Show archived**, inspect the conversation, journal, documents, sessions, status, Active Work linkage, and work item ID, and choose the visible **Unarchive** control.
+- [ ] Repeat with each optional reason. Archived features must not contribute the First Mate attention badge, including `awaiting_direction` and `blocked` features. An older companion without `first-mate-archive-v1` must leave archive controls unavailable with update guidance.
+
 - [ ] **Attachment titles on hover:** Have a session return several documents. At rest they should be icons. Hover the orb or any visible HUD control: all visible document titles should expand beside that session. Move between titles and click one, then move away to restore icons.
 
 - [ ] **Documents belong to responses:** Have the same agent return different documents in two replies. Open Chat: each card should sit beneath the reply that produced it. Switch sessions and reopen an older chat to check that cards stay with the correct response.

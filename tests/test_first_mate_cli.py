@@ -38,6 +38,25 @@ class FirstMateCLITests(unittest.TestCase):
         self.assertEqual(code,0);self.assertEqual(len(self.requests),1)
         self.assertEqual(json.loads(self.requests[0].data)['expected_revision'],3)
 
+    def test_archive_uses_actions_route_and_optional_reason(self):
+        code, _ = self.run_cli(['archive', 'fmf_sample', '--reason', 'test/synthetic', '--request-id', 'archive-one'])
+        self.assertEqual(code, 0)
+        self.assertTrue(self.requests[0].full_url.endswith('/features/fmf_sample/actions'))
+        self.assertEqual(json.loads(self.requests[0].data), {
+            'action': 'archive', 'reason': 'test/synthetic', 'request_id': 'archive-one',
+        })
+        self.run_cli(['unarchive', 'fmf_sample', '--request-id', 'unarchive-one'])
+        self.assertEqual(json.loads(self.requests[0].data), {'action': 'unarchive', 'request_id': 'unarchive-one'})
+
+    def test_list_archived_and_all_are_mutually_exclusive_api_views(self):
+        self.run_cli(['list', '--archived'])
+        self.assertTrue(self.requests[0].full_url.endswith('/features?view=archived'))
+        self.run_cli(['list', '--all'])
+        self.assertTrue(self.requests[0].full_url.endswith('/features?view=all'))
+        code, result = self.run_cli(['list', '--archived', '--all'])
+        self.assertEqual(code, 2)
+        self.assertEqual(result['error']['code'], 'invalid_arguments')
+
     def test_open_only_navigates_after_feature_exists(self):
         code,data=self.run_cli(['open','fmf_sample','--graph'])
         self.assertEqual(code,0);self.assertIn('herdr://first-mate?',data['url'])

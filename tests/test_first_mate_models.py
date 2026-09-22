@@ -57,12 +57,16 @@ class ModelSettingsTests(unittest.TestCase):
     def test_existing_database_migrates_without_losing_feature(self):
         path = Path(self.temp.name) / 'old.sqlite3'
         db = sqlite3.connect(path)
-        db.executescript(SCHEMA)
+        old_schema = SCHEMA.replace(' archived_at TEXT, archive_reason TEXT, created_at', ' created_at')
+        db.executescript(old_schema)
         db.execute("INSERT INTO fm_features(id,title,goal,cwd,status,revision,created_at,updated_at) VALUES('old','Old','Retain','/tmp','ready',1,'now','now')")
         db.commit(); db.close()
         migrated = FirstMateStore(path)
         self.assertEqual(migrated.get_feature('old')['model_settings_revision'], 0)
         self.assertEqual(migrated.get_feature('old')['goal'], 'Retain')
+        self.assertIsNone(migrated.get_feature('old')['archived_at'])
+        self.assertEqual([item['id'] for item in migrated.list_features()], ['old'])
+        self.assertIsNotNone(migrated._db.execute('SELECT 1 FROM fm_schema WHERE version=4').fetchone())
         migrated.close()
 
     def test_new_coordinator_turn_captures_settings_but_workers_and_existing_job_do_not_change(self):

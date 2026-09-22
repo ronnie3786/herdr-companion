@@ -19,7 +19,7 @@ This package does not install itself. The Mac updater updates only the native Ma
 
 ## Verification
 
-1. Read the authenticated root capabilities and confirm `first-mate-usage-v1`, `smart-rename-v1`, `chat-tab-colors-v1`, and `first-mate-archive-v1`, plus Response Brief length policy version 2.
+1. Read the authenticated root capabilities and confirm `first-mate-usage-v1`, `chat-tab-colors-v1`, and `first-mate-archive-v1`. Then read `/api/v1/assistant/capabilities` and confirm `smart-rename-v1` plus Response Brief length policy version 2.
 2. Inspect a synthetic First Mate task in the browser and native Mac app. Confirm usage coverage, archive/unarchive retention, and exclusion of archived features from active attention counts.
 3. Run a synthetic tool-free Smart Rename request and all three Response Brief lengths. Confirm invalid inputs fail closed and replayed receipts do not duplicate work.
 4. Enable tab-color sharing from a test Mac, compare filtered results from `herdr-control` and `herdr-hud-chats`, then disable sharing and confirm the exported copy is withdrawn.

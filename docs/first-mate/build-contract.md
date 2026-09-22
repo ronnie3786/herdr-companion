@@ -29,6 +29,49 @@ Usage accounting is additive. Feature objects, assignment objects and session ob
 
 A usage summary has `currency` (`USD`), nullable `cost_usd`, `status` (`complete`, `partial`, or `unavailable`), nonnegative integer `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, and `total_tokens`, `usage_records`, `missing_cost_records`, `session_count`, `known_cost_sessions`, `models`, and `updated_at`. Public integer counters are bounded to the cross-client JSON-safe range `0...(2^53-1)`; an invalid or overflowing value is skipped and lowers coverage instead of emitting a rounded or un-decodable number. Each model row repeats the cost/status/token/record fields and adds nullable `provider` and `model`. Optional `stale:true` means a previously parsed amount was preserved after its source became temporarily unreadable; its status is never complete. Explicit Pi-reported zero is valid. Unknown cost is `null`, never an invented zero. These are Pi-reported estimates rather than provider invoices, and subscription-backed providers may report zero.
 
+## Chat parity API additions
+
+`GET /api/v1/first-mate/capabilities` additionally advertises
+`first-mate-attachments-v1`, `first-mate-context-v1`, and
+`first-mate-safe-model-settings-v1`.
+
+`POST /features/{id}/attachments` is an authenticated control request containing
+exactly `filename`, `content_type`, and `data_base64`. The feature must exist and
+must not be completed or cancelled. The route alone accepts the existing 20 MiB
+attachment JSON limit. Data is stored through Herdr-owned attachment storage in
+the opaque `first-mate:<feature-id>` namespace; callers cannot supply a workspace
+or filesystem path. Its response intentionally matches the native attachment
+envelope's camel-case fields:
+
+```json
+{"ok":true,"attachment":{"id":"…","filename":"…","originalFilename":"notes.txt","contentType":"text/plain","size":12,"path":"…","workspaceId":"first-mate:fmf_…","createdAt":"…"}}
+```
+
+Feature list, single-feature, and detail projections may include
+`coordinator_context`: `native_session_id` (string or null), `status` (`measured`
+or `unavailable`), `tokens` (JSON-safe nonnegative integer or null),
+`context_window` (JSON-safe positive integer or null), positive
+`handoff_target_tokens`, and `observed_at` (timestamp or null). This is the latest
+valid bounded telemetry sample for the exact current native coordinator session,
+not cumulative billing usage. Foreign, predecessor, worker, malformed, negative,
+boolean, non-finite, and unsafe integer values never become an invented zero. A
+new or rotated session cannot inherit its predecessor's sample. The handoff target
+uses the same configured-target/window-reserve calculation as managed coordinator
+rotation.
+
+`POST /features/{id}/model-settings` retains required `model`, `thinking`,
+`expected_settings_revision`, and `request_id`, and accepts optional string
+`expected_session_id` plus boolean `confirm_session_model_change`. A genuine
+change on an established coordinator session requires confirmation and the exact
+current session ID. Conflicts are `model_change_confirmation_required`,
+`stale_coordinator_session`, or `coordinator_busy` when a coordinator dispatch
+owns the feature or its established session has queued work. Validation,
+idempotency, ownership checks, and mutation share one store transaction. Exact
+receipt replay remains valid after rotation. A no-op does not increment the
+settings revision, emit a change event, enqueue work, reset a session, or dispatch
+an agent. Before the first session is claimed, older clients may still select the
+initial model without the optional fields.
+
 ## Implementation layers
 
 - `first_mate_store.py`: SQLite transactions, deduplication, event ledger, assignments, attempts, message queue, handoffs and human gates.

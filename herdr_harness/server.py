@@ -412,6 +412,9 @@ def api_description() -> dict:
             "first-mate-v1",
             "first-mate-usage-v1",
             "first-mate-archive-v1",
+            "first-mate-attachments-v1",
+            "first-mate-context-v1",
+            "first-mate-safe-model-settings-v1",
             "pr-review-v1",
             "pi-session-context-v1",
             "agent-control-v1",
@@ -428,6 +431,7 @@ def api_description() -> dict:
             "uiClients": "/api/v1/ui/clients",
             "firstMate": "/api/v1/first-mate/features",
             "firstMateCapabilities": "/api/v1/first-mate/capabilities",
+            "firstMateAttachment": "/api/v1/first-mate/features/{featureId}/attachments",
             "prReviews": "/api/v1/pr-reviews",
             "prReview": "/api/v1/pr-reviews/{reviewId}",
             "prReviewCapabilities": "/api/v1/pr-reviews/capabilities",
@@ -498,6 +502,7 @@ def api_description() -> dict:
         },
         "mutations": [
             "POST /api/v1/notes|notes/import",
+            "POST /api/v1/first-mate/features/{featureId}/attachments",
             "PATCH|DELETE /api/v1/notes/{noteId}",
             "POST /api/v1/workspaces",
             "PATCH|DELETE /api/v1/workspaces/{workspaceId}",
@@ -854,11 +859,17 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     and segments[:3] == ["api", "v1", "workspaces"]
                     and segments[4] == "attachments"
                 )
+                first_mate_attachment_upload = (
+                    method == "POST"
+                    and len(segments) == 6
+                    and segments[:4] == ["api", "v1", "first-mate", "features"]
+                    and segments[5] == "attachments"
+                )
                 agent_run_create = method == "POST" and segments == ["api", "v1", "agent-runs"]
                 issue_report_create = method == "POST" and segments == ["api", "v1", "issue-reports"]
                 voice_upload = method == "POST" and segments[2:] == ["voice", "transcriptions"]
                 pr_review_upload = method == "POST" and len(segments) == 5 and segments[:3] == ["api", "v1", "pr-reviews"] and segments[4] == "documents"
-                if attachment_upload or agent_run_create or pr_review_upload:
+                if attachment_upload or first_mate_attachment_upload or agent_run_create or pr_review_upload:
                     maximum = attachments.MAX_ATTACHMENT_JSON_BYTES
                 elif issue_report_create:
                     maximum = issue_reports.MAX_ISSUE_REPORT_JSON_BYTES
@@ -1046,7 +1057,11 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             snapshot_view = runtime.snapshot if hasattr(runtime, "snapshot") else store.snapshot
             features_view = runtime.list_features if hasattr(runtime, "list_features") else store.list_features
             if method == "GET" and tail == ["capabilities"]:
-                return {"ok": True, "capabilities": ["first-mate-v1", "first-mate-model-settings-v1", "first-mate-usage-v1", "first-mate-archive-v1"], **runtime.capabilities()}
+                return {"ok": True, "capabilities": [
+                    "first-mate-v1", "first-mate-model-settings-v1", "first-mate-usage-v1",
+                    "first-mate-archive-v1", "first-mate-attachments-v1",
+                    "first-mate-context-v1", "first-mate-safe-model-settings-v1",
+                ], **runtime.capabilities()}
             if method == "GET" and tail == ["models"]:
                 return {"ok": True, **service.first_mate.model_catalog()}
             if tail == ["features"]:
@@ -1072,6 +1087,20 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     store.set_model_settings(feature_id, body)
                     # Settings alone never enqueue a conversation turn or authorize work.
                     return {"ok": True, **snapshot_view(feature_id)}
+                if tail[2:] == ["attachments"] and method == "POST":
+                    if set(body) != {"filename", "content_type", "data_base64"}:
+                        raise HTTPValidationError("Attachment must contain exactly filename, content_type, and data_base64")
+                    filename = _string(body.get("filename"), "filename", maximum=512)
+                    content_type = _string(body.get("content_type"), "content_type", maximum=255)
+                    data_base64 = body.get("data_base64")
+                    if not isinstance(data_base64, str):
+                        raise HTTPValidationError("data_base64 must be a string")
+                    return service.first_mate_attachment(
+                        feature_id,
+                        filename=filename,
+                        content_type=content_type,
+                        data_base64=data_base64,
+                    )
                 if tail[2:] == ["messages"] and method == "POST":
                     if set(body) - {"text", "request_id"}:
                         raise HTTPValidationError("Message contains an unsupported field")

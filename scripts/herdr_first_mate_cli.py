@@ -63,6 +63,14 @@ def parser(environ):
     settings.add_argument("--model", required=True, help="provider/model, or an empty string for host default")
     settings.add_argument("--thinking", default="", choices=("", "off", "minimal", "low", "medium", "high", "xhigh", "max"))
     settings.add_argument("--expected-settings-revision", type=int, required=True)
+    settings.add_argument(
+        "--expected-session-id",
+        help="Exact current coordinator session ID required for an established-session change",
+    )
+    settings.add_argument(
+        "--confirm-session-model-change", action="store_true", default=None,
+        help="Explicitly accept reprocessing and prompt-cache cost risk at a safe idle turn boundary",
+    )
     settings.add_argument("--request-id")
     commands.add_parser("document").add_argument("id")
     session = commands.add_parser("session")
@@ -90,10 +98,16 @@ def execute(args, client, *, stdin, launch):
         return client.request("GET", path + quote(args.id) + ("?" + urllib.parse.urlencode(query) if query else ""))
     path = "/features/" + quote(args.feature_id)
     if args.command == "set-model":
-        return client.request("POST", path + "/model-settings", {
+        body = {
             "model": args.model, "thinking": args.thinking,
             "expected_settings_revision": args.expected_settings_revision,
-            "request_id": args.request_id or str(uuid.uuid4())})
+            "request_id": args.request_id or str(uuid.uuid4()),
+        }
+        if args.expected_session_id is not None:
+            body["expected_session_id"] = args.expected_session_id
+        if args.confirm_session_model_change is not None:
+            body["confirm_session_model_change"] = args.confirm_session_model_change
+        return client.request("POST", path + "/model-settings", body)
     if args.command == "events": return client.request("GET", path + "/events?" + urllib.parse.urlencode({"after": args.after}))
     if args.command == "send":
         text = _read_file(args.text_file, stdin) if args.text_file else args.text

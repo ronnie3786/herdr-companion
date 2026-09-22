@@ -88,6 +88,10 @@ herdr-first-mate set-model FEATURE_ID --model 'provider/model' --thinking high \
 # Restore the host model and Pi's session/default effort:
 herdr-first-mate set-model FEATURE_ID --model '' --thinking '' \
   --expected-settings-revision 1 --request-id feature-model-reset
+# Change an established coordinator only after reading its exact current session:
+herdr-first-mate set-model FEATURE_ID --model 'provider/model' --thinking high \
+  --expected-settings-revision 2 --expected-session-id NATIVE_SESSION_ID \
+  --confirm-session-model-change --request-id feature-model-confirmed
 ```
 
 Read `feature.model_settings_revision` before updating. A stale revision returns
@@ -97,13 +101,23 @@ apply to new coordinator dispatches; existing dispatches, workers, advisors,
 workflow revisions and human approvals remain unchanged. Saving does not start
 a model turn. The native conversation continues across model changes.
 
+Changing an established coordinator can reprocess conversation context, invalidate
+prompt caches, and incur additional provider cost. Wait for a safe idle turn
+boundary, pass the exact current `feature.native_session_id` with
+`--expected-session-id`, and explicitly accept that risk with
+`--confirm-session-model-change`. The CLI does not fetch or select a session and
+never supplies confirmation automatically. Initial no-session requests omit both
+fields unless you explicitly provide them.
+
 The authenticated API adds `GET /api/v1/first-mate/models` and
-`POST /api/v1/first-mate/features/:id/model-settings` with `model`, `thinking`,
-`expected_settings_revision` and `request_id`. Capability:
-`first-mate-model-settings-v1`. The feature fields are additive. Older apps and
-CLI versions can continue using the server. New apps retain chat on older servers
-and explain that model controls require a companion update. The Mac updater does
-not install the companion package; update that component separately.
+`POST /api/v1/first-mate/features/:id/model-settings` with required `model`,
+`thinking`, `expected_settings_revision`, and `request_id`, plus optional
+`expected_session_id` and `confirm_session_model_change`. Capabilities include
+`first-mate-model-settings-v1` and `first-mate-safe-model-settings-v1`. The feature
+fields are additive. Older apps and CLI versions can continue using the server.
+New apps retain chat on older servers and explain that model controls require a
+companion update. The Mac updater does not install the companion package; update
+that component separately.
 
 ## Archive contract
 

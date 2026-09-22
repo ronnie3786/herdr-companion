@@ -26,7 +26,7 @@ from .chat_tab_colors import project_snapshot, sources_response
 from .client import DEFAULT_SUBSCRIPTIONS, HerdrClient, HerdrClientError
 from .cleanup import DEFAULT_JUDGE_CHARTER, CleanupManager, _parse_time
 from .events import EventBroker
-from .first_mate_store import FirstMateStore
+from .first_mate_store import FirstMateError, FirstMateStore
 from .pr_review_store import PRReviewStore, PRReviewError
 from .issue_reports import IssueReporter
 from .network import network_payload
@@ -1534,6 +1534,40 @@ class HerdrService:
                 "path": attachment.get("path"),
                 "workspace_id": workspace_id,
                 "created_at": created_at,
+            },
+        }
+
+    def first_mate_attachment(
+        self,
+        feature_id: str,
+        *,
+        filename: str,
+        content_type: str,
+        data_base64: str,
+    ) -> dict:
+        feature = self.first_mate_store.get_feature(feature_id)
+        if feature["status"] in {"completed", "cancelled"}:
+            raise FirstMateError("This feature is closed", code="feature_closed")
+        data = self._decode_attachment(data_base64)
+        namespace = "first-mate:" + feature_id
+        attachment = attachments.store_attachment(
+            workspace_id=namespace,
+            filename=filename,
+            content_type=content_type,
+            data=data,
+            environ=self.environ,
+        )
+        return {
+            "ok": True,
+            "attachment": {
+                "id": attachment["id"],
+                "filename": attachment["filename"],
+                "originalFilename": attachment["original_filename"],
+                "contentType": attachment["content_type"],
+                "size": attachment["size"],
+                "path": attachment["path"],
+                "workspaceId": attachment["workspace_id"],
+                "createdAt": attachment["created_at"],
             },
         }
 

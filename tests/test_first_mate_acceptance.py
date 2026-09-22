@@ -192,7 +192,9 @@ class FirstMateAcceptanceTests(unittest.TestCase):
         job = self.runtime._new_job(self.store.get_feature(feature['id']), kind='coordinator', claim=claim, prompt='Status')
         self.runtime._bind(job, 'synthetic-coordinator-native', job['session_file'])
         telemetry = self.runtime._job_dir(job) / 'telemetry.jsonl'
-        telemetry.write_text(json.dumps({'type':'context_usage','payload':{'tokens':160000,'contextWindow':200000}})+'\n')
+        telemetry.write_text(json.dumps({'type':'context_usage','native_session_id':'synthetic-coordinator-native',
+                                         'time':'2026-09-22T12:00:00Z',
+                                         'payload':{'tokens':160000,'contextWindow':200000}})+'\n')
         self.runtime._finish(job, {'ended':True,'response':'Latest status recorded.'})
         checkpoint = _read_json(self.runtime.root / 'checkpoints' / (feature['id']+'.json'))
         self.assertTrue('Keep the legacy public API intact' in json.dumps(checkpoint), 'Coordinator checkpoint dropped an earlier human constraint')

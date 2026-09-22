@@ -27,6 +27,7 @@ from .agent_runs import _assistant_text, _child_path, _resolve_pi_bin
 from .alerts import utc_now
 from .child_environment import agent_environment
 from .resources import pi_extension_path
+from .first_mate_context import FirstMateContext
 from .first_mate_routing import delegation_profile, resolve_dispatch_policy
 from .first_mate_store import FirstMateError
 from .first_mate_usage import FirstMateUsage
@@ -301,6 +302,7 @@ class FirstMateRuntime:
         self._catalog_cache = None
         self._catalog_at = 0.0
         self.usage = FirstMateUsage(self.root / "sessions")
+        self.context = FirstMateContext(self.jobs_root, self.context_target)
 
     def capabilities(self) -> dict:
         return {"available": bool(self.pi_bin and self.extension and self.extension.is_file()),
@@ -380,23 +382,27 @@ class FirstMateRuntime:
         for feature in self.store.list_features(view):
             account = self._usage_account(feature, jobs=jobs, ledger_sessions=ledger_sessions)
             selection = self._policy(feature, kind="coordinator", claim={}).selection()
-            result.append({**feature, "usage": account["usage"], "model_selection": selection})
+            result.append({**feature, "usage": account["usage"], "model_selection": selection,
+                           "coordinator_context": self.context.project(feature, jobs)})
         return result
 
     def feature(self, feature_id: str) -> dict:
         feature = self.store.get_feature(feature_id)
+        jobs = self._jobs()
         selection = self._policy(feature, kind="coordinator", claim={}).selection()
-        return {**feature, "usage": self._usage_account(feature)["usage"],
-                "model_selection": selection}
+        return {**feature, "usage": self._usage_account(feature, jobs=jobs)["usage"],
+                "model_selection": selection,
+                "coordinator_context": self.context.project(feature, jobs)}
 
     def snapshot(self, feature_id: str) -> dict:
         snapshot = self.store.snapshot(feature_id)
-        account = self._usage_account(snapshot["feature"], assignments=snapshot["assignments"])
+        jobs = self._jobs()
+        account = self._usage_account(snapshot["feature"], assignments=snapshot["assignments"], jobs=jobs)
         result = dict(snapshot)
         feature_selection = self._policy(snapshot["feature"], kind="coordinator", claim={}).selection()
         result["feature"] = {**snapshot["feature"], "usage": account["usage"],
-                             "model_selection": feature_selection}
-        jobs = self._jobs()
+                             "model_selection": feature_selection,
+                             "coordinator_context": self.context.project(snapshot["feature"], jobs)}
         assignment_jobs: dict[str, list[dict]] = {}
         for job in jobs:
             if job.get("kind") == "worker" and job.get("claim", {}).get("id"):
@@ -1267,13 +1273,11 @@ class FirstMateRuntime:
         return False
 
     def _rotate_coordinator_if_needed(self, job: dict) -> None:
-        observations, _ = _records(self._job_dir(job) / "telemetry.jsonl")
-        usage = next((e.get("payload", {}) for e in reversed(observations) if e.get("type") == "context_usage"), {})
-        tokens, window = usage.get("tokens"), usage.get("contextWindow")
-        if not isinstance(tokens, (int, float)):
-            return
-        target = min(self.context_target, max(4096, window - max(8192, int(window * .1)))) if isinstance(window, (int, float)) and window > 0 else self.context_target
-        if tokens < target or not job.get("native_session_id"):
+        feature = self.store.get_feature(job["feature_id"])
+        context = self.context.project(feature, [job])
+        if (context["status"] != "measured"
+                or context["tokens"] < context["handoff_target_tokens"]
+                or context["native_session_id"] != job.get("native_session_id")):
             return
         snapshot = self.store.snapshot(job["feature_id"])
         checkpoint = {"predecessor_session_id": job["native_session_id"], "created_at": utc_now(),

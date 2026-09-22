@@ -63,6 +63,8 @@ PRIVACY_CHECK_SCRIPT = "scripts/check-public-source.py"
 RELEASE_VERSION_FILE = "release/macos.json"
 MAX_CHECK_OUTPUT_CHARS = 1024 * 1024
 MAX_FINDINGS = 50
+MESSAGE_ME_TIMEOUT_SECONDS = 30
+MESSAGE_ME_SCRIPT = Path.home() / ".codex" / "skills" / "message-me" / "scripts" / "message_me.py"
 
 _ATTACHMENT_URL_RE = re.compile(
     r"https://github\.com/(?:user-attachments/[^\s)\]\"'<>]+|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/releases/download/[^\s)\]\"'<>]+)"
@@ -215,6 +217,7 @@ class CodeFactory:
         release_runner: Runner | None = None,
         log: Logger | None = None,
         check_runner: Runner | None = None,
+        message_runner: Runner | None = None,
     ):
         self._settings = settings
         self._store = store
@@ -224,6 +227,7 @@ class CodeFactory:
         self._clock = clock
         self._sleep = sleep
         self._check_runner: Runner = check_runner or subprocess.run
+        self._message_runner: Runner = message_runner or subprocess.run
         self._log: Logger = log or _default_log
         self._lock = threading.RLock()
         self._active: set[int] = set()
@@ -403,7 +407,7 @@ class CodeFactory:
         """Discover labeled issues, queue new/resumable ones, retire closed ones, kick releases."""
         counts: dict[str, Any] = {
             "discovered": 0, "eligible": 0, "new": 0, "resumed": 0, "ignored": 0, "skipped": 0,
-            "queued": [], "releaseStarted": False, "releaseDeferred": False,
+            "reconciled": 0, "queued": [], "releaseStarted": False, "releaseDeferred": False,
         }
         listed = self._github.list_issues(self._settings.trigger_label)
         counts["discovered"] = len(listed)
@@ -440,16 +444,22 @@ class CodeFactory:
                 if self._submit(number) or not self.started:
                     counts["resumed"] += 1
                     counts["queued"].append(number)
-        for issue in self._store.list_issues("active"):
+        for issue in self._store.list_issues():
             number = issue["number"]
-            if number in open_numbers or issue["stage"] in TERMINAL_STAGES or self.is_running(number):
+            if issue["status"] == "done" or number in open_numbers or self.is_running(number):
                 continue
             try:
                 remote = self._github.get_issue(number)
             except CodeFactoryError as exc:
                 self._log(f"issue #{number}: state check failed: {_error_text(exc)}")
                 continue
-            if str(remote.get("state") or "").upper() == "CLOSED" and not issue.get("mergeSha"):
+            if str(remote.get("state") or "").upper() != "CLOSED":
+                continue
+            merged = self._merged_closing_pull_request(remote)
+            if merged is not None:
+                self._reconcile_external_merge(issue, remote, merged)
+                counts["reconciled"] += 1
+            elif issue["status"] == "active" and issue["stage"] not in TERMINAL_STAGES and not issue.get("mergeSha"):
                 self._store.add_event(number, issue["stage"], "warning", "Issue was closed on GitHub; skipping")
                 self._skip_issue(issue, remove_label=False)
                 counts["skipped"] += 1
@@ -464,6 +474,66 @@ class CodeFactory:
                               "use the release_now action to retry immediately")
         self._store.set_daemon("last_poll_at", utc_now())
         return counts
+
+    def _merged_closing_pull_request(self, remote: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Return the newest merged PR that GitHub says closed ``remote``.
+
+        A request can be delivered by a consolidated or replacement PR rather than the
+        per-issue PR stored in the ledger. GitHub's issue relationship is authoritative;
+        fetching each referenced PR also avoids trusting the abbreviated relationship
+        object returned by ``gh issue view``.
+        """
+        references = remote.get("closedByPullRequestsReferences")
+        items = references if isinstance(references, list) else []
+        numbers = sorted({
+            item["number"] for item in items
+            if isinstance(item, Mapping) and isinstance(item.get("number"), int)
+            and not isinstance(item.get("number"), bool) and item["number"] > 0
+        }, reverse=True)
+        for number in numbers:
+            try:
+                pull = self._github.pull_request(number)
+            except CodeFactoryError as exc:
+                self._log(f"issue #{remote.get('number')}: closing PR #{number} check failed: {_error_text(exc)}")
+                continue
+            if str(pull.get("state") or "").upper() == "MERGED" or pull.get("mergedAt"):
+                return pull
+        return None
+
+    def _reconcile_external_merge(
+        self,
+        issue: Mapping[str, Any],
+        remote: Mapping[str, Any],
+        pull: Mapping[str, Any],
+    ) -> None:
+        """Mark stale pipeline state done when GitHub proves another PR delivered it."""
+        number = issue["number"]
+        pr_number = pull.get("number")
+        if isinstance(pr_number, bool) or not isinstance(pr_number, int) or pr_number <= 0:
+            return
+        merge_commit = pull.get("mergeCommit")
+        merge_sha = merge_commit.get("oid") if isinstance(merge_commit, Mapping) else None
+        labels = _label_names(remote) or list(issue.get("labels") or [])
+        pr_url = str(pull.get("url") or f"https://github.com/{self._settings.repository}/pull/{pr_number}")[:500]
+        self._store.update_issue(
+            number,
+            labels=labels,
+            status="done",
+            stage="done",
+            prNumber=pr_number,
+            prUrl=pr_url,
+            mergeSha=str(merge_sha or issue.get("mergeSha") or "") or None,
+            error=None,
+            blockedReason=None,
+            finishedAt=str(pull.get("mergedAt") or utc_now()),
+        )
+        self._store.add_event(
+            number,
+            "done",
+            "success",
+            f"Reconciled from GitHub: delivered by merged PR #{pr_number}",
+            {"prNumber": pr_number, "prUrl": pr_url, "mergeSha": merge_sha},
+        )
 
     def _release_retry_due(self) -> bool:
         """False while the last failed batch is inside its exponential backoff window.
@@ -583,6 +653,8 @@ class CodeFactory:
             self._store.update_issue(number, status="blocked", blockedReason=reason, error=None)
         self._store.add_event(number, stage, "warning", f"Blocked ({reason}): {message}"[:20_000], {"reason": reason})
         self._log(f"issue #{number}: blocked at {stage}: {reason}")
+        if reason == "human_question":
+            self._notify_human_question(number, stage, message)
 
     # -- helpers shared by stages ---------------------------------------------------
 
@@ -602,8 +674,54 @@ class CodeFactory:
         return f"origin/{self._settings.base_branch}"
 
     def _dashboard_url(self) -> str:
-        value = self._store.daemon_info().get("dashboardUrl")
-        return value if isinstance(value, str) else ""
+        if self._settings.dashboard_link:
+            return self._settings.dashboard_link
+        daemon = self._store.daemon_info()
+        for key in ("dashboardUrl", "dashboardBindUrl"):
+            value = daemon.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+
+    def _notify_human_question(self, number: int, stage: str, question: str) -> None:
+        """Send a best-effort Message Me alert without changing the blocked outcome."""
+        issue = self._store.get_issue(number) or {}
+        title = self._public(str(issue.get("title") or "Untitled feature"))
+        safe_question = self._public(question)
+        body = (
+            f"Feature #{number}, {title}, is blocked waiting for your response. "
+            f"Question: {safe_question} Reply on the GitHub issue, then choose Retry in the Code Factory Dashboard."
+        )
+        argv = [
+            self._settings.python,
+            str(MESSAGE_ME_SCRIPT),
+            "--title", "Code Factory needs your response",
+            "--sender", "Herdr · Code Factory",
+            "--urgency", "active",
+        ]
+        dashboard_url = self._dashboard_url()
+        if dashboard_url:
+            argv.extend(("--link", dashboard_url))
+        argv.append(body)
+        try:
+            result = self._message_runner(
+                argv, capture_output=True, text=True, timeout=MESSAGE_ME_TIMEOUT_SECONDS, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            detail = f"Message Me notification failed: {_error_text(exc)}"
+            self._store.add_event(number, stage, "warning", detail)
+            self._log(f"issue #{number}: {detail}")
+            return
+        returncode = int(getattr(result, "returncode", 1))
+        if returncode == 0:
+            self._store.add_event(number, stage, "info", "Message Me notification sent")
+            return
+        if returncode == 2:
+            detail = "Message Me stored the alert, but iPhone delivery was not confirmed"
+        else:
+            detail = f"Message Me notification failed with exit status {returncode}"
+        self._store.add_event(number, stage, "warning", detail)
+        self._log(f"issue #{number}: {detail}")
 
     def _public(self, text: str) -> str:
         """Every GitHub-bound text passes here: local paths, tailnet names/addresses, keys and tokens are redacted."""
@@ -618,21 +736,28 @@ class CodeFactory:
         except CodeFactoryError as exc:
             self._store.add_event(number, stage, "warning", f"Could not comment on the issue: {_error_text(exc)}")
 
-    def _issue_view(self, issue: Mapping[str, Any], paths: RunPaths) -> dict[str, Any]:
+    def _issue_view(self, issue: Mapping[str, Any], paths: RunPaths, *, refresh: bool = False) -> dict[str, Any]:
         """The issue as prompt builders expect it (title, verbatim body, url, kind, labels)."""
         body = ""
         data: dict[str, Any] = {}
-        try:
-            data = json.loads(paths.issue_json.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            data = {}
+        if not refresh:
+            try:
+                data = json.loads(paths.issue_json.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                data = {}
         if not isinstance(data, dict) or not isinstance(data.get("body"), str):
             data = self._github.get_issue(issue["number"])
             self._write_json(paths.issue_json, data)
         body = data.get("body") if isinstance(data.get("body"), str) else ""
+        allowed = {login.lower() for login in self.allowed_authors()}
+        comments = [
+            item for item in (data.get("comments") if isinstance(data.get("comments"), list) else [])
+            if isinstance(item, Mapping) and _author_login(item).lower() in allowed
+        ]
         return {
             "number": issue["number"], "title": issue["title"], "body": body, "url": issue["url"],
             "kind": issue["kind"], "author": issue["author"], "labels": issue.get("labels") or [],
+            "comments": comments,
         }
 
     @staticmethod
@@ -1020,7 +1145,9 @@ class CodeFactory:
         number = issue["number"]
         paths = self._paths(number)
         cwd = self._ensure_worktree(issue)
-        view = self._issue_view(issue, paths)
+        # A retry after a human question must see replies and description edits made
+        # after intake; the cached issue snapshot is deliberately refreshed here.
+        view = self._issue_view(issue, paths, refresh=True)
         descriptors = [prompts.attachment_descriptor(file) for file in sorted(paths.attachments.iterdir()) if file.is_file()]
         images = [item["path"] for item in descriptors if item["isImage"]]
         hints = [
@@ -1147,6 +1274,9 @@ class CodeFactory:
         head = issue.get("headSha")
         if not head:
             return "pull_request"
+        pr_number = issue.get("prNumber")
+        if isinstance(pr_number, int) and self._head_moved(number, "verify", pr_number, head):
+            return "verify"
         status = self._wait_for_verify(
             head, lambda value: self._store.update_issue(number, ciStatus=value),
             on_warning=lambda message: self._store.add_event(number, "verify", "warning", message),
@@ -1287,6 +1417,10 @@ class CodeFactory:
 
     def _stage_revise(self, issue: dict[str, Any]) -> str | None:
         number = issue["number"]
+        head = issue.get("headSha") or ""
+        pr_number = issue.get("prNumber")
+        if isinstance(pr_number, int) and self._head_moved(number, "revise", pr_number, head):
+            return "verify"
         paths = self._paths(number)
         cwd = self._ensure_worktree(issue)
         plan = self._ready_plan(issue, paths, "revise")
@@ -1296,7 +1430,6 @@ class CodeFactory:
         round_number = int(issue["reviewRound"] or 0)
         branch = issue.get("branch") or self._branch(number)
         review = plan.get("last_review") if isinstance(plan.get("last_review"), dict) else None
-        head = issue.get("headSha") or ""
         if head and self._git.head(cwd) != head and self._resolve_optional(head):
             self._git.reset_hard(cwd, head)
         self._discard_leftovers(number, "revise", cwd, "reviser")
@@ -1374,6 +1507,7 @@ class CodeFactory:
             if issue["status"] not in ("blocked", "failed"):
                 raise CodeFactoryError(f"issue #{number} is {issue['status']}; only blocked or failed issues can be retried", code="invalid_request")
             retry_stage = issue["stage"]
+            retry_fields: dict[str, Any] = {}
             if issue.get("blockedReason") == "human_question":
                 paths = self._paths(number)
                 try:
@@ -1403,7 +1537,45 @@ class CodeFactory:
                     number, issue["stage"], "info",
                     "Human-decision retry refreshed the issue description and will create a fresh plan; prior feedback is context, not approval",
                 )
-            self._store.update_issue(number, status="active", stage=retry_stage, error=None, blockedReason=None)
+            elif issue.get("blockedReason") == "ci_failures_exhausted":
+                head = str(issue.get("headSha") or "").strip()
+                if not head:
+                    raise CodeFactoryError(
+                        f"issue #{number} has no pull request head to revise",
+                        code="invalid_request",
+                    )
+                try:
+                    log = self._github.failed_run_log(head)
+                except CodeFactoryError as exc:
+                    message = f"Retry could not fetch the failed CI log; it remains blocked: {_error_text(exc)}"
+                    self._store.add_event(number, retry_stage, "warning", message)
+                    raise CodeFactoryError(message, code=exc.code) from exc
+                plan = self._plan_for(issue)
+                plan.update(
+                    ci_log=log[-prompts.MAX_LOG_CHARS:],
+                    last_review=None,
+                    last_review_head=None,
+                    last_review_posted=None,
+                )
+                self._save_plan(issue, plan, self._paths(number))
+                retry_stage = "revise"
+                retry_fields.update(ciFailures=0, ciRerunRequested=None, ciStatus="failure")
+                self._store.add_event(
+                    number, issue["stage"], "info",
+                    "CI recovery retry captured the failed log, reset the bounded CI budget, and will start a reviser",
+                    {"headSha": head},
+                )
+            elif issue.get("blockedReason") == "review_rounds_exhausted":
+                retry_stage = "revise"
+                retry_fields.update(reviewRound=0)
+                self._store.add_event(
+                    number, issue["stage"], "info",
+                    "Review recovery retry reset the bounded review budget and will start a reviser",
+                    {"headSha": issue.get("headSha")},
+                )
+            self._store.update_issue(
+                number, status="active", stage=retry_stage, error=None, blockedReason=None, **retry_fields,
+            )
             self._store.add_event(number, retry_stage, "info", f"Retry requested at {STAGE_LABELS.get(retry_stage, retry_stage)}")
             queued = self._start_release() if retry_stage == "release" else self._submit(number)
         elif action == "skip":

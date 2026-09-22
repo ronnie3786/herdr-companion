@@ -35,11 +35,17 @@ This is an experimental personal automation. Read the safety section before enab
    bounded JSON plan. The plan carries stable requirement IDs that preserve excerpts from
    the original request, observable outcomes, required evidence, and explicit confirmed or
    unresolved assumptions, plus acceptance criteria, at most four sequential tasks with
-   owned paths and tests, documentation obligations, and attachment descriptions. An
-   unresolved behavior assumption cannot enter implementation: Astra asks a specific
-   question, the issue is marked **blocked**, and the question is posted on it. Record the
-   answer in the issue description before retrying; comments are not consumed as planning
-   instructions.
+   owned paths and tests, documentation obligations, and attachment descriptions. Astra
+   resolves ordinary low- and medium-risk ambiguity from repository evidence, established
+   best practices, the safest reversible choice, and the ideal user experience. Those choices
+   are recorded as confirmed inferred assumptions instead of becoming operator questions.
+   Human input is reserved for high-risk authority boundaries involving security or privacy,
+   credentials or access, destructive or irreversible data loss, money or legal/compliance
+   obligations, or external production impact when no safe reversible path exists. At that
+   point Astra asks one specific question, the issue is marked **blocked**, and Message Me
+   alerts the operator with a link to the Code Factory dashboard. On **Retry**, planning
+   refreshes the issue body and recent replies from allow-listed operators while excluding
+   Code Factory's own comments, so an answer becomes part of the next plan.
 6. **DeepSeek implements.** For each task a fresh Pi session on
    `ollama-cloud/deepseek-v4.1-flash:cloud` with thinking `max` implements the task in the
    worktree, writes tests without running incremental suites, and commits. The complete
@@ -55,7 +61,9 @@ This is an experimental personal automation. Read the safety section before enab
    the request and a counterexample using another valid configuration (or a justified
    not-applicable result). CI/plan agreement alone is not evidence, and code/test evidence
    is not described as installed or deployed UI verification. Missing, unmet, unverified,
-   narrowed, unresolved, stale, or unposted approval data blocks merge. A narrowing finding
+   narrowed, unresolved, stale, or unposted approval data blocks merge. Ordinary reversible
+   findings go to a reviser with Astra's recommended best-practice fix; review asks a human
+   only for the same high-risk authority boundaries used during planning. A narrowing finding
    starts a fresh plan with the original request and bounded prior review evidence (requirement
    assessments, narrowing explanation, blocking findings, and human question) as explicitly
    delimited untrusted context. The planner must account for rejected assumptions and any
@@ -67,15 +75,25 @@ This is an experimental personal automation. Read the safety section before enab
 9. **Fresh revisions.** A red CI run first gets one automatic re-run of only its failed
    jobs for that head commit. A second failure on the same head goes to a new DeepSeek
    revision session, which commits and pushes. Astra implementation findings go to a
-   revision session; a rejected/narrowed plan returns to planning, and unresolved behavior
-   questions block for the issue-description decision instead of asking a reviser to guess.
+   revision session; a rejected/narrowed plan returns to planning, and only high-risk authority
+   questions block for an issue-description decision instead of using a safe reversible fix.
    Astra's requested-change loop is bounded by
    `max_review_rounds`, while repeated CI failures are bounded separately by
    `max_ci_failures`. Exhausting either blocks the issue for a human with
    `review_rounds_exhausted` or `ci_failures_exhausted`, respectively.
+   Retrying `ci_failures_exhausted` is a supervisory recovery action: it captures the
+   latest failed log, grants one fresh bounded CI budget, and starts the reviser directly.
+   Retrying `review_rounds_exhausted` likewise grants one fresh bounded review budget and
+   starts the reviser with Astra's latest feedback. Both recoveries remain bounded, so a
+   reviser that cannot produce a working change blocks again instead of creating an
+   unlimited retry loop.
 10. **Merge and cleanup.** On approval the PR is squash-merged with its remote branch
     deleted, and the worktree and local branch are removed immediately. The dashboard
-    shows a checkmark once the worktree is gone.
+    shows a checkmark once the worktree is gone. If a request is instead delivered by a
+    consolidated or replacement PR, the poller follows GitHub's authoritative
+    issue-closing relationship, replaces the stale per-issue PR link, and marks the
+    dashboard request done. This also repairs older blocked or skipped ledger entries;
+    it never infers delivery from a closed issue alone.
 11. **Release.** Merged issues wait for the next release batch. A DeepSeek session in a
     fresh worktree runs `scripts/release-macos.py bump` (patch for bug-only batches,
     minor when a feature is included, on the configured channel), writes the release
@@ -102,6 +120,9 @@ This is an experimental personal automation. Read the safety section before enab
 
 - A git checkout of the repository whose `origin` is the GitHub repository. The daemon
   only creates and removes worktrees from it; it does not modify its working tree.
+- The Message Me skill installed at
+  `~/.codex/skills/message-me/scripts/message_me.py`. A missing or failed notification is
+  recorded as a warning and does not change the feature's blocked state.
 - For releases: the `[deployment.macos_release]` settings, Keychain access for the
   Sparkle key, and the Sparkle tools, exactly as in the release guide. Run one manual
   `prepare` on this Mac first so Keychain prompts are answered interactively.
@@ -119,6 +140,7 @@ allowed_authors = "your-github-login"
 dashboard_host = "127.0.0.1" # Or "tailscale" for plain HTTP on the tailnet address.
 dashboard_port = 9097
 dashboard_token = { file = "~/.config/herdr-companion/secrets/code-factory-token" }
+dashboard_link = "https://factory.example.invalid:9097/" # Canonical private URL for Message Me.
 release_enabled = true
 release_channel = "preview"
 ```
@@ -131,6 +153,11 @@ host name, or a tailnet MagicDNS name when fronted by `tailscale serve`), refuse
 cross-site browser requests, accepts `POST` bodies only as `application/json`, cannot be
 framed, and closes idle connections after 30 s. Its address is recorded in the private
 ledger only; issue comments never link to it.
+
+`dashboard_link` is optional. Set it when Tailscale Serve fronts a loopback-bound
+dashboard so Message Me can open the dashboard from another device. When it is omitted,
+the alert uses the dashboard's bind URL. Dashboard links are sent only through the
+private Message Me alert and never appear in GitHub comments.
 
 ### Check the installation
 
@@ -337,7 +364,8 @@ reported unused runtimes.
 | Report fails with `github_failed` | `gh auth status` on the server machine; repository configured under `[code_factory]`. |
 | Issue never leaves **Picked up** | Daemon not running, wrong `allowed_authors`, or missing trigger label. Run `doctor`. |
 | DeepSeek sessions fail immediately | `OLLAMA_API_KEY` is not available to the daemon; add it to `[environment]`. |
-| Planner blocked with a question | Record the decision in the issue description, then **Retry**. Issue comments are not consumed as planning instructions. |
+| Planner blocked with a question | Answer on the issue, adjust the description if needed, then **Retry**. |
+| Planner blocks but no alert arrives | Confirm the Message Me skill exists at `~/.codex/skills/message-me/scripts/message_me.py`, then inspect the issue event log for the recorded delivery status. |
 | Release stays **failed** | Read the error in the release card; a red Verify run or a Keychain prompt are the usual causes. Fix, then **Release now**. |
 
 ## Verification

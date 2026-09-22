@@ -22,6 +22,7 @@ from .active_work import ActiveWorkError
 from .active_work_store import ActiveWorkRepository, DEFAULT_STORE_PATH as DEFAULT_ACTIVE_WORK_STORE_PATH
 from .agent_activity import AgentActivityManager
 from .agent_runs import ACT_CHARTER, ASK_CHARTER, THINKING_LEVELS, AgentRunError, AgentRunManager
+from .chat_tab_colors import project_snapshot, sources_response
 from .client import DEFAULT_SUBSCRIPTIONS, HerdrClient, HerdrClientError
 from .cleanup import DEFAULT_JUDGE_CHARTER, CleanupManager, _parse_time
 from .events import EventBroker
@@ -901,7 +902,7 @@ class HerdrService:
             generated_at = self.generated_at or utc_now()
         return snapshot, generated_at
 
-    def snapshot_response(self) -> dict:
+    def snapshot_response(self, *, include_chat_tab_colors: bool = True) -> dict:
         snapshot, generated_at = self._cached_snapshot()
         enriched = self.pi_semantic.enrich_snapshot(snapshot)
         for pane in enriched.get("panes", []):
@@ -914,11 +915,33 @@ class HerdrService:
                 )
                 if activity is not None:
                     pane["session_activity"] = activity
-        return {
+        response = {
             "ok": True,
             "snapshot": enriched,
             "generatedAt": generated_at,
         }
+        if include_chat_tab_colors:
+            publications: list[dict] = []
+            # Reading the durable store here is what lets a restarted companion
+            # keep serving stale last-known metadata while the publisher is
+            # offline. A store created by this first read with nothing in it
+            # leaves the snapshot's existing shape untouched, exactly as before.
+            if hasattr(self, "_control_store"):
+                with self._lock:
+                    store_preexisting = self._control_store is not None
+                store = self.control_store
+                publications = store.chat_tab_color_publications()
+                # Projection only mutates this response's copy and never imports
+                # a publisher's values into local state. A companion that has
+                # already initialized agent-control state reports an empty
+                # array per tab.
+                project_snapshot(
+                    enriched,
+                    publications,
+                    include_empty=store_preexisting or bool(publications),
+                )
+            response["chatTabColorSources"] = sources_response(publications)
+        return response
 
     def _project_acked_statuses(self, workspaces: list[dict]) -> list[dict]:
         """Apply HTTP-only pane state enrichments to composite workspace copies."""

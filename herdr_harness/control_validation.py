@@ -103,6 +103,15 @@ def receiver_token(value: Any) -> str:
     return text
 
 
+def publisher_token(value: Any) -> str:
+    """Validate a chat-tab-color publisher secret bound on first publication."""
+
+    text = short_string(value, "publisherToken", maximum=64)
+    if not _RECEIVER_TOKEN_RE.fullmatch(text):
+        raise ControlError("publisherToken must be 64 lowercase hexadecimal characters")
+    return text
+
+
 def _json_depth(value: Any, depth: int = 0) -> int:
     if depth > MAX_JSON_DEPTH:
         return depth
@@ -130,8 +139,15 @@ def validate_json(value: Any, label: str, *, maximum_bytes: int = MAX_JSON_BYTES
         raise ControlError(f"{label} is nested too deeply")
 
 
-def canonical_json(value: Any) -> str:
-    validate_json(value, "payload")
+def canonical_json(value: Any, *, maximum_bytes: int = MAX_JSON_BYTES) -> str:
+    """Canonical serialization with an explicit call-site size budget.
+
+    Callers with a documented larger contract (for example the 512 KiB chat
+    tab color publication) must pass their own ``maximum_bytes``; the generic
+    control default stays 64 KiB.
+    """
+
+    validate_json(value, "payload", maximum_bytes=maximum_bytes)
     return json.dumps(
         value,
         sort_keys=True,

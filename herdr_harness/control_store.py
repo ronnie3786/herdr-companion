@@ -14,6 +14,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from .chat_tab_colors import (
+    CHAT_TAB_STALE_SECONDS,
+    MAX_CHAT_TAB_PUBLICATION_BYTES,
+    MAX_CHAT_TAB_PUBLISHERS,
+    disable_relay_actions,
+    disabled_action_reason,
+)
 from .control_validation import ControlError, canonical_json, validate_parameters
 
 
@@ -50,6 +57,12 @@ CREATE TABLE IF NOT EXISTS control_operations (
 );
 CREATE INDEX IF NOT EXISTS control_operations_status_updated
  ON control_operations(status,updated_at);
+CREATE TABLE IF NOT EXISTS control_chat_tab_publishers (
+ client_id TEXT PRIMARY KEY, server_id TEXT NOT NULL, publisher_hash TEXT NOT NULL,
+ platform TEXT NOT NULL, client_name TEXT NOT NULL, enabled INTEGER NOT NULL,
+ revision INTEGER NOT NULL, payload_json TEXT NOT NULL, tabs_json TEXT NOT NULL,
+ published_at REAL NOT NULL, last_seen REAL NOT NULL, created_at REAL NOT NULL
+);
 """
 
 
@@ -204,6 +217,10 @@ class ControlStore:
         return hashlib.sha256(token.encode("ascii")).hexdigest()
 
     @staticmethod
+    def _publisher_hash(token: str) -> str:
+        return hashlib.sha256(token.encode("ascii")).hexdigest()
+
+    @staticmethod
     def _public_client(row: sqlite3.Row, now: float) -> dict:
         return {
             "clientId": row["client_id"],
@@ -212,7 +229,7 @@ class ControlStore:
             "online": now - float(row["last_seen"]) <= ONLINE_SECONDS,
             "lastSeenAt": _iso(float(row["last_seen"])),
             "state": _loads(row["state_json"]),
-            "actions": _loads(row["actions_json"]),
+            "actions": disable_relay_actions(_loads(row["actions_json"])),
         }
 
     def _require_receiver(self, client_id: str, token: str, instance_id: str) -> sqlite3.Row:
@@ -457,6 +474,9 @@ class ControlStore:
                 ).fetchone()
                 if client is None:
                     raise ControlError("UI client not found", code="not_found", status=404)
+                relay_disabled = disabled_action_reason(action)
+                if relay_disabled is not None:
+                    raise ControlError(relay_disabled, code="action_disabled", status=409)
                 public = self._public_client(client, now)
                 state = public["state"]
                 if state.get("enabled") is not True:
@@ -582,13 +602,31 @@ class ControlStore:
                 ).fetchone()
                 command = None
                 if running is None and state.get("enabled") is True:
-                    selected = self._db.execute(
-                        """SELECT request_id FROM control_commands
-                           WHERE client_id=? AND instance_id=? AND status='accepted'
-                           ORDER BY created_at,request_id LIMIT 1""",
-                        (client_id, instance_id),
-                    ).fetchone()
-                    if selected is not None:
+                    while True:
+                        selected = self._db.execute(
+                            """SELECT request_id,action FROM control_commands
+                               WHERE client_id=? AND instance_id=? AND status='accepted'
+                               ORDER BY created_at,request_id LIMIT 1""",
+                            (client_id, instance_id),
+                        ).fetchone()
+                        if selected is None:
+                            break
+                        relay_disabled = disabled_action_reason(str(selected["action"]))
+                        if relay_disabled is not None:
+                            # Previously queued commands for an action that became
+                            # read-only are terminally refused instead of claimed.
+                            self._db.execute(
+                                """UPDATE control_commands SET status='failed',error_json=?,updated_at=?
+                                   WHERE request_id=? AND status='accepted'""",
+                                (
+                                    canonical_json(
+                                        {"code": "action_disabled", "message": relay_disabled}
+                                    ),
+                                    now,
+                                    selected["request_id"],
+                                ),
+                            )
+                            continue
                         self._db.execute(
                             """UPDATE control_commands SET status='running',running_at=?,updated_at=?
                                WHERE request_id=? AND status='accepted'""",
@@ -599,6 +637,7 @@ class ControlStore:
                             (selected["request_id"],),
                         ).fetchone()
                         command = self._command(claimed)
+                        break
                 self._db.execute("COMMIT")
                 return command
             except Exception:
@@ -821,3 +860,148 @@ class ControlStore:
             if row is None:
                 raise ControlError("Operation not found", code="not_found", status=404)
             return self._operation(row)
+
+    @staticmethod
+    def _public_publication(row: sqlite3.Row, now: float) -> dict:
+        tabs = _loads(row["tabs_json"])
+        return {
+            "clientId": row["client_id"],
+            "platform": row["platform"],
+            "clientName": row["client_name"],
+            "enabled": bool(row["enabled"]),
+            "revision": int(row["revision"]),
+            "tabs": tabs if isinstance(tabs, list) else [],
+            "updatedAt": _iso(float(row["published_at"])),
+            "lastSeenAt": _iso(float(row["last_seen"])),
+            "stale": now - float(row["last_seen"]) > CHAT_TAB_STALE_SECONDS,
+        }
+
+    def publish_chat_tab_colors(
+        self,
+        *,
+        client_id: str,
+        publisher_token: str,
+        payload: dict,
+    ) -> dict:
+        """Atomically replace one client's published tab colors for this server.
+
+        The first publication pins the publisher secret hash. Higher revisions
+        replace that client's data; an identical equal-revision retry is a
+        heartbeat; a lower revision or a conflicting equal revision is refused.
+        A disabled publication clears values but keeps the binding so a delayed
+        older request cannot restore them.
+        """
+
+        now = self.clock()
+        digest = self._publisher_hash(publisher_token)
+        if str(payload.get("serverId")) != self.server_id:
+            raise ControlError("Publication belongs to another server", code="stale_target", status=409)
+        enabled = bool(payload.get("enabled"))
+        revision = int(payload["revision"])
+        tabs = payload.get("tabs") if enabled else []
+        if not isinstance(tabs, list):
+            tabs = []
+        payload_json = canonical_json(payload, maximum_bytes=MAX_CHAT_TAB_PUBLICATION_BYTES)
+        tabs_json = canonical_json(tabs, maximum_bytes=MAX_CHAT_TAB_PUBLICATION_BYTES)
+        with self._lock:
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                self._cleanup_locked(now)
+                row = self._db.execute(
+                    "SELECT * FROM control_chat_tab_publishers WHERE client_id=?", (client_id,)
+                ).fetchone()
+                if row is None:
+                    count = self._db.execute(
+                        "SELECT COUNT(*) FROM control_chat_tab_publishers"
+                    ).fetchone()[0]
+                    if count >= MAX_CHAT_TAB_PUBLISHERS:
+                        raise ControlError(
+                            "The tab color publisher registry is full",
+                            code="publisher_capacity",
+                            status=503,
+                        )
+                    self._db.execute(
+                        """INSERT INTO control_chat_tab_publishers
+                           (client_id,server_id,publisher_hash,platform,client_name,enabled,
+                            revision,payload_json,tabs_json,published_at,last_seen,created_at)
+                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            client_id,
+                            str(payload["serverId"]),
+                            digest,
+                            str(payload["platform"]),
+                            str(payload["clientName"]),
+                            1 if enabled else 0,
+                            revision,
+                            payload_json,
+                            tabs_json,
+                            now,
+                            now,
+                            now,
+                        ),
+                    )
+                else:
+                    if not hmac.compare_digest(str(row["publisher_hash"]), digest):
+                        raise ControlError(
+                            "Publisher credentials are invalid",
+                            code="publisher_unauthorized",
+                            status=401,
+                        )
+                    stored_revision = int(row["revision"])
+                    if revision < stored_revision:
+                        raise ControlError(
+                            "Publication revision is older than the stored revision",
+                            code="stale_publication_revision",
+                            status=409,
+                        )
+                    if revision == stored_revision:
+                        if row["payload_json"] != payload_json:
+                            raise ControlError(
+                                "Publication conflicts with the stored revision",
+                                code="publication_conflict",
+                                status=409,
+                            )
+                        # Identical retry: refresh only the last confirmation.
+                        self._db.execute(
+                            "UPDATE control_chat_tab_publishers SET last_seen=? WHERE client_id=?",
+                            (now, client_id),
+                        )
+                    else:
+                        self._db.execute(
+                            """UPDATE control_chat_tab_publishers SET server_id=?,platform=?,
+                               client_name=?,enabled=?,revision=?,payload_json=?,tabs_json=?,
+                               published_at=?,last_seen=? WHERE client_id=?""",
+                            (
+                                str(payload["serverId"]),
+                                str(payload["platform"]),
+                                str(payload["clientName"]),
+                                1 if enabled else 0,
+                                revision,
+                                payload_json,
+                                tabs_json,
+                                now,
+                                now,
+                                client_id,
+                            ),
+                        )
+                public = self._public_publication(
+                    self._db.execute(
+                        "SELECT * FROM control_chat_tab_publishers WHERE client_id=?", (client_id,)
+                    ).fetchone(),
+                    now,
+                )
+                self._db.execute("COMMIT")
+                return public
+            except Exception:
+                self._db.execute("ROLLBACK")
+                raise
+
+    def chat_tab_color_publications(self) -> list[dict]:
+        """Every publisher for this server in stable publication order."""
+
+        now = self.clock()
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT * FROM control_chat_tab_publishers ORDER BY created_at,client_id"
+            ).fetchall()
+            return [self._public_publication(row, now) for row in rows]

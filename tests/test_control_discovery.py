@@ -12,6 +12,12 @@ from herdr_harness.service import HerdrService
 CURRENT_SESSION_ID = "11111111-1111-4111-8111-111111111111"
 SECOND_SESSION_ID = "22222222-2222-4222-8222-222222222222"
 OLD_SESSION_ID = "33333333-3333-4333-8333-333333333333"
+PRIMARY_COLOR_CLIENT = "ui_11111111-1111-4111-8111-111111111111"
+SECONDARY_COLOR_CLIENT = "ui_22222222-2222-4222-8222-222222222222"
+WITHDRAWN_COLOR_CLIENT = "ui_33333333-3333-4333-8333-333333333333"
+COLOR_LABEL = "Synthetic Release Group"
+UNICODE_COLOR_LABEL = "Synthes\u00e9 \u2726 Planning"
+COLOR_TIME = "2026-09-16T11:00:00Z"
 
 
 class FakeFirstMateStore:
@@ -87,7 +93,67 @@ class FakeDiscoverySource:
         self.active_work = FakeActiveWork()
         self.snapshot = {
             "workspaces": [{"workspace_id": "w1", "label": "Synthetic Project", "cwd": "/synthetic/project"}],
-            "tabs": [{"tab_id": "t1", "workspace_id": "w1", "label": "Implementation"}],
+            "tabs": [
+                {
+                    "tab_id": "t1",
+                    "workspace_id": "w1",
+                    "label": "Implementation",
+                    "chatTabColors": [
+                        {
+                            "clientId": PRIMARY_COLOR_CLIENT,
+                            "color": "sage",
+                            "label": COLOR_LABEL,
+                            "status": "assigned",
+                            "updatedAt": COLOR_TIME,
+                            "lastSeenAt": COLOR_TIME,
+                            "stale": False,
+                        },
+                        {
+                            "clientId": SECONDARY_COLOR_CLIENT,
+                            "color": "rose",
+                            "label": COLOR_LABEL,
+                            "status": "assigned",
+                            "updatedAt": COLOR_TIME,
+                            "lastSeenAt": COLOR_TIME,
+                            "stale": False,
+                        },
+                        {
+                            "clientId": WITHDRAWN_COLOR_CLIENT,
+                            "color": None,
+                            "label": None,
+                            "status": "unavailable",
+                            "updatedAt": COLOR_TIME,
+                            "lastSeenAt": COLOR_TIME,
+                            "stale": False,
+                        },
+                    ],
+                },
+                {
+                    "tab_id": "t2",
+                    "workspace_id": "w1",
+                    "label": "Boundary work",
+                    "chatTabColors": [
+                        {
+                            "clientId": PRIMARY_COLOR_CLIENT,
+                            "color": None,
+                            "label": None,
+                            "status": "unassigned",
+                            "updatedAt": COLOR_TIME,
+                            "lastSeenAt": COLOR_TIME,
+                            "stale": False,
+                        },
+                        {
+                            "clientId": SECONDARY_COLOR_CLIENT,
+                            "color": "iris",
+                            "label": UNICODE_COLOR_LABEL,
+                            "status": "assigned",
+                            "updatedAt": COLOR_TIME,
+                            "lastSeenAt": COLOR_TIME,
+                            "stale": False,
+                        },
+                    ],
+                },
+            ],
             "panes": [
                 {
                     "pane_id": "p1",
@@ -116,6 +182,38 @@ class FakeDiscoverySource:
         return {
             "ok": True,
             "snapshot": self.snapshot,
+            "chatTabColorSources": [
+                {
+                    "clientId": PRIMARY_COLOR_CLIENT,
+                    "platform": "macos",
+                    "clientName": "Synthetic Primary Companion",
+                    "enabled": True,
+                    "revision": 7,
+                    "updatedAt": COLOR_TIME,
+                    "lastSeenAt": COLOR_TIME,
+                    "stale": False,
+                },
+                {
+                    "clientId": SECONDARY_COLOR_CLIENT,
+                    "platform": "ios",
+                    "clientName": "Synthetic Secondary Companion",
+                    "enabled": True,
+                    "revision": 3,
+                    "updatedAt": COLOR_TIME,
+                    "lastSeenAt": COLOR_TIME,
+                    "stale": False,
+                },
+                {
+                    "clientId": WITHDRAWN_COLOR_CLIENT,
+                    "platform": "macos",
+                    "clientName": "Synthetic Withdrawn Companion",
+                    "enabled": False,
+                    "revision": 1,
+                    "updatedAt": COLOR_TIME,
+                    "lastSeenAt": COLOR_TIME,
+                    "stale": False,
+                },
+            ],
             "generatedAt": "2026-09-16T12:00:01Z",
         }
 
@@ -453,6 +551,162 @@ class ControlDiscoveryTests(unittest.TestCase):
         self.assertEqual(feature["target"]["featureId"], "fmf_1")
         with self.assertRaises(ControlError):
             self.discovery.inspect({"kind": "unknown", "paneId": "p1"})
+
+    def test_color_metadata_propagates_without_touching_typed_targets(self):
+        result = self.discovery.search(
+            kind="all", query="", ticket="", sort="updated", limit=100, offset=0
+        )
+        pane = next(item for item in result["results"] if item["id"] == "p1")
+        self.assertEqual([entry["status"] for entry in pane["chatTabColors"]], ["assigned", "assigned", "unavailable"])
+        self.assertNotIn("chatTabColors", pane["target"])
+        tab = next(item for item in result["results"] if item["kind"] == "tab" and item["id"] == "t2")
+        self.assertEqual(
+            [entry["status"] for entry in tab["chatTabColors"]],
+            ["unassigned", "assigned"],
+        )
+        self.assertEqual(
+            result["coverage"]["chatTabColors"],
+            {
+                "searched": True,
+                "staleAfterSeconds": 60,
+                "publisherCount": 3,
+                "currentPublisherCount": 2,
+                "stalePublisherCount": 0,
+                "disabledPublisherCount": 1,
+                "available": True,
+                "freshness": "current",
+            },
+        )
+
+        inspected = self.discovery.inspect({"kind": "pane", "paneId": "p1"})
+        self.assertEqual(inspected["chatTabColors"][0]["color"], "sage")
+        self.assertNotIn("chatTabColors", inspected["target"])
+
+    def test_color_filters_match_one_entry_and_run_before_pagination(self):
+        sage = self.discovery.search(
+            kind="chats", query="", ticket="", sort="updated", limit=100, offset=0, color="sage"
+        )
+        self.assertEqual([item["id"] for item in sage["results"]], ["p1", "p2"])
+
+        page = self.discovery.search(
+            kind="chats", query="", ticket="", sort="updated", limit=1, offset=1, color="sage"
+        )
+        self.assertEqual([item["id"] for item in page["results"]], ["p2"])
+        self.assertIsNone(page["nextOffset"])
+        first_page = self.discovery.search(
+            kind="chats", query="", ticket="", sort="updated", limit=1, offset=0, color="sage"
+        )
+        self.assertEqual(first_page["nextOffset"], 1)
+
+        # A label and a color from different publishers must not combine.
+        mixed = self.discovery.search(
+            kind="chats",
+            query="",
+            ticket="",
+            sort="updated",
+            limit=100,
+            offset=0,
+            color="sage",
+            color_label=COLOR_LABEL,
+            color_client_id=SECONDARY_COLOR_CLIENT,
+        )
+        self.assertEqual(mixed["results"], [])
+
+        secondary = self.discovery.search(
+            kind="chats",
+            query="",
+            ticket="",
+            sort="updated",
+            limit=100,
+            offset=0,
+            color_client_id=SECONDARY_COLOR_CLIENT,
+        )
+        self.assertEqual([item["id"] for item in secondary["results"]], ["p1", "p2"])
+
+        withdrawn = self.discovery.search(
+            kind="chats",
+            query="",
+            ticket="",
+            sort="updated",
+            limit=100,
+            offset=0,
+            color_client_id=WITHDRAWN_COLOR_CLIENT,
+        )
+        self.assertEqual(withdrawn["results"], [])
+
+        unassigned = self.discovery.search(
+            kind="tabs",
+            query="",
+            ticket="",
+            sort="updated",
+            limit=100,
+            offset=0,
+            color="none",
+        )
+        self.assertEqual([item["id"] for item in unassigned["results"]], ["t2"])
+
+        unicode_label = self.discovery.search(
+            kind="tabs",
+            query="",
+            ticket="",
+            sort="updated",
+            limit=100,
+            offset=0,
+            color_label=UNICODE_COLOR_LABEL.casefold(),
+        )
+        self.assertEqual([item["id"] for item in unicode_label["results"]], ["t2"])
+
+    def test_color_label_text_is_searchable_evidence(self):
+        result = self.discovery.search(
+            kind="chats", query=COLOR_LABEL, ticket="", sort="relevance", limit=100, offset=0
+        )
+        self.assertEqual([item["id"] for item in result["results"]], ["p1", "p2"])
+        self.assertIn(
+            "tabColorLabel",
+            {item["field"] for item in result["results"][0]["matchEvidence"]},
+        )
+        saved = self.discovery.search(
+            kind="chats", query="Saved design", ticket="", sort="updated", limit=10, offset=0
+        )
+        self.assertEqual(saved["results"][0]["kind"], "hud-chat")
+
+    def test_terminal_chat_scope_excludes_saved_hud_chats(self):
+        scoped = self.discovery.search(
+            kind="chats",
+            query="Saved design",
+            ticket="",
+            sort="updated",
+            limit=10,
+            offset=0,
+            chat_scope="terminal",
+        )
+        self.assertEqual(scoped["results"], [])
+        unscoped = self.discovery.search(
+            kind="chats", query="Saved design", ticket="", sort="updated", limit=10, offset=0
+        )
+        self.assertEqual(unscoped["results"][0]["kind"], "hud-chat")
+        with self.assertRaises(ControlError):
+            self.discovery.search(
+                kind="chats", query="", ticket="", sort="updated", limit=10, offset=0,
+                chat_scope="all",
+            )
+
+    def test_coverage_marks_stale_and_unavailable_publishers(self):
+        original = self.source.snapshot_response
+        self.source.snapshot_response = lambda: {
+            **original(),
+            "chatTabColorSources": [
+                {**source, "stale": True} for source in original()["chatTabColorSources"]
+            ],
+        }
+        result = self.discovery.search(
+            kind="chats", query="", ticket="", sort="updated", limit=100, offset=0
+        )
+        coverage = result["coverage"]["chatTabColors"]
+        self.assertEqual(coverage["stalePublisherCount"], 2)
+        self.assertEqual(coverage["disabledPublisherCount"], 1)
+        self.assertTrue(coverage["available"])
+        self.assertEqual(coverage["freshness"], "stale")
 
 
 class HudCatalogTests(unittest.TestCase):

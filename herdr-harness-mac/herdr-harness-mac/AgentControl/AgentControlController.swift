@@ -841,21 +841,13 @@ final class AgentControlController {
             try validateExecutionContext(context)
             return .completed(["provider": .string(provider), "modelId": .string(modelID)])
         case "chat.tab-color":
-            let colorName = try requiredString("color", command.parameters)
-            guard let target = command.target else { throw AgentControlCommandError.invalid("chat.tab-color requires a target.") }
-            try await refreshForTarget(target, model: model, context: context)
-            let resolved = try resolve(target, model: model)
-            let tabID: String
-            switch resolved {
-            case let .pane(pane): tabID = pane.scopedTabID
-            case let .tab(_, tab): tabID = tab.id
-            default: throw AgentControlCommandError.invalid("chat.tab-color requires a pane or tab target.")
-            }
-            let color = colorName == "none" ? nil : ChatTabColor(rawValue: colorName)
-            if colorName != "none", color == nil { throw AgentControlCommandError.invalid("Unknown tab color.") }
-            model.chatTabColors.assign(color, to: tabID)
-            stateDidChange()
-            return .completed(["color": color.map { .string($0.rawValue) } ?? .null])
+            // Permanently read-only. The registry rejects this before any
+            // side effect and this arm is defense in depth for a legacy or
+            // queued command, so it must never refresh or assign.
+            throw AgentControlCommandError.disabled(
+                AgentControlRegistry.permanentlyDisabledActions["chat.tab-color"]
+                    ?? "Tab colors are read-only through agent control."
+            )
         default:
             throw AgentControlCommandError.invalid("Unsupported action: \(command.action)")
         }

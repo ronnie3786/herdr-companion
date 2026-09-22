@@ -160,6 +160,7 @@ struct SettingsView: View {
         case .privacy:
             privacySection
             agentControlSection
+            chatTabColorSharingSection
             ScreenRecordingSettingsSection()
         case .updates:
             updatesSection
@@ -881,6 +882,61 @@ struct SettingsView: View {
             Label("Agent control", systemImage: "network.badge.shield.half.filled")
         } footer: {
             Text("Off by default. When enabled, authenticated companion servers may invoke the listed native actions without a second Mac confirmation. Normal manual confirmations and workflow checkpoints are unchanged. Receiver secrets stay in Keychain.")
+        }
+    }
+
+    private var chatTabColorSharingSection: some View {
+        let publisher = model.chatTabColorPublisher
+        return Section {
+            Toggle(
+                "Share tab colors with companions",
+                systemImage: "paintpalette",
+                isOn: Binding(
+                    get: { publisher.isSharingEnabled },
+                    set: { publisher.setSharingEnabled($0) }
+                )
+            )
+            .tint(HerdrTheme.controlAccent)
+            .accessibilityIdentifier("settings-chat-tab-colors-share")
+
+            LabeledContent("Installation") {
+                Text(publisher.clientID)
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.mist)
+                    .textSelection(.enabled)
+            }
+            .accessibilityIdentifier("settings-chat-tab-colors-installation")
+
+            LabeledContent("Publication") {
+                Text(publisher.statusText)
+                    .foregroundStyle(publisher.isPublishing ? HerdrTheme.signal : HerdrTheme.mist)
+                    .multilineTextAlignment(.trailing)
+            }
+            .accessibilityIdentifier("settings-chat-tab-colors-status")
+
+            ForEach(publisher.hostStates) { host in
+                LabeledContent(host.machineName) {
+                    Text(host.detail)
+                        .herdrFont(.caption)
+                        .foregroundStyle(host.phase == .failed || host.phase == .ambiguous
+                            ? HerdrTheme.alert
+                            : HerdrTheme.mist)
+                        .multilineTextAlignment(.trailing)
+                }
+                .accessibilityIdentifier("settings-chat-tab-colors-host-\(host.machineID)")
+            }
+
+            if let error = publisher.lastError {
+                Text(error)
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.alert)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("settings-chat-tab-colors-error")
+            }
+        } header: {
+            Label("Tab colors", systemImage: "paintpalette")
+        } footer: {
+            Text("Off by default and separate from Allow agent control. When enabled, this Mac publishes each known tab's color and its label to the companions above so agents can list and group chats by color or label. Colors never sync between clients, other clients' colors are never imported here, and agents cannot change them.")
         }
     }
 

@@ -5,8 +5,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from herdr_harness.chat_tab_colors import publication_payload
 from herdr_harness.control_store import ControlStore
-from herdr_harness.control_validation import ControlError, target, validate_json
+from herdr_harness.control_validation import ControlError, canonical_json, target, validate_json
 
 
 CLIENT_ID = "ui_11111111-1111-4111-8111-111111111111"
@@ -38,6 +39,19 @@ TARGET = {
     "paneId": "p1",
     "terminalId": "term1",
     "sessionId": "session1",
+}
+TAB_COLOR_ACTION = {
+    "id": "chat.tab-color",
+    "title": "Set tab color",
+    "parameters": {
+        "type": "object",
+        "properties": {"color": {"type": "string", "enum": ["sage", "none"]}},
+        "required": ["color"],
+        "additionalProperties": False,
+    },
+    "targetKinds": ["pane", "tab"],
+    "effect": "mutation",
+    "enabled": True,
 }
 
 
@@ -331,6 +345,16 @@ class ControlStoreTests(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaises(ControlError):
                 target({"kind": "pane", "serverURL": invalid})
 
+    def test_canonical_json_bounds_are_call_site_specific(self):
+        large = {"tabs": [{"label": "x" * 1000} for _ in range(80)]}
+        # The generic control budget is unchanged: only the publication path
+        # may opt into the documented 512 KiB contract.
+        with self.assertRaises(ControlError) as default_limit:
+            canonical_json(large)
+        self.assertEqual(default_limit.exception.code, "body_too_large")
+        serialized = canonical_json(large, maximum_bytes=512 * 1024)
+        self.assertGreater(len(serialized.encode("utf-8")), 64 * 1024)
+
     def test_capacity_never_evicts_young_operation_dedupe_receipts(self):
         clock = MutableClock()
         store = ControlStore(":memory:", clock=clock)
@@ -373,3 +397,125 @@ class ControlStoreTests(unittest.TestCase):
             recovered = second.operation("mutation-1")
             self.assertEqual(recovered["status"], "outcome_unknown")
             self.assertEqual(recovered["error"]["code"], "server_restarted")
+
+    def publication_body(self, server_id, *, revision=1, tabs=None, enabled=True):
+        return publication_payload(
+            {
+                "serverId": server_id,
+                "platform": "macos",
+                "clientName": "Synthetic Publisher",
+                "enabled": enabled,
+                "revision": revision,
+                "tabs": tabs or [],
+            }
+        )
+
+    def test_publisher_secret_is_hashed_and_publication_survives_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "control.sqlite3"
+            clock = MutableClock()
+            first = ControlStore(path, clock=clock)
+            server_id = first.server_id
+            tabs = [
+                {
+                    "workspaceId": "w1",
+                    "tabId": "t1",
+                    "color": "sage",
+                    "label": "Synthetic Group",
+                }
+            ]
+            published = first.publish_chat_tab_colors(
+                client_id=CLIENT_ID,
+                publisher_token=TOKEN,
+                payload=self.publication_body(server_id, tabs=tabs),
+            )
+            self.assertEqual(published["revision"], 1)
+            self.assertEqual(published["tabs"], tabs)
+            first.close()
+            self.assertNotIn(TOKEN.encode(), path.read_bytes())
+
+            second = ControlStore(path, clock=clock)
+            self.addCleanup(second.close)
+            publications = second.chat_tab_color_publications()
+            self.assertEqual(len(publications), 1)
+            self.assertEqual(publications[0]["clientId"], CLIENT_ID)
+            self.assertEqual(publications[0]["tabs"], tabs)
+            self.assertEqual(publications[0]["updatedAt"], publications[0]["lastSeenAt"])
+            with self.assertRaises(ControlError) as raised:
+                second.publish_chat_tab_colors(
+                    client_id=CLIENT_ID,
+                    publisher_token="f" * 64,
+                    payload=self.publication_body(server_id, tabs=tabs),
+                )
+            self.assertEqual(raised.exception.code, "publisher_unauthorized")
+
+    def test_read_only_tab_color_command_is_refused_before_and_at_claim(self):
+        clock = MutableClock()
+        store = ControlStore(":memory:", clock=clock)
+        self.addCleanup(store.close)
+        store.register(
+            client_id=CLIENT_ID,
+            name="Synthetic Companion",
+            receiver_token=TOKEN,
+            instance_id=INSTANCE_ONE,
+            state=STATE,
+            actions=ACTIONS + [TAB_COLOR_ACTION],
+        )
+        descriptor = next(
+            item for item in store.client(CLIENT_ID)["actions"] if item["id"] == "chat.tab-color"
+        )
+        self.assertFalse(descriptor["enabled"])
+        self.assertIn("read-only", descriptor["disabledReason"])
+
+        body = {
+            "requestId": "tab-color-1",
+            "action": "chat.tab-color",
+            "target": TARGET,
+            "parameters": {"color": "sage"},
+        }
+        with self.assertRaises(ControlError) as refused:
+            store.enqueue(
+                client_id=CLIENT_ID,
+                request_id="tab-color-1",
+                action="chat.tab-color",
+                target=TARGET,
+                parameters={"color": "sage"},
+                expected_revision=None,
+                ttl_seconds=30,
+                payload=body,
+            )
+        self.assertEqual(refused.exception.code, "action_disabled")
+
+        # Simulate a command queued before the action became read-only.
+        now = clock()
+        with store._lock:
+            store._db.execute(
+                """INSERT INTO control_commands
+                   (request_id,client_id,instance_id,payload_json,action,parameters_json,
+                    status,created_at,expires_at,updated_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    "legacy-tab-color",
+                    CLIENT_ID,
+                    INSTANCE_ONE,
+                    "{}",
+                    "chat.tab-color",
+                    "{}",
+                    "accepted",
+                    now,
+                    now + 30,
+                    now,
+                ),
+            )
+        self.assertIsNone(
+            store.poll(
+                client_id=CLIENT_ID,
+                receiver_token=TOKEN,
+                instance_id=INSTANCE_ONE,
+                state=STATE,
+                actions=None,
+            )
+        )
+        legacy = store.command("legacy-tab-color")
+        self.assertEqual(legacy["status"], "failed")
+        self.assertEqual(legacy["error"]["code"], "action_disabled")

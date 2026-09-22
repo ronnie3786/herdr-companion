@@ -1,0 +1,303 @@
+{
+  "version": 1,
+  "capability": "chat-tab-colors-v1",
+  "staleAfterSeconds": 60,
+  "heartbeatSeconds": 20,
+  "palette": ["lavender", "iris", "rose", "clay", "sage", "slate"],
+  "unassignedColor": "none",
+  "apiBearer": "synthetic-chat-tab-colors-api-bearer-v1-4f8a1c6e2b9d0a7f3c5e8b1d4a6f9024",
+  "fixedUnixTime": 1893456000,
+  "serverId": "srv_33333333-3333-4333-8333-333333333333",
+  "secondServerId": "srv_44444444-4444-4444-8444-444444444444",
+  "clients": {
+    "primary": {
+      "clientId": "ui_11111111-1111-4111-8111-111111111111",
+      "publisherToken": "0123012301230123012301230123012301230123012301230123012301230123",
+      "platform": "macos",
+      "clientName": "Synthetic Primary Companion"
+    },
+    "secondary": {
+      "clientId": "ui_22222222-2222-4222-8222-222222222222",
+      "publisherToken": "4567456745674567456745674567456745674567456745674567456745674567",
+      "platform": "ios",
+      "clientName": "Synthetic Secondary Companion"
+    }
+  },
+  "target": {
+    "workspaceId": "ws_synthetic_alpha",
+    "tabId": "ws_synthetic_alpha:t1",
+    "paneId": "ws_synthetic_alpha:p1",
+    "terminalId": "term_synthetic_p1",
+    "sessionId": "55555555-5555-4555-8555-555555555555"
+  },
+  "labels": {
+    "shared": "Synthetic Release Group",
+    "unicode": "Synthesé ✦ Planning"
+  },
+  "publications": {
+    "primary": {
+      "serverId": "srv_33333333-3333-4333-8333-333333333333",
+      "publisherToken": "0123012301230123012301230123012301230123012301230123012301230123",
+      "platform": "macos",
+      "clientName": "Synthetic Primary Companion",
+      "enabled": true,
+      "revision": 7,
+      "tabs": [
+        {
+          "workspaceId": "ws_synthetic_alpha",
+          "tabId": "ws_synthetic_alpha:t1",
+          "color": "sage",
+          "label": "Synthetic Release Group"
+        },
+        {
+          "workspaceId": "ws_synthetic_alpha",
+          "tabId": "ws_synthetic_alpha:t2",
+          "color": "sage",
+          "label": "Synthetic Release Group"
+        },
+        {
+          "workspaceId": "ws_synthetic_beta",
+          "tabId": "ws_synthetic_beta:t1",
+          "color": "iris",
+          "label": "Synthesé ✦ Planning"
+        },
+        {
+          "workspaceId": "ws_synthetic_beta",
+          "tabId": "ws_synthetic_beta:t2",
+          "color": null,
+          "label": null
+        }
+      ]
+    },
+    "secondary": {
+      "serverId": "srv_33333333-3333-4333-8333-333333333333",
+      "publisherToken": "4567456745674567456745674567456745674567456745674567456745674567",
+      "platform": "ios",
+      "clientName": "Synthetic Secondary Companion",
+      "enabled": true,
+      "revision": 3,
+      "tabs": [
+        {
+          "workspaceId": "ws_synthetic_alpha",
+          "tabId": "ws_synthetic_alpha:t1",
+          "color": "rose",
+          "label": "Synthetic Release Group"
+        }
+      ]
+    },
+    "disabled": {
+      "serverId": "srv_33333333-3333-4333-8333-333333333333",
+      "publisherToken": "4567456745674567456745674567456745674567456745674567456745674567",
+      "platform": "ios",
+      "clientName": "Synthetic Secondary Companion",
+      "enabled": false,
+      "revision": 4,
+      "tabs": []
+    },
+    "mixedTopology": {
+      "serverId": "srv_55555555-5555-4555-8555-555555555555",
+      "publisherToken": "0123012301230123012301230123012301230123012301230123012301230123",
+      "platform": "macos",
+      "clientName": "Synthetic Primary Companion",
+      "enabled": true,
+      "revision": 11,
+      "tabs": [
+        {
+          "workspaceId": "ws_mixed_alpha",
+          "tabId": "ws_mixed_alpha:t1",
+          "color": "sage",
+          "label": "Synthetic Release Group"
+        },
+        {
+          "workspaceId": "ws_mixed_alpha",
+          "tabId": "ws_mixed_alpha:t2",
+          "color": null,
+          "label": null
+        }
+      ]
+    }
+  },
+  "topologies": {
+    "mixed": [
+      {
+        "workspace_id": "ws_mixed_alpha",
+        "number": 1,
+        "label": "Synthetic Mixed Alpha",
+        "focused": true,
+        "pane_count": 2,
+        "tab_count": 1,
+        "active_tab_id": "ws_mixed_alpha:t1",
+        "agent_status": "idle",
+        "tabs": [
+          {
+            "tab_id": "ws_mixed_alpha:t1",
+            "workspace_id": "ws_mixed_alpha",
+            "number": 1,
+            "label": "Synthetic Tab One",
+            "focused": true,
+            "pane_count": 1,
+            "agent_status": "idle"
+          }
+        ],
+        "panes": [
+          {
+            "pane_id": "ws_mixed_alpha:p1",
+            "workspace_id": "ws_mixed_alpha",
+            "tab_id": "ws_mixed_alpha:t1",
+            "focused": true,
+            "agent_status": "idle",
+            "revision": 1
+          },
+          {
+            "pane_id": "ws_mixed_alpha:p2",
+            "workspace_id": "ws_mixed_alpha",
+            "tab_id": "ws_mixed_alpha:t2",
+            "focused": false,
+            "agent_status": "idle",
+            "revision": 1
+          }
+        ]
+      },
+      {
+        "workspace_id": "ws_mixed_beta",
+        "number": 2,
+        "label": "Synthetic Mixed Beta",
+        "focused": false,
+        "pane_count": 1,
+        "tab_count": 0,
+        "active_tab_id": "",
+        "agent_status": "idle",
+        "tabs": [],
+        "panes": [
+          {
+            "pane_id": "ws_mixed_beta:p1",
+            "workspace_id": "ws_mixed_beta",
+            "tab_id": "",
+            "focused": true,
+            "agent_status": "idle",
+            "revision": 1
+          }
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "publishedAt": "2030-01-01T00:00:00Z",
+    "heartbeatAt": "2030-01-01T00:00:20Z",
+    "staleAt": "2030-01-01T00:01:01Z",
+    "sources": [
+      {
+        "clientId": "ui_11111111-1111-4111-8111-111111111111",
+        "platform": "macos",
+        "clientName": "Synthetic Primary Companion",
+        "enabled": true,
+        "revision": 7,
+        "updatedAt": "2030-01-01T00:00:00Z",
+        "lastSeenAt": "2030-01-01T00:00:00Z",
+        "stale": false
+      },
+      {
+        "clientId": "ui_22222222-2222-4222-8222-222222222222",
+        "platform": "ios",
+        "clientName": "Synthetic Secondary Companion",
+        "enabled": true,
+        "revision": 3,
+        "updatedAt": "2030-01-01T00:00:00Z",
+        "lastSeenAt": "2030-01-01T00:00:00Z",
+        "stale": false
+      }
+    ],
+    "tabs": {
+      "ws_synthetic_alpha:t1": [
+        {
+          "clientId": "ui_11111111-1111-4111-8111-111111111111",
+          "color": "sage",
+          "label": "Synthetic Release Group",
+          "status": "assigned",
+          "updatedAt": "2030-01-01T00:00:00Z",
+          "lastSeenAt": "2030-01-01T00:00:00Z",
+          "stale": false
+        },
+        {
+          "clientId": "ui_22222222-2222-4222-8222-222222222222",
+          "color": "rose",
+          "label": "Synthetic Release Group",
+          "status": "assigned",
+          "updatedAt": "2030-01-01T00:00:00Z",
+          "lastSeenAt": "2030-01-01T00:00:00Z",
+          "stale": false
+        }
+      ],
+      "ws_synthetic_alpha:t2": [
+        {
+          "clientId": "ui_11111111-1111-4111-8111-111111111111",
+          "color": "sage",
+          "label": "Synthetic Release Group",
+          "status": "assigned",
+          "updatedAt": "2030-01-01T00:00:00Z",
+          "lastSeenAt": "2030-01-01T00:00:00Z",
+          "stale": false
+        },
+        {
+          "clientId": "ui_22222222-2222-4222-8222-222222222222",
+          "color": null,
+          "label": null,
+          "status": "unavailable",
+          "updatedAt": "2030-01-01T00:00:00Z",
+          "lastSeenAt": "2030-01-01T00:00:00Z",
+          "stale": false
+        }
+      ],
+      "ws_synthetic_beta:t1": [
+        {
+          "clientId": "ui_11111111-1111-4111-8111-111111111111",
+          "color": "iris",
+          "label": "Synthesé ✦ Planning",
+          "status": "assigned",
+          "updatedAt": "2030-01-01T00:00:00Z",
+          "lastSeenAt": "2030-01-01T00:00:00Z",
+          "stale": false
+        },
+        {
+          "clientId": "ui_22222222-2222-4222-8222-222222222222",
+          "color": null,
+          "label": null,
+          "status": "unavailable",
+          "updatedAt": "2030-01-01T00:00:00Z",
+          "lastSeenAt": "2030-01-01T00:00:00Z",
+          "stale": false
+        }
+      ],
+      "ws_synthetic_beta:t2": [
+        {
+          "clientId": "ui_11111111-1111-4111-8111-111111111111",
+          "color": null,
+          "label": null,
+          "status": "unassigned",
+          "updatedAt": "2030-01-01T00:00:00Z",
+          "lastSeenAt": "2030-01-01T00:00:00Z",
+          "stale": false
+        },
+        {
+          "clientId": "ui_22222222-2222-4222-8222-222222222222",
+          "color": null,
+          "label": null,
+          "status": "unavailable",
+          "updatedAt": "2030-01-01T00:00:00Z",
+          "lastSeenAt": "2030-01-01T00:00:00Z",
+          "stale": false
+        }
+      ]
+    },
+    "coverage": {
+      "searched": true,
+      "staleAfterSeconds": 60,
+      "publisherCount": 2,
+      "currentPublisherCount": 2,
+      "stalePublisherCount": 0,
+      "disabledPublisherCount": 0,
+      "available": true,
+      "freshness": "current"
+    }
+  }
+}

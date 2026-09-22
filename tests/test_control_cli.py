@@ -8,6 +8,17 @@ import urllib.parse
 from pathlib import Path
 
 from herdr_harness import control_cli as cli
+from herdr_harness.chat_tab_color_cli import chat_tab_colors_unsupported_message
+
+PRIMARY_CLIENT = "ui_11111111-1111-4111-8111-111111111111"
+SECONDARY_CLIENT = "ui_22222222-2222-4222-8222-222222222222"
+CHAT_TAB_COLOR_CAPABILITIES = {
+    "ok": True,
+    "version": 1,
+    "serverId": "srv_alpha",
+    "capabilities": ["agent-control-v1", "discovery-v1", "chat-tab-colors-v1"],
+    "chatTabColorStaleAfterSeconds": 60,
+}
 
 
 class FakeResponse:
@@ -206,6 +217,67 @@ def selecting_ui_client(identifier, session_id, *, kind="pane", pane_id=None):
     return receiver
 
 
+class RoutingFleetOpener:
+    """Route queued responses by host and path so color checks stay in order."""
+
+    def __init__(self, responses_by_key):
+        self.queues = {key: list(values) for key, values in responses_by_key.items()}
+        self.requests = []
+
+    def __call__(self, request, *, timeout):
+        parsed = urllib.parse.urlsplit(request.full_url)
+        host = (parsed.hostname or "").split(".")[0]
+        key = (host, parsed.path)
+        self.requests.append(
+            {
+                "url": request.full_url,
+                "host": host,
+                "path": parsed.path,
+                "query": urllib.parse.parse_qs(parsed.query),
+                "method": request.get_method(),
+                "headers": {key.lower(): value for key, value in request.header_items()},
+                "body": request.data,
+                "timeout": timeout,
+            }
+        )
+        queue = self.queues.get(key)
+        if not queue:
+            raise AssertionError(f"unexpected request {request.full_url}")
+        response = queue.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        response.request_url = request.full_url
+        return response
+
+
+def http_error(url, status, code, message):
+    return urllib.error.HTTPError(
+        url,
+        status,
+        message,
+        {},
+        io.BytesIO(json.dumps({"ok": False, "error": {"code": code, "message": message}}).encode("utf-8")),
+    )
+
+
+def color_entry(client_id, color, label, *, status="assigned", stale=False):
+    return {
+        "clientId": client_id,
+        "color": color,
+        "label": label,
+        "status": status,
+        "updatedAt": "2026-09-17T00:00:00Z",
+        "lastSeenAt": "2026-09-17T00:00:00Z",
+        "stale": stale,
+    }
+
+
+def colored_resource(kind, identifier, entries, *, updated="2026-09-17T00:00:00Z", **target):
+    row = resource(kind, identifier, updated=updated, **target)
+    row["chatTabColors"] = entries
+    return row
+
+
 class ControlCLITests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -268,6 +340,15 @@ api_token = { env = "BETA_TOKEN" }
         status = cli.main(["--help"], environ={}, stdout=output, stderr=error)
         self.assertEqual(status, 0)
         self.assertIn("herdr-control", output.getvalue())
+        self.assertEqual(error.getvalue(), "")
+
+        output, error = io.StringIO(), io.StringIO()
+        status = cli.main(
+            ["find", "chats", "--help"], environ={}, stdout=output, stderr=error
+        )
+        self.assertEqual(status, 0)
+        for option in ("--color-label", "--color-client", "--group-by"):
+            self.assertIn(option, output.getvalue())
         self.assertEqual(error.getvalue(), "")
 
     def test_machine_roster_is_public_and_does_not_resolve_credentials(self):
@@ -458,6 +539,371 @@ url = "https://beta.example.test"
         )
         self.assertEqual(status, 2)
         self.assertEqual(error["error"]["code"], "cursor_mismatch")
+        self.assertEqual(opener.requests, [])
+
+    def test_color_find_checks_capability_and_forwards_same_entry_filters(self):
+        opener = RoutingFleetOpener(
+            {
+                ("alpha", "/api/v1/control/capabilities"): [
+                    FakeResponse(CHAT_TAB_COLOR_CAPABILITIES)
+                ],
+                ("alpha", "/api/v1/discovery"): [
+                    FakeResponse(
+                        discovery(
+                            "alpha",
+                            colored_resource(
+                                "pane",
+                                "w1:p1",
+                                [
+                                    color_entry(
+                                        PRIMARY_CLIENT, "sage", "Synthetic Release Group"
+                                    ),
+                                    color_entry(
+                                        SECONDARY_CLIENT, "iris", "Synthetic Release Group"
+                                    ),
+                                ],
+                                terminalId="term-1",
+                            ),
+                        )
+                    )
+                ],
+            }
+        )
+        status, output, error, opener = self.run_cli(
+            [
+                "--machine", "alpha", "find", "chats",
+                "--color", "sage",
+                "--color-label", "Synthetic Release Group",
+                "--color-client", PRIMARY_CLIENT.upper(),
+            ],
+            opener=opener,
+        )
+        self.assertEqual(status, 0, error)
+        self.assertEqual([item["id"] for item in output["results"]], ["w1:p1"])
+        self.assertEqual(output["results"][0]["target"]["machineId"], "alpha")
+        self.assertNotIn("groups", output)
+        self.assertNotIn("groupingScope", output)
+        self.assertEqual([row["method"] for row in opener.requests], ["GET", "GET"])
+        self.assertEqual(
+            [row["path"] for row in opener.requests],
+            ["/api/v1/control/capabilities", "/api/v1/discovery"],
+        )
+        query = opener.requests[1]["query"]
+        self.assertEqual(query["kind"], ["chats"])
+        self.assertEqual(query["color"], ["sage"])
+        self.assertEqual(query["colorLabel"], ["Synthetic Release Group"])
+        # A mixed-case installation ID is normalized exactly as the server does.
+        self.assertEqual(query["colorClientId"], [PRIMARY_CLIENT])
+        self.assertEqual(query["chatScope"], ["terminal"])
+
+    def test_color_none_matches_only_explicit_unassignment(self):
+        rows = [
+            colored_resource(
+                "tab", "w1:t1", [color_entry(PRIMARY_CLIENT, None, None, status="unassigned")]
+            ),
+            colored_resource(
+                "tab", "w1:t2", [color_entry(PRIMARY_CLIENT, None, None, status="unavailable")]
+            ),
+        ]
+        opener = RoutingFleetOpener(
+            {
+                ("alpha", "/api/v1/control/capabilities"): [
+                    FakeResponse(CHAT_TAB_COLOR_CAPABILITIES)
+                ],
+                ("alpha", "/api/v1/discovery"): [
+                    FakeResponse(discovery("alpha", *rows))
+                ],
+            }
+        )
+        status, output, error, opener = self.run_cli(
+            ["--machine", "alpha", "find", "tabs", "--color", "none", "--group-by", "color"],
+            opener=opener,
+        )
+        self.assertEqual(status, 0, error)
+        self.assertNotIn("chatScope", opener.requests[1]["query"])
+        self.assertEqual(opener.requests[1]["query"]["color"], ["none"])
+        self.assertEqual(
+            [
+                (group["status"], group["key"], group["clientId"], group["count"])
+                for group in output["groups"]
+            ],
+            [("unassigned", "none", PRIMARY_CLIENT, 1)],
+        )
+        self.assertEqual(output["groupingScope"], "page")
+        self.assertEqual(output["groups"][0]["colors"], [])
+
+    def test_page_grouping_separates_publishers_and_preserves_flat_rows(self):
+        opener = RoutingFleetOpener(
+            {
+                ("alpha", "/api/v1/control/capabilities"): [
+                    FakeResponse(CHAT_TAB_COLOR_CAPABILITIES)
+                ],
+                ("alpha", "/api/v1/discovery"): [
+                    FakeResponse(
+                        discovery(
+                            "alpha",
+                            colored_resource(
+                                "pane",
+                                "w1:p1",
+                                [
+                                    color_entry(
+                                        PRIMARY_CLIENT, "sage", "Synthetic Release Group"
+                                    ),
+                                    color_entry(
+                                        SECONDARY_CLIENT, "sage", "Synthetic Release Group"
+                                    ),
+                                ],
+                                terminalId="term-1",
+                            ),
+                            colored_resource(
+                                "pane",
+                                "w1:p2",
+                                [
+                                    color_entry(
+                                        PRIMARY_CLIENT, "iris", "Synthetic Release Group", stale=True
+                                    )
+                                ],
+                                terminalId="term-2",
+                            ),
+                        )
+                    )
+                ],
+            }
+        )
+        status, output, error, opener = self.run_cli(
+            [
+                "--machine", "alpha", "find", "chats",
+                "--group-by", "label", "--limit", "2",
+            ],
+            opener=opener,
+        )
+        self.assertEqual(status, 0, error)
+        self.assertEqual(output["groupingScope"], "page")
+        # The flat page is unchanged and every row keeps its original metadata.
+        self.assertEqual([item["id"] for item in output["results"]], ["w1:p1", "w1:p2"])
+        self.assertEqual(
+            [entry["status"] for entry in output["results"][0]["chatTabColors"]],
+            ["assigned", "assigned"],
+        )
+        self.assertEqual(
+            [
+                (group["clientId"], group["key"], group["colors"], group["count"], group["scope"])
+                for group in output["groups"]
+            ],
+            [
+                (PRIMARY_CLIENT, "synthetic release group", ["iris", "sage"], 2, "page"),
+                (SECONDARY_CLIENT, "synthetic release group", ["sage"], 1, "page"),
+            ],
+        )
+        primary, secondary = output["groups"]
+        self.assertTrue(primary["stale"])
+        self.assertEqual(
+            [member["result"]["id"] for member in primary["members"]],
+            ["w1:p1", "w1:p2"],
+        )
+        self.assertEqual(
+            [member["chatTabColor"]["color"] for member in primary["members"]],
+            ["sage", "iris"],
+        )
+        self.assertEqual(primary["members"][1]["chatTabColor"]["stale"], True)
+        self.assertEqual(
+            primary["members"][0]["result"]["target"]["machineId"], "alpha"
+        )
+        self.assertFalse(secondary["stale"])
+
+    def test_unassigned_unavailable_and_non_tab_rows_group_distinctly(self):
+        opener = RoutingFleetOpener(
+            {
+                ("alpha", "/api/v1/control/capabilities"): [
+                    FakeResponse(CHAT_TAB_COLOR_CAPABILITIES)
+                ],
+                ("alpha", "/api/v1/discovery"): [
+                    FakeResponse(
+                        discovery(
+                            "alpha",
+                            colored_resource(
+                                "tab",
+                                "w1:t1",
+                                [color_entry(PRIMARY_CLIENT, None, None, status="unassigned")],
+                            ),
+                            colored_resource(
+                                "tab",
+                                "w1:t2",
+                                [color_entry(PRIMARY_CLIENT, None, None, status="unavailable")],
+                            ),
+                            resource("workspace", "w1"),
+                        )
+                    )
+                ],
+            }
+        )
+        status, output, error, opener = self.run_cli(
+            ["--machine", "alpha", "find", "all", "--group-by", "color"],
+            opener=opener,
+        )
+        self.assertEqual(status, 0, error)
+        self.assertEqual(
+            [
+                (group["status"], group["key"], group["clientId"])
+                for group in output["groups"]
+            ],
+            [
+                ("unassigned", "none", PRIMARY_CLIENT),
+                ("unavailable", "unavailable", PRIMARY_CLIENT),
+                ("notApplicable", None, None),
+            ],
+        )
+        self.assertIsNone(output["groups"][2]["members"][0]["chatTabColor"])
+        self.assertEqual(
+            output["groups"][2]["members"][0]["result"]["target"]["kind"], "workspace"
+        )
+
+    def test_color_cursor_continuation_binds_filters_and_grouping(self):
+        page = discovery(
+            "alpha",
+            colored_resource(
+                "pane",
+                "w1:p1",
+                [color_entry(PRIMARY_CLIENT, "sage", "Synthetic Release Group")],
+                terminalId="term-1",
+            ),
+        )
+        page["nextOffset"] = 1
+        opener = RoutingFleetOpener(
+            {
+                ("alpha", "/api/v1/control/capabilities"): [
+                    FakeResponse(CHAT_TAB_COLOR_CAPABILITIES)
+                ],
+                ("alpha", "/api/v1/discovery"): [FakeResponse(page)],
+            }
+        )
+        status, output, error, opener = self.run_cli(
+            ["--machine", "alpha", "find", "chats", "--color", "sage", "--group-by", "color"],
+            opener=opener,
+        )
+        self.assertEqual(status, 0, error)
+        cursor = output["nextCursor"]
+        self.assertIsNotNone(cursor)
+        self.assertEqual(output["groups"][0]["key"], "sage")
+        for arguments in (
+            ["--machine", "alpha", "find", "chats", "--color", "sage", "--group-by", "label", "--cursor", cursor],
+            ["--machine", "alpha", "find", "chats", "--color", "iris", "--group-by", "color", "--cursor", cursor],
+            ["--machine", "alpha", "find", "chats", "--cursor", cursor],
+        ):
+            with self.subTest(arguments=arguments):
+                status, output, error, unused = self.run_cli(arguments)
+                self.assertEqual(status, 2)
+                self.assertIsNone(output)
+                self.assertEqual(error["error"]["code"], "cursor_mismatch")
+                self.assertEqual(unused.requests, [])
+
+    def test_missing_color_capability_is_explicit_not_an_empty_match(self):
+        opener = RoutingFleetOpener(
+            {
+                ("alpha", "/api/v1/control/capabilities"): [
+                    http_error(
+                        "https://alpha.example.test/api/v1/control/capabilities",
+                        404,
+                        "not_found",
+                        "Agent control endpoint not found",
+                    )
+                ],
+            }
+        )
+        status, output, error, opener = self.run_cli(
+            ["--machine", "alpha", "find", "chats", "--color", "sage"], opener=opener
+        )
+        self.assertEqual(status, 5)
+        self.assertIsNone(output)
+        self.assertEqual(error["error"]["code"], "chat_tab_colors_unsupported")
+        self.assertEqual(error["error"]["message"], chat_tab_colors_unsupported_message())
+        self.assertEqual(
+            [row["path"] for row in opener.requests], ["/api/v1/control/capabilities"]
+        )
+
+        lacking = {"ok": True, "capabilities": ["agent-control-v1", "discovery-v1"]}
+        opener = RoutingFleetOpener(
+            {
+                ("alpha", "/api/v1/control/capabilities"): [FakeResponse(lacking)],
+                ("beta", "/api/v1/control/capabilities"): [FakeResponse(lacking)],
+            }
+        )
+        status, output, error, opener = self.run_cli(
+            ["--all-machines", "find", "tabs", "--group-by", "label"], opener=opener
+        )
+        self.assertEqual(status, 5)
+        self.assertIsNone(output)
+        self.assertEqual(error["error"]["code"], "chat_tab_colors_unsupported")
+        self.assertEqual(
+            [source["machineId"] for source in error["error"]["details"]["sources"]],
+            ["alpha", "beta"],
+        )
+        self.assertEqual(
+            [row["path"] for row in opener.requests],
+            ["/api/v1/control/capabilities", "/api/v1/control/capabilities"],
+        )
+
+    def test_partial_multi_machine_color_support_reports_the_unsupported_host(self):
+        opener = RoutingFleetOpener(
+            {
+                ("alpha", "/api/v1/control/capabilities"): [
+                    FakeResponse(CHAT_TAB_COLOR_CAPABILITIES)
+                ],
+                ("alpha", "/api/v1/discovery"): [
+                    FakeResponse(
+                        discovery(
+                            "alpha",
+                            colored_resource(
+                                "pane",
+                                "w1:p1",
+                                [color_entry(PRIMARY_CLIENT, "sage", "Synthetic Release Group")],
+                                terminalId="term-1",
+                            ),
+                        )
+                    )
+                ],
+                ("beta", "/api/v1/control/capabilities"): [
+                    FakeResponse({"ok": True, "capabilities": ["agent-control-v1", "discovery-v1"]})
+                ],
+            }
+        )
+        status, output, error, opener = self.run_cli(
+            [
+                "--all-machines", "find", "chats",
+                "--color", "sage", "--group-by", "color",
+            ],
+            opener=opener,
+        )
+        self.assertEqual(status, 0, error)
+        self.assertTrue(output["partial"])
+        self.assertEqual([item["id"] for item in output["results"]], ["w1:p1"])
+        self.assertEqual(
+            output["sourceErrors"],
+            [
+                {
+                    "machineId": "beta",
+                    "error": {
+                        "code": "chat_tab_colors_unsupported",
+                        "message": chat_tab_colors_unsupported_message(),
+                    },
+                }
+            ],
+        )
+        self.assertEqual([source["machineId"] for source in output["sources"]], ["alpha"])
+        self.assertIsNotNone(output["nextCursor"])
+        self.assertEqual(
+            [row["path"] for row in opener.requests if row["host"] == "beta"],
+            ["/api/v1/control/capabilities"],
+        )
+
+    def test_color_options_reject_workspace_discovery_without_requests(self):
+        status, output, error, opener = self.run_cli(
+            ["--machine", "alpha", "find", "workspaces", "--color", "sage"]
+        )
+        self.assertEqual(status, 2)
+        self.assertIsNone(output)
+        self.assertEqual(error["error"]["code"], "invalid_arguments")
+        self.assertIn("workspaces", error["error"]["message"])
         self.assertEqual(opener.requests, [])
 
     def test_ref_file_accepts_target_or_discovery_result(self):

@@ -26,7 +26,7 @@ from .chat_tab_colors import project_snapshot, sources_response
 from .client import DEFAULT_SUBSCRIPTIONS, HerdrClient, HerdrClientError
 from .cleanup import DEFAULT_JUDGE_CHARTER, CleanupManager, _parse_time
 from .events import EventBroker
-from .first_mate_store import FirstMateStore
+from .first_mate_store import FirstMateError, FirstMateStore
 from .pr_review_store import PRReviewStore, PRReviewError
 from .issue_reports import IssueReporter
 from .network import network_payload
@@ -1430,6 +1430,136 @@ class HerdrService:
             "diff": payload.get("diff", ""),
             "truncated": payload.get("truncated", False),
         }
+
+    def first_mate_git_workspaces(self, feature_id: str) -> dict:
+        """Return only Git roots explicitly recorded by this First Mate feature."""
+
+        feature = self.first_mate_store.get_feature(feature_id)
+        workspaces = [{
+            "id": "project",
+            "title": "Project workspace",
+            "path": feature["cwd"],
+        }]
+        for assignment in self.first_mate_store.list_assignments(feature_id=feature_id):
+            metadata = assignment.get("metadata")
+            path = metadata.get("worktree_path") if isinstance(metadata, dict) else None
+            if isinstance(path, str) and path:
+                workspaces.append({
+                    "id": assignment["id"],
+                    "title": assignment["title"],
+                    "path": path,
+                })
+        return {"ok": True, "workspaces": workspaces}
+
+    def _first_mate_git_context(self, feature_id: str, workspace_id: str) -> tuple[dict, Path]:
+        feature = self.first_mate_store.get_feature(feature_id)
+        if workspace_id == "project":
+            raw_path = feature.get("cwd")
+        else:
+            try:
+                assignment = self.first_mate_store.get_assignment(workspace_id)
+            except FirstMateError as exc:
+                raise workspace_tools.WorkspaceToolError(
+                    "First Mate Git workspace not found",
+                    code="first_mate_git_workspace_not_found",
+                    status=404,
+                ) from exc
+            metadata = assignment.get("metadata")
+            raw_path = metadata.get("worktree_path") if isinstance(metadata, dict) else None
+            if assignment.get("feature_id") != feature_id or not isinstance(raw_path, str) or not raw_path:
+                raise workspace_tools.WorkspaceToolError(
+                    "First Mate Git workspace not found",
+                    code="first_mate_git_workspace_not_found",
+                    status=404,
+                )
+        if not isinstance(raw_path, str) or not raw_path or "\x00" in raw_path:
+            raise workspace_tools.WorkspaceToolError(
+                "First Mate Git workspace is invalid",
+                code="invalid_workspace_root",
+                status=400,
+            )
+        path = Path(raw_path)
+        if not path.is_absolute():
+            raise workspace_tools.WorkspaceToolError(
+                "First Mate Git workspace is invalid",
+                code="invalid_workspace_root",
+                status=400,
+            )
+        try:
+            path = path.resolve()
+        except (OSError, RuntimeError) as exc:
+            raise workspace_tools.WorkspaceToolError(
+                "First Mate Git workspace is invalid",
+                code="invalid_workspace_root",
+                status=400,
+            ) from exc
+        if not path.is_dir():
+            raise workspace_tools.WorkspaceToolError(
+                "First Mate Git workspace is unavailable",
+                code="workspace_root_not_found",
+                status=404,
+            )
+        return feature, path
+
+    @staticmethod
+    def _first_mate_git_payload(feature_id: str, workspace_id: str, payload: dict) -> dict:
+        return {"ok": True, "feature_id": feature_id, "workspace": workspace_id, **payload}
+
+    def first_mate_git_status(self, feature_id: str, workspace_id: str = "project") -> dict:
+        _, root = self._first_mate_git_context(feature_id, workspace_id)
+        payload = self._tool_call(self.local_tools.git_status, root)
+        return self._first_mate_git_payload(feature_id, workspace_id, {
+            "root_path": payload.get("cwd") or payload.get("rootPath") or payload.get("root_path") or str(root),
+            "branch": payload.get("branch"),
+            "detached": payload.get("detached"),
+            "staged": payload.get("staged") if isinstance(payload.get("staged"), list) else [],
+            "unstaged": payload.get("unstaged") if isinstance(payload.get("unstaged"), list) else [],
+            "untracked": payload.get("untracked") if isinstance(payload.get("untracked"), list) else [],
+            "commits": payload.get("commits") if isinstance(payload.get("commits"), list) else [],
+            "generated_at": utc_now(),
+        })
+
+    def first_mate_git_diff(self, feature_id: str, workspace_id: str, *, file: str, section: str, expected_root: str) -> dict:
+        _, root = self._first_mate_git_context(feature_id, workspace_id)
+        payload = self._tool_call(self.local_tools.git_diff, root, file, section, expected_root=expected_root)
+        return self._first_mate_git_payload(feature_id, workspace_id, {
+            "file": payload.get("file", file), "section": payload.get("section", section),
+            "diff": payload.get("diff", ""), "truncated": payload.get("truncated", False),
+        })
+
+    def first_mate_git_stage(self, feature_id: str, workspace_id: str, *, file: str, expected_root: str) -> dict:
+        _, root = self._first_mate_git_context(feature_id, workspace_id)
+        payload = self._tool_call(self.local_tools.git_stage, root, file, expected_root=expected_root)
+        return self._first_mate_git_payload(feature_id, workspace_id, {"file": payload.get("file", file)})
+
+    def first_mate_git_unstage(self, feature_id: str, workspace_id: str, *, file: str, expected_root: str) -> dict:
+        _, root = self._first_mate_git_context(feature_id, workspace_id)
+        payload = self._tool_call(self.local_tools.git_unstage, root, file, expected_root=expected_root)
+        return self._first_mate_git_payload(feature_id, workspace_id, {"file": payload.get("file", file)})
+
+    def first_mate_git_open(self, feature_id: str, workspace_id: str, *, file: str, expected_root: str, reveal: bool) -> dict:
+        _, root = self._first_mate_git_context(feature_id, workspace_id)
+        payload = self._tool_call(self.local_tools.git_open_file, root, file, reveal=reveal, expected_root=expected_root)
+        return self._first_mate_git_payload(feature_id, workspace_id, {
+            "file": payload.get("path", file), "absolute_path": payload.get("absolute_path"),
+            "revealed": bool(payload.get("revealed", reveal)),
+        })
+
+    def first_mate_git_commit_files(self, feature_id: str, workspace_id: str, *, commit_hash: str, expected_root: str) -> dict:
+        _, root = self._first_mate_git_context(feature_id, workspace_id)
+        payload = self._tool_call(self.local_tools.git_commit_files, root, commit_hash, expected_root=expected_root)
+        return self._first_mate_git_payload(feature_id, workspace_id, {
+            "hash": payload.get("hash", commit_hash),
+            "files": payload.get("files") if isinstance(payload.get("files"), list) else [],
+        })
+
+    def first_mate_git_commit_diff(self, feature_id: str, workspace_id: str, *, commit_hash: str, file: str, expected_root: str) -> dict:
+        _, root = self._first_mate_git_context(feature_id, workspace_id)
+        payload = self._tool_call(self.local_tools.git_commit_diff, root, commit_hash, file, expected_root=expected_root)
+        return self._first_mate_git_payload(feature_id, workspace_id, {
+            "hash": payload.get("hash", commit_hash), "file": payload.get("file", file),
+            "diff": payload.get("diff", ""), "truncated": payload.get("truncated", False),
+        })
 
     def workspace_skills(self, workspace_id: str) -> dict:
         _, root = self._workspace_tool_context(workspace_id)

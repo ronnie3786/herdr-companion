@@ -239,6 +239,22 @@ struct WorkspaceNavigationView: View {
         return model.machines.first { $0.id == activeFirstMateMachineID }
     }
 
+    /// The selected snapshot belongs only to the store's active machine. A
+    /// removed or swapping owner never falls through to the detail selector or
+    /// primary machine, because that could send its feature ID to another host.
+    private var firstMateGitOwnerMachineID: String? {
+        if model.isDemoMode { return "demo" }
+        guard let machineID = shell.activeFirstMateMachineID,
+              model.machines.contains(where: { $0.id == machineID })
+        else { return nil }
+        return machineID
+    }
+
+    private var firstMateGitConfiguration: ServerConfiguration? {
+        guard let machineID = firstMateGitOwnerMachineID, !model.isDemoMode else { return nil }
+        return model.firstMateConfiguration(machineID: machineID)
+    }
+
     private var firstMateCanControl: Bool {
         firstMateConnectionIsReady && (model.isDemoMode || firstMateConfiguration != nil)
     }
@@ -432,12 +448,17 @@ struct WorkspaceNavigationView: View {
             }
         case .firstMate:
             FirstMateWorkspaceView(
+                model: model,
                 store: shell.firstMate,
                 canControl: firstMateCanControl,
+                owningMachineID: firstMateGitOwnerMachineID,
+                gitOwnerIsReady: firstMateGitOwnerMachineID != nil && firstMateConnectionIsReady,
+                configuration: firstMateGitConfiguration,
+                configurationRevision: firstMateGitOwnerMachineID.map { model.machineConfigurationRevision(for: $0) } ?? 0,
                 owningMachineName: resolvedFirstMateScope == .all ? activeFirstMateMachine?.name : nil,
-                allowsDirectCreate: resolvedFirstMateScope != .all
+                allowsDirectCreate: resolvedFirstMateScope != .all,
+                popOutGit: { openWindow(id: HerdrWindowID.firstMateGit, value: $0) }
             )
-            .id(shell.firstMateStoreID)
         case .prReview:
             PRReviewContainerView(
                 store: shell.prReview,

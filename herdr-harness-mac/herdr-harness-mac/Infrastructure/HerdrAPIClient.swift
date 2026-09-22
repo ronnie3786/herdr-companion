@@ -217,6 +217,10 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient {
         try await request(path: firstMatePath("features", id: id))
     }
 
+    func fetchFirstMateGitWorkspaces(featureID: String) async throws -> FirstMateGitWorkspaceResponse {
+        try await request(path: firstMatePath("features", id: featureID) + "/git/workspaces")
+    }
+
     func createFirstMateFeature(title: String, goal: String, cwd: String, requestID: String) async throws -> FirstMateSnapshot {
         try await request(path: "/api/v1/first-mate/features", method: "POST", body: [
             "title": title, "goal": goal, "cwd": cwd, "request_id": requestID,
@@ -1632,6 +1636,7 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient {
             path.hasPrefix("/api/v1/active-work") ||
             path.hasPrefix("/api/v1/jira/") ||
             (path.hasPrefix("/api/v1/panes/") && path.contains("/git")) ||
+            (path.hasPrefix("/api/v1/first-mate/features/") && path.contains("/git")) ||
             (path.hasPrefix("/api/v1/workspaces/") &&
                 (path.contains("/git") || path.hasSuffix("/skills") || path.hasSuffix("/files"))) {
             // Git and Jira operations may run for up to 10 and 15

@@ -16,7 +16,7 @@ import {
   History,
   RefreshCw,
 } from "lucide-react";
-import type { GitSection } from "../../api/git";
+import { gitTargetFromKey, type GitSection } from "../../api/git";
 import { useWorkspacesStore } from "../../store/workspacesStore";
 import {
   EMPTY_GIT_ENTRY,
@@ -68,11 +68,13 @@ function persistNavigatorWidth(width: number): void {
 }
 
 interface GitStatusViewProps {
+  /** Opaque scoped Git target key; legacy pane IDs remain unchanged. */
   paneId: string;
   embedded?: boolean;
 }
 
 export function GitStatusView({ paneId, embedded = false }: GitStatusViewProps) {
+  const target = gitTargetFromKey(paneId);
   const data = useWorkspacesStore((state) => state.data);
   const pane = embedded
     ? null
@@ -129,7 +131,7 @@ export function GitStatusView({ paneId, embedded = false }: GitStatusViewProps) 
       <div className="hz-git-state" role="status">
         <RefreshCw className="hz-git-state-spinner" size={18} aria-hidden />
         <span className="hz-git-state-title">Reading working tree…</span>
-        <span className="hz-git-state-sub">Resolving the repository for this pane.</span>
+        <span className="hz-git-state-sub">Resolving the selected repository workspace.</span>
       </div>
     );
   } else if (entry.noRepo || entry.snapshot === null) {
@@ -137,11 +139,11 @@ export function GitStatusView({ paneId, embedded = false }: GitStatusViewProps) 
       <div className="hz-git-state">
         <GitBranch size={20} aria-hidden />
         <span className="hz-git-state-title">No Git repository</span>
-        <span className="hz-git-state-sub">This pane's working directory is outside a repository.</span>
+        <span className="hz-git-state-sub">The selected workspace is outside a repository.</span>
       </div>
     );
   } else {
-    body = <GitBody paneId={paneId} entry={entry} snapshot={entry.snapshot} />;
+    body = <GitBody paneId={paneId} entry={entry} snapshot={entry.snapshot} allowsAsk={target.kind === "pane"} />;
   }
 
   return (
@@ -149,6 +151,13 @@ export function GitStatusView({ paneId, embedded = false }: GitStatusViewProps) 
       className={`hz-detail-col hz-git-col${embedded ? " hz-git-col-embedded" : ""}`}
       aria-busy={entry.loading}
     >
+      {target.kind === "firstMate" ? (
+        <div className="hz-git-header-meta" aria-label="First Mate Git context">
+          <strong>First Mate</strong>
+          <span className="mono">Feature {target.featureId}</span>
+          <span className="mono">Workspace {target.workspaceId}</span>
+        </div>
+      ) : null}
       <div className="hz-git-scroll">{body}</div>
       {pane !== null ? <CommandLensDock pane={pane} /> : null}
     </main>
@@ -159,10 +168,12 @@ function GitBody({
   paneId,
   entry,
   snapshot,
+  allowsAsk,
 }: {
   paneId: string;
   entry: GitEntry;
   snapshot: GitSnapshot;
+  allowsAsk: boolean;
 }) {
   const [contextTarget, setContextTarget] = useState<GitContextTarget | null>(null);
   const closeContextMenu = useCallback(() => setContextTarget(null), []);
@@ -339,7 +350,7 @@ function GitBody({
         onDoubleClick={resetNavigatorWidth}
       />
 
-      <DiffInspector paneId={paneId} />
+      <DiffInspector paneId={paneId} allowsAsk={allowsAsk} />
 
       {contextTarget !== null ? (
         <GitContextMenu paneId={paneId} target={contextTarget} onClose={closeContextMenu} />

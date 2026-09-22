@@ -4,6 +4,7 @@ import tempfile
 import threading
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -19,10 +20,19 @@ class FirstMateHTTPTests(unittest.TestCase):
         self.store = FirstMateStore(Path(self.temp.name) / "work.sqlite3")
         self.wakes = []
         runtime = SimpleNamespace(capabilities=lambda: {"available": True}, session=lambda identity, **paging: {"ok": True, "native_session_id": identity, "messages": [], **paging})
+        self.git_calls = []
         self.service = SimpleNamespace(
             environ={"HERDR_HARNESS_API_TOKEN": "synthetic-main-token", "HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN": "synthetic-ingest-token"},
             first_mate_store=self.store, first_mate=runtime,
             first_mate_changed=self.wakes.append,
+            first_mate_git_workspaces=lambda feature_id: {"ok": True, "workspaces": [{"id": "project", "title": "Project workspace", "path": self.temp.name}]},
+            first_mate_git_status=lambda feature_id, workspace: self._git_call("status", feature_id, workspace),
+            first_mate_git_diff=lambda feature_id, workspace, **values: self._git_call("diff", feature_id, workspace, **values),
+            first_mate_git_stage=lambda feature_id, workspace, **values: self._git_call("stage", feature_id, workspace, **values),
+            first_mate_git_unstage=lambda feature_id, workspace, **values: self._git_call("unstage", feature_id, workspace, **values),
+            first_mate_git_open=lambda feature_id, workspace, **values: self._git_call("open", feature_id, workspace, **values),
+            first_mate_git_commit_files=lambda feature_id, workspace, **values: self._git_call("commit-files", feature_id, workspace, **values),
+            first_mate_git_commit_diff=lambda feature_id, workspace, **values: self._git_call("commit-diff", feature_id, workspace, **values),
         )
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.service))
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -51,6 +61,10 @@ class FirstMateHTTPTests(unittest.TestCase):
 
     def create(self):
         return self.request("/api/v1/first-mate/features", {"title": "Garden timer", "goal": "Plan a reliable watering timer", "cwd": self.temp.name, "request_id": "create-garden"})
+
+    def _git_call(self, action, feature_id, workspace, **values):
+        self.git_calls.append((action, feature_id, workspace, values))
+        return {"ok": True, "feature_id": feature_id, "workspace": workspace, "root_path": self.temp.name, "staged": [], "unstaged": [], "untracked": [], "commits": [], **values}
 
     def test_public_shell_never_exposes_private_feature_data(self):
         self.create()
@@ -125,6 +139,79 @@ class FirstMateHTTPTests(unittest.TestCase):
         code, first_mate = self.request("/api/v1/first-mate/capabilities")
         self.assertEqual(code, 200)
         self.assertIn("first-mate-archive-v1", first_mate["capabilities"])
+
+    def test_git_capability_and_every_authenticated_operation_forward_the_complete_contract(self):
+        _, created = self.create()
+        feature_id = created["feature"]["id"]
+        base = f"/api/v1/first-mate/features/{feature_id}/git"
+        root = self.temp.name
+        self.assertIn("first-mate-git-v1", self.request("/api/v1")[1]["capabilities"])
+        self.assertIn("first-mate-git-v1", self.request("/api/v1/first-mate/capabilities")[1]["capabilities"])
+        encoded_root = urllib.parse.quote(root, safe="")
+        unauthorized_operations = (
+            (base + "/workspaces", None),
+            (base + "?workspace=project", None),
+            (base + f"/diff?workspace=project&file=tracked.txt&section=unstaged&expected_root={encoded_root}", None),
+            (base + f"/commit-files?workspace=project&hash=a1b2c3d4&expected_root={encoded_root}", None),
+            (base + f"/commit-diff?workspace=project&hash=a1b2c3d4&file=tracked.txt&expected_root={encoded_root}", None),
+            (base + "/stage", {"workspace": "project", "file": "tracked.txt", "expected_root": root}),
+            (base + "/unstage", {"workspace": "project", "file": "tracked.txt", "expected_root": root}),
+            (base + "/open", {"workspace": "project", "file": "tracked.txt", "expected_root": root, "reveal": True}),
+        )
+        for token in (None, "synthetic-ingest-token"):
+            for path, body in unauthorized_operations:
+                with self.subTest(token=token, path=path):
+                    self.assertEqual(self.request(path, body, token=token)[0], 401)
+
+        self.assertEqual(self.request(base + "/workspaces")[1]["workspaces"][0]["id"], "project")
+        operations = [
+            (base + "?workspace=worker-1", None, ("status", feature_id, "worker-1", {})),
+            (base + f"/diff?workspace=worker-1&file=Sources%2FApp.swift&section=unstaged&expected_root={urllib.parse.quote(root, safe='')}", None,
+             ("diff", feature_id, "worker-1", {"file": "Sources/App.swift", "section": "unstaged", "expected_root": root})),
+            (base + f"/commit-files?workspace=worker-1&hash=a1b2c3d4&expected_root={urllib.parse.quote(root, safe='')}", None,
+             ("commit-files", feature_id, "worker-1", {"commit_hash": "a1b2c3d4", "expected_root": root})),
+            (base + f"/commit-diff?workspace=worker-1&hash=a1b2c3d4&file=Sources%2FApp.swift&expected_root={urllib.parse.quote(root, safe='')}", None,
+             ("commit-diff", feature_id, "worker-1", {"commit_hash": "a1b2c3d4", "file": "Sources/App.swift", "expected_root": root})),
+            (base + "/stage", {"workspace": "worker-1", "file": "Sources/App.swift", "expected_root": root},
+             ("stage", feature_id, "worker-1", {"file": "Sources/App.swift", "expected_root": root})),
+            (base + "/unstage", {"workspace": "worker-1", "file": "Sources/App.swift", "expected_root": root},
+             ("unstage", feature_id, "worker-1", {"file": "Sources/App.swift", "expected_root": root})),
+            (base + "/open", {"workspace": "worker-1", "file": "Sources/App.swift", "expected_root": root, "reveal": True},
+             ("open", feature_id, "worker-1", {"file": "Sources/App.swift", "expected_root": root, "reveal": True})),
+        ]
+        for path, body, expected_call in operations:
+            with self.subTest(path=path):
+                self.assertEqual(self.request(path, body)[0], 200)
+                self.assertEqual(self.git_calls[-1], expected_call)
+
+    def test_git_routes_reject_missing_preconditions_malformed_queries_and_unknown_fields_before_tools(self):
+        _, created = self.create()
+        feature_id = created["feature"]["id"]
+        base = f"/api/v1/first-mate/features/{feature_id}/git"
+        root = self.temp.name
+        invalid_requests = [
+            (base + "/workspaces?path=%2Fclient", None),
+            (base + "?workspace=project&workspace=other", None),
+            (base + "?workspace=project&path=%2Fclient", None),
+            (base + "/diff?workspace=project&file=tracked.txt&section=unstaged", None),
+            (base + f"/diff?workspace=project&file=tracked.txt&section=unstaged&expected_root={urllib.parse.quote(root, safe='')}&path=%2Fclient", None),
+            (base + "/commit-files?workspace=project&hash=a1b2c3d4", None),
+            (base + "/commit-diff?workspace=project&hash=a1b2c3d4&file=tracked.txt", None),
+            (base + f"/stage?workspace=project", {"workspace": "project", "file": "tracked.txt", "expected_root": root}),
+            (base + "/stage", {"workspace": "project", "file": "tracked.txt"}),
+            (base + "/unstage", {"workspace": "project", "file": "tracked.txt"}),
+            (base + "/open", {"workspace": "project", "file": "tracked.txt"}),
+            (base + "/stage", {"workspace": "project", "file": "tracked.txt", "expected_root": root, "reveal": True}),
+            (base + "/open", {"workspace": "project", "file": "tracked.txt", "expected_root": root, "path": "/client"}),
+            (base + "/open", {"workspace": "project", "file": "tracked.txt", "expected_root": root, "reveal": "yes"}),
+        ]
+        for path, body in invalid_requests:
+            before = len(self.git_calls)
+            with self.subTest(path=path, body=body):
+                code, result = self.request(path, body)
+                self.assertEqual(code, 400)
+                self.assertEqual(result["error"]["code"], "invalid_request")
+                self.assertEqual(len(self.git_calls), before)
 
     def test_model_settings_require_auth_and_do_not_wake_agents(self):
         _, data = self.create()

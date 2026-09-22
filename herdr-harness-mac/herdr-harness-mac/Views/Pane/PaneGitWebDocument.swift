@@ -10,15 +10,27 @@ struct PaneGitWebDocument: Equatable {
         workspaceID: String,
         paneID: String
     ) {
+        self.init(configuration: configuration, routeItems: [
+            URLQueryItem(name: "ws", value: workspaceID),
+            URLQueryItem(name: "pane", value: paneID),
+        ])
+    }
+
+    init(configuration: ServerConfiguration, firstMateTarget: FirstMateGitWindowTarget) {
+        self.init(configuration: configuration, routeItems: [
+            URLQueryItem(name: "firstMate", value: firstMateTarget.featureID),
+            URLQueryItem(name: "workspace", value: firstMateTarget.workspaceID),
+        ])
+    }
+
+    private init(configuration: ServerConfiguration, routeItems: [URLQueryItem]) {
         let pageURL = configuration.baseURL.appending(
             path: "herdr-web",
             directoryHint: .isDirectory
         )
         var pageComponents = URLComponents(url: pageURL, resolvingAgainstBaseURL: false)
         var routeComponents = URLComponents()
-        routeComponents.queryItems = [
-            URLQueryItem(name: "ws", value: workspaceID),
-            URLQueryItem(name: "pane", value: paneID),
+        routeComponents.queryItems = routeItems + [
             URLQueryItem(name: "view", value: "git"),
             URLQueryItem(name: "embed", value: "1"),
         ]

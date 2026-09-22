@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, configureClient } from "../api/client";
+import { gitTargetKey } from "../api/git";
 import { isUpstreamError } from "../components/Shared/ToolErrorCard";
 import { useToastStore } from "../lib/toast";
 import { useGitStore } from "./gitStore";
@@ -56,6 +57,34 @@ beforeEach(() => {
 afterEach(() => {
   useToastStore.getState().dismiss();
   vi.unstubAllGlobals();
+});
+
+describe("gitStore target isolation", () => {
+  it("keeps pane and First Mate snapshots in separate scoped entries", async () => {
+    const firstMateTarget = gitTargetKey({
+      kind: "firstMate",
+      featureId: "fmf-one",
+      workspaceId: "project",
+    });
+    const firstMateURL = `${BASE_URL}/first-mate/features/fmf-one/git?workspace=project`;
+    mockFetch({
+      [GIT_URL]: jsonResponse(GIT_RESPONSE),
+      [firstMateURL]: jsonResponse({
+        ...GIT_RESPONSE,
+        pane_id: undefined,
+        feature_id: "fmf-one",
+        workspace: "project",
+        root_path: "/Users/developer/first-mate",
+      }),
+    });
+
+    await useGitStore.getState().load(PANE_ID);
+    await useGitStore.getState().load(firstMateTarget);
+
+    expect(firstMateTarget).not.toBe(PANE_ID);
+    expect(useGitStore.getState().byPane[PANE_ID]?.snapshot?.rootPath).toBe("/Users/developer/repo");
+    expect(useGitStore.getState().byPane[firstMateTarget]?.snapshot?.rootPath).toBe("/Users/developer/first-mate");
+  });
 });
 
 describe("gitStore.load", () => {

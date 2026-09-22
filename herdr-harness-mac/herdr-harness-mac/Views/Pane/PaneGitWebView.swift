@@ -1,23 +1,26 @@
 import SwiftUI
 
 struct PaneGitWebView: View {
-    let configuration: ServerConfiguration
-    let workspaceID: String
-    let paneID: String
+    let document: PaneGitWebDocument
 
     @State private var phase: PaneGitWebLoadPhase = .loading
     @State private var reloadID = 0
 
+    init(configuration: ServerConfiguration, workspaceID: String, paneID: String) {
+        document = PaneGitWebDocument(
+            configuration: configuration,
+            workspaceID: workspaceID,
+            paneID: paneID
+        )
+    }
+
+    init(configuration: ServerConfiguration, firstMateTarget: FirstMateGitWindowTarget) {
+        document = PaneGitWebDocument(configuration: configuration, firstMateTarget: firstMateTarget)
+    }
+
     var body: some View {
         ZStack {
-            PaneGitWebContainer(
-                document: PaneGitWebDocument(
-                    configuration: configuration,
-                    workspaceID: workspaceID,
-                    paneID: paneID
-                ),
-                phase: $phase
-            )
+            PaneGitWebContainer(document: document, phase: $phase)
             .id(reloadID)
 
             switch phase {

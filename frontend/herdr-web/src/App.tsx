@@ -11,7 +11,7 @@ import { useConnectionStore } from "./store/connectionStore";
 import { useEventStreamStore } from "./store/eventStream";
 import { useWorkspacesStore } from "./store/workspacesStore";
 import {
-  embeddedGitRoute,
+  embeddedGitRouteResult,
   getHashRoute,
   parseHash,
   setHashRoute,
@@ -23,6 +23,7 @@ import { DetailPlaceholder } from "./components/Detail/DetailPlaceholder";
 import { AttentionView } from "./components/Attention/AttentionView";
 import { TerminalView } from "./components/Terminal/TerminalView";
 import { GitStatusView } from "./components/Git/GitStatusView";
+import { gitTargetKey } from "./api/git";
 import { SkillsView } from "./components/Skills/SkillsView";
 import { PiChatPane } from "./components/Pi/PiChatView";
 import { Toast } from "./components/Toast/Toast";
@@ -49,16 +50,34 @@ import "./styles/app.css";
  * Attention Deck (P3-run-B).
  */
 export default function App() {
-  const embeddedGit = embeddedGitRoute(window.location.hash);
-  if (embeddedGit !== null) {
+  const embeddedGit = embeddedGitRouteResult(window.location.hash);
+  if (embeddedGit.kind === "invalid") {
+    return <EmbeddedGitTargetError message={embeddedGit.message} />;
+  }
+  if (embeddedGit.kind === "valid") {
+    const route = embeddedGit.route;
+    const targetKey = route.kind === "pane"
+      ? gitTargetKey({ kind: "pane", paneId: route.paneId })
+      : gitTargetKey({ kind: "firstMate", featureId: route.featureId, workspaceId: route.workspaceId });
     return (
       <>
-        <GitStatusView paneId={embeddedGit.paneId} embedded />
+        <GitStatusView paneId={targetKey} embedded />
         <Toast />
       </>
     );
   }
   return <HerdrShell />;
+}
+
+export function EmbeddedGitTargetError({ message }: { message: string }) {
+  return (
+    <main className="hz-detail-col hz-git-col hz-git-col-embedded">
+      <div className="hz-git-state" role="alert">
+        <span className="hz-git-state-title">Git target unavailable</span>
+        <span className="hz-git-state-sub">{message}</span>
+      </div>
+    </main>
+  );
 }
 
 function HerdrShell() {

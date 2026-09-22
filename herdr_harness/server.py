@@ -412,6 +412,7 @@ def api_description() -> dict:
             "first-mate-v1",
             "first-mate-usage-v1",
             "first-mate-archive-v1",
+            "first-mate-git-v1",
             "pr-review-v1",
             "pi-session-context-v1",
             "agent-control-v1",
@@ -428,6 +429,7 @@ def api_description() -> dict:
             "uiClients": "/api/v1/ui/clients",
             "firstMate": "/api/v1/first-mate/features",
             "firstMateCapabilities": "/api/v1/first-mate/capabilities",
+            "firstMateGit": "/api/v1/first-mate/features/{featureId}/git",
             "prReviews": "/api/v1/pr-reviews",
             "prReview": "/api/v1/pr-reviews/{reviewId}",
             "prReviewCapabilities": "/api/v1/pr-reviews/capabilities",
@@ -1046,7 +1048,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             snapshot_view = runtime.snapshot if hasattr(runtime, "snapshot") else store.snapshot
             features_view = runtime.list_features if hasattr(runtime, "list_features") else store.list_features
             if method == "GET" and tail == ["capabilities"]:
-                return {"ok": True, "capabilities": ["first-mate-v1", "first-mate-model-settings-v1", "first-mate-usage-v1", "first-mate-archive-v1"], **runtime.capabilities()}
+                return {"ok": True, "capabilities": ["first-mate-v1", "first-mate-model-settings-v1", "first-mate-usage-v1", "first-mate-archive-v1", "first-mate-git-v1"], **runtime.capabilities()}
             if method == "GET" and tail == ["models"]:
                 return {"ok": True, **service.first_mate.model_catalog()}
             if tail == ["features"]:
@@ -1066,6 +1068,80 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     return {"ok": True, "feature": feature_view(feature["id"])}, 201
             if len(tail) >= 2 and tail[0] == "features":
                 feature_id = _string(tail[1], "feature_id", maximum=128)
+                if tail[2:] == ["git", "workspaces"] and method == "GET":
+                    if query:
+                        raise HTTPValidationError("Git workspace request contains an unsupported query field")
+                    return service.first_mate_git_workspaces(feature_id)
+                if len(tail) >= 3 and tail[2] == "git":
+                    action = tail[3] if len(tail) == 4 else None
+                    if len(tail) not in {3, 4}:
+                        raise HTTPValidationError("First Mate Git endpoint not found", code="not_found", status=404)
+
+                    if method == "GET":
+                        allowed_query_fields = {
+                            None: {"workspace"},
+                            "diff": {"workspace", "file", "section", "expected_root"},
+                            "commit-files": {"workspace", "hash", "expected_root"},
+                            "commit-diff": {"workspace", "hash", "file", "expected_root"},
+                        }.get(action)
+                        if allowed_query_fields is None:
+                            raise HTTPValidationError("First Mate Git endpoint not found", code="not_found", status=404)
+                        if set(query) - allowed_query_fields:
+                            raise HTTPValidationError("First Mate Git request contains an unsupported query field")
+                        if any(len(values) != 1 for values in query.values()):
+                            raise HTTPValidationError("First Mate Git query fields must occur exactly once")
+                        workspace_id = _string(
+                            (query.get("workspace") or ["project"])[0],
+                            "workspace",
+                            maximum=128,
+                        )
+                        if action is None:
+                            return service.first_mate_git_status(feature_id, workspace_id)
+                        expected_root = _string(
+                            (query.get("expected_root") or [""])[0],
+                            "expected_root",
+                            maximum=4096,
+                        )
+                        if action == "diff":
+                            return service.first_mate_git_diff(
+                                feature_id, workspace_id,
+                                file=_string((query.get("file") or [""])[0], "file", maximum=4096),
+                                section=_string((query.get("section") or ["unstaged"])[0], "section", maximum=32),
+                                expected_root=expected_root,
+                            )
+                        if action == "commit-files":
+                            return service.first_mate_git_commit_files(
+                                feature_id, workspace_id,
+                                commit_hash=_string((query.get("hash") or [""])[0], "hash", maximum=40),
+                                expected_root=expected_root,
+                            )
+                        return service.first_mate_git_commit_diff(
+                            feature_id, workspace_id,
+                            commit_hash=_string((query.get("hash") or [""])[0], "hash", maximum=40),
+                            file=_string((query.get("file") or [""])[0], "file", maximum=4096),
+                            expected_root=expected_root,
+                        )
+
+                    if method == "POST" and action in {"stage", "unstage", "open"}:
+                        if query:
+                            raise HTTPValidationError("First Mate Git mutation does not accept query fields")
+                        allowed_body_fields = {"workspace", "file", "expected_root"}
+                        if action == "open":
+                            allowed_body_fields.add("reveal")
+                        if set(body) - allowed_body_fields:
+                            raise HTTPValidationError("First Mate Git request contains an unsupported field")
+                        workspace_id = _string(body.get("workspace", "project"), "workspace", maximum=128)
+                        file = _string(body.get("file"), "file", maximum=4096)
+                        expected_root = _string(body.get("expected_root"), "expected_root", maximum=4096)
+                        if action == "stage":
+                            return service.first_mate_git_stage(feature_id, workspace_id, file=file, expected_root=expected_root)
+                        if action == "unstage":
+                            return service.first_mate_git_unstage(feature_id, workspace_id, file=file, expected_root=expected_root)
+                        return service.first_mate_git_open(
+                            feature_id, workspace_id, file=file, expected_root=expected_root,
+                            reveal=_boolean(body.get("reveal"), "reveal", default=False),
+                        )
+                    raise HTTPValidationError("First Mate Git endpoint not found", code="not_found", status=404)
                 if len(tail) == 2 and method == "GET":
                     return {"ok": True, **snapshot_view(feature_id)}
                 if tail[2:] == ["model-settings"] and method == "POST":

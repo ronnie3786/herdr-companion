@@ -4,13 +4,37 @@ import SwiftUI
 
 @MainActor @Observable
 final class FirstMateStore {
+    struct LifecycleIdentity: Equatable, Hashable, Sendable {
+        fileprivate let value: UUID
+
+        /// Safe to use as SwiftUI/task identity. This is a random local lifecycle
+        /// marker, never a companion credential or server token.
+        var opaqueID: String { value.uuidString.lowercased() }
+    }
+
     struct OperationContext: Equatable, Sendable {
         fileprivate let generation: Int
         fileprivate let featureID: String?
+        let lifecycleIdentity: LifecycleIdentity
+
+        func matchesFeature(_ id: String) -> Bool { featureID == id }
+
+        func destinationID(for featureID: String) -> String? {
+            guard matchesFeature(featureID) else { return nil }
+            return "first-mate:\(featureID):lifecycle:\(lifecycleIdentity.opaqueID)"
+        }
+    }
+
+    struct ControlLease: Equatable, Sendable {
+        fileprivate let id: UUID
+        fileprivate let lifecycleIdentity: LifecycleIdentity
     }
 
     /// Capture when the human acts, before scheduling an asynchronous UI task.
-    var operationContext: OperationContext { .init(generation: generation, featureID: selectedFeatureID) }
+    var operationContext: OperationContext {
+        .init(generation: generation, featureID: selectedFeatureID, lifecycleIdentity: lifecycleIdentity)
+    }
+    var lifecycle: LifecycleIdentity { lifecycleIdentity }
 
     private(set) var features: [FirstMateFeature] = []
     private(set) var snapshots: [String: FirstMateSnapshot] = [:]
@@ -34,6 +58,10 @@ final class FirstMateStore {
     private(set) var error: String?
     private(set) var unsupported = false
     private(set) var archiveSupported = false
+    private(set) var attachmentsSupported = false
+    private(set) var contextSupported = false
+    private(set) var safeModelSettingsSupported = false
+    private(set) var controlAvailable = false
     private(set) var lastUpdated: Date?
     var openedResource: FirstMateResource?
     var resourcePresentation: FirstMateResourcePresentation?
@@ -48,17 +76,27 @@ final class FirstMateStore {
     private(set) var isLoadingEarlier = false
     private(set) var sessionPageError: String?
     private var generation = 0
+    private var lifecycleIdentity = LifecycleIdentity(value: UUID())
+    private var activeControlLease: ControlLease?
     private var resourceGeneration = 0
     private var drafts: [String: String] = [:]
     private var pendingMessages: [String: (text: String, requestID: String)] = [:]
     private var demoStep = 0
     @ObservationIgnored private var client: (any FirstMateClient)?
+    #if os(macOS)
+    @ObservationIgnored let composerDrafts = FirstMateComposerDraftStore()
+    #endif
 
     var colorScheme: ColorScheme { isDark ? .dark : .light }
     var snapshot: FirstMateSnapshot? { selectedFeatureID.flatMap { snapshots[$0] } }
     var hasUnsentDrafts: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || drafts.values.contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        #if os(macOS)
+        return hasText || composerDrafts.hasStagedContent
+        #else
+        return hasText
+        #endif
     }
     var filteredFeatures: [FirstMateFeature] {
         features.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.goal.localizedCaseInsensitiveContains(search) }
@@ -68,6 +106,7 @@ final class FirstMateStore {
 
     func configure(client: (any FirstMateClient)?, demo: Bool) {
         generation += 1
+        lifecycleIdentity = LifecycleIdentity(value: UUID())
         resourceGeneration += 1
         self.client = client
         isDemo = demo
@@ -89,18 +128,44 @@ final class FirstMateStore {
         error = nil
         unsupported = false
         archiveSupported = demo
+        attachmentsSupported = demo
+        contextSupported = demo
+        safeModelSettingsSupported = demo
+        activeControlLease = nil
+        controlAvailable = demo
         isRefreshing = false
         isSending = false
         isCreating = false
         showArchived = false
         hasLoaded = false
         lastUpdated = nil
+        #if os(macOS)
+        composerDrafts.discardAll()
+        #endif
         if demo {
             demoStep = 0
             for value in FirstMateDemo.features(step: 0) { receive(value) }
             selectedFeatureID = features.first?.id
             hasLoaded = true
         }
+    }
+
+    func acquireControlLease(available: Bool) -> ControlLease {
+        let lease = ControlLease(id: UUID(), lifecycleIdentity: lifecycleIdentity)
+        activeControlLease = lease
+        controlAvailable = available
+        return lease
+    }
+
+    func updateControlLease(_ lease: ControlLease, available: Bool) {
+        guard activeControlLease == lease, lease.lifecycleIdentity == lifecycleIdentity else { return }
+        controlAvailable = available
+    }
+
+    func releaseControlLease(_ lease: ControlLease) {
+        guard activeControlLease == lease, lease.lifecycleIdentity == lifecycleIdentity else { return }
+        activeControlLease = nil
+        controlAvailable = false
     }
 
     func select(_ id: String) {
@@ -112,6 +177,24 @@ final class FirstMateStore {
         closeResource()
     }
 
+    func composerDraft(for context: OperationContext) -> String {
+        guard context.generation == generation,
+              context.lifecycleIdentity == lifecycleIdentity,
+              let featureID = context.featureID else { return "" }
+        return selectedFeatureID == featureID ? draft : drafts[featureID] ?? ""
+    }
+
+    func setComposerDraft(_ value: String, for context: OperationContext) {
+        guard context.generation == generation,
+              context.lifecycleIdentity == lifecycleIdentity,
+              let featureID = context.featureID else { return }
+        if selectedFeatureID == featureID {
+            draft = value
+        } else {
+            drafts[featureID] = value
+        }
+    }
+
     func receive(_ value: FirstMateSnapshot) {
         guard value.ok else { return }
         if let existing = snapshots[value.feature.id],
@@ -121,8 +204,35 @@ final class FirstMateStore {
            (existing.events.map(\.sequence).max() ?? 0) > (value.events.map(\.sequence).max() ?? 0) { return }
         if !value.hasDetails, var existing = snapshots[value.feature.id] {
             // Mutations acknowledge the feature; their omitted arrays and usage are not deletions.
+            // A delayed mutation may have the same feature/settings revisions as a
+            // newer full session-rotation snapshot. Only valid, strictly ordered
+            // timestamps fence its stale session identity; equal or unparseable
+            // synthetic timestamps retain the compatible merge behavior.
             var feature = value.feature
+            let hasStaleIdentityMetadata = Self.isStrictlyOlderTimestamp(
+                feature.updatedAt,
+                than: existing.feature.updatedAt
+            )
             if feature.usage == nil { feature.usage = existing.feature.usage }
+            if hasStaleIdentityMetadata {
+                feature.updatedAt = existing.feature.updatedAt
+                feature.nativeSessionID = existing.feature.nativeSessionID
+                feature.includesNativeSessionID = existing.feature.includesNativeSessionID
+                feature.coordinatorContext = existing.feature.coordinatorContext
+                feature.modelSelection = existing.feature.modelSelection
+            } else {
+                // An explicit native_session_id:null is a managed rotation and
+                // must not resurrect its predecessor. Only genuinely omitted
+                // old-server metadata inherits the cached identity and context.
+                if !feature.includesNativeSessionID {
+                    feature.nativeSessionID = existing.feature.nativeSessionID
+                }
+                if feature.coordinatorContext == nil,
+                   feature.nativeSessionID == existing.feature.nativeSessionID {
+                    feature.coordinatorContext = existing.feature.coordinatorContext
+                }
+                if feature.modelSelection == nil { feature.modelSelection = existing.feature.modelSelection }
+            }
             existing.feature = feature
             snapshots[value.feature.id] = existing
         } else { snapshots[value.feature.id] = value }
@@ -151,9 +261,15 @@ final class FirstMateStore {
                 let capabilities = try await client.fetchFirstMateCapabilities()
                 guard capturedGeneration == generation else { return }
                 archiveSupported = capabilities.ok && capabilities.supportsArchive
+                attachmentsSupported = capabilities.ok && capabilities.supportsAttachments
+                contextSupported = capabilities.ok && capabilities.supportsContext
+                safeModelSettingsSupported = capabilities.ok && capabilities.supportsSafeModelSettings
             } catch {
                 guard capturedGeneration == generation else { return }
                 archiveSupported = false
+                attachmentsSupported = false
+                contextSupported = false
+                safeModelSettingsSupported = false
             }
             let list = try await client.fetchFirstMateFeatures(scope: showArchived ? .all : .active)
             guard capturedGeneration == generation else { return }
@@ -219,11 +335,31 @@ final class FirstMateStore {
     func send(expectedContext: OperationContext? = nil, expectedText: String? = nil) async {
         if let expectedContext, expectedContext != operationContext { return }
         if let expectedText, expectedText != draft { return }
-        guard let id = selectedFeatureID, !isSending else { return }
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let originalDraft = draft
+        let text = originalDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        if isDemo { sendDemo(text, featureID: id); return }
-        guard let client else { error = "Connect to send your direction."; return }
+        let context = expectedContext ?? operationContext
+        guard await sendPreparedMessage(text, expectedContext: context),
+              let id = context.featureID else { return }
+        if context == operationContext, draft == originalDraft { draft = "" }
+        if drafts[id] == originalDraft { drafts[id] = nil }
+    }
+
+    /// Sends a fully serialized composer payload. Callers own draft, attachment,
+    /// and quote clearing so only the exact accepted items are removed.
+    func sendPreparedMessage(_ text: String, expectedContext: OperationContext) async -> Bool {
+        guard expectedContext == operationContext,
+              let id = expectedContext.featureID,
+              !isSending,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        if isDemo {
+            sendDemo(text, featureID: id)
+            return true
+        }
+        guard let client else {
+            error = "Connect to send your direction."
+            return false
+        }
         let pending = pendingMessages[id].flatMap { $0.text == text ? $0 : nil }
             ?? (text: text, requestID: UUID().uuidString)
         pendingMessages[id] = pending
@@ -232,18 +368,74 @@ final class FirstMateStore {
         defer { if capturedGeneration == generation { isSending = false } }
         do {
             let value = try await client.sendFirstMateMessage(featureID: id, text: text, requestID: pending.requestID)
-            guard capturedGeneration == generation else { return }
+            guard capturedGeneration == generation, expectedContext.generation == generation else { return false }
             guard value.ok, value.feature.id == id else { throw APIError.invalidResponse }
             receive(value)
             pendingMessages[id] = nil
-            if selectedFeatureID == id, draft.trimmingCharacters(in: .whitespacesAndNewlines) == text { draft = "" }
-            if drafts[id]?.trimmingCharacters(in: .whitespacesAndNewlines) == text { drafts[id] = nil }
             error = nil
             await refresh()
+            return capturedGeneration == generation && expectedContext.generation == generation
         } catch {
-            guard capturedGeneration == generation else { return }
+            guard capturedGeneration == generation else { return false }
             record(error)
+            return false
         }
+    }
+
+    func uploadAttachment(
+        at fileURL: URL,
+        contentType: String,
+        expectedContext: OperationContext
+    ) async throws -> UploadedAttachment {
+        guard expectedContext == operationContext,
+              let featureID = expectedContext.featureID,
+              attachmentsSupported,
+              let client else { throw APIError.invalidResponse }
+        let capturedGeneration = generation
+        let response = try await client.uploadFirstMateAttachment(
+            featureID: featureID,
+            fileURL: fileURL,
+            contentType: contentType
+        )
+        guard capturedGeneration == generation,
+              expectedContext.generation == generation,
+              response.ok,
+              let attachment = response.attachment else { throw APIError.invalidResponse }
+        return attachment
+    }
+
+    func transcribeVoice(
+        at fileURL: URL,
+        expectedContext: OperationContext
+    ) async throws -> VoiceTranscriptionResponse {
+        guard expectedContext == operationContext, let client else { throw APIError.invalidResponse }
+        let capturedGeneration = generation
+        let response = try await client.transcribeFirstMateVoice(fileURL: fileURL)
+        guard capturedGeneration == generation, expectedContext.generation == generation, response.ok else {
+            throw APIError.invalidResponse
+        }
+        return response
+    }
+
+    func isDestinationAlive(_ context: OperationContext) -> Bool {
+        guard context.generation == generation,
+              context.lifecycleIdentity == lifecycleIdentity,
+              let featureID = context.featureID else { return false }
+        return snapshots[featureID] != nil || features.contains { $0.id == featureID }
+    }
+
+    func snapshot(for context: OperationContext) -> FirstMateSnapshot? {
+        guard context.generation == generation,
+              context.lifecycleIdentity == lifecycleIdentity,
+              let featureID = context.featureID else { return nil }
+        return snapshots[featureID]
+    }
+
+    func feature(for context: OperationContext) -> FirstMateFeature? {
+        guard context.generation == generation,
+              context.lifecycleIdentity == lifecycleIdentity else { return nil }
+        return snapshot(for: context)?.feature
+            ?? features.first { context.matchesFeature($0.id) }
     }
 
     func perform(_ action: String, expectedContext: OperationContext? = nil) async {
@@ -320,14 +512,33 @@ final class FirstMateStore {
         return catalog
     }
 
-    func saveModelSettings(_ settings: FirstMateModelSettings, expectedContext: OperationContext) async throws {
+    func reportComposerError(_ message: String) {
+        error = message
+    }
+
+    func saveModelSettings(
+        _ settings: FirstMateModelSettings,
+        expectedContext: OperationContext,
+        expectedSessionID: String? = nil,
+        expectedSettingsRevision: Int? = nil
+    ) async throws {
         guard expectedContext == operationContext, let id = selectedFeatureID,
               !isDemo, !isSending, let client else { throw APIError.invalidResponse }
+        if let expectedSettingsRevision {
+            guard let current = feature(for: expectedContext),
+                  current.nativeSessionID == expectedSessionID,
+                  current.modelSettingsRevision == expectedSettingsRevision else {
+                throw APIError.invalidResponse
+            }
+        }
         let capturedGeneration = generation
         isSending = true
         defer { if generation == capturedGeneration { isSending = false } }
         let value = try await client.setFirstMateModel(featureID: id, settings: settings)
-        guard generation == capturedGeneration, value.ok, value.feature.id == id else { throw APIError.invalidResponse }
+        guard generation == capturedGeneration,
+              expectedContext.generation == generation,
+              value.ok,
+              value.feature.id == id else { throw APIError.invalidResponse }
         receive(value)
     }
 
@@ -406,6 +617,12 @@ final class FirstMateStore {
         } catch { if token == resourceGeneration { sessionPageError = error.localizedDescription } }
     }
 
+    private static func isStrictlyOlderTimestamp(_ candidate: String, than existing: String) -> Bool {
+        guard let candidateDate = HerdrTimestamp.date(from: candidate),
+              let existingDate = HerdrTimestamp.date(from: existing) else { return false }
+        return candidateDate < existingDate
+    }
+
     private func resetSessionPagination() {
         sessionNextBefore = nil
         sessionTotalMessages = nil
@@ -444,7 +661,6 @@ final class FirstMateStore {
         value.messages.append(.init(id: UUID().uuidString, featureID: featureID, role: "assistant", text: "Your direction is recorded in this synthetic demo. Use Next scenario to inspect the planned implementation, review, checkpoint, and handoff states.", status: "delivered", createdAt: FirstMateDemo.timestamp))
         value.feature.revision += 1
         receive(value)
-        draft = ""
     }
 
     private func record(_ failure: Error) {
@@ -452,5 +668,43 @@ final class FirstMateStore {
             unsupported = true
             error = "This companion server needs First Mate support. Update the server to a version with first-mate-v1."
         } else { error = failure.localizedDescription }
+    }
+}
+
+/// Owns the UI-control grant for one visible workspace. Moving this lease to a
+/// different store or lifecycle revokes the previous grant first. Store-issued
+/// tokens make delayed cleanup harmless after a newer view has taken ownership.
+@MainActor
+final class FirstMateWorkspaceControlLease {
+    private weak var store: FirstMateStore?
+    private var token: FirstMateStore.ControlLease?
+
+    func update(store newStore: FirstMateStore, available: Bool) {
+        if store === newStore,
+           let token,
+           token.lifecycleIdentity == newStore.lifecycle {
+            newStore.updateControlLease(token, available: available)
+            return
+        }
+
+        release()
+        store = newStore
+        token = newStore.acquireControlLease(available: available)
+    }
+
+    func release() {
+        if let store, let token {
+            store.releaseControlLease(token)
+        }
+        store = nil
+        token = nil
+    }
+
+    func release(storeID: ObjectIdentifier, lifecycleIdentity: FirstMateStore.LifecycleIdentity) {
+        guard let store,
+              let token,
+              ObjectIdentifier(store) == storeID,
+              token.lifecycleIdentity == lifecycleIdentity else { return }
+        release()
     }
 }

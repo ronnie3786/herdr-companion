@@ -7,6 +7,7 @@ struct PiMarkdownMessageView: View {
     let id: String?
     let detectsPaneLinks: Bool
     @Environment(\.herdrFontScale) private var fontScale
+    @Environment(\.chatProsePalette) private var palette
 
     init(source: String, isStreaming: Bool, id: String? = nil, detectsPaneLinks: Bool = true) {
         self.source = source
@@ -60,7 +61,7 @@ struct PiMarkdownMessageView: View {
                     split.tail,
                     font: HerdrProse.font(.body, scale: fontScale),
                     inlineCodeFont: HerdrProse.inlineCodeFont(.body, scale: fontScale),
-                    inlineCodeColor: HerdrProse.inlineCodeColor,
+                    inlineCodeColor: palette.accent,
                     id: id,
                     cacheKeyLength: fullSourceLength
                 )

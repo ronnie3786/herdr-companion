@@ -381,6 +381,8 @@ class FirstMateRuntimeTests(unittest.TestCase):
         self.runtime._bind(second_job, 'synthetic-coordinator', second_job['session_file'])
         telemetry = self.runtime._job_dir(second_job) / 'telemetry.jsonl'
         telemetry.write_text(json.dumps({'type':'context_usage',
+                                         'native_session_id':'synthetic-coordinator',
+                                         'time':'2026-09-22T12:00:00Z',
                                          'payload':{'tokens':160000,'contextWindow':200000}})+'\n')
         self.runtime._finish(second_job, {'ended':True,'response':'Publishing is authorized.'})
         checkpoint = _read_json(self.runtime.root / 'checkpoints' / (feature['id']+'.json'))

@@ -74,6 +74,7 @@ class ModelSettingsTests(unittest.TestCase):
         # No launch: these are durable dispatch records, just as after a process restart.
         claim = self.store.claim_message(self.feature['id'], runtime.owner)
         old = runtime._new_job(self.feature, kind='coordinator', prompt='Original', claim=claim)
+        self.store.finish_message(claim['id'], runtime.owner)
         self.store.set_model_settings(self.feature['id'], self.settings())
         same = runtime._new_job(self.feature, kind='coordinator', prompt='Retry', claim=claim)
         self.assertEqual(same['model'], 'synthetic/host')
@@ -88,6 +89,107 @@ class ModelSettingsTests(unittest.TestCase):
         reset = runtime._new_job(self.feature, kind='coordinator', prompt='Reset', claim={**claim, 'id': 'reset-turn'})
         self.assertEqual(reset['model'], 'synthetic/host')
         self.assertEqual(reset['thinking'], '')
+
+    def test_claimed_dispatch_is_busy_but_initial_queued_direction_allows_preclaim_selection(self):
+        # Feature creation queues its initial direction. Before it is claimed,
+        # old clients can still choose the initial coordinator model.
+        selected = self.store.set_model_settings(self.feature['id'], self.settings())
+        self.assertEqual(selected['model_settings_revision'], 1)
+        claim = self.store.claim_message(self.feature['id'], 'coordinator-owner')
+        with self.assertRaises(FirstMateError) as conflict:
+            self.store.set_model_settings(self.feature['id'], self.settings(
+                model='synthetic/other', expected_settings_revision=1, request_id='busy'))
+        self.assertEqual(conflict.exception.code, 'coordinator_busy')
+        self.assertEqual(self.store.get_feature(self.feature['id'])['model_settings_revision'], 1)
+        self.store.release_message(claim['id'], 'coordinator-owner', 'synthetic stop', verified_stopped=True)
+
+    def test_established_session_requires_confirmation_exact_identity_and_idle_queue(self):
+        claim = self.store.claim_message(self.feature['id'], 'coordinator-owner')
+        session_file = str(Path(self.temp.name) / 'coordinator-session.jsonl')
+        self.store.bind_coordinator_session(
+            self.feature['id'], 'coordinator-owner', 'native-current', session_file)
+        self.store.finish_message(claim['id'], 'coordinator-owner')
+
+        with self.assertRaises(FirstMateError) as confirmation:
+            self.store.set_model_settings(self.feature['id'], self.settings(request_id='confirm-required'))
+        self.assertEqual(confirmation.exception.code, 'model_change_confirmation_required')
+        with self.assertRaises(FirstMateError) as stale:
+            self.store.set_model_settings(self.feature['id'], self.settings(
+                request_id='stale-session', expected_session_id='native-old',
+                confirm_session_model_change=True))
+        self.assertEqual(stale.exception.code, 'stale_coordinator_session')
+
+        body = self.settings(request_id='confirmed', expected_session_id='native-current',
+                             confirm_session_model_change=True)
+        changed = self.store.set_model_settings(self.feature['id'], body)
+        self.assertEqual(changed['model_settings_revision'], 1)
+        self.store.append_human_message(self.feature['id'], 'Continue safely', 'queued-work')
+        with self.assertRaises(FirstMateError) as busy:
+            self.store.set_model_settings(self.feature['id'], self.settings(
+                model='synthetic/other', expected_settings_revision=1,
+                request_id='queued-busy', expected_session_id='native-current',
+                confirm_session_model_change=True))
+        self.assertEqual(busy.exception.code, 'coordinator_busy')
+        queued = self.store.claim_message(self.feature['id'], 'next-turn-owner')
+        self.store.finish_message(queued['id'], 'next-turn-owner')
+
+        # An idle no-op never mutates, dispatches, or asks for a redundant confirmation.
+        no_op = self.store.set_model_settings(self.feature['id'], self.settings(
+            expected_settings_revision=1, request_id='no-op'))
+        self.assertEqual(no_op['model_settings_revision'], 1)
+        events = self.store.get_events(self.feature['id'])['events']
+        self.assertEqual(sum(event['type'] == 'feature.model_settings_changed' for event in events), 1)
+
+    def test_confirmation_is_stale_after_rotation_to_nil_or_a_successor(self):
+        claim = self.store.claim_message(self.feature['id'], 'coordinator-owner')
+        old_file = str(Path(self.temp.name) / 'coordinator-old.jsonl')
+        self.store.bind_coordinator_session(
+            self.feature['id'], 'coordinator-owner', 'native-old', old_file)
+        self.store.finish_message(claim['id'], 'coordinator-owner')
+        self.store.rotate_coordinator_session(
+            self.feature['id'], 'native-old', 'rotate-old', verified_stopped=True)
+
+        with self.assertRaises(FirstMateError) as stale:
+            self.store.set_model_settings(self.feature['id'], self.settings(
+                request_id='stale-after-nil', expected_session_id='native-old',
+                confirm_session_model_change=True))
+        self.assertEqual(stale.exception.code, 'stale_coordinator_session')
+        self.assertEqual(self.store.get_feature(self.feature['id'])['model_settings_revision'], 0)
+
+        self.store.append_human_message(self.feature['id'], 'Continue', 'successor-turn')
+        successor_claim = self.store.claim_message(self.feature['id'], 'successor-owner')
+        successor_file = str(Path(self.temp.name) / 'coordinator-successor.jsonl')
+        self.store.bind_coordinator_session(
+            self.feature['id'], 'successor-owner', 'native-successor', successor_file)
+        self.store.finish_message(successor_claim['id'], 'successor-owner')
+        with self.assertRaises(FirstMateError) as stale:
+            self.store.set_model_settings(self.feature['id'], self.settings(
+                request_id='stale-after-successor', expected_session_id='native-old',
+                confirm_session_model_change=True))
+        self.assertEqual(stale.exception.code, 'stale_coordinator_session')
+        self.assertEqual(self.store.get_feature(self.feature['id'])['model_settings_revision'], 0)
+
+    def test_identical_confirmed_receipt_replays_after_session_rotation(self):
+        claim = self.store.claim_message(self.feature['id'], 'coordinator-owner')
+        session_file = str(Path(self.temp.name) / 'coordinator-session.jsonl')
+        self.store.bind_coordinator_session(
+            self.feature['id'], 'coordinator-owner', 'native-current', session_file)
+        self.store.finish_message(claim['id'], 'coordinator-owner')
+        body = self.settings(expected_session_id='native-current',
+                             confirm_session_model_change=True)
+        receipt = self.store.set_model_settings(self.feature['id'], body)
+        self.store.rotate_coordinator_session(
+            self.feature['id'], 'native-current', 'rotate', verified_stopped=True)
+        self.assertIsNone(self.store.get_feature(self.feature['id'])['native_session_id'])
+        self.assertEqual(self.store.set_model_settings(self.feature['id'], body), receipt)
+
+    def test_optional_safety_fields_are_strictly_typed(self):
+        for change in ({'expected_session_id': None}, {'expected_session_id': ''},
+                       {'confirm_session_model_change': 1},
+                       {'confirm_session_model_change': 'true'}):
+            with self.subTest(change=change), self.assertRaises(FirstMateError) as failure:
+                self.store.set_model_settings(self.feature['id'], self.settings(**change))
+            self.assertEqual(failure.exception.code, 'invalid_request')
 
     def test_catalog_runs_no_prompt_and_excludes_sensitive_model_fields(self):
         executable = Path(self.temp.name) / 'pi'

@@ -1,4 +1,6 @@
 """The First Mate surface retains the companion's authentication boundary."""
+import base64
+import http.client
 import json
 import tempfile
 import threading
@@ -9,9 +11,11 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from herdr_harness.first_mate_store import FirstMateStore
 from herdr_harness.server import make_handler
+from herdr_harness.service import HerdrService
 
 
 class FirstMateHTTPTests(unittest.TestCase):
@@ -22,9 +26,14 @@ class FirstMateHTTPTests(unittest.TestCase):
         runtime = SimpleNamespace(capabilities=lambda: {"available": True}, session=lambda identity, **paging: {"ok": True, "native_session_id": identity, "messages": [], **paging})
         self.git_calls = []
         self.service = SimpleNamespace(
-            environ={"HERDR_HARNESS_API_TOKEN": "synthetic-main-token", "HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN": "synthetic-ingest-token"},
+            environ={
+                "HERDR_HARNESS_API_TOKEN": "synthetic-main-token",
+                "HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN": "synthetic-ingest-token",
+                "HERDR_HARNESS_ATTACHMENTS_DIR": str(Path(self.temp.name) / "attachments"),
+            },
             first_mate_store=self.store, first_mate=runtime,
             first_mate_changed=self.wakes.append,
+            _decode_attachment=HerdrService._decode_attachment,
             first_mate_git_workspaces=lambda feature_id: {"ok": True, "workspaces": [{"id": "project", "title": "Project workspace", "path": self.temp.name}]},
             first_mate_git_status=lambda feature_id, workspace: self._git_call("status", feature_id, workspace),
             first_mate_git_diff=lambda feature_id, workspace, **values: self._git_call("diff", feature_id, workspace, **values),
@@ -33,6 +42,11 @@ class FirstMateHTTPTests(unittest.TestCase):
             first_mate_git_open=lambda feature_id, workspace, **values: self._git_call("open", feature_id, workspace, **values),
             first_mate_git_commit_files=lambda feature_id, workspace, **values: self._git_call("commit-files", feature_id, workspace, **values),
             first_mate_git_commit_diff=lambda feature_id, workspace, **values: self._git_call("commit-diff", feature_id, workspace, **values),
+        )
+        self.service.first_mate_attachment = (
+            lambda feature_id, **values: HerdrService.first_mate_attachment(
+                self.service, feature_id, **values
+            )
         )
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.service))
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -139,6 +153,13 @@ class FirstMateHTTPTests(unittest.TestCase):
         code, first_mate = self.request("/api/v1/first-mate/capabilities")
         self.assertEqual(code, 200)
         self.assertIn("first-mate-archive-v1", first_mate["capabilities"])
+        for capability in (
+            "first-mate-attachments-v1",
+            "first-mate-context-v1",
+            "first-mate-safe-model-settings-v1",
+        ):
+            self.assertIn(capability, top["capabilities"])
+            self.assertIn(capability, first_mate["capabilities"])
 
     def test_git_capability_and_every_authenticated_operation_forward_the_complete_contract(self):
         _, created = self.create()
@@ -229,6 +250,80 @@ class FirstMateHTTPTests(unittest.TestCase):
         self.assertEqual(self.request(path, body)[0], 200)
         self.assertEqual(self.request(path, {**body, "request_id": "stale"})[0], 409)
         self.assertEqual(self.request(path, {**body, "thinking": "invalid"})[0], 400)
+
+    def test_attachment_upload_is_bounded_authenticated_and_feature_scoped(self):
+        _, data = self.create()
+        identity = data["feature"]["id"]
+        path = f"/api/v1/first-mate/features/{identity}/attachments"
+        payload = {
+            "filename": "../synthetic notes.txt",
+            "content_type": "text/plain",
+            "data_base64": base64.b64encode(b"synthetic notes").decode(),
+        }
+        for token in (None, "synthetic-ingest-token"):
+            self.assertEqual(self.request(path, payload, token=token)[0], 401)
+        code, result = self.request(path, payload)
+        self.assertEqual(code, 200)
+        attachment = result["attachment"]
+        self.assertEqual(set(attachment), {
+            "id", "filename", "originalFilename", "contentType", "size",
+            "path", "workspaceId", "createdAt",
+        })
+        self.assertEqual(attachment["originalFilename"], payload["filename"])
+        self.assertEqual(attachment["workspaceId"], "first-mate:" + identity)
+        stored = Path(attachment["path"])
+        self.assertEqual(stored.read_bytes(), b"synthetic notes")
+        self.assertTrue(stored.resolve().is_relative_to(
+            Path(self.service.environ["HERDR_HARNESS_ATTACHMENTS_DIR"]).resolve()))
+        self.assertEqual(self.request(path, {**payload, "workspace_id": "arbitrary"})[0], 400)
+        self.assertEqual(self.request(path, {**payload, "filename": "bad\nname.txt"})[0], 400)
+        self.assertEqual(self.request(path, {**payload, "content_type": "text/plain\n"})[0], 400)
+        self.assertEqual(self.request(path, {**payload, "data_base64": "invalid=="})[0], 400)
+        self.assertEqual(self.request(
+            "/api/v1/first-mate/features/missing/attachments", payload)[0], 404)
+
+        with patch("herdr_harness.attachments.MAX_ATTACHMENT_BYTES", 3):
+            code, body = self.request(path, {**payload, "data_base64": base64.b64encode(b"four").decode()})
+        self.assertEqual(code, 413)
+        self.assertEqual(body["error"]["code"], "attachment_too_large")
+
+        self.store.feature_action(identity, "complete", "close-feature")
+        code, body = self.request(path, payload)
+        self.assertEqual(code, 409)
+        self.assertEqual(body["error"]["code"], "feature_closed")
+
+    def test_only_first_mate_attachment_route_receives_the_large_json_limit(self):
+        _, data = self.create()
+        identity = data["feature"]["id"]
+        encoded = base64.b64encode(b"x" * (1024 * 1024)).decode()
+        upload = {
+            "filename": "large.txt",
+            "content_type": "text/plain",
+            "data_base64": encoded,
+        }
+        code, result = self.request(
+            f"/api/v1/first-mate/features/{identity}/attachments", upload)
+        self.assertEqual(code, 200)
+        self.assertEqual(result["attachment"]["size"], 1024 * 1024)
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", self.server.server_port, timeout=5)
+        try:
+            connection.request(
+                "POST",
+                f"/api/v1/first-mate/features/{identity}/messages",
+                headers={
+                    "Authorization": "Bearer synthetic-main-token",
+                    "Content-Type": "application/json",
+                    "Content-Length": str(1024 * 1024 + 1),
+                },
+            )
+            response = connection.getresponse()
+            code = response.status
+            body = json.loads(response.read())
+        finally:
+            connection.close()
+        self.assertEqual(code, 413)
+        self.assertEqual(body["error"]["code"], "body_too_large")
 
     def test_events_and_validation(self):
         _, data = self.create()

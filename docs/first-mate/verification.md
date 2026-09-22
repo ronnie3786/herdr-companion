@@ -43,4 +43,4 @@ The ignored `build/first-mate-delivery` directory contains a separately identifi
 - Very long feature histories can still accumulate human directives in coordinator recovery context. Incremental decision summarization remains a future improvement.
 - Session transcripts are paginated. Feature detail exposes the newest 1,000 session metadata records with a truncation flag; older records remain retained in the host ledger.
 
-See [the runtime guide](runtime.md) for configuration, ownership boundaries and recovery behavior, and [the implementation contract](build-contract.md) for the shared API and human checkpoints.
+See [the runtime guide](runtime.md) for configuration, ownership boundaries and recovery behavior, [Mac chat parity and its release checklist](chat-parity.md), and [the implementation contract](build-contract.md) for the shared API and human checkpoints.

@@ -1667,6 +1667,40 @@ class HerdrService:
             },
         }
 
+    def first_mate_attachment(
+        self,
+        feature_id: str,
+        *,
+        filename: str,
+        content_type: str,
+        data_base64: str,
+    ) -> dict:
+        feature = self.first_mate_store.get_feature(feature_id)
+        if feature["status"] in {"completed", "cancelled"}:
+            raise FirstMateError("This feature is closed", code="feature_closed")
+        data = self._decode_attachment(data_base64)
+        namespace = "first-mate:" + feature_id
+        attachment = attachments.store_attachment(
+            workspace_id=namespace,
+            filename=filename,
+            content_type=content_type,
+            data=data,
+            environ=self.environ,
+        )
+        return {
+            "ok": True,
+            "attachment": {
+                "id": attachment["id"],
+                "filename": attachment["filename"],
+                "originalFilename": attachment["original_filename"],
+                "contentType": attachment["content_type"],
+                "size": attachment["size"],
+                "path": attachment["path"],
+                "workspaceId": attachment["workspace_id"],
+                "createdAt": attachment["created_at"],
+            },
+        }
+
     def jira_assigned(self, *, project: str, limit: int) -> dict:
         payload = self._tool_call(
             self.local_tools.jira_assigned,

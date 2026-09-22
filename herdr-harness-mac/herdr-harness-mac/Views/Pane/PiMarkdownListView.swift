@@ -3,6 +3,7 @@ import SwiftUI
 struct PiMarkdownListView: View {
     let items: [PiMarkdownListItem]
     @Environment(\.herdrFontScale) private var fontScale
+    @Environment(\.chatProsePalette) private var palette
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -16,7 +17,7 @@ struct PiMarkdownListView: View {
                         item.text,
                         font: HerdrProse.font(.listItem, scale: fontScale),
                         inlineCodeFont: HerdrProse.inlineCodeFont(.listItem, scale: fontScale),
-                        inlineCodeColor: HerdrProse.inlineCodeColor
+                        inlineCodeColor: palette.accent
                     )
                         .lineSpacing(HerdrProse.lineSpacing(.listItem, scale: fontScale))
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -34,15 +35,15 @@ struct PiMarkdownListView: View {
         case .bullet:
             Text("•")
                 .herdrFont(.body, weight: .bold)
-                .foregroundStyle(HerdrTheme.muted)
+                .foregroundStyle(palette.secondaryText)
         case let .number(number):
             Text("\(number).")
                 .herdrFont(.callout, monospacedDigit: true)
-                .foregroundStyle(HerdrTheme.muted)
+                .foregroundStyle(palette.secondaryText)
         case let .task(isCompleted):
             Image(systemName: isCompleted ? "checkmark.square.fill" : "square")
                 .herdrFont(.callout, weight: .semibold)
-                .foregroundStyle(isCompleted ? HerdrTheme.success : HerdrTheme.muted)
+                .foregroundStyle(isCompleted ? HerdrTheme.success : palette.secondaryText)
         }
     }
 

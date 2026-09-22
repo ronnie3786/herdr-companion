@@ -33,6 +33,104 @@ struct ChatPolishRenderTests {
         render.expectSubstantial()
     }
 
+    @Test("First Mate shared prose is readable in light and dark appearances at narrow large text")
+    func firstMateProseAppearances() async throws {
+        let assistant = FirstMateMessage(
+            id: "assistant",
+            featureID: "synthetic-feature",
+            role: "assistant",
+            text: "## Review\nThe **shared renderer** keeps selectable prose readable.\n\n- One long item wraps at narrow widths without becoming a dark island.\n- Inline `code` retains contrast.",
+            status: "delivered",
+            createdAt: "2030-01-01T12:00:00Z"
+        )
+        let human = FirstMateMessage(
+            id: "human",
+            featureID: "synthetic-feature",
+            role: "user",
+            text: "Keep the complete feature context while making this paragraph selectable.",
+            status: "delivered",
+            createdAt: "2030-01-01T12:00:00Z"
+        )
+        for scheme in [ColorScheme.light, .dark] {
+            let render = try await HerdrRenderHarness.render(
+                "first-mate-prose-\(scheme == .light ? "light" : "dark").png",
+                size: CGSize(width: 330, height: 620)
+            ) {
+                VStack(spacing: 18) {
+                    FirstMateMessageView(message: human)
+                    FirstMateMessageView(message: assistant, canQuote: true)
+                }
+                .padding(12)
+                .environment(\.colorScheme, scheme)
+                .environment(\.herdrFontScale, .xxLarge)
+                .background(FirstMatePalette(scheme: scheme).background)
+            }
+            render.expectSubstantial()
+        }
+    }
+
+    @Test("First Mate native selection receives the light prose color")
+    func firstMateNativeSelectionColor() throws {
+        let firstMate = FirstMatePalette(scheme: .light)
+        let prose = ChatProsePalette(
+            text: firstMate.text,
+            secondaryText: firstMate.secondaryText,
+            accent: firstMate.accent,
+            separator: firstMate.line
+        )
+        let root = ChatSelectableText(text: AttributedString("Readable synthetic prose"), font: .body)
+            .environment(\.chatProsePalette, prose)
+            .frame(width: 300)
+        let host = NSHostingView(rootView: root)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 100), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .aqua)
+        window.contentView = host
+        defer { window.close() }
+        window.layoutIfNeeded()
+        host.layoutSubtreeIfNeeded()
+
+        func find(_ view: NSView) -> ChatSelectionTextView? {
+            if let text = view as? ChatSelectionTextView { return text }
+            return view.subviews.lazy.compactMap(find).first
+        }
+        let textView = try #require(find(host))
+        let color = try #require(textView.attributedString().attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor)
+        let actual = try #require(color.usingColorSpace(.sRGB))
+        let expected = try #require(NSColor(firstMate.text).usingColorSpace(.sRGB))
+        let chatDefault = try #require(NSColor(HerdrTheme.text).usingColorSpace(.sRGB))
+        #expect(abs(actual.redComponent - expected.redComponent) < 0.01)
+        #expect(abs(actual.greenComponent - expected.greenComponent) < 0.01)
+        #expect(abs(actual.blueComponent - expected.blueComponent) < 0.01)
+        #expect(abs(actual.redComponent - chatDefault.redComponent) > 0.1)
+    }
+
+    @Test("First Mate model controls adapt at the 330-point minimum and large text")
+    func firstMateModelControlsNarrow() async throws {
+        let store = FirstMateStore()
+        store.configure(client: nil, demo: true)
+        var feature = try #require(store.snapshot?.feature)
+        feature.modelSettingsRevision = 1
+        feature.nativeSessionID = "synthetic-session"
+        let render = try await HerdrRenderHarness.render(
+            "first-mate-model-controls-narrow.png",
+            size: CGSize(width: 330, height: 240)
+        ) {
+            FirstMateComposerModelControls(
+                store: store,
+                feature: feature,
+                context: store.operationContext,
+                canControl: true,
+                hasQueuedWork: false,
+                modelFavorites: ModelFavoritesStore()
+            )
+            .environment(\.herdrFontScale, .xxLarge)
+            .padding(12)
+            .background(FirstMatePalette(scheme: .light).surface)
+        }
+        render.expectSubstantial()
+    }
+
     @Test("Note tooltips appear after a delay without taking editor focus")
     func delayedTooltip() async throws {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 200), styleMask: [.borderless], backing: .buffered, defer: false)

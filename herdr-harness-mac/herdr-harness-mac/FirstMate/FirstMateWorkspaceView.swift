@@ -6,9 +6,23 @@ private enum FirstMateWorkspaceMode: String, CaseIterable, Identifiable {
     var id: Self { self }
 }
 
+private struct FirstMateWorkspaceControlTarget: Equatable {
+    let storeID: ObjectIdentifier
+    let lifecycle: FirstMateStore.LifecycleIdentity
+    let canControl: Bool
+
+    @MainActor
+    init(store: FirstMateStore, canControl: Bool) {
+        storeID = ObjectIdentifier(store)
+        lifecycle = store.lifecycle
+        self.canControl = canControl
+    }
+}
+
 struct FirstMateWorkspaceView: View {
     @Bindable var model: HerdrAppModel
     @Bindable var store: FirstMateStore
+    let modelFavorites: ModelFavoritesStore
     let canControl: Bool
     let owningMachineID: String?
     let gitOwnerIsReady: Bool
@@ -21,9 +35,11 @@ struct FirstMateWorkspaceView: View {
     @State private var mode = FirstMateWorkspaceMode.chat
     @State private var selectedGitWorkspaceID = "project"
     @State private var selectedGitTargetIdentity: String?
+    @State private var controlLease = FirstMateWorkspaceControlLease()
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
+        let controlTarget = FirstMateWorkspaceControlTarget(store: store, canControl: canControl)
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 if let owningMachineName {
@@ -75,7 +91,13 @@ struct FirstMateWorkspaceView: View {
                         }
                     } else {
                         HSplitView {
-                            FirstMateChatView(store: store, snapshot: snapshot, canControl: canControl)
+                            FirstMateChatView(
+                                store: store,
+                                model: model,
+                                snapshot: snapshot,
+                                canControl: canControl,
+                                modelFavorites: modelFavorites
+                            )
                                 .frame(minWidth: 330, idealWidth: 480, maxWidth: .infinity)
                             FirstMateInspectorView(store: store, snapshot: snapshot)
                                 .frame(minWidth: 340, idealWidth: 465, maxWidth: .infinity)
@@ -112,6 +134,12 @@ struct FirstMateWorkspaceView: View {
                 FirstMateResourceSheet(store: store, resource: resource)
                     .id(resource.id)
             }
+        }
+        .onChange(of: controlTarget, initial: true) { _, _ in
+            controlLease.update(store: store, available: canControl)
+        }
+        .onDisappear {
+            controlLease.release(storeID: controlTarget.storeID, lifecycleIdentity: controlTarget.lifecycle)
         }
         .accessibilityIdentifier("first-mate-workspace")
     }

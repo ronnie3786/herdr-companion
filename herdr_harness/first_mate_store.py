@@ -243,7 +243,9 @@ class FirstMateStore:
 
     def set_model_settings(self, feature_id: str, body: dict) -> dict:
         # A separate revision avoids invalidating running assignments or human gates.
-        if set(body) != {"model", "thinking", "expected_settings_revision", "request_id"}:
+        required = {"model", "thinking", "expected_settings_revision", "request_id"}
+        allowed = required | {"expected_session_id", "confirm_session_model_change"}
+        if not required.issubset(body) or set(body) - allowed:
             raise FirstMateError("Invalid model settings fields", code="invalid_request", status=400)
         model = _text(body.get("model"), "model", 300, optional=True)
         thinking = _text(body.get("thinking"), "thinking", 20, optional=True)
@@ -254,6 +256,12 @@ class FirstMateStore:
         revision = body.get("expected_settings_revision")
         if type(revision) is not int or revision < 0:
             raise FirstMateError("Invalid model settings revision", code="invalid_request", status=400)
+        expected_session_id = body.get("expected_session_id")
+        if "expected_session_id" in body:
+            expected_session_id = _text(expected_session_id, "expected_session_id", 500)
+        confirmed = body.get("confirm_session_model_change", False)
+        if "confirm_session_model_change" in body and type(confirmed) is not bool:
+            raise FirstMateError("Invalid model change confirmation", code="invalid_request", status=400)
         with self._transaction():
             scope = "model_settings:" + feature_id
             cached = self._receipt(scope, body.get("request_id"), body)
@@ -264,10 +272,43 @@ class FirstMateStore:
                 raise FirstMateError("Model settings changed. Reload them before saving.", code="stale_model_settings")
             if feature["status"] in {"completed", "cancelled"}:
                 raise FirstMateError("This feature is closed", code="feature_closed")
+            # coordinator_owner fences the complete claimed dispatch, including
+            # launch and finalization windows that are not represented by status.
+            if feature["coordinator_owner"]:
+                raise FirstMateError("The coordinator is processing a turn", code="coordinator_busy")
+            native_session_id = feature["native_session_id"]
+            if native_session_id:
+                queued = self._db.execute(
+                    "SELECT 1 FROM fm_messages WHERE feature_id=? AND status='queued' LIMIT 1",
+                    (feature_id,),
+                ).fetchone()
+                if queued:
+                    raise FirstMateError("The coordinator has queued work", code="coordinator_busy")
+            changed = (model != feature["coordinator_model"]
+                       or thinking != feature["coordinator_thinking"])
+            if not changed:
+                return self._save_receipt(scope, body["request_id"], body, feature)
+            if expected_session_id is not None and expected_session_id != native_session_id:
+                raise FirstMateError(
+                    "The coordinator session changed. Reload before saving.",
+                    code="stale_coordinator_session",
+                )
+            if native_session_id:
+                if not confirmed:
+                    raise FirstMateError(
+                        "Changing an established coordinator session requires confirmation",
+                        code="model_change_confirmation_required",
+                    )
+                if expected_session_id != native_session_id:
+                    raise FirstMateError(
+                        "The coordinator session changed. Reload before saving.",
+                        code="stale_coordinator_session",
+                    )
             self._db.execute("UPDATE fm_features SET coordinator_model=?,coordinator_thinking=?,model_settings_revision=model_settings_revision+1 WHERE id=?", (model, thinking, feature_id))
             self._event(feature_id, "feature.model_settings_changed", "First Mate model settings updated for the next turn", {
                 "model": model, "thinking": thinking, "settings_revision": revision + 1,
-                "previous_model": feature["coordinator_model"], "previous_thinking": feature["coordinator_thinking"]})
+                "previous_model": feature["coordinator_model"], "previous_thinking": feature["coordinator_thinking"],
+                "native_session_id": native_session_id})
             return self._save_receipt(scope, body["request_id"], body, self._one("fm_features", feature_id))
 
     def get_feature(self, feature_id: str) -> dict:

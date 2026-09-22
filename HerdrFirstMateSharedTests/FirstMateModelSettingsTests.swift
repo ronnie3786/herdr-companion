@@ -128,6 +128,52 @@ struct FirstMateModelSettingsTests {
         #expect(store.snapshots[snapshot.feature.id]?.feature.coordinatorModel == "synthetic/reasoner")
     }
 
+    @Test("An uncertain settings retry reuses one frozen payload and request ID")
+    func retryIdentity() async throws {
+        let store = FirstMateStore()
+        let client = RetryingModelSettingsClient()
+        store.configure(client: client, demo: false)
+        await store.refresh()
+        let context = store.operationContext
+        let feature = try #require(store.feature(for: context))
+        var proposalState = FirstMateModelSettingsProposalState()
+        let stagedProposal = proposalState.stage(
+            feature: feature,
+            context: context,
+            model: "synthetic/reasoner",
+            thinking: "high",
+            safeSettingsSupported: true,
+            requestID: "stable-settings-request"
+        )
+        _ = try #require(stagedProposal)
+        let unconfirmedProposal = proposalState.proposalForSubmission()
+        #expect(unconfirmedProposal == nil)
+        #expect(await client.requests.isEmpty)
+
+        let confirmedProposal = proposalState.proposalForSubmission(userConfirmed: true)
+        let proposal = try #require(confirmedProposal)
+        await #expect(throws: URLError.self) {
+            try await store.saveModelSettings(
+                proposal.settings,
+                expectedContext: context,
+                expectedSessionID: proposal.nativeSessionID,
+                expectedSettingsRevision: proposal.settingsRevision
+            )
+        }
+        let retryProposal = proposalState.proposalForSubmission()
+        let retry = try #require(retryProposal)
+        try await store.saveModelSettings(
+            retry.settings,
+            expectedContext: retry.context,
+            expectedSessionID: retry.nativeSessionID,
+            expectedSettingsRevision: retry.settingsRevision
+        )
+        let requests = await client.requests
+        #expect(requests.count == 2)
+        #expect(requests[0] == requests[1])
+        #expect(requests[0].requestID == "stable-settings-request")
+    }
+
     @Test("A pending settings update cannot land on another host")
     func switchedHost() async throws {
         let store = FirstMateStore()
@@ -144,6 +190,37 @@ struct FirstMateModelSettingsTests {
         #expect(store.features.isEmpty)
         #expect(!store.isSending)
     }
+}
+
+private actor RetryingModelSettingsClient: FirstMateClient {
+    private(set) var requests: [FirstMateModelSettings] = []
+
+    private var snapshot: FirstMateSnapshot {
+        var value = FirstMateDemo.features(step: 0)[0]
+        value.feature.nativeSessionID = "session-a"
+        value.feature.modelSettingsRevision = 4
+        return value
+    }
+
+    func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities {
+        .init(ok: true, capabilities: ["first-mate-v1", "first-mate-safe-model-settings-v1"])
+    }
+    func fetchFirstMateFeatures() async throws -> FirstMateFeatureList { .init(ok: true, features: [snapshot.feature]) }
+    func fetchFirstMateFeature(_ id: String) async throws -> FirstMateSnapshot { snapshot }
+    func setFirstMateModel(featureID: String, settings: FirstMateModelSettings) async throws -> FirstMateSnapshot {
+        requests.append(settings)
+        if requests.count == 1 { throw URLError(.networkConnectionLost) }
+        var value = snapshot
+        value.feature.coordinatorModel = settings.model
+        value.feature.coordinatorThinking = settings.thinking
+        value.feature.modelSettingsRevision = settings.expectedSettingsRevision + 1
+        return value
+    }
+    func createFirstMateFeature(title: String, goal: String, cwd: String, requestID: String) async throws -> FirstMateSnapshot { throw APIError.invalidResponse }
+    func sendFirstMateMessage(featureID: String, text: String, requestID: String) async throws -> FirstMateSnapshot { throw APIError.invalidResponse }
+    func performFirstMateAction(featureID: String, action: String, requestID: String) async throws -> FirstMateSnapshot { throw APIError.invalidResponse }
+    func fetchFirstMateDocument(_ id: String) async throws -> FirstMateDocumentResponse { throw APIError.invalidResponse }
+    func fetchFirstMateSession(_ id: String, before: Int?) async throws -> FirstMateSessionResponse { throw APIError.invalidResponse }
 }
 
 private actor ModelSettingsClient: FirstMateClient {

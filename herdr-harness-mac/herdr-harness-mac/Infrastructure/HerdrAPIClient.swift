@@ -233,6 +233,31 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient {
         ])
     }
 
+    func uploadFirstMateAttachment(
+        featureID: String,
+        fileURL: URL,
+        contentType: String
+    ) async throws -> AttachmentUploadResponse {
+        let candidate = try AttachmentPolicy.candidate(for: fileURL, ownership: .userSelected)
+        let accessed = fileURL.startAccessingSecurityScopedResource()
+        defer { if accessed { fileURL.stopAccessingSecurityScopedResource() } }
+        let data = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
+        try AttachmentPolicy.validateFile(named: candidate.filename, byteCount: Int64(data.count))
+        return try await request(
+            path: firstMatePath("features", id: featureID) + "/attachments",
+            method: "POST",
+            body: WorkspaceAttachmentBody(
+                filename: candidate.filename,
+                contentType: contentType,
+                dataBase64: data.base64EncodedString()
+            )
+        )
+    }
+
+    func transcribeFirstMateVoice(fileURL: URL) async throws -> VoiceTranscriptionResponse {
+        try await transcribeVoice(fileURL: fileURL)
+    }
+
     func performFirstMateAction(featureID: String, action: String, requestID: String) async throws -> FirstMateSnapshot {
         try await request(path: firstMatePath("features", id: featureID) + "/actions", method: "POST", body: [
             "action": action, "request_id": requestID,

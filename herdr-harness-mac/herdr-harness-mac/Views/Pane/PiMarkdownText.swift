@@ -6,6 +6,7 @@ struct PiMarkdownText: View {
     @Environment(\.saveChatQuote) private var saveQuote
     @Environment(\.paneResponseLinkCatalog) private var paneLinks
     @Environment(\.detectsPaneResponseLinks) private var detectsPaneLinks
+    @Environment(\.chatProsePalette) private var palette
     let font: Font
     let cacheRenderedText: Bool
     var inlineCodeFont: Font? = nil
@@ -71,8 +72,8 @@ struct PiMarkdownText: View {
             } else {
                 Text(linked)
                     .font(font)
-                    .foregroundStyle(HerdrTheme.text)
-                    .tint(HerdrTheme.accent)
+                    .foregroundStyle(palette.text)
+                    .tint(palette.accent)
                     .textSelection(.enabled)
             }
         }

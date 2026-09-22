@@ -27,11 +27,28 @@ class FirstMateCLITests(unittest.TestCase):
         self.assertEqual(body,{'text':'Plan only.\nDo not implement.','request_id':'stable-send'})
         self.assertEqual(self.requests[0].full_url,'https://host.example.test/api/v1/first-mate/features/fmf_sample/messages')
 
-    def test_set_model_preserves_revision_effort_and_retry_identity(self):
+    def test_set_model_preserves_four_field_initial_request_when_safety_flags_omitted(self):
         code, _ = self.run_cli(['set-model', 'fmf_sample', '--model', 'synthetic/reasoner', '--thinking', 'high', '--expected-settings-revision', '2', '--request-id', 'model-one'])
         self.assertEqual(code, 0)
         self.assertEqual(self.requests[0].full_url, 'https://host.example.test/api/v1/first-mate/features/fmf_sample/model-settings')
         self.assertEqual(json.loads(self.requests[0].data), {'model': 'synthetic/reasoner', 'thinking': 'high', 'expected_settings_revision': 2, 'request_id': 'model-one'})
+
+    def test_set_model_forwards_explicit_established_session_confirmation(self):
+        code, _ = self.run_cli([
+            'set-model', 'fmf_sample', '--model', 'synthetic/reasoner',
+            '--thinking', 'high', '--expected-settings-revision', '2',
+            '--expected-session-id', 'native-current',
+            '--confirm-session-model-change', '--request-id', 'model-confirmed',
+        ])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(self.requests[0].data), {
+            'model': 'synthetic/reasoner',
+            'thinking': 'high',
+            'expected_settings_revision': 2,
+            'expected_session_id': 'native-current',
+            'confirm_session_model_change': True,
+            'request_id': 'model-confirmed',
+        })
 
     def test_pause_has_revision_and_no_automatic_retries(self):
         code,_=self.run_cli(['pause','fmf_sample','--expected-revision','3','--request-id','pause-one'])

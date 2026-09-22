@@ -686,16 +686,48 @@ class PRReviewRuntimeTests(unittest.TestCase):
     def test_shell_skill_uses_split_argv_and_syncs_viewed_afterward(self):
         review, worktree = self._ready_review()
         self.store.upsert_files(review["id"], [{"path": "Sources/Garden.swift"}])
+        sync_started = threading.Event()
+        allow_sync = threading.Event()
+        utility_workers = []
+
+        def block_sync(argv, _kwargs):
+            if argv[:2] == ["gh", "autoview"]:
+                utility_workers.append(threading.current_thread())
+            if argv[:3] == ["gh", "api", "graphql"]:
+                sync_started.set()
+                allow_sync.wait(timeout=5)
+            return None
+
+        self.runner.on_call = block_sync
         run = self.runtime.start_run(review["id"], "mark-generated-and-test-viewed-in-pull-request", "utility")
-        self._until(lambda: self.store.run(review["id"], run["id"])["state"] in {"finished", "failed"})
+        try:
+            self._until(lambda: self.store.run(review["id"], run["id"])["state"] in {"finished", "failed"})
+            self.assertTrue(sync_started.wait(timeout=2))
+            self.assertTrue(utility_workers[0].is_alive())
+        finally:
+            allow_sync.set()
+            if utility_workers:
+                utility_workers[0].join(timeout=5)
+        self.assertFalse(utility_workers[0].is_alive())
         utility = next(call for call in self.runner.calls if call[0][:2] == ["gh", "autoview"])
         self.assertEqual(utility[0], shlex.split("gh autoview https://github.com/example-owner/garden/pull/42 --apply"))
         self.assertEqual(utility[1]["cwd"], str(worktree))
         self.assertEqual(self.store.run(review["id"], run["id"])["state"], "finished")
         self.assertTrue(any(argv[:3] == ["gh", "api", "graphql"] for argv, _ in self.runner.calls))
-        self.runner.on_call = lambda argv, _kwargs: _Result(returncode=1, stderr="synthetic utility failure") if argv[:2] == ["gh", "autoview"] else None
+
+        failed_workers = []
+
+        def fail_utility(argv, _kwargs):
+            if argv[:2] == ["gh", "autoview"]:
+                failed_workers.append(threading.current_thread())
+                return _Result(returncode=1, stderr="synthetic utility failure")
+            return None
+
+        self.runner.on_call = fail_utility
         failed = self.runtime.start_run(review["id"], "mark-generated-and-test-viewed-in-pull-request", "utility-failed")
         self._until(lambda: self.store.run(review["id"], failed["id"])["state"] in {"finished", "failed"})
+        failed_workers[0].join(timeout=5)
+        self.assertFalse(failed_workers[0].is_alive())
         self.assertEqual(self.store.run(review["id"], failed["id"])["state"], "failed")
 
     def test_reconcile_registers_only_new_untracked_matching_outputs_once(self):

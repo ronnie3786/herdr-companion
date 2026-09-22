@@ -84,6 +84,8 @@ ENVIRONMENT_FIELDS = {
         "worker_thinking": "HERDR_FIRST_MATE_WORKER_THINKING",
         "planner_model": "HERDR_FIRST_MATE_PLANNER_MODEL",
         "planner_thinking": "HERDR_FIRST_MATE_PLANNER_THINKING",
+        "architect_model": "HERDR_FIRST_MATE_ARCHITECT_MODEL",
+        "architect_thinking": "HERDR_FIRST_MATE_ARCHITECT_THINKING",
         "max_workers": "HERDR_FIRST_MATE_MAX_WORKERS",
         "context_target": "HERDR_FIRST_MATE_CONTEXT_TARGET", "stall_seconds": "HERDR_FIRST_MATE_STALL_SECONDS",
         "coordinator_timeout_seconds": "HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS",

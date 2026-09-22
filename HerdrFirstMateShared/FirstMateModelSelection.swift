@@ -12,15 +12,33 @@ struct FirstMateModelSelection: Codable, Equatable, Sendable {
         if let actual = normalized(actualModel) {
             return joined(model: shortModel(actual), thinking: normalized(actualThinking))
         }
+        guard !isUnconfiguredArchitectRequest else { return "Not configured" }
         let requested = normalized(requestedModel).map(shortModel) ?? "Pi default"
         return "Requested \(joined(model: requested, thinking: normalized(requestedThinking)))"
     }
 
-    var fullDisplayName: String {
-        if let actual = normalized(actualModel) {
-            return "Actual \(joined(model: actual, thinking: normalized(actualThinking)))"
+    var profileDisplayName: String {
+        normalized(profile) ?? "Unknown"
+    }
+
+    var requestedDisplayName: String {
+        guard !isUnconfiguredArchitectRequest else { return "Not configured" }
+        return joined(model: normalized(requestedModel) ?? "Pi default", thinking: normalized(requestedThinking))
+    }
+
+    var actualDisplayName: String {
+        guard let actual = normalized(actualModel) else {
+            return "Unavailable — no observed runtime evidence"
         }
-        return "Requested \(joined(model: normalized(requestedModel) ?? "Pi default", thinking: normalized(requestedThinking)))"
+        return joined(model: actual, thinking: normalized(actualThinking))
+    }
+
+    var fullDisplayName: String {
+        "Profile: \(profileDisplayName) · Requested: \(requestedDisplayName) · Actual: \(actualDisplayName)"
+    }
+
+    private var isUnconfiguredArchitectRequest: Bool {
+        normalized(profile)?.lowercased() == "architect" && normalized(requestedModel) == nil
     }
 
     private func normalized(_ value: String?) -> String? {
@@ -48,6 +66,7 @@ struct FirstMateModelRouting: Decodable, Equatable, Sendable {
     var coordinator: FirstMateRoutingDefault
     var planning: FirstMateRoutingDefault
     var execution: FirstMateRoutingDefault
+    var architect: FirstMateRoutingDefault?
 }
 
 struct FirstMateRoutingDefault: Decodable, Equatable, Sendable {
@@ -55,9 +74,20 @@ struct FirstMateRoutingDefault: Decodable, Equatable, Sendable {
     var thinking: String
 
     var compactDisplayName: String {
+        if let configuredDisplayName { return configuredDisplayName }
+        let effort = thinking.trimmingCharacters(in: .whitespacesAndNewlines)
+        return effort.isEmpty ? "Pi default" : "Pi default · \(effort)"
+    }
+
+    var configuredDisplayName: String? {
         let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        let modelName = trimmed.isEmpty ? "Pi default" : (trimmed.split(separator: "/").last.map(String.init) ?? trimmed)
+        guard !trimmed.isEmpty else { return nil }
+        let modelName = trimmed.split(separator: "/").last.map(String.init) ?? trimmed
         let effort = thinking.trimmingCharacters(in: .whitespacesAndNewlines)
         return effort.isEmpty ? modelName : "\(modelName) · \(effort)"
+    }
+
+    var pinnedDisplayName: String {
+        configuredDisplayName ?? "NOT CONFIGURED"
     }
 }

@@ -33,7 +33,7 @@ struct FirstMateModelSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("First Mate model").herdrFont(.title3, weight: .semibold)
-            Text("Saved for this feature and applied to the next First Mate turn. Host planning and execution defaults route new work separately.")
+            Text("Saved for this feature and applied to the next First Mate turn. Host planning, execution, and architect routes are configured separately.")
                 .herdrFont(.caption).foregroundStyle(.secondary)
             if feature.modelSettingsRevision == nil {
                 Label("Update this companion server to 0.12.0b3 or later to configure models here. You can keep chatting with its current model.", systemImage: "arrow.down.circle")
@@ -74,7 +74,12 @@ struct FirstMateModelSettingsView: View {
                     routingRow("Coordinator", value: routing.coordinator)
                     routingRow("Planning", value: routing.planning)
                     routingRow("Execution", value: routing.execution)
-                    Text("These defaults apply to new dispatches and continuations. Running workers keep their current model until a safe checkpoint and handoff.")
+                    if let architect = routing.architect {
+                        routingRow("Architect", value: architect, emptyModelLabel: architect.pinnedDisplayName)
+                        Text("Architect is a host-only pin from the private [first_mate] configuration. Change architect_model and architect_thinking there; this feature's model choice never overrides it.")
+                            .herdrFont(.caption2).foregroundStyle(.secondary)
+                    }
+                    Text("Host routing applies to new dispatches, retries, continuations, and handoffs. Already-started sessions keep their recorded selection.")
                         .herdrFont(.caption2).foregroundStyle(.secondary)
                 }
                 if let error {
@@ -111,13 +116,15 @@ struct FirstMateModelSettingsView: View {
         }.buttonStyle(.plain).help(id.isEmpty ? "Use this host's default First Mate model" : id)
     }
 
-    private func routingRow(_ title: String, value: FirstMateRoutingDefault) -> some View {
-        HStack {
+    private func routingRow(_ title: String, value: FirstMateRoutingDefault, emptyModelLabel: String? = nil) -> some View {
+        let fallbackDisplayName = emptyModelLabel ?? value.compactDisplayName
+        let displayName = value.configuredDisplayName ?? fallbackDisplayName
+        return HStack {
             Text(title).herdrFont(.caption).foregroundStyle(.secondary)
             Spacer()
-            Text(value.compactDisplayName).herdrFont(.caption, weight: .medium)
+            Text(displayName).herdrFont(.caption, weight: .medium)
                 .lineLimit(1).truncationMode(.middle)
-                .help([value.model, value.thinking].filter { !$0.isEmpty }.joined(separator: " · "))
+                .help(value.configuredDisplayName == nil ? fallbackDisplayName : [value.model, value.thinking].filter { !$0.isEmpty }.joined(separator: " · "))
         }
     }
 

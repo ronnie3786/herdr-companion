@@ -29,6 +29,25 @@ Usage accounting is additive. Feature objects, assignment objects and session ob
 
 A usage summary has `currency` (`USD`), nullable `cost_usd`, `status` (`complete`, `partial`, or `unavailable`), nonnegative integer `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, and `total_tokens`, `usage_records`, `missing_cost_records`, `session_count`, `known_cost_sessions`, `models`, and `updated_at`. Public integer counters are bounded to the cross-client JSON-safe range `0...(2^53-1)`; an invalid or overflowing value is skipped and lowers coverage instead of emitting a rounded or un-decodable number. Each model row repeats the cost/status/token/record fields and adds nullable `provider` and `model`. Optional `stale:true` means a previously parsed amount was preserved after its source became temporarily unreadable; its status is never complete. Explicit Pi-reported zero is valid. Unknown cost is `null`, never an invented zero. These are Pi-reported estimates rather than provider invoices, and subscription-backed providers may report zero.
 
+Feature, assignment, delegation, and session projections may contain additive
+`model_selection` with `profile`, `requested_model`, `requested_thinking`, nullable
+`actual_model`, nullable `actual_thinking`, and `source`. The requested fields
+acknowledge routing policy; they are never presented as observed execution. Actual
+fields come only from Pi `get_state` or identity-validated retained session history.
+Acknowledgements report the requested role and pin, never an inferred actual. The
+coordinator interprets natural-language intent such as `Give me an architect
+review` and uses typed `model_profile: architect` for architecture/design reviews,
+architect audits, and a second opinion on an implementation. A model name or title
+alone does not override host pins. An unavailable or mismatched requested architect
+is blocked and is never re-routed through planning or execution. The delegated
+profile vocabulary is `planning`, `execution`, and `architect`;
+coordinator is a separate runtime profile. The model catalog's additive routing
+object exposes coordinator, planning, execution, and architect defaults. Its
+architect row includes `configured`; an unset architect model remains a readable
+`configured:false` catalog state rather than breaking feature or catalog reads.
+Older clients ignore these additions, and newer clients accept older servers that
+omit architect routing.
+
 ## Implementation layers
 
 - `first_mate_store.py`: SQLite transactions, deduplication, event ledger, assignments, attempts, message queue, handoffs and human gates.

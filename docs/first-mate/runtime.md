@@ -37,17 +37,44 @@ attributed to a feature.
 The Pi supervisor is a detached Python module using Pi's documented JSONL RPC.
 It maintains a saved session even if the first model request fails.
 
-Every dispatch uses a typed `coordinator`, `planning`, or `execution` routing
-profile. `fm_delegate` can choose planning or execution explicitly. When omitted,
-only an exact current visit `stage_key` of `planning` selects planning; every
-other stage selects execution. The resolved profile is stored with the assignment,
-including nested delegation, without classifying free-form titles or prompts.
+Every dispatch uses a typed `coordinator`, `planning`, `execution`, or `architect`
+routing profile. `fm_delegate` can choose any delegated profile explicitly. Use
+`architect` when natural-language intent asks for an architecture/design review,
+architect audit, or a second opinion on an implementation, independent of the
+stage. For example, `Give me an architect review` is routed explicitly with
+`model_profile: architect`. Ordinary planning, implementation, routine code
+review, and testing retain their existing profiles. A model name or worker title
+alone does not override host pins; the coordinator interprets intent and supplies
+the typed profile rather than Python classifying prompt text. When the field is
+omitted, only an exact current visit `stage_key` of `planning` selects planning;
+every other stage selects execution. The resolved profile is stored with the
+assignment, including nested delegation. An unavailable or mismatched requested
+architect is a blocker and is never re-routed through planning or execution.
 
 Feature coordinator settings override host coordinator fields for the next turn.
 A configured planning or execution model wins over the legacy assignment model.
-Without a configured role model, routing falls back through the assignment model,
-the legacy host `first_mate.model`, and finally Pi's default. Role effort is passed
-when configured; otherwise Pi selects it. Advisors use execution policy.
+Without a configured planning/execution role model, routing falls back through
+the assignment model, the legacy host `first_mate.model`, and finally Pi's
+default. Architect is intentionally different: it requires the operator's exact
+provider-qualified `first_mate.architect_model` pin and never falls back to an
+assignment, worker, legacy, or Pi-default model. Its effort is optional, but when
+configured it must match Pi's effective effort. Advisors continue to use execution
+policy.
+
+Before an architect prompt is sent, the supervisor inspects Pi's initial RPC
+`get_state`. Pi must report the exact pinned provider/model identity and, when
+configured, the exact architect effort. Missing or mismatched evidence blocks the
+assignment before the task prompt and retains the requested and observed values.
+The same policy is frozen in the immutable workspace plan before delegation
+allocates a workspace or assignment, then checked again under the dispatch writer
+lock immediately before launch. Replaying the same delegation request reuses that
+frozen requested selection even if host policy changed or was removed; changed
+parameters are rejected. Legacy plans without selection metadata retain their
+original receipt shape. An unstarted queued claim is blocked visibly if its pin
+disappears; rejection and finalization occur while holding the writer lock, and a
+delayed supervisor refuses the rejected job. Started or writer-locked dispatches
+keep their recorded policy. Retries, child continuations, and handoff successors
+resolve the current host policy as new dispatches.
 
 Saved Pi JSONL is streamed from the private runtime sessions root and validated
 against its session header. Assistant usage, explicit tool-result usage,
@@ -55,8 +82,9 @@ compaction usage and branch-summary usage are counted; compaction `retainedTail`
 is not re-counted. A compaction or branch summary without usage lowers coverage.
 Entry IDs deduplicate repeated records. Recorded message/usage provider and model
 fields drive historical grouping; configured model settings are never substituted.
-Public `model_selection` keeps requested values separate from actual values. Actual
-model and effort come only from Pi `get_state` or identity-validated saved-session
+Public `model_selection` acknowledgements report the requested role and pin, with
+actual values left null until observed. Actual model and effort come only from Pi
+`get_state` or identity-validated saved-session
 metadata. Later validated native changes supersede startup observations. Unknown
 actual values remain `null`; selection metadata never contains transcript text.
 Partial final lines wait for completion. Missing, malformed, identity-mismatched,
@@ -115,7 +143,10 @@ not inherit the companion control token.
   stage, delegate, steer, retry, revise affected work, resolve explicit human
   gates, complete a stage and finish the feature. It can also read bounded
   feature Documents and saved sessions. Pi's normal configured tools, extensions,
-  skills, prompt templates and project context remain available.
+  skills, prompt templates and project context remain available. Its charter
+  interprets requests such as `Give me an architect review` and selects
+  `architect` explicitly for architecture/design reviews, architect audits, and
+  second opinions on implementations. Names alone do not override host pins.
 - Worker: read feature evidence, delegate scoped children, yield until their
   outcomes, retry a direct child, report a verdict with documents, request a
   human decision, produce a checkpoint and acknowledge a predecessor's handoff.
@@ -238,7 +269,8 @@ recovery, fresh successor acknowledgement, worktree isolation, role scoping and
 idempotent delegation. They also cover the coordinator's replacement prompt,
 resumed-session charter and extension refresh, normal configured tool access,
 role-specific First Mate workflow actions, reference-oriented input, worker
-evidence capabilities and question/answer continuity across rotation. Focused
+evidence capabilities, explicit architect routing and startup pin validation,
+and question/answer continuity across rotation. Focused
 usage tests cover mixed models and entry shapes, zero/missing/corrupt numeric
 values, append refresh and stale cache behavior, header/path validation, retries,
 nested/advisor attribution, unbounded inventory and transcript-page independence.
@@ -273,6 +305,7 @@ are `HERDR_HARNESS_FIRST_MATE_RUNS_ROOT`, `HERDR_STATE_DIR`,
 `HERDR_FIRST_MATE_MODEL`, `HERDR_FIRST_MATE_COORDINATOR_THINKING`,
 `HERDR_FIRST_MATE_PLANNER_MODEL`, `HERDR_FIRST_MATE_PLANNER_THINKING`,
 `HERDR_FIRST_MATE_WORKER_MODEL`, `HERDR_FIRST_MATE_WORKER_THINKING`,
+`HERDR_FIRST_MATE_ARCHITECT_MODEL`, `HERDR_FIRST_MATE_ARCHITECT_THINKING`,
 `HERDR_FIRST_MATE_MAX_WORKERS`,
 `HERDR_FIRST_MATE_CONTEXT_TARGET`, `HERDR_FIRST_MATE_STALL_SECONDS`, and
 `HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS`. The default runtime directory is

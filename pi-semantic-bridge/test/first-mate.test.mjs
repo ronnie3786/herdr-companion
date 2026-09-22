@@ -128,7 +128,12 @@ test("coordinator exposes evidence and orchestration while normal tools remain u
     assert.equal(f.handlers.get("tool_call")({toolName:"fm_outcome"}).block, true);
     assert.equal(f.handlers.get("tool_call")({toolName:"fm_delegate"}), undefined);
     const profile = f.tools.get("fm_delegate").parameters.properties.model_profile;
-    assert.deepEqual(profile.anyOf.map((item) => item.const), ["planning", "execution"]);
+    assert.deepEqual(profile.anyOf.map((item) => item.const), ["planning", "execution", "architect"]);
+    assert.match(profile.description, /second opinion on an implementation/);
+    assert.match(profile.description, /Give me an architect review/);
+    assert.match(profile.description, /model name or worker title alone does not override host pins/);
+    assert.match(profile.description, /NEVER be re-routed through planning or execution/);
+    assert.match(profile.description, /actual model only from model_selection actual evidence/);
   } finally { f.cleanup(); }
 });
 

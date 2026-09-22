@@ -110,7 +110,7 @@ class FirstMateUsageParserTests(unittest.TestCase):
         parsed = self.accountant.session_usage(path, "native-changed")
         selection = FirstMateRuntime._selection({
             "kind": "worker", "actual_model": "synthetic/startup", "actual_thinking": "low",
-            "model_selection": {"profile": "execution", "requested_model": "synthetic/requested",
+            "model_selection": {"profile": "architect", "requested_model": "synthetic/requested",
                                 "requested_thinking": "high", "actual_model": None,
                                 "actual_thinking": None, "source": "host_policy"}}, parsed)
         self.assertEqual(selection["requested_model"], "synthetic/requested")

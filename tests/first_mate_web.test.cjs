@@ -243,7 +243,9 @@ test('creating a feature starts with its own draft and preserves the previous fe
   await app.reply('/features', { ok: true, feature: feature('c') }, 'POST');
   assert.equal(app.element('#prompt').value, '');
   assert.equal(app.element('#dialog').open, false);
-  await app.refresh('c', ['a', 'b', 'c']);
+  // The create response can become visible through its detail endpoint before
+  // the eventually consistent feature list includes it.
+  await app.refresh('c', ['a', 'b']);
   await creation;
   app.element('#prompt').value = 'A separate draft for feature c';
   await app.select('a');

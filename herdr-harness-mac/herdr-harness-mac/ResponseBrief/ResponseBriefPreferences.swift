@@ -8,6 +8,7 @@ final class ResponseBriefPreferences {
         static let enabledChats = "herdr.responseBrief.enabledChats.v1"
         static let model = "herdr.responseBrief.model.v1"
         static let thinking = "herdr.responseBrief.thinking.v1"
+        static let length = "herdr.responseBrief.length.v1"
     }
 
     static let maximumEnabledChats = 20
@@ -16,6 +17,9 @@ final class ResponseBriefPreferences {
     private(set) var enabledChats: [ResponseBriefChatIdentity]
     private(set) var model: String?
     private(set) var thinkingLevel: String?
+    /// App-wide brief length. Absent or unreadable stored values fall back to
+    /// Minimal so an upgrade never silently grows output.
+    private(set) var length: ResponseBriefLength
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -27,6 +31,8 @@ final class ResponseBriefPreferences {
         }
         model = defaults.string(forKey: Key.model)
         thinkingLevel = defaults.string(forKey: Key.thinking)
+        length = defaults.string(forKey: Key.length)
+            .flatMap(ResponseBriefLength.init(rawValue:)) ?? .fallback
     }
 
     func isEnabled(_ chat: ResponseBriefChatIdentity) -> Bool {
@@ -54,6 +60,11 @@ final class ResponseBriefPreferences {
     func replaceThinkingLevel(_ level: String?) {
         thinkingLevel = level
         defaults.set(level, forKey: Key.thinking)
+    }
+
+    func replaceLength(_ length: ResponseBriefLength) {
+        self.length = length
+        defaults.set(length.rawValue, forKey: Key.length)
     }
 
     private func persistChats() {

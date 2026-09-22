@@ -3,6 +3,7 @@ import CryptoKit
 import Foundation
 import SwiftUI
 import Testing
+import Vision
 @testable import herdr_harness_mac
 
 @Suite("Settings pane renders", .serialized)
@@ -147,6 +148,257 @@ struct SettingsRenderTests {
         }
 
         #expect(digests.count == SettingsPane.allCases.count)
+    }
+
+    @Test("Smart Rename settings render the saved naming model and effort")
+    func rendersSmartRenameSettings() async throws {
+        let populated = try await renderAgentsPane(
+            named: "settings-smart-rename-populated.png",
+            configure: { settings in
+                settings.smartRenameModel = "openai-codex/gpt-5.6-luna"
+                settings.smartRenameThinkingLevel = .off
+            }
+        )
+        let defaultsOnly = try await renderAgentsPane(
+            named: "settings-smart-rename-defaults.png",
+            configure: { _ in }
+        )
+
+        populated.result.expectSubstantial()
+        defaultsOnly.result.expectSubstantial()
+        // The naming model label and effort picker are part of the Agents pane,
+        // so a saved Smart Rename choice must change what it draws.
+        #expect(try pngData(populated) != pngData(defaultsOnly))
+    }
+
+    @Test("Both Smart Rename controls change the rendered Agents pane")
+    func rendersBothSmartRenameControls() async throws {
+        let baseline = try await renderAgentsPane(
+            named: "settings-smart-rename-baseline.png",
+            configure: { settings in
+                settings.smartRenameModel = "openai-codex/gpt-5.6-luna"
+                settings.smartRenameThinkingLevel = .off
+            }
+        )
+        let otherModel = try await renderAgentsPane(
+            named: "settings-smart-rename-other-model.png",
+            configure: { settings in
+                settings.smartRenameModel = "anthropic/claude-sonnet-4-5"
+                settings.smartRenameThinkingLevel = .off
+            }
+        )
+        let otherEffort = try await renderAgentsPane(
+            named: "settings-smart-rename-other-effort.png",
+            configure: { settings in
+                settings.smartRenameModel = "openai-codex/gpt-5.6-luna"
+                settings.smartRenameThinkingLevel = .low
+            }
+        )
+
+        for render in [baseline, otherModel, otherEffort] {
+            render.result.expectSubstantial()
+        }
+        #expect(try pngData(baseline) != pngData(otherModel))
+        #expect(try pngData(baseline) != pngData(otherEffort))
+        #expect(baseline.settings.smartRenameModel == "openai-codex/gpt-5.6-luna")
+        #expect(otherModel.settings.smartRenameModel == "anthropic/claude-sonnet-4-5")
+        #expect(otherEffort.settings.smartRenameThinkingLevel == .low)
+    }
+
+    @Test("A saved but unavailable selection stays visible with a strict-policy warning")
+    func rendersUnavailableSelectionWarning() async throws {
+        let available = try await renderAgentsPane(
+            named: "settings-smart-rename-available.png",
+            configure: { settings in
+                settings.smartRenameModel = "openai-codex/gpt-5.6-luna"
+                settings.smartRenameThinkingLevel = .low
+            }
+        )
+        let unavailable = try await renderAgentsPane(
+            named: "settings-smart-rename-unavailable.png",
+            settlePasses: 16,
+            configure: { settings in
+                settings.smartRenameModel = "ghost/vendor-naming"
+                settings.smartRenameThinkingLevel = .low
+            }
+        )
+
+        available.result.expectSubstantial()
+        unavailable.result.expectSubstantial()
+        // The warning changes the drawn pane; the saved selection survives the
+        // catalog load and every unrelated preference stays put.
+        #expect(try pngData(available) != pngData(unavailable))
+        #expect(unavailable.settings.smartRenameModel == "ghost/vendor-naming")
+        #expect(unavailable.settings.smartRenameThinkingLevel == .low)
+        #expect(unavailable.settings.quickChatModel == "")
+        #expect(unavailable.settings.hudModel == "")
+
+        // "offered" appears only in the strict-policy warning, so visible text
+        // proves the unavailable selection was reported rather than hidden.
+        let availableText = try recognizedText(available)
+        let unavailableText = try recognizedText(unavailable)
+        #expect(!availableText.lowercased().contains("offered"))
+        #expect(unavailableText.lowercased().contains("offered"))
+
+        let catalog = try await HerdrRenderFixtures.demoModel().fetchAgentModels()
+        let warning = try #require(SmartRenameSettingsPresentation.resolutionWarning(
+            catalog: catalog,
+            preference: "ghost/vendor-naming",
+            thinkingLevel: .low,
+            browsedCatalogMachineName: "desktop"
+        ))
+        #expect(warning.contains("ghost/vendor-naming"))
+        #expect(warning.contains("desktop"))
+        #expect(warning.contains("Settings"))
+        #expect(!warning.contains("falls back"))
+    }
+
+    @Test("An incompatible thinking level warns with Off as the actionable fix")
+    func rendersIncompatibleThinkingWarning() async throws {
+        let legacy = PiAvailableModel(
+            provider: "alpha",
+            modelID: "legacy",
+            name: "Alpha Legacy",
+            reasoning: false,
+            contextWindow: nil
+        )
+        let catalog = AgentModelCatalogResponse(
+            ok: true,
+            models: [legacy],
+            defaultModel: PiModelIdentity(provider: "alpha", id: "legacy", name: "Alpha Legacy")
+        )
+
+        #expect(SmartRenameSettingsPresentation.resolutionWarning(
+            catalog: catalog,
+            preference: legacy.id,
+            thinkingLevel: .off,
+            browsedCatalogMachineName: "Alpha"
+        ) == nil)
+
+        let warning = try #require(SmartRenameSettingsPresentation.resolutionWarning(
+            catalog: catalog,
+            preference: legacy.id,
+            thinkingLevel: .high,
+            browsedCatalogMachineName: "Alpha"
+        ))
+        #expect(warning.contains("alpha/legacy"))
+        #expect(warning.contains("High"))
+        #expect(warning.contains("Off"))
+        #expect(warning.contains("Alpha"))
+        #expect(warning.contains("Settings"))
+    }
+
+    @Test("The Smart Rename copy states the strict policy without promising a fallback")
+    func smartRenameCopyStatesStrictPolicy() {
+        let footer = SmartRenameSettingsPresentation.sectionFooter
+        #expect(footer.contains("keeps the current title"))
+        #expect(footer.contains("leaves the saved preference unchanged"))
+        #expect(footer.contains("no other model or machine is substituted"))
+        #expect(!footer.contains("fallback"))
+        #expect(!footer.contains("falls back"))
+        #expect(!footer.contains("Off when the resolved model cannot reason"))
+
+        let sourceNote = SmartRenameSettingsPresentation.catalogSourceFootnote
+        #expect(sourceNote.contains("browses"))
+        #expect(sourceNote.contains("does not prove"))
+        #expect(sourceNote.contains("machine that owns the target"))
+    }
+
+    @Test("Switching the browsed catalog source leaves the saved selection unchanged")
+    func switchingCatalogSourceKeepsSelection() async throws {
+        let desktop = try await renderAgentsPane(
+            named: "settings-smart-rename-source-desktop.png",
+            initialCatalogMachineID: "demo1",
+            configure: { settings in
+                settings.smartRenameModel = "anthropic/claude-sonnet-4-5"
+                settings.smartRenameThinkingLevel = .low
+            }
+        )
+        let laptop = try await renderAgentsPane(
+            named: "settings-smart-rename-source-laptop.png",
+            initialCatalogMachineID: "demo2",
+            configure: { settings in
+                settings.smartRenameModel = "anthropic/claude-sonnet-4-5"
+                settings.smartRenameThinkingLevel = .low
+            }
+        )
+
+        desktop.result.expectSubstantial()
+        laptop.result.expectSubstantial()
+        // The source picker label changes with the browsed companion, but the
+        // naming preference is never part of catalog state.
+        #expect(try pngData(desktop) != pngData(laptop))
+        for render in [desktop, laptop] {
+            #expect(render.settings.smartRenameModel == "anthropic/claude-sonnet-4-5")
+            #expect(render.settings.smartRenameThinkingLevel == .low)
+        }
+    }
+
+    private struct AgentsPaneRender {
+        let result: HerdrRenderHarness.RenderResult
+        let settings: AgentModelSettingsStore
+    }
+
+    private func pngData(_ render: AgentsPaneRender) throws -> Data {
+        try Data(contentsOf: render.result.url)
+    }
+
+    private func recognizedText(_ render: AgentsPaneRender) throws -> String {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = ["en-US"]
+        request.minimumTextHeight = 0.005
+        try HerdrOCR.perform(request, url: render.result.url)
+        return (request.results ?? [])
+            .compactMap { $0.topCandidates(1).first?.string }
+            .joined(separator: " ")
+    }
+
+    private func renderAgentsPane(
+        named name: String,
+        initialCatalogMachineID: String? = nil,
+        settlePasses: Int = 8,
+        configure: (AgentModelSettingsStore) -> Void
+    ) async throws -> AgentsPaneRender {
+        let suiteName = "SettingsRenderTests.smartRename.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let model = HerdrRenderFixtures.demoModel()
+        let fontScale = HerdrFontScaleStore(defaults: defaults)
+        let agentSettings = AgentModelSettingsStore(defaults: defaults)
+        configure(agentSettings)
+        // Tall enough that the whole Smart Rename section, including its
+        // footer and any warning row, is captured rather than clipped.
+        let result = try await HerdrRenderHarness.render(
+            name,
+            size: CGSize(width: 920, height: 1400),
+            settlePasses: settlePasses
+        ) {
+            SettingsView(
+                model: model,
+                fontScale: fontScale,
+                cleanupSettings: CleanupSettingsStore(defaults: defaults),
+                agentSettings: agentSettings,
+                promptSettings: HerdrPromptSettingsStore(defaults: defaults),
+                modelFavorites: ModelFavoritesStore(userDefaults: defaults),
+                hudController: HerdrHudController(userDefaults: defaults),
+                updates: HerdrUpdateController(defaults: defaults),
+                agentControl: AgentControlController(
+                    defaults: defaults,
+                    secretStorage: TestAgentControlSecretStorage()
+                ),
+                initialPane: .agents,
+                initialSmartRenameCatalogMachineID: initialCatalogMachineID
+            )
+            .environment(\.herdrFontScale, fontScale.scale)
+            .background(HerdrTheme.ink)
+            .foregroundStyle(HerdrTheme.text)
+            .preferredColorScheme(.dark)
+            .tint(HerdrTheme.accent)
+        }
+        return AgentsPaneRender(result: result, settings: agentSettings)
     }
 
     private func luminanceStatistics(

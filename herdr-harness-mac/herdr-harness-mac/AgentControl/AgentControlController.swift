@@ -793,22 +793,37 @@ final class AgentControlController {
             return .completed(["presentation": .string("summary"), "operationState": .string("started")])
         case "chat.smart-rename":
             let pane = try await targetedPane(command.target, model: model, context: context)
-            guard pane.supportsPiSemanticChat else {
-                throw AgentControlCommandError.unavailable("This pane has no live semantic Pi session to rename.")
-            }
             guard !model.smartRenamingPaneIDs.contains(pane.id) else {
                 throw AgentControlCommandError.conflict("Smart Rename is already running for this pane.")
             }
-            let outcome = try await model.smartRenameForAgentControl(pane) {
-                try self.validateExecutionContext(context)
+            let outcome: HerdrAppModel.SmartRenamePaneOutcome
+            do {
+                outcome = try await model.smartRenameForAgentControl(pane) {
+                    try self.validateExecutionContext(context)
+                }
+            } catch let error as AgentControlCommandError {
+                throw error
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // Routing and context failures carry actionable messages while
+                // the receiver contract requires an AgentControlCommandError.
+                throw AgentControlCommandError.failed(error.localizedDescription)
             }
             switch outcome {
-            case let .refreshed(title):
-                return .completed(["operationState": .string("finished"), "title": .string(title)])
-            case let .renamedNeedsRefresh(title, message):
-                throw AgentControlCommandError.failed(
-                    "The pane was renamed to “\(title)”, but updated workspace state could not be refreshed: \(message)"
-                )
+            case let .refreshed(title, notice):
+                var result: [String: PiJSONValue] = [
+                    "operationState": .string("finished"),
+                    "title": .string(title),
+                ]
+                if let notice, !notice.isEmpty {
+                    result["notice"] = .string(notice)
+                }
+                return .completed(result)
+            case let .renamedNeedsRefresh(title, message, notice):
+                var text = "The pane was renamed to “\(title)”, but updated workspace state could not be refreshed: \(message)"
+                if let notice, !notice.isEmpty { text += " \(notice)" }
+                throw AgentControlCommandError.failed(text)
             }
         case "chat.mark-unread":
             let pane = try await targetedPane(command.target, model: model, context: context)
@@ -826,21 +841,13 @@ final class AgentControlController {
             try validateExecutionContext(context)
             return .completed(["provider": .string(provider), "modelId": .string(modelID)])
         case "chat.tab-color":
-            let colorName = try requiredString("color", command.parameters)
-            guard let target = command.target else { throw AgentControlCommandError.invalid("chat.tab-color requires a target.") }
-            try await refreshForTarget(target, model: model, context: context)
-            let resolved = try resolve(target, model: model)
-            let tabID: String
-            switch resolved {
-            case let .pane(pane): tabID = pane.scopedTabID
-            case let .tab(_, tab): tabID = tab.id
-            default: throw AgentControlCommandError.invalid("chat.tab-color requires a pane or tab target.")
-            }
-            let color = colorName == "none" ? nil : ChatTabColor(rawValue: colorName)
-            if colorName != "none", color == nil { throw AgentControlCommandError.invalid("Unknown tab color.") }
-            model.chatTabColors.assign(color, to: tabID)
-            stateDidChange()
-            return .completed(["color": color.map { .string($0.rawValue) } ?? .null])
+            // Permanently read-only. The registry rejects this before any
+            // side effect and this arm is defense in depth for a legacy or
+            // queued command, so it must never refresh or assign.
+            throw AgentControlCommandError.disabled(
+                AgentControlRegistry.permanentlyDisabledActions["chat.tab-color"]
+                    ?? "Tab colors are read-only through agent control."
+            )
         default:
             throw AgentControlCommandError.invalid("Unsupported action: \(command.action)")
         }

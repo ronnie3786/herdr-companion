@@ -174,6 +174,18 @@ class FirstMateRuntimeTests(unittest.TestCase):
     def feature(self, goal='Plan the synthetic feature'):
         return self.store.create_feature({'title':'Synthetic feature','goal':goal,'cwd':str(self.cwd),'request_id':'create'})
 
+    def test_archived_nonterminal_feature_remains_in_internal_reconciliation(self):
+        feature = self.feature()
+        self.store.set_archived(feature['id'], True, {'request_id': 'archive-running'})
+        self.assertEqual(self.runtime.list_features(), [])
+        self.assertEqual([item['id'] for item in self.runtime.list_features('all')], [feature['id']])
+        launched = []
+        with patch.object(self.runtime, '_launch', side_effect=launched.append), \
+             patch.object(self.runtime, 'capabilities', return_value={'available': True}):
+            self.runtime.reconcile()
+        self.assertEqual([job['feature_id'] for job in launched], [feature['id']])
+        self.assertEqual(launched[0]['kind'], 'coordinator')
+
     def until(self, predicate, timeout=12):
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -548,7 +560,10 @@ class FirstMateRuntimeTests(unittest.TestCase):
         self.assertNotIn('HERDR_HARNESS_API_TOKEN', child)
         self.assertNotIn('HERDR_FIRST_MATE_ROLE', child)
         self.assertEqual(child['HERDR_FIRST_MATE_MANAGED_ROLE'],'coordinator')
-        self.assertEqual(spawn.call_args.kwargs['cwd'], feature['cwd'])
+        self.assertEqual(
+            Path(spawn.call_args.kwargs['cwd']).resolve(),
+            Path(feature['cwd']).resolve(),
+        )
         self.assertEqual(child['PATH'].split(os.pathsep)[0], str(self.fake.parent))
         self.assertTrue(child['PATH'].endswith(configured_path))
 

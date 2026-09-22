@@ -21,7 +21,7 @@ struct ChatColorLegendRow: View {
         model.workspaces.contains { workspace in
             workspace.panes.contains {
                 store.color(for: $0.scopedTabID) == color
-                    && $0.piSemantic?.sessionID != nil && model.canControl(machineID: $0.machineID)
+                    && model.canControl(machineID: $0.machineID)
             }
         }
     }

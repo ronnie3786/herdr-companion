@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import Synchronization
 import Testing
 @testable import herdr_harness_mac
 
@@ -548,6 +549,79 @@ struct AgentControlRoutingTests {
         #expect(fixture.model.manuallyUnreadPaneIDs.contains(pane.id))
     }
 
+    @Test("Smart Rename reaches the execution machine for a shell pane without a Pi session")
+    func shellPaneSmartRenameRouting() async throws {
+        ShellSmartRenameURLProtocol.reset()
+        defer { ShellSmartRenameURLProtocol.reset() }
+        let suite = "AgentControlShellSmartRenameTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defaults.set(true, forKey: "herdr.agentControl.enabled.v1")
+        let machine = HerdrMachine(
+            id: "shell-machine",
+            name: "Synthetic Shell",
+            urlString: "http://127.0.0.1:9455"
+        )
+        let credentials = TestCredentialStore()
+        credentials.values["api-token.\(machine.id)"] = "synthetic-token"
+        let model = HerdrAppModel(
+            credentials: credentials,
+            arguments: ["HerdrTests"],
+            userDefaults: defaults,
+            configuredMachines: []
+        )
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [ShellSmartRenameURLProtocol.self]
+        let client = HerdrAPIClient(
+            configuration: try #require(ServerConfiguration(
+                urlString: machine.urlString,
+                token: "synthetic-token"
+            )),
+            session: URLSession(configuration: sessionConfiguration)
+        )
+        model.machines = [machine]
+        model.clientFactory = { _ in client }
+        model.prepareRuntime(for: machine, generation: model.connectionGeneration)
+        model.machineStates[machine.id] = .live
+        let shell = HerdrShellState(userDefaults: defaults)
+        let controller = AgentControlController(
+            defaults: defaults,
+            secretStorage: TestAgentControlSecretStorage()
+        )
+        controller.configure(
+            model: model,
+            shell: shell,
+            hudController: HerdrHudController(userDefaults: defaults),
+            openMainWindow: {},
+            openSettingsWindow: {}
+        )
+        let target = AgentControlTarget(
+            kind: "pane",
+            serverId: "srv_shell",
+            machineId: machine.id,
+            workspaceId: "w1",
+            tabId: "t1",
+            paneId: "p1",
+            terminalId: "term1",
+            generation: 0
+        )
+
+        do {
+            _ = try await controller.executeForTesting(
+                command(action: "chat.smart-rename", target: target),
+                serverMapping: ["srv_shell": machine.id]
+            )
+            Issue.record("Expected the context-free shell pane to fail Smart Rename")
+        } catch let error as AgentControlCommandError {
+            #expect(error.message.contains("no readable context"))
+            #expect(!error.message.contains("semantic"))
+        }
+        let counts = ShellSmartRenameURLProtocol.counts()
+        #expect(counts.catalogFetches == 1)
+        #expect(counts.outputs == 1)
+        #expect(counts.renames == 0)
+    }
+
     private func makeHistoryFixture() async throws -> (
         controller: AgentControlController,
         model: HerdrAppModel,
@@ -774,4 +848,65 @@ struct TestAgentControlSecretStorage: AgentControlSecretStorage {
     }
 
     func set(_ value: String, for account: String) -> OSStatus { errSecSuccess }
+}
+
+/// Answers a catalogs route, a deliberately context-free shell workspace,
+/// bounded output, and rename mutations so routing can be observed without a
+/// semantic Pi session.
+private final class ShellSmartRenameURLProtocol: URLProtocol, @unchecked Sendable {
+    private struct State: Sendable {
+        var catalogFetches = 0
+        var outputs = 0
+        var renames = 0
+    }
+
+    private static let state = Mutex(State())
+
+    static func reset() {
+        state.withLock { $0 = State() }
+    }
+
+    static func counts() -> (catalogFetches: Int, outputs: Int, renames: Int) {
+        state.withLock { ($0.catalogFetches, $0.outputs, $0.renames) }
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+        let method = request.httpMethod ?? "GET"
+        let path = url.path
+        let notFound = #"{"ok":false,"error":{"code":"not_found","message":"Synthetic route not found"}}"#
+        let response: (status: Int, body: String)
+        switch (method, path) {
+        case ("GET", "/api/v1/agent-runs/models"):
+            Self.state.withLock { $0.catalogFetches += 1 }
+            response = (200, #"{"ok":true,"models":[{"provider":"shell","id":"naming","name":"Shell Naming","reasoning":true}],"default":{"provider":"shell","id":"naming","name":"Shell Naming"}}"#)
+        case ("GET", "/api/v1/workspaces"):
+            response = (200, #"{"ok":true,"workspaces":[{"workspace_id":"w1","number":1,"label":"","focused":true,"pane_count":1,"tab_count":1,"active_tab_id":"t1","agent_status":"idle","tabs":[{"tab_id":"t1","workspace_id":"w1","number":1,"label":"","focused":true,"pane_count":1,"agent_status":"idle"}],"panes":[{"pane_id":"p1","terminal_id":"term1","workspace_id":"w1","tab_id":"t1","focused":true,"agent_status":"idle","revision":1,"cwd":null,"label":null,"agent":"zsh","display_agent":"Terminal"}]}],"alerts":[]}"#)
+        case ("GET", let path) where path.hasSuffix("/output"):
+            Self.state.withLock { $0.outputs += 1 }
+            response = (404, notFound)
+        case ("PATCH", let path) where path.hasSuffix("/panes/p1"):
+            Self.state.withLock { $0.renames += 1 }
+            response = (200, #"{"ok":true}"#)
+        default:
+            response = (404, notFound)
+        }
+        let http = HTTPURLResponse(
+            url: url,
+            statusCode: response.status,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(response.body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

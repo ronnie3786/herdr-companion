@@ -71,7 +71,10 @@ struct FirstMateUsageTests {
         snapshot.sessionsTruncated = true
         #expect(snapshot.feature.usage?.costUSD == 9.99)
         #expect(snapshot.feature.usage?.sessionCount == 1_200)
-        #expect(snapshot.sessions.map { $0.usage?.costUSD ?? 0 }.reduce(0, +) == 170)
+        let retainedSessionCost: Double = snapshot.sessions.reduce(0.0) { total, session in
+            total + (session.usage?.costUSD ?? 0.0)
+        }
+        #expect(retainedSessionCost == 170)
     }
 
     @Test("Coordinator and advisor histories are classified without role-label inference")

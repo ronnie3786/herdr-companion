@@ -95,6 +95,37 @@ class FirstMateHTTPTests(unittest.TestCase):
             code, _ = self.request(path, {"action": action, "request_id": action})
             self.assertEqual(code, 400)
 
+    def test_action_endpoint_archives_without_waking_or_changing_workflow(self):
+        _, data = self.create()
+        identity = data["feature"]["id"]
+        path = f"/api/v1/first-mate/features/{identity}/actions"
+        before = self.store.snapshot(identity)
+        wakes = list(self.wakes)
+        body = {"action": "archive", "reason": "duplicate", "request_id": "archive-one"}
+        code, archived = self.request(path, body)
+        self.assertEqual(code, 200)
+        self.assertEqual(self.request(path, body)[1], archived)
+        self.assertEqual(self.wakes, wakes)
+        self.assertEqual(archived["feature"]["status"], before["feature"]["status"])
+        self.assertEqual(archived["feature"]["revision"], before["feature"]["revision"])
+        self.assertEqual(archived["feature"]["archive_reason"], "duplicate")
+        self.assertEqual(self.request("/api/v1/first-mate/features")[1]["features"], [])
+        self.assertEqual(len(self.request("/api/v1/first-mate/features?view=archived")[1]["features"]), 1)
+        self.assertEqual(len(self.request("/api/v1/first-mate/features?view=all")[1]["features"]), 1)
+        self.assertEqual(self.request(path, {"action": "archive", "reason": "finished", "request_id": "bad"})[0], 400)
+        code, restored = self.request(path, {"action": "unarchive", "request_id": "unarchive-one"})
+        self.assertEqual(code, 200)
+        self.assertIsNone(restored["feature"]["archived_at"])
+        self.assertEqual(restored["feature"]["status"], before["feature"]["status"])
+
+    def test_archive_capability_is_advertised_at_both_levels(self):
+        code, top = self.request("/api/v1")
+        self.assertEqual(code, 200)
+        self.assertIn("first-mate-archive-v1", top["capabilities"])
+        code, first_mate = self.request("/api/v1/first-mate/capabilities")
+        self.assertEqual(code, 200)
+        self.assertIn("first-mate-archive-v1", first_mate["capabilities"])
+
     def test_model_settings_require_auth_and_do_not_wake_agents(self):
         _, data = self.create()
         identity = data["feature"]["id"]

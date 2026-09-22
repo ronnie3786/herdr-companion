@@ -32,6 +32,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Mapping, TextIO
 
+from .chat_tab_color_cli import (
+    CHAT_TAB_COLOR_CHOICES,
+    GROUPING_SCOPE,
+    GROUP_BY_CHOICES,
+    chat_tab_colors_unsupported_message,
+    color_query_parameters,
+    group_results,
+    is_color_requested,
+    normalized_color_client,
+    supports_chat_tab_colors,
+)
 from .config import ConfigurationError, load_configuration
 from .secret_file import (
     SecretFileError,
@@ -699,6 +710,31 @@ class ControlCLI:
             results.append(self._augment_result(item, machine=machine, server_id=server_id))
         return {**result, "results": results}
 
+    def require_color_capability(self, machine: str) -> None:
+        """Fail closed when a companion cannot report tab colors.
+
+        Color discovery is additive. A companion without ``chat-tab-colors-v1``
+        would ignore or reject the new query parameters, so the CLI reports an
+        explicit unsupported result instead of a false empty match.
+        """
+
+        unsupported = CLIError(
+            chat_tab_colors_unsupported_message(),
+            code="chat_tab_colors_unsupported",
+            exit_code=5,
+            details={"machineId": machine},
+        )
+        try:
+            response = self.client(machine).request(
+                "GET", "/api/v1/control/capabilities"
+            )
+        except CLIError as exc:
+            if exc.code == "not_found" or exc.http_status in {404, 405, 501}:
+                raise unsupported from exc
+            raise
+        if not supports_chat_tab_colors(response.get("capabilities")):
+            raise unsupported
+
     def _check_target_machine(self, target: Mapping[str, Any], machine: str) -> None:
         target_machine = target.get("machineId")
         if target_machine is not None and target_machine != machine:
@@ -1122,12 +1158,37 @@ class ControlCLI:
             machines = sorted(self.roster()) if all_machines else [self.require_data_machine()]
             if not machines:
                 raise CLIError("The configured machine roster is empty", "no_machines")
+            color = getattr(args, "color", None)
+            color_label = getattr(args, "color_label", None)
+            color_client = normalized_color_client(getattr(args, "color_client", None))
+            group_by = getattr(args, "group_by", None)
+            color_requested = is_color_requested(
+                color=color,
+                color_label=color_label,
+                color_client=color_client,
+                group_by=group_by,
+            )
+            if color_requested and args.find_kind == "workspaces":
+                raise CLIError(
+                    "Tab color filters and grouping apply to chats, tabs, or all; "
+                    "workspaces have no tab color metadata",
+                    "invalid_arguments",
+                )
+            # Color behavior is tab-scoped, so a color request over chats or all
+            # reads terminal discovery and never implies saved HUD ownership.
+            chat_scope = (
+                "terminal" if color_requested and args.find_kind in {"chats", "all"} else None
+            )
             settings = {
                 "kind": args.find_kind,
                 "query": args.query,
                 "ticket": args.ticket,
                 "sort": args.sort,
                 "limit": args.limit,
+                "color": color,
+                "colorLabel": color_label,
+                "colorClientId": color_client,
+                "groupBy": group_by,
                 "machines": machines,
             }
             if args.cursor is not None and args.offset is not None:
@@ -1146,10 +1207,15 @@ class ControlCLI:
             for machine in machines:
                 try:
                     self.client(machine)
+                    if color_requested:
+                        self.require_color_capability(machine)
                     ready.append(machine)
                 except CLIError as exc:
                     error_by_machine[machine] = exc
             if ready:
+                color_query = color_query_parameters(
+                    color=color, color_label=color_label, color_client=color_client
+                )
                 with ThreadPoolExecutor(max_workers=min(4, len(ready))) as executor:
                     futures = {
                         executor.submit(
@@ -1161,6 +1227,8 @@ class ControlCLI:
                             sort=args.sort,
                             limit=args.limit,
                             offset=offsets[machine],
+                            chatScope=chat_scope,
+                            **color_query,
                         ): machine
                         for machine in ready
                     }
@@ -1182,6 +1250,17 @@ class ControlCLI:
                 if machine in error_by_machine
             ]
             if not successes:
+                if color_requested and all(
+                    error_by_machine.get(machine) is not None
+                    and error_by_machine[machine].code == "chat_tab_colors_unsupported"
+                    for machine in machines
+                ):
+                    raise CLIError(
+                        chat_tab_colors_unsupported_message(),
+                        "chat_tab_colors_unsupported",
+                        5,
+                        details={"sources": errors},
+                    )
                 raise CLIError(
                     "Discovery failed on every selected machine",
                     "all_sources_failed",
@@ -1248,18 +1327,26 @@ class ControlCLI:
             can_continue = any(source_has_more.values()) and all(
                 offset <= 100000 for offset in next_offsets.values()
             )
-            return Outcome(
-                {
-                    "ok": True,
-                    "partial": bool(errors),
-                    "results": merged,
-                    "sources": sources,
-                    "sourceErrors": errors,
-                    "nextCursor": _encode_cursor(settings, next_offsets)
-                    if can_continue
-                    else None,
-                }
-            )
+            payload: dict[str, Any] = {
+                "ok": True,
+                "partial": bool(errors),
+                "results": merged,
+                "sources": sources,
+                "sourceErrors": errors,
+                "nextCursor": _encode_cursor(settings, next_offsets)
+                if can_continue
+                else None,
+            }
+            if group_by is not None:
+                payload["groups"] = group_results(
+                    merged,
+                    group_by=group_by,
+                    color=color,
+                    color_label=color_label,
+                    color_client=color_client,
+                )
+                payload["groupingScope"] = GROUPING_SCOPE
+            return Outcome(payload)
 
         if args.command == "inspect":
             machine = self.require_data_machine()
@@ -1449,6 +1536,27 @@ def _add_create_open_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--view", choices=("chat", "terminal", "git", "skills"))
 
 
+def _add_find_color_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--color",
+        choices=CHAT_TAB_COLOR_CHOICES,
+        help="Match one palette color, or none for explicitly unassigned tabs",
+    )
+    parser.add_argument(
+        "--color-label",
+        help="Match a published tab color label exactly (trimmed, case-insensitive)",
+    )
+    parser.add_argument(
+        "--color-client",
+        help="Restrict tab color matching to one publisher installation ID",
+    )
+    parser.add_argument(
+        "--group-by",
+        choices=GROUP_BY_CHOICES,
+        help="Add a page-scoped color or label group projection of the returned rows",
+    )
+
+
 def _parser() -> JSONArgumentParser:
     parser = JSONArgumentParser(
         prog="herdr-control",
@@ -1480,6 +1588,7 @@ def _parser() -> JSONArgumentParser:
             help="Opaque continuation cursor returned by a previous matching query",
         )
         search.add_argument("--all-machines", dest="find_all_machines", action="store_true")
+        _add_find_color_arguments(search)
 
     inspect = commands.add_parser("inspect", help="Revalidate one exact target")
     inspect.add_argument("--ref-file", required=True)

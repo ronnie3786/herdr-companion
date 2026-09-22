@@ -202,6 +202,182 @@ struct ResponseBriefSourceTests {
         }
     }
 
+    @Test("A live answer without an identifier verifies continuity with its persisted entry")
+    func liveToPersistedIdentity() throws {
+        var live = PiConversationReducer()
+        live.replace(with: try snapshot(entries: "[]", state: #"{"isStreaming":true}"#))
+        _ = live.apply(try envelope(1, #"{"type":"message_end","message":{"role":"user","content":"Question","timestamp":1786536000000}}"#))
+        _ = live.apply(try envelope(2, #"{"type":"message_start","message":{"role":"assistant","timestamp":1786536060000,"content":[]}}"#))
+        _ = live.apply(try envelope(3, #"{"type":"message_update","assistantMessageEvent":{"type":"text_end","contentIndex":0,"content":"Exact answer"}}"#))
+        _ = live.apply(try envelope(4, #"{"type":"message_end","message":{"role":"assistant","timestamp":1786536060000,"stopReason":"stop","content":[{"type":"text","text":"Exact answer"}]}}"#))
+        _ = live.apply(try envelope(5, #"{"type":"agent_settled"}"#))
+
+        let liveSource = try #require(ResponseBriefSource.latest(
+            turns: live.turns,
+            machineID: "synthetic-machine",
+            paneID: "p1",
+            sessionID: "s1"
+        ))
+        #expect(liveSource.responseID == "live:s1:1786536060000")
+        #expect(liveSource.identity?.responseTimestamp == Date(timeIntervalSince1970: 1_786_536_060))
+        #expect(liveSource.identity?.userTimestamp == Date(timeIntervalSince1970: 1_786_536_000))
+
+        var persisted = PiConversationReducer()
+        persisted.replace(with: try snapshot(entries: """
+        [
+          {"type":"message","id":"entry-u1","timestamp":"2026-09-01T00:00:00Z","message":{"role":"user","content":"Question","timestamp":1786536000000}},
+          {"type":"message","id":"entry-a1","timestamp":"2026-09-01T00:00:01Z","message":{"role":"assistant","timestamp":1786536060000,"stopReason":"stop","content":[{"type":"text","text":"Exact answer"}]}}
+        ]
+        """))
+        let persistedSource = try #require(ResponseBriefSource.latest(
+            turns: persisted.turns,
+            machineID: "synthetic-machine",
+            paneID: "p1",
+            sessionID: "s1"
+        ))
+        #expect(persistedSource.responseID == "entry-a1")
+        #expect(persistedSource.identity == liveSource.identity)
+        #expect(ResponseBriefIdentity.match(liveSource, persistedSource) == .verifiedContinuation)
+    }
+
+    @Test("Source identity mirrors projected timestamps and never invents them")
+    func identityMirrorsProjectedTimestamps() throws {
+        let responseDate = Date(timeIntervalSince1970: 1_800_000_100)
+        let userDate = Date(timeIntervalSince1970: 1_800_000_000)
+        let timestamped = PiConversationTurn(
+            id: "turn-timestamped",
+            user: PiUserMessage(id: "u1", text: "Question", timestamp: userDate),
+            items: [.assistant(.init(
+                id: "answer-1:text:0",
+                text: "Exact answer",
+                status: .complete,
+                timestamp: responseDate,
+                stopReason: "stop"
+            ))],
+            isActive: false
+        )
+        let timestampedSource = try #require(ResponseBriefSource.latest(
+            turns: [timestamped],
+            machineID: "synthetic-machine",
+            paneID: "p1",
+            sessionID: "s1"
+        ))
+        #expect(timestampedSource.identity?.responseTimestamp == responseDate)
+        #expect(timestampedSource.identity?.userTimestamp == userDate)
+        #expect(timestampedSource.identity?.responseTextHash == ResponseBriefIdentityEvidence.hash("Exact answer"))
+        #expect(timestampedSource.identity?.userTextHash == ResponseBriefIdentityEvidence.hash("Question"))
+
+        let undated = PiConversationTurn(
+            id: "turn-undated",
+            user: PiUserMessage(id: "u2", text: "Question", timestamp: nil),
+            items: [.assistant(.init(
+                id: "answer-2:text:0",
+                text: "Exact answer",
+                status: .complete,
+                stopReason: "stop"
+            ))],
+            isActive: false
+        )
+        let undatedSource = try #require(ResponseBriefSource.latest(
+            turns: [undated],
+            machineID: "synthetic-machine",
+            paneID: "p1",
+            sessionID: "s1"
+        ))
+        #expect(undatedSource.identity?.responseTimestamp == nil)
+        #expect(undatedSource.identity?.userTimestamp == nil)
+        #expect(undatedSource.identity?.responseTextHash == ResponseBriefIdentityEvidence.hash("Exact answer"))
+    }
+
+    @Test("Length-aware requests carry the selection and drop superseded prompt caps")
+    func lengthAwareRequestContract() throws {
+        let source = makeSource(
+            text: "line one\nline two",
+            current: "Current question",
+            previousUser: nil,
+            previousAssistant: nil
+        )
+        let legacy = try ResponseBriefRequestBuilder.request(
+            for: source,
+            model: "provider/model",
+            thinkingLevel: "low",
+            clientRequestID: "legacy-request"
+        )
+        #expect(legacy.responseBriefLength == nil)
+        #expect(legacy.prompt == ResponseBriefRequestBuilder.prompt)
+        #expect(legacy.prompt.contains("140 words"))
+
+        let selected = try ResponseBriefRequestBuilder.request(
+            for: source,
+            model: "provider/model",
+            thinkingLevel: "low",
+            clientRequestID: "selected-request",
+            length: .long
+        )
+        #expect(selected.responseBriefLength == .long)
+        #expect(selected.prompt == ResponseBriefRequestBuilder.lengthPrompt)
+        #expect(!selected.prompt.contains("140 words"))
+        #expect(!selected.prompt.contains("0-4 points"))
+        #expect(!selected.prompt.contains("0-6"))
+        #expect(selected.context.items == legacy.context.items)
+        #expect(selected.context.source == legacy.context.source)
+
+        let selectedData = try JSONEncoder().encode(selected)
+        let selectedJSON = try #require(JSONSerialization.jsonObject(with: selectedData) as? [String: Any])
+        #expect(selectedJSON["responseBriefLength"] as? String == "long")
+
+        let legacyData = try JSONEncoder().encode(legacy)
+        let legacyJSON = try #require(JSONSerialization.jsonObject(with: legacyData) as? [String: Any])
+        #expect(legacyJSON["responseBriefLength"] == nil)
+    }
+
+    @Test("Generic assistant requests never encode the brief-only length field")
+    func genericRequestOmitsLength() throws {
+        let request = AssistantRequest(
+            prompt: "Synthetic question",
+            profile: "contextual-question-v1",
+            paneId: "w1:p1",
+            scope: .init(),
+            context: AssistantContext(
+                source: .init(feature: "notes", instanceId: "synthetic-note"),
+                items: []
+            ),
+            model: nil,
+            thinkingLevel: nil
+        )
+        #expect(request.responseBriefLength == nil)
+
+        let data = try JSONEncoder().encode(request)
+        let root = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(root["responseBriefLength"] == nil)
+    }
+
+    @Test("Capability decoding stays additive and reports length policy support")
+    func capabilityLengthPolicyDecoding() throws {
+        let modern = try JSONDecoder().decode(
+            AssistantCapabilities.self,
+            from: Data(#"{"ok":true,"profiles":["response-brief-v1"],"responseBriefs":{"version":1,"lengthPolicyVersion":2,"lengthOptions":["minimal","medium","long"],"tools":"none","oneShot":true,"maxOutputBytes":32768,"requiresParentSessionId":true}}"#.utf8)
+        )
+        #expect(modern.responseBriefs?.supportsLengthPolicy == true)
+        #expect(modern.responseBriefs?.advertisedLengths == [.minimal, .medium, .long])
+        #expect(modern.responseBriefs?.supportsEveryLengthOption == true)
+
+        let predecessor = try JSONDecoder().decode(
+            AssistantCapabilities.self,
+            from: Data(#"{"ok":true,"profiles":["response-brief-v1"],"responseBriefs":{"version":1,"tools":"none","oneShot":true,"maxOutputBytes":32768,"requiresParentSessionId":true}}"#.utf8)
+        )
+        #expect(predecessor.responseBriefs?.supportsLengthPolicy == false)
+        #expect(predecessor.responseBriefs?.advertisedLengths.isEmpty == true)
+        #expect(predecessor.responseBriefs?.supportsEveryLengthOption == false)
+
+        let oldest = try JSONDecoder().decode(
+            AssistantCapabilities.self,
+            from: Data(#"{"ok":true,"profiles":["response-brief-v1"]}"#.utf8)
+        )
+        #expect(oldest.responseBriefs == nil)
+        #expect(oldest.profiles == ["response-brief-v1"])
+    }
+
     @Test("UTF-8 chunks reconstruct multibyte source without loss")
     func multibyteChunks() throws {
         let source = String(repeating: "🪻café\r\n```swift\nlet value = 1\n```\n| A | B |\n", count: 900)

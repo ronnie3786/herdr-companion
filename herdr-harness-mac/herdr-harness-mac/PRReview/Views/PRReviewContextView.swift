@@ -4,6 +4,9 @@ import UniformTypeIdentifiers
 
 struct PRReviewContextView: View {
     @Bindable var store: PRReviewStore
+    /// The live model, when this rail is hosted by the app, so a document
+    /// window opened from a row observes its pinned machine independently.
+    var documentHost: HerdrAppModel? = nil
     @State private var isDropTargeted = false
     @State private var isPresentingLinkSheet = false
     @State private var linkURL = ""
@@ -46,7 +49,7 @@ struct PRReviewContextView: View {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(section.0).herdrFont(.headline)
                                 ForEach(documents) { document in
-                                    PRReviewDocumentRow(store: store, document: document)
+                                    PRReviewDocumentRow(store: store, document: document, documentHost: documentHost)
                                 }
                             }
                         }
@@ -170,6 +173,7 @@ private struct PRReviewUploadRow: View {
 private struct PRReviewDocumentRow: View {
     @Bindable var store: PRReviewStore
     let document: PRReviewDocument
+    let documentHost: HerdrAppModel?
     @State private var isHovering = false
     @State private var openError: String?
 
@@ -272,9 +276,9 @@ private struct PRReviewDocumentRow: View {
         openError = nil
         switch document.kind {
         case .markdown:
-            PRReviewDocumentWindow.showMarkdown(document: document, store: store)
+            PRReviewDocumentWindow.showMarkdown(document: document, store: store, host: documentHost)
         case .html:
-            PRReviewDocumentWindow.showHTML(document: document, store: store)
+            PRReviewDocumentWindow.showHTML(document: document, store: store, host: documentHost)
         case .link:
             guard let value = document.url, let url = URL(string: value),
                   ["http", "https"].contains(url.scheme?.lowercased() ?? "")

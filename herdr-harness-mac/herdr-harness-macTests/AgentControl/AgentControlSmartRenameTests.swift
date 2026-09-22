@@ -3,7 +3,7 @@ import Synchronization
 import Testing
 @testable import herdr_harness_mac
 
-// Both cases configure one process-wide URLProtocol fixture. Serialize them so
+// These cases configure one process-wide URLProtocol fixture. Serialize them so
 // suspension during a request cannot replace another case's response state.
 @Suite("Agent control Smart Rename refresh", .serialized)
 @MainActor
@@ -48,6 +48,88 @@ struct AgentControlSmartRenameTests {
         #expect(fixture.model.toastMessage?.contains("Pane renamed to “Synthetic renamed title”") == true)
         #expect(fixture.model.toastMessage?.contains("couldn't refresh") == true)
         #expect(fixture.model.toastMessage?.hasPrefix("Smart Rename failed") == false)
+    }
+
+    @Test("A missing naming selection is reported without renaming or rewriting the preference")
+    func missingSelectionIsReportedWithoutRenaming() async throws {
+        let fixture = try makeFixture(refreshFails: false)
+        defer {
+            fixture.defaults.removePersistentDomain(forName: fixture.suite)
+            AgentControlSmartRenameURLProtocol.reset()
+        }
+        fixture.defaults.set("beta/beta-only", forKey: AgentModelSettings.quickChatModelKey)
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Should not run"}"#)
+
+        await fixture.model.smartRename(fixture.pane, runner: runner)
+
+        let counts = AgentControlSmartRenameURLProtocol.counts()
+        #expect(counts.renames == 0)
+        #expect(counts.refreshes == 0)
+        #expect(runner.calls.isEmpty)
+        #expect(fixture.model.pane(id: fixture.pane.id)?.displayTitle == "Original title")
+        let toast = try #require(fixture.model.toastMessage)
+        #expect(toast.hasPrefix("Smart Rename failed"))
+        #expect(toast.contains("beta/beta-only"))
+        #expect(toast.contains("Desktop"))
+        #expect(toast.contains("Settings"))
+        #expect(fixture.defaults.string(forKey: AgentModelSettings.quickChatModelKey) == "beta/beta-only")
+    }
+
+    @Test("A naming-run failure is an actionable typed receipt that never mutates the pane")
+    func failedRunReceiptPreservesTitle() async throws {
+        let fixture = try makeFixture(refreshFails: false)
+        defer {
+            fixture.defaults.removePersistentDomain(forName: fixture.suite)
+            AgentControlSmartRenameURLProtocol.reset()
+        }
+        let runner = FakeNoteAIRunner()
+        runner.mode = .throwing(AgentControlSmartRenameFixtureError(message: "Synthetic provider failure"))
+
+        do {
+            _ = try await fixture.model.smartRenameForAgentControl(fixture.pane, runner: runner) {}
+            Issue.record("Expected the naming-run failure to throw")
+        } catch let error as SmartRenameExecutionError {
+            #expect(error.machineName == "Desktop")
+            #expect(error.model == "synthetic/naming")
+            #expect(error.thinkingLevel == .low)
+            #expect(error.reason == "Synthetic provider failure")
+        }
+
+        let counts = AgentControlSmartRenameURLProtocol.counts()
+        #expect(counts.renames == 0)
+        #expect(counts.refreshes == 0)
+        #expect(runner.calls.count == 1)
+        #expect(fixture.model.pane(id: fixture.pane.id)?.displayTitle == "Original title")
+        #expect(!fixture.model.smartRenamingPaneIDs.contains(fixture.pane.id))
+    }
+
+    @Test("Invalid naming output reaches agent control with the actionable selection details")
+    func invalidOutputReceiptPreservesTitle() async throws {
+        let fixture = try makeFixture(refreshFails: false)
+        defer {
+            fixture.defaults.removePersistentDomain(forName: fixture.suite)
+            AgentControlSmartRenameURLProtocol.reset()
+        }
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed("not JSON")
+
+        do {
+            _ = try await fixture.model.smartRenameForAgentControl(fixture.pane, runner: runner) {}
+            Issue.record("Expected invalid naming output to throw")
+        } catch let error as SmartRenameExecutionError {
+            #expect(error.machineName == "Desktop")
+            #expect(error.model == "synthetic/naming")
+            #expect(error.thinkingLevel == .low)
+            #expect(error.reason == SmartRenameModelRouting.invalidTitleReason)
+        }
+
+        let counts = AgentControlSmartRenameURLProtocol.counts()
+        #expect(counts.renames == 0)
+        #expect(counts.refreshes == 0)
+        #expect(runner.calls.count == 1)
+        #expect(fixture.model.pane(id: fixture.pane.id)?.displayTitle == "Original title")
+        #expect(!fixture.model.smartRenamingPaneIDs.contains(fixture.pane.id))
     }
 
     private func makeFixture(refreshFails: Bool) throws -> (
@@ -117,11 +199,17 @@ struct AgentControlSmartRenameTests {
     }
 }
 
+private struct AgentControlSmartRenameFixtureError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
+}
+
 private final class AgentControlSmartRenameURLProtocol: URLProtocol, @unchecked Sendable {
     private struct State: Sendable {
         var refreshFails = false
         var renameCount = 0
         var refreshCount = 0
+        var renamedTitle: String?
     }
 
     private static let state = Mutex(State())
@@ -149,9 +237,15 @@ private final class AgentControlSmartRenameURLProtocol: URLProtocol, @unchecked 
         let method = request.httpMethod ?? "GET"
         let response: (status: Int, body: String)
         if path.hasSuffix("/api/v1/panes/p1/pi/snapshot") {
-            response = (200, #"{"available":true,"entries":[{"type":"message","id":"a","message":{"role":"user","content":[{"type":"text","text":"Rename this synthetic conversation"}]}}]}"#)
+            response = (200, #"{"available":true,"session":{"id":"synthetic-session"},"entries":[{"type":"message","id":"a","message":{"role":"user","content":[{"type":"text","text":"Rename this synthetic conversation"}]}}]}"#)
+        } else if path == "/api/v1/agent-runs/models" {
+            response = (200, #"{"ok":true,"models":[{"provider":"synthetic","id":"naming","name":"Synthetic Naming","reasoning":true}],"default":{"provider":"synthetic","id":"naming","name":"Synthetic Naming"}}"#)
         } else if method == "PATCH", path.hasSuffix("/api/v1/panes/p1") {
-            Self.state.withLock { $0.renameCount += 1 }
+            let input = (try? JSONSerialization.jsonObject(with: requestBody())) as? [String: Any]
+            Self.state.withLock {
+                $0.renameCount += 1
+                $0.renamedTitle = input?["label"] as? String
+            }
             response = (200, #"{"ok":true}"#)
         } else if path.hasSuffix("/api/v1/workspaces") {
             let shouldFail = Self.state.withLock { state -> Bool in
@@ -161,7 +255,28 @@ private final class AgentControlSmartRenameURLProtocol: URLProtocol, @unchecked 
             if shouldFail {
                 response = (503, #"{"ok":false,"error":{"code":"synthetic_refresh","message":"Synthetic refresh failed"}}"#)
             } else {
-                response = (200, #"{"ok":true,"workspaces":[{"workspace_id":"w1","number":1,"label":"Synthetic workspace","focused":true,"pane_count":1,"tab_count":1,"active_tab_id":"t1","agent_status":"idle","panes":[{"pane_id":"p1","terminal_id":"term1","workspace_id":"w1","tab_id":"t1","focused":true,"agent_status":"idle","revision":2,"cwd":"/tmp/synthetic","label":"Synthetic refreshed title","agent":"pi","display_agent":"Pi","pi_semantic":{"available":true,"connected":true,"protocol_version":1,"session_id":"synthetic-session"}}]}],"alerts":[]}"#)
+                let title = Self.state.withLock { $0.renamedTitle ?? "Synthetic refreshed title" }
+                let payload: [String: Any] = [
+                    "ok": true,
+                    "workspaces": [[
+                        "workspace_id": "w1", "number": 1, "label": "Synthetic workspace",
+                        "focused": true, "pane_count": 1, "tab_count": 1,
+                        "active_tab_id": "t1", "agent_status": "idle",
+                        "panes": [[
+                            "pane_id": "p1", "terminal_id": "term1", "workspace_id": "w1",
+                            "tab_id": "t1", "focused": true, "agent_status": "idle",
+                            "revision": 2, "cwd": "/tmp/synthetic", "label": title,
+                            "agent": "pi", "display_agent": "Pi",
+                            "pi_semantic": [
+                                "available": true, "connected": true, "protocol_version": 1,
+                                "session_id": "synthetic-session",
+                            ],
+                        ]],
+                    ]],
+                    "alerts": [],
+                ]
+                let data = try! JSONSerialization.data(withJSONObject: payload)
+                response = (200, String(decoding: data, as: UTF8.self))
             }
         } else {
             response = (404, #"{"ok":false,"error":{"code":"not_found","message":"Synthetic route not found"}}"#)
@@ -178,4 +293,19 @@ private final class AgentControlSmartRenameURLProtocol: URLProtocol, @unchecked 
     }
 
     override func stopLoading() {}
+
+    private func requestBody() -> Data {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return Data() }
+        stream.open()
+        defer { stream.close() }
+        var body = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            guard count > 0 else { break }
+            body.append(buffer, count: count)
+        }
+        return body
+    }
 }

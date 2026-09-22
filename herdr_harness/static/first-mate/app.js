@@ -85,7 +85,7 @@
   }
   const sessionKind = session => session?.kind==='advisor'?'Advisor':session?.kind==='coordinator'||(!session?.kind&&session?.role==='first_mate')?'First Mate coordinator':'Worker';
   const base = new URL('../api/v1/first-mate/', location.href).pathname;
-  const state = {features:[],selected:new URLSearchParams(location.search).get('feature'),detail:null,tab:'Overview',graph:false,token:'',drafts:new Map(),pending:new Map(),generation:0,resourceGeneration:0,sessionView:null,refreshSequence:0,appliedRefresh:0,sending:new Set(),lastSignature:'',error:null};
+  const state = {features:[],selected:new URLSearchParams(location.search).get('feature'),detail:null,tab:'Overview',graph:false,showArchived:false,token:'',drafts:new Map(),pending:new Map(),generation:0,resourceGeneration:0,sessionView:null,refreshSequence:0,appliedRefresh:0,sending:new Set(),lastSignature:'',error:null};
   let noticeTimer;
   function notice(text) { clearTimeout(noticeTimer); $('#notice').textContent = text; $('#notice').hidden = false; noticeTimer = setTimeout(() => $('#notice').hidden = true, 7000); }
   function status(value) { return `<span class="status ${escape(value)}">${escape(label(value))}</span>`; }
@@ -125,9 +125,9 @@
     const generation=state.generation, sequence=++state.refreshSequence;
     const current=()=>generation===state.generation && sequence>=state.appliedRefresh;
     try {
-      const list=await api('features'); if(!current())return;
+      const list=await api(`features${state.showArchived?'?view=all':''}`); if(!current())return;
       state.features=list.features||[];
-      if(!state.selected && state.features.length) state.selected=state.features[0].id;
+      if(!state.selected) state.selected=state.features[0]?.id||null;
       renderFeatures();
       if(state.selected) {
         const selected=state.selected; const detail=await api(`features/${encodeURIComponent(selected)}`);
@@ -147,12 +147,14 @@
     updateComposer();
   }
   function renderFeatures(){
-    $('#features').innerHTML=state.features.map(f=>`<button class="feature ${f.id===state.selected?'selected':''}" data-feature="${escape(f.id)}" aria-pressed="${f.id===state.selected}" aria-label="${escape(`${f.title}, ${f.work_item_id||'Idea'}, status ${label(f.status)}, ${taskUsageDescription(f.usage)}`)}" title="${escape(taskUsageDescription(f.usage))}"><strong>${escape(f.title)}</strong><small class="feature-meta"><span>${escape(f.work_item_id||'Idea')} · ${escape(label(f.status))}</span><span class="compact-cost">${escape(compactCost(f.usage))}</span></small></button>`).join('')||empty('Start a feature','Your ideas and tickets will appear here.');
+    const row=f=>`<div class="feature-row"><button class="feature ${f.id===state.selected?'selected':''}" data-feature="${escape(f.id)}" aria-pressed="${f.id===state.selected}" aria-label="${escape(`${f.title}, ${f.work_item_id||'Idea'}, status ${label(f.status)}, ${taskUsageDescription(f.usage)}`)}" title="${escape(taskUsageDescription(f.usage))}"><strong>${escape(f.title)}</strong><small class="feature-meta"><span>${escape(f.work_item_id||'Idea')} · ${escape(label(f.status))}</span><span class="compact-cost">${escape(compactCost(f.usage))}</span></small></button><button class="archive-list-action" data-archive-feature="${escape(f.id)}" data-archived="${f.archived_at?'true':'false'}">${f.archived_at?'Unarchive':'Archive'}</button></div>`;
+    const active=state.features.filter(f=>!f.archived_at), archived=state.features.filter(f=>f.archived_at);
+    $('#features').innerHTML=active.map(row).join('')+(archived.length?`<h3 class="archive-heading">Archived</h3>${archived.map(row).join('')}`:'')||empty('Start a feature','Your ideas and tickets will appear here.');
   }
   function renderDetail(){
     const d=state.detail;if(!d){$('#feature-header').innerHTML=empty(state.selected?'Loading feature':'Your First Mate','Select a feature or start something new.');$('#messages').innerHTML=empty('A clear place to begin','Create a feature. Your First Mate will help shape the plan and delegate each step.');$('#workspace').innerHTML=empty('Your feature workspace','Goals, agents, documents, and the workflow live here.');renderTabs();return;}
     const f=d.feature;
-    $('#feature-header').innerHTML=`<h1>${escape(f.title)}</h1><p>Your First Mate · one conversation for this feature</p>${status(f.status)}`;
+    $('#feature-header').innerHTML=`<h1>${escape(f.title)}</h1><p>Your First Mate · one conversation for this feature${f.archived_at?' · Archived':''}</p>${status(f.status)}`;
     const log=$('#messages'), nearBottom=log.scrollHeight-log.scrollTop-log.clientHeight<90;
     log.innerHTML=d.messages.filter(m=>['user','human','assistant'].includes(m.role)).map(m=>`<article class="message ${humanMessage(m)?'user':''}"><span class="avatar" aria-hidden="true">${humanMessage(m)?'You':'FM'}</span><div class="message-main"><div class="message-meta"><strong>${humanMessage(m)?'You':'First Mate'}</strong><time>${escape(date(m.created_at))}</time>${m.status==='queued'?'<small>Queued</small>':''}</div><div class="prose">${messageContent(m)}</div></div></article>`).join('')||empty('Ready for your direction','Tell First Mate what this feature should achieve.');
     if(nearBottom)log.scrollTop=log.scrollHeight;
@@ -173,7 +175,7 @@
       if(d.feature.status==='awaiting_direction')html+='<section class="checkpoint"><h3>Ready for your next direction</h3><p>Work is waiting at a human checkpoint. Review the latest request, then tell First Mate how you want to continue.</p></section>';
       html+=`<div class="section-title"><h2>Working on this feature</h2><small>${d.assignments.length} assignments</small></div>${agentRows([...d.assignments.filter(a=>['running','queued','dispatching','handoff_pending'].includes(a.status)),...d.assignments.filter(a=>!['running','queued','dispatching','handoff_pending'].includes(a.status)).slice(-4)].slice(0,4))}`;
       html+='<div class="section-title"><h2>Feature journal</h2></div>'+d.events.slice(-12).reverse().map(e=>`<article class="event"><time>${escape(date(e.created_at))}</time>${escape(e.summary||label(e.type))}</article>`).join('');
-      html+=`<div class="controls"><button data-action-feature="${escape(d.feature.id)}" data-action="${d.feature.status==='paused'?'resume':'pause'}" ${['completed','cancelled'].includes(d.feature.status)?'disabled':''}>${d.feature.status==='paused'?'Resume authorized work':'Pause work'}</button><button data-action-feature="${escape(d.feature.id)}" data-action="cancel" ${['completed','cancelled'].includes(d.feature.status)?'disabled':''}>Cancel feature</button></div>`;
+      html+=`<div class="controls"><button data-action-feature="${escape(d.feature.id)}" data-action="${d.feature.status==='paused'?'resume':'pause'}" ${['completed','cancelled'].includes(d.feature.status)?'disabled':''}>${d.feature.status==='paused'?'Resume authorized work':'Pause work'}</button><button data-action-feature="${escape(d.feature.id)}" data-action="cancel" ${['completed','cancelled'].includes(d.feature.status)?'disabled':''}>Cancel feature</button><button data-archive-feature="${escape(d.feature.id)}" data-archived="${d.feature.archived_at?'true':'false'}">${d.feature.archived_at?'Unarchive':'Archive…'}</button></div>`;
     } else if(state.tab==='Agents'){
       const coordinators=d.sessions.filter(s=>s.kind==='coordinator'||(!s.kind&&s.role==='first_mate'));
       const advisors=d.sessions.filter(s=>s.kind==='advisor');
@@ -217,6 +219,24 @@
     }catch(e){if(generation===state.generation && resource===state.resourceGeneration)notice(e.message);}
   }
   async function openAgent(id){const a=state.detail.assignments.find(a=>a.id===id);const sessions=(state.detail.sessions||[]).filter(s=>s.assignment_id===id);if(!sessions.length&&a?.native_session_id)return openSession(a.native_session_id);const own=a?.subtree_usage&&JSON.stringify(a.subtree_usage)!==JSON.stringify(a.usage)?`<p>Own · ${usageInline(a.usage)}<br>With descendants · ${usageInline(a.subtree_usage)}</p>`:`<p>${usageInline(a?.usage)}</p>`;modal(a?.title||'Assignment',`<p>${escape(label(a?.status))}</p>${own}${sessions.length?sessionRows(sessions):'<p class="document-meta">A saved session will appear after this assignment starts.</p>'}${state.detail.sessions_truncated?'<p>Showing recent session history. Older sessions remain retained on the companion host.</p>':''}`);}
+  async function setArchived(feature, archived, reason=null){
+    const action=archived?'archive':'unarchive', body={action,request_id:idFor(`${action}:${feature}`,reason||action)};
+    if(archived&&reason)body.reason=reason;
+    try{
+      await api(`features/${encodeURIComponent(feature)}/actions`,body);
+      state.pending.delete(`${action}:${feature}`);
+      if(archived&&!state.showArchived&&state.selected===feature){state.selected=null;state.detail=null;state.lastSignature='';}
+      if($('#dialog').open)$('#dialog').close();
+      await refresh();
+    }catch(error){notice(error.message);}
+  }
+  function archiveDialog(feature){
+    const record=state.features.find(item=>item.id===feature)||state.detail?.feature;
+    if(record?.archived_at){setArchived(feature,false);return;}
+    const continues=['running','coordinating','recovering'].includes(record?.status);
+    modal('Archive feature',`<form id="archive-feature"><p>${continues?'Work continues after archiving. ':''}The feature leaves the active list. Visits, assignments, documents, sessions, events, status, and Active Work linkage are retained.</p><label for="archive-reason">Optional reason</label><select id="archive-reason"><option value="">No reason</option><option value="test/synthetic">Test/synthetic</option><option value="duplicate">Duplicate</option><option value="no longer relevant">No longer relevant</option><option value="superseded">Superseded</option><option value="other">Other</option></select><button class="primary" type="submit">Archive</button></form>`);
+    $('#archive-feature').onsubmit=e=>{e.preventDefault();setArchived(feature,true,$('#archive-reason').value||null);};
+  }
   document.addEventListener('click',async e=>{
     const b=e.target.closest('button');if(!b)return;
     if(b.dataset.feature){selectFeature(b.dataset.feature);await refresh();}
@@ -226,6 +246,7 @@
     if(b.dataset.agent)await openAgent(b.dataset.agent);
     if(b.dataset.document)await openDocument(b.dataset.document);
     if(b.dataset.session){b.disabled=true;try{await openSession(b.dataset.session,b.dataset.before===undefined?null:Number(b.dataset.before));}finally{b.disabled=false;}}
+    if(b.dataset.archiveFeature)archiveDialog(b.dataset.archiveFeature);
     if(b.dataset.action){
       const action=b.dataset.action, feature=b.dataset.actionFeature;
       if(!feature || state.selected!==feature || state.detail?.feature.id!==feature)return;
@@ -249,6 +270,7 @@
   $('#prompt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();if(!$('#send').disabled)$('#composer').requestSubmit();}});
   $('#new').onclick=()=>{modal('Start a feature','<form id="new-feature"><label for="feature-title">Feature name</label><input id="feature-title" required placeholder="A small improvement worth shipping"><label for="feature-goal">What should it achieve?</label><textarea id="feature-goal" required placeholder="Describe the outcome in your own words."></textarea><label for="feature-cwd">Project folder on this companion host</label><input id="feature-cwd" required placeholder="/path/to/project"><button class="primary" type="submit">Create feature</button></form>');$('#new-feature').onsubmit=async e=>{e.preventDefault();const payload={title:$('#feature-title').value.trim(),goal:$('#feature-goal').value.trim(),cwd:$('#feature-cwd').value.trim()};payload.request_id=idFor('create',JSON.stringify(payload));try{const d=await api('features',payload);state.pending.delete('create');selectFeature(d.feature.id);await refresh();$('#prompt').focus();}catch(err){notice(err.message);}};};
   $('#connect').onclick=()=>{modal('Connect to Herdr','<form id="connection-form"><p>Your companion API token stays in memory for this page only.</p><label for="api-token">API token</label><input id="api-token" type="password" autocomplete="off"><button class="primary">Connect</button></form>');$('#connection-form').onsubmit=e=>{e.preventDefault();state.token=$('#api-token').value;selectFeature(state.selected);$('#dialog').close();refresh();};};
+  $('#show-archived').onchange=e=>{state.showArchived=e.target.checked;state.generation++;refresh();};
   $('#dialog').addEventListener('close',()=>{state.resourceGeneration++;});
   function theme(value){document.documentElement.dataset.theme=value;$('#theme').textContent=value==='dark'?'Light mode':'Dark mode';try{localStorage.setItem('herdr-first-mate-theme',value);}catch{}}
   $('#theme').onclick=()=>theme(document.documentElement.dataset.theme==='dark'?'light':'dark');

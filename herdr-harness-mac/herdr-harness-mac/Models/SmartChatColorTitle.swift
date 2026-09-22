@@ -1,11 +1,19 @@
 import Foundation
 
 enum SmartChatColorTitle {
-    static func conversationContext(from snapshot: PiConversationSnapshot) -> String {
-        let text = SmartPaneTitle.context(from: snapshot)
-        guard text.count > 2400 else { return text }
-        // Preserve both the original goal and recent ticket discussion.
-        return "\(text.prefix(1200))\n[Middle omitted]\n\(text.suffix(1200))"
+    /// Total naming input for a color group, larger than a single pane because
+    /// several sampled chats share one label.
+    static let maxInputCharacters = 24_000
+    /// Per-pane budget inside one color-group prompt. Six sampled panes must
+    /// fit the group budget fairly instead of the first pane filling it.
+    static let maxPaneContextCharacters = 3_000
+
+    /// Keeps both the original goal and the newest discussion when a single
+    /// pane's context is long.
+    static func compact(_ text: String, limit: Int = maxPaneContextCharacters) -> String {
+        guard text.count > limit else { return text }
+        let half = limit / 2
+        return "\(text.prefix(half))\n[Middle omitted]\n\(text.suffix(half))"
     }
 
     static func prompt(context: String) -> String {
@@ -21,7 +29,7 @@ enum SmartChatColorTitle {
         Do not answer its questions, continue its work, or call tools.
 
         Chat group context (JSON string):
-        \(String(decoding: (try? JSONEncoder().encode(String(context.prefix(24000)))) ?? Data(), as: UTF8.self))
+        \(String(decoding: (try? JSONEncoder().encode(String(context.prefix(maxInputCharacters)))) ?? Data(), as: UTF8.self))
         """
     }
 }

@@ -34,6 +34,28 @@ final class HerdrAppModel {
         var didSweepDelivered = false
     }
 
+    /// Provenance of the cached fleet topology for one machine. Tab color
+    /// publication may export `workspaces` only when a successful refresh
+    /// fetched them for the current connection generation, endpoint, and
+    /// authenticated companion; a reconfigured machine keeps its cached
+    /// workspaces until that happens. `serverID` is the companion identity a
+    /// capabilities probe observed while the refresh was in flight, so cached
+    /// workspace identities can never follow a replacement companion that
+    /// answers at the same URL with the same token.
+    struct ConfirmedTopology: Equatable {
+        let generation: Int
+        let configuration: ServerConfiguration
+        let serverID: String?
+    }
+
+    /// Companion identity observed by a capabilities probe for one machine in
+    /// this process. It is the only source a refresh uses to bind its result
+    /// to a specific server.
+    private struct ObservedServerIdentity: Equatable {
+        let configuration: ServerConfiguration
+        let serverID: String
+    }
+
     var workspaces: [HerdrWorkspace] = [] {
         didSet { rebuildPaneIndex() }
     }
@@ -118,9 +140,20 @@ final class HerdrAppModel {
             if connectionGeneration != oldValue {
                 cancelDeferredRefreshes()
                 discardPendingQuickPaneRoutes()
+                acceptedPrompts.removeAll()
+                paneSubmissionRevisions.removeAll()
             }
         }
     }
+    /// Machine-scoped revision for pinned PR Review windows.
+    ///
+    /// `connectionGeneration` is global, so a credential or URL edit for one
+    /// machine changes it for every other machine too. Pinned windows compare
+    /// this machine-scoped revision instead: only the edited machine's windows
+    /// re-activate, and an unrelated edit cannot retire their in-flight work.
+    private(set) var machineConfigurationRevisions: [String: Int] = [:]
+    @ObservationIgnored private(set) var confirmedTopology: [String: ConfirmedTopology] = [:]
+    @ObservationIgnored private var observedServerIdentities: [String: ObservedServerIdentity] = [:]
     private(set) var activeServerConnection: ActiveServerConnection?
     var machineStates: [String: ConnectionState] = [:]
     var machines: [HerdrMachine]
@@ -141,6 +174,9 @@ final class HerdrAppModel {
 
     private let userDefaults: UserDefaults
     let chatTabColors: ChatTabColorStore
+    /// Process-owned publication of this Mac's opt-in tab colors. The store
+    /// above stays authoritative; this controller only sends copies.
+    let chatTabColorPublisher: ChatTabColorPublisher
     /// Local sidebar reminder only; never creates alerts or HUD notifications.
     private(set) var manuallyUnreadPaneIDs: Set<String> = []
     @ObservationIgnored private let resultArtifactOpenedLedger: AgentResultArtifactOpenedLedger
@@ -171,6 +207,21 @@ final class HerdrAppModel {
     /// map lets `acknowledgeUnreadAlerts` post once per episode.
     @ObservationIgnored private var lastAckedDoneEpisodeByPaneID: [String: String] = [:]
     @ObservationIgnored private var promptOverrideSupport: [String: (generation: Int, supported: Bool, probedAt: Date)] = [:]
+    /// Whether a companion advertises the enforced tool-free naming profile.
+    /// Cached like prompt-override support; an unsupported companion is probed
+    /// again after a minute so a server update is picked up without relaunch.
+    @ObservationIgnored private var toolFreeNamingSupport: [String: (generation: Int, supported: Bool, probedAt: Date)] = [:]
+    /// Latest successfully accepted prompt per pane/session, memory-only, so a
+    /// Smart Rename asked for right after a submission can name the pane before
+    /// its semantic snapshot catches up. Never persisted, never read from the
+    /// pane-only `promptHistory`, and validated against the pane's current
+    /// terminal/workspace/tab/session and connection generation before use.
+    @ObservationIgnored private var acceptedPrompts: [AcceptedPromptRecord] = []
+    /// Bumped only when a submission is accepted for a pane. Smart Rename
+    /// captures the value with its context and rechecks it before mutating, so
+    /// a newer prompt invalidates a late title without treating assistant
+    /// streaming, tool activity, or completion as invalidation.
+    @ObservationIgnored private var paneSubmissionRevisions: [String: UUID] = [:]
     @ObservationIgnored private var lastPresentedConnectionError: String?
     @ObservationIgnored private var lastBadgeCount: Int?
     @ObservationIgnored private var paneIndex: [String: PaneLocation] = [:]
@@ -194,6 +245,22 @@ final class HerdrAppModel {
     /// reaped-session fallback (a continuation whose underlying pi
     /// session no longer exists, so the server starts a fresh thread).
     var demoForcesFreshThreadForTesting = false
+
+    /// Test-only: record the same topology provenance a successful fleet
+    /// refresh records after a capabilities probe, without reaching the
+    /// network.
+    func confirmTopologyForTesting(machineID: String, serverID: String) {
+        guard let configuration = firstMateConfiguration(machineID: machineID) else { return }
+        observedServerIdentities[machineID] = ObservedServerIdentity(
+            configuration: configuration,
+            serverID: serverID
+        )
+        confirmedTopology[machineID] = ConfirmedTopology(
+            generation: connectionGeneration,
+            configuration: configuration,
+            serverID: serverID
+        )
+    }
 #endif
     private static var isRunningTests: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
@@ -232,7 +299,8 @@ final class HerdrAppModel {
         arguments: [String] = ProcessInfo.processInfo.arguments,
         userDefaults: UserDefaults = .standard,
         resultArtifactOpener: AgentResultArtifactOpener? = nil,
-        configuredMachines: [HerdrMachine] = HerdrMachine.configuredMachines()
+        configuredMachines: [HerdrMachine] = HerdrMachine.configuredMachines(),
+        chatTabColorSecretStorage: any AgentControlSecretStorage = KeychainAgentControlSecretStorage()
     ) {
         self.credentials = credentials
         self.userDefaults = userDefaults
@@ -247,6 +315,10 @@ final class HerdrAppModel {
             persistence: ResponseBriefPersistence(inMemory: isolateResponseBriefs)
         )
         chatTabColors = ChatTabColorStore(defaults: userDefaults)
+        chatTabColorPublisher = ChatTabColorPublisher(
+            defaults: userDefaults,
+            secretStorage: chatTabColorSecretStorage
+        )
         promptHistory = PromptHistoryStore(userDefaults: userDefaults)
         let resultArtifactOpenedLedger = AgentResultArtifactOpenedLedger(userDefaults: userDefaults)
         self.resultArtifactOpenedLedger = resultArtifactOpenedLedger
@@ -395,6 +467,43 @@ final class HerdrAppModel {
         machineStates[id] ?? (isDemoMode ? .demo : .disconnected)
     }
 
+    /// Whether the cached workspaces for this machine were fetched by a
+    /// successful refresh for the supplied endpoint at the current connection
+    /// generation and while the authenticated companion was the supplied
+    /// server. Publication refuses cached topology until this is true, so a
+    /// replacement companion never receives the previous server's tab IDs or
+    /// labels.
+    func topologyIsConfirmed(
+        machineID: String,
+        configuration: ServerConfiguration,
+        serverID: String
+    ) -> Bool {
+        guard let confirmed = confirmedTopology[machineID] else { return false }
+        return confirmed.generation == connectionGeneration
+            && confirmed.configuration == configuration
+            && confirmed.serverID == serverID
+    }
+
+    /// Records the companion identity a capabilities probe authenticated.
+    /// A probe that identifies another companion invalidates the cached
+    /// topology confirmation, so the next publication waits for a refresh
+    /// performed against that companion instead of exporting the previous
+    /// server's workspace identities.
+    func noteAuthenticatedServer(
+        machineID: String,
+        configuration: ServerConfiguration,
+        serverID: String
+    ) {
+        observedServerIdentities[machineID] = ObservedServerIdentity(
+            configuration: configuration,
+            serverID: serverID
+        )
+        guard let confirmed = confirmedTopology[machineID] else { return }
+        if confirmed.configuration != configuration || confirmed.serverID != serverID {
+            confirmedTopology[machineID] = nil
+        }
+    }
+
     func resultArtifactPhase(id: String) -> AgentResultArtifactPhase {
         if let phase = resultArtifactPhases[id] { return phase }
         return resultArtifactOpenedLedger.contains(id) ? .opened : .available
@@ -475,6 +584,7 @@ final class HerdrAppModel {
         errorMessage = nil
         resetConnectionState()
         connectionGeneration += 1
+        noteMachineConfigurationChange(machine.id)
         runtimes[machine.id] = MachineRuntime(
             client: clientFactory(configuration),
             connection: ActiveServerConnection(configuration: configuration, generation: connectionGeneration)
@@ -523,9 +633,72 @@ final class HerdrAppModel {
         prReviewMachineRevision &+= 1
     }
     func prReviewConfiguration(machineID: String? = nil) -> ServerConfiguration? {
-        guard !isDemoMode,
-              let machine = machines.first(where: { $0.id == machineID }) ?? prReviewMachine
-        else { return nil }
+        let machine: HerdrMachine?
+        if let machineID {
+            // An explicit machine that is no longer configured is unavailable;
+            // it never borrows the default review host.
+            machine = machines.first { $0.id == machineID }
+        } else {
+            machine = prReviewMachine
+        }
+        return configuration(forReviewMachine: machine)
+    }
+
+    /// A popped-out window stays on the machine it was opened from. An explicit
+    /// machine id that is no longer configured returns nil instead of silently
+    /// falling back to the current default review host.
+    func prReviewConfiguration(pinnedMachineID machineID: String) -> ServerConfiguration? {
+        configuration(forReviewMachine: machines.first { $0.id == machineID })
+    }
+
+    /// The observable configuration of a pinned machine/review window.
+    ///
+    /// Reading this in a window body subscribes that window to machine and
+    /// credential changes, so a review or document pop-out reconnects without
+    /// depending on the main window's review-host task. The probe intentionally
+    /// carries no credential.
+    func prReviewWindowHostProbe(for machineID: String) -> PRReviewWindowHostProbe {
+        let isDemoTarget = isDemoMode && machineID == "demo"
+        let configuration = isDemoTarget ? nil : prReviewConfiguration(pinnedMachineID: machineID)
+        return PRReviewWindowHostProbe(
+            isDemoTarget: isDemoTarget,
+            machineExists: machines.contains { $0.id == machineID },
+            configurationURL: configuration?.baseURL.absoluteString,
+            machineRevision: machineConfigurationRevision(for: machineID)
+        )
+    }
+
+    /// The current machine-scoped configuration revision. Windows pinned to
+    /// this machine re-activate when it changes; other machines' edits do not.
+    func machineConfigurationRevision(for machineID: String) -> Int {
+        machineConfigurationRevisions[machineID] ?? 0
+    }
+
+    private func noteMachineConfigurationChange(_ machineID: String) {
+        machineConfigurationRevisions[machineID, default: 0] &+= 1
+    }
+
+    /// Resolves a probe into either a usable pinned client or the unavailable
+    /// state the window must show instead of falling back to another machine.
+    func prReviewWindowHostResolution(
+        for machineID: String
+    ) -> (state: PRReviewWindowHostState, client: (any PRReviewClient)?) {
+        let probe = prReviewWindowHostProbe(for: machineID)
+        let state = PRReviewWindowHostResolver.resolve(
+            isDemoTarget: probe.isDemoTarget,
+            targetMachineExists: probe.machineExists,
+            hasConfiguration: probe.configurationURL != nil
+        )
+        guard state == .available,
+              let configuration = prReviewConfiguration(pinnedMachineID: machineID)
+        else {
+            return (state, nil)
+        }
+        return (.available, HerdrAPIClient(configuration: configuration))
+    }
+
+    private func configuration(forReviewMachine machine: HerdrMachine?) -> ServerConfiguration? {
+        guard !isDemoMode, let machine else { return nil }
         let token = machine.id == "ui-test" ? runtimes[machine.id]?.connection?.configuration.token ?? "" : credentials.value(for: "api-token.\(machine.id)")
         return ServerConfiguration(urlString: machine.urlString, token: token)
     }
@@ -534,6 +707,7 @@ final class HerdrAppModel {
         userDefaults.set(false, forKey: "herdr.demoMode")
         isDemoMode = false
         machines = Self.loadMachines(defaults: userDefaults)
+        for machine in machines { noteMachineConfigurationChange(machine.id) }
         hasCompletedSetup = !machines.isEmpty
         userDefaults.set(hasCompletedSetup, forKey: "herdr.completedSetup")
         if let primary = machines.first {
@@ -566,6 +740,7 @@ final class HerdrAppModel {
         userDefaults.set(true, forKey: "herdr.completedSetup")
         errorMessage = nil
         connectionGeneration += 1
+        noteMachineConfigurationChange(machine.id)
         return true
     }
 
@@ -601,6 +776,9 @@ final class HerdrAppModel {
         }
         errorMessage = nil
         connectionGeneration += 1
+        noteMachineConfigurationChange(id)
+        confirmedTopology[id] = nil
+        observedServerIdentities[id] = nil
         return true
     }
 
@@ -1502,6 +1680,40 @@ final class HerdrAppModel {
         }
     }
 
+    /// The headless-run profiles this companion advertises. Used to feature-detect
+    /// server-enforced profiles before dispatching a run whose older counterpart
+    /// could execute with different tool access.
+    func assistantCapabilities(machineID: String) async throws -> AssistantCapabilities {
+        if isDemoMode {
+            return AssistantCapabilities(
+                profiles: [HerdrNoteAIProfiles.smartRename, "hud-chat-v1"],
+                hudChatWorkingDirectory: true
+            )
+        }
+        guard canControl(machineID: machineID), let client = client(forMachine: machineID) else {
+            throw APIError.noActiveConnection(
+                machineID: machines.first(where: { $0.id == machineID })?.name ?? machineID
+            )
+        }
+        return try await client.assistantCapabilities()
+    }
+
+    /// Whether `machineID` can execute Smart Rename's enforced tool-free profile.
+    /// A companion that does not advertise it must never receive a naming ask:
+    /// its contextual-question route could run the same prompt with tools.
+    func supportsToolFreeNaming(machineID: String) async -> Bool {
+        if isDemoMode { return true }
+        if let cached = toolFreeNamingSupport[machineID],
+           cached.generation == connectionGeneration,
+           cached.supported || Date.now.timeIntervalSince(cached.probedAt) < 60 {
+            return cached.supported
+        }
+        let supported = (try? await assistantCapabilities(machineID: machineID))?
+            .profiles.contains(HerdrNoteAIProfiles.smartRename) ?? false
+        toolFreeNamingSupport[machineID] = (connectionGeneration, supported, .now)
+        return supported
+    }
+
     func prepareResponseAudio(
         action: ResponseAudioAction,
         text: String,
@@ -1545,6 +1757,7 @@ final class HerdrAppModel {
         to pane: HerdrPane
     ) async throws {
         let submittedAt = Date.now
+        let generation = connectionGeneration
         noteUserInteraction(machineID: pane.machineID)
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
         #if DEBUG
@@ -1561,10 +1774,12 @@ final class HerdrAppModel {
         else { throw APIError.invalidResponse }
         try await client.sendPiPrompt(paneID: pane.paneID, text: prompt, disposition: disposition)
         promptHistory.record(prompt, paneID: pane.id, submittedAt: submittedAt)
+        recordAcceptedPrompt(prompt, for: pane, generation: generation)
     }
 
     func sendPiPrompt(paneID scopedPaneID: String, text: String) async throws {
         let submittedAt = Date.now
+        let generation = connectionGeneration
         guard let scope = MachineScopedID.split(scopedPaneID) else {
             throw APIError.invalidResponse
         }
@@ -1574,8 +1789,12 @@ final class HerdrAppModel {
                 machineID: machines.first(where: { $0.id == scope.machineID })?.name ?? scope.machineID
             )
         }
+        let pane = self.pane(id: scopedPaneID)
         try await client.sendPiPrompt(paneID: scope.rawID, text: text, disposition: .prompt)
         promptHistory.record(text, paneID: scopedPaneID, submittedAt: submittedAt)
+        if let pane {
+            recordAcceptedPrompt(text, for: pane, generation: generation)
+        }
     }
 
     func abortPiConversation(for pane: HerdrPane) async throws {
@@ -1630,6 +1849,7 @@ final class HerdrAppModel {
 
     func sendPrompt(_ text: String, to pane: HerdrPane) async -> Bool {
         let submittedAt = Date.now
+        let generation = connectionGeneration
         noteUserInteraction(machineID: pane.machineID)
         let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return false }
@@ -1650,6 +1870,7 @@ final class HerdrAppModel {
             }
             toastMessage = "Sent to \(pane.displayAgentName)"
             promptHistory.record(prompt, paneID: pane.id, submittedAt: submittedAt)
+            recordAcceptedPrompt(prompt, for: pane, generation: generation)
             return true
         } catch {
             errorMessage = error.localizedDescription
@@ -1895,29 +2116,100 @@ final class HerdrAppModel {
     }
 
     enum SmartRenamePaneOutcome: Equatable {
-        case refreshed(title: String)
-        case renamedNeedsRefresh(title: String, message: String)
+        case refreshed(title: String, notice: String?)
+        case renamedNeedsRefresh(title: String, message: String, notice: String?)
     }
 
     private(set) var smartRenamingPaneIDs: Set<String> = []
     private var paneRenameRevisions: [String: UUID] = [:]
 
+    /// Identity captured before any asynchronous naming work. Ordinary output
+    /// revisions are deliberately absent so streaming and shell activity do
+    /// not invalidate a rename, while replacement, session changes, manual
+    /// renames, and connection changes do.
+    private struct PaneMutationIdentity {
+        let machineID: String
+        let scopedPaneID: String
+        let terminalID: String
+        let workspaceID: String
+        let tabID: String
+        let sessionID: String?
+        let label: String?
+        let title: String?
+        let connectionGeneration: Int
+        let renameRevision: UUID?
+        let submissionRevision: UUID?
+
+        init(pane: HerdrPane, connectionGeneration: Int, renameRevision: UUID?, submissionRevision: UUID?) {
+            machineID = pane.machineID
+            scopedPaneID = pane.id
+            terminalID = pane.terminalID
+            workspaceID = pane.workspaceID
+            tabID = pane.tabID
+            sessionID = pane.piSemantic?.sessionID
+            label = pane.label
+            title = pane.title
+            self.connectionGeneration = connectionGeneration
+            self.renameRevision = renameRevision
+            self.submissionRevision = submissionRevision
+        }
+
+        func matches(
+            _ pane: HerdrPane,
+            connectionGeneration: Int,
+            renameRevision: UUID?,
+            submissionRevision: UUID?
+        ) -> Bool {
+            machineID == pane.machineID
+                && scopedPaneID == pane.id
+                && terminalID == pane.terminalID
+                && workspaceID == pane.workspaceID
+                && tabID == pane.tabID
+                && sessionID == pane.piSemantic?.sessionID
+                && label == pane.label
+                && title == pane.title
+                && self.connectionGeneration == connectionGeneration
+                && self.renameRevision == renameRevision
+                && self.submissionRevision == submissionRevision
+        }
+    }
+
+    private struct AcceptedPromptRecord: Equatable {
+        let machineID: String
+        let scopedPaneID: String
+        let terminalID: String
+        let workspaceID: String
+        let tabID: String
+        let sessionID: String?
+        let connectionGeneration: Int
+        let text: String
+    }
+
+    private static let maxAcceptedPromptRecords = 128
+    private static let maxAcceptedPromptCharacters = 4_000
+
     func smartRename(_ pane: HerdrPane, runner: any HerdrNoteAIRunner = HerdrLiveNoteAIRunner()) async {
-        guard canControl(machineID: pane.machineID), pane.piSemantic?.sessionID != nil,
-              !smartRenamingPaneIDs.contains(pane.id) else { return }
+        guard canControl(machineID: pane.machineID), !smartRenamingPaneIDs.contains(pane.id) else { return }
         toastMessage = "Finding a smart title…"
         do {
             switch try await smartRenameForAgentControl(pane, runner: runner) {} {
-            case .refreshed:
-                toastMessage = "Pane renamed"
-            case let .renamedNeedsRefresh(title, message):
-                toastMessage = "Pane renamed to “\(title)”, but the app couldn't refresh it: \(message)"
+            case let .refreshed(_, notice):
+                toastMessage = Self.smartRenameSuccessMessage(notice: notice)
+            case let .renamedNeedsRefresh(title, message, notice):
+                var text = "Pane renamed to “\(title)”, but the app couldn't refresh it: \(message)"
+                if let notice, !notice.isEmpty { text += " \(notice)" }
+                toastMessage = text
             }
         } catch is CancellationError {
             // Cancellation before the mutation preserves the existing title.
         } catch {
             toastMessage = "Smart Rename failed: \(error.localizedDescription)"
         }
+    }
+
+    private static func smartRenameSuccessMessage(notice: String?) -> String {
+        guard let notice, !notice.isEmpty else { return "Pane renamed" }
+        return "Pane renamed. \(notice)"
     }
 
     /// Throwing Smart Rename outcome used by agent control. The validation
@@ -1928,38 +2220,60 @@ final class HerdrAppModel {
         runner: any HerdrNoteAIRunner = HerdrLiveNoteAIRunner(),
         validateBeforeMutation: @MainActor () throws -> Void
     ) async throws -> SmartRenamePaneOutcome {
-        guard canControl(machineID: pane.machineID), pane.piSemantic?.sessionID != nil else {
-            throw AgentControlCommandError.unavailable("This pane has no controllable semantic Pi session.")
+        guard canControl(machineID: pane.machineID) else {
+            throw AgentControlCommandError.unavailable("Reconnect before renaming this pane.")
         }
         guard smartRenamingPaneIDs.insert(pane.id).inserted else {
             throw AgentControlCommandError.conflict("Smart Rename is already running for this pane.")
         }
         defer { smartRenamingPaneIDs.remove(pane.id) }
-        let revision = paneRenameRevisions[pane.id]
-        let snapshot = try await fetchPiConversationSnapshot(for: pane)
-        let context = SmartPaneTitle.context(from: snapshot)
-        guard snapshot.available, !context.isEmpty else {
-            throw AgentControlCommandError.unavailable("This Pi session has no conversation to name yet.")
-        }
-        let settings = AgentModelSettings.load(from: userDefaults)
-        let charter = await supportsPromptOverrides(machineID: pane.machineID)
-            ? "You name conversations. Use only supplied text. Never call tools. Return only the requested JSON object."
-            : nil
-        let response = try await runner.run(
-            prompt: SmartPaneTitle.prompt(context: context), machineID: pane.machineID,
-            mode: .ask, model: settings.quickChatModel.isEmpty ? nil : settings.quickChatModel,
-            thinkingLevel: "low", systemPrompt: charter, deadline: .seconds(60),
-            appModel: self, onProgress: { _ in }
+
+        // Capture identity before any model, context, or AI work so ordinary
+        // output revisions can be ignored while replacement, session changes,
+        // manual renames, connection changes, and newer accepted submissions
+        // are rejected.
+        let identity = PaneMutationIdentity(
+            pane: pane,
+            connectionGeneration: connectionGeneration,
+            renameRevision: paneRenameRevisions[pane.id],
+            submissionRevision: paneSubmissionRevisions[pane.id]
         )
+        // Model availability resolves against the machine that will execute
+        // the naming ask, never the primary machine's catalog.
+        let resolution = try await SmartRenameModelRouting.resolve(
+            settings: AgentModelSettings.load(from: userDefaults),
+            executionMachineID: pane.machineID,
+            appModel: self
+        )
+        guard let context = try await smartRenameContext(for: pane), !context.isEmpty else {
+            throw AgentControlCommandError.unavailable("This pane has no readable context to name yet.")
+        }
+        let response: String
+        do {
+            response = try await runner.run(
+                prompt: SmartPaneTitle.prompt(context: context), machineID: pane.machineID,
+                mode: .ask, model: resolution.modelID,
+                thinkingLevel: resolution.thinkingLevel.rawValue,
+                systemPrompt: nil,
+                profile: HerdrNoteAIProfiles.smartRename,
+                deadline: .seconds(60),
+                appModel: self, onProgress: { _ in }
+            )
+        } catch {
+            throw SmartRenameModelRouting.executionError(error, resolution: resolution)
+        }
         try Task.checkCancellation()
         guard let current = self.pane(id: pane.id),
-              current.piSemantic?.sessionID == pane.piSemantic?.sessionID,
-              current.displayTitle == pane.displayTitle,
-              paneRenameRevisions[pane.id] == revision else {
-            throw AgentControlCommandError.conflict("The chat changed while Smart Rename was running.")
+              identity.matches(
+                  current,
+                  connectionGeneration: connectionGeneration,
+                  renameRevision: paneRenameRevisions[pane.id],
+                  submissionRevision: paneSubmissionRevisions[pane.id]
+              ) else {
+            throw AgentControlCommandError.conflict("The pane changed or received a newer prompt while Smart Rename was running.")
         }
         guard let title = SmartPaneTitle.parse(response) else {
-            throw AgentControlCommandError.failed("Smart Rename did not return a valid short title.")
+            throw SmartRenameModelRouting.invalidOutputError(resolution: resolution)
         }
         try validateBeforeMutation()
         noteUserInteraction(machineID: current.machineID)
@@ -1975,7 +2289,11 @@ final class HerdrAppModel {
         // with the server's title rather than guessing that SSE will arrive.
         do {
             guard generation == connectionGeneration else {
-                return .renamedNeedsRefresh(title: title, message: "The companion connection changed after the rename.")
+                return .renamedNeedsRefresh(
+                    title: title,
+                    message: "The companion connection changed after the rename.",
+                    notice: resolution.notice
+                )
             }
             try await refresh(
                 machineID: current.machineID,
@@ -1985,21 +2303,165 @@ final class HerdrAppModel {
             )
             guard generation == connectionGeneration,
                   let refreshed = self.pane(id: current.id) else {
-                return .renamedNeedsRefresh(title: title, message: "The renamed pane was not present in the refreshed workspace state.")
+                return .renamedNeedsRefresh(
+                    title: title,
+                    message: "The renamed pane was not present in the refreshed workspace state.",
+                    notice: resolution.notice
+                )
             }
-            return .refreshed(title: refreshed.displayTitle)
+            return .refreshed(title: refreshed.displayTitle, notice: resolution.notice)
         } catch {
-            return .renamedNeedsRefresh(title: title, message: error.localizedDescription)
+            return .renamedNeedsRefresh(title: title, message: error.localizedDescription, notice: resolution.notice)
         }
     }
 
+    /// One shared context path for pane and color-group naming. Prefers a
+    /// matching semantic conversation (with an acknowledged submission merged
+    /// in while the snapshot lags), falls back to bounded shell output whenever
+    /// the conversation is empty or unreadable — even when Pi semantic metadata
+    /// exists — and finally uses pane/tab/workspace metadata. Returns nil only
+    /// when the target genuinely has no readable context.
+    func smartRenameContext(for pane: HerdrPane) async throws -> String? {
+        let acceptedPrompt = acceptedPrompt(for: pane)
+        var conversation = ""
+        if let expectedSessionID = pane.piSemantic?.sessionID {
+            conversation = try await smartRenameConversationContext(
+                for: pane,
+                expectedSessionID: expectedSessionID
+            )
+        }
+        let merged = SmartPaneTitle.mergedContext(conversation: conversation, acceptedPrompt: acceptedPrompt)
+        if SmartPaneTitle.hasReadableText(merged) {
+            return merged
+        }
+        // A snapshot that is empty, unavailable, or belongs to another session
+        // must not hide terminal activity. The accepted-prompt merge above is a
+        // no-op here because it would already have returned.
+        let terminal = try await smartRenameTerminalContext(for: pane)
+        let terminalMerged = SmartPaneTitle.mergedContext(
+            conversation: terminal,
+            acceptedPrompt: acceptedPrompt
+        )
+        if SmartPaneTitle.hasReadableText(terminalMerged) {
+            return terminalMerged
+        }
+        guard let metadata = smartRenameMetadataContext(for: pane) else { return nil }
+        return SmartPaneTitle.mergedContext(conversation: metadata, acceptedPrompt: acceptedPrompt)
+    }
+
+    private func smartRenameConversationContext(
+        for pane: HerdrPane,
+        expectedSessionID: String
+    ) async throws -> String {
+        do {
+            let snapshot = try await fetchPiConversationSnapshot(for: pane)
+            guard snapshot.available else { return "" }
+            // A snapshot that names a different session is another
+            // conversation: reject it rather than blending its transcript into
+            // this pane's title.
+            if let snapshotSessionID = SmartPaneTitle.sessionID(from: snapshot),
+               snapshotSessionID != expectedSessionID {
+                return ""
+            }
+            return SmartPaneTitle.context(from: snapshot)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // A snapshot that is not available yet falls back to the accepted
+            // prompt and metadata.
+            return ""
+        }
+    }
+
+    private func smartRenameTerminalContext(for pane: HerdrPane) async throws -> String {
+        do {
+            let output = try await fetchOutput(for: pane)
+            return SmartPaneTitle.terminalContext(from: output)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return ""
+        }
+    }
+
+    private func smartRenameMetadataContext(for pane: HerdrPane) -> String? {
+        let workspace = workspace(containing: pane)
+        let tab = workspace?.tabs.first { $0.id == pane.scopedTabID }
+        return SmartPaneTitle.metadataContext(
+            paneLabel: pane.label,
+            paneTitle: pane.title,
+            terminalTitle: pane.terminalTitleStripped,
+            sessionTitle: pane.sessionTitle,
+            workspaceLabel: workspace?.label,
+            tabLabel: tab?.label,
+            workingDirectory: pane.displayPath
+        )
+    }
+
+    /// Remember an acknowledged submission so Smart Rename can use it before
+    /// the semantic snapshot catches up. Only called after the server accepted
+    /// the prompt; unsent drafts and failed submissions never reach here.
+    private func recordAcceptedPrompt(_ text: String, for pane: HerdrPane, generation: Int) {
+        let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty, generation == connectionGeneration,
+              let current = self.pane(id: pane.id),
+              current.terminalID == pane.terminalID,
+              current.workspaceID == pane.workspaceID,
+              current.tabID == pane.tabID,
+              current.piSemantic?.sessionID == pane.piSemantic?.sessionID else { return }
+        pruneAcceptedPrompts()
+        let record = AcceptedPromptRecord(
+            machineID: current.machineID,
+            scopedPaneID: current.id,
+            terminalID: current.terminalID,
+            workspaceID: current.workspaceID,
+            tabID: current.tabID,
+            sessionID: current.piSemantic?.sessionID,
+            connectionGeneration: generation,
+            text: String(prompt.prefix(Self.maxAcceptedPromptCharacters))
+        )
+        acceptedPrompts.removeAll {
+            $0.scopedPaneID == record.scopedPaneID && $0.sessionID == record.sessionID
+        }
+        acceptedPrompts.append(record)
+        if acceptedPrompts.count > Self.maxAcceptedPromptRecords {
+            acceptedPrompts.removeFirst(acceptedPrompts.count - Self.maxAcceptedPromptRecords)
+        }
+        // A newer accepted submission invalidates an in-flight naming result
+        // that read the older prompt, while streaming and completion do not.
+        paneSubmissionRevisions[record.scopedPaneID] = UUID()
+    }
+
+    private func acceptedPrompt(for pane: HerdrPane) -> String? {
+        pruneAcceptedPrompts()
+        return acceptedPrompts.last { record in
+            record.connectionGeneration == connectionGeneration
+                && record.machineID == pane.machineID
+                && record.scopedPaneID == pane.id
+                && record.terminalID == pane.terminalID
+                && record.workspaceID == pane.workspaceID
+                && record.tabID == pane.tabID
+                && record.sessionID == pane.piSemantic?.sessionID
+        }?.text
+    }
+
+    private func pruneAcceptedPrompts() {
+        acceptedPrompts.removeAll { record in
+            record.connectionGeneration != connectionGeneration
+                || self.pane(id: record.scopedPaneID) == nil
+        }
+        paneSubmissionRevisions = paneSubmissionRevisions.filter { self.pane(id: $0.key) != nil }
+    }
+
     /// Name the shared color label, never the underlying tabs or conversations.
+    /// Sampling is deterministic and tab-fair, and the naming ask runs on the
+    /// machine of the first successfully sampled controllable pane.
     func smartRenameChatColor(_ color: ChatTabColor, runner: any HerdrNoteAIRunner = HerdrLiveNoteAIRunner()) async {
         let panes = workspaces.flatMap(\.panes)
             .filter { chatTabColors.color(for: $0.scopedTabID) == color }
             .sorted { $0.id < $1.id }
-        let readable = panes.filter { $0.piSemantic?.sessionID != nil && canControl(machineID: $0.machineID) }
-        guard !readable.isEmpty, chatTabColors.beginSmartRename(color) else { return }
+        let controllable = panes.filter { canControl(machineID: $0.machineID) }
+        guard !controllable.isEmpty, chatTabColors.beginSmartRename(color) else { return }
         defer { chatTabColors.endSmartRename(color) }
         let revision = chatTabColors.revision(for: color)
         toastMessage = "Finding a label for \(chatTabColors.label(for: color))…"
@@ -2009,54 +2471,79 @@ final class HerdrAppModel {
                 let tab = workspace?.tabs.first { $0.id == pane.scopedTabID }
                 return "Tab: \((tab?.label ?? "Untitled").prefix(80)); Chat: \(pane.displayTitle.prefix(80))"
             }.joined(separator: "\n")
-            // Give each tab a turn before taking extra panes from a single tab.
+            // Give each tab a turn before taking extra panes from a single tab,
+            // and keep the sample order deterministic for reproducible routing.
             var seenTabs: Set<String> = []
-            let representatives = readable.filter { seenTabs.insert($0.scopedTabID).inserted }
-            let extra = readable.filter { pane in !representatives.contains(where: { $0.id == pane.id }) }
-            var loaded: [HerdrPane] = []
+            let representatives = controllable.filter { seenTabs.insert($0.scopedTabID).inserted }
+            let extra = controllable.filter { pane in !representatives.contains(where: { $0.id == pane.id }) }
+            var loaded: [(pane: HerdrPane, identity: PaneMutationIdentity)] = []
             for pane in (representatives + extra).prefix(6) {
                 try Task.checkCancellation()
+                // Context loading reads the accepted submission synchronously
+                // and then awaits the snapshot. Capture this pane's identity
+                // first so a prompt accepted, a manual rename, or a connection
+                // change during that await cannot be paired with the older
+                // context and pass the final guard.
+                let identity = PaneMutationIdentity(
+                    pane: pane,
+                    connectionGeneration: connectionGeneration,
+                    renameRevision: paneRenameRevisions[pane.id],
+                    submissionRevision: paneSubmissionRevisions[pane.id]
+                )
                 do {
-                    let snapshot = try await fetchPiConversationSnapshot(for: pane)
-                    let text = SmartChatColorTitle.conversationContext(from: snapshot)
-                    if snapshot.available, !text.isEmpty {
-                        context += "\nChat \(pane.displayTitle.prefix(80)):\n\(text)"
-                        loaded.append(pane)
-                    }
+                    guard let text = try await smartRenameContext(for: pane), !text.isEmpty else { continue }
+                    context += "\nChat \(pane.displayTitle.prefix(80)):\n\(SmartChatColorTitle.compact(text))"
+                    loaded.append((pane, identity))
                 } catch is CancellationError { throw CancellationError() }
                 catch { continue } // One unavailable sibling must not hide the others.
             }
-            guard let source = loaded.first else {
-                toastMessage = "This color group has no readable Pi conversation to name yet."
+            guard let source = loaded.first?.pane else {
+                toastMessage = "This color group has no readable context to name yet."
                 return
             }
-            let settings = AgentModelSettings.load(from: userDefaults)
-            let charter = await supportsPromptOverrides(machineID: source.machineID)
-                ? "You name chat groups. Use only supplied text. Never call tools. Return only the requested JSON object."
-                : nil
-            let response = try await runner.run(
-                prompt: SmartChatColorTitle.prompt(context: context), machineID: source.machineID,
-                mode: .ask, model: settings.quickChatModel.isEmpty ? nil : settings.quickChatModel,
-                thinkingLevel: "low", systemPrompt: charter, deadline: .seconds(60),
-                appModel: self, onProgress: { _ in }
+            // The naming ask executes on the sampled pane's machine, not the
+            // primary/selected catalog machine.
+            let resolution = try await SmartRenameModelRouting.resolve(
+                settings: AgentModelSettings.load(from: userDefaults),
+                executionMachineID: source.machineID,
+                appModel: self
             )
+            let response: String
+            do {
+                response = try await runner.run(
+                    prompt: SmartChatColorTitle.prompt(context: context), machineID: source.machineID,
+                    mode: .ask, model: resolution.modelID,
+                    thinkingLevel: resolution.thinkingLevel.rawValue,
+                    systemPrompt: nil,
+                    profile: HerdrNoteAIProfiles.smartRename,
+                    deadline: .seconds(60),
+                    appModel: self, onProgress: { _ in }
+                )
+            } catch {
+                throw SmartRenameModelRouting.executionError(error, resolution: resolution)
+            }
             try Task.checkCancellation()
             let currentIDs = Set(workspaces.flatMap(\.panes)
                 .filter { chatTabColors.color(for: $0.scopedTabID) == color }.map(\.id))
             guard chatTabColors.revision(for: color) == revision,
                   currentIDs == Set(panes.map(\.id)),
-                  loaded.allSatisfy({ old in
-                      pane(id: old.id)?.piSemantic?.sessionID == old.piSemantic?.sessionID
+                  loaded.allSatisfy({ entry in
+                      guard let current = pane(id: entry.pane.id) else { return false }
+                      return entry.identity.matches(
+                          current,
+                          connectionGeneration: connectionGeneration,
+                          renameRevision: paneRenameRevisions[current.id],
+                          submissionRevision: paneSubmissionRevisions[current.id]
+                      )
                   }) else {
                 toastMessage = "Color group changed while naming it. Your changes were kept."
                 return
             }
             guard let title = SmartPaneTitle.parse(response) else {
-                toastMessage = "AI did not return a valid short label. Try Smart Rename again."
-                return
+                throw SmartRenameModelRouting.invalidOutputError(resolution: resolution)
             }
             chatTabColors.rename(color, to: title)
-            toastMessage = "Color label renamed"
+            toastMessage = resolution.notice.map { "Color label renamed. \($0)" } ?? "Color label renamed"
         } catch is CancellationError {
             // Keep the previous label on cancellation.
         } catch {
@@ -2618,22 +3105,27 @@ final class HerdrAppModel {
     }
 
     /// PR review questions deliberately pin both transport and scope to the review host.
-    func presentPRReviewQuestion(
+    struct PRReviewQuestionPlan {
+        let machineID: String
+        let checkoutPath: String
+        let context: AssistantContext
+    }
+
+    /// Builds the host-scoped context for a PR review question.
+    ///
+    /// The machine is always explicit: a popped-out review passes its pinned
+    /// host so excerpts and findings come from that companion, never from the
+    /// machine the main window happens to have selected as the review host.
+    func prReviewQuestionPlan(
+        machineID: String,
         review: PRReviewSummary,
-        selection: PRReviewSelection,
-        question: String? = nil,
-        anchor: (view: NSView, rect: CGRect)?
-    ) async {
+        selection: PRReviewSelection
+    ) async -> PRReviewQuestionPlan? {
         let checkoutPath = review.checkoutPath?.nonEmpty ?? (isDemoMode ? "/path/to/project" : nil)
         guard let checkoutPath
         else {
             toastMessage = "Connect the development machine before asking about this review."
-            return
-        }
-        let machineID = isDemoMode ? "demo" : prReviewMachine?.id
-        guard let machineID else {
-            toastMessage = "Connect the development machine before asking about this review."
-            return
+            return nil
         }
 
         let firstSpan = selection.spans.first
@@ -2688,15 +3180,31 @@ final class HerdrAppModel {
             if let index = items.lastIndex(where: { $0.priority == "optional" }) { items.remove(at: index) } else { break }
         }
         let context = AssistantContext(source: .init(feature: "pr-review.diff", instanceId: review.id), items: items)
+        return PRReviewQuestionPlan(machineID: machineID, checkoutPath: checkoutPath, context: context)
+    }
+
+    func presentPRReviewQuestion(
+        machineID: String,
+        review: PRReviewSummary,
+        selection: PRReviewSelection,
+        question: String? = nil,
+        anchor: (view: NSView, rect: CGRect)?
+    ) async {
+        guard let plan = await prReviewQuestionPlan(
+            machineID: machineID,
+            review: review,
+            selection: selection
+        ) else { return }
+
         let submittedQuestion = question ?? selection.question ?? ""
         #if DEBUG
         if isDemoMode {
             let session = assistantCoordinator.present(
                 title: "PR #\(review.number) · \(selection.path)",
-                machineID: "demo-\(machineID)",
+                machineID: "demo-\(plan.machineID)",
                 paneID: nil,
-                rootPath: checkoutPath,
-                context: context,
+                rootPath: plan.checkoutPath,
+                context: plan.context,
                 transport: AssistantDemo().transport,
                 profile: "pr-review-question-v1",
                 reviewId: review.id,
@@ -2706,7 +3214,7 @@ final class HerdrAppModel {
             return
         }
         #endif
-        guard let client = client(forMachine: machineID) else {
+        guard let client = client(forMachine: plan.machineID) else {
             toastMessage = "Connect the development machine before asking about this review."
             return
         }
@@ -2717,14 +3225,14 @@ final class HerdrAppModel {
             stop: { try await client.cancelHeadlessAgent(id: $0).run },
             models: { try await client.fetchAgentModels() },
             promote: { try await client.promoteHeadlessAgent(id: $0, workspaceID: nil).run },
-            openAgent: { HerdrMacAppDelegate.openPaneURLWithFallback(MachineScopedID.compose(machineID: machineID, rawID: $0)) }
+            openAgent: { HerdrMacAppDelegate.openPaneURLWithFallback(MachineScopedID.compose(machineID: plan.machineID, rawID: $0)) }
         )
         let session = assistantCoordinator.present(
             title: "PR #\(review.number) · \(selection.path)",
-            machineID: machineID,
+            machineID: plan.machineID,
             paneID: nil,
-            rootPath: checkoutPath,
-            context: context,
+            rootPath: plan.checkoutPath,
+            context: plan.context,
             transport: transport,
             profile: "pr-review-question-v1",
             reviewId: review.id,
@@ -3771,8 +4279,23 @@ final class HerdrAppModel {
         defer {
             if showSpinner, expectedGeneration == connectionGeneration { isRefreshing = false }
         }
+        let observedBefore = observedServerIdentities[machineID]
         let response = try await client.fetchWorkspaces()
         guard expectedGeneration == connectionGeneration else { throw CancellationError() }
+        // Bind the fetched topology to the companion observed across the whole
+        // request. If a probe identified a different server while the request
+        // was in flight, record no identity so the response is never attributed
+        // to that server, and a later refresh has to confirm it.
+        let observedAfter = observedServerIdentities[machineID]
+        let confirmedServerID = observedBefore == observedAfter
+            && observedAfter?.configuration == client.configuration
+            ? observedAfter?.serverID
+            : nil
+        confirmedTopology[machineID] = ConfirmedTopology(
+            generation: expectedGeneration,
+            configuration: client.configuration,
+            serverID: confirmedServerID
+        )
         var previousAlertIDs: Set<String> = []
         var previousReadAlertIDs: Set<String> = []
         for alert in alerts where alert.machineID == machineID {
@@ -4177,6 +4700,8 @@ final class HerdrAppModel {
         resultArtifactReconciliation = [:]
         runtimes = [:]
         machineStates = [:]
+        confirmedTopology = [:]
+        observedServerIdentities = [:]
         activeServerConnection = nil
         connectionState = .disconnected
         let hadFleetContent = !workspaces.isEmpty || !alerts.isEmpty
@@ -4527,6 +5052,8 @@ final class HerdrAppModel {
         }
         runtimes[id] = nil
         machineStates[id] = nil
+        confirmedTopology[id] = nil
+        observedServerIdentities[id] = nil
         let workspaceCount = workspaces.count
         let alertCount = alerts.count
         workspaces.removeAll { $0.machineID == id }
@@ -4571,6 +5098,7 @@ final class HerdrAppModel {
             machineScope.save(to: userDefaults)
         }
         connectionGeneration += 1
+        noteMachineConfigurationChange(id)
         updateAggregateConnectionState()
         mirrorPrimaryConnection()
     }

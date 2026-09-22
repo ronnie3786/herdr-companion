@@ -10,6 +10,7 @@ enum HerdrWindowID {
     static let main = "herdr-main"
     static let activeWorkBoard = "herdr-active-work-board"
     static let workspaceGit = "herdr-workspace-git"
+    static let prReview = "herdr-pr-review"
 }
 
 enum HerdrExternalEvent {
@@ -134,6 +135,28 @@ struct HerdrHarnessMacApp: App {
             }
         }
         .defaultSize(width: 1120, height: 760)
+        .windowResizability(.contentMinSize)
+
+        // One window per machine/review pair. The value is the window identity
+        // macOS uses to focus an existing window instead of opening a second
+        // copy, and every window owns its own store and refresh lifecycle.
+        WindowGroup("PR Review", id: HerdrWindowID.prReview, for: PRReviewWindowTarget.self) { $target in
+            if let target {
+                PRReviewWindowRoot(model: model, shell: shell, target: target)
+                    .environment(\.herdrFontScale, fontScale.scale)
+            } else {
+                ContentUnavailableView(
+                    "Review unavailable",
+                    systemImage: "arrow.triangle.pull",
+                    description: Text("Open PR Review from the navigator and choose a review to pop out.")
+                )
+                .frame(minWidth: 720, minHeight: 520)
+                .background(HerdrTheme.graphite)
+                .foregroundStyle(HerdrTheme.text)
+                .preferredColorScheme(.dark)
+            }
+        }
+        .defaultSize(width: 1180, height: 820)
         .windowResizability(.contentMinSize)
 
         // ⌘, — replaces the iOS Settings tab.

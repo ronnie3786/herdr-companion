@@ -186,6 +186,16 @@ class PRReviewRuntimeTests(unittest.TestCase):
         self.runtime = PRReviewRuntime(self.service, self.store, environ={"HERDR_PR_REVIEW_AUTO_RANK": "false"}, runtime_root=self.temp.name, runner=self.runner)
         self.addCleanup(self.store.close)
         self.addCleanup(self.temp.cleanup)
+        # Shell, ranking, and preparation workers publish their run state
+        # before their final store writes, so a test can return while a daemon
+        # thread still touches this store. Join runtime workers before cleanup
+        # closes the shared connection.
+        self.addCleanup(self.join_runtime_workers)
+
+    def join_runtime_workers(self) -> None:
+        for thread in list(threading.enumerate()):
+            if isinstance(getattr(getattr(thread, "_target", None), "__self__", None), PRReviewRuntime):
+                thread.join(timeout=5)
 
     def _review(self):
         return self.store.create_review({"url": "https://github.com/example-owner/garden/pull/42", "host": "github.com", "owner": "example-owner", "repo": "garden", "number": 42, "request_id": "create"})

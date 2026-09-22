@@ -7,7 +7,15 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from .control_validation import ControlError
+from .chat_tab_colors import (
+    CHAT_TAB_COLOR_NONE,
+    CHAT_TAB_STALE_SECONDS,
+    entries_match,
+    palette_color,
+    searchable_colors,
+    tab_label,
+)
+from .control_validation import ControlError, client_id as control_client_id
 
 
 EXPENSIVE_PANE_LIMIT = 50
@@ -123,6 +131,17 @@ def _external_native_session_id(value: Any) -> Optional[str]:
         return None
 
 
+def _tab_color_entries(tab: Any) -> Optional[list[dict]]:
+    """Return a tab's publisher entries, or None when it has no color metadata."""
+
+    if not isinstance(tab, dict) or "chatTabColors" not in tab:
+        return None
+    entries = tab.get("chatTabColors")
+    if not isinstance(entries, list):
+        return []
+    return [entry for entry in entries if isinstance(entry, dict)]
+
+
 class DiscoveryService:
     def __init__(self, service: Any, server_id: str) -> None:
         self.service = service
@@ -137,6 +156,10 @@ class DiscoveryService:
         sort: str,
         limit: int,
         offset: int,
+        color: Optional[str] = None,
+        color_label: Optional[str] = None,
+        color_client_id: Optional[str] = None,
+        chat_scope: Optional[str] = None,
     ) -> dict:
         if kind not in {"chats", "workspaces", "tabs", "all"}:
             raise ControlError("kind must be chats, workspaces, tabs, or all")
@@ -146,6 +169,14 @@ class DiscoveryService:
             raise ControlError("q is invalid")
         if len(ticket) > 128 or "\x00" in ticket:
             raise ControlError("ticket is invalid")
+        if chat_scope is not None and chat_scope != "terminal":
+            raise ControlError("chatScope must be terminal")
+        if color is not None and color != CHAT_TAB_COLOR_NONE:
+            color = palette_color(color, label="color")
+        color_label = tab_label(color_label, label="colorLabel")
+        color_client_id = (
+            control_client_id(color_client_id) if color_client_id is not None else None
+        )
         records, coverage, generated_at = self._records(
             include_expensive=bool(query or ticket), query=query, ticket=ticket
         )
@@ -204,6 +235,21 @@ class DiscoveryService:
             record["matchEvidence"] = evidence
             record["_score"] = score
             matches.append(record)
+        if chat_scope == "terminal":
+            matches = [
+                item for item in matches if item["kind"] not in {"hud-chat", "first-mate"}
+            ]
+        if color is not None or color_label is not None or color_client_id is not None:
+            # Every supplied predicate must match one publisher's entry, and the
+            # filter runs before pagination so later pages are not skipped.
+            predicates = {
+                "color": color,
+                "color_label": color_label,
+                "color_client_id": color_client_id,
+            }
+            matches = [
+                item for item in matches if entries_match(item.get("chatTabColors"), **predicates)
+            ]
         if sort == "relevance":
             matches.sort(
                 key=lambda item: (
@@ -387,8 +433,14 @@ class DiscoveryService:
                 "reason": "Historical closed Pi archives are not indexed by discovery-v1",
             },
             "linkedTickets": {"searched": False, "truncated": False},
+            "chatTabColors": {
+                "searched": False,
+                "staleAfterSeconds": CHAT_TAB_STALE_SECONDS,
+            },
         }
         generated_at = ""
+        response: Optional[dict] = None
+        chat_tab_sources: Optional[list[dict]] = None
         try:
             response = self.service.snapshot_response()
             raw_snapshot = response.get("snapshot") if isinstance(response, dict) else None
@@ -415,10 +467,37 @@ class DiscoveryService:
             else:
                 coverage["liveTopology"]["freshness"] = "unknown"
             coverage["liveTopology"]["searched"] = True
+            raw_sources = response.get("chatTabColorSources") if isinstance(response, dict) else None
+            if isinstance(raw_sources, list):
+                chat_tab_sources = [item for item in raw_sources if isinstance(item, dict)]
         except Exception as exc:
             snapshot = {}
             coverage["liveTopology"]["error"] = type(exc).__name__
             coverage["liveTopology"]["freshness"] = "unknown"
+        if chat_tab_sources is None:
+            coverage["chatTabColors"]["reason"] = (
+                "This companion response does not expose chat tab color publishers"
+            )
+        else:
+            enabled_publishers = [item for item in chat_tab_sources if item.get("enabled") is True]
+            current_publishers = [item for item in enabled_publishers if not item.get("stale")]
+            stale_publishers = [item for item in enabled_publishers if item.get("stale")]
+            disabled_publishers = [item for item in chat_tab_sources if item.get("enabled") is not True]
+            coverage["chatTabColors"].update(
+                {
+                    "searched": True,
+                    "publisherCount": len(chat_tab_sources),
+                    "currentPublisherCount": len(current_publishers),
+                    "stalePublisherCount": len(stale_publishers),
+                    "disabledPublisherCount": len(disabled_publishers),
+                    "available": bool(enabled_publishers),
+                    "freshness": (
+                        "current"
+                        if current_publishers
+                        else ("stale" if enabled_publishers else "none")
+                    ),
+                }
+            )
         tickets_by_identity, tickets_by_work_item = self._ticket_associations(coverage)
         workspaces = [item for item in snapshot.get("workspaces", []) if isinstance(item, dict)]
         tabs = [item for item in snapshot.get("tabs", []) if isinstance(item, dict)]
@@ -481,29 +560,32 @@ class DiscoveryService:
             updated = _timestamp(tab) or max(
                 tab_updates.get(tab_id, []), key=_timestamp_value, default=None
             )
-            records.append(
-                {
+            tab_colors = _tab_color_entries(tab)
+            tab_record: dict = {
+                "kind": "tab",
+                "id": tab_id,
+                "title": title,
+                "updatedAt": updated,
+                "status": str(tab.get("agent_status") or "open"),
+                "workspaceName": workspace_name,
+                "target": {
                     "kind": "tab",
-                    "id": tab_id,
+                    "serverId": self.server_id,
+                    "workspaceId": workspace_id,
+                    "tabId": tab_id,
+                },
+                "openModes": ["workspace"],
+                "_fields": {
                     "title": title,
-                    "updatedAt": updated,
-                    "status": str(tab.get("agent_status") or "open"),
                     "workspaceName": workspace_name,
-                    "target": {
-                        "kind": "tab",
-                        "serverId": self.server_id,
-                        "workspaceId": workspace_id,
-                        "tabId": tab_id,
-                    },
-                    "openModes": ["workspace"],
-                    "_fields": {
-                        "title": title,
-                        "workspaceName": workspace_name,
-                        "workspaceId": workspace_id,
-                        "tabId": tab_id,
-                    },
-                }
-            )
+                    "workspaceId": workspace_id,
+                    "tabId": tab_id,
+                    **searchable_colors(tab_colors),
+                },
+            }
+            if tab_colors is not None:
+                tab_record["chatTabColors"] = copy.deepcopy(tab_colors)
+            records.append(tab_record)
         expensive = (
             sorted(panes, key=lambda item: _timestamp_value(_timestamp(item)), reverse=True)[
                 :EXPENSIVE_PANE_LIMIT
@@ -541,6 +623,7 @@ class DiscoveryService:
                 or pane_id
             )
             cwd = pane.get("foreground_cwd") or pane.get("cwd")
+            pane_colors = _tab_color_entries(tab)
             target = {
                 "kind": "pane",
                 "serverId": self.server_id,
@@ -563,24 +646,26 @@ class DiscoveryService:
                 "paneId": pane_id,
                 "terminalId": terminal_id,
                 "sessionId": session_id,
+                **searchable_colors(pane_colors),
             }
             if pane_id in pi_text:
                 fields["currentPiText"] = pi_text[pane_id]
-            records.append(
-                {
-                    "kind": "pane",
-                    "id": pane_id,
-                    "title": title,
-                    "updatedAt": _timestamp(pane),
-                    "status": str(pane.get("agent_status") or "unknown"),
-                    "workspaceName": workspace_name,
-                    "tabName": tab_name,
-                    **({"cwd": str(cwd)} if isinstance(cwd, str) else {}),
-                    "target": target,
-                    "openModes": ["chat", "terminal", "git", "skills"],
-                    "_fields": fields,
-                }
-            )
+            pane_record: dict = {
+                "kind": "pane",
+                "id": pane_id,
+                "title": title,
+                "updatedAt": _timestamp(pane),
+                "status": str(pane.get("agent_status") or "unknown"),
+                "workspaceName": workspace_name,
+                "tabName": tab_name,
+                **({"cwd": str(cwd)} if isinstance(cwd, str) else {}),
+                "target": target,
+                "openModes": ["chat", "terminal", "git", "skills"],
+                "_fields": fields,
+            }
+            if pane_colors is not None:
+                pane_record["chatTabColors"] = copy.deepcopy(pane_colors)
+            records.append(pane_record)
         self._append_hud(
             records,
             coverage,

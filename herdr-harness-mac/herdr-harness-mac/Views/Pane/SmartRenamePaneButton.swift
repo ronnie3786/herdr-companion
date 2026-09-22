@@ -5,14 +5,12 @@ struct SmartRenamePaneButton: View {
     let pane: HerdrPane
 
     var body: some View {
-        if pane.piSemantic?.sessionID != nil {
-            Button(model.smartRenamingPaneIDs.contains(pane.id) ? "Renaming…" : "Smart Rename",
-                   systemImage: "sparkles") {
-                Task { await model.smartRename(pane) }
-            }
-            .disabled(!model.canControl(machineID: pane.machineID) || model.smartRenamingPaneIDs.contains(pane.id))
-            .help("Generate a short title from this Pi conversation in a separate quick AI session")
-            .accessibilityIdentifier("pane-smart-rename")
+        Button(model.smartRenamingPaneIDs.contains(pane.id) ? "Renaming…" : "Smart Rename",
+               systemImage: "sparkles") {
+            Task { await model.smartRename(pane) }
         }
+        .disabled(!model.canControl(machineID: pane.machineID) || model.smartRenamingPaneIDs.contains(pane.id))
+        .help("Generate a short title from this pane's conversation, terminal output, or workspace context in a separate quick AI session")
+        .accessibilityIdentifier("pane-smart-rename")
     }
 }

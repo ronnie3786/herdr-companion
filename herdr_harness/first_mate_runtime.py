@@ -323,11 +323,11 @@ class FirstMateRuntime:
             updated_at=feature.get("updated_at") or utc_now(),
         )
 
-    def list_features(self) -> list[dict]:
+    def list_features(self, view: str = "active") -> list[dict]:
         jobs = self._jobs()
         ledger_sessions = self.store.list_session_records()
         result = []
-        for feature in self.store.list_features():
+        for feature in self.store.list_features(view):
             account = self._usage_account(feature, jobs=jobs, ledger_sessions=ledger_sessions)
             result.append({**feature, "usage": account["usage"]})
         return result
@@ -668,7 +668,9 @@ class FirstMateRuntime:
                 self._last_watch = time.monotonic()
             if not self.capabilities()["available"]:
                 return
-            for feature in self.store.list_features():
+            # Archiving is presentation-only. Detached work for an archived
+            # feature continues to reconcile until its workflow settles.
+            for feature in self.store.list_features("all"):
                 if feature["status"] in {"cancelled", "completed"}:
                     continue
                 if feature["id"] not in active_features:

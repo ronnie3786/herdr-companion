@@ -16,11 +16,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
-from . import attachments, issue_reports, response_audio, result_artifacts, voice
+from . import attachments, chat_tab_colors, issue_reports, response_audio, result_artifacts, voice
 from .active_work import ActiveWorkError
 from .first_mate_store import FirstMateError
 from .pr_review_store import PRReviewError
-from .agent_runs import AgentRunError, MAX_ATTACHMENTS, MODEL_PATTERN, THINKING_LEVELS
+from .agent_runs import SMART_RENAME_PROFILE, AgentRunError, MAX_ATTACHMENTS, MODEL_PATTERN, THINKING_LEVELS
 from .alerts import utc_now
 from .issue_reports import IssueReportError
 from .client import HerdrAPIError, HerdrClientError
@@ -31,6 +31,7 @@ from .control_validation import (
     action_id as control_action_id,
     client_id as control_client_id,
     instance_id as control_instance_id,
+    publisher_token as control_publisher_token,
     receiver_token as control_receiver_token,
     request_id as control_request_id,
     require_fields as control_require_fields,
@@ -410,16 +411,19 @@ def api_description() -> dict:
             "pane-retirement-v1",
             "first-mate-v1",
             "first-mate-usage-v1",
+            "first-mate-archive-v1",
             "pr-review-v1",
             "pi-session-context-v1",
             "agent-control-v1",
             "discovery-v1",
+            "chat-tab-colors-v1",
             "issue-reports-v1",
         ],
         "endpoints": {
             "health": "/api/v1/health",
             "controlCapabilities": "/api/v1/control/capabilities",
             "controlActions": "/api/v1/control/actions",
+            "chatTabColors": "/api/v1/control/chat-tab-colors/{clientId}",
             "discovery": "/api/v1/discovery",
             "uiClients": "/api/v1/ui/clients",
             "firstMate": "/api/v1/first-mate/features",
@@ -535,6 +539,7 @@ def api_description() -> dict:
             "POST /api/v1/fleet/sync",
             "POST /api/v1/fleet/items/{itemId}/action",
             "POST /api/v1/control/actions",
+            "POST /api/v1/control/chat-tab-colors/{clientId}",
             "POST /api/v1/ui/clients/register|{clientId}/poll|{clientId}/commands",
             "POST /api/v1/ui/clients/{clientId}/commands/{requestId}/result",
         ],
@@ -1041,12 +1046,15 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             snapshot_view = runtime.snapshot if hasattr(runtime, "snapshot") else store.snapshot
             features_view = runtime.list_features if hasattr(runtime, "list_features") else store.list_features
             if method == "GET" and tail == ["capabilities"]:
-                return {"ok": True, "capabilities": ["first-mate-v1", "first-mate-model-settings-v1", "first-mate-usage-v1"], **runtime.capabilities()}
+                return {"ok": True, "capabilities": ["first-mate-v1", "first-mate-model-settings-v1", "first-mate-usage-v1", "first-mate-archive-v1"], **runtime.capabilities()}
             if method == "GET" and tail == ["models"]:
                 return {"ok": True, **service.first_mate.model_catalog()}
             if tail == ["features"]:
                 if method == "GET":
-                    return {"ok": True, "features": features_view()}
+                    view = (query.get("view") or ["active"])[0]
+                    if view not in {"active", "archived", "all"}:
+                        raise HTTPValidationError("Invalid feature view", code="invalid_request")
+                    return {"ok": True, "features": features_view(view)}
                 if method == "POST":
                     if set(body) - {"title", "goal", "cwd", "request_id", "work_item_id"}:
                         raise HTTPValidationError("Feature contains an unsupported field")
@@ -1073,10 +1081,19 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     service.first_mate_changed(feature_id)
                     return {"ok": True, "message": message, "feature": feature_view(feature_id)}, 202
                 if tail[2:] == ["actions"] and method == "POST":
-                    if set(body) - {"action", "request_id", "expected_revision"}:
+                    if set(body) - {"action", "request_id", "expected_revision", "reason"}:
                         raise HTTPValidationError("Action contains an unsupported field")
                     action = _string(body.get("action"), "action", maximum=32)
-                    if action not in {"pause", "resume", "cancel"}:
+                    if action in {"archive", "unarchive"}:
+                        if "expected_revision" in body or (action == "unarchive" and "reason" in body):
+                            raise HTTPValidationError("Archive action contains an unsupported field")
+                        request_id = _string(body.get("request_id"), "request_id", maximum=200)
+                        payload = {"request_id": request_id}
+                        if body.get("reason") is not None:
+                            payload["reason"] = _string(body.get("reason"), "reason", maximum=32)
+                        store.set_archived(feature_id, action == "archive", payload)
+                        return {"ok": True, "feature": feature_view(feature_id)}
+                    if action not in {"pause", "resume", "cancel"} or "reason" in body:
                         raise HTTPValidationError("Use a message to direct the next stage", code="first_mate_action_invalid")
                     request_id = _string(body.get("request_id"), "request_id", maximum=200)
                     runtime.action(feature_id, action, request_id, expected_revision=body.get("expected_revision"))
@@ -1252,10 +1269,51 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     "ok": True,
                     "version": 1,
                     "serverId": server_id,
-                    "capabilities": ["agent-control-v1", "discovery-v1"],
+                    "capabilities": ["agent-control-v1", "discovery-v1", "chat-tab-colors-v1"],
+                    "chatTabColorStaleAfterSeconds": chat_tab_colors.CHAT_TAB_STALE_SECONDS,
+                }
+            if (
+                method == "POST"
+                and len(tail) == 3
+                and tail[:2] == ["control", "chat-tab-colors"]
+            ):
+                control_require_fields(
+                    body,
+                    allowed=chat_tab_colors.PUBLICATION_BODY_FIELDS,
+                    required={
+                        "serverId",
+                        "publisherToken",
+                        "platform",
+                        "clientName",
+                        "enabled",
+                        "revision",
+                        "tabs",
+                    },
+                    label="tab color publication",
+                )
+                publication = store.publish_chat_tab_colors(
+                    client_id=control_client_id(tail[2]),
+                    publisher_token=control_publisher_token(body.get("publisherToken")),
+                    payload=chat_tab_colors.publication_payload(body),
+                )
+                return {
+                    "ok": True,
+                    "serverId": server_id,
+                    "publication": chat_tab_colors.publication_response(publication),
                 }
             if method == "GET" and tail == ["discovery"]:
-                allowed = {"kind", "q", "ticket", "sort", "limit", "offset"}
+                allowed = {
+                    "kind",
+                    "q",
+                    "ticket",
+                    "sort",
+                    "limit",
+                    "offset",
+                    "color",
+                    "colorLabel",
+                    "colorClientId",
+                    "chatScope",
+                }
                 if set(query) - allowed or any(len(values) != 1 for values in query.values()):
                     raise ControlError("Discovery query contains an unsupported or repeated parameter")
                 kind = (query.get("kind") or ["all"])[0]
@@ -1271,6 +1329,10 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     sort=sort,
                     limit=limit,
                     offset=offset,
+                    color=(query.get("color") or [None])[0],
+                    color_label=(query.get("colorLabel") or [None])[0],
+                    color_client_id=(query.get("colorClientId") or [None])[0],
+                    chat_scope=(query.get("chatScope") or [None])[0],
                 )
             if method == "POST" and tail == ["control", "inspect"]:
                 control_require_fields(body, allowed={"target"}, required={"target"}, label="inspect request")
@@ -1413,7 +1475,12 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             if tail == ["control", "actions"] and method == "GET":
                 if query:
                     raise ControlError("Actions does not accept query parameters")
-                return {"ok": True, "actions": service.control_resources.actions()}
+                return {
+                    "ok": True,
+                    "actions": chat_tab_colors.disable_relay_actions(
+                        service.control_resources.actions()
+                    ),
+                }
             if tail == ["control", "actions"] and method == "POST":
                 control_require_fields(
                     body,
@@ -1424,9 +1491,13 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 dry_run = body.get("dryRun", False)
                 if not isinstance(dry_run, bool):
                     raise ControlError("dryRun must be a boolean")
+                action = control_action_id(body.get("action"))
+                disabled = chat_tab_colors.disabled_action_reason(action)
+                if disabled is not None:
+                    raise ControlError(disabled, code="action_disabled", status=409)
                 normalized = {
                     "requestId": control_request_id(body.get("requestId")),
-                    "action": control_action_id(body.get("action")),
+                    "action": action,
                     "parameters": body.get("parameters"),
                 }
                 if "dryRun" in body:
@@ -1623,7 +1694,11 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 port = int(self.server.server_address[1])
                 return service.network_response(port, host_header=self.headers.get("Host", ""))
             if method == "GET" and tail == ["snapshot"]:
-                return service.snapshot_response()
+                # Published tab colors are authenticated data. The explicit
+                # insecure loopback mode never receives them.
+                return service.snapshot_response(
+                    include_chat_tab_colors=getattr(self, "_authorization_scope", "open") == "main"
+                )
             if method == "GET" and tail == ["workspaces"]:
                 return service.workspaces_response()
             if method == "GET" and len(tail) == 2 and tail[0] == "workspaces":
@@ -2302,6 +2377,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         "systemPrompt",
                         "paneId",
                         "cwd", "profile", "context", "scope", "clientRequestId", "parentSessionId",
+                        "responseBriefLength",
                     }
                     for key in body
                 ):
@@ -2337,8 +2413,43 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 profile = body.get("profile")
                 hud_chat = profile == "hud-chat-v1"
                 response_brief = profile == "response-brief-v1"
+                smart_rename = profile == SMART_RENAME_PROFILE
+                if smart_rename:
+                    # Naming is one-shot and tool-free: no continuation, files,
+                    # working-folder change, client system prompt, or supplied
+                    # context is accepted, so a naming run can only ever name
+                    # from the prompt the app sends.
+                    if mode != "ask":
+                        raise HTTPValidationError("Smart Rename must use ask mode")
+                    if any(
+                        key in body
+                        for key in (
+                            "attachments",
+                            "continueFromRunId",
+                            "systemPrompt",
+                            "paneId",
+                            "cwd",
+                            "context",
+                            "scope",
+                            "clientRequestId",
+                            "parentSessionId",
+                        )
+                    ):
+                        raise HTTPValidationError(
+                            "Smart Rename accepts only a prompt, model, and thinkingLevel"
+                        )
+                    return (
+                        service.start_smart_rename(
+                            prompt=prompt,
+                            model=model,
+                            thinking_level=thinking_level,
+                        ),
+                        202,
+                    )
                 if "parentSessionId" in body and not response_brief:
                     raise HTTPValidationError("parentSessionId requires response-brief-v1")
+                if "responseBriefLength" in body and not response_brief:
+                    raise HTTPValidationError("responseBriefLength requires response-brief-v1")
                 if response_brief and not valid_pi_session_id(body.get("parentSessionId")):
                     raise HTTPValidationError("parentSessionId is invalid")
                 if hud_chat and mode != "act":
@@ -2357,6 +2468,9 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         raise HTTPValidationError("Response briefs must use ask mode")
                     if any(key in body for key in ("attachments", "systemPrompt", "continueFromRunId")):
                         raise HTTPValidationError("Response briefs do not accept attachments, systemPrompt, or continuation")
+                    from .response_briefs import LENGTH_OPTIONS
+                    if "responseBriefLength" in body and body.get("responseBriefLength") not in LENGTH_OPTIONS:
+                        raise HTTPValidationError("responseBriefLength must be minimal, medium, or long")
                     return service.start_response_brief(body), 202
                 if profile is not None and not hud_chat:
                     return service.start_contextual_question(body), 202

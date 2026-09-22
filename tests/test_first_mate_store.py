@@ -16,7 +16,7 @@ class FirstMateStoreTests(unittest.TestCase):
         self.path = Path(self.temp.name) / "first-mate.sqlite3"
         self.store = FirstMateStore(self.path)
         self.addCleanup(lambda: self.store.close())
-        self.feature = self.store.create_feature({"title": "Garden schedule", "goal": "Plan a garden watering feature", "cwd": "/tmp/synthetic-garden", "request_id": "feature-create"})
+        self.feature = self.store.create_feature({"title": "Garden schedule", "goal": "Plan a garden watering feature", "cwd": "/tmp/synthetic-garden", "work_item_id": "SYNTH-31", "request_id": "feature-create"})
 
     def stage(self):
         message = self.store.claim_message(self.feature["id"], "coordinator")
@@ -42,16 +42,56 @@ class FirstMateStoreTests(unittest.TestCase):
         self.assertEqual(error.exception.code, code)
 
     def test_duplicate_commands_are_identical_and_changed_payload_conflicts(self):
-        duplicate = self.store.create_feature({"title": "Garden schedule", "goal": "Plan a garden watering feature", "cwd": "/tmp/synthetic-garden", "request_id": "feature-create"})
+        duplicate = self.store.create_feature({"title": "Garden schedule", "goal": "Plan a garden watering feature", "cwd": "/tmp/synthetic-garden", "work_item_id": "SYNTH-31", "request_id": "feature-create"})
         self.assertEqual(self.feature, duplicate)
         self.assertEqual(len(self.store.list_features()), 1)
         self.assertEqual(len(self.store.snapshot(self.feature["id"])["messages"]), 1)
-        self.assert_code("idempotency_conflict", lambda: self.store.create_feature({"title": "Different", "goal": "Plan a garden watering feature", "cwd": "/tmp/synthetic-garden", "request_id": "feature-create"}))
+        self.assert_code("idempotency_conflict", lambda: self.store.create_feature({"title": "Different", "goal": "Plan a garden watering feature", "cwd": "/tmp/synthetic-garden", "work_item_id": "SYNTH-31", "request_id": "feature-create"}))
         first = self.store.append_human_message(self.feature["id"], "Do not deploy; discuss options", "direction-1")
         second = self.store.append_human_message(self.feature["id"], "Do not deploy; discuss options", "direction-1")
         self.assertEqual(first, second)
         self.assertEqual(first["role"], "user")
         self.assertEqual(self.store.get_feature(self.feature["id"])["status"], "ready")
+
+    def test_archive_is_an_idempotent_presentation_axis_that_preserves_running_work(self):
+        assignment = self.running()
+        self.store.begin_handoff(assignment["id"], 1, "handoff-before-archive", "Retained checkpoint")
+        before = self.store.snapshot(self.feature["id"])
+        archived = self.store.set_archived(self.feature["id"], True, {
+            "request_id": "archive-one", "reason": "superseded",
+        })
+        duplicate = self.store.set_archived(self.feature["id"], True, {
+            "request_id": "archive-one", "reason": "superseded",
+        })
+        self.assertEqual(duplicate, archived)
+        self.assertEqual(archived["archive_reason"], "superseded")
+        self.assertIsNotNone(archived["archived_at"])
+        self.assertEqual(self.store.list_features(), [])
+        self.assertEqual([item["id"] for item in self.store.list_features("archived")], [self.feature["id"]])
+        self.assertEqual([item["id"] for item in self.store.list_features("all")], [self.feature["id"]])
+
+        after = self.store.snapshot(self.feature["id"])
+        for field in ("status", "revision", "current_visit_id", "work_item_id"):
+            self.assertEqual(after["feature"][field], before["feature"][field])
+        for collection in ("visits", "assignments", "documents", "sessions", "messages", "handoffs"):
+            self.assertEqual(after[collection], before[collection])
+        self.assertEqual(
+            [event["id"] for event in after["events"][:-1]],
+            [event["id"] for event in before["events"]],
+        )
+        self.assertEqual(after["events"][-1]["type"], "feature.archived")
+
+        restored = self.store.set_archived(self.feature["id"], False, {"request_id": "unarchive-one"})
+        self.assertIsNone(restored["archived_at"])
+        self.assertIsNone(restored["archive_reason"])
+        self.assertEqual(restored["status"], before["feature"]["status"])
+        self.assertEqual(len(self.store.list_features()), 1)
+
+    def test_archive_reason_and_list_view_are_validated(self):
+        self.assert_code("invalid_request", lambda: self.store.set_archived(
+            self.feature["id"], True, {"request_id": "archive-invalid", "reason": "finished"}
+        ))
+        self.assert_code("invalid_request", lambda: self.store.list_features("hidden"))
 
     def test_messages_are_verbatim_and_human_priority_does_not_allow_two_writers(self):
         first = self.store.claim_message(self.feature["id"], "owner-1")

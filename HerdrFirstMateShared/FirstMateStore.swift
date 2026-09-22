@@ -20,6 +20,7 @@ final class FirstMateStore {
     var selectedVisitID: String?
     var draft = ""
     var search = ""
+    var showArchived = false
     var isCreating = false
     #if os(macOS)
     var isDark = true
@@ -32,6 +33,7 @@ final class FirstMateStore {
     private(set) var hasLoaded = false
     private(set) var error: String?
     private(set) var unsupported = false
+    private(set) var archiveSupported = false
     private(set) var lastUpdated: Date?
     var openedResource: FirstMateResource?
     var resourcePresentation: FirstMateResourcePresentation?
@@ -60,6 +62,8 @@ final class FirstMateStore {
     var filteredFeatures: [FirstMateFeature] {
         features.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.goal.localizedCaseInsensitiveContains(search) }
     }
+    var activeFeatures: [FirstMateFeature] { filteredFeatures.filter { !$0.isArchived } }
+    var archivedFeatures: [FirstMateFeature] { filteredFeatures.filter(\.isArchived) }
 
     func configure(client: (any FirstMateClient)?, demo: Bool) {
         generation += 1
@@ -82,9 +86,11 @@ final class FirstMateStore {
         resetSessionPagination()
         error = nil
         unsupported = false
+        archiveSupported = demo
         isRefreshing = false
         isSending = false
         isCreating = false
+        showArchived = false
         hasLoaded = false
         lastUpdated = nil
         if demo {
@@ -126,12 +132,28 @@ final class FirstMateStore {
     }
 
     func refresh() async {
-        guard !isDemo, !isRefreshing, let client else { return }
+        guard !isRefreshing else { return }
+        if isDemo {
+            features = snapshots.values.map(\.feature)
+                .filter { showArchived || !$0.isArchived }
+                .sorted { $0.updatedAt == $1.updatedAt ? $0.id < $1.id : $0.updatedAt > $1.updatedAt }
+            reconcileSelection()
+            return
+        }
+        guard let client else { return }
         let capturedGeneration = generation
         isRefreshing = true
         defer { if capturedGeneration == generation { isRefreshing = false } }
         do {
-            let list = try await client.fetchFirstMateFeatures()
+            do {
+                let capabilities = try await client.fetchFirstMateCapabilities()
+                guard capturedGeneration == generation else { return }
+                archiveSupported = capabilities.ok && capabilities.supportsArchive
+            } catch {
+                guard capturedGeneration == generation else { return }
+                archiveSupported = false
+            }
+            let list = try await client.fetchFirstMateFeatures(scope: showArchived ? .all : .active)
             guard capturedGeneration == generation else { return }
             guard list.ok else { throw APIError.invalidResponse }
             features = list.features.map { feature in
@@ -145,7 +167,7 @@ final class FirstMateStore {
                 if refreshed.usage == nil { refreshed.usage = cached.usage }
                 return refreshed
             }
-            if selectedFeatureID == nil { selectedFeatureID = features.first?.id }
+            reconcileSelection()
             if let id = selectedFeatureID {
                 let value = try await client.fetchFirstMateFeature(id)
                 guard capturedGeneration == generation else { return }
@@ -246,6 +268,49 @@ final class FirstMateStore {
         } catch { if capturedGeneration == generation { record(error) } }
     }
 
+    func setArchived(featureID: String, archived: Bool, reason: FirstMateArchiveReason? = nil) async -> Bool {
+        guard !isSending else { return false }
+        if isDemo {
+            guard var value = snapshots[featureID] else { return false }
+            value.feature.archivedAt = archived ? FirstMateDemo.timestamp : nil
+            value.feature.archiveReason = archived ? reason?.rawValue : nil
+            receive(value)
+            if archived && !showArchived { features.removeAll { $0.id == featureID } }
+            reconcileSelection()
+            return true
+        }
+        guard archiveSupported else {
+            error = "Update this companion server to archive First Mate features."
+            return false
+        }
+        guard let client else { error = "Connect to archive this feature."; return false }
+        let capturedGeneration = generation
+        isSending = true
+        defer { if capturedGeneration == generation { isSending = false } }
+        do {
+            let value = try await client.setFirstMateArchived(
+                featureID: featureID,
+                archived: archived,
+                reason: archived ? reason : nil,
+                requestID: UUID().uuidString
+            )
+            guard capturedGeneration == generation, value.ok, value.feature.id == featureID else {
+                throw APIError.invalidResponse
+            }
+            receive(value)
+            if archived && !showArchived {
+                features.removeAll { $0.id == featureID }
+                reconcileSelection()
+            }
+            error = nil
+            await refresh()
+            return true
+        } catch {
+            if capturedGeneration == generation { record(error) }
+            return false
+        }
+    }
+
     func fetchModelCatalog(expectedContext: OperationContext) async throws -> FirstMateModelCatalog {
         guard expectedContext == operationContext, !isDemo, let client else { throw APIError.invalidResponse }
         let catalog = try await client.fetchFirstMateModels()
@@ -341,6 +406,19 @@ final class FirstMateStore {
         sessionLoadedMessages = 0
         isLoadingEarlier = false
         sessionPageError = nil
+    }
+
+    private func reconcileSelection() {
+        guard selectedFeatureID == nil || !features.contains(where: { $0.id == selectedFeatureID }) else { return }
+        if let first = features.first {
+            select(first.id)
+        } else {
+            if let old = selectedFeatureID { drafts[old] = draft }
+            selectedFeatureID = nil
+            selectedVisitID = nil
+            draft = ""
+            closeResource()
+        }
     }
 
     func advanceDemo() {

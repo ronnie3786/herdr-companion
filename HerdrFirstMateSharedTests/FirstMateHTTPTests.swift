@@ -17,12 +17,14 @@ struct FirstMateHTTPTests {
         )
         _ = try await client.sendFirstMateMessage(featureID: "feature:123", text: "Run the independent reviews", requestID: "direction-456")
         _ = try await client.performFirstMateAction(featureID: "feature:123", action: "pause", requestID: "pause-789")
+        _ = try await client.setFirstMateArchived(featureID: "feature:123", archived: true, reason: .duplicate, requestID: "archive-101")
 
         let requests = FirstMateURLProtocol.recorder.requests()
-        #expect(requests.map(\.httpMethod) == ["POST", "POST", "POST"])
+        #expect(requests.map(\.httpMethod) == ["POST", "POST", "POST", "POST"])
         #expect(requests.compactMap { $0.url?.path } == [
             "/api/v1/first-mate/features",
             "/api/v1/first-mate/features/feature:123/messages",
+            "/api/v1/first-mate/features/feature:123/actions",
             "/api/v1/first-mate/features/feature:123/actions",
         ])
         for request in requests {
@@ -36,6 +38,7 @@ struct FirstMateHTTPTests {
         #expect(bodies[0] == ["title": "A clearer review", "goal": "Retain every review session", "cwd": "/workspace/sample-app", "request_id": "create-123"])
         #expect(bodies[1] == ["text": "Run the independent reviews", "request_id": "direction-456"])
         #expect(bodies[2] == ["action": "pause", "request_id": "pause-789"])
+        #expect(bodies[3] == ["action": "archive", "reason": "duplicate", "request_id": "archive-101"])
     }
 
     @Test("Model settings use the authenticated host and independent settings revision")
@@ -87,6 +90,19 @@ struct FirstMateHTTPTests {
         let url = try #require(request.url)
         let query = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems)
         #expect(query == [URLQueryItem(name: "limit", value: "100"), URLQueryItem(name: "before", value: "240")])
+    }
+
+    @Test("Feature list scopes and archive capability use additive authenticated requests")
+    func archiveCapabilityAndListScope() async throws {
+        let (client, session) = try makeClient()
+        defer { session.invalidateAndCancel() }
+        let capabilities = try await client.fetchFirstMateCapabilities()
+        _ = try await client.fetchFirstMateFeatures(scope: .all)
+        #expect(capabilities.supportsArchive)
+        let requests = FirstMateURLProtocol.recorder.requests()
+        #expect(requests[0].url?.path == "/api/v1/first-mate/capabilities")
+        #expect(requests[1].url?.path == "/api/v1/first-mate/features")
+        #expect(requests[1].url?.query == "view=all")
     }
 
     @Test("Resource identifiers cannot escape their endpoint collection", arguments: ["", ".", "..", "../notes", "a/b", "a?limit=1", "a#fragment", "%2F", String(repeating: "x", count: 257)])
@@ -151,6 +167,8 @@ private final class FirstMateURLProtocol: URLProtocol {
             let data: Data
             if status != 200 {
                 data = Data(#"{"ok":false,"error":{"code":"unauthorized","message":"Authentication required"}}"#.utf8)
+            } else if url.path == "/api/v1/first-mate/capabilities" {
+                data = Data(#"{"ok":true,"capabilities":["first-mate-v1","first-mate-archive-v1"]}"#.utf8)
             } else if url.path == "/api/v1/first-mate/models" {
                 data = Data(#"{"ok":true,"models":[{"id":"synthetic/reasoner","name":"Reasoner","provider":"synthetic","reasoning":true}],"default_model":"synthetic/default","thinking_levels":["off","high"]}"#.utf8)
             } else if url.path.contains("/sessions/") {

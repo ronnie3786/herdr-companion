@@ -1,17 +1,21 @@
 import http.client
 import json
+import tempfile
 import threading
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 import urllib.error
 import urllib.parse
 import urllib.request
 
+from herdr_harness.agent_runs import SMART_RENAME_PROFILE
 from herdr_harness.events import EventBroker
 from herdr_harness.pi_semantic import PiSemanticError
 from herdr_harness.server import make_server
 from herdr_harness.service import HerdrService
 from herdr_harness.workspace_tools import WorkspaceToolError
+from tests.test_agent_runs import wait_for_status, write_fake_pi
 from tests.test_herdr_service import FakeClient, snapshot_with_status
 
 
@@ -53,6 +57,7 @@ class FakeHTTPService:
             "agents": [],
             "layouts": [],
         }
+        self.snapshot_scopes = []
 
     def health_response(self):
         return {
@@ -76,7 +81,8 @@ class FakeHTTPService:
         self.calls.append(("response_audio.speech", {"text": text}))
         return {"ok": True, "audioBase64": "SUQz", "contentType": "audio/mpeg"}
 
-    def snapshot_response(self):
+    def snapshot_response(self, *, include_chat_tab_colors=True):
+        self.snapshot_scopes.append(include_chat_tab_colors)
         return {"ok": True, "snapshot": self.snapshot, "generatedAt": "2026-08-11T00:00:00Z"}
 
     def workspaces_response(self):
@@ -970,6 +976,28 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertIn("alerts", workspaces)
         self.assertIn("starredPaneIds", workspaces)
 
+    def test_snapshot_tab_colors_follow_the_authenticated_scope(self):
+        self.assertEqual(self.request("/api/v1/snapshot", token="test-secret")[0], 200)
+        self.assertEqual(self.service.snapshot_scopes[-1], True)
+        self.assertEqual(self.request("/api/v1/snapshot", token=None)[0], 401)
+
+        open_service = FakeHTTPService()
+        open_server = make_server(open_service, host="127.0.0.1", port=0, api_token="")
+        open_thread = threading.Thread(target=open_server.serve_forever, daemon=True)
+        open_thread.start()
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{open_server.server_address[1]}/api/v1/snapshot", timeout=2
+            ) as response:
+                body = json.loads(response.read())
+                self.assertEqual(response.status, 200)
+        finally:
+            open_server.shutdown()
+            open_server.server_close()
+            open_thread.join(timeout=1)
+        self.assertEqual(open_service.snapshot_scopes, [False])
+        self.assertNotIn("chatTabColorSources", body)
+
     def test_pane_star_route_validates_and_forwards(self):
         status, _, body = self.request(
             "/api/v1/panes/w1:p1/star",
@@ -1238,8 +1266,123 @@ class HerdrHTTPTests(unittest.TestCase):
         status, _, _ = self.request("/api/v1/agent-runs", method="POST", payload=request)
         self.assertEqual(status, 202)
         self.service.start_contextual_question.assert_called_once_with(request)
+        rejected = {**request, "clientRequestId": "fixture-request-00002", "responseBriefLength": "minimal"}
+        self.assertEqual(self.request("/api/v1/agent-runs", method="POST", payload=rejected)[0], 400)
+        self.assertEqual(self.service.start_contextual_question.call_count, 1)
         status, _, _ = self.request("/api/v1/agent-runs", method="POST", payload={"prompt": "Explain", "context": {}})
         self.assertEqual(status, 400)
+
+    def test_smart_rename_profile_is_advertised_and_dispatches_tool_free(self):
+        status, _, capabilities = self.request("/api/v1/agent-runs/capabilities")
+        self.assertEqual(status, 200)
+        self.assertIn("smart-rename-v1", capabilities["profiles"])
+        self.assertEqual(capabilities["smartRename"]["tools"], "none")
+        self.assertTrue(capabilities["smartRename"]["oneShot"])
+
+        self.service.start_smart_rename = Mock(
+            return_value={"ok": True, "run": {"id": "agr_0123456789ab"}}
+        )
+        self.service.start_contextual_question = Mock()
+        request = {"prompt": "Name this synthetic chat", "profile": "smart-rename-v1"}
+        status, _, _ = self.request("/api/v1/agent-runs", method="POST", payload=request)
+        self.assertEqual(status, 202)
+        self.service.start_smart_rename.assert_called_once_with(
+            prompt="Name this synthetic chat", model=None, thinking_level=None
+        )
+        self.service.start_contextual_question.assert_not_called()
+
+        offered = {**request, "model": "synthetic/naming", "thinkingLevel": "low"}
+        self.assertEqual(self.request("/api/v1/agent-runs", method="POST", payload=offered)[0], 202)
+        self.service.start_smart_rename.assert_called_with(
+            prompt="Name this synthetic chat", model="synthetic/naming", thinking_level="low"
+        )
+
+        for invalid in (
+            {**request, "mode": "act"},
+            {**request, "attachments": []},
+            {**request, "systemPrompt": "override"},
+            {**request, "continueFromRunId": "agr_0123456789ab"},
+            {**request, "cwd": "~"},
+            {**request, "paneId": "w1:p1"},
+            {**request, "context": {"version": 1}},
+            {**request, "clientRequestId": "naming-request-0001"},
+        ):
+            with self.subTest(invalid=invalid):
+                self.assertEqual(
+                    self.request("/api/v1/agent-runs", method="POST", payload=invalid)[0], 400
+                )
+        self.assertEqual(self.service.start_smart_rename.call_count, 2)
+
+    def test_smart_rename_runs_cannot_be_continued_or_promoted_over_http(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            home = directory / "home"
+            home.mkdir()
+            fake_pi = write_fake_pi(directory)
+            service = HerdrService(
+                FakeClient([snapshot_with_status("done")]),
+                environ={
+                    "HOME": str(home),
+                    "HERDR_HARNESS_AGENT_RUNS_ROOT": str(directory / "runs"),
+                    "HERDR_HARNESS_AGENT_PI_BIN": str(fake_pi),
+                },
+            )
+            manager = service.agent_runs
+            naming = manager.start(
+                prompt="Name this synthetic chat",
+                label="Smart Rename",
+                cwd=str(home),
+                topology={},
+                _assistant={"profile": SMART_RENAME_PROFILE},
+            )["run"]
+            wait_for_status(manager, naming["id"], {"completed"})
+
+            server = make_server(service, host="127.0.0.1", port=0, api_token="test-secret")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            base = f"http://127.0.0.1:{server.server_address[1]}"
+
+            def post(path, payload):
+                request = urllib.request.Request(
+                    base + path,
+                    method="POST",
+                    data=json.dumps(payload).encode(),
+                    headers={
+                        "Authorization": "Bearer test-secret",
+                        "Content-Type": "application/json",
+                    },
+                )
+                try:
+                    with urllib.request.urlopen(request, timeout=5) as response:
+                        return response.status, json.loads(response.read())
+                except urllib.error.HTTPError as exc:
+                    return exc.code, json.loads(exc.read())
+
+            try:
+                # A generic request must not continue a completed naming run
+                # even when it omits the naming profile.
+                status, body = post(
+                    "/api/v1/agent-runs",
+                    {"prompt": "Continue generically", "continueFromRunId": naming["id"]},
+                )
+                self.assertEqual(status, 409)
+                self.assertEqual(body["error"]["code"], "smart_rename_continuation_forbidden")
+
+                # Promotion would expose the one-shot naming session as a chat.
+                status, body = post(f"/api/v1/agent-runs/{naming['id']}/promote", {})
+                self.assertEqual(status, 409)
+                self.assertEqual(body["error"]["code"], "smart_rename_promotion_forbidden")
+
+                # Neither rejected call created a run or changed the naming run.
+                self.assertEqual(len(list((directory / "runs").glob("agr_*"))), 1)
+                unchanged = manager.get(naming["id"])["run"]
+                self.assertEqual(unchanged["status"], "completed")
+                self.assertIsNone(unchanged.get("promotedPaneId"))
+            finally:
+                service.stop()
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=1)
 
     def test_pr_review_question_capabilities_and_dispatch(self):
         status, _, capabilities = self.request("/api/v1/agent-runs/capabilities")
@@ -1265,6 +1408,11 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("response-brief-v1", capabilities["profiles"])
         self.assertTrue(capabilities["responseBriefs"]["requiresParentSessionId"])
+        self.assertEqual(capabilities["responseBriefs"]["lengthPolicyVersion"], 2)
+        self.assertEqual(
+            capabilities["responseBriefs"]["lengthOptions"],
+            ["minimal", "medium", "long"],
+        )
 
         self.service.start_response_brief = Mock(
             return_value={"ok": True, "run": {"id": "agr_0123456789ab"}}
@@ -1284,6 +1432,15 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertEqual(status, 202)
         self.service.start_response_brief.assert_called_once_with(request)
 
+        for length in ("minimal", "medium", "long"):
+            with self.subTest(length=length):
+                selected = {**request, "responseBriefLength": length}
+                status, _, _ = self.request(
+                    "/api/v1/agent-runs", method="POST", payload=selected
+                )
+                self.assertEqual(status, 202)
+                self.service.start_response_brief.assert_called_with(selected)
+
         for invalid in (
             {**request, "parentSessionId": "../source"},
             {key: value for key, value in request.items() if key != "parentSessionId"},
@@ -1292,20 +1449,38 @@ class HerdrHTTPTests(unittest.TestCase):
             {**request, "continueFromRunId": "agr_0123456789ab"},
             {**request, "cwd": "~"},
             {**request, "mode": "act"},
+            {**request, "responseBriefLength": None},
+            {**request, "responseBriefLength": ""},
+            {**request, "responseBriefLength": "Minimal"},
+            {**request, "responseBriefLength": "compact"},
+            {**request, "responseBriefLength": "longer"},
+            {**request, "responseBriefLength": 2},
+            {**request, "responseBriefLength": ["minimal"]},
         ):
             with self.subTest(invalid=invalid):
                 invalid_status, _, _ = self.request(
                     "/api/v1/agent-runs", method="POST", payload=invalid
                 )
                 self.assertEqual(invalid_status, 400)
-        self.assertEqual(self.service.start_response_brief.call_count, 1)
+        self.assertEqual(self.service.start_response_brief.call_count, 4)
 
-        generic_status, _, _ = self.request(
-            "/api/v1/agent-runs",
-            method="POST",
-            payload={"prompt": "Question", "parentSessionId": "source-session-1"},
-        )
-        self.assertEqual(generic_status, 400)
+        for other_profile in (
+            {"prompt": "Question", "parentSessionId": "source-session-1"},
+            {"prompt": "Question", "responseBriefLength": "minimal"},
+            {"prompt": "Question", "profile": "contextual-question-v1", "responseBriefLength": "minimal"},
+            {
+                "prompt": "Question",
+                "profile": "hud-chat-v1",
+                "mode": "act",
+                "responseBriefLength": "minimal",
+            },
+        ):
+            with self.subTest(other_profile=other_profile):
+                other_status, _, _ = self.request(
+                    "/api/v1/agent-runs", method="POST", payload=other_profile
+                )
+                self.assertEqual(other_status, 400)
+        self.assertEqual(self.service.start_response_brief.call_count, 4)
 
     def test_agent_run_routes_use_async_start_and_stable_envelope(self):
         status, _, body = self.request(

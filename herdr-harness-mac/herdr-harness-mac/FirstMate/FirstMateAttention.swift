@@ -34,7 +34,7 @@ enum FirstMateAttention {
     static func count(hosts: [FirstMateFleetHost]) -> Int {
         var waiting = Set<FirstMateFleetFeatureID>()
         for host in hosts {
-            for feature in host.features where needsHumanDecision(status: feature.status) {
+            for feature in host.features where !feature.isArchived && needsHumanDecision(status: feature.status) {
                 waiting.insert(FirstMateFleetFeatureID(machineID: host.machineID, featureID: feature.id))
             }
         }

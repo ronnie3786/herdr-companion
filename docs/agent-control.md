@@ -81,7 +81,29 @@ herdr-control --machine desktop --control-machine desktop ui open \
 ```
 
 Search results include names, timestamps, match excerpts, typed targets and source
-coverage. A source `generatedAt` is its cached snapshot time, not the time the
+coverage. Tab colors are read-only discovery data: `find chats`, `find tabs`,
+and `find all` accept `--color`, `--color-label`, `--color-client`, and
+`--group-by color|label`.
+
+```sh
+herdr-control --machine desktop find chats --color sage
+herdr-control --machine desktop find chats --color none
+herdr-control --machine desktop find chats \
+  --color sage --color-label "Synthetic Release Group" \
+  --color-client ui_00000000-0000-4000-8000-000000000000 --group-by label
+```
+
+All supplied filters must match the **same** publisher entry, so one client's
+color is never combined with another client's label, and filtering runs before
+pagination. `--color none` matches only tabs a publisher explicitly reports as
+known with no color; missing and `unavailable` entries are never treated as
+`none`. Every entry names the `clientId` whose local assignment it is, and
+`--group-by` is a page-scoped projection that keeps publishers separate and
+retains each row's typed target. These options need a companion advertising
+`chat-tab-colors-v1`; without it the CLI reports an explicit unsupported result
+rather than a false empty match. See [tab color discovery](chat-tab-colors.md).
+
+A source `generatedAt` is its cached snapshot time, not the time the
 search command ran; an empty string accompanies `freshness: "unknown"` when that
 time is unavailable. Choose a result deliberately; never treat the first match
 as the user's intent when multiple tickets/features/conversations fit. Natural-language
@@ -161,7 +183,7 @@ control from the [long-term plan](agent-control-plan.md).
 | Area | Control surface |
 | --- | --- |
 | Main shell | Exact pane/workspace/tab opening; main segments; back/forward; refresh; reveal in sidebar |
-| Chat | Chat/Terminal/Git/Skills modes, summary presentation, Smart Rename, exact model selection, local unread marking, tab color |
+| Chat | Chat/Terminal/Git/Skills modes, summary presentation, Smart Rename, exact model selection, local unread marking; tab colors are read-only discovery |
 | Sidebar | Supported query/category/recency filters through a typed action |
 | Other native surfaces | Settings window, HUD, HUD notes, saved HUD chat history, First Mate feature/inspector |
 | PR Review | `pr-review` segment plus parameter-only `pr-review.open`, `select-file`, `scroll-to-line`, `highlight-lines`, `clear-highlight`, `set-filter`, `set-view-mode`, `set-tab`, `set-viewed` and the `pr-review.state` read; see [PR Review](pr-review.md) |
@@ -173,6 +195,15 @@ control from the [long-term plan](agent-control-plan.md).
 
 Unsupported actions return an error. Do not substitute arbitrary terminal
 keystrokes or a generic shell command to bypass the catalog or validation.
+The former `chat.tab-color` mutation is disabled: relay catalogs return it with
+`enabled: false` and a read-only reason, the CLI refuses it before enqueueing,
+and the server rejects both admission and claim, including commands queued
+before the upgrade. Manual color assignment, removal, and label editing in the
+app are unchanged. Tab color publication itself uses a dedicated
+`/api/v1/control/chat-tab-colors/{clientId}` route with a per-installation
+publisher token; it is not a UI command. See
+[chat tab colors](chat-tab-colors.md).
+
 `pane.close` stops the pane's process and can remove its tab/workspace when it is
 the last pane. Use the separately authorized `pane.retire` operation to end Pi
 while retaining the tab/workspace. Neither operation asks again in the Mac UI.

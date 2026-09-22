@@ -82,7 +82,14 @@ class PRReviewStore:
         self.seed_skills()
 
     def close(self) -> None:
-        self._db.close()
+        # The connection is shared with daemon worker threads (the runtime writes
+        # from its shell/rank/prepare workers), so closing it without the same
+        # lock that serializes every query can drop the pysqlite connection while
+        # a worker is inside a statement, which crashes the interpreter. Waiting
+        # on the lock first lets an in-flight statement finish; later calls fail
+        # with the ordinary closed-database error instead of a process crash.
+        with self._lock:
+            self._db.close()
 
     @contextmanager
     def _transaction(self) -> Iterator[None]:

@@ -94,3 +94,12 @@ class AssistantTests(unittest.TestCase):
         with self.assertRaises(AgentRunError) as error:
             self.start()
         self.assertEqual(error.exception.code, 'assistant_promoted')
+
+    def test_response_brief_length_is_rejected_by_question_profiles(self):
+        self.request['responseBriefLength'] = 'minimal'
+        with self.assertRaises(AgentRunError) as error:
+            self.start()
+        self.assertEqual(error.exception.code, 'invalid_response_brief_length')
+        self.assertEqual(list(self.manager.runs_root.glob('agr_*')), [])
+        receipts = self.manager.runs_root / 'requests'
+        self.assertEqual(list(receipts.glob('*.json')) if receipts.exists() else [], [])

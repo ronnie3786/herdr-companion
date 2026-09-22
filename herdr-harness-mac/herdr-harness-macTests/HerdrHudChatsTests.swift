@@ -758,7 +758,14 @@ struct HerdrHudChatsTests {
                 duplicateError = error
             }
         }
-        await #expect(throws: HerdrHudChats.SmartRenameError.invalidTitle) {
+        await #expect(throws: SmartRenameModelRouting.invalidOutputError(
+            resolution: SmartRenameModelResolution(
+                modelID: "synthetic/naming",
+                thinkingLevel: .low,
+                machineName: "Example Mac",
+                notice: nil
+            )
+        )) {
             try await fixture.chats.smartRename(chat.id, model: fixture.model, runner: invalid)
         }
         #expect(duplicateError as? HerdrHudChats.SmartRenameError == .busy)
@@ -773,6 +780,663 @@ struct HerdrHudChatsTests {
         }
         #expect(!fixture.chats.chats.contains(where: { $0.id == chat.id }))
         #expect(fixture.chats.smartRenamingChatIDs.isEmpty)
+    }
+
+    @Test("A submitted prompt names a running chat before any assistant reply")
+    func promptOnlyRunningChatRenames() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.draft = "Investigate the synthetic irrigation leak"
+        let task = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        #expect(session.isRunning)
+        #expect(session.exchanges.last?.response == nil)
+        // The accepted run identity is persisted separately while the visible
+        // exchange remains the local placeholder until the run completes.
+        #expect(session.exchanges.last?.id.hasPrefix("hud-pending-") == true)
+        let chat = try #require(fixture.chats.chats.first { $0.session === session })
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Synthetic irrigation leak"}"#)
+        let notice = try await fixture.chats.smartRename(chat.id, model: fixture.model, runner: runner)
+
+        #expect(notice == nil)
+        #expect(session.isRunning)
+        #expect(fixture.chats.chats.first { $0.id == chat.id }?.displayTitle == "Synthetic irrigation leak")
+        let call = try #require(runner.calls.first)
+        #expect(call.machineID == "synthetic")
+        #expect(call.mode == .ask)
+        #expect(call.profile == "smart-rename-v1")
+        #expect(call.systemPrompt == nil)
+        #expect(call.model == "synthetic/naming")
+        #expect(call.thinkingLevel == "low")
+        #expect(call.prompt.contains("Investigate the synthetic irrigation leak"))
+        #expect(!call.prompt.contains("Assistant:"))
+        await session.stop(model: fixture.model)
+        await task.value
+    }
+
+    @Test("A reply arriving during naming does not invalidate the rename")
+    func completionDuringSmartRenameKeepsTitle() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.draft = "Compare synthetic trail maps"
+        let task = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        let runID = try #require(session.thread?.lastRunID)
+        let chat = try #require(fixture.chats.chats.first { $0.session === session })
+        let revisions = session.exchangesRevision
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Trail Map Comparison"}"#)
+        runner.onRun = {
+            HudChatsURLProtocol.finish(runID)
+            await task.value
+            #expect(session.exchangesRevision != revisions)
+        }
+        let notice = try await fixture.chats.smartRename(chat.id, model: fixture.model, runner: runner)
+
+        #expect(notice == nil)
+        #expect(session.exchanges.last?.id == runID)
+        #expect(session.exchanges.last?.response == "Answer for Compare synthetic trail maps")
+        #expect(fixture.chats.chats.first { $0.id == chat.id }?.displayTitle == "Trail Map Comparison")
+    }
+
+    @Test("A title created before acceptance follows the run into saved history")
+    func pendingTitleFollowsAcceptedRun() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.draft = "Plan a synthetic water feature"
+        HudChatsURLProtocol.state.withLock { $0.delayNextStart = true }
+        let task = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.exchanges.last?.id.hasPrefix("hud-pending-") == true }
+        #expect(session.historyIdentity == nil)
+        let chat = try #require(fixture.chats.chats.first { $0.session === session })
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Synthetic Water Feature"}"#)
+        let notice = try await fixture.chats.smartRename(chat.id, model: fixture.model, runner: runner)
+
+        #expect(notice == nil)
+        #expect(session.exchanges.last?.id.hasPrefix("hud-pending-") == true)
+        #expect(fixture.chats.chats.first { $0.id == chat.id }?.displayTitle == "Synthetic Water Feature")
+
+        HudChatsURLProtocol.releaseStart()
+        try await wait { session.historyIdentity != nil }
+        let rootID = try #require(session.thread?.rootRunID)
+        #expect(session.historyIdentity == "synthetic:\(rootID)")
+        HudChatsURLProtocol.finish(rootID)
+        await task.value
+
+        try await fixture.chats.dismiss(chat.id, model: fixture.model)
+        #expect(fixture.chats.visibleChats.isEmpty)
+        let summary = HudChatSummary(id: rootID, title: "Plan a synthetic water feature",
+                                     updatedAt: "2026-09-01T12:00:00Z", latestRunId: rootID, turnCount: 1,
+                                     status: .completed, cwd: nil, sessionId: nil, promotedPaneId: nil)
+        let reopenedID = try await fixture.chats.openHistory(summary, machineID: "synthetic", model: fixture.model)
+        let reopened = try #require(fixture.chats.chats.first { $0.id == reopenedID })
+        #expect(reopened.displayTitle == "Synthetic Water Feature")
+    }
+
+    @Test("A replaced conversation is not mistaken for the pending run's acceptance")
+    func replacedConversationIsRejected() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.draft = "Plan a synthetic water feature"
+        HudChatsURLProtocol.state.withLock { $0.delayNextStart = true }
+        let task = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.exchanges.last?.id.hasPrefix("hud-pending-") == true }
+        let chat = try #require(fixture.chats.chats.first { $0.session === session })
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Wrong Conversation"}"#)
+        runner.onRun = {
+            let replacement = HerdrHudExchange(
+                id: "agr_replacement0001",
+                machineID: "synthetic",
+                prompt: "A different synthetic conversation",
+                sentPrompt: "A different synthetic conversation",
+                response: nil,
+                error: nil,
+                status: .running,
+                costUSD: nil,
+                createdAt: .now,
+                promotedPaneID: nil,
+                attachmentFilenames: []
+            )
+            session.seedExchangesForTesting([replacement])
+            session.seedThreadForTesting(HerdrHudSession.HerdrHudThread(
+                machineID: "synthetic",
+                rootRunID: "agr_replacement0001",
+                lastRunID: "agr_replacement0001",
+                turnCount: 1
+            ))
+        }
+        await #expect(throws: HerdrHudChats.SmartRenameError.changed) {
+            try await fixture.chats.smartRename(chat.id, model: fixture.model, runner: runner)
+        }
+        #expect(fixture.chats.chats.first { $0.id == chat.id }?.displayTitle == chat.displayTitle)
+        #expect(fixture.chats.smartRenamingChatIDs.isEmpty)
+        HudChatsURLProtocol.releaseStart()
+        try await wait { HudChatsURLProtocol.state.withLock { !$0.starts.isEmpty } }
+        let accepted = try #require(HudChatsURLProtocol.state.withLock { $0.starts.first?.id })
+        HudChatsURLProtocol.finish(accepted)
+        await task.value
+    }
+
+    @Test("A replaced saved root blocks a stale rename")
+    func replacedSavedRootIsRejected() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.draft = "Compare synthetic trail maps"
+        let task = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        HudChatsURLProtocol.finish(try #require(session.thread?.lastRunID))
+        await task.value
+        let chat = try #require(fixture.chats.chats.first { $0.session === session })
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Stale Root Title"}"#)
+        runner.onRun = {
+            let other = HerdrHudExchange(
+                id: "agr_otherroot0001",
+                machineID: "synthetic",
+                prompt: "Another synthetic conversation",
+                sentPrompt: "Another synthetic conversation",
+                response: "Synthetic reply",
+                error: nil,
+                status: .completed,
+                costUSD: nil,
+                createdAt: .now,
+                promotedPaneID: nil,
+                attachmentFilenames: []
+            )
+            session.seedExchangesForTesting([other])
+            session.seedThreadForTesting(HerdrHudSession.HerdrHudThread(
+                machineID: "synthetic",
+                rootRunID: "agr_otherroot0001",
+                lastRunID: "agr_otherroot0001",
+                turnCount: 1
+            ))
+        }
+        await #expect(throws: HerdrHudChats.SmartRenameError.changed) {
+            try await fixture.chats.smartRename(chat.id, model: fixture.model, runner: runner)
+        }
+        #expect(fixture.chats.chats.first { $0.id == chat.id }?.displayTitle == chat.displayTitle)
+    }
+
+    @Test("A manual title edit during naming wins over the late AI title")
+    func manualTitleEditWinsOverLateRename() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.draft = "Compare synthetic trail maps"
+        let task = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        HudChatsURLProtocol.finish(try #require(session.thread?.lastRunID))
+        await task.value
+        let chat = try #require(fixture.chats.chats.first { $0.session === session })
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Late AI Title"}"#)
+        runner.onRun = { fixture.chats.setTitleForTesting("Manual Title", for: chat.id) }
+        await #expect(throws: HerdrHudChats.SmartRenameError.changed) {
+            try await fixture.chats.smartRename(chat.id, model: fixture.model, runner: runner)
+        }
+
+        let current = try #require(fixture.chats.chats.first { $0.id == chat.id })
+        #expect(current.title == "Manual Title")
+        #expect(current.displayTitle == "Manual Title")
+    }
+
+    @Test("HUD naming resolves the selected machine's catalog and rejects a missing preference")
+    func hudRenameUsesSelectedMachineCatalog() async throws {
+        let alpha = HerdrMachine(id: "alpha", name: "Alpha", urlString: "https://alpha.example.invalid")
+        let beta = HerdrMachine(id: "beta", name: "Beta", urlString: "https://beta.example.invalid")
+        let fixture = try Fixture(machines: [alpha, beta], catalogByHost: [
+            "alpha.example.invalid": #"{"ok":true,"models":[{"provider":"alpha","id":"alpha-only","name":"Alpha Only","reasoning":true}],"default":{"provider":"alpha","id":"alpha-only","name":"Alpha Only"}}"#,
+            "beta.example.invalid": #"{"ok":true,"models":[{"provider":"beta","id":"beta-only","name":"Beta Only","reasoning":true}],"default":{"provider":"beta","id":"beta-only","name":"Beta Only"}}"#,
+        ])
+        defer { fixture.cleanUp() }
+        fixture.defaults.set("alpha/alpha-only", forKey: AgentModelSettings.smartRenameModelKey)
+        fixture.defaults.set("high", forKey: AgentModelSettings.smartRenameThinkingLevelKey)
+        let seeded = try seedPendingChat(fixture, machineID: "beta", prompt: "Synthetic beta task")
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Should not run"}"#)
+        await #expect(throws: SmartRenameModelRoutingError.modelUnavailable(
+            machineName: "Beta",
+            model: "alpha/alpha-only"
+        )) {
+            try await fixture.chats.smartRename(seeded.chat.id, model: fixture.model, runner: runner)
+        }
+
+        #expect(runner.calls.isEmpty)
+        #expect(fixture.chats.chats.first { $0.id == seeded.chat.id }?.title == "Synthetic beta task")
+        #expect(fixture.chats.smartRenamingChatIDs.isEmpty)
+        #expect(HudChatsURLProtocol.catalogHosts() == ["beta.example.invalid"])
+        #expect(fixture.defaults.string(forKey: AgentModelSettings.smartRenameModelKey) == "alpha/alpha-only")
+        #expect(fixture.defaults.string(forKey: AgentModelSettings.smartRenameThinkingLevelKey) == "high")
+    }
+
+    @Test("HUD naming sends an offered selection and selected effort unchanged")
+    func hudRenameSendsOfferedSelectionUnchanged() async throws {
+        let alpha = HerdrMachine(id: "alpha", name: "Alpha", urlString: "https://alpha.example.invalid")
+        let beta = HerdrMachine(id: "beta", name: "Beta", urlString: "https://beta.example.invalid")
+        let fixture = try Fixture(machines: [alpha, beta], catalogByHost: [
+            "alpha.example.invalid": #"{"ok":true,"models":[{"provider":"alpha","id":"alpha-only","name":"Alpha Only","reasoning":true}],"default":{"provider":"alpha","id":"alpha-only","name":"Alpha Only"}}"#,
+            "beta.example.invalid": #"{"ok":true,"models":[{"provider":"beta","id":"beta-only","name":"Beta Only","reasoning":true}],"default":{"provider":"beta","id":"beta-only","name":"Beta Only"}}"#,
+        ])
+        defer { fixture.cleanUp() }
+        fixture.defaults.set("beta/beta-only", forKey: AgentModelSettings.smartRenameModelKey)
+        fixture.defaults.set("high", forKey: AgentModelSettings.smartRenameThinkingLevelKey)
+        let seeded = try seedPendingChat(fixture, machineID: "beta", prompt: "Synthetic beta task")
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Synthetic Beta Task"}"#)
+        let notice = try await fixture.chats.smartRename(seeded.chat.id, model: fixture.model, runner: runner)
+
+        let call = try #require(runner.calls.first)
+        #expect(call.machineID == "beta")
+        #expect(call.model == "beta/beta-only")
+        #expect(call.thinkingLevel == "high")
+        #expect(notice == nil)
+        #expect(fixture.chats.chats.first { $0.id == seeded.chat.id }?.displayTitle == "Synthetic Beta Task")
+        #expect(HudChatsURLProtocol.catalogHosts() == ["beta.example.invalid"])
+    }
+
+    @Test("A non-reasoning naming model rejects non-Off effort and keeps the saved effort")
+    func nonReasoningNamingModelRejectsNonOffEffort() async throws {
+        let fixture = try Fixture(catalogByHost: [
+            "hud.example.invalid": #"{"ok":true,"models":[{"provider":"synthetic","id":"legacy","name":"Legacy","reasoning":false}],"default":{"provider":"synthetic","id":"legacy","name":"Legacy"}}"#,
+        ])
+        defer { fixture.cleanUp() }
+        fixture.defaults.set("high", forKey: AgentModelSettings.smartRenameThinkingLevelKey)
+        let seeded = try seedPendingChat(fixture, prompt: "Synthetic legacy model task")
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Should not run"}"#)
+        await #expect(throws: SmartRenameModelRoutingError.thinkingLevelUnsupported(
+            machineName: "Example Mac",
+            model: "synthetic/legacy",
+            level: .high
+        )) {
+            try await fixture.chats.smartRename(seeded.chat.id, model: fixture.model, runner: runner)
+        }
+        #expect(runner.calls.isEmpty)
+        #expect(fixture.chats.chats.first { $0.id == seeded.chat.id }?.title == "Synthetic legacy model task")
+        #expect(fixture.defaults.string(forKey: AgentModelSettings.smartRenameThinkingLevelKey) == "high")
+    }
+
+    @Test("A non-reasoning naming model runs with Off when Off is selected")
+    func nonReasoningNamingModelRunsWithOff() async throws {
+        let fixture = try Fixture(catalogByHost: [
+            "hud.example.invalid": #"{"ok":true,"models":[{"provider":"synthetic","id":"legacy","name":"Legacy","reasoning":false}],"default":{"provider":"synthetic","id":"legacy","name":"Legacy"}}"#,
+        ])
+        defer { fixture.cleanUp() }
+        fixture.defaults.set("off", forKey: AgentModelSettings.smartRenameThinkingLevelKey)
+        let seeded = try seedPendingChat(fixture, prompt: "Synthetic legacy model task")
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Synthetic Legacy Task"}"#)
+        let notice = try await fixture.chats.smartRename(seeded.chat.id, model: fixture.model, runner: runner)
+
+        let call = try #require(runner.calls.first)
+        #expect(call.model == "synthetic/legacy")
+        #expect(call.thinkingLevel == "off")
+        #expect(notice == nil)
+        #expect(fixture.chats.chats.first { $0.id == seeded.chat.id }?.displayTitle == "Synthetic Legacy Task")
+        #expect(fixture.defaults.string(forKey: AgentModelSettings.smartRenameThinkingLevelKey) == "off")
+    }
+
+    @Test("A whitespace-only HUD context is rejected with context-oriented wording")
+    func whitespaceOnlyContextIsRejected() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let seeded = try seedPendingChat(fixture, prompt: "   \n\t ")
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Should not run"}"#)
+        await #expect(throws: HerdrHudChats.SmartRenameError.unavailable) {
+            try await fixture.chats.smartRename(seeded.chat.id, model: fixture.model, runner: runner)
+        }
+        #expect(runner.calls.isEmpty)
+        #expect(
+            HerdrHudChats.SmartRenameError.unavailable.errorDescription
+                == "This HUD chat has no readable context to name yet."
+        )
+        #expect(fixture.chats.chats.first { $0.id == seeded.chat.id }?.displayTitle == "   ") // title fallback uses the raw prompt prefix
+        #expect(fixture.chats.smartRenamingChatIDs.isEmpty)
+    }
+
+    @Test("A HUD naming-run failure names the selection and machine and keeps the title")
+    func hudExecutionFailurePreservesTitle() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let seeded = try seedPendingChat(fixture, prompt: "Synthetic HUD failure task")
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .throwing(HudChatsFixtureError(message: "Synthetic provider failure"))
+        await #expect(throws: SmartRenameExecutionError(
+            machineName: "Example Mac",
+            model: "synthetic/naming",
+            thinkingLevel: .low,
+            reason: "Synthetic provider failure"
+        )) {
+            try await fixture.chats.smartRename(seeded.chat.id, model: fixture.model, runner: runner)
+        }
+
+        #expect(runner.calls.count == 1)
+        #expect(fixture.chats.chats.first { $0.id == seeded.chat.id }?.title == "Synthetic HUD failure task")
+        #expect(fixture.chats.smartRenamingChatIDs.isEmpty)
+    }
+
+    @Test("Catalog failures preserve the title and explain what to fix")
+    func catalogFailuresPreserveTitle() async throws {
+        let cases: [(catalog: String, expected: SmartRenameModelRoutingError)] = [
+            (#"{"ok":false,"error":{"code":"synthetic_catalog","message":"Synthetic catalog failure"}}"#,
+             .catalogUnavailable(machineName: "Example Mac")),
+            (#"{"ok":true,"models":[],"default":null}"#,
+             .catalogEmpty(machineName: "Example Mac")),
+            (#"{"ok":true,"models":[{"provider":"synthetic","id":"offered","name":"Offered","reasoning":true}],"default":{"provider":"synthetic","id":"missing","name":"Ghost Model"}}"#,
+             .defaultModelUnavailable(machineName: "Example Mac", model: "Ghost Model")),
+        ]
+        for entry in cases {
+            let fixture = try Fixture(catalogByHost: ["hud.example.invalid": entry.catalog])
+            defer { fixture.cleanUp() }
+            let seeded = try seedPendingChat(fixture, prompt: "Synthetic catalog failure task")
+            let runner = FakeNoteAIRunner()
+            runner.mode = .succeed(#"{"title":"Should Not Run"}"#)
+            await #expect(throws: entry.expected) {
+                try await fixture.chats.smartRename(seeded.chat.id, model: fixture.model, runner: runner)
+            }
+            #expect(runner.calls.isEmpty)
+            #expect(fixture.chats.chats.first { $0.id == seeded.chat.id }?.title == "Synthetic catalog failure task")
+            #expect(fixture.chats.smartRenamingChatIDs.isEmpty)
+        }
+    }
+
+    @Test("Invalid HUD naming output reports the selection, keeps the title, and clears busy state")
+    func invalidHudOutputIsActionable() async throws {
+        let responses = [
+            "not JSON",
+            #"{"title":"HUD RAW-MARKER\ncontrol"}"#,
+            #"{"title":"\#(String(repeating: "x", count: 81))"}"#,
+        ]
+        for response in responses {
+            let fixture = try Fixture()
+            defer { fixture.cleanUp() }
+            let seeded = try seedPendingChat(fixture, prompt: "Synthetic HUD invalid output")
+            let runner = FakeNoteAIRunner()
+            runner.mode = .succeed(response)
+
+            do {
+                _ = try await fixture.chats.smartRename(seeded.chat.id, model: fixture.model, runner: runner)
+                Issue.record("Expected invalid HUD naming output to throw")
+            } catch let error as SmartRenameExecutionError {
+                #expect(error.machineName == "Example Mac")
+                #expect(error.model == "synthetic/naming")
+                #expect(error.thinkingLevel == .low)
+                #expect(error.reason == SmartRenameModelRouting.invalidTitleReason)
+            }
+            #expect(runner.calls.count == 1)
+            #expect(fixture.chats.chats.first { $0.id == seeded.chat.id }?.title == "Synthetic HUD invalid output")
+            #expect(fixture.chats.smartRenamingChatIDs.isEmpty)
+            #expect(fixture.defaults.string(forKey: AgentModelSettings.smartRenameModelKey) == nil)
+        }
+    }
+
+    @Test("A placeholder adopted from saved history maps only to its exact root")
+    func adoptedHistoryPlaceholderMapsToItsRoot() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.seedExchangesForTesting([
+            HerdrHudExchange(
+                id: "hud-pending-adopted",
+                machineID: "synthetic",
+                prompt: "Synthetic adopted submission",
+                sentPrompt: "Synthetic adopted submission",
+                response: nil,
+                error: nil,
+                status: .running,
+                costUSD: nil,
+                createdAt: .now,
+                promotedPaneID: nil,
+                attachmentFilenames: []
+            )
+        ])
+        let acceptedID = HudChatsURLProtocol.appendExternal(
+            root: "agr_adoptedroot01",
+            prompt: "Synthetic adopted submission"
+        )
+        session.seedThreadForTesting(HerdrHudSession.HerdrHudThread(
+            machineID: "synthetic",
+            rootRunID: "agr_adoptedroot01",
+            lastRunID: acceptedID,
+            turnCount: 1
+        ))
+
+        try await session.openHistory(
+            id: "agr_adoptedroot01",
+            machineID: "synthetic",
+            model: fixture.model
+        )
+
+        #expect(session.acceptedSubmissionID(forHistoryIdentity: "synthetic:agr_adoptedroot01") == "hud-pending-adopted")
+        #expect(session.acceptedSubmissionID(forHistoryIdentity: "synthetic:agr_otherroot01") == nil)
+    }
+
+    @Test("A failed submission's pending title never attaches to a later accepted root")
+    func pendingTitleDoesNotLeakToLaterSubmission() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        let sharedPrompt = "Synthetic failed submission"
+        session.draft = sharedPrompt
+        HudChatsURLProtocol.state.withLock { $0.rejectNextStart = true }
+        await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) }
+        let failedSubmissionID = try #require(session.exchanges.last?.id)
+        #expect(failedSubmissionID.hasPrefix("hud-pending-"))
+        #expect(session.exchanges.last?.status == .failed)
+        #expect(session.thread == nil)
+        let chat = try #require(fixture.chats.chats.first { $0.session === session })
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Failed Submission Title"}"#)
+        _ = try await fixture.chats.smartRename(chat.id, model: fixture.model, runner: runner)
+        #expect(fixture.chats.chats.first { $0.id == chat.id }?.displayTitle == "Failed Submission Title")
+
+        // The next submission in the same chat reuses the same prompt text and
+        // is accepted while the failed placeholder is still retained. Its root
+        // must map to itself, never to the failed submission that was renamed
+        // first, even though prompt matching alone cannot tell them apart.
+        session.draft = sharedPrompt
+        let accepted = Task { await session.submit(model: fixture.model) }
+        try await wait { session.thread != nil }
+        let acceptedRoot = try #require(session.thread?.rootRunID)
+        let acceptedSubmissionID = try #require(session.exchanges.last?.id)
+        #expect(acceptedSubmissionID.hasPrefix("hud-pending-"))
+        #expect(session.acceptedSubmissionID(forHistoryIdentity: "synthetic:\(acceptedRoot)") == acceptedSubmissionID)
+        #expect(session.acceptedSubmissionID(forHistoryIdentity: "synthetic:\(acceptedRoot)") != failedSubmissionID)
+        HudChatsURLProtocol.finish(acceptedRoot)
+        await accepted.value
+
+        // Relaunch, remove the chat, and reopen the accepted root from saved
+        // history: the failed submission's title must not surface there.
+        let cache = fixture.directory.appendingPathComponent("hud-chats/\(chat.id).json")
+        try await wait {
+            HerdrHudPersistenceSnapshot.load(from: cache)?.exchanges.last?.id == acceptedRoot
+        }
+        let relaunched = HerdrHudChats(legacySession: fixture.prototype, defaults: fixture.defaults)
+        await relaunched.restore(model: fixture.model)
+        let relaunchedChat = try #require(relaunched.chats.first { $0.id == chat.id })
+        try await relaunched.dismiss(relaunchedChat.id, model: fixture.model)
+        let summary = HudChatSummary(
+            id: acceptedRoot,
+            title: "Synthetic accepted submission",
+            updatedAt: "2026-09-01T12:00:00Z",
+            latestRunId: acceptedRoot,
+            turnCount: 1,
+            status: .completed,
+            cwd: nil,
+            sessionId: nil,
+            promotedPaneId: nil
+        )
+        let reopenedID = try await relaunched.openHistory(summary, machineID: "synthetic", model: fixture.model)
+        let reopened = try #require(relaunched.chats.first { $0.id == reopenedID })
+        #expect(reopened.displayTitle == "Synthetic accepted submission")
+        #expect(reopened.displayTitle != "Failed Submission Title")
+    }
+
+    @Test("An explicit retry of a failed submission adopts its pending title")
+    func pendingTitleFollowsExplicitRetry() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.draft = "Synthetic retry target"
+        HudChatsURLProtocol.state.withLock { $0.rejectNextStart = true }
+        await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) }
+        let failed = try #require(session.exchanges.last)
+        #expect(failed.id.hasPrefix("hud-pending-"))
+        #expect(failed.status == .failed)
+        #expect(session.thread == nil)
+        let chat = try #require(fixture.chats.chats.first { $0.session === session })
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Retried Submission Title"}"#)
+        _ = try await fixture.chats.smartRename(chat.id, model: fixture.model, runner: runner)
+        #expect(fixture.chats.chats.first { $0.id == chat.id }?.displayTitle == "Retried Submission Title")
+
+        let retry = Task { await session.retry(failed, model: fixture.model) }
+        try await wait { session.thread != nil }
+        let retryRoot = try #require(session.thread?.rootRunID)
+        #expect(session.acceptedSubmissionID(forHistoryIdentity: "synthetic:\(retryRoot)") == failed.id)
+        HudChatsURLProtocol.finish(retryRoot)
+        await retry.value
+
+        try await fixture.chats.dismiss(chat.id, model: fixture.model)
+        let summary = HudChatSummary(
+            id: retryRoot,
+            title: "Synthetic retry target",
+            updatedAt: "2026-09-01T12:00:00Z",
+            latestRunId: retryRoot,
+            turnCount: 1,
+            status: .completed,
+            cwd: nil,
+            sessionId: nil,
+            promotedPaneId: nil
+        )
+        let reopenedID = try await fixture.chats.openHistory(summary, machineID: "synthetic", model: fixture.model)
+        let reopened = try #require(fixture.chats.chats.first { $0.id == reopenedID })
+        #expect(reopened.displayTitle == "Retried Submission Title")
+    }
+
+    @Test("A pending title belongs to its own chat and submission when another chat is accepted first")
+    func pendingTitleStaysWithItsOwnSubmission() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let prefix = String(repeating: "Synthetic shared pending prefix ", count: 5)
+        let first = fixture.chats.composer
+        first.draft = prefix + "alpha detail"
+        HudChatsURLProtocol.state.withLock { $0.delayNextStart = true }
+        let firstTask = Task { await first.submit(model: fixture.model) { fixture.chats.submissionStarted(first) } }
+        try await wait { first.exchanges.last?.id.hasPrefix("hud-pending-") == true }
+        let firstChat = try #require(fixture.chats.chats.first { $0.session === first })
+        let firstSubmissionID = try #require(first.exchanges.last?.id)
+        #expect(firstSubmissionID.hasPrefix("hud-pending-"))
+
+        let runner = FakeNoteAIRunner()
+        runner.mode = .succeed(#"{"title":"Alpha Pending Title"}"#)
+        _ = try await fixture.chats.smartRename(firstChat.id, model: fixture.model, runner: runner)
+        #expect(fixture.chats.chats.first { $0.id == firstChat.id }?.displayTitle == "Alpha Pending Title")
+
+        // A second chat on the same machine submits the same 120-character
+        // prefix while the first submission is still pending. Its acceptance
+        // must not consume the first chat's pending title.
+        let second = fixture.chats.composer
+        second.draft = prefix + "beta detail"
+        let secondTask = Task { await second.submit(model: fixture.model) { fixture.chats.submissionStarted(second) } }
+        try await wait { second.thread != nil }
+        let secondChat = try #require(fixture.chats.chats.first { $0.session === second })
+        #expect(secondChat.displayTitle == String((prefix + "beta detail").prefix(120)))
+        #expect(secondChat.displayTitle != "Alpha Pending Title")
+
+        // Release the first submission. Its own acceptance adopts the title.
+        HudChatsURLProtocol.releaseStart()
+        try await wait { first.thread != nil }
+        let firstRoot = try #require(first.thread?.rootRunID)
+        HudChatsURLProtocol.finish(firstRoot)
+        await firstTask.value
+        let secondRoot = try #require(second.thread?.rootRunID)
+        HudChatsURLProtocol.finish(secondRoot)
+        await secondTask.value
+        #expect(fixture.chats.chats.first { $0.id == firstChat.id }?.displayTitle == "Alpha Pending Title")
+
+        // Relaunch and reopen both from saved history: the first keeps its
+        // title, and the second never inherits it.
+        try await fixture.chats.dismiss(firstChat.id, model: fixture.model)
+        try await fixture.chats.dismiss(secondChat.id, model: fixture.model)
+        let relaunched = HerdrHudChats(legacySession: fixture.prototype, defaults: fixture.defaults)
+        await relaunched.restore(model: fixture.model)
+        let firstSummary = HudChatSummary(
+            id: firstRoot,
+            title: prefix + "alpha detail",
+            updatedAt: "2026-09-01T12:00:00Z",
+            latestRunId: firstRoot,
+            turnCount: 1,
+            status: .completed,
+            cwd: nil,
+            sessionId: nil,
+            promotedPaneId: nil
+        )
+        let secondSummary = HudChatSummary(
+            id: secondRoot,
+            title: "Second summary title",
+            updatedAt: "2026-09-01T12:00:00Z",
+            latestRunId: secondRoot,
+            turnCount: 1,
+            status: .completed,
+            cwd: nil,
+            sessionId: nil,
+            promotedPaneId: nil
+        )
+        let reopenedFirstID = try await relaunched.openHistory(firstSummary, machineID: "synthetic", model: fixture.model)
+        let reopenedSecondID = try await relaunched.openHistory(secondSummary, machineID: "synthetic", model: fixture.model)
+        #expect(relaunched.chats.first { $0.id == reopenedFirstID }?.displayTitle == "Alpha Pending Title")
+        #expect(relaunched.chats.first { $0.id == reopenedSecondID }?.displayTitle == "Second summary title")
+    }
+
+    private func seedPendingChat(
+        _ fixture: Fixture,
+        machineID: String = "synthetic",
+        prompt: String
+    ) throws -> (chat: HerdrHudChats.Chat, session: HerdrHudSession) {
+        let session = fixture.chats.composer
+        session.selectedMachineID = machineID
+        session.seedExchangesForTesting([
+            HerdrHudExchange(
+                id: "hud-pending-\(UUID().uuidString)",
+                machineID: machineID,
+                prompt: prompt,
+                sentPrompt: prompt,
+                response: nil,
+                error: nil,
+                status: .running,
+                costUSD: nil,
+                createdAt: .now,
+                promotedPaneID: nil,
+                attachmentFilenames: []
+            )
+        ])
+        fixture.chats.submissionStarted(session)
+        let chat = try #require(fixture.chats.chats.first { $0.session === session })
+        return (chat, session)
     }
 
     @Test("Ending during submission waits for its accepted identity before stopping it")
@@ -882,21 +1546,32 @@ struct HerdrHudChatsTests {
         let prototype: HerdrHudSession
         let chats: HerdrHudChats
 
-        init() throws {
-            HudChatsURLProtocol.state.withLock { $0 = .init() }
+        init(
+            machines: [HerdrMachine]? = nil,
+            catalogByHost: [String: String] = [:]
+        ) throws {
+            HudChatsURLProtocol.state.withLock {
+                $0 = .init()
+                $0.catalogByHost = catalogByHost
+            }
             defaults = try #require(UserDefaults(suiteName: suite))
             prototype = HerdrHudSession(userDefaults: defaults, persistenceURL: directory.appendingPathComponent("hud-thread.json"))
             chats = HerdrHudChats(legacySession: prototype, defaults: defaults)
-            let configuration = try #require(ServerConfiguration(urlString: "https://hud.example.invalid", token: "synthetic-token"))
-            let urlSession = URLSessionConfiguration.ephemeral
-            urlSession.protocolClasses = [HudChatsURLProtocol.self]
-            let client = HerdrAPIClient(configuration: configuration, session: URLSession(configuration: urlSession))
+            let urlSessionConfiguration = URLSessionConfiguration.ephemeral
+            urlSessionConfiguration.protocolClasses = [HudChatsURLProtocol.self]
+            let urlSession = URLSession(configuration: urlSessionConfiguration)
             model = HerdrAppModel(credentials: TestCredentialStore(), arguments: [], userDefaults: defaults)
-            let machine = HerdrMachine(id: "synthetic", name: "Example Mac", urlString: "https://hud.example.invalid")
-            model.machines = [machine]
-            model.clientFactory = { _ in client }
-            model.prepareRuntime(for: machine, generation: model.connectionGeneration)
-            model.machineStates[machine.id] = .live
+            let roster = machines ?? [
+                HerdrMachine(id: "synthetic", name: "Example Mac", urlString: "https://hud.example.invalid")
+            ]
+            model.machines = roster
+            model.clientFactory = { configuration in
+                HerdrAPIClient(configuration: configuration, session: urlSession)
+            }
+            for machine in roster {
+                model.prepareRuntime(for: machine, generation: model.connectionGeneration)
+                model.machineStates[machine.id] = .live
+            }
         }
 
         func cleanUp() {
@@ -906,8 +1581,13 @@ struct HerdrHudChatsTests {
     }
 }
 
+private struct HudChatsFixtureError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
+}
+
 /// The protocol adds no mutable instance state; synthetic server state is locked.
-private final class HudChatsURLProtocol: URLProtocol {
+private final class HudChatsURLProtocol: URLProtocol, @unchecked Sendable {
     struct Start: Sendable {
         let id: String
         let root: String
@@ -929,9 +1609,14 @@ private final class HudChatsURLProtocol: URLProtocol {
         var historyRequestCount = 0
         var delayNextCapabilities = false
         var delayNextHistory = false
+        var delayNextStart = false
+        var catalogByHost: [String: String] = [:]
+        var catalogHosts: [String] = []
         let capabilitiesGate = DispatchSemaphore(value: 0)
         let historyGate = DispatchSemaphore(value: 0)
+        let startGate = DispatchSemaphore(value: 0)
     }
+    static let fallbackCatalog = #"{"ok":true,"models":[{"provider":"synthetic","id":"naming","name":"Synthetic Naming","reasoning":true,"context_window":64000}],"default":{"provider":"synthetic","id":"naming","name":"Synthetic Naming"}}"#
     static let state = Mutex(State())
     static func finish(_ id: String) { state.withLock { $0.statuses[id] = "completed" } }
     static func fail(_ id: String) { state.withLock { $0.statuses[id] = "failed" } }
@@ -947,6 +1632,13 @@ private final class HudChatsURLProtocol: URLProtocol {
             state.historyGate.signal()
         }
     }
+    static func releaseStart() {
+        state.withLock { state in
+            state.delayNextStart = false
+            state.startGate.signal()
+        }
+    }
+    static func catalogHosts() -> [String] { state.withLock { $0.catalogHosts } }
     @discardableResult
     static func appendExternal(root: String, prompt: String, cwd: String? = nil) -> String {
         state.withLock { state in
@@ -982,11 +1674,30 @@ private final class HudChatsURLProtocol: URLProtocol {
                     return state.historyGate
                 }
             }
+            if path == "/api/v1/agent-runs", request.httpMethod == "POST", state.delayNextStart {
+                state.delayNextStart = false
+                return state.startGate
+            }
             return nil
         }
-        gate?.wait()
+        if let gate {
+            DispatchQueue.global().async { [self] in
+                gate.wait()
+                completeLoading(url: url, body: body)
+            }
+            return
+        }
+        completeLoading(url: url, body: body)
+    }
+
+    private func completeLoading(url: URL, body: Data) {
         let payload = Self.state.withLock { state -> (Int, Data) in
             let path = url.path
+            if path == "/api/v1/agent-runs/models" {
+                state.catalogHosts.append(url.host ?? "")
+                let body = state.catalogByHost[url.host ?? ""] ?? Self.fallbackCatalog
+                return (200, Data(body.utf8))
+            }
             if path.hasSuffix("/cancel") {
                 state.cancellationCount += 1
                 if state.rejectNextCancellation {

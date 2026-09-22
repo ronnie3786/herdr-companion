@@ -263,10 +263,6 @@ final class FirstMateStore {
             guard capturedGeneration == generation else { return }
             guard value.ok, value.feature.id == id else { throw APIError.invalidResponse }
             receive(value)
-            if archived && !showArchived {
-                features.removeAll { $0.id == featureID }
-                reconcileSelection()
-            }
             error = nil
             await refresh()
         } catch { if capturedGeneration == generation { record(error) } }
@@ -302,6 +298,10 @@ final class FirstMateStore {
                 throw APIError.invalidResponse
             }
             receive(value)
+            if archived && !showArchived {
+                features.removeAll { $0.id == featureID }
+                reconcileSelection()
+            }
             error = nil
             await refresh()
             return true

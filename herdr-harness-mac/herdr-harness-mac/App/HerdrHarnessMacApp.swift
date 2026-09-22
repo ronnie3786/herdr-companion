@@ -10,6 +10,7 @@ enum HerdrWindowID {
     static let main = "herdr-main"
     static let activeWorkBoard = "herdr-active-work-board"
     static let workspaceGit = "herdr-workspace-git"
+    static let firstMateGit = "herdr-first-mate-git"
     static let prReview = "herdr-pr-review"
 }
 
@@ -132,6 +133,23 @@ struct HerdrHarnessMacApp: App {
                 .background(HerdrTheme.ink)
                 .foregroundStyle(HerdrTheme.text)
                 .preferredColorScheme(.dark)
+            }
+        }
+        .defaultSize(width: 1120, height: 760)
+        .windowResizability(.contentMinSize)
+
+        WindowGroup("First Mate Git", id: HerdrWindowID.firstMateGit, for: FirstMateGitWindowTarget.self) { $target in
+            if let target {
+                FirstMateGitWindowRoot(model: model, driver: connectionDriver, target: target)
+                    .environment(herdPulse)
+                    .environment(\.herdrFontScale, fontScale.scale)
+            } else {
+                ContentUnavailableView(
+                    "First Mate Git unavailable",
+                    systemImage: "arrow.triangle.branch",
+                    description: Text("Open Git from a selected First Mate feature.")
+                )
+                .frame(minWidth: 720, minHeight: 520)
             }
         }
         .defaultSize(width: 1120, height: 760)

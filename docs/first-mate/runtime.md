@@ -1,6 +1,8 @@
 # First Mate execution runtime
 
-First Mate is one saved Pi conversation per feature. The companion service owns
+First Mate is one saved Pi conversation per feature. Managed roles also receive
+compact, validated Companion/role identity and pointers to the installed on-demand
+references; see [agent awareness](../agent-awareness.md). The companion service owns
 its message queue, assignments, process receipts, work log and human checkpoints.
 The Mac app and web inspector read that state and can close without stopping work.
 
@@ -285,6 +287,10 @@ the configured trusted package override, then the installed wheel's bundled
 package, and finally the source checkout. Do not install a second competing Pi
 manager to use First Mate. Follow the main README's installation and verification
 commands for the server and Mac client.
+
+For a concise agent-facing workflow reference, run `herdr-docs read first-mate`.
+It is bundled with the wheel, works offline, and does not replace the current
+role-scoped `fm_*` tool schemas or authoritative status.
 
 The extension spool and session directories are private to the local user. This
 is process and assignment ownership on one trusted host, not an operating-system

@@ -17,10 +17,14 @@ export interface HashRoute {
   params: Record<string, string>;
 }
 
-export interface EmbeddedGitRoute {
-  workspaceId: string | null;
-  paneId: string;
-}
+export type EmbeddedGitRoute =
+  | { kind: "pane"; workspaceId: string | null; paneId: string }
+  | { kind: "firstMate"; featureId: string; workspaceId: string };
+
+export type EmbeddedGitRouteResult =
+  | { kind: "none" }
+  | { kind: "invalid"; message: string }
+  | { kind: "valid"; route: EmbeddedGitRoute };
 
 function decodeSafe(raw: string): string | null {
   try {
@@ -71,12 +75,33 @@ export function serializeHash(route: HashRoute): string {
  * `#ws=<id>&pane=<id>&view=git&embed=1`. It deliberately bypasses the web
  * shell, workspace polling, and onboarding.
  */
-export function embeddedGitRoute(hash: string): EmbeddedGitRoute | null {
+export function embeddedGitRouteResult(hash: string): EmbeddedGitRouteResult {
   const route = parseHash(hash);
-  if (route.params.embed !== "1" || route.params.view !== "git" || route.paneId === null) {
-    return null;
+  if (route.params.embed !== "1" || route.params.view !== "git") return { kind: "none" };
+  const featureId = route.params.firstMate;
+  const featureWorkspace = route.params.workspace;
+  const hasFirstMate = typeof featureId === "string" && featureId.length > 0;
+  const hasPane = route.paneId !== null;
+  // The two authenticated target namespaces are deliberately mutually exclusive.
+  if (hasFirstMate === hasPane) {
+    return { kind: "invalid", message: "Choose exactly one pane or First Mate Git target." };
   }
-  return { workspaceId: route.workspaceId, paneId: route.paneId };
+  if (hasFirstMate) {
+    if (typeof featureWorkspace !== "string" || featureWorkspace.length === 0 || route.workspaceId !== null) {
+      return { kind: "invalid", message: "The First Mate feature and workspace target is malformed." };
+    }
+    return { kind: "valid", route: { kind: "firstMate", featureId, workspaceId: featureWorkspace } };
+  }
+  if (typeof featureId === "string" || typeof featureWorkspace === "string") {
+    return { kind: "invalid", message: "The First Mate feature and workspace target is incomplete." };
+  }
+  return { kind: "valid", route: { kind: "pane", workspaceId: route.workspaceId, paneId: route.paneId! } };
+}
+
+/** Backwards-compatible convenience for callers that only accept valid routes. */
+export function embeddedGitRoute(hash: string): EmbeddedGitRoute | null {
+  const result = embeddedGitRouteResult(hash);
+  return result.kind === "valid" ? result.route : null;
 }
 
 /**

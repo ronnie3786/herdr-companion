@@ -40,6 +40,9 @@ class AssistantTests(unittest.TestCase):
         self.assertNotIn('--tools', capture['argv'])
         self.assertNotIn('--extension', capture['argv'])
         self.assertIn('exact\\n text\\n', capture['prompt'])
+        charter = capture['argv'][capture['argv'].index('--append-system-prompt') + 1]
+        self.assertNotIn('herdr-companion-awareness', charter)
+        self.assertEqual(capture['herdrAgentRunProfile'], assistant.PROFILE)
         self.assertEqual(assistant.history(self.manager, run['id'])['turns'][0]['context'], self.request['context'])
 
     def test_parallel_retries_create_one_run(self):

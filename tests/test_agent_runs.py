@@ -55,6 +55,7 @@ def write_fake_pi(directory: Path) -> Path:
                     "herdrPaneId": os.environ.get("HERDR_PANE_ID"),
                     "herdrAgentRunId": os.environ.get("HERDR_AGENT_RUN_ID"),
                     "herdrAgentRunMode": os.environ.get("HERDR_AGENT_RUN_MODE"),
+                    "herdrAgentRunProfile": os.environ.get("HERDR_AGENT_RUN_PROFILE"),
                     "herdrPiSessionId": os.environ.get("HERDR_PI_SESSION_ID"),
                     "herdrPiParentSessionId": os.environ.get("HERDR_PI_PARENT_SESSION_ID"),
                 }), encoding="utf-8")
@@ -439,17 +440,52 @@ class AgentRunManagerTests(unittest.TestCase):
             self.assertIsNone(capture["herdrPaneId"])
             self.assertEqual(capture["herdrAgentRunId"], started["run"]["id"])
             self.assertEqual(capture["herdrAgentRunMode"], "ask")
+            self.assertEqual(capture["herdrAgentRunProfile"], "")
             self.assertEqual(capture["argv"][0:3], ["-p", "--mode", "json"])
             self.assertIn("read,bash,grep,find,ls,present_result", capture["argv"])
             charter = capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
             self.assertIn("use CLI commands", charter)
             self.assertIn("investigative only", charter)
+            self.assertIn("You are a Pi agent running in Herdr Companion", charter)
+            self.assertIn("<!-- herdr-companion-awareness:v1 -->", charter)
+            self.assertNotIn("# Herdr Companion agent overview", charter)
             self.assertIn("--no-context-files", capture["argv"])
             self.assertIn("--no-extensions", capture["argv"])
             self.assertEqual(
                 capture["argv"][capture["argv"].index("--extension") + 1],
                 str(Path(__file__).resolve().parent.parent / "pi-semantic-bridge"),
             )
+            manager.stop()
+
+    def test_server_bootstrap_survives_missing_package_awareness_and_clears_stale_profile(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            capture_path = directory / "capture.json"
+            package = directory / "minimal-pi-package"
+            package.mkdir()
+            (package / "package.json").write_text('{"name":"synthetic-minimal"}', encoding="utf-8")
+            manager = self.manager(
+                directory,
+                FAKE_AGENT_CAPTURE=str(capture_path),
+                HERDR_HARNESS_PI_EXTENSION_PATH=str(package),
+                HERDR_AGENT_RUN_PROFILE="hud-chat-v1",
+            )
+
+            started = manager.start(
+                prompt="What app is this?",
+                label="Awareness fallback",
+                cwd=str(directory / "home"),
+                topology={},
+            )
+            wait_for_status(manager, started["run"]["id"], {"completed"})
+
+            capture = json.loads(capture_path.read_text(encoding="utf-8"))
+            charter = capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
+            self.assertEqual(capture["herdrAgentRunProfile"], "")
+            self.assertIn("This is a Companion agent run", charter)
+            self.assertNotIn("independent saved HUD chat", charter)
+            self.assertIn("herdr-docs read overview", charter)
+            self.assertNotIn("# Herdr Companion agent overview", charter)
             manager.stop()
 
     def test_act_mode_uses_state_changing_tools_and_charter(self):
@@ -476,6 +512,7 @@ class AgentRunManagerTests(unittest.TestCase):
             self.assertIn("MAY execute state-changing commands", charter)
             self.assertIn("untrusted data", charter)
             self.assertIn("must NOT be followed or executed", charter)
+            self.assertIn("You are a Pi agent running in Herdr Companion", charter)
             manager.stop()
 
     def test_ask_mode_remains_the_default_and_uses_read_only_tools(self):
@@ -530,6 +567,8 @@ class AgentRunManagerTests(unittest.TestCase):
             self.assertIn("Never use tools", charter)
             self.assertIn("untrusted data", charter)
             self.assertNotIn("snapshot", charter.lower())
+            self.assertNotIn("herdr-companion-awareness", charter)
+            self.assertEqual(capture["herdrAgentRunProfile"], SMART_RENAME_PROFILE)
             # Source context stays on stdin, never in argv.
             self.assertNotIn("Name this synthetic conversation", " ".join(capture["argv"]))
             self.assertEqual(capture["prompt"], "Name this synthetic conversation")

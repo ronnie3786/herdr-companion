@@ -40,6 +40,12 @@ class HudChatTests(unittest.TestCase):
                      "--no-prompt-templates", "--no-approve", "--approve"):
             self.assertNotIn(flag, argv)
         self.assertEqual(run["profile"], hud_chats.PROFILE)
+        capture = json.loads(self.capture.read_text())
+        self.assertEqual(capture["herdrAgentRunProfile"], hud_chats.PROFILE)
+        charter = capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
+        self.assertIn("independent saved HUD chat", charter)
+        self.assertEqual(charter.count("<!-- herdr-companion-awareness:v1 -->"), 1)
+        self.assertNotIn("# Herdr Companion agent overview", charter)
         self.assertIn(hud_chats.PROFILE, assistant.capabilities()["profiles"])
         self.assertTrue(Path(run["sessionFile"]).is_file())
 

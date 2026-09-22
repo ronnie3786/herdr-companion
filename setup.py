@@ -20,6 +20,7 @@ class BuildWithResources(build_py):
         shutil.copy2(bridge / "package.json", target / "package.json")
         shutil.copytree(bridge / "extensions", target / "extensions", dirs_exist_ok=True)
         shutil.copytree(bridge / "lib", target / "lib", dirs_exist_ok=True)
+        shutil.copytree(bridge / "agent-docs", target / "agent-docs", dirs_exist_ok=True)
         shutil.copy2(source / "config.example.toml", destination / "config.example.toml")
 
 

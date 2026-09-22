@@ -8,6 +8,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  appendCompanionAwareness,
+  firstMateAwarenessInstructions,
+} from "../lib/companion-awareness";
 
 const documentSchema = Type.Object({
   title: Type.String(), content: Type.String(),
@@ -39,6 +43,11 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
     } catch {
       return;
     }
+    const awareness = firstMateAwarenessInstructions(job, role!);
+    pi.on("before_agent_start", (event) => {
+      const systemPrompt = appendCompanionAwareness(event.systemPrompt, awareness);
+      if (systemPrompt !== event.systemPrompt) return { systemPrompt };
+    });
     mkdirSync(join(root, "requests"), { recursive: true, mode: 0o700 });
     mkdirSync(join(root, "responses"), { recursive: true, mode: 0o700 });
     let retired = false;

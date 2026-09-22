@@ -231,8 +231,6 @@ final class HerdrShellState {
         }
     }
 
-    var firstMateStoreID: ObjectIdentifier { ObjectIdentifier(firstMate) }
-
     func isActiveFirstMateConnection(
         machineID: String?,
         configuration: ServerConfiguration?,

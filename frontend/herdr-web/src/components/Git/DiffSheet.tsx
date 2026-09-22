@@ -69,7 +69,7 @@ const PIERRE_THEME_OVERRIDES = `
  * an internal loading model used by the API and store tests. It is no longer
  * presented as a sheet: the inspector stays beside the repository navigator.
  */
-export function DiffInspector({ paneId }: { paneId: string }) {
+export function DiffInspector({ paneId, allowsAsk = true }: { paneId: string; allowsAsk?: boolean }) {
   const [diffStyle, setDiffStyle] = useState<DiffStyle>(() =>
     storedPreference(DIFF_STYLE_KEY, "unified", ["unified", "split"]),
   );
@@ -197,7 +197,9 @@ export function DiffInspector({ paneId }: { paneId: string }) {
           </div>
         )}
       </div>
-      <SelectionAskLauncher paneId={paneId} file={sheet.file} section={sheet.section} rootPath={entry.snapshot?.rootPath} revision={sheet.commitHash ?? undefined} containerRef={diffBodyRef} />
+      {allowsAsk ? (
+        <SelectionAskLauncher paneId={paneId} file={sheet.file} section={sheet.section} rootPath={entry.snapshot?.rootPath} revision={sheet.commitHash ?? undefined} containerRef={diffBodyRef} />
+      ) : null}
     </section>
   );
 }

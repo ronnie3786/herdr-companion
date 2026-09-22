@@ -2,12 +2,12 @@
 
 import { create } from "zustand";
 import {
+  gitCommitDiff,
+  gitCommitFiles,
+  gitDiff,
   gitStage,
+  gitStatus,
   gitUnstage,
-  paneGit,
-  paneGitCommitDiff,
-  paneGitCommitFiles,
-  paneGitDiff,
   type GitCommit,
   type GitFile,
   type GitSection,
@@ -169,7 +169,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
       },
     });
 
-    const request = paneGit(paneId)
+    const request = gitStatus(paneId)
       .then((response) => {
         const previous = entryFor(get(), paneId);
         const noRepo = looksLikeNoRepo(response);
@@ -298,7 +298,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
         error: null,
       },
     });
-    void paneGitDiff(paneId, file, section, expectedRoot)
+    void gitDiff(paneId, file, section, expectedRoot)
       .then((response) => {
         const sheet = get().diffSheet;
         if (!sheetMatches(sheet, paneId, file, section, null)) return;
@@ -371,7 +371,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
 
     if (cached !== undefined && cached.error === null && options?.force !== true) return;
 
-    void paneGitCommitFiles(paneId, hash, expectedRoot)
+    void gitCommitFiles(paneId, hash, expectedRoot)
       .then((response) => {
         const latest = entryFor(get(), paneId);
         set({
@@ -434,7 +434,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
         error: null,
       },
     });
-    void paneGitCommitDiff(paneId, hash, file, expectedRoot)
+    void gitCommitDiff(paneId, hash, file, expectedRoot)
       .then((response) => {
         const sheet = get().diffSheet;
         if (!sheetMatches(sheet, paneId, file, "commit", hash)) return;

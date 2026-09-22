@@ -6,6 +6,9 @@ This Pi package adds these integrations to the stock interactive TUI:
   Herdr, without replacing or parsing the terminal;
 - persisted parent session IDs, automatic child-process inheritance, and
   agent instructions for tagging delegated Pi work across workspaces;
+- compact per-turn Companion identity plus installed, on-demand agent references
+  (`herdr-docs list` and `herdr-docs read overview`) for managed panes, saved HUD
+  chats, ordinary agent runs, and validated First Mate roles;
 - discovery guidance for synchronized notes, each ticket's editable task path,
   and saved HUD conversations (`herdr-hud-chats list`, `search`, and `show`);
   [HUD history](../docs/hud-chat-history.md) stays separate from terminal workspaces;
@@ -34,6 +37,19 @@ No global Pi settings are changed by either command. For durable installation,
 `pi install /absolute/path/to/herdr-companion/pi-semantic-bridge` is
 idempotent because Pi records the local package path rather than copying or
 modifying another extension.
+
+## Companion awareness and offline guides
+
+Package installation alone does not label an external Pi session as managed.
+Known pane/run hints activate a compact identity on each turn; First Mate uses its
+validated scoped extension. Restricted contextual-question, PR-review-question,
+response-brief, and Smart Rename profiles stay unchanged. The bootstrap points to
+the installed guides instead of injecting their bodies.
+
+Run `herdr-docs list`, then `herdr-docs read overview`, `control`, `first-mate`,
+or `api`. The CLI is offline and needs no companion configuration or token. For
+coverage, trigger questions, limits, and upgrades, see
+[agent awareness](../docs/agent-awareness.md).
 
 ## Live chat checkpoints and recovery
 

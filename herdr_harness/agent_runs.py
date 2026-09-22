@@ -23,6 +23,7 @@ from typing import Any, Callable, Mapping, Optional
 
 from .alerts import utc_now
 from .attachments import MAX_ATTACHMENT_BYTES
+from .agent_docs import agent_run_bootstrap, append_agent_run_bootstrap
 from .child_environment import agent_environment
 
 
@@ -1089,6 +1090,18 @@ class AgentRunManager:
                 # server-side charter is the enforced policy and never invites
                 # tools or the topology snapshot.
                 charter = SMART_RENAME_CHARTER
+            awareness_environment = {
+                "HERDR_AGENT_RUN_ID": run_id,
+                "HERDR_AGENT_RUN_MODE": run_mode,
+                "HERDR_AGENT_RUN_PROFILE": profile if isinstance(profile, str) else "",
+            }
+            charter = append_agent_run_bootstrap(
+                charter,
+                agent_run_bootstrap(
+                    awareness_environment,
+                    profile if isinstance(profile, str) else None,
+                ),
+            )
             command = [
                 pi_bin,
                 "-p",
@@ -1162,6 +1175,10 @@ class AgentRunManager:
             child_env.pop("HERDR_PANE_ID", None)
             child_env["HERDR_AGENT_RUN_ID"] = run_id
             child_env["HERDR_AGENT_RUN_MODE"] = run_mode
+            # Always overwrite inherited profile state, including with an empty
+            # value for ordinary runs, so installed extensions cannot misclassify
+            # a new process from a stale parent environment.
+            child_env["HERDR_AGENT_RUN_PROFILE"] = profile if isinstance(profile, str) else ""
             if profile == "response-brief-v1":
                 child_env.pop("HERDR_PI_SESSION_ID", None)
                 child_env["HERDR_PI_PARENT_SESSION_ID"] = str(run["responseBriefParentSessionId"])

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { embeddedGitRoute, parseHash, serializeHash, workspaceFromPaneId } from "./hashRoute";
+import { embeddedGitRoute, embeddedGitRouteResult, parseHash, serializeHash, workspaceFromPaneId } from "./hashRoute";
 
 const EMPTY = { workspaceId: null, paneId: null, params: {} };
 
@@ -112,9 +112,37 @@ describe("serializeHash", () => {
 describe("embeddedGitRoute", () => {
   it("recognizes the native pane Git route", () => {
     expect(embeddedGitRoute("#ws=w1&pane=w1%3Ap2&view=git&embed=1")).toEqual({
+      kind: "pane",
       workspaceId: "w1",
       paneId: "w1:p2",
     });
+  });
+
+  it("recognizes an escaped, feature-scoped First Mate Git route", () => {
+    expect(embeddedGitRoute("#firstMate=fmf%2Fone&workspace=fma%20two&view=git&embed=1")).toEqual({
+      kind: "firstMate",
+      featureId: "fmf/one",
+      workspaceId: "fma two",
+    });
+  });
+
+  it("rejects mixed pane and First Mate targets", () => {
+    expect(embeddedGitRoute("#pane=w1:p2&firstMate=fmf&workspace=project&view=git&embed=1")).toBe(null);
+    expect(embeddedGitRoute("#ws=w1&firstMate=fmf&workspace=project&view=git&embed=1")).toBe(null);
+    expect(embeddedGitRouteResult("#pane=w1:p2&firstMate=fmf&workspace=project&view=git&embed=1").kind).toBe("invalid");
+  });
+
+  it("marks empty, incomplete, and malformed explicit embed targets invalid instead of opening the shell", () => {
+    const hashes = [
+      "#view=git&embed=1",
+      "#firstMate=&workspace=project&view=git&embed=1",
+      "#firstMate=fmf&workspace=&view=git&embed=1",
+      "#firstMate=%E0&workspace=project&view=git&embed=1",
+      "#pane=w1:p1&workspace=project&view=git&embed=1",
+    ];
+    for (const hash of hashes) {
+      expect(embeddedGitRouteResult(hash).kind).toBe("invalid");
+    }
   });
 
   it("requires the Git view, embed flag, and pane id", () => {

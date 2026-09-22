@@ -38,15 +38,17 @@ final class HerdrSidebarUITests: XCTestCase {
         let pane = app.buttons["sidebar-pane-demo1|w1:p2"]
         scrollToElement(pane, in: app)
         pane.tap()
-        let firstTitle = app.buttons["pane-session-title"]
+        let firstTitle = app.staticTexts["pane-session-title"]
         XCTAssertTrue(firstTitle.waitForExistence(timeout: 3))
         XCTAssertTrue(firstTitle.label.contains("Choose sample garden colors"))
+        XCTAssertFalse(app.buttons["sidebar-toggle"].exists)
 
+        returnToAgents(app)
         app.buttons["sidebar-toggle"].tap()
         let otherWorkspacePane = app.buttons["sidebar-pane-demo1|w2:p1"]
         scrollToElement(otherWorkspacePane, in: app)
         otherWorkspacePane.tap()
-        let secondTitle = app.buttons["pane-session-title"]
+        let secondTitle = app.staticTexts["pane-session-title"]
         XCTAssertTrue(secondTitle.waitForExistence(timeout: 3))
         XCTAssertTrue(secondTitle.label.contains("Sample reading list export"))
     }
@@ -152,8 +154,9 @@ final class HerdrSidebarUITests: XCTestCase {
         let filteredPane = app.buttons["sidebar-pane-demo1|w1:p2"]
         XCTAssertTrue(filteredPane.waitForExistence(timeout: 3))
         filteredPane.tap()
-        XCTAssertTrue(app.buttons["pane-session-title"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["pane-session-title"].waitForExistence(timeout: 3))
 
+        returnToAgents(app)
         app.buttons["sidebar-toggle"].tap()
         let reopenedSearch = app.textFields["Filter chats"]
         XCTAssertTrue(reopenedSearch.waitForExistence(timeout: 3))
@@ -192,6 +195,14 @@ final class HerdrSidebarUITests: XCTestCase {
         let all = app.buttons["All"]
         XCTAssertTrue(all.waitForExistence(timeout: 3))
         all.tap()
+    }
+
+    @MainActor
+    private func returnToAgents(_ app: XCUIApplication) {
+        let back = app.navigationBars.buttons.element(boundBy: 0)
+        XCTAssertTrue(back.waitForExistence(timeout: 3))
+        back.tap()
+        XCTAssertTrue(app.buttons["sidebar-toggle"].waitForExistence(timeout: 3))
     }
 
     @MainActor

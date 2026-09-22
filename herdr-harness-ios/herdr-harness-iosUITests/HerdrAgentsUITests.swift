@@ -29,9 +29,13 @@ final class HerdrAgentsUITests: XCTestCase {
         XCTAssertFalse(app.buttons["agent-card-demo1|w1:p1"].exists)
         search.typeText("\n")
         card.tap()
-        let title = app.buttons["pane-session-title"]
+        let title = app.staticTexts["pane-session-title"]
         XCTAssertTrue(title.waitForExistence(timeout: 5))
         XCTAssertTrue(title.label.contains("Sample reading list export"))
+        XCTAssertFalse(app.descendants(matching: .any)["pane-session-header"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["pane-session-status"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["pane-session-scope"].exists)
+        XCTAssertFalse(app.buttons["sidebar-toggle"].exists, "A pushed pane must use native Back, not a second navigator control")
 
         // Back leaves the pane for the Agents list, not a workspace layout screen.
         let back = app.navigationBars.buttons.element(boundBy: 0)
@@ -116,7 +120,7 @@ final class HerdrAgentsUITests: XCTestCase {
         close.buttons["Cancel"].tap()
         XCTAssertTrue(card.exists)
         card.tap()
-        XCTAssertTrue(app.buttons["pane-session-title"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["pane-session-title"].waitForExistence(timeout: 5))
     }
 
 }

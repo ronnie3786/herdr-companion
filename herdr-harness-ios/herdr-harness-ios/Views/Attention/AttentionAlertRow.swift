@@ -15,6 +15,7 @@ struct AttentionAlertRow: View {
                     AlertCardView(alert: alert, pane: pane)
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("attention-alert-\(alert.id)")
             } else {
                 AlertCardView(alert: alert, pane: nil)
                     .opacity(0.78)

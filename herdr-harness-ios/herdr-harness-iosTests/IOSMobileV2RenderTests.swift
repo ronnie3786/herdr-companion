@@ -211,6 +211,10 @@ final class IOSMobileV2RenderTests: XCTestCase {
             XCTAssertTrue(control.frame.insetBy(dx: -0.5, dy: -0.5).contains(value.frame), context)
         }
         XCTAssertFalse(model.frame.intersects(thinking.frame), "Independent pickers must not overlap: \(context)")
+        if dynamicType.name == "default" {
+            XCTAssertLessThanOrEqual(model.frame.height, 46, "Model remains a single quiet value row: \(context)")
+            XCTAssertLessThanOrEqual(thinking.frame.height, 46, "Thinking remains a single quiet value row: \(context)")
+        }
 
         let font = UIFont.preferredFont(
             forTextStyle: .callout,

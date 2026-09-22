@@ -1,29 +1,9 @@
 import SwiftUI
 
-struct LastPromptPeekButton: View {
-    let message: PiUserMessage?
-    @State private var isPresented = false
-
-    var body: some View {
-        Button("Last prompt", systemImage: "text.bubble.badge.clock") {
-            isPresented = true
-        }
-        .labelStyle(.iconOnly)
-        .foregroundStyle(message == nil ? HerdrTheme.mist.opacity(0.4) : HerdrTheme.accent)
-        .disabled(message == nil)
-        .accessibilityIdentifier("pane-last-prompt")
-        .accessibilityHint("Shows the most recent prompt sent to Pi")
-        .sheet(isPresented: $isPresented) {
-            if let message {
-                LastPromptPeekSheet(message: message)
-                    .presentationDetents([.medium])
-            }
-        }
-    }
-}
-
-private struct LastPromptPeekSheet: View {
+struct LastPromptPeekSheet: View {
     let message: PiUserMessage
+    let copy: () -> Void
+    let dismiss: () -> Void
     @State private var copied = false
 
     var body: some View {
@@ -38,15 +18,25 @@ private struct LastPromptPeekSheet: View {
 
                 Spacer(minLength: 12)
 
-                Button(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc") {
-                    copy()
+                HStack(spacing: 8) {
+                    Button(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc") {
+                        copyPrompt()
+                    }
+                    .foregroundStyle(copied ? HerdrTheme.success : HerdrTheme.accent)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .accessibilityIdentifier("pane-last-prompt-copy")
+                    .accessibilityLabel(copied ? "Prompt copied" : "Copy prompt")
+                    .composerLayoutMeasurement(id: "pane-last-prompt-copy", label: "Copy prompt")
+
+                    Button("Done", systemImage: "xmark", action: dismiss)
+                        .foregroundStyle(HerdrTheme.mist)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .accessibilityIdentifier("pane-last-prompt-dismiss")
+                        .composerLayoutMeasurement(id: "pane-last-prompt-dismiss", label: "Done")
                 }
                 .font(.caption.monospaced().weight(.medium))
-                .foregroundStyle(copied ? HerdrTheme.success : HerdrTheme.accent)
                 .buttonStyle(.plain)
-                .frame(minWidth: 44, minHeight: 44)
-                .accessibilityIdentifier("pane-last-prompt-copy")
-                .accessibilityLabel(copied ? "Prompt copied" : "Copy prompt")
+                .frame(minHeight: 44)
             }
 
             Rectangle()
@@ -79,8 +69,8 @@ private struct LastPromptPeekSheet: View {
         }
     }
 
-    private func copy() {
-        UIPasteboard.general.string = message.text
+    private func copyPrompt() {
+        copy()
         copied = true
         Task {
             try? await Task.sleep(for: .seconds(1.4))

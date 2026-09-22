@@ -55,45 +55,34 @@ struct PiModelPickerChip: View {
     }
 
     private var controlLabel: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text("Model")
-                .font(.caption)
-                .foregroundStyle(HerdrTheme.mist)
-                .lineLimit(1)
-
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                if isSetting {
-                    ProgressView()
-                        .controlSize(.small)
-                } else {
-                    Image(systemName: "cpu")
-                        .accessibilityHidden(true)
-                }
-
-                Text(displayText)
-                    .font(.callout.bold())
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .allowsTightening(true)
-                    .composerLayoutMeasurement(id: "pi-chat-model-value", label: displayText)
-
-                if isInteractive {
-                    Image(systemName: "chevron.up.down")
-                        .font(.caption)
-                        .accessibilityHidden(true)
-                }
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
+            if isSetting {
+                ProgressView()
+                    .controlSize(.mini)
+            } else {
+                Image(systemName: "cpu")
+                    .font(.caption)
+                    .imageScale(.small)
+                    .accessibilityHidden(true)
             }
-            .foregroundStyle(isInteractive ? HerdrTheme.mauve : HerdrTheme.mist)
+
+            Text(displayText)
+                .font(.callout.bold())
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .allowsTightening(true)
+                .composerLayoutMeasurement(id: "pi-chat-model-value", label: displayText)
+
+            if isInteractive {
+                Image(systemName: "chevron.up.down")
+                    .font(.caption)
+                    .imageScale(.small)
+                    .accessibilityHidden(true)
+            }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
+        .foregroundStyle(isInteractive ? HerdrTheme.mauve : HerdrTheme.mist)
+        .padding(.horizontal, 6)
         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-        .background(HerdrTheme.elevated)
-        .overlay {
-            RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                .strokeBorder(HerdrTheme.surface, lineWidth: 1)
-        }
-        .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
         .contentShape(.rect)
         .opacity(isInteractive && !isEnabled ? 0.48 : 1)
     }

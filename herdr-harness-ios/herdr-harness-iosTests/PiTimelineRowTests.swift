@@ -28,14 +28,9 @@ struct PiTimelineRowTests {
         ])
         #expect(rows.map(\.startsTurn) == [true, false, false, true, false])
         #expect(rows.map(\.isFirstInTimeline) == [true, false, false, false, false])
-        #expect(rows.map(\.rail.isFirst) == [true, false, false, true, false])
-        #expect(rows.map(\.rail.isLast) == [false, false, true, false, true])
         #expect(rows[0].topSpacing == 0)
         #expect(rows[1].topSpacing == PiTimelineMetrics.itemSpacing)
         #expect(rows[3].topSpacing == HerdrProse.turnSpacing)
-        #expect(rows[0].rail.hasTool)
-        #expect(!rows[3].rail.hasTool)
-        #expect(rows[3].rail.isActive)
     }
 
     @Test("An active turn with no items gets the starting placeholder row")
@@ -44,7 +39,6 @@ struct PiTimelineRowTests {
 
         #expect(rows.map(\.id) == ["turn:1|user", "turn:1|starting"])
         #expect(rows.last?.content == .starting)
-        #expect(rows.last?.rail.isLast == true)
     }
 
     @Test("A turn with nothing visible produces no rows")
@@ -88,17 +82,18 @@ struct PiTimelineRowTests {
         #expect(view != changed)
     }
 
-    @Test("Failure and activity state flow into every row's rail")
-    func railCarriesTurnState() {
+    @Test("Turn state does not add decorative timeline rows")
+    func turnStateDoesNotAddRows() {
         let failed = turn(id: "turn:1", items: [
             .assistant(assistant(id: "a1", text: "ok")),
             .tool(tool(id: "c1", status: .failed)),
         ])
-        let rows = PiTimelineRow.rows(for: [failed])
 
-        #expect(rows.allSatisfy { $0.rail.hasFailure })
-        #expect(rows.allSatisfy { $0.rail.hasTool })
-        #expect(rows.allSatisfy { !$0.rail.isActive })
+        #expect(PiTimelineRow.rows(for: [failed]).map(\.id) == [
+            "turn:1|user",
+            "turn:1|output:a1",
+            "turn:1|working:tool:c1",
+        ])
     }
 
     @Test("The mounted window keeps only the newest rows until earlier rows are requested")

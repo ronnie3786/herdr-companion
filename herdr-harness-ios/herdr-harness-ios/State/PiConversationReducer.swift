@@ -145,7 +145,7 @@ struct PiConversationReducer: Sendable {
             phase = .working
             compactionActivity = nil
             // Pi emits agent/turn start before the user message. Wait for the
-            // first semantic item so we do not render an empty orphan rail.
+            // first semantic item so we do not render an empty orphan turn.
             return .none
         case "agent_end":
             return .none

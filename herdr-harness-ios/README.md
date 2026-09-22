@@ -53,8 +53,16 @@ whole so chats remain reachable with large text in landscape.
 
 Pane views use charcoal chrome and system-scaled prose. Chat, Git, Terminal, and
 Skills are available from **Pane actions → View**, without a separate segment
-row taking conversation space. Compact Model and Thinking controls stay
-independent and follow the connected Pi session's catalog and capabilities.
+row taking conversation space. Chat uses a one-line inline navigation title and
+flat, full-width conversation rows: there is no turn rail, large agent/status
+header, standalone star, or location breadcrumb. Star remains in Pane actions;
+**Chat history → Last prompt** shows only the latest visible user prompt and is
+disabled when there is none. Pushed panes use native Back and swipe. Root and
+split-detail panes expose the app Chat navigator; split detail removes the
+split view's automatic Agents-column control rather than duplicating it. Compact
+Model and Thinking controls are single-line values,
+stay independent, follow the connected Pi session's catalog and capabilities,
+and stack with response-audio controls at accessibility text sizes.
 
 The unified input card keeps Attach, Voice, More, and Send close to the editor.
 **More → Show terminal keys** reveals the optional key deck; it is hidden by

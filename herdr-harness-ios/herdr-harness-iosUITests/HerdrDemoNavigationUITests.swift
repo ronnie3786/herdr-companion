@@ -15,8 +15,11 @@ final class HerdrDemoNavigationUITests: XCTestCase {
     func testPaneModesLiveInMenuAndTerminalKeysAreOptIn() throws {
         let app = launchDemoPane(paneID: "demo1|w1:p2")
 
-        XCTAssertTrue(app.buttons["pane-session-title"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.descendants(matching: .any)["pane-session-scope"].exists)
+        XCTAssertTrue(app.staticTexts["pane-session-title"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.descendants(matching: .any)["pane-session-header"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["pane-session-status"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["pane-session-scope"].exists)
+        XCTAssertFalse(app.buttons["sidebar-toggle"].exists, "Native Back must be the only leading pane action")
         XCTAssertTrue(app.textFields["prompt-composer"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.tabBars.firstMatch.exists, "Pane detail should hide the app tab bar")
         XCTAssertFalse(app.descendants(matching: .any)["pane-mode-bar"].exists)
@@ -32,6 +35,10 @@ final class HerdrDemoNavigationUITests: XCTestCase {
         let paneMenu = app.descendants(matching: .any)["pane-mode-toggle"]
         XCTAssertEqual(paneMenu.value as? String, "Terminal view")
         paneMenu.tap()
+        XCTAssertTrue(app.buttons["pane-action-star"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.descendants(matching: .any)["pane-action-chat-history"].exists)
+        XCTAssertFalse(app.buttons["pane-session-star"].exists)
+        XCTAssertFalse(app.buttons["pane-last-prompt"].exists)
         let chat = app.buttons["pane-action-mode-chat"]
         XCTAssertTrue(chat.waitForExistence(timeout: 3))
         XCTAssertFalse(chat.isEnabled, "A nonsemantic pane must not acquire native Chat support")
@@ -110,6 +117,79 @@ final class HerdrDemoNavigationUITests: XCTestCase {
     }
 
     @MainActor
+    func testPaneActionsOwnHonestLastPromptHistory() {
+        let app = launchDemoPane(paneID: "demo1|w1:p2")
+        let paneMenu = app.descendants(matching: .any)["pane-mode-toggle"]
+        XCTAssertTrue(paneMenu.waitForExistence(timeout: 3))
+        paneMenu.tap()
+
+        let history = app.descendants(matching: .any)["pane-action-chat-history"]
+        XCTAssertTrue(history.waitForExistence(timeout: 3))
+        history.tap()
+        let lastPrompt = app.buttons["pane-action-last-prompt"]
+        XCTAssertTrue(lastPrompt.waitForExistence(timeout: 3))
+        XCTAssertFalse(lastPrompt.isEnabled, "Demo has no user message; history must not imply durable saved chat history")
+    }
+
+    @MainActor
+    func testAttentionAndActivityPanesUseNativeBackWithoutNavigator() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-HerdrDemoMode"]
+        app.launch()
+        let attention = app.tabBars.buttons["Attention"]
+        XCTAssertTrue(attention.waitForExistence(timeout: 8))
+        attention.tap()
+
+        let alert = app.buttons["attention-alert-demo1|demo-blocked"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        alert.tap()
+        assertPushedPaneNavigation(app)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+
+        let activity = app.buttons["open-activity-feed"]
+        XCTAssertTrue(activity.waitForExistence(timeout: 3))
+        activity.tap()
+        let activityAlert = app.buttons["activity-alert-demo1|demo-blocked"]
+        XCTAssertTrue(activityAlert.waitForExistence(timeout: 5))
+        activityAlert.tap()
+        assertPushedPaneNavigation(app)
+    }
+
+    @MainActor
+    func testRegularSplitDetailReplacesSystemToggleWithChatNavigator() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-HerdrDemoMode"]
+        app.launch()
+        guard app.frame.width >= 700 else {
+            throw XCTSkip("Split-detail navigation requires an iPad-sized UI test destination.")
+        }
+
+        let pane = app.buttons["agent-card-demo1|w2:p1"]
+        XCTAssertTrue(pane.waitForExistence(timeout: 8))
+        pane.tap()
+        XCTAssertTrue(app.staticTexts["pane-session-title"].waitForExistence(timeout: 3))
+
+        let navigator = app.navigationBars.buttons["sidebar-toggle"]
+        XCTAssertTrue(navigator.waitForExistence(timeout: 3))
+        let sidebarControls = app.navigationBars.buttons.matching(
+            NSPredicate(
+                format: "identifier == %@ OR label CONTAINS[c] %@",
+                "sidebar-toggle",
+                "sidebar"
+            )
+        )
+        XCTAssertEqual(
+            sidebarControls.count,
+            1,
+            "The detail must remove NavigationSplitView's default column toggle."
+        )
+
+        navigator.tap()
+        XCTAssertTrue(app.scrollViews["herdr-sidebar"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["sidebar-close"].exists)
+    }
+
+    @MainActor
     func testPlainShellKeepsMenuModesAndHidesPiControls() throws {
         let app = launchDemoPane(paneID: "demo1|w1:p3")
         let menu = app.descendants(matching: .any)["pane-mode-toggle"]
@@ -177,6 +257,13 @@ final class HerdrDemoNavigationUITests: XCTestCase {
         XCTAssertTrue(pane.waitForExistence(timeout: 3))
         pane.tap()
         return app
+    }
+
+    @MainActor
+    private func assertPushedPaneNavigation(_ app: XCUIApplication) {
+        XCTAssertTrue(app.staticTexts["pane-session-title"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["sidebar-toggle"].exists)
+        XCTAssertTrue(app.navigationBars.buttons.element(boundBy: 0).exists)
     }
 
     @MainActor

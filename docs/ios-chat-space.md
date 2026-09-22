@@ -8,11 +8,28 @@ This follow-up to `77a9c8a` replaces the separate pane-mode row from the origina
 - **Pane actions → View** contains Chat, Git, Terminal, and Skills, with a
   checkmark for the current mode. The segment bar is removed. Chat still
   requires semantic Pi support; Git still waits for a confirmed repository.
+- Conversation rows are flat and use the complete reading width. The decorative
+  turn rail, dots, and reserved leading gutter are removed without changing lazy
+  row identity, working groups, streaming updates, errors, or transcript windowing.
 - Model and Thinking retain separate actions and live capability/catalog state.
-  Their compact values no longer compete with a higher-priority expanding
-  model control. Hidden audio controls reserve no space. Visible audio can move
-  below the pickers; accessibility text sizes stack controls rather than
-  squeezing or hyphenating their values. Touch targets remain at least 44 points.
+  Each is now one quiet value line with a small decorative icon and chevron,
+  rather than a caption repeated above an outlined card. Hidden audio controls
+  reserve no space. Visible audio can move below the pickers; accessibility text
+  sizes stack controls rather than squeezing or hyphenating their values. Full
+  VoiceOver labels and at least 44-point touch targets remain.
+- The large in-content pane header is removed. A tail-truncated one-line inline
+  navigation title retains the full accessible title. Agent name, idle status,
+  standalone star, and machine/workspace/tab breadcrumb no longer consume chat
+  space; active compaction and connection errors remain in the chat/composer.
+- Star stays under **Pane actions → Chat organization**. The former toolbar clock
+  is now the honest **Chat history → Last prompt** submenu action. Its sheet is
+  owned by the pane view hierarchy, keeps copy/dismiss behavior, and is disabled
+  when the transcript has no user message. It does not claim durable history.
+- Navigation owners pass explicit pane context. Agents and Attention pushes,
+  including Activity → pane, keep native Back and swipe with no navigator button.
+  Root and regular split-detail panes expose the app's Chat navigator. Split detail
+  removes SwiftUI's automatic Agents-column toggle so only that app navigator is
+  shown; opening it presents the same Chat navigator drawer as compact layouts.
 - The composer uses one quiet card: a full-width, system-font editor followed by
   Attach, Voice, More, and Send. Voice recording and hold-to-dictate remain
   available. Empty input keeps Send disabled rather than turning it into a
@@ -46,24 +63,19 @@ required. The earlier local-color and unsent-text draft behavior remains intact.
 
 ## Verification
 
-- Xcode 26.2 simulator build and signed device archive/export succeeded.
-- **349 unit tests and 10 UI tests passed**, with no skipped tests. UI coverage
-  includes menu-only modes, selected-mode accessibility labels, hidden/optional
-  keys, draft continuity, file/Jira/voice access, and the existing navigator and
-  notes regressions.
-- Native UIKit renders cover 56 complete picker-bar combinations and eight full
-  attachment-composer layouts at 320/375/402/430 points and default/Accessibility
-  3 text sizes. They include nonnil hidden/visible audio, short/long/unknown/model
-  loading states, and ready/uploading/failed attachments. Layout-neutral DEBUG
-  anchors measure actual control and value bounds; release builds omit those
-  probes. These are geometry checks, not a manual VoiceOver certification.
-- A synthetic image was selected through the native Photos picker in demo mode.
-  Its thumbnail and Ready state appeared inside the input, survived mode
-  switches, and disappeared when removed; empty-input Send was disabled again.
-  The demo upload did not contact a backend.
-- The public-source guard and whitespace checks passed. Private user captures,
-  configuration, signing identities, archives, and installation destinations
-  remain outside source.
+Build 41 adds deterministic coverage for rail-free row geometry, compact picker
+controls at 320/375/402/430 points and default/Accessibility 3 text sizes,
+one-line title geometry, removed header/status/breadcrumb chrome, Pane actions
+ownership of star and Last prompt, nonnil prompt presentation/copy/dismiss,
+composed synthetic conversation imagery, and navigation policy plus Agents,
+Attention, Activity, and iPad split-detail routes. Those tests are authored but intentionally not run
+until the final reviewed-candidate gate. The gate must also run the existing
+attachment layouts, navigator/notes regressions, native unit suite, focused UI
+suite, public-source guard, and signed device archive/package checks.
 
-A physical-device connected-Pi smoke test remains necessary after installation;
-these checks do not certify the complete iPad, VoiceOver, or media-service matrix.
+The earlier attachment follow-up was verified with Xcode 26.2, 349 unit tests,
+10 UI tests, and its native render matrix. That older evidence is not evidence
+for build 41. A physical-device connected-Pi smoke test remains necessary after
+installation; automated checks do not certify the complete iPad, VoiceOver, or
+media-service matrix. Private captures, configuration, signing identities,
+archives, and installation destinations stay outside source.

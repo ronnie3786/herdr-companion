@@ -6,9 +6,9 @@ struct PaneActionsMenu: View {
     @Binding var selectedMode: PaneDetailMode
     let gitIsAvailable: Bool
     var isPiCompacting = false
-    /// Mirrors the Mac's `PaneSessionHeader` parameters. Defaulted so the flag
-    /// and the action can be added at the single call site without touching
-    /// anything else.
+    let lastPrompt: PiUserMessage?
+    let presentLastPrompt: () -> Void
+    /// Session-summary availability is independent of semantic bridge state.
     var showsPiSessionSummary = false
     var summarizePiSession: () -> Void = { }
     @State private var isConfirmingClose = false
@@ -47,6 +47,14 @@ struct PaneActionsMenu: View {
                 .accessibilityIdentifier("pane-action-star")
 
                 ChatTabColorMenu(store: model.chatTabColors, tabID: pane.scopedTabID)
+
+                Menu("Chat history", systemImage: "clock.arrow.circlepath") {
+                    Button("Last prompt", systemImage: "text.bubble.badge.clock", action: presentLastPrompt)
+                        .disabled(lastPrompt == nil)
+                        .accessibilityHint("Shows the most recent prompt sent to Pi")
+                        .accessibilityIdentifier("pane-action-last-prompt")
+                }
+                .accessibilityIdentifier("pane-action-chat-history")
             }
 
             Section("Focus and control") {

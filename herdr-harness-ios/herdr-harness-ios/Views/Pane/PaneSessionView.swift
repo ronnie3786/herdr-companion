@@ -1,12 +1,13 @@
 import SwiftUI
+import UIKit
 
 struct PaneSessionView: View {
     @Bindable var model: HerdrAppModel
     let pane: HerdrPane
     let hidesAppTabBar: Bool
+    let navigationContext: PaneNavigationContext
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var output = "Connecting to terminal…"
     @State private var snapshotRevision = 0
     @State private var snapshotFrameSequence = 0
@@ -27,20 +28,13 @@ struct PaneSessionView: View {
     @State private var composerAttachments: [TerminalAttachment] = []
     @State private var composerFocusRequest = 0
     @State private var piSessionSummaryRequest: PiSessionSummaryRequest?
+    @State private var lastPromptPresentation = LastPromptPeekPresentation()
 
     var body: some View {
         ZStack {
             HerdrBackground()
 
             VStack(spacing: 0) {
-                PaneSessionHeader(
-                    model: model,
-                    pane: currentPane,
-                    store: piConversationStore
-                )
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-
                 modeContent
             }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: selectedMode)
@@ -48,8 +42,9 @@ struct PaneSessionView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarVisibility(hidesAppTabBar ? .hidden : .automatic, for: .tabBar)
+        .toolbar(removing: navigationContext.removesSystemSidebarToggle ? .sidebarToggle : nil)
         .toolbar {
-            if horizontalSizeClass == .compact {
+            if navigationContext.showsNavigatorButton {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Open navigator", systemImage: "sidebar.leading") {
                         model.isSidebarPresented = true
@@ -57,10 +52,8 @@ struct PaneSessionView: View {
                     .accessibilityIdentifier("sidebar-toggle")
                 }
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                LastPromptPeekButton(
-                    message: PiLastPrompt.lastUserMessage(in: piConversationStore.turns)
-                )
+            ToolbarItem(placement: .principal) {
+                PaneNavigationTitle(title: currentPane.displayTitle)
             }
             ToolbarItem(placement: .topBarTrailing) {
                 PaneActionsMenu(
@@ -69,6 +62,8 @@ struct PaneSessionView: View {
                     selectedMode: modeSelection,
                     gitIsAvailable: gitIsAvailable,
                     isPiCompacting: isPiCompacting,
+                    lastPrompt: lastPrompt,
+                    presentLastPrompt: { lastPromptPresentation.present(lastPrompt) },
                     showsPiSessionSummary: summaryRequest != nil,
                     summarizePiSession: presentPiSessionSummary
                 )
@@ -100,6 +95,16 @@ struct PaneSessionView: View {
         }
         .sheet(item: $piSessionSummaryRequest) { request in
             PiSessionSummaryView(model: model, request: request)
+        }
+        .sheet(item: $lastPromptPresentation.message) { message in
+            LastPromptPeekSheet(
+                message: message,
+                copy: {
+                    lastPromptPresentation.copy { UIPasteboard.general.string = $0 }
+                },
+                dismiss: { lastPromptPresentation.dismiss() }
+            )
+            .presentationDetents([.medium])
         }
         .onAppear {
             autoSelectChatIfNeeded()
@@ -261,6 +266,10 @@ struct PaneSessionView: View {
 
     private var workspace: HerdrWorkspace? {
         model.workspace(containing: currentPane)
+    }
+
+    private var lastPrompt: PiUserMessage? {
+        PiLastPrompt.lastUserMessage(in: piConversationStore.turns)
     }
 
     /// `nil` for a pane with no Pi session id, which is what hides the action.

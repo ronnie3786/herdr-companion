@@ -20,23 +20,9 @@ struct PiTimelineRow: Identifiable, Equatable {
         case starting
     }
 
-    /// What the row's slice of the turn rail draws. Turn-level facts are
-    /// duplicated into every row so a row can render without its siblings.
-    struct Rail: Equatable {
-        let hasUser: Bool
-        let hasTool: Bool
-        let hasFailure: Bool
-        let isActive: Bool
-        /// First row of the turn: draws the turn's top dot.
-        let isFirst: Bool
-        /// Last row of the turn: draws the turn's terminal dot.
-        let isLast: Bool
-    }
-
     let id: String
     let turnID: String
     let content: Content
-    let rail: Rail
     /// First row of a turn that is not the first turn in the timeline: gets
     /// `HerdrProse.turnSpacing` above it instead of the in-turn item spacing.
     let startsTurn: Bool
@@ -53,7 +39,6 @@ struct PiTimelineRow: Identifiable, Equatable {
             id: id,
             turnID: turnID,
             content: content,
-            rail: rail,
             startsTurn: startsTurn,
             isFirstInTimeline: true
         )
@@ -85,22 +70,12 @@ struct PiTimelineRow: Identifiable, Equatable {
             }
             guard !contents.isEmpty else { continue }
 
-            let hasTool = turn.items.contains(where: Self.isTool)
-            let hasFailure = turn.items.contains(where: Self.isFailed)
             for (index, entry) in contents.enumerated() {
                 rows.append(
                     PiTimelineRow(
                         id: entry.id,
                         turnID: turn.id,
                         content: entry.content,
-                        rail: Rail(
-                            hasUser: turn.user != nil,
-                            hasTool: hasTool,
-                            hasFailure: hasFailure,
-                            isActive: turn.isActive,
-                            isFirst: index == 0,
-                            isLast: index == contents.count - 1
-                        ),
                         startsTurn: index == 0,
                         isFirstInTimeline: isFirstTurn && index == 0
                     )
@@ -109,25 +84,6 @@ struct PiTimelineRow: Identifiable, Equatable {
             isFirstTurn = false
         }
         return rows
-    }
-
-    private static func isTool(_ item: PiConversationItem) -> Bool {
-        if case .tool = item { return true }
-        return false
-    }
-
-    private static func isFailed(_ item: PiConversationItem) -> Bool {
-        switch item {
-        case let .assistant(block):
-            if case .failed = block.status { return true }
-            return false
-        case let .tool(tool):
-            return tool.status == .failed
-        case let .notice(notice):
-            return notice.tone == .error
-        case .thinking:
-            return false
-        }
     }
 }
 
@@ -158,33 +114,36 @@ struct PiTimelineWindow: Equatable {
 }
 
 enum PiTimelineMetrics {
-    static let railWidth: CGFloat = 10
-    static let railSpacing: CGFloat = 12
     static let itemSpacing: CGFloat = 13
-    static let dotSize: CGFloat = 7
 }
 
-/// A single timeline row: its content, offset past the rail, with the rail
-/// slice drawn in an overlay so no stack has to negotiate the rail's width.
+/// A single timeline row. Content uses the full reading width; spacing alone
+/// separates turns without a decorative rail or a reserved leading gutter.
 ///
 /// `Equatable` on the row model is the whole point: SwiftUI skips the body
 /// (and therefore the layout) of every row whose content did not change.
 struct PiTimelineRowView: View, Equatable {
     let row: PiTimelineRow
+    var measuresLayout = false
 
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.row == rhs.row
+        lhs.row == rhs.row && lhs.measuresLayout == rhs.measuresLayout
     }
 
     var body: some View {
         content
+            .modifier(PiTimelineRowLayoutMeasurement(
+                isEnabled: measuresLayout,
+                id: "pi-timeline-row-content",
+                label: "Timeline row content"
+            ))
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.leading, PiTimelineMetrics.railWidth + PiTimelineMetrics.railSpacing)
             .padding(.top, row.topSpacing)
-            .overlay(alignment: .topLeading) {
-                PiTimelineRailSegment(rail: row.rail, topInset: row.topSpacing)
-                    .frame(width: PiTimelineMetrics.railWidth)
-            }
+            .modifier(PiTimelineRowLayoutMeasurement(
+                isEnabled: measuresLayout,
+                id: "pi-timeline-row",
+                label: "Timeline row"
+            ))
             .accessibilityIdentifier(accessibilityIdentifier)
     }
 
@@ -218,50 +177,17 @@ struct PiTimelineRowView: View, Equatable {
     }
 }
 
-/// The per-row slice of the turn's activity rail: a hairline that runs the
-/// full row height (through the spacing above the row, so consecutive rows
-/// read as one continuous rail), a top dot on the turn's first row and a
-/// terminal dot on its last. Colors mirror the old whole-turn rail.
-struct PiTimelineRailSegment: View {
-    let rail: PiTimelineRow.Rail
-    let topInset: CGFloat
+private struct PiTimelineRowLayoutMeasurement: ViewModifier {
+    let isEnabled: Bool
+    let id: String
+    let label: String
 
-    var body: some View {
-        VStack(spacing: 0) {
-            if rail.isFirst {
-                Color.clear
-                    .frame(height: topInset)
-                Circle()
-                    .fill(rail.hasUser ? HerdrTheme.accent : HerdrTheme.muted)
-                    .frame(width: PiTimelineMetrics.dotSize, height: PiTimelineMetrics.dotSize)
-            }
-
-            Rectangle()
-                .fill(lineGradient)
-                .frame(width: 1)
-                .frame(maxHeight: .infinity)
-
-            if rail.isLast {
-                Circle()
-                    .fill(terminalColor)
-                    .frame(width: PiTimelineMetrics.dotSize, height: PiTimelineMetrics.dotSize)
-            }
-        }
-        .accessibilityHidden(true)
-    }
-
-    private var lineGradient: LinearGradient {
-        let colors: [Color]
-        if rail.hasTool {
-            colors = [HerdrTheme.accent.opacity(0.55), HerdrTheme.mauve.opacity(0.7), HerdrTheme.signal.opacity(0.62)]
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content.composerLayoutMeasurement(id: id, label: label)
         } else {
-            colors = [HerdrTheme.accent.opacity(0.48), HerdrTheme.mauve.opacity(0.4), HerdrTheme.success.opacity(0.52)]
+            content
         }
-        return LinearGradient(colors: colors, startPoint: .top, endPoint: .bottom)
-    }
-
-    private var terminalColor: Color {
-        if rail.hasFailure { return HerdrTheme.alert }
-        return rail.isActive ? HerdrTheme.working : HerdrTheme.success
     }
 }

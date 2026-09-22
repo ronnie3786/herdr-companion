@@ -48,8 +48,8 @@ struct PiChatTimelineView: View {
                 // forward progress while streaming), the escape hatch is one
                 // word — `VStack` — plus the Mac's `initialLimit` ramp.
                 //
-                // Spacing lives on the rows (`PiTimelineRow.topSpacing`) so the
-                // rail can run through it; the stack itself adds none.
+                // Spacing lives on the rows (`PiTimelineRow.topSpacing`) so
+                // turn boundaries stay explicit while the stack itself adds none.
                 LazyVStack(alignment: .leading, spacing: 0) {
                     transcriptHeader
                         .padding(.bottom, HerdrProse.turnSpacing)

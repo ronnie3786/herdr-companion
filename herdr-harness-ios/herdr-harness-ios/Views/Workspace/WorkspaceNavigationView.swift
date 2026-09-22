@@ -28,8 +28,13 @@ struct WorkspaceNavigationView: View {
                 switch route {
                 case let .pane(id):
                     if let pane = model.pane(id: id) {
-                        PaneSessionView(model: model, pane: pane, hidesAppTabBar: true)
-                            .id(pane.id)
+                        PaneSessionView(
+                            model: model,
+                            pane: pane,
+                            hidesAppTabBar: true,
+                            navigationContext: .pushed
+                        )
+                        .id(pane.id)
                     }
                 case .hudChats:
                     HudChatsView(model: model) { paneID in
@@ -60,8 +65,13 @@ struct WorkspaceNavigationView: View {
                     model.openPane(id: paneID)
                 }
             } else if let pane = model.pane(id: model.selectedPaneID) {
-                PaneSessionView(model: model, pane: pane, hidesAppTabBar: true)
-                    .id(pane.id)
+                PaneSessionView(
+                    model: model,
+                    pane: pane,
+                    hidesAppTabBar: true,
+                    navigationContext: .splitDetail
+                )
+                .id(pane.id)
             } else {
                 ContentUnavailableView(
                     "Choose an agent",

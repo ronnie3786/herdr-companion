@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from herdr_harness.first_mate_models import read_model_catalog
-from herdr_harness.first_mate_runtime import FirstMateRuntime
+from herdr_harness.first_mate_runtime import FirstMateRuntime, _pi_command
 from herdr_harness.first_mate_store import FirstMateStore, FirstMateError, SCHEMA
 
 
@@ -82,7 +82,8 @@ class ModelSettingsTests(unittest.TestCase):
         self.assertEqual((new['model'], new['thinking'], new['model_settings_revision']), ('synthetic/reasoner', 'high', 1))
         worker = runtime._new_job(self.feature, kind='worker', prompt='Work', claim={'id': 'worker', 'generation': 1})
         self.assertEqual(worker['model'], 'synthetic/host')
-        self.assertNotIn('thinking', worker)
+        self.assertEqual(worker['thinking'], '')
+        self.assertNotIn('--thinking', _pi_command(worker))
         self.store.set_model_settings(self.feature['id'], self.settings(model='', thinking='', expected_settings_revision=1, request_id='reset'))
         reset = runtime._new_job(self.feature, kind='coordinator', prompt='Reset', claim={**claim, 'id': 'reset-turn'})
         self.assertEqual(reset['model'], 'synthetic/host')

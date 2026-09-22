@@ -1,5 +1,6 @@
 """The First Mate surface retains the companion's authentication boundary."""
 import base64
+import http.client
 import json
 import tempfile
 import threading
@@ -304,10 +305,23 @@ class FirstMateHTTPTests(unittest.TestCase):
             f"/api/v1/first-mate/features/{identity}/attachments", upload)
         self.assertEqual(code, 200)
         self.assertEqual(result["attachment"]["size"], 1024 * 1024)
-        code, body = self.request(
-            f"/api/v1/first-mate/features/{identity}/messages",
-            {"text": "x" * (1024 * 1024), "request_id": "large-message"},
-        )
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", self.server.server_port, timeout=5)
+        try:
+            connection.request(
+                "POST",
+                f"/api/v1/first-mate/features/{identity}/messages",
+                headers={
+                    "Authorization": "Bearer synthetic-main-token",
+                    "Content-Type": "application/json",
+                    "Content-Length": str(1024 * 1024 + 1),
+                },
+            )
+            response = connection.getresponse()
+            code = response.status
+            body = json.loads(response.read())
+        finally:
+            connection.close()
         self.assertEqual(code, 413)
         self.assertEqual(body["error"]["code"], "body_too_large")
 

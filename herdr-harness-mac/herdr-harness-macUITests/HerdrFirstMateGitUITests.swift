@@ -13,11 +13,11 @@ final class HerdrFirstMateGitUITests: HerdrUITestCase {
         firstMate.click()
 
         let main = mainWindow(in: app)
-        let composer = control("first-mate-composer", in: main)
-        XCTAssertTrue(composer.waitForExistence(timeout: 10), "First Mate should open its selected demo feature")
-        composer.click()
-        composer.typeText(Self.draft)
-        XCTAssertTrue(waitForValue(Self.draft, of: composer))
+        let editor = main.textViews["composer-draft-editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10), "First Mate should open its selected demo feature")
+        editor.click()
+        editor.typeText(Self.draft)
+        XCTAssertTrue(waitForValue(Self.draft, of: editor))
 
         selectFirstMateMode("Git", in: main, app: app)
         selectWorkspace(Self.workerTitle, in: main, app: app)
@@ -32,10 +32,10 @@ final class HerdrFirstMateGitUITests: HerdrUITestCase {
         expectWorkspaceContext(in: workerWindow, title: Self.workerTitle, path: Self.workerPath)
 
         selectFirstMateMode("Chat", in: main, app: app)
-        let restoredComposer = control("first-mate-composer", in: main)
-        XCTAssertTrue(restoredComposer.waitForExistence(timeout: 5), "Returning to Chat should restore the composer")
+        let restoredEditor = main.textViews["composer-draft-editor"]
+        XCTAssertTrue(restoredEditor.waitForExistence(timeout: 5), "Returning to Chat should restore the composer")
         XCTAssertTrue(
-            waitForValue(Self.draft, of: restoredComposer),
+            waitForValue(Self.draft, of: restoredEditor),
             "Switching through Git must preserve the unsent feature draft"
         )
 

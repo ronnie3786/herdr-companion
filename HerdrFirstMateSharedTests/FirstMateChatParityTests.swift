@@ -163,7 +163,8 @@ struct FirstMateChatParityTests {
     func quoteSavePolicy() throws {
         let store = FirstMateStore()
         store.configure(client: nil, demo: true)
-        store.setControlAvailability(true)
+        let controlLease = FirstMateWorkspaceControlLease()
+        controlLease.update(store: store, available: true)
         var snapshot = try #require(store.snapshot)
         let source = FirstMateMessage(
             id: "eligible",
@@ -228,6 +229,72 @@ struct FirstMateChatParityTests {
             currentContext: context,
             canControl: false
         ))
+    }
+
+    @Test("Workspace control lease revokes a cached host and fences stale cleanup") @MainActor
+    func workspaceControlLease() throws {
+        let firstStore = FirstMateStore()
+        let secondStore = FirstMateStore()
+        firstStore.configure(client: nil, demo: true)
+        secondStore.configure(client: nil, demo: true)
+        let featureID = try #require(firstStore.selectedFeatureID)
+        secondStore.select(featureID)
+
+        var snapshot = try #require(firstStore.snapshot)
+        let source = FirstMateMessage(
+            id: "cached-host-quote",
+            featureID: featureID,
+            role: "assistant",
+            text: "Synthetic cached-host answer",
+            status: "delivered",
+            createdAt: "2030-01-01T12:00:00Z"
+        )
+        snapshot.messages = [source]
+        firstStore.receive(snapshot)
+        let cachedContext = firstStore.operationContext
+        let firstLifecycle = firstStore.lifecycle
+
+        let workspaceLease = FirstMateWorkspaceControlLease()
+        workspaceLease.update(store: firstStore, available: true)
+        #expect(FirstMateQuoteEligibility.canStage(
+            sourceMessageID: source.id,
+            snapshot: firstStore.snapshot(for: cachedContext),
+            expectedContext: cachedContext,
+            currentContext: firstStore.operationContext,
+            canControl: firstStore.controlAvailable
+        ))
+
+        workspaceLease.update(store: secondStore, available: true)
+        #expect(!firstStore.controlAvailable)
+        #expect(secondStore.controlAvailable)
+        workspaceLease.release(
+            storeID: ObjectIdentifier(firstStore),
+            lifecycleIdentity: firstLifecycle
+        )
+        #expect(secondStore.controlAvailable)
+        #expect(!FirstMateQuoteEligibility.canStage(
+            sourceMessageID: source.id,
+            snapshot: firstStore.snapshot(for: cachedContext),
+            expectedContext: cachedContext,
+            currentContext: firstStore.operationContext,
+            canControl: firstStore.controlAvailable
+        ))
+
+        let previousSecondLifecycle = secondStore.lifecycle
+        secondStore.configure(client: nil, demo: true)
+        workspaceLease.update(store: secondStore, available: true)
+        workspaceLease.release(
+            storeID: ObjectIdentifier(secondStore),
+            lifecycleIdentity: previousSecondLifecycle
+        )
+        #expect(secondStore.controlAvailable)
+
+        let newerLease = FirstMateWorkspaceControlLease()
+        newerLease.update(store: secondStore, available: true)
+        workspaceLease.release()
+        #expect(secondStore.controlAvailable)
+        newerLease.release()
+        #expect(!secondStore.controlAvailable)
     }
 
     @Test("Composer lifecycle identity isolates reconnects and same feature IDs in different stores") @MainActor
@@ -404,7 +471,7 @@ struct FirstMateChatParityTests {
     func contextPresentation() {
         var feature = FirstMateDemo.features(step: 0)[0].feature
         feature.nativeSessionID = "session"
-        feature.coordinatorContext = .init(nativeSessionID: "session", status: .measured, tokens: 144_000, contextWindow: nil, handoffTargetTokens: 160_000, observedAt: "2030-01-01T12:00:00Z")
+        feature.coordinatorContext = .init(nativeSessionID: "session", status: .measured, tokens: 144_000, contextWindow: nil, handoffTargetTokens: 160_000, observedAt: "2030-01-01T12:00:00.123Z")
         var presentation = FirstMateCoordinatorContextPresentation(feature: feature, capabilityAvailable: true)
         #expect(presentation.summary.contains("window unknown"))
         #expect(presentation.pressure?.contains("Approaching") == true)
@@ -413,6 +480,10 @@ struct FirstMateChatParityTests {
         feature.coordinatorContext?.tokens = 160_000
         presentation = .init(feature: feature, capabilityAvailable: true)
         #expect(presentation.pressure?.contains("threshold reached") == true)
+
+        feature.coordinatorContext?.observedAt = "not-a-timestamp"
+        presentation = .init(feature: feature, capabilityAvailable: true)
+        #expect(presentation.measurement == nil)
 
         feature.coordinatorContext = .init(
             nativeSessionID: "session",

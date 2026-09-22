@@ -125,6 +125,64 @@ struct FirstMateComposerAsyncTests {
         #expect(store.isDemo)
     }
 
+    @Test("Cancellation and release before fake entry cannot strand continuations")
+    func cancellationBeforeContinuationEntry() async throws {
+        let client = DeferredFirstMateComposerClient(deferOperationEntry: true)
+        let upload = Task {
+            try await client.uploadFirstMateAttachment(
+                featureID: "synthetic-feature",
+                fileURL: URL(fileURLWithPath: "/tmp/herdr-first-mate-synthetic.txt"),
+                contentType: "text/plain"
+            )
+        }
+        let send = Task {
+            try await client.sendFirstMateMessage(
+                featureID: FirstMateDemo.features(step: 0)[0].feature.id,
+                text: "Synthetic cancellation",
+                requestID: "synthetic-cancelled-request"
+            )
+        }
+
+        do {
+            try await waitUntil("upload and send to pause before continuation entry") {
+                let uploadIsWaiting = await client.uploadEntryIsWaiting
+                let sendIsWaiting = await client.sendEntryIsWaiting
+                return uploadIsWaiting && sendIsWaiting
+            }
+        } catch {
+            upload.cancel()
+            send.cancel()
+            await client.releaseUpload()
+            await client.releaseSend()
+            throw error
+        }
+
+        upload.cancel()
+        send.cancel()
+        await client.releaseUpload()
+        await client.releaseSend()
+        do {
+            try await waitUntil("cancelled upload and send to finish") {
+                let uploadFinished = await client.uploadDidFinish
+                let sendFinished = await client.sendDidFinish
+                return uploadFinished && sendFinished
+            }
+        } catch {
+            // A second release makes a regression fail boundedly rather than
+            // leaving the test process parked on a checked continuation.
+            await client.releaseUpload()
+            await client.releaseSend()
+            throw error
+        }
+
+        var uploadCancelled = false
+        do { _ = try await upload.value } catch is CancellationError { uploadCancelled = true } catch {}
+        var sendCancelled = false
+        do { _ = try await send.value } catch is CancellationError { sendCancelled = true } catch {}
+        #expect(uploadCancelled)
+        #expect(sendCancelled)
+    }
+
     private enum DeferredWaitError: Error {
         case timedOut(String)
     }
@@ -157,13 +215,46 @@ struct FirstMateComposerAsyncTests {
 }
 
 private actor DeferredFirstMateComposerClient: FirstMateClient {
+    private let deferOperationEntry: Bool
+    private var uploadEntryContinuation: CheckedContinuation<Void, Never>?
+    private var sendEntryContinuation: CheckedContinuation<Void, Never>?
     private var uploadContinuation: CheckedContinuation<Void, Never>?
     private var sendContinuation: CheckedContinuation<Void, Never>?
+    private var uploadReleased = false
+    private var sendReleased = false
+    private(set) var uploadDidFinish = false
+    private(set) var sendDidFinish = false
+
+    init(deferOperationEntry: Bool = false) {
+        self.deferOperationEntry = deferOperationEntry
+    }
+
+    var uploadEntryIsWaiting: Bool { uploadEntryContinuation != nil }
+    var sendEntryIsWaiting: Bool { sendEntryContinuation != nil }
     var uploadIsWaiting: Bool { uploadContinuation != nil }
     var sendIsWaiting: Bool { sendContinuation != nil }
 
-    func releaseUpload() { uploadContinuation?.resume(); uploadContinuation = nil }
-    func releaseSend() { sendContinuation?.resume(); sendContinuation = nil }
+    func releaseUpload() {
+        if let uploadContinuation {
+            self.uploadContinuation = nil
+            uploadContinuation.resume()
+        } else {
+            uploadReleased = true
+        }
+        uploadEntryContinuation?.resume()
+        uploadEntryContinuation = nil
+    }
+
+    func releaseSend() {
+        if let sendContinuation {
+            self.sendContinuation = nil
+            sendContinuation.resume()
+        } else {
+            sendReleased = true
+        }
+        sendEntryContinuation?.resume()
+        sendEntryContinuation = nil
+    }
 
     func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities {
         .init(ok: true, capabilities: ["first-mate-v1", "first-mate-attachments-v1"])
@@ -186,7 +277,17 @@ private actor DeferredFirstMateComposerClient: FirstMateClient {
         fileURL: URL,
         contentType: String
     ) async throws -> AttachmentUploadResponse {
-        await withCheckedContinuation { uploadContinuation = $0 }
+        defer { uploadDidFinish = true }
+        if deferOperationEntry {
+            await withCheckedContinuation { uploadEntryContinuation = $0 }
+        }
+        try Task.checkCancellation()
+        if uploadReleased {
+            uploadReleased = false
+        } else {
+            await withCheckedContinuation { uploadContinuation = $0 }
+        }
+        try Task.checkCancellation()
         return .init(ok: true, attachment: UploadedAttachment(
             id: "uploaded",
             filename: fileURL.lastPathComponent,
@@ -200,7 +301,17 @@ private actor DeferredFirstMateComposerClient: FirstMateClient {
     }
 
     func sendFirstMateMessage(featureID: String, text: String, requestID: String) async throws -> FirstMateSnapshot {
-        await withCheckedContinuation { sendContinuation = $0 }
+        defer { sendDidFinish = true }
+        if deferOperationEntry {
+            await withCheckedContinuation { sendEntryContinuation = $0 }
+        }
+        try Task.checkCancellation()
+        if sendReleased {
+            sendReleased = false
+        } else {
+            await withCheckedContinuation { sendContinuation = $0 }
+        }
+        try Task.checkCancellation()
         return try #require(FirstMateDemo.features(step: 0).first { $0.feature.id == featureID })
     }
 

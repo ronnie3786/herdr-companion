@@ -57,7 +57,7 @@ struct FirstMateCoordinatorContextPresentation: Equatable {
         }
 
         if let observedAt = context.observedAt,
-           let date = try? Date(observedAt, strategy: .iso8601) {
+           let date = HerdrTimestamp.date(from: observedAt) {
             measurement = "Measured \(date.formatted(date: .abbreviated, time: .shortened))"
         } else {
             measurement = nil

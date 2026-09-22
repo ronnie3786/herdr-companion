@@ -4,7 +4,7 @@
 - Select text in a recent completed First Mate reply and choose **Quote & comment…**. Save stages the excerpt and your comment without sending. Replies and code blocks use Chat's copy controls.
 - Unsent drafts, uploads, and quotes remain scoped to their feature while this Mac app runs. Switching features or machines cannot redirect an in-flight upload or reply.
 - Choose models and thinking effort through the same controls as Chat. Existing First Mate sessions require an idle boundary and explicit confirmation: switching may reprocess context, invalidate prompt caches, and incur extra cost. Workers keep their own model settings.
-- **Main session context** shows the current coordinator's measured tokens, context window, and automatic handoff threshold, separately from total feature cost. First Mate preserves a checkpoint and continues in a fresh session at a safe boundary; it does not use ordinary Pi compaction.
+- **Coordinator context** shows the current coordinator's measured tokens, context window, and automatic handoff threshold, separately from total feature cost. First Mate preserves a checkpoint and continues in a fresh session at a safe boundary; it does not use ordinary Pi compaction.
 
 ## Try it
 

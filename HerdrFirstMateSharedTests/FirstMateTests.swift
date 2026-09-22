@@ -176,6 +176,68 @@ struct FirstMateTests {
         #expect(store.snapshot?.feature.coordinatorContext?.nativeSessionID == "session-newest")
     }
 
+    @Test("Fractional timestamp ordering fences same-second rotations and mixed formats")
+    func fractionalTimestampOrdering() throws {
+        func partial(_ feature: FirstMateFeature) throws -> FirstMateSnapshot {
+            let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(feature))
+            let data = try JSONSerialization.data(withJSONObject: ["ok": true, "feature": object])
+            return try JSONDecoder().decode(FirstMateSnapshot.self, from: data)
+        }
+
+        let store = FirstMateStore()
+        var original = FirstMateDemo.features(step: 0)[0]
+        original.feature.updatedAt = "2030-01-01T12:00:00.100Z"
+        original.feature.nativeSessionID = "session-original"
+        original.feature.coordinatorContext = .init(
+            nativeSessionID: "session-original",
+            status: .measured,
+            tokens: 40_000,
+            contextWindow: 200_000,
+            handoffTargetTokens: 160_000
+        )
+        store.receive(original)
+        store.select(original.feature.id)
+
+        var sameSecondSuccessor = original
+        sameSecondSuccessor.feature.updatedAt = "2030-01-01T12:00:00.900Z"
+        sameSecondSuccessor.feature.nativeSessionID = "session-same-second-successor"
+        sameSecondSuccessor.feature.coordinatorContext = .init(
+            nativeSessionID: "session-same-second-successor",
+            status: .measured,
+            tokens: 2_000,
+            contextWindow: 200_000,
+            handoffTargetTokens: 160_000
+        )
+        store.receive(sameSecondSuccessor)
+
+        var delayed = original.feature
+        delayed.updatedAt = "2030-01-01T12:00:00.500Z"
+        delayed.status = "paused"
+        store.receive(try partial(delayed))
+        #expect(store.snapshot?.feature.status == "paused")
+        #expect(store.snapshot?.feature.updatedAt == "2030-01-01T12:00:00.900Z")
+        #expect(store.snapshot?.feature.nativeSessionID == "session-same-second-successor")
+
+        var plainSuccessor = sameSecondSuccessor
+        plainSuccessor.feature.updatedAt = "2030-01-01T12:00:01Z"
+        plainSuccessor.feature.nativeSessionID = "session-plain-successor"
+        plainSuccessor.feature.coordinatorContext?.nativeSessionID = "session-plain-successor"
+        store.receive(plainSuccessor)
+        store.receive(try partial(delayed))
+        #expect(store.snapshot?.feature.updatedAt == "2030-01-01T12:00:01Z")
+        #expect(store.snapshot?.feature.nativeSessionID == "session-plain-successor")
+
+        var invalid = delayed
+        invalid.updatedAt = "not-a-timestamp"
+        invalid.nativeSessionID = "session-invalid-unordered"
+        invalid.coordinatorContext = nil
+        store.receive(try partial(invalid))
+        // Invalid timestamps cannot establish strict ordering, so retain the
+        // compatible partial-merge behavior instead of guessing chronology.
+        #expect(store.snapshot?.feature.updatedAt == "not-a-timestamp")
+        #expect(store.snapshot?.feature.nativeSessionID == "session-invalid-unordered")
+    }
+
     @Test("Feature drafts stay separate and a host change clears sensitive state")
     func draftAndConnectionIsolation() {
         let store = FirstMateStore()
@@ -208,6 +270,32 @@ struct FirstMateTests {
         store.setComposerDraft("Second feature", for: store.operationContext)
         store.select(first)
         #expect(store.draft == "Late original edit")
+    }
+
+    @Test("Operation contexts reject a foreign store with the same feature and generation")
+    func operationContextLifecycleIsolation() throws {
+        let firstStore = FirstMateStore()
+        let secondStore = FirstMateStore()
+        firstStore.configure(client: nil, demo: true)
+        secondStore.configure(client: nil, demo: true)
+        let featureID = try #require(firstStore.selectedFeatureID)
+        secondStore.select(featureID)
+        let firstContext = firstStore.operationContext
+        let foreignContext = secondStore.operationContext
+
+        firstStore.setComposerDraft("Owned by the first store", for: firstContext)
+        #expect(firstStore.composerDraft(for: foreignContext).isEmpty)
+        firstStore.setComposerDraft("Foreign overwrite", for: foreignContext)
+        #expect(firstStore.composerDraft(for: firstContext) == "Owned by the first store")
+        #expect(!firstStore.isDestinationAlive(foreignContext))
+        #expect(firstStore.snapshot(for: foreignContext) == nil)
+        #expect(firstStore.feature(for: foreignContext) == nil)
+
+        let otherID = try #require(firstStore.features.first { $0.id != featureID }?.id)
+        firstStore.select(otherID)
+        #expect(firstStore.composerDraft(for: firstContext) == "Owned by the first store")
+        #expect(firstStore.isDestinationAlive(firstContext))
+        #expect(firstStore.snapshot(for: firstContext)?.feature.id == featureID)
     }
 
     @Test("A failed message retry reuses its request ID and preserves the draft")

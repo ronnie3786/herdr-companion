@@ -6,6 +6,19 @@ private enum FirstMateWorkspaceMode: String, CaseIterable, Identifiable {
     var id: Self { self }
 }
 
+private struct FirstMateWorkspaceControlTarget: Equatable {
+    let storeID: ObjectIdentifier
+    let lifecycle: FirstMateStore.LifecycleIdentity
+    let canControl: Bool
+
+    @MainActor
+    init(store: FirstMateStore, canControl: Bool) {
+        storeID = ObjectIdentifier(store)
+        lifecycle = store.lifecycle
+        self.canControl = canControl
+    }
+}
+
 struct FirstMateWorkspaceView: View {
     @Bindable var model: HerdrAppModel
     @Bindable var store: FirstMateStore
@@ -22,9 +35,11 @@ struct FirstMateWorkspaceView: View {
     @State private var mode = FirstMateWorkspaceMode.chat
     @State private var selectedGitWorkspaceID = "project"
     @State private var selectedGitTargetIdentity: String?
+    @State private var controlLease = FirstMateWorkspaceControlLease()
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
+        let controlTarget = FirstMateWorkspaceControlTarget(store: store, canControl: canControl)
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 if let owningMachineName {
@@ -120,10 +135,12 @@ struct FirstMateWorkspaceView: View {
                     .id(resource.id)
             }
         }
-        .task(id: "\(store.lifecycle.opaqueID):\(canControl)") {
-            store.setControlAvailability(canControl)
+        .onChange(of: controlTarget, initial: true) { _, _ in
+            controlLease.update(store: store, available: canControl)
         }
-        .onDisappear { store.setControlAvailability(false) }
+        .onDisappear {
+            controlLease.release(storeID: controlTarget.storeID, lifecycleIdentity: controlTarget.lifecycle)
+        }
         .accessibilityIdentifier("first-mate-workspace")
     }
 

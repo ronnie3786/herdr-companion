@@ -41,7 +41,8 @@ Use synthetic features, files, messages, clocks, and model names. Do not capture
 - [ ] Record a voice note; exercise hold, lock, finish, too-short, transcription success, and transcription failure.
 - [ ] Quote text and code from each of the latest three completed assistant messages. Confirm older and user messages copy but do not quote, Save does not send, and quote-only send serializes inline.
 - [ ] Switch features and hosts while upload, transcription, send, catalog load, confirmation, and settings save are suspended. Confirm no completion mutates the new destination and every original draft survives.
-- [ ] Fail a send after acceptance is uncertain, edit the draft and add another file, then retry. Confirm the request ID is reused and success removes only the originally sent identities.
+- [ ] Fail a send after acceptance is uncertain, then retry the identical serialized message. Confirm the request ID is reused. Changing the submitted payload is a new message and must not reuse that ID.
+- [ ] While a send is suspended, edit the draft and stage another file. Complete the original send and confirm success removes only the originally accepted text/item identities, preserving the newer material.
 - [ ] Confirm First Mate never displays terminal keys, `/reload`, compact, workspace file, Jira, skill, or pane-conversation controls.
 - [ ] Render context values for zero, unknown, unavailable, malformed, foreign session, rollover, near-threshold, and old-server states. Confirm no cumulative usage is labeled as context.
 - [ ] On an established session, verify the cost warning for both model and thinking changes, cancel, confirm, stale session, stale settings revision, active owner, queued work, and idempotent retry.

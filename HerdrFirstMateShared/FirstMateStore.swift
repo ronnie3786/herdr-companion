@@ -25,6 +25,11 @@ final class FirstMateStore {
         }
     }
 
+    struct ControlLease: Equatable, Sendable {
+        fileprivate let id: UUID
+        fileprivate let lifecycleIdentity: LifecycleIdentity
+    }
+
     /// Capture when the human acts, before scheduling an asynchronous UI task.
     var operationContext: OperationContext {
         .init(generation: generation, featureID: selectedFeatureID, lifecycleIdentity: lifecycleIdentity)
@@ -72,6 +77,7 @@ final class FirstMateStore {
     private(set) var sessionPageError: String?
     private var generation = 0
     private var lifecycleIdentity = LifecycleIdentity(value: UUID())
+    private var activeControlLease: ControlLease?
     private var resourceGeneration = 0
     private var drafts: [String: String] = [:]
     private var pendingMessages: [String: (text: String, requestID: String)] = [:]
@@ -125,6 +131,7 @@ final class FirstMateStore {
         attachmentsSupported = demo
         contextSupported = demo
         safeModelSettingsSupported = demo
+        activeControlLease = nil
         controlAvailable = demo
         isRefreshing = false
         isSending = false
@@ -143,8 +150,22 @@ final class FirstMateStore {
         }
     }
 
-    func setControlAvailability(_ available: Bool) {
+    func acquireControlLease(available: Bool) -> ControlLease {
+        let lease = ControlLease(id: UUID(), lifecycleIdentity: lifecycleIdentity)
+        activeControlLease = lease
         controlAvailable = available
+        return lease
+    }
+
+    func updateControlLease(_ lease: ControlLease, available: Bool) {
+        guard activeControlLease == lease, lease.lifecycleIdentity == lifecycleIdentity else { return }
+        controlAvailable = available
+    }
+
+    func releaseControlLease(_ lease: ControlLease) {
+        guard activeControlLease == lease, lease.lifecycleIdentity == lifecycleIdentity else { return }
+        activeControlLease = nil
+        controlAvailable = false
     }
 
     func select(_ id: String) {
@@ -157,12 +178,16 @@ final class FirstMateStore {
     }
 
     func composerDraft(for context: OperationContext) -> String {
-        guard context.generation == generation, let featureID = context.featureID else { return "" }
+        guard context.generation == generation,
+              context.lifecycleIdentity == lifecycleIdentity,
+              let featureID = context.featureID else { return "" }
         return selectedFeatureID == featureID ? draft : drafts[featureID] ?? ""
     }
 
     func setComposerDraft(_ value: String, for context: OperationContext) {
-        guard context.generation == generation, let featureID = context.featureID else { return }
+        guard context.generation == generation,
+              context.lifecycleIdentity == lifecycleIdentity,
+              let featureID = context.featureID else { return }
         if selectedFeatureID == featureID {
             draft = value
         } else {
@@ -393,17 +418,23 @@ final class FirstMateStore {
     }
 
     func isDestinationAlive(_ context: OperationContext) -> Bool {
-        guard context.generation == generation, let featureID = context.featureID else { return false }
+        guard context.generation == generation,
+              context.lifecycleIdentity == lifecycleIdentity,
+              let featureID = context.featureID else { return false }
         return snapshots[featureID] != nil || features.contains { $0.id == featureID }
     }
 
     func snapshot(for context: OperationContext) -> FirstMateSnapshot? {
-        guard context.generation == generation, let featureID = context.featureID else { return nil }
+        guard context.generation == generation,
+              context.lifecycleIdentity == lifecycleIdentity,
+              let featureID = context.featureID else { return nil }
         return snapshots[featureID]
     }
 
     func feature(for context: OperationContext) -> FirstMateFeature? {
-        snapshot(for: context)?.feature
+        guard context.generation == generation,
+              context.lifecycleIdentity == lifecycleIdentity else { return nil }
+        return snapshot(for: context)?.feature
             ?? features.first { context.matchesFeature($0.id) }
     }
 
@@ -587,8 +618,8 @@ final class FirstMateStore {
     }
 
     private static func isStrictlyOlderTimestamp(_ candidate: String, than existing: String) -> Bool {
-        guard let candidateDate = try? Date(candidate, strategy: .iso8601),
-              let existingDate = try? Date(existing, strategy: .iso8601) else { return false }
+        guard let candidateDate = HerdrTimestamp.date(from: candidate),
+              let existingDate = HerdrTimestamp.date(from: existing) else { return false }
         return candidateDate < existingDate
     }
 
@@ -637,5 +668,43 @@ final class FirstMateStore {
             unsupported = true
             error = "This companion server needs First Mate support. Update the server to a version with first-mate-v1."
         } else { error = failure.localizedDescription }
+    }
+}
+
+/// Owns the UI-control grant for one visible workspace. Moving this lease to a
+/// different store or lifecycle revokes the previous grant first. Store-issued
+/// tokens make delayed cleanup harmless after a newer view has taken ownership.
+@MainActor
+final class FirstMateWorkspaceControlLease {
+    private weak var store: FirstMateStore?
+    private var token: FirstMateStore.ControlLease?
+
+    func update(store newStore: FirstMateStore, available: Bool) {
+        if store === newStore,
+           let token,
+           token.lifecycleIdentity == newStore.lifecycle {
+            newStore.updateControlLease(token, available: available)
+            return
+        }
+
+        release()
+        store = newStore
+        token = newStore.acquireControlLease(available: available)
+    }
+
+    func release() {
+        if let store, let token {
+            store.releaseControlLease(token)
+        }
+        store = nil
+        token = nil
+    }
+
+    func release(storeID: ObjectIdentifier, lifecycleIdentity: FirstMateStore.LifecycleIdentity) {
+        guard let store,
+              let token,
+              ObjectIdentifier(store) == storeID,
+              token.lifecycleIdentity == lifecycleIdentity else { return }
+        release()
     }
 }

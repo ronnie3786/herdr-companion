@@ -4,6 +4,15 @@ import Observation
 struct FirstMateGitCatalogIdentity: Equatable, Sendable {
     let machineID: String
     let featureID: String
+    let configuration: ServerConfiguration?
+    let configurationRevision: Int
+
+    init(machineID: String, featureID: String, configuration: ServerConfiguration? = nil, configurationRevision: Int = 0) {
+        self.machineID = machineID
+        self.featureID = featureID
+        self.configuration = configuration
+        self.configurationRevision = configurationRevision
+    }
 }
 
 @MainActor @Observable
@@ -57,20 +66,27 @@ final class FirstMateGitCatalog {
         featureID: String,
         client: (any FirstMateGitClient)?,
         demo: Bool,
-        demoFeatureTitle: String = "Demo feature"
+        demoFeatureTitle: String = "Demo feature",
+        configuration: ServerConfiguration? = nil,
+        configurationRevision: Int = 0
     ) async {
         requestGeneration &+= 1
         let request = requestGeneration
-        let requestedIdentity = FirstMateGitCatalogIdentity(machineID: machineID, featureID: featureID)
-        let changedTarget = identity != requestedIdentity
+        let requestedIdentity = FirstMateGitCatalogIdentity(
+            machineID: machineID, featureID: featureID,
+            configuration: configuration, configurationRevision: configurationRevision
+        )
+        let changedTarget = identity?.machineID != machineID || identity?.featureID != featureID
+        let changedConnection = identity != requestedIdentity
         identity = requestedIdentity
-        phase = .loading
-
-        if changedTarget {
-            // Never leave a previous feature's title or path on screen while
-            // the new target is in flight.
+        // Keep a ready workbench mounted across same-target catalog refreshes.
+        // A changed feature or API configuration must hide the old host's data.
+        if changedConnection || phase != .ready { phase = .loading }
+        if changedConnection {
             workspaces = []
             featureTitle = nil
+        }
+        if changedTarget {
             selectedWorkspaceID = pinnedWorkspaceID ?? initialWorkspaceID
         }
 

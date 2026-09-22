@@ -1,9 +1,8 @@
 import SwiftUI
 
-private struct FirstMateGitLoadIdentity: Hashable {
+struct FirstMateGitLoadIdentity: Hashable {
     let machineID: String
     let featureID: String
-    let connectionState: String
     let configurationRevision: Int
     let url: String?
     let token: String?
@@ -79,7 +78,9 @@ struct FirstMateGitView: View {
                 featureID: featureID,
                 client: client,
                 demo: isDemoTarget,
-                demoFeatureTitle: featureTitle
+                demoFeatureTitle: featureTitle,
+                configuration: configuration,
+                configurationRevision: configurationRevision
             )
         }
         .navigationTitle(windowTitle)
@@ -218,11 +219,13 @@ struct FirstMateGitView: View {
         return "\(feature) — \(workspace) — First Mate Git"
     }
 
-    private var loadIdentity: FirstMateGitLoadIdentity {
+    var loadIdentity: FirstMateGitLoadIdentity {
         .init(
             machineID: machineID,
             featureID: featureID,
-            connectionState: model.connectionState(forMachine: machineID).title,
+            // The companion Git API is independent of the terminal connection.
+            // A transient terminal disconnect must not restart this task and
+            // discard the embedded web view while First Mate remains usable.
             configurationRevision: configurationRevision,
             url: configuration?.baseURL.absoluteString,
             token: configuration?.token,

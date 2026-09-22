@@ -14,6 +14,11 @@ open or reveal actions have the same behavior.
 3. In Git, choose **Project workspace** (the default) or one of the assignment
    worktrees recorded by that feature.
 
+The Git page stays mounted during companion catalog refreshes and transient
+terminal reconnects, so the open diff, selection, and scroll position do not
+flash back to a loading screen. Use **Refresh Git workspaces** to update the
+catalog explicitly; the workbench continues to poll Git status on its own.
+
 The picker never guesses the newest worker, borrows the active Chat pane, uses a
 terminal's current directory, or creates a shell. Concurrent workers are distinct
 choices. Paths are visible for context but are not editable selectors. A worktree
@@ -67,7 +72,8 @@ authenticated native web container.
 - [ ] Pop out project and worker targets; confirm each window remains pinned as
       the main window changes machine, feature, and workspace.
 - [ ] Stop only the terminal-pane connection while leaving the companion API
-      reachable and confirm First Mate Git still loads.
+      reachable and confirm the open Git page, diff, and scroll position stay
+      visible across reconnects and **Refresh Git workspaces**.
 - [ ] Disconnect/reconnect the owning companion and confirm the same target reloads.
 - [ ] Verify an older companion shows the compatibility message.
 - [ ] Verify VoiceOver labels for Chat/Git, workspace, refresh, pop-out, stage,

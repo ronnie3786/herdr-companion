@@ -34,6 +34,62 @@ struct FirstMateGitTargetTests {
     }
 }
 
+@Suite("First Mate Git load identity")
+@MainActor
+struct FirstMateGitLoadIdentityTests {
+    @Test("Terminal connection churn leaves Git mounted; target and credential changes still reload")
+    func companionIdentityIsIndependentOfTerminal() throws {
+        let defaultsName = "FirstMateGitLoadIdentityTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: defaultsName))
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+        let model = HerdrAppModel(
+            credentials: TestCredentialStore(), arguments: ["test"],
+            userDefaults: defaults, configuredMachines: []
+        )
+        let configuration = try #require(ServerConfiguration(
+            urlString: "https://companion.example.test", token: "synthetic-token"
+        ))
+        let rotatedConfiguration = try #require(ServerConfiguration(
+            urlString: "https://companion.example.test", token: "synthetic-new-token"
+        ))
+        func identity(
+            machine: String = "machine-a",
+            feature: String = "feature",
+            revision: Int = 1,
+            retry: Int = 0,
+            missingConfiguration: Bool = false,
+            rotatedCredentials: Bool = false
+        ) -> FirstMateGitLoadIdentity {
+            let view = FirstMateGitView(
+                model: model, machineID: machine, featureID: feature,
+                featureTitle: "Synthetic feature",
+                configuration: missingConfiguration ? nil : (rotatedCredentials ? rotatedConfiguration : configuration),
+                configurationRevision: revision
+            )
+            // retryGeneration is view-local; changing its identity explicitly
+            // below covers the Refresh action without relying on a timer.
+            let current = view.loadIdentity
+            return FirstMateGitLoadIdentity(
+                machineID: current.machineID, featureID: current.featureID,
+                configurationRevision: current.configurationRevision,
+                url: current.url, token: current.token, retryGeneration: retry
+            )
+        }
+        model.machineStates["machine-a"] = .connecting
+        let before = identity()
+        model.machineStates["machine-a"] = .live
+        #expect(identity() == before)
+        model.machineStates["machine-a"] = .failed
+        #expect(identity() == before)
+        #expect(identity(machine: "machine-b") != before)
+        #expect(identity(feature: "other-feature") != before)
+        #expect(identity(revision: 2) != before)
+        #expect(identity(retry: 1) != before)
+        #expect(identity(missingConfiguration: true) != before)
+        #expect(identity(rotatedCredentials: true) != before)
+    }
+}
+
 @Suite("First Mate workspace observation identity")
 @MainActor
 struct FirstMateWorkspaceObservationIDTests {
@@ -72,13 +128,14 @@ private actor FirstMateGitClientFixture: FirstMateGitClient {
     let capabilityError: APIError?
     let workspaceError: APIError?
     let blockedFeatureID: String?
+    let blockedRequestNumber: Int
     var workspacesByFeature: [String: [FirstMateGitWorkspace]]
     let titlesByFeature: [String: String]
 
     private(set) var capabilityRequestCount = 0
     private(set) var workspaceRequestIDs: [String] = []
     private var blockedContinuation: CheckedContinuation<Void, Never>?
-    private var requestWaiters: [CheckedContinuation<Void, Never>] = []
+    private var blockedWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(
         capabilities: [String] = ["first-mate-git-v1"],
@@ -86,7 +143,8 @@ private actor FirstMateGitClientFixture: FirstMateGitClient {
         workspaceError: APIError? = nil,
         workspacesByFeature: [String: [FirstMateGitWorkspace]],
         titlesByFeature: [String: String],
-        blockedFeatureID: String? = nil
+        blockedFeatureID: String? = nil,
+        blockedRequestNumber: Int = 1
     ) {
         self.capabilities = capabilities
         self.capabilityError = capabilityError
@@ -94,6 +152,7 @@ private actor FirstMateGitClientFixture: FirstMateGitClient {
         self.workspacesByFeature = workspacesByFeature
         self.titlesByFeature = titlesByFeature
         self.blockedFeatureID = blockedFeatureID
+        self.blockedRequestNumber = blockedRequestNumber
     }
 
     func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities {
@@ -105,12 +164,13 @@ private actor FirstMateGitClientFixture: FirstMateGitClient {
     func fetchFirstMateGitWorkspaces(featureID: String) async throws -> FirstMateGitWorkspaceResponse {
         workspaceRequestIDs.append(featureID)
         if let workspaceError { throw workspaceError }
-        let waiters = requestWaiters
-        requestWaiters.removeAll()
-        waiters.forEach { $0.resume() }
-        if featureID == blockedFeatureID {
+        if featureID == blockedFeatureID &&
+            workspaceRequestIDs.filter({ $0 == featureID }).count == blockedRequestNumber {
             await withCheckedContinuation { continuation in
                 blockedContinuation = continuation
+                let waiters = blockedWaiters
+                blockedWaiters.removeAll()
+                waiters.forEach { $0.resume() }
             }
         }
         return .init(ok: true, workspaces: workspacesByFeature[featureID] ?? [])
@@ -135,11 +195,10 @@ private actor FirstMateGitClientFixture: FirstMateGitClient {
         workspacesByFeature[featureID] = workspaces
     }
 
-    func waitUntilWorkspaceRequested(_ featureID: String) async {
-        while !workspaceRequestIDs.contains(featureID) {
-            await withCheckedContinuation { continuation in
-                requestWaiters.append(continuation)
-            }
+    func waitUntilBlockedWorkspaceRequest() async {
+        guard blockedContinuation == nil else { return }
+        await withCheckedContinuation { continuation in
+            blockedWaiters.append(continuation)
         }
     }
 
@@ -185,6 +244,69 @@ struct FirstMateGitCatalogTests {
 
         await catalog.load(machineID: "machine-b", featureID: "feature", client: fixture, demo: false)
         #expect(catalog.selectedWorkspaceID == "project")
+    }
+
+    @Test("A same-target refresh leaves the existing Git workbench mounted")
+    func refreshPreservesReadyContent() async {
+        let fixture = FirstMateGitClientFixture(
+            workspacesByFeature: ["feature": [project, worker]],
+            titlesByFeature: ["feature": "Synthetic feature"],
+            blockedFeatureID: "feature", blockedRequestNumber: 2
+        )
+        let catalog = FirstMateGitCatalog()
+        await catalog.load(machineID: "machine", featureID: "feature", client: fixture, demo: false)
+        catalog.selectWorkspace(id: "worker")
+        let refresh = Task {
+            await catalog.load(machineID: "machine", featureID: "feature", client: fixture, demo: false)
+        }
+        await fixture.waitUntilBlockedWorkspaceRequest()
+        #expect(catalog.phase == .ready)
+        #expect(catalog.featureTitle == "Synthetic feature")
+        #expect(catalog.selectedWorkspace == worker)
+        await fixture.releaseBlockedWorkspaceRequest()
+        await refresh.value
+        #expect(catalog.phase == .ready)
+        #expect(catalog.selectedWorkspace == worker)
+    }
+
+    @Test("Changing the companion configuration hides old-host content while retaining the exact selection")
+    func connectionChangeClearsOldContent() async throws {
+        let original = try #require(ServerConfiguration(
+            urlString: "https://old.example.test", token: "synthetic-old-token"
+        ))
+        let replacement = try #require(ServerConfiguration(
+            urlString: "https://new.example.test", token: "synthetic-new-token"
+        ))
+        let fixture = FirstMateGitClientFixture(
+            workspacesByFeature: ["feature": [project, worker]],
+            titlesByFeature: ["feature": "Synthetic feature"],
+            blockedFeatureID: "feature", blockedRequestNumber: 2
+        )
+        let catalog = FirstMateGitCatalog()
+        await catalog.load(
+            machineID: "machine", featureID: "feature", client: fixture, demo: false,
+            configuration: original, configurationRevision: 1
+        )
+        catalog.selectWorkspace(id: "worker")
+        let reconnect = Task {
+            await catalog.load(
+                machineID: "machine", featureID: "feature", client: fixture, demo: false,
+                configuration: replacement, configurationRevision: 2
+            )
+        }
+        await fixture.waitUntilBlockedWorkspaceRequest()
+        #expect(catalog.phase == .loading)
+        #expect(catalog.featureTitle == nil)
+        #expect(catalog.workspaces.isEmpty)
+        #expect(catalog.selectedWorkspaceID == "worker")
+        await fixture.releaseBlockedWorkspaceRequest()
+        await reconnect.value
+        #expect(catalog.phase == .ready)
+        #expect(catalog.selectedWorkspace == worker)
+        #expect(catalog.identity == .init(
+            machineID: "machine", featureID: "feature",
+            configuration: replacement, configurationRevision: 2
+        ))
     }
 
     @Test("A recreated same-feature Git view restores its explicit worker selection")
@@ -277,7 +399,7 @@ struct FirstMateGitCatalogTests {
         let switched = Task {
             await catalog.load(machineID: "machine", featureID: "new", client: fixture, demo: false)
         }
-        await fixture.waitUntilWorkspaceRequested("new")
+        await fixture.waitUntilBlockedWorkspaceRequest()
         #expect(catalog.phase == .loading)
         #expect(catalog.featureTitle == nil)
         #expect(catalog.workspaces.isEmpty)
@@ -301,7 +423,7 @@ struct FirstMateGitCatalogTests {
         let stale = Task {
             await catalog.load(machineID: "machine", featureID: "old", client: fixture, demo: false)
         }
-        await fixture.waitUntilWorkspaceRequested("old")
+        await fixture.waitUntilBlockedWorkspaceRequest()
         catalog.reset()
         await catalog.load(machineID: "machine", featureID: "new", client: fixture, demo: false)
         await fixture.releaseBlockedWorkspaceRequest()

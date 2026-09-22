@@ -38,6 +38,10 @@ enum IOSMobileV2ConfigurationFixture {
         modelName: String?,
         thinkingLevel: String?,
         isLoadingModels: Bool = false,
+        isSettingModel: Bool = false,
+        isSettingThinkingLevel: Bool = false,
+        modelCatalogError: String? = nil,
+        hasCatalogModels: Bool = true,
         isConnected: Bool = true,
         allowsModelSelection: Bool = true,
         allowsThinkingSelection: Bool = true
@@ -73,23 +77,26 @@ enum IOSMobileV2ConfigurationFixture {
             isSubmitting: false,
             isAborting: false,
             currentModel: currentModel,
-            availableModels: [availableModel],
+            availableModels: hasCatalogModels ? [availableModel] : [],
             isLoadingModels: isLoadingModels,
-            isSettingModel: false,
-            modelCatalogError: nil,
+            isSettingModel: isSettingModel,
+            modelCatalogError: modelCatalogError,
             isModelSwitchingUnsupported: false,
             submit: { _, _ in false },
             abort: { false },
             selectModel: { _ in false },
             retryLoadModels: { },
             thinkingLevel: thinkingLevel,
-            isSettingThinkingLevel: false,
+            isSettingThinkingLevel: isSettingThinkingLevel,
             selectThinkingLevel: { _ in false }
         )
     }
 
     @MainActor
-    static func audioPlayer(isVisible: Bool) -> ResponseAudioPlayer {
+    static func audioPlayer(
+        isVisible: Bool,
+        phase: ResponseAudioPlaybackPhase = .idle
+    ) -> ResponseAudioPlayer {
         ResponseAudioPlayer.preview(
             capabilities: ResponseAudioCapabilities(
                 ok: true,
@@ -97,7 +104,7 @@ enum IOSMobileV2ConfigurationFixture {
                 listen: true,
                 tldr: true
             ),
-            phase: .idle,
+            phase: phase,
             hasPlayableResponse: isVisible
         )
     }

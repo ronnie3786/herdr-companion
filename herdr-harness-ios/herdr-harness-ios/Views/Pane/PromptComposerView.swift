@@ -60,7 +60,7 @@ struct PromptComposerView: View {
     }
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 0) {
             if let activity = piConfiguration?.compactionActivity {
                 PiCompactionStatusBar(activity: activity)
                     .transition(semanticControlTransition)
@@ -82,6 +82,7 @@ struct PromptComposerView: View {
                     responseAudioPlayer: responseAudioPlayer,
                     activateResponseAudio: activateResponseAudio
                 )
+                .padding(.top, showsPiStatusBar ? 8 : 0)
             }
 
             if quickVoiceCapture.phase == .locked {
@@ -93,14 +94,22 @@ struct PromptComposerView: View {
                     .background(HerdrTheme.alert.opacity(0.16))
                     .clipShape(.capsule)
                     .transition(semanticControlTransition)
+                    .padding(.top, showsPiStatusBar || showsPiOptionsBar ? 8 : 0)
             }
 
             if showsTerminalKeys {
                 TerminalKeyDeck(model: model, pane: pane, isExpanded: true)
                     .transition(semanticControlTransition)
+                    .padding(
+                        .top,
+                        showsPiStatusBar || showsPiOptionsBar || quickVoiceCapture.phase == .locked
+                            ? 8
+                            : 0
+                    )
             }
 
             composerCard
+                .padding(.top, composerCardTopSpacing)
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: showsTerminalKeys)
         .animation(
@@ -232,6 +241,10 @@ struct PromptComposerView: View {
         }
     }
 
+    private var showsPiStatusBar: Bool {
+        piConfiguration?.compactionActivity != nil || piConfiguration?.phase == .working
+    }
+
     private var showsPiOptionsBar: Bool {
         guard let piConfiguration else { return false }
         return piConfiguration.currentModel != nil
@@ -239,6 +252,12 @@ struct PromptComposerView: View {
             || piConfiguration.thinkingLevel != nil
             || piConfiguration.capabilities.setThinkingLevel
             || responseAudioPlayer?.isVisible == true
+    }
+
+    private var composerCardTopSpacing: CGFloat {
+        if showsTerminalKeys || quickVoiceCapture.phase == .locked { return 8 }
+        if showsPiOptionsBar { return 2 }
+        return showsPiStatusBar ? 8 : 0
     }
 
     private var semanticControlTransition: AnyTransition {

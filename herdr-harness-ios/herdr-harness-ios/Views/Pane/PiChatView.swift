@@ -60,7 +60,7 @@ struct PiChatView: View {
             )
             .id(pane.id)
             .padding(.horizontal, 12)
-            .padding(.top, 8)
+            .padding(.top, 2)
             .padding(.bottom, 10)
             .background(.ultraThinMaterial)
             .overlay(alignment: .top) {

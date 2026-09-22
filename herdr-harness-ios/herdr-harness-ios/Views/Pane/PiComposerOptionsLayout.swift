@@ -4,9 +4,9 @@ import SwiftUI
 /// composer actually proposes. Thinking keeps its intrinsic label width and the
 /// model receives the remainder; ideal model-name width never selects a stack.
 struct PiComposerOptionsLayout: Layout {
-    static let modelMinimumWidth: CGFloat = 124
-    static let thinkingMinimumWidth: CGFloat = 108
-    static let spacing: CGFloat = 8
+    static let modelMinimumWidth: CGFloat = 96
+    static let thinkingMinimumWidth: CGFloat = 44
+    static let spacing: CGFloat = 4
 
     let isAccessibilitySize: Bool
 

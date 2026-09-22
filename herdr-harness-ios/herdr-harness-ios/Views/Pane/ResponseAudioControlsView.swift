@@ -2,19 +2,17 @@ import SwiftUI
 
 struct ResponseAudioControlsView: View {
     let player: ResponseAudioPlayer
-    let showsTitles: Bool
     let activate: (ResponseAudioAction) -> Void
 
     var body: some View {
         if player.isVisible {
-            HStack(spacing: 6) {
+            HStack(spacing: 4) {
                 ForEach(ResponseAudioAction.allCases) { action in
                     if player.capabilities.supports(action) {
                         ResponseAudioButton(
                             action: action,
                             phase: player.phase,
                             progressText: player.progressText,
-                            showsTitle: showsTitles,
                             activate: { activate(action) }
                         )
                     }
@@ -29,47 +27,36 @@ private struct ResponseAudioButton: View {
     let action: ResponseAudioAction
     let phase: ResponseAudioPlaybackPhase
     let progressText: String?
-    let showsTitle: Bool
     let activate: () -> Void
 
     var body: some View {
         Button(action: activate) {
-            HStack(spacing: 5) {
-                if isPreparing {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(tint)
-                } else {
-                    Image(systemName: systemImage)
-                        .font(.caption.bold())
-                }
-
-                if showsTitle {
-                    Text(title)
-                        .font(.caption.monospaced().bold())
-                        .lineLimit(1)
-                }
-            }
-            .foregroundStyle(tint)
-            .padding(.horizontal, showsTitle ? 10 : 12)
-            .frame(minWidth: 44, minHeight: 44)
-            .background(tint.opacity(isActive ? 0.2 : 0.11))
-            .overlay {
-                Capsule().strokeBorder(tint.opacity(isActive ? 0.62 : 0.28), lineWidth: 1)
-            }
-            .clipShape(.capsule)
-            .contentShape(.capsule)
+            Text(title)
+                .font(.footnote.weight(isActive ? .medium : .regular))
+                .lineLimit(1)
+                .foregroundStyle(tint)
+                .composerLayoutMeasurement(
+                    id: "pi-response-audio-\(action.rawValue)-value",
+                    label: title
+                )
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .disabled(activeAction != nil && activeAction != action)
-        .opacity(activeAction != nil && activeAction != action ? 0.38 : 1)
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.38 : 1)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityHint(accessibilityHint)
-        .composerLayoutMeasurement(id: "pi-response-audio-\(action.rawValue)", label: accessibilityLabel)
+        .accessibilityValue(accessibilityValue)
+        .composerLayoutMeasurement(
+            id: "pi-response-audio-\(action.rawValue)",
+            label: accessibilityLabel
+        )
     }
 
     private var activeAction: ResponseAudioAction? { phase.activeAction }
     private var isActive: Bool { activeAction == action }
+    private var isDisabled: Bool { activeAction != nil && !isActive }
     private var isPreparing: Bool {
         if case let .preparing(activeAction) = phase { return activeAction == action }
         return false
@@ -78,19 +65,10 @@ private struct ResponseAudioButton: View {
     private var title: String {
         guard isActive else { return action.title }
         return switch phase {
-        case .preparing, .playing: "Stop"
+        case .preparing: "Stop"
+        case .playing: "Pause"
         case .paused: "Resume"
         case .unavailable, .checking, .idle: action.title
-        }
-    }
-
-    private var systemImage: String {
-        guard isActive else { return action.systemImage }
-        return switch phase {
-        case .preparing: "stop.circle.fill"
-        case .playing: "pause.fill"
-        case .paused: "play.fill"
-        case .unavailable, .checking, .idle: action.systemImage
         }
     }
 
@@ -110,7 +88,16 @@ private struct ResponseAudioButton: View {
     }
 
     private var accessibilityHint: String {
-        if isPreparing, let progressText { return progressText }
-        return isActive ? "Playback stays at the current position." : "Uses the latest completed response."
+        isActive ? "Playback stays at the current position." : "Uses the latest completed response."
+    }
+
+    private var accessibilityValue: String {
+        if isActive, let progressText { return progressText }
+        if isPreparing { return "Preparing" }
+        return switch phase {
+        case .playing where isActive: "Playing"
+        case .paused where isActive: "Paused"
+        default: ""
+        }
     }
 }

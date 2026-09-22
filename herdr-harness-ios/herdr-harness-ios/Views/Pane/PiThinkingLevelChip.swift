@@ -14,10 +14,12 @@ struct PiThinkingLevelChip: View {
                     Button {
                         selectLevel(level)
                     } label: {
-                        Label(
-                            level.displayName,
-                            systemImage: isCurrent(level) ? "checkmark.circle.fill" : "brain"
-                        )
+                        HStack {
+                            Text(level.displayName)
+                            if isCurrent(level) {
+                                Image(systemName: "checkmark")
+                            }
+                        }
                     }
                 }
             } label: {
@@ -26,48 +28,36 @@ struct PiThinkingLevelChip: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .disabled(!isEnabled)
             .accessibilityIdentifier("pi-chat-thinking")
-            .composerLayoutMeasurement(id: "pi-chat-thinking", label: "Thinking level: \(displayText)")
-            .accessibilityLabel("Thinking level: \(displayText)")
+            .composerLayoutMeasurement(id: "pi-chat-thinking", label: accessibilityLabel)
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityHint("Chooses the thinking level for the next message.")
         } else if currentLevel != nil {
             controlLabel
                 .opacity(0.65)
                 .accessibilityIdentifier("pi-chat-thinking")
-                .composerLayoutMeasurement(id: "pi-chat-thinking", label: "Thinking level: \(displayText)")
-                .accessibilityLabel("Thinking level: \(displayText)")
+                .composerLayoutMeasurement(id: "pi-chat-thinking", label: accessibilityLabel)
+                .accessibilityLabel(accessibilityLabel)
         }
     }
 
     private var controlLabel: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 5) {
-            if isSetting {
-                ProgressView()
-                    .controlSize(.mini)
-            } else {
-                Image(systemName: "brain")
-                    .font(.caption)
-                    .imageScale(.small)
-                    .accessibilityHidden(true)
-            }
+        Text(visibleText)
+            .font(.footnote)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .foregroundStyle(isInteractive ? HerdrTheme.mauve : HerdrTheme.mist)
+            .composerLayoutMeasurement(id: "pi-chat-thinking-value", label: visibleText)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(.rect)
+            .opacity(isInteractive && !isEnabled ? 0.48 : 1)
+    }
 
-            Text(displayText)
-                .font(.callout.bold())
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .allowsTightening(true)
-                .composerLayoutMeasurement(id: "pi-chat-thinking-value", label: displayText)
+    private var visibleText: String {
+        isSetting ? "Setting…" : displayText
+    }
 
-            if isInteractive {
-                Image(systemName: "chevron.up.down")
-                    .font(.caption)
-                    .imageScale(.small)
-                    .accessibilityHidden(true)
-            }
-        }
-        .foregroundStyle(isInteractive ? HerdrTheme.mauve : HerdrTheme.mist)
-        .padding(.horizontal, 6)
-        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-        .contentShape(.rect)
-        .opacity(isInteractive && !isEnabled ? 0.48 : 1)
+    private var accessibilityLabel: String {
+        isSetting ? "Thinking level: \(displayText), setting" : "Thinking level: \(displayText)"
     }
 
     private var displayText: String {

@@ -137,18 +137,21 @@ struct FirstMateModelSettingsTests {
         let context = store.operationContext
         let feature = try #require(store.feature(for: context))
         var proposalState = FirstMateModelSettingsProposalState()
-        _ = try #require(proposalState.stage(
+        let stagedProposal = proposalState.stage(
             feature: feature,
             context: context,
             model: "synthetic/reasoner",
             thinking: "high",
             safeSettingsSupported: true,
             requestID: "stable-settings-request"
-        ))
-        #expect(proposalState.proposalForSubmission() == nil)
+        )
+        _ = try #require(stagedProposal)
+        let unconfirmedProposal = proposalState.proposalForSubmission()
+        #expect(unconfirmedProposal == nil)
         #expect(await client.requests.isEmpty)
 
-        let proposal = try #require(proposalState.proposalForSubmission(userConfirmed: true))
+        let confirmedProposal = proposalState.proposalForSubmission(userConfirmed: true)
+        let proposal = try #require(confirmedProposal)
         await #expect(throws: URLError.self) {
             try await store.saveModelSettings(
                 proposal.settings,
@@ -157,7 +160,8 @@ struct FirstMateModelSettingsTests {
                 expectedSettingsRevision: proposal.settingsRevision
             )
         }
-        let retry = try #require(proposalState.proposalForSubmission())
+        let retryProposal = proposalState.proposalForSubmission()
+        let retry = try #require(retryProposal)
         try await store.saveModelSettings(
             retry.settings,
             expectedContext: retry.context,

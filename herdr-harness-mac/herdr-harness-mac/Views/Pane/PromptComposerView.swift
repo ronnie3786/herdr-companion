@@ -461,9 +461,9 @@ struct PromptComposerView: View {
                     finishLockedVoiceCapture: finishLockedQuickVoiceCapture,
                     pasteCodeBlock: pasteCodeBlock,
                     showsTitles: true,
-                    showsContextTools: false,
                     showsAttach: destination.supportsAttachments,
                     showsVoice: destination.supportsVoice,
+                    showsContextTools: false,
                     canPasteCode: !isSubmitting && canControl && !isPiCompacting
                 )
                 .fixedSize(horizontal: true, vertical: false)

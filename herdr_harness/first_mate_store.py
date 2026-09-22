@@ -976,6 +976,82 @@ class FirstMateStore:
             self._event(feature["id"], "assignment.retry_queued" if status == "queued" else "assignment.repair_exhausted", "Internal repair queued" if status == "queued" else "Internal repair limit reached", {"assignment_id": assignment_id, "repair_count": repair_count, "previous_verdict": assignment["verdict"], "metadata": merged})
             return self._save_receipt(f"retry:{assignment_id}", request_id, payload, self._one("fm_assignments", assignment_id))
 
+    def block_dispatch_configuration(self, assignment_id: str, generation: int, reason: str,
+                                     request_id: str, *, expected_revision: int | None = None,
+                                     verified_stopped: bool = False) -> dict:
+        """Block only the exact current dispatch after any bound writer stopped."""
+        payload = {"generation": generation, "reason": _text(reason, "reason"),
+                   "expected_revision": expected_revision, "verified_stopped": verified_stopped}
+        with self._transaction():
+            cached = self._receipt(f"dispatch_configuration:{assignment_id}", request_id, payload)
+            if cached is not None:
+                return cached
+            assignment = self._one("fm_assignments", assignment_id)
+            feature = self._one("fm_features", assignment["feature_id"])
+            current_member = self._db.execute(
+                "SELECT 1 FROM fm_assignment_memberships WHERE assignment_id=? AND visit_id=? AND revision=?",
+                (assignment_id, feature["current_visit_id"], feature["revision"]),
+            ).fetchone() is not None
+            exact = (assignment["generation"] == generation
+                     and (expected_revision is None or assignment["input_revision"] == expected_revision)
+                     and current_member)
+            # A stale/settled dispatch or concurrent human direction wins. Return
+            # current truth so reconciliation can finalize without rewriting it.
+            if (not exact or feature["status"] in {"paused", "cancelled", "awaiting_direction"}
+                    or assignment["status"] in {"completed", "failed", "blocked", "cancelled", "superseded", "paused"}):
+                return assignment
+            if assignment["status"] == "blocked" and assignment["summary"] == reason:
+                return assignment
+            if assignment["status"] not in {"queued", "dispatching", "running", "waiting_children", "handoff_pending", "awaiting_ack"}:
+                raise FirstMateError("Execution is not awaiting a new dispatch", code="not_dispatchable")
+            bound_writer = bool(assignment.get("native_session_id")) or self._db.execute(
+                "SELECT 1 FROM fm_sessions WHERE assignment_id=? AND generation=? AND status='active'",
+                (assignment_id, generation),
+            ).fetchone() is not None
+            if bound_writer and not verified_stopped:
+                raise FirstMateError("Verify the bound executor stopped before blocking its dispatch",
+                                     code="writer_not_stopped")
+            now = _now()
+            self._db.execute(
+                "UPDATE fm_assignments SET status='blocked',verdict='blocked',owner=NULL,summary=?,updated_at=? WHERE id=?",
+                (reason, now, assignment_id),
+            )
+            self._db.execute(
+                "UPDATE fm_attempts SET status='blocked',verdict='blocked',summary=?,updated_at=? WHERE assignment_id=? AND generation=?",
+                (reason, now, assignment_id, generation),
+            )
+            if verified_stopped:
+                self._db.execute(
+                    "UPDATE fm_sessions SET status='retained',updated_at=? WHERE assignment_id=? AND generation=? AND status IN ('active','quiesced')",
+                    (now, assignment_id, generation),
+                )
+            self._db.execute(
+                "UPDATE fm_handoffs SET status='failed',updated_at=? WHERE assignment_id=? AND status NOT IN ('completed','failed')",
+                (now, assignment_id),
+            )
+            # Only an exact active generation may block the feature; preserve
+            # every concurrent human-controlled status.
+            self._db.execute(
+                "UPDATE fm_features SET status='blocked',updated_at=? WHERE id=? AND revision=? AND current_visit_id=? AND status IN ('running','blocked')",
+                (now, assignment["feature_id"], feature["revision"], feature["current_visit_id"]),
+            )
+            metadata = assignment.get("metadata", {})
+            self._message(
+                assignment["feature_id"], "system", reason,
+                metadata={"assignment_id": assignment_id,
+                          "generation": generation,
+                          "model_profile": metadata.get("model_profile")},
+            )
+            self._event(
+                assignment["feature_id"], "assignment.configuration_blocked", reason,
+                {"assignment_id": assignment_id, "generation": generation,
+                 "model_profile": metadata.get("model_profile")},
+            )
+            return self._save_receipt(
+                f"dispatch_configuration:{assignment_id}", request_id, payload,
+                self._one("fm_assignments", assignment_id),
+            )
+
     def recover_assignment(self, assignment_id: str, generation: int, reason: str, request_id: str, verified_stopped: bool = False) -> dict:
         payload = {"generation": generation, "reason": _text(reason, "reason"), "verified_stopped": verified_stopped}
         with self._transaction():

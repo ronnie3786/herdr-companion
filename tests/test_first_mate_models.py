@@ -205,12 +205,19 @@ sys.stdin.read()
             'PATH': os.environ['PATH'], 'HERDR_FIRST_MATE_MODEL': 'synthetic/host',
             'HERDR_FIRST_MATE_COORDINATOR_THINKING': 'low',
             'HERDR_FIRST_MATE_PLANNER_THINKING': 'high',
-            'HERDR_FIRST_MATE_WORKER_MODEL': 'synthetic/worker'}, self.temp.name)
+            'HERDR_FIRST_MATE_WORKER_MODEL': 'synthetic/worker',
+            'HERDR_FIRST_MATE_ARCHITECT_MODEL': 'synthetic/architect',
+            'HERDR_FIRST_MATE_ARCHITECT_THINKING': 'xhigh'}, self.temp.name)
         self.assertEqual(catalog['models'], [{'id': 'synthetic/model', 'name': 'Test Model', 'provider': 'synthetic', 'reasoning': True}])
         self.assertEqual(catalog['routing'], {
             'coordinator': {'model': 'synthetic/host', 'thinking': 'low'},
             'planning': {'model': 'synthetic/host', 'thinking': 'high'},
-            'execution': {'model': 'synthetic/worker', 'thinking': ''}})
+            'execution': {'model': 'synthetic/worker', 'thinking': ''},
+            'architect': {'model': 'synthetic/architect', 'thinking': 'xhigh', 'configured': True}})
         self.assertNotIn('private', json.dumps(catalog))
+
+        unset = read_model_catalog(str(executable), {'PATH': os.environ['PATH']}, self.temp.name)
+        self.assertEqual(unset['routing']['architect'], {
+            'model': '', 'thinking': '', 'configured': False})
 
 if __name__ == '__main__': unittest.main()

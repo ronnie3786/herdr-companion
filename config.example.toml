@@ -127,6 +127,8 @@ thinking_level = "high"
 # planner_thinking = "high"
 # worker_model = "your-provider/your-execution-model"
 # worker_thinking = "medium"
+# architect_model = "your-provider/your-architect-model" # Required for architect reviews/implementation second opinions; no fallback or role re-routing.
+# architect_thinking = "high"
 # Role defaults belong in the operator's private configuration. A feature can
 # override only its coordinator selection for the next coordinator turn.
 max_workers = 8

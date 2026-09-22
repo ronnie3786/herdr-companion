@@ -72,6 +72,27 @@ settings revision, emit a change event, enqueue work, reset a session, or dispat
 an agent. Before the first session is claimed, older clients may still select the
 initial model without the optional fields.
 
+## Model routing and runtime evidence
+
+Feature, assignment, delegation, and session projections may contain additive
+`model_selection` with `profile`, `requested_model`, `requested_thinking`, nullable
+`actual_model`, nullable `actual_thinking`, and `source`. The requested fields
+acknowledge routing policy; they are never presented as observed execution. Actual
+fields come only from Pi `get_state` or identity-validated retained session history.
+Acknowledgements report the requested role and pin, never an inferred actual. The
+coordinator interprets natural-language intent such as `Give me an architect
+review` and uses typed `model_profile: architect` for architecture/design reviews,
+architect audits, and a second opinion on an implementation. A model name or title
+alone does not override host pins. An unavailable or mismatched requested architect
+is blocked and is never re-routed through planning or execution. The delegated
+profile vocabulary is `planning`, `execution`, and `architect`;
+coordinator is a separate runtime profile. The model catalog's additive routing
+object exposes coordinator, planning, execution, and architect defaults. Its
+architect row includes `configured`; an unset architect model remains a readable
+`configured:false` catalog state rather than breaking feature or catalog reads.
+Older clients ignore these additions, and newer clients accept older servers that
+omit architect routing.
+
 ## Implementation layers
 
 - `first_mate_store.py`: SQLite transactions, deduplication, event ledger, assignments, attempts, message queue, handoffs and human gates.

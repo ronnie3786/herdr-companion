@@ -5,9 +5,14 @@ from dataclasses import dataclass
 from typing import Literal, Mapping
 
 
-ModelProfile = Literal["coordinator", "planning", "execution"]
+ModelProfile = Literal["coordinator", "planning", "execution", "architect"]
 SelectionSource = Literal["feature_override", "host_policy", "assignment_override", "pi_default"]
-DELEGATION_PROFILES = frozenset({"planning", "execution"})
+DELEGATION_PROFILES = frozenset({"planning", "execution", "architect"})
+THINKING_LEVELS = frozenset({"off", "minimal", "low", "medium", "high", "xhigh", "max"})
+
+
+class ArchitectConfigurationError(ValueError):
+    """Architect work has no safe model fallback on this host."""
 
 
 @dataclass(frozen=True)
@@ -29,11 +34,11 @@ class DispatchPolicy:
         }
 
 
-def delegation_profile(value: object, *, stage_key: str | None) -> Literal["planning", "execution"]:
+def delegation_profile(value: object, *, stage_key: str | None) -> Literal["planning", "execution", "architect"]:
     """Validate an explicit profile, or use only the exact planning stage key."""
     if value is not None:
         if not isinstance(value, str) or value not in DELEGATION_PROFILES:
-            raise ValueError("model_profile must be planning or execution")
+            raise ValueError("model_profile must be planning, execution, or architect")
         return value
     return "planning" if stage_key == "planning" else "execution"
 
@@ -61,6 +66,23 @@ def resolve_dispatch_policy(*, kind: str, feature: Mapping[str, object],
         profile = "execution"
     else:
         profile = delegation_profile(metadata.get("model_profile"), stage_key=stage_key)
+    if profile == "architect":
+        architect_model = str(environ.get("HERDR_FIRST_MATE_ARCHITECT_MODEL") or "").strip()
+        architect_thinking = str(environ.get("HERDR_FIRST_MATE_ARCHITECT_THINKING") or "").strip()
+        if not architect_model:
+            raise ArchitectConfigurationError(
+                "Architect work requires first_mate.architect_model "
+                "(HERDR_FIRST_MATE_ARCHITECT_MODEL); no fallback is allowed"
+            )
+        if "/" not in architect_model or architect_model.startswith("/") or architect_model.endswith("/"):
+            raise ArchitectConfigurationError(
+                "first_mate.architect_model must be an exact provider/model identity"
+            )
+        if architect_thinking and architect_thinking not in THINKING_LEVELS:
+            raise ArchitectConfigurationError(
+                "first_mate.architect_thinking must be off, minimal, low, medium, high, xhigh, or max"
+            )
+        return DispatchPolicy(profile, architect_model, architect_thinking, "host_policy")
     prefix = "PLANNER" if profile == "planning" else "WORKER"
     role_model = str(environ.get(f"HERDR_FIRST_MATE_{prefix}_MODEL") or "")
     role_thinking = str(environ.get(f"HERDR_FIRST_MATE_{prefix}_THINKING") or "")

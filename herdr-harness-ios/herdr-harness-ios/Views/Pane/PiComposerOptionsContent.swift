@@ -41,7 +41,6 @@ struct PiComposerOptionsContent: View {
                let activateResponseAudio {
                 ResponseAudioControlsView(
                     player: responseAudioPlayer,
-                    showsTitles: false,
                     activate: activateResponseAudio
                 )
                 .fixedSize(horizontal: true, vertical: false)

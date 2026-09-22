@@ -28,7 +28,12 @@ from .alerts import utc_now
 from .child_environment import agent_environment
 from .resources import pi_extension_path
 from .first_mate_context import FirstMateContext
-from .first_mate_routing import delegation_profile, resolve_dispatch_policy
+from .first_mate_routing import (
+    ArchitectConfigurationError,
+    DELEGATION_PROFILES,
+    delegation_profile,
+    resolve_dispatch_policy,
+)
 from .first_mate_store import FirstMateError
 from .first_mate_usage import FirstMateUsage
 
@@ -56,9 +61,17 @@ workflow stages. Interpret ordinary English thoughtfully and ask one focused que
 when a necessary choice is genuinely ambiguous. Within an authorized stage,
 delegate substantive work through fm_delegate. Give each worker complete scope,
 acceptance criteria, required Documents, the exact revision to inspect when
-applicable, and any internal human gates. Set model_profile to planning for
-planning work, and execution for code, review, testing, or other execution work.
-The host role policy controls the configured model and effort for that profile.
+applicable, and any internal human gates. Interpret the human's natural-language intent and set model_profile to architect
+for an architecture/design review, architect audit, or a second opinion on an
+implementation, independent of the current stage. For example, `Give me an
+architect review` requests the architect profile. Use planning for ordinary
+planning and execution for implementation, routine code review, testing, or
+other execution work. A model name or worker title alone does not override the
+host's pinned role policy; always use the typed model_profile. If the requested
+architect pin is unavailable or Pi reports a mismatched identity or effort, that
+review is blocked: NEVER re-route it through planning or execution. Acknowledge
+the requested role and pin, and claim an actual model only from model_selection
+actual evidence.
 Acknowledge dispatch briefly, then end
 your turn. Never poll, wait, perform substantive assignment work, or consume a
 turn monitoring workers; ordinary service code watches and records them
@@ -85,9 +98,17 @@ with an honest verdict and textual documents. A final answer or process exit is
 NOT a completion report. Report needs_changes, blocked or failed when appropriate.
 Never silently skip an explicit human gate. Do not merge, deploy, publish or
 delete branches/worktrees without exact authorization. Use fm_delegate for any specialist or sub-agent work so every child is tracked.
-Set model_profile to planning for planning work, and execution for code, review,
-testing, or other execution work. The host role policy controls the configured
-model and effort for that profile.
+Interpret natural-language intent and set model_profile to architect for an
+architecture/design review, architect audit, or a second opinion on an
+implementation, independent of the current stage. For example, `Give me an
+architect review` requests the architect profile. Use planning for ordinary
+planning and execution for implementation, routine code review, testing, or
+other execution work. A model name or worker title alone does not override the
+host's pinned role policy; always use the typed model_profile. If the requested
+architect pin is unavailable or Pi reports a mismatched identity or effort, that
+review is blocked: NEVER re-route it through planning or execution. Acknowledge
+the requested role and pin, and claim an actual model only from model_selection
+actual evidence.
 Do not launch unmanaged Pi subprocesses from scripts or skills. If a skill needs
 independent agents, adapt its steps to fm_delegate. Children remain within your
 current authorized stage. After dispatching children, call fm_wait_for_children
@@ -155,10 +176,10 @@ def _coordinator_state(snapshot: dict, claim: dict | None = None) -> dict:
                                 for membership in memberships],
         "assignments": [{**_pick(assignment, ("id", "visit_id", "title", "role", "status", "verdict",
                                                    "generation", "input_revision", "summary", "code_revision",
-                                                   "native_session_id")),
+                                                   "native_session_id", "model_selection")),
                          "operational": _pick(assignment.get("metadata", {}),
                                               ("parent_assignment_id", "source_assignment_id",
-                                               "expected_code_revision", "human_gate"))}
+                                               "expected_code_revision", "human_gate", "model_profile"))}
                         for assignment in assignments],
         "document_references": [_pick(document, ("id", "visit_id", "assignment_id", "title",
                                                      "media_type", "content_hash", "generation",
@@ -272,6 +293,42 @@ def _bounded(environment: Mapping[str, str], key: str, default: int, minimum: in
         return default
 
 
+def _observed_model_selection(data: Mapping[str, Any]) -> tuple[str | None, str | None]:
+    """Read only Pi's provider-qualified get_state identity and effective effort."""
+    raw_model = data.get("model") or data.get("currentModel")
+    model = raw_model if isinstance(raw_model, Mapping) else {}
+    provider = model.get("provider") or data.get("provider")
+    identity = model.get("id") or model.get("modelId") or data.get("modelId")
+    actual_model = (provider + "/" + identity
+                    if isinstance(provider, str) and isinstance(identity, str)
+                    and provider and identity else
+                    raw_model if isinstance(raw_model, str) and "/" in raw_model else None)
+    raw_thinking = data.get("thinkingLevel") or data.get("thinking_level")
+    actual_thinking = raw_thinking if isinstance(raw_thinking, str) and raw_thinking else None
+    return actual_model, actual_thinking
+
+
+def _architect_startup_error(job: Mapping[str, Any], data: Mapping[str, Any]) -> str | None:
+    selection = job.get("model_selection")
+    if not isinstance(selection, Mapping) or selection.get("profile") != "architect":
+        return None
+    requested_model = selection.get("requested_model")
+    requested_thinking = selection.get("requested_thinking")
+    actual_model, actual_thinking = _observed_model_selection(data)
+    if not isinstance(requested_model, str) or not requested_model:
+        return "Architect startup blocked: the required architect model pin is missing"
+    if not actual_model:
+        return "Architect startup blocked: Pi get_state did not report a provider-qualified model"
+    if actual_model != requested_model:
+        return f"Architect startup blocked: requested model {requested_model!r}, but Pi reported {actual_model!r}"
+    if isinstance(requested_thinking, str) and requested_thinking:
+        if not actual_thinking:
+            return "Architect startup blocked: Pi get_state did not report the configured thinking effort"
+        if actual_thinking != requested_thinking:
+            return f"Architect startup blocked: requested thinking {requested_thinking!r}, but Pi reported {actual_thinking!r}"
+    return None
+
+
 class FirstMateRuntime:
     """Run saved Pi coordinators and workers independently of client windows."""
 
@@ -343,6 +400,73 @@ class FirstMateRuntime:
         if job["kind"] == "coordinator":
             job["model_settings_revision"] = feature.get("model_settings_revision", 0)
 
+    def _delegation_policy(self, feature: Mapping[str, Any], params: Mapping[str, Any],
+                           profile: str):
+        return resolve_dispatch_policy(
+            kind="worker", feature=feature,
+            claim={"model": params.get("model", ""),
+                   "metadata": {"model_profile": profile}},
+            environ=self.environ,
+        )
+
+    def _block_assignment_configuration(self, assignment: Mapping[str, Any], error: Exception,
+                                        *, request_id: str,
+                                        verified_stopped: bool = False) -> dict:
+        detail = str(error)
+        reason = (detail if detail.startswith("Architect startup blocked:") else
+                  "Architect dispatch blocked by host configuration: " + detail)
+        return self.store.block_dispatch_configuration(
+            assignment["id"], int(assignment.get("generation", 0)), reason, request_id,
+            expected_revision=assignment.get("input_revision"),
+            verified_stopped=verified_stopped,
+        )
+
+    def _reject_unstarted_job(self, job: dict, error: Exception) -> None:
+        directory = self._job_dir(job)
+        metadata = job.get("claim", {}).get("metadata", {})
+        job["blocked_policy"] = {
+            "profile": metadata.get("model_profile", "architect"),
+            "requested_model": "",
+            "requested_thinking": str(self.environ.get("HERDR_FIRST_MATE_ARCHITECT_THINKING") or "").strip(),
+            "source": "host_policy",
+        }
+        # Keep the last valid queued request immutable for historical display;
+        # blocked_policy records why no refreshed dispatch could be launched.
+        job["configuration_error"] = str(error)
+        job["configuration_checked_at"] = utc_now()
+        self._save_job(job)
+        rejected = self._block_assignment_configuration(
+            job["claim"], error, request_id="configuration:" + job["id"],
+            verified_stopped=bool(job.get("stopped_executor_proof")),
+        )
+        feature = self.store.get_feature(job["feature_id"])
+        current_rejection = (
+            rejected.get("generation") == job["claim"].get("generation")
+            and rejected.get("input_revision") == job["claim"].get("input_revision")
+            and self.store.assignment_is_in_current_visit(rejected["id"])
+        )
+        stopped_before_launch = (
+            bool(job.get("stopped_executor_proof"))
+            or (not rejected.get("native_session_id")
+                and not (directory / "started.json").exists())
+        )
+        if (current_rejection and stopped_before_launch
+                and feature["status"] in {"paused", "awaiting_direction"}
+                and rejected.get("status") not in TERMINAL):
+            # Configuration rejection lost to concurrent human direction. The
+            # exact unstarted (or already stopped continuation) dispatch still
+            # needs a stop acknowledgement so an explicit resume can requeue it.
+            self.store.acknowledge_stopped(
+                rejected["id"], rejected["generation"],
+                "configuration-stopped:" + job["id"], status="paused",
+                reason="Execution stopped before configuration rejection",
+            )
+        _write_json(directory / "status.json", {
+            "ended": True, "accepted": False, "configuration_blocked": True,
+            "error": "Architect task was not launched: " + str(error),
+        })
+        _write_json(directory / "finalized.json", {"at": utc_now(), "configuration_blocked": True})
+
     @staticmethod
     def _selection(job: Mapping[str, Any] | None, parsed: Mapping[str, Any] | None = None) -> dict | None:
         selection = dict(job.get("model_selection", {})) if job else {}
@@ -362,6 +486,16 @@ class FirstMateRuntime:
         selection["actual_model"] = actual_model if isinstance(actual_model, str) and actual_model else None
         selection["actual_thinking"] = actual_thinking if isinstance(actual_thinking, str) and actual_thinking else None
         return selection
+
+    def _coordinator_projection(self, snapshot: dict, claim: dict | None = None) -> dict:
+        """Attach bounded requested/actual routing evidence to router status."""
+        try:
+            detail = self.snapshot(snapshot["feature"]["id"])
+        except FirstMateError:
+            # Keep the pure projection usable for synthetic/offline snapshots.
+            return _coordinator_state(snapshot, claim)
+        enriched = {**snapshot, "assignments": detail["assignments"]}
+        return _coordinator_state(enriched, claim)
 
     def _usage_account(self, feature: dict, *, assignments: list[dict] | None = None,
                        jobs: list[dict] | None = None,
@@ -423,7 +557,7 @@ class FirstMateRuntime:
                     persisted_thinking = str(latest_job.get("thinking") or "")
                     claim_model = str(latest_job.get("claim", {}).get("model") or "")
                     profile = latest_job.get("claim", {}).get("metadata", {}).get("model_profile")
-                    if not isinstance(profile, str) or profile not in {"planning", "execution"}:
+                    if not isinstance(profile, str) or profile not in DELEGATION_PROFILES:
                         profile = "execution"
                     source = ("assignment_override" if claim_model and claim_model == persisted_model else
                               "host_policy" if persisted_model or persisted_thinking else "pi_default")
@@ -433,7 +567,19 @@ class FirstMateRuntime:
                                  "source": source}
                 exact_native_id = latest_job.get("native_session_id")
             else:
-                selection = self._policy(snapshot["feature"], kind="worker", claim=assignment).selection()
+                queued_selection = assignment.get("metadata", {}).get("model_selection")
+                if isinstance(queued_selection, Mapping):
+                    selection = dict(queued_selection)
+                else:
+                    try:
+                        selection = self._policy(snapshot["feature"], kind="worker", claim=assignment).selection()
+                    except ArchitectConfigurationError:
+                        selection = {
+                            "profile": "architect", "requested_model": "",
+                            "requested_thinking": str(self.environ.get("HERDR_FIRST_MATE_ARCHITECT_THINKING") or "").strip(),
+                            "actual_model": None, "actual_thinking": None,
+                            "source": "host_policy",
+                        }
                 exact_native_id = assignment.get("native_session_id")
             latest_session = max((session for session in assignment_sessions.get(assignment["id"], [])
                                   if exact_native_id and session.get("native_session_id") == exact_native_id),
@@ -575,6 +721,7 @@ class FirstMateRuntime:
         except BlockingIOError:
             refresh_lock.close()
             return
+        configuration_error = None
         try:
             if (directory / "started.json").exists():
                 return
@@ -587,7 +734,16 @@ class FirstMateRuntime:
                 job["extension_selected_at"] = utc_now()
             previous_selection = job.get("model_selection")
             previous_revision = job.get("model_settings_revision")
-            self._apply_policy(job, self.store.get_feature(job["feature_id"]))
+            try:
+                self._apply_policy(job, self.store.get_feature(job["feature_id"]))
+            except ArchitectConfigurationError as exc:
+                configuration_error = exc
+            if configuration_error is not None:
+                # Rejection, status, and finalization share the writer lock with
+                # the supervisor. A delayed previously spawned runner can only
+                # observe the finalized rejection after it acquires this lock.
+                self._reject_unstarted_job(job, configuration_error)
+                return
             if previous_selection != job.get("model_selection"):
                 job["previous_model_selection"] = previous_selection
                 job["model_selected_at"] = utc_now()
@@ -674,6 +830,11 @@ class FirstMateRuntime:
         if prepared and prepared["params"] != params:
             raise FirstMateError("A workspace request ID cannot be reused with changed instructions")
         if not prepared:
+            # Freeze delegation policy with the immutable workspace plan before
+            # any worktree or DB mutation. Replays retain the original requested
+            # selection even when host policy changes or is removed.
+            profile = delegation_profile(params.get("model_profile"), stage_key=self._stage_key(feature))
+            policy = self._delegation_policy(feature, params, profile)
             source = feature["cwd"]
             source_assignment = params.get("source_assignment_id")
             if source_assignment:
@@ -688,7 +849,8 @@ class FirstMateRuntime:
                     raise FirstMateError("Writable assignments need a Git repository for isolated worktrees")
                 baseline = None
             metadata = {"workspace_mode": mode, "worktree_path": source, "source_assignment_id": source_assignment,
-                        "base_revision": baseline}
+                        "base_revision": baseline, "model_profile": profile,
+                        "model_selection": policy.selection()}
             if baseline and mode == "read_only" and (source_assignment or "review" in str(params.get("role", "")).lower()):
                 metadata["expected_code_revision"] = baseline
             if mode == "isolated":
@@ -802,11 +964,26 @@ class FirstMateRuntime:
                     if worker_count >= self.max_workers:
                         break
                     if assignment["status"] == "queued":
+                        try:
+                            self._policy(feature, kind="worker", claim=assignment)
+                        except ArchitectConfigurationError as exc:
+                            self._block_assignment_configuration(
+                                assignment, exc,
+                                request_id="queued-configuration:" + assignment["id"] + ":" + str(assignment["generation"]),
+                            )
+                            continue
                         claim = self.store.claim_assignment(assignment["id"], self.owner)
                         if claim:
-                            prompt = self._worker_input(feature, claim)
-                            job = self._new_job(feature, kind="worker", prompt=prompt, claim=claim,
-                                                handoff_id=claim.get("handoff_id"))
+                            try:
+                                prompt = self._worker_input(feature, claim)
+                                job = self._new_job(feature, kind="worker", prompt=prompt, claim=claim,
+                                                    handoff_id=claim.get("handoff_id"))
+                            except ArchitectConfigurationError as exc:
+                                self._block_assignment_configuration(
+                                    claim, exc,
+                                    request_id="claimed-configuration:" + claim["dispatch_id"],
+                                )
+                                continue
                             self._launch(job)
                             worker_count += 1
 
@@ -823,15 +1000,21 @@ class FirstMateRuntime:
         for assignment in self.store.list_assignments(statuses=["dispatching"]):
             if assignment["dispatch_id"] not in assignment_dispatches:
                 feature = self.store.get_feature(assignment["feature_id"])
-                self._new_job(feature, kind="worker", claim=assignment, prompt=self._worker_input(feature, assignment))
+                try:
+                    self._new_job(feature, kind="worker", claim=assignment,
+                                  prompt=self._worker_input(feature, assignment))
+                except ArchitectConfigurationError as exc:
+                    self._block_assignment_configuration(
+                        assignment, exc,
+                        request_id="recovered-configuration:" + assignment["dispatch_id"],
+                    )
         for message in self.store.pending_messages():
             if message["status"] == "processing" and (message["id"], message["owner"]) not in message_claims:
                 snapshot = self.store.snapshot(message["feature_id"])
                 self._new_job(snapshot["feature"], kind="coordinator", claim=message,
                               prompt=self._coordinator_input(snapshot, message))
 
-    @staticmethod
-    def _coordinator_input(snapshot: dict, claim: dict) -> str:
+    def _coordinator_input(self, snapshot: dict, claim: dict) -> str:
         turn = {"id": claim["id"], "role": claim["role"],
                 "metadata": _pick(claim.get("metadata", {}),
                                   ("assignment_id", "generation", "native_session_id",
@@ -840,7 +1023,7 @@ class FirstMateRuntime:
         return (f"{'Human direction' if claim['role'] == 'user' else 'Recorded system update (not authorization)'}:\n"
                 + claim["text"] + "\n\nCurrent turn reference:\n" + json.dumps(turn, ensure_ascii=False)
                 + "\n\nScope-bounded authoritative router state. Detailed evidence remains in tracked workers and Documents:\n"
-                + json.dumps(_coordinator_state(snapshot, claim), ensure_ascii=False))
+                + json.dumps(self._coordinator_projection(snapshot, claim), ensure_ascii=False))
 
     @staticmethod
     def _worker_input(feature: dict, claim: dict) -> str:
@@ -885,18 +1068,14 @@ class FirstMateRuntime:
             for index, event in enumerate(records):
                 identity = event.get("id") or f"{offset}:{index}"
                 kind = event.get("type", "event")
-                if kind == "response" and event.get("command") == "get_state" and event.get("success"):
+                if (kind == "response" and event.get("command") == "get_state"
+                        and event.get("id") == "initial-state"):
                     data = event.get("data", {})
-                    self._bind(job, data.get("sessionId", ""), data.get("sessionFile", ""))
-                    raw_model = data.get("model") or data.get("currentModel")
-                    model = raw_model if isinstance(raw_model, dict) else {}
-                    provider = model.get("provider") or data.get("provider")
-                    identity = model.get("id") or model.get("modelId") or data.get("modelId")
-                    actual_model = (provider + "/" + identity
-                                    if isinstance(provider, str) and isinstance(identity, str)
-                                    and provider and identity else
-                                    raw_model if isinstance(raw_model, str) and "/" in raw_model else None)
-                    actual_thinking = data.get("thinkingLevel") or data.get("thinking_level")
+                    if not isinstance(data, Mapping):
+                        data = {}
+                    if event.get("success"):
+                        self._bind(job, data.get("sessionId", ""), data.get("sessionFile", ""))
+                    actual_model, actual_thinking = _observed_model_selection(data)
                     changed = False
                     if actual_model and job.get("actual_model") != actual_model:
                         job["actual_model"] = actual_model
@@ -955,7 +1134,7 @@ class FirstMateRuntime:
         if action == "fm_status":
             snapshot = self.store.snapshot(feature_id)
             if job["kind"] == "coordinator":
-                status = _coordinator_state(snapshot, claim)
+                status = self._coordinator_projection(snapshot, claim)
                 status["last_updates"] = [{"sequence": event["sequence"], "type": event["type"],
                                             "summary": event["summary"][:500], "created_at": event["created_at"]}
                                            for event in snapshot["events"][-10:]]
@@ -1008,8 +1187,11 @@ class FirstMateRuntime:
                           "source_assignment_id": params.get("source_assignment_id") or parent["id"]}
             metadata = {**self._workspace(feature, parameters, request_id),
                         "parent_assignment_id": parent["id"], "model_profile": profile}
-            return self.store.create_assignment(feature["current_visit_id"], {
+            assignment = self.store.create_assignment(feature["current_visit_id"], {
                 **parameters, "metadata": metadata, "request_id": request_id, "input_revision": feature["revision"]})
+            queued_selection = assignment.get("metadata", {}).get("model_selection")
+            return ({**assignment, "model_selection": queued_selection}
+                    if isinstance(queued_selection, Mapping) else assignment)
         if action == "fm_retry" and job["kind"] == "worker":
             child = self.store.get_assignment(params["assignment_id"])
             if child["feature_id"] != feature_id or child.get("metadata", {}).get("parent_assignment_id") != claim["id"]:
@@ -1023,6 +1205,8 @@ class FirstMateRuntime:
                 metadata = dict(child.get("metadata", {}))
                 if metadata.get("expected_code_revision"):
                     metadata["expected_code_revision"] = self._git(metadata["worktree_path"], "rev-parse", "HEAD")
+                metadata["model_selection"] = self._policy(
+                    feature, kind="worker", claim={**child, "metadata": metadata}).selection()
                 _write_json(prepared_path, metadata)
             return self.store.retry_assignment(child["id"], params["prompt"], request_id, metadata=metadata, verified_stopped=True)
         if job["kind"] == "coordinator":
@@ -1038,8 +1222,11 @@ class FirstMateRuntime:
                 parameters = {**params, "model_profile": profile}
                 metadata = {**self._workspace(feature, parameters, request_id),
                             "model_profile": profile}
-                return self.store.create_assignment(feature["current_visit_id"], {
+                assignment = self.store.create_assignment(feature["current_visit_id"], {
                     **parameters, "metadata": metadata, "request_id": request_id, "input_revision": feature["revision"]})
+                queued_selection = assignment.get("metadata", {}).get("model_selection")
+                return ({**assignment, "model_selection": queued_selection}
+                        if isinstance(queued_selection, Mapping) else assignment)
             if action == "fm_recover":
                 assignment = self.store.get_assignment(params["assignment_id"])
                 if assignment["feature_id"] != feature_id:
@@ -1086,6 +1273,8 @@ class FirstMateRuntime:
                     metadata = dict(assignment.get("metadata", {}))
                     if metadata.get("expected_code_revision"):
                         metadata["expected_code_revision"] = self._git(metadata["worktree_path"], "rev-parse", "HEAD")
+                    metadata["model_selection"] = self._policy(
+                        feature, kind="worker", claim={**assignment, "metadata": metadata}).selection()
                     _write_json(prepared_path, metadata)
                 return self.store.retry_assignment(assignment["id"], params["prompt"], request_id, metadata=metadata, verified_stopped=True)
             if action == "fm_complete_stage":
@@ -1203,18 +1392,38 @@ class FirstMateRuntime:
                 self.store.finish_message(claim["id"], job["owner"], reply=reply)
             self._rotate_coordinator_if_needed(job)
         elif job["kind"] == "worker":
-            if job.get("waiting_children") and not job.get("cancel_requested"):
+            assignment = self.store.get_assignment(claim["id"])
+            feature = self.store.get_feature(job["feature_id"])
+            current_execution = (assignment.get("generation") == claim.get("generation")
+                                 and assignment.get("input_revision") == claim.get("input_revision")
+                                 and self.store.assignment_is_in_current_visit(assignment["id"]))
+            human_state_wins = (job.get("cancel_requested")
+                                or feature["status"] in {"paused", "cancelled", "awaiting_direction"}
+                                or assignment["status"] in TERMINAL
+                                or not current_execution)
+            if state.get("startup_validation_failed"):
+                if not human_state_wins:
+                    self._block_assignment_configuration(
+                        claim, RuntimeError(str(state.get("error") or "Architect startup validation failed")),
+                        request_id="startup-validation:" + job["id"], verified_stopped=True,
+                    )
+                elif current_execution and (assignment["status"] not in TERMINAL
+                                            or (assignment["status"] == "paused"
+                                                and assignment.get("metadata", {}).get("human_gate"))):
+                    # The stopped executor is acknowledged without replacing a
+                    # concurrent human pause, cancellation, gate, or scope revision.
+                    self.store.acknowledge_stopped(
+                        claim["id"], claim["generation"], "startup-stopped:" + job["id"], status="paused")
+            elif job.get("waiting_children") and not job.get("cancel_requested"):
                 if not self._continue_children(job):
                     return
             elif job.get("pending_handoff"):
-                if self.store.get_feature(job["feature_id"])["status"] != "cancelled" and not self._continue_handoff(job):
+                if feature["status"] != "cancelled" and not self._continue_handoff(job):
                     return
             elif job.get("cancel_requested"):
-                assignment = self.store.get_assignment(claim["id"])
                 if assignment["status"] not in TERMINAL or (assignment["status"] == "paused" and assignment.get("metadata", {}).get("human_gate")):
                     self.store.acknowledge_stopped(claim["id"], claim["generation"], "stopped:" + job["id"], status="paused")
             else:
-                assignment = next(a for a in self.store.snapshot(job["feature_id"])["assignments"] if a["id"] == claim["id"])
                 if assignment["status"] == "paused" and assignment.get("metadata", {}).get("human_gate"):
                     self.store.acknowledge_stopped(claim["id"], claim["generation"], "gate-stopped:" + job["id"], status="paused")
                 elif assignment["status"] not in TERMINAL:
@@ -1238,10 +1447,18 @@ class FirstMateRuntime:
         if not children or any(a["status"] not in TERMINAL for a in children):
             return False
         claim = {**job["claim"], "dispatch_id": "children:" + job["id"]}
-        continuation = self._new_job(feature, kind="worker", claim=claim, parent_job=job,
-            prompt="Resume your current assignment after delegated children settled. Inspect their evidence, repair bounded failures if needed, and report your own honest outcome. You may not advance the major stage.\nYour saved checkpoint:\n"
-                   + job["waiting_children"] + "\nChild outcomes:\n" + json.dumps(children, ensure_ascii=False))
+        try:
+            continuation = self._new_job(feature, kind="worker", claim=claim, parent_job=job,
+                prompt="Resume your current assignment after delegated children settled. Inspect their evidence, repair bounded failures if needed, and report your own honest outcome. You may not advance the major stage.\nYour saved checkpoint:\n"
+                       + job["waiting_children"] + "\nChild outcomes:\n" + json.dumps(children, ensure_ascii=False))
+        except ArchitectConfigurationError as exc:
+            self._block_assignment_configuration(
+                claim, exc, request_id="children-configuration:" + job["id"],
+                verified_stopped=True,
+            )
+            return True
         # This is a new turn of the SAME saved executor, not a new generation.
+        continuation["stopped_executor_proof"] = True
         continuation["session_file"] = job["session_file"]
         continuation["owner"] = job["owner"]
         self._save_job(continuation)
@@ -1281,7 +1498,7 @@ class FirstMateRuntime:
             return
         snapshot = self.store.snapshot(job["feature_id"])
         checkpoint = {"predecessor_session_id": job["native_session_id"], "created_at": utc_now(),
-                      "router_state": _coordinator_state(snapshot),
+                      "router_state": self._coordinator_projection(snapshot),
                       # These are authoritative instructions, not evidence. A
                       # successor without transcript readers must retain them
                       # verbatim across coordinator rotation.
@@ -1320,10 +1537,19 @@ class FirstMateRuntime:
         if feature["status"] in {"paused", "cancelled"}:
             return False
         claim = {**job["claim"], "dispatch_id": "handoff:" + handoff["id"]}
-        successor = self._new_job(feature, kind="worker", claim=claim,
-            prompt=self._worker_input(feature, claim) + "\n\nRetained predecessor checkpoint:\n" + handoff["summary"]
-            + "\nInspect this evidence and workspace, then fm_acknowledge_handoff before changing anything.",
-            parent_job=job, handoff_id=handoff["id"])
+        try:
+            successor = self._new_job(feature, kind="worker", claim=claim,
+                prompt=self._worker_input(feature, claim) + "\n\nRetained predecessor checkpoint:\n" + handoff["summary"]
+                + "\nInspect this evidence and workspace, then fm_acknowledge_handoff before changing anything.",
+                parent_job=job, handoff_id=handoff["id"])
+        except ArchitectConfigurationError as exc:
+            self._block_assignment_configuration(
+                claim, exc, request_id="handoff-configuration:" + handoff["id"],
+                verified_stopped=True,
+            )
+            return True
+        successor["stopped_executor_proof"] = True
+        self._save_job(successor)
         self._launch(successor)
         return True
 
@@ -1495,8 +1721,15 @@ def run_detached(directory: Path) -> int:
     if (directory / "started.json").exists():
         return 0
     # Read dispatch policy only after acquiring the same lock used by the
-    # manager's final pre-launch refresh.
+    # manager's final pre-launch refresh. A delayed runner must honor an atomic
+    # configuration rejection and never revive its finalized stale policy.
     job = _read_json(directory / "job.json")
+    rejected = _read_json(directory / "finalized.json", {})
+    status_receipt = _read_json(directory / "status.json", {})
+    if (isinstance(rejected, Mapping) and rejected.get("configuration_blocked")) \
+            or (isinstance(status_receipt, Mapping) and status_receipt.get("configuration_blocked")) \
+            or (isinstance(job, Mapping) and job.get("configuration_error")):
+        return 0
     if not job:
         return 2
     # A second lock protects the exact Pi conversation, including across turns
@@ -1527,6 +1760,8 @@ def run_detached(directory: Path) -> int:
     accepted = threading.Event()
     ready = threading.Event()
     ended = threading.Event()
+    initial_state: dict[str, Any] = {}
+    initial_state_error: list[str] = []
     stdin_lock = threading.Lock()
     try:
         stderr = (directory / "pi-stderr.log").open("ab")
@@ -1556,7 +1791,17 @@ def run_detached(directory: Path) -> int:
                     output.flush()
                     with event_lock:
                         status["last_event_epoch"] = time.time()
-                        if event.get("type") == "response" and event.get("command") == "get_state" and event.get("success"):
+                        if (event.get("type") == "response"
+                                and event.get("command") == "get_state"
+                                and event.get("id") == "initial-state"):
+                            data = event.get("data")
+                            if isinstance(data, dict):
+                                initial_state.clear()
+                                initial_state.update(data)
+                            if not event.get("success"):
+                                initial_state_error.append(str(event.get("error") or "Pi rejected initial get_state"))
+                            elif not isinstance(data, dict):
+                                initial_state_error.append("Pi initial get_state returned malformed data")
                             ready.set()
                         if event.get("type") == "response" and event.get("command") == "prompt":
                             status["accepted"] = bool(event.get("success"))
@@ -1580,8 +1825,30 @@ def run_detached(directory: Path) -> int:
         reader.start()
         send({"type": "set_auto_compaction", "enabled": False, "id": "no-compaction"})
         send({"type": "get_state", "id": "initial-state"})
-        if not ready.wait(30):
-            raise RuntimeError("Pi did not confirm its saved session during startup")
+        confirmed = ready.wait(float(job.get("startup_timeout_seconds", 30)))
+        architect = job.get("model_selection", {}).get("profile") == "architect"
+        if not confirmed:
+            startup_error = "Architect startup blocked: Pi initial get_state timed out without observed startup evidence"
+            if not architect:
+                raise RuntimeError("Pi did not confirm its saved session during startup")
+        elif initial_state_error:
+            startup_error = "Architect startup blocked: " + initial_state_error[0]
+            if not architect:
+                raise RuntimeError(initial_state_error[0])
+        else:
+            startup_error = _architect_startup_error(job, initial_state)
+        if startup_error:
+            actual_model, actual_thinking = _observed_model_selection(initial_state)
+            status["startup_validation_failed"] = True
+            status["startup_observation"] = {
+                "requested_model": job.get("model_selection", {}).get("requested_model"),
+                "requested_thinking": job.get("model_selection", {}).get("requested_thinking"),
+                "actual_model": actual_model,
+                "actual_thinking": actual_thinking,
+            }
+            status["error"] = startup_error
+            _write_json(directory / "status.json", status)
+            raise RuntimeError(startup_error)
         send({"type": "prompt", "id": "dispatch:" + job["id"], "message": job["prompt"]})
         sent_controls = set()
         abort_deadline = None

@@ -59,10 +59,12 @@ header, standalone star, or location breadcrumb. Star remains in Pane actions;
 **Chat history → Last prompt** shows only the latest visible user prompt and is
 disabled when there is none. Pushed panes use native Back and swipe. Root and
 split-detail panes expose the app Chat navigator; split detail removes the
-split view's automatic Agents-column control rather than duplicating it. Compact
-Model and Thinking controls are single-line values,
-stay independent, follow the connected Pi session's catalog and capabilities,
-and stack with response-audio controls at accessibility text sizes.
+split view's automatic Agents-column control rather than duplicating it. Model,
+Thinking, Listen, and TL;DR are small plain-text controls with independent 44-point
+tap targets. Common values share one compact row; long values and
+accessibility text stack safely. The selectors retain the connected Pi session's
+catalog and capability behavior, and audio labels change to Stop, Pause, or Resume
+as playback changes.
 
 The unified input card keeps Attach, Voice, More, and Send close to the editor.
 **More → Show terminal keys** reveals the optional key deck; it is hidden by

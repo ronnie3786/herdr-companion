@@ -88,13 +88,20 @@
     if(!selection)return '';
     const actual=typeof selection.actual_model==='string'?selection.actual_model.trim():'';
     const requested=typeof selection.requested_model==='string'?selection.requested_model.trim():'';
-    const model=value=>{const parts=value.split('/').filter(Boolean);return full?value:(parts[parts.length-1]||value);};
-    if(actual){
-      const effort=typeof selection.actual_thinking==='string'?selection.actual_thinking.trim():'';
-      return `${full?'Actual ':''}${model(actual)}${effort?` · ${effort}`:''}`;
+    const requestedEffort=typeof selection.requested_thinking==='string'?selection.requested_thinking.trim():'';
+    const actualEffort=typeof selection.actual_thinking==='string'?selection.actual_thinking.trim():'';
+    const profile=typeof selection.profile==='string'&&selection.profile.trim()?selection.profile.trim():'Unknown';
+    const unconfiguredArchitect=profile.toLowerCase()==='architect'&&!requested;
+    const joined=(model,effort)=>`${model}${effort?` · ${effort}`:''}`;
+    const requestedText=unconfiguredArchitect?'Not configured':joined(requested||'Pi default',requestedEffort);
+    const shortModel=value=>{const parts=value.split('/').filter(Boolean);return parts[parts.length-1]||value;};
+    if(full){
+      const actualText=actual?joined(actual,actualEffort):'Unavailable — no observed runtime evidence';
+      return `Profile: ${profile} · Requested: ${requestedText} · Actual: ${actualText}`;
     }
-    const effort=typeof selection.requested_thinking==='string'?selection.requested_thinking.trim():'';
-    return `Requested ${model(requested||'Pi default')}${effort?` · ${effort}`:''}`;
+    if(actual)return joined(shortModel(actual),actualEffort);
+    if(unconfiguredArchitect)return 'Not configured';
+    return `Requested ${joined(shortModel(requested||'Pi default'),requestedEffort)}`;
   };
   const selectionLine = selection => selection ? `<small class="model-selection" title="${escape(selectionText(selection,true))}">◇ ${escape(selectionText(selection))}</small>` : '';
   const base = new URL('../api/v1/first-mate/', location.href).pathname;
@@ -227,15 +234,16 @@
       if(d.native_session_id!==id)throw Error('Saved session identity did not match.');
       if(before!==null && d.next_before!=null && (d.next_before<0 || d.next_before>=before))throw Error('Saved session cursor did not advance.');
       const retained=(state.detail?.sessions||[]).find(session=>session.native_session_id===id);
+      const assignment=(state.detail?.assignments||[]).find(item=>item.native_session_id===id);
       const messages=[...(d.messages||[]),...previous], usage=d.usage||previousView?.usage||retained?.usage;
-      const modelSelection=d.model_selection||previousView?.modelSelection||retained?.model_selection;
+      const modelSelection=d.model_selection||previousView?.modelSelection||retained?.model_selection||assignment?.model_selection;
       state.sessionView={id,messages,usage,modelSelection};
       const paging=d.total_messages!=null?`<div class="document-meta">${messages.length} of ${escape(d.total_messages)} saved messages</div>`:'';
       const earlier=d.next_before!=null?`<button data-session="${escape(id)}" data-before="${escape(d.next_before)}">Load earlier messages</button>`:'';
       modal('Saved agent session',`<p class="document-meta">${escape(id)}${modelSelection?`<br><span title="${escape(selectionText(modelSelection,true))}">${escape(selectionText(modelSelection,true))}</span>`:''}</p>${usagePanel(usage,'Whole-session usage')}${paging}${earlier}${messages.map(m=>`<article class="event"><strong>${escape(m.role)}</strong><div class="prose">${messageContent(m)}</div></article>`).join('')||empty('No saved messages yet','The exact session is registered, but it has not written a transcript yet.')}`);
     }catch(e){if(generation===state.generation && resource===state.resourceGeneration)notice(e.message);}
   }
-  async function openAgent(id){const a=state.detail.assignments.find(a=>a.id===id);const sessions=(state.detail.sessions||[]).filter(s=>s.assignment_id===id);if(!sessions.length&&a?.native_session_id)return openSession(a.native_session_id);const own=a?.subtree_usage&&JSON.stringify(a.subtree_usage)!==JSON.stringify(a.usage)?`<p>Own · ${usageInline(a.usage)}<br>With descendants · ${usageInline(a.subtree_usage)}</p>`:`<p>${usageInline(a?.usage)}</p>`;modal(a?.title||'Assignment',`<p>${escape(label(a?.status))}</p>${own}${sessions.length?sessionRows(sessions):'<p class="document-meta">A saved session will appear after this assignment starts.</p>'}${state.detail.sessions_truncated?'<p>Showing recent session history. Older sessions remain retained on the companion host.</p>':''}`);}
+  async function openAgent(id){const a=state.detail.assignments.find(a=>a.id===id);const sessions=(state.detail.sessions||[]).filter(s=>s.assignment_id===id);if(!sessions.length&&a?.native_session_id)return openSession(a.native_session_id);const own=a?.subtree_usage&&JSON.stringify(a.subtree_usage)!==JSON.stringify(a.usage)?`<p>Own · ${usageInline(a.usage)}<br>With descendants · ${usageInline(a.subtree_usage)}</p>`:`<p>${usageInline(a?.usage)}</p>`;const modelSelection=a?.model_selection?`<p class="document-meta">${escape(selectionText(a.model_selection,true))}</p>`:'';modal(a?.title||'Assignment',`<p>${escape(label(a?.status))}</p>${modelSelection}${own}${sessions.length?sessionRows(sessions):'<p class="document-meta">A saved session will appear after this assignment starts.</p>'}${state.detail.sessions_truncated?'<p>Showing recent session history. Older sessions remain retained on the companion host.</p>':''}`);}
   async function setArchived(feature, archived, reason=null){
     const action=archived?'archive':'unarchive', body={action,request_id:idFor(`${action}:${feature}`,reason||action)};
     if(archived&&reason)body.reason=reason;

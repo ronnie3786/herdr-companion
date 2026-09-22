@@ -68,8 +68,16 @@ def read_model_catalog(pi_bin, environ, cwd):
                 routing = {name: {"model": policy.requested_model,
                                   "thinking": policy.requested_thinking}
                            for name, policy in policies.items()}
-                if any(value for policy in routing.values() for value in policy.values()):
-                    result["routing"] = routing
+                architect_model = str(environ.get("HERDR_FIRST_MATE_ARCHITECT_MODEL") or "").strip()
+                architect_thinking = str(environ.get("HERDR_FIRST_MATE_ARCHITECT_THINKING") or "").strip()
+                routing["architect"] = {
+                    "model": architect_model,
+                    "thinking": architect_thinking,
+                    "configured": bool(architect_model),
+                }
+                # The architect row is always present so a missing required pin is
+                # inspectable without making catalog reads fail.
+                result["routing"] = routing
                 return result
     except (OSError, ValueError, TypeError, AttributeError):
         pass

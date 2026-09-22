@@ -28,10 +28,12 @@ struct PiModelPickerChip: View {
                                 Button {
                                     selectModel(candidate)
                                 } label: {
-                                    Label(
-                                        candidate.displayName,
-                                        systemImage: isCurrent(candidate) ? "checkmark.circle.fill" : "cpu"
-                                    )
+                                    HStack {
+                                        Text(candidate.displayName)
+                                        if isCurrent(candidate) {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -43,48 +45,36 @@ struct PiModelPickerChip: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .disabled(!isEnabled)
             .accessibilityIdentifier("pi-chat-model")
-            .composerLayoutMeasurement(id: "pi-chat-model", label: "Model: \(displayText)")
-            .accessibilityLabel("Model: \(displayText)")
+            .composerLayoutMeasurement(id: "pi-chat-model", label: accessibilityLabel)
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityHint("Chooses the model for the next message.")
         } else if currentModel != nil {
             controlLabel
                 .opacity(0.65)
                 .accessibilityIdentifier("pi-chat-model")
-                .composerLayoutMeasurement(id: "pi-chat-model", label: "Model: \(displayText)")
-                .accessibilityLabel("Model: \(displayText)")
+                .composerLayoutMeasurement(id: "pi-chat-model", label: accessibilityLabel)
+                .accessibilityLabel(accessibilityLabel)
         }
     }
 
     private var controlLabel: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 5) {
-            if isSetting {
-                ProgressView()
-                    .controlSize(.mini)
-            } else {
-                Image(systemName: "cpu")
-                    .font(.caption)
-                    .imageScale(.small)
-                    .accessibilityHidden(true)
-            }
+        Text(visibleText)
+            .font(.footnote.weight(.medium))
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .foregroundStyle(isInteractive ? HerdrTheme.mauve : HerdrTheme.mist)
+            .composerLayoutMeasurement(id: "pi-chat-model-value", label: visibleText)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(.rect)
+            .opacity(isInteractive && !isEnabled ? 0.48 : 1)
+    }
 
-            Text(displayText)
-                .font(.callout.bold())
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .allowsTightening(true)
-                .composerLayoutMeasurement(id: "pi-chat-model-value", label: displayText)
+    private var visibleText: String {
+        isSetting ? "Setting…" : displayText
+    }
 
-            if isInteractive {
-                Image(systemName: "chevron.up.down")
-                    .font(.caption)
-                    .imageScale(.small)
-                    .accessibilityHidden(true)
-            }
-        }
-        .foregroundStyle(isInteractive ? HerdrTheme.mauve : HerdrTheme.mist)
-        .padding(.horizontal, 6)
-        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-        .contentShape(.rect)
-        .opacity(isInteractive && !isEnabled ? 0.48 : 1)
+    private var accessibilityLabel: String {
+        isSetting ? "Model: \(displayText), setting" : "Model: \(displayText)"
     }
 
     private var displayText: String {

@@ -73,6 +73,8 @@ planner_model = "synthetic/planner"
 planner_thinking = "high"
 worker_model = "synthetic/worker"
 worker_thinking = "medium"
+architect_model = "synthetic/architect"
+architect_thinking = "xhigh"
 message_hub_url = "https://messages.example.invalid/api/v1/messages"
 ''')
         self.assertEqual(config.environ['HERDR_FIRST_MATE_CONTEXT_TARGET'], '120000')
@@ -82,8 +84,31 @@ message_hub_url = "https://messages.example.invalid/api/v1/messages"
         self.assertEqual(config.environ['HERDR_FIRST_MATE_PLANNER_THINKING'], 'high')
         self.assertEqual(config.environ['HERDR_FIRST_MATE_WORKER_MODEL'], 'synthetic/worker')
         self.assertEqual(config.environ['HERDR_FIRST_MATE_WORKER_THINKING'], 'medium')
+        self.assertEqual(config.environ['HERDR_FIRST_MATE_ARCHITECT_MODEL'], 'synthetic/architect')
+        self.assertEqual(config.environ['HERDR_FIRST_MATE_ARCHITECT_THINKING'], 'xhigh')
         self.assertEqual(config.environ['HERDR_HARNESS_FIRST_MATE_RUNS_ROOT'], str(self.root.resolve() / 'state/first-mate-runs'))
         self.assertNotIn('HERDR_FIRST_MATE_MESSAGE_HUB_TOKEN', config.environ)
+
+    def test_machine_architect_pin_maps_to_environment_with_normal_precedence(self):
+        path = self.write('''[first_mate]
+architect_model = "synthetic/shared-architect"
+architect_thinking = "high"
+[machines.worker]
+name = "Worker"
+[machines.worker.first_mate]
+architect_model = "synthetic/machine-architect"
+architect_thinking = "xhigh"
+''')
+        machine = load_configuration(path, 'worker', environ={})
+        self.assertEqual(machine.environ['HERDR_FIRST_MATE_ARCHITECT_MODEL'],
+                         'synthetic/machine-architect')
+        self.assertEqual(machine.environ['HERDR_FIRST_MATE_ARCHITECT_THINKING'], 'xhigh')
+        process = load_configuration(path, 'worker', environ={
+            'HERDR_FIRST_MATE_ARCHITECT_MODEL': 'synthetic/process-architect',
+            'HERDR_FIRST_MATE_ARCHITECT_THINKING': 'max'})
+        self.assertEqual(process.environ['HERDR_FIRST_MATE_ARCHITECT_MODEL'],
+                         'synthetic/process-architect')
+        self.assertEqual(process.environ['HERDR_FIRST_MATE_ARCHITECT_THINKING'], 'max')
 
     def test_pr_review_settings_resolve_paths_defaults_and_environment_precedence(self):
         config = self.load('''[server]

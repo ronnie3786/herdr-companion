@@ -16,8 +16,8 @@ import unittest
 from unittest.mock import patch
 
 from herdr_harness.first_mate_runtime import (COORDINATOR_PROMPT, WORKER_PROMPT,
-    FirstMateRuntime, _coordinator_state, _ledger_event, _locked,
-    _pi_command, _read_json, _records, _write_json)
+    FirstMateRuntime, _architect_startup_error, _coordinator_state, _ledger_event, _locked,
+    _pi_command, _read_json, _records, _write_json, run_detached)
 from herdr_harness.first_mate_store import FirstMateStore, FirstMateError
 
 FAKE_PI = r'''#!PYTHON
@@ -55,7 +55,24 @@ for line in sys.stdin:
  command=json.loads(line)
  name=command['type']
  if name=='get_state':
-  emit({'type':'response','command':name,'success':True,'id':command.get('id'),'data':{'sessionId':sid,'sessionFile':str(session)}})
+  state={'sessionId':sid,'sessionFile':str(session)}
+  if job.get('model') and 'missing initial model' not in job['prompt']:
+   provider,model=job['model'].split('/',1)
+   if 'runtime mismatch' in job['prompt']:model='mismatched-architect'
+   state['model']={'provider':provider,'id':model}
+  if job.get('thinking') and 'missing initial thinking' not in job['prompt']:
+   state['thinkingLevel']=job['thinking']
+  if 'initial state timeout' in job['prompt']:
+   continue
+  if 'unrelated initial state' in job['prompt']:
+   emit({'type':'response','command':name,'success':True,'id':'unrelated-request','data':state})
+   continue
+  if 'initial state rejected' in job['prompt']:
+   emit({'type':'response','command':name,'success':False,'id':command.get('id'),'error':'synthetic get_state rejection','data':state})
+  elif 'malformed initial state' in job['prompt']:
+   emit({'type':'response','command':name,'success':True,'id':command.get('id'),'data':['malformed']})
+  else:
+   emit({'type':'response','command':name,'success':True,'id':command.get('id'),'data':state})
  elif name=='prompt':
   emit({'type':'response','command':name,'success':True,'id':command.get('id')})
   save('user',command['message'])
@@ -67,7 +84,9 @@ for line in sys.stdin:
     elif snapshot['feature']['status'] in ['ready','awaiting_direction']:
      tool('fm_begin_stage',{'stage_key':'planning','title':'Plan synthetic feature'},'begin')
      for index in range(7 if 'seven reviews' in job['claim']['text'] else 1):
-      tool('fm_delegate',{'title':'Synthetic specialist '+str(index),'role':'reviewer' if 'seven reviews' in job['claim']['text'] else 'planner','prompt':job['claim']['text'],'workspace_mode':'read_only'},'delegate'+str(index))
+      delegation={'title':'Synthetic specialist '+str(index),'role':'reviewer' if 'seven reviews' in job['claim']['text'] else 'planner','prompt':job['claim']['text'],'workspace_mode':'read_only'}
+      if 'architecture review' in job['claim']['text']:delegation['model_profile']='architect'
+      tool('fm_delegate',delegation,'delegate'+str(index))
     response='Planning is running. Follow it in the sidebar.'
    else:
     if snapshot['feature']['status']=='running' and all(a['status']=='completed' for a in snapshot['assignments']):
@@ -219,6 +238,13 @@ class FirstMateRuntimeTests(unittest.TestCase):
         self.assertNotIn('--append-system-prompt', command)
         self.assertIn('one to three sentences', COORDINATOR_PROMPT)
         self.assertIn('adapt it to fm_delegate', COORDINATOR_PROMPT)
+        self.assertIn('second opinion on an', COORDINATOR_PROMPT)
+        self.assertIn('Give me an', COORDINATOR_PROMPT)
+        self.assertIn('architect review', COORDINATOR_PROMPT)
+        self.assertIn('routine code review', COORDINATOR_PROMPT)
+        self.assertIn('model name or worker title alone', COORDINATOR_PROMPT)
+        self.assertIn('NEVER re-route', COORDINATOR_PROMPT)
+        self.assertIn('model_selection', COORDINATOR_PROMPT)
         for flag in ('--tools', '--exclude-tools', '--no-tools', '--no-builtin-tools',
                      '--no-extensions', '--no-skills', '--no-context-files',
                      '--no-prompt-templates'):
@@ -232,6 +258,10 @@ class FirstMateRuntimeTests(unittest.TestCase):
         command = _pi_command(job)
         self.assertEqual(command[command.index('--append-system-prompt') + 1], WORKER_PROMPT)
         self.assertNotIn('--system-prompt', command)
+        self.assertIn('second opinion on an', WORKER_PROMPT)
+        self.assertIn('architect review', WORKER_PROMPT)
+        self.assertIn('routine code review', WORKER_PROMPT)
+        self.assertIn('NEVER re-route', WORKER_PROMPT)
         for flag in ('--tools', '--exclude-tools', '--no-tools', '--no-builtin-tools',
                      '--no-extensions', '--no-skills', '--no-context-files',
                      '--no-prompt-templates'):
@@ -618,10 +648,441 @@ class FirstMateRuntimeTests(unittest.TestCase):
             'model_profile': 'execution', 'workspace_mode': 'read_only'}, 'execution-profile')
         self.assertEqual(planned['metadata']['model_profile'], 'planning')
         self.assertEqual(explicit['metadata']['model_profile'], 'execution')
-        with self.assertRaisesRegex(ValueError, 'planning or execution'):
+        with self.assertRaisesRegex(ValueError, 'planning, execution, or architect'):
             self.runtime._tool(coordinator, 'fm_delegate', {
                 'title': 'Bad', 'role': 'reviewer', 'prompt': 'Inspect',
                 'model_profile': {'invalid': True}, 'workspace_mode': 'read_only'}, 'bad-profile')
+
+    def test_architect_delegation_requires_pin_before_workspace_or_assignment(self):
+        feature = self.feature()
+        human = self.store.claim_message(feature['id'], self.runtime.owner)
+        self.store.start_visit(feature['id'], 'planning', 'Planning', 'start-architect-missing', 1, human['id'])
+        coordinator = {'feature_id': feature['id'], 'kind': 'coordinator', 'claim': human}
+        self.runtime.environ['HERDR_FIRST_MATE_MODEL'] = 'synthetic/legacy-must-not-fallback'
+        with self.assertRaisesRegex(ValueError, 'architect_model'):
+            self.runtime._tool(coordinator, 'fm_delegate', {
+                'title': 'Architecture review', 'role': 'architect', 'prompt': 'Review the design',
+                'model': 'synthetic/assignment-must-not-fallback',
+                'model_profile': 'architect', 'workspace_mode': 'read_only'}, 'architect-missing')
+        self.assertEqual(self.store.snapshot(feature['id'])['assignments'], [])
+        self.assertFalse((self.runtime.root / 'workspace-plans').exists())
+
+    def test_architect_profile_and_requested_selection_persist_for_coordinator_and_nested_delegation(self):
+        feature = self.feature()
+        self.runtime.environ.update({
+            'HERDR_FIRST_MATE_ARCHITECT_MODEL': 'synthetic/architect',
+            'HERDR_FIRST_MATE_ARCHITECT_THINKING': 'xhigh',
+        })
+        human = self.store.claim_message(feature['id'], self.runtime.owner)
+        self.store.start_visit(feature['id'], 'planning', 'Planning', 'start-architect', 1, human['id'])
+        coordinator = {'feature_id': feature['id'], 'kind': 'coordinator', 'claim': human}
+        parent = self.runtime._tool(coordinator, 'fm_delegate', {
+            'title': 'Lead', 'role': 'planner', 'prompt': 'Coordinate the review',
+            'workspace_mode': 'read_only'}, 'architect-parent')
+        parent_claim = self.store.claim_assignment(parent['id'], self.runtime.owner)
+        parent_job = self.runtime._new_job(feature, kind='worker', prompt='Coordinate', claim=parent_claim)
+        self.runtime._bind(parent_job, 'native-architect-parent', parent_job['session_file'])
+        child = self.runtime._tool(parent_job, 'fm_delegate', {
+            'title': 'Independent architecture audit', 'role': 'architect',
+            'prompt': 'Audit the implementation architecture', 'model_profile': 'architect',
+            'model': 'synthetic/ignored-assignment', 'workspace_mode': 'read_only'}, 'architect-child')
+        self.assertEqual(child['metadata']['model_profile'], 'architect')
+        self.assertEqual(child['metadata']['parent_assignment_id'], parent['id'])
+        self.assertEqual(child['model_selection'], {
+            'profile': 'architect', 'requested_model': 'synthetic/architect',
+            'requested_thinking': 'xhigh', 'actual_model': None,
+            'actual_thinking': None, 'source': 'host_policy'})
+        status = self.runtime._tool(coordinator, 'fm_status', {}, 'architect-status')
+        projected = next(item for item in status['assignments'] if item['id'] == child['id'])
+        self.assertEqual(projected['operational']['model_profile'], 'architect')
+        self.assertEqual(projected['model_selection']['requested_model'], 'synthetic/architect')
+        self.assertIsNone(projected['model_selection']['actual_model'])
+
+    def test_architect_retry_continuation_and_handoff_dispatches_resolve_current_pin(self):
+        feature = self.feature()
+        claim = {'id': 'synthetic-architect-assignment', 'generation': 1,
+                 'dispatch_id': 'architect-first', 'title': 'Architect',
+                 'metadata': {'model_profile': 'architect', 'workspace_mode': 'read_only'}}
+        self.runtime.environ['HERDR_FIRST_MATE_ARCHITECT_MODEL'] = 'synthetic/architect-a'
+        first = self.runtime._new_job(feature, kind='worker', prompt='Audit', claim=claim)
+        self.assertEqual(first['model'], 'synthetic/architect-a')
+        self.runtime.environ['HERDR_FIRST_MATE_ARCHITECT_MODEL'] = 'synthetic/architect-b'
+        dispatches = [
+            self.runtime._new_job(feature, kind='worker', prompt='Retry',
+                                  claim={**claim, 'generation': 2, 'dispatch_id': 'architect-retry'}),
+            self.runtime._new_job(feature, kind='worker', prompt='Continue children',
+                                  claim={**claim, 'dispatch_id': 'children:architect'}, parent_job=first),
+            self.runtime._new_job(feature, kind='worker', prompt='Continue handoff',
+                                  claim={**claim, 'generation': 2, 'dispatch_id': 'handoff:architect'},
+                                  parent_job=first, handoff_id='synthetic-handoff'),
+        ]
+        self.assertTrue(all(job['model'] == 'synthetic/architect-b' for job in dispatches))
+        self.assertTrue(all(job['model_selection']['profile'] == 'architect' for job in dispatches))
+
+    def test_unstarted_architect_refresh_blocks_on_removed_pin_but_started_dispatch_is_immutable(self):
+        feature = self.feature()
+        self.runtime.environ['HERDR_FIRST_MATE_ARCHITECT_MODEL'] = 'synthetic/architect'
+        human = self.store.claim_message(feature['id'], self.runtime.owner)
+        self.store.start_visit(feature['id'], 'planning', 'Planning', 'start-refresh', 1, human['id'])
+        coordinator = {'feature_id': feature['id'], 'kind': 'coordinator', 'claim': human}
+        assignments = [self.runtime._tool(coordinator, 'fm_delegate', {
+            'title': 'Architect ' + str(index), 'role': 'architect', 'prompt': 'Audit',
+            'model_profile': 'architect', 'workspace_mode': 'read_only'}, 'architect-refresh-' + str(index))
+            for index in range(2)]
+        claims = [self.store.claim_assignment(assignment['id'], self.runtime.owner)
+                  for assignment in assignments]
+        jobs = [self.runtime._new_job(feature, kind='worker', prompt='Audit', claim=claim)
+                for claim in claims]
+        _write_json(self.runtime._job_dir(jobs[1]) / 'started.json', {'pid': 123})
+        self.runtime.environ.pop('HERDR_FIRST_MATE_ARCHITECT_MODEL')
+
+        with patch('herdr_harness.first_mate_runtime.subprocess.Popen') as spawn:
+            self.runtime._launch(jobs[0])
+            self.runtime._launch(jobs[1])
+        spawn.assert_not_called()
+        blocked = self.store.get_assignment(assignments[0]['id'])
+        immutable = self.store.get_assignment(assignments[1]['id'])
+        self.assertEqual(blocked['status'], 'blocked')
+        self.assertIn('no fallback is allowed', blocked['summary'])
+        self.assertTrue((self.runtime._job_dir(jobs[0]) / 'finalized.json').exists())
+        visible = next(item for item in self.runtime.snapshot(feature['id'])['assignments']
+                       if item['id'] == assignments[0]['id'])
+        self.assertEqual(visible['model_selection']['requested_model'], 'synthetic/architect')
+        self.assertIsNone(visible['model_selection']['actual_model'])
+        self.assertEqual(immutable['status'], 'dispatching')
+        self.assertEqual(_read_json(self.runtime._job_dir(jobs[1]) / 'job.json')['model'],
+                         'synthetic/architect')
+
+    def test_architect_initial_state_mismatch_blocks_before_task_prompt_and_retains_evidence(self):
+        feature = self.feature()
+        self.runtime.environ.update({
+            'HERDR_FIRST_MATE_ARCHITECT_MODEL': 'synthetic/architect',
+            'HERDR_FIRST_MATE_ARCHITECT_THINKING': 'high',
+        })
+        human = self.store.claim_message(feature['id'], self.runtime.owner)
+        self.store.start_visit(feature['id'], 'planning', 'Planning', 'start-runtime-mismatch', 1, human['id'])
+        coordinator = {'feature_id': feature['id'], 'kind': 'coordinator', 'claim': human}
+        assignment = self.runtime._tool(coordinator, 'fm_delegate', {
+            'title': 'Architecture audit', 'role': 'architect',
+            'prompt': 'architecture review runtime mismatch', 'model_profile': 'architect',
+            'workspace_mode': 'read_only'}, 'runtime-mismatch')
+        self.store.finish_message(human['id'], self.runtime.owner, 'Architecture audit queued.')
+        claim = self.store.claim_assignment(assignment['id'], self.runtime.owner)
+        job = self.runtime._new_job(feature, kind='worker',
+                                    prompt=self.runtime._worker_input(feature, claim), claim=claim)
+        self.runtime._launch(job)
+        self.until(lambda: self.store.get_assignment(assignment['id'])['status'] == 'blocked')
+
+        directory = self.runtime._job_dir(job)
+        status = _read_json(directory / 'status.json')
+        self.assertTrue(status['startup_validation_failed'])
+        self.assertEqual(status['startup_observation']['actual_model'], 'synthetic/mismatched-architect')
+        events, _ = _records(directory / 'events.jsonl')
+        self.assertFalse(any(event.get('command') == 'prompt' for event in events))
+        session_rows, _ = _records(Path(job['session_file']))
+        self.assertEqual([row.get('type') for row in session_rows], ['session'])
+        self.runtime.environ['HERDR_FIRST_MATE_ARCHITECT_MODEL'] = 'synthetic/new-host-policy'
+        selection = self.runtime.snapshot(feature['id'])['assignments'][0]['model_selection']
+        self.assertEqual(selection['requested_model'], 'synthetic/architect')
+        self.assertEqual(selection['actual_model'], 'synthetic/mismatched-architect')
+
+    def test_architect_initial_state_requires_observed_model_and_configured_effort(self):
+        job = {'model_selection': {'profile': 'architect',
+                                   'requested_model': 'synthetic/architect',
+                                   'requested_thinking': 'high'}}
+        self.assertIn('provider-qualified model', _architect_startup_error(job, {}) or '')
+        self.assertIn('thinking effort', _architect_startup_error(job, {
+            'model': {'provider': 'synthetic', 'id': 'architect'}}) or '')
+        self.assertIn("reported 'low'", _architect_startup_error(job, {
+            'model': {'provider': 'synthetic', 'id': 'architect'},
+            'thinkingLevel': 'low'}) or '')
+        self.assertIsNone(_architect_startup_error(job, {
+            'model': {'provider': 'synthetic', 'id': 'architect'},
+            'thinkingLevel': 'high'}))
+
+    def test_delegation_replay_freezes_coordinator_and_nested_requested_selection(self):
+        feature = self.feature()
+        human = self.store.claim_message(feature['id'], self.runtime.owner)
+        visit = self.store.start_visit(feature['id'], 'planning', 'Planning', 'start-replay', 1, human['id'])
+        coordinator = {'feature_id': feature['id'], 'kind': 'coordinator', 'claim': human}
+        self.runtime.environ['HERDR_FIRST_MATE_ARCHITECT_MODEL'] = 'synthetic/architect-a'
+        params = {'title': 'Architecture review', 'role': 'reviewer',
+                  'prompt': 'Give me an architect review', 'model_profile': 'architect',
+                  'workspace_mode': 'isolated'}
+        first = self.runtime._tool(coordinator, 'fm_delegate', params, 'coordinator-replay')
+        self.runtime.environ['HERDR_FIRST_MATE_ARCHITECT_MODEL'] = 'synthetic/architect-b'
+        second = self.runtime._tool(coordinator, 'fm_delegate', params, 'coordinator-replay')
+        self.runtime.environ.pop('HERDR_FIRST_MATE_ARCHITECT_MODEL')
+        third = self.runtime._tool(coordinator, 'fm_delegate', params, 'coordinator-replay')
+        self.assertEqual({first['id'], second['id'], third['id']}, {first['id']})
+        self.assertTrue(all(item['model_selection']['requested_model'] == 'synthetic/architect-a'
+                            for item in (first, second, third)))
+        self.assertEqual(len(list((self.runtime.root / 'worktrees').glob('*'))), 1)
+        with self.assertRaisesRegex(FirstMateError, 'changed instructions'):
+            self.runtime._tool(coordinator, 'fm_delegate', {**params, 'prompt': 'Changed'},
+                               'coordinator-replay')
+
+        legacy_input = {'title': 'Legacy planner', 'role': 'planner', 'prompt': 'Plan',
+                        'workspace_mode': 'read_only'}
+        legacy_parameters = {**legacy_input, 'model_profile': 'planning'}
+        legacy_token = hashlib.sha256((feature['id'] + 'legacy-replay').encode()).hexdigest()[:20]
+        legacy_workspace = {'workspace_mode': 'read_only', 'worktree_path': str(self.cwd),
+                            'source_assignment_id': None,
+                            'base_revision': self.runtime._git(str(self.cwd), 'rev-parse', 'HEAD')}
+        _write_json(self.runtime.root / 'workspace-plans' / (legacy_token + '.json'), {
+            'params': legacy_parameters, 'source': str(self.cwd),
+            'metadata': legacy_workspace})
+        # The pre-upgrade coordinator added model_profile after reading its old
+        # workspace plan, before persisting the assignment receipt.
+        legacy_receipt = self.store.create_assignment(visit['id'], {
+            **legacy_parameters, 'metadata': {**legacy_workspace, 'model_profile': 'planning'},
+            'request_id': 'legacy-replay', 'input_revision': feature['revision']})
+        legacy_first = self.runtime._tool(coordinator, 'fm_delegate', legacy_input, 'legacy-replay')
+        self.runtime.environ['HERDR_FIRST_MATE_PLANNER_MODEL'] = 'synthetic/new-planner'
+        legacy_second = self.runtime._tool(coordinator, 'fm_delegate', legacy_input, 'legacy-replay')
+        self.assertEqual({legacy_receipt['id'], legacy_first['id'], legacy_second['id']},
+                         {legacy_receipt['id']})
+        self.assertEqual(legacy_first['metadata']['model_profile'], 'planning')
+        self.assertNotIn('model_selection', legacy_first)
+        self.assertNotIn('model_selection', legacy_first['metadata'])
+
+        self.runtime.environ['HERDR_FIRST_MATE_ARCHITECT_MODEL'] = 'synthetic/nested-a'
+        parent = self.runtime._tool(coordinator, 'fm_delegate', {
+            'title': 'Lead', 'role': 'planner', 'prompt': 'Lead',
+            'model_profile': 'planning', 'workspace_mode': 'read_only'}, 'nested-parent-replay')
+        parent_claim = self.store.claim_assignment(parent['id'], self.runtime.owner)
+        parent_job = self.runtime._new_job(feature, kind='worker', prompt='Lead', claim=parent_claim)
+        self.runtime._bind(parent_job, 'nested-replay-parent', parent_job['session_file'])
+        child_params = {'title': 'Second opinion', 'role': 'reviewer',
+                        'prompt': 'Second opinion on the implementation',
+                        'model_profile': 'architect', 'workspace_mode': 'read_only'}
+        child_first = self.runtime._tool(parent_job, 'fm_delegate', child_params, 'nested-replay')
+        self.runtime.environ['HERDR_FIRST_MATE_ARCHITECT_MODEL'] = 'synthetic/nested-b'
+        child_second = self.runtime._tool(parent_job, 'fm_delegate', child_params, 'nested-replay')
+        self.runtime.environ.pop('HERDR_FIRST_MATE_ARCHITECT_MODEL')
+        child_third = self.runtime._tool(parent_job, 'fm_delegate', child_params, 'nested-replay')
+        self.assertEqual({child_first['id'], child_second['id'], child_third['id']}, {child_first['id']})
+        self.assertTrue(all(item['model_selection']['requested_model'] == 'synthetic/nested-a'
+                            for item in (child_first, child_second, child_third)))
+        with self.assertRaisesRegex(FirstMateError, 'changed instructions'):
+            self.runtime._tool(parent_job, 'fm_delegate', {**child_params, 'title': 'Changed'},
+                               'nested-replay')
+
+    def test_configuration_rejection_is_finalized_under_writer_lock_and_delayed_runner_refuses_it(self):
+        feature = self.feature()
+        self.runtime.environ['HERDR_FIRST_MATE_ARCHITECT_MODEL'] = 'synthetic/architect'
+        human = self.store.claim_message(feature['id'], self.runtime.owner)
+        self.store.start_visit(feature['id'], 'planning', 'Planning', 'start-lock-rejection', 1, human['id'])
+        coordinator = {'feature_id': feature['id'], 'kind': 'coordinator', 'claim': human}
+        assignment = self.runtime._tool(coordinator, 'fm_delegate', {
+            'title': 'Architect', 'role': 'reviewer', 'prompt': 'Review',
+            'model_profile': 'architect', 'workspace_mode': 'read_only'}, 'lock-rejection')
+        claim = self.store.claim_assignment(assignment['id'], self.runtime.owner)
+        job = self.runtime._new_job(feature, kind='worker', prompt='Review', claim=claim)
+        directory = self.runtime._job_dir(job)
+        self.runtime.environ.pop('HERDR_FIRST_MATE_ARCHITECT_MODEL')
+        observed = []
+        reject = self.runtime._reject_unstarted_job
+
+        def reject_while_locked(candidate, error):
+            observed.append(_locked(directory / 'writer.lock'))
+            return reject(candidate, error)
+
+        with patch.object(self.runtime, '_reject_unstarted_job', side_effect=reject_while_locked), \
+             patch('herdr_harness.first_mate_runtime.subprocess.Popen') as spawn:
+            self.runtime._launch(job)
+        spawn.assert_not_called()
+        self.assertEqual(observed, [True])
+        self.assertTrue(_read_json(directory / 'finalized.json')['configuration_blocked'])
+        self.assertEqual(run_detached(directory), 0)
+        self.assertFalse((directory / 'started.json').exists())
+
+    def test_unstarted_configuration_rejection_acknowledges_concurrent_human_pause(self):
+        feature = self.feature()
+        self.runtime.environ['HERDR_FIRST_MATE_ARCHITECT_MODEL'] = 'synthetic/architect'
+        human = self.store.claim_message(feature['id'], self.runtime.owner)
+        self.store.start_visit(feature['id'], 'planning', 'Planning',
+                               'start-paused-rejection', 1, human['id'])
+        coordinator = {'feature_id': feature['id'], 'kind': 'coordinator', 'claim': human}
+        assignment = self.runtime._tool(coordinator, 'fm_delegate', {
+            'title': 'Architect', 'role': 'reviewer', 'prompt': 'Review',
+            'model_profile': 'architect', 'workspace_mode': 'read_only'},
+            'paused-rejection')
+        claim = self.store.claim_assignment(assignment['id'], self.runtime.owner)
+        job = self.runtime._new_job(feature, kind='worker', prompt='Review', claim=claim)
+        self.runtime.environ.pop('HERDR_FIRST_MATE_ARCHITECT_MODEL')
+        self.store.feature_action(feature['id'], 'pause', 'human-pause-before-launch')
+
+        with patch('herdr_harness.first_mate_runtime.subprocess.Popen') as spawn:
+            self.runtime._launch(job)
+        spawn.assert_not_called()
+        self.assertEqual(self.store.get_feature(feature['id'])['status'], 'paused')
+        self.assertEqual(self.store.get_assignment(assignment['id'])['status'], 'paused')
+        self.assertTrue((self.runtime._job_dir(job) / 'finalized.json').exists())
+        self.assertFalse((self.runtime._job_dir(job) / 'started.json').exists())
+
+        self.runtime.environ['HERDR_FIRST_MATE_ARCHITECT_MODEL'] = 'synthetic/repaired-architect'
+        resumed = self.store.feature_action(feature['id'], 'resume', 'human-resume-after-repair')
+        self.assertEqual(resumed['status'], 'running')
+        self.assertEqual(self.store.get_assignment(assignment['id'])['status'], 'queued')
+        successor_claim = self.store.claim_assignment(assignment['id'], self.runtime.owner)
+        successor = self.runtime._new_job(feature, kind='worker', prompt='Review',
+                                          claim=successor_claim)
+        self.assertEqual(successor_claim['generation'], claim['generation'] + 1)
+        self.assertEqual(successor['model'], 'synthetic/repaired-architect')
+        self.assertEqual(self.store.get_assignment(assignment['id'])['status'], 'dispatching')
+
+    def test_startup_validation_preserves_concurrent_pause_and_superseded_scope(self):
+        def running_architect(feature, suffix):
+            self.runtime.environ['HERDR_FIRST_MATE_ARCHITECT_MODEL'] = 'synthetic/architect'
+            human = self.store.claim_message(feature['id'], self.runtime.owner)
+            self.store.start_visit(feature['id'], 'planning', 'Planning', 'stage-' + suffix,
+                                   feature['revision'], human['id'])
+            coordinator = {'feature_id': feature['id'], 'kind': 'coordinator', 'claim': human}
+            assignment = self.runtime._tool(coordinator, 'fm_delegate', {
+                'title': 'Architect', 'role': 'reviewer', 'prompt': 'Review',
+                'model_profile': 'architect', 'workspace_mode': 'read_only'}, 'delegate-' + suffix)
+            claim = self.store.claim_assignment(assignment['id'], self.runtime.owner)
+            job = self.runtime._new_job(feature, kind='worker', prompt='Review', claim=claim)
+            self.runtime._bind(job, 'native-' + suffix, job['session_file'])
+            return assignment, claim, job
+
+        feature = self.feature()
+        assignment, claim, job = running_architect(feature, 'paused')
+        self.store.feature_action(feature['id'], 'pause', 'human-pause')
+        self.runtime._finish(job, {'ended': True, 'startup_validation_failed': True,
+                                   'error': 'Architect startup blocked: mismatch'})
+        self.assertEqual(self.store.get_feature(feature['id'])['status'], 'paused')
+        self.assertEqual(self.store.get_assignment(assignment['id'])['status'], 'paused')
+
+        revised = self.store.create_feature({'title': 'Revised synthetic feature', 'goal': 'Review',
+            'cwd': str(self.cwd), 'request_id': 'create-revised-startup'})
+        assignment, claim, job = running_architect(revised, 'revised')
+        self.store.finish_message(self.store.pending_messages(revised['id'])[0]['id'],
+                                  self.runtime.owner, 'Stage started')
+        self.store.append_human_message(revised['id'], 'Revise scope', 'revise-direction')
+        direction = self.store.claim_message(revised['id'], self.runtime.owner)
+        self.store.revise_feature(revised['id'], 'Changed scope', 1, 'revise-startup',
+                                  direction['id'], verified_stopped=True)
+        self.runtime._finish(job, {'ended': True, 'startup_validation_failed': True,
+                                   'error': 'Architect startup blocked: mismatch'})
+        self.assertEqual(self.store.get_feature(revised['id'])['status'], 'awaiting_direction')
+        self.assertEqual(self.store.get_assignment(assignment['id'])['status'], 'superseded')
+        self.assertTrue((self.runtime._job_dir(job) / 'finalized.json').exists())
+
+    def test_architect_negative_malformed_timeout_and_unrelated_initial_state_never_prompt(self):
+        variants = ('initial state rejected', 'malformed initial state',
+                    'initial state timeout', 'unrelated initial state')
+        for index, variant in enumerate(variants):
+            with self.subTest(variant=variant):
+                directory = self.root / ('startup-' + str(index))
+                directory.mkdir()
+                session = directory / 'session.jsonl'
+                job = {'id': 'startup-' + str(index), 'kind': 'worker',
+                       'feature_id': 'synthetic-feature', 'cwd': str(self.cwd),
+                       'session_file': str(session), 'prompt': variant,
+                       'claim': {'title': 'Architect'}, 'pi_bin': str(self.fake),
+                       'extension': str(self.root / 'synthetic-extension.ts'),
+                       'model': 'synthetic/architect', 'thinking': 'high',
+                       'startup_timeout_seconds': 1,
+                       'model_selection': {'profile': 'architect',
+                           'requested_model': 'synthetic/architect',
+                           'requested_thinking': 'high'}}
+                _write_json(directory / 'job.json', job)
+                with patch.dict(os.environ, {'HERDR_FIRST_MATE_JOB_DIR': str(directory)}):
+                    self.assertEqual(run_detached(directory), 1)
+                status = _read_json(directory / 'status.json')
+                self.assertTrue(status['startup_validation_failed'])
+                events, _ = _records(directory / 'events.jsonl')
+                self.assertFalse(any(event.get('command') == 'prompt' for event in events))
+                if variant == 'initial state rejected':
+                    self.assertEqual(status['startup_observation']['actual_model'],
+                                     'synthetic/architect')
+                else:
+                    self.assertIsNone(status['startup_observation']['actual_model'])
+
+    def test_pin_removal_blocks_real_child_continuation_handoff_and_claim_gap_without_wedging(self):
+        feature = self.feature()
+        self.runtime.environ['HERDR_FIRST_MATE_ARCHITECT_MODEL'] = 'synthetic/architect'
+        human = self.store.claim_message(feature['id'], self.runtime.owner)
+        visit = self.store.start_visit(feature['id'], 'planning', 'Planning', 'start-real-continuation', 1, human['id'])
+        parent = self.store.create_assignment(visit['id'], {
+            'title': 'Architect lead', 'role': 'reviewer', 'prompt': 'Lead',
+            'metadata': {'model_profile': 'architect', 'workspace_mode': 'read_only'},
+            'request_id': 'real-parent', 'input_revision': 1})
+        parent_claim = self.store.claim_assignment(parent['id'], self.runtime.owner)
+        parent_job = self.runtime._new_job(feature, kind='worker', prompt='Lead', claim=parent_claim)
+        self.runtime._bind(parent_job, 'real-parent-native', parent_job['session_file'])
+        child = self.runtime._tool(parent_job, 'fm_delegate', {
+            'title': 'Child', 'role': 'reviewer', 'prompt': 'Inspect',
+            'workspace_mode': 'read_only'}, 'real-child')
+        self.store.wait_for_children(parent['id'], parent_claim['generation'],
+                                     'real-parent-native', 'Await child', 'real-wait')
+        child_claim = self.store.claim_assignment(child['id'], self.runtime.owner)
+        child_job = self.runtime._new_job(feature, kind='worker', prompt='Inspect', claim=child_claim)
+        self.runtime._bind(child_job, 'real-child-native', child_job['session_file'])
+        self.store.record_outcome(
+            child['id'], child_claim['generation'], 'real-child-native', 1,
+            'success', 'Inspected', 'real-child-outcome',
+            code_revision=child_claim['metadata']['expected_code_revision'])
+        parent_job['waiting_children'] = 'Await child'
+        self.runtime.environ.pop('HERDR_FIRST_MATE_ARCHITECT_MODEL')
+        jobs_before = {job['id'] for job in self.runtime._jobs()}
+        self.assertTrue(self.runtime._continue_children(parent_job))
+        self.assertEqual(self.store.get_assignment(parent['id'])['status'], 'blocked')
+        self.assertEqual({job['id'] for job in self.runtime._jobs()}, jobs_before)
+
+        # A real claim/spool crash gap is blocked, then a repaired pin and retry
+        # can reconcile normally instead of leaving the feature wedged.
+        gap_feature = self.store.create_feature({'title': 'Claim gap', 'goal': 'Review',
+            'cwd': str(self.cwd), 'request_id': 'create-claim-gap'})
+        self.runtime.environ['HERDR_FIRST_MATE_ARCHITECT_MODEL'] = 'synthetic/architect'
+        gap_human = self.store.claim_message(gap_feature['id'], self.runtime.owner)
+        gap_visit = self.store.start_visit(gap_feature['id'], 'planning', 'Planning',
+                                           'gap-stage', 1, gap_human['id'])
+        gap = self.store.create_assignment(gap_visit['id'], {
+            'title': 'Gap architect', 'role': 'reviewer', 'prompt': 'Review',
+            'metadata': {'model_profile': 'architect', 'workspace_mode': 'read_only'},
+            'request_id': 'gap-assignment', 'input_revision': 1})
+        gap_claim = self.store.claim_assignment(gap['id'], self.runtime.owner)
+        self.runtime.environ.pop('HERDR_FIRST_MATE_ARCHITECT_MODEL')
+        self.runtime._recover_claim_gaps()
+        self.assertEqual(self.store.get_assignment(gap['id'])['status'], 'blocked')
+        self.runtime.environ['HERDR_FIRST_MATE_ARCHITECT_MODEL'] = 'synthetic/architect-repaired'
+        self.store.feature_action(gap_feature['id'], 'resume', 'resume-gap')
+        metadata = dict(self.store.get_assignment(gap['id'])['metadata'])
+        metadata['model_selection'] = self.runtime._policy(
+            self.store.get_feature(gap_feature['id']), kind='worker',
+            claim={**self.store.get_assignment(gap['id']), 'metadata': metadata}).selection()
+        self.store.retry_assignment(gap['id'], 'Retry review', 'retry-gap',
+                                    metadata=metadata, verified_stopped=True)
+        launched = []
+        with patch.object(self.runtime, '_launch', side_effect=launched.append), \
+             patch.object(self.runtime, 'capabilities', return_value={'available': True}):
+            self.runtime.reconcile()
+        self.assertTrue(any(job['claim']['id'] == gap['id'] for job in launched))
+        self.assertEqual(self.store.get_assignment(gap['id'])['status'], 'dispatching')
+
+        handoff_feature = self.store.create_feature({'title': 'Handoff', 'goal': 'Review',
+            'cwd': str(self.cwd), 'request_id': 'create-real-handoff'})
+        handoff_human = self.store.claim_message(handoff_feature['id'], self.runtime.owner)
+        handoff_visit = self.store.start_visit(handoff_feature['id'], 'planning', 'Planning',
+                                               'handoff-stage', 1, handoff_human['id'])
+        handoff_assignment = self.store.create_assignment(handoff_visit['id'], {
+            'title': 'Handoff architect', 'role': 'reviewer', 'prompt': 'Review',
+            'metadata': {'model_profile': 'architect', 'workspace_mode': 'read_only'},
+            'request_id': 'handoff-assignment', 'input_revision': 1})
+        handoff_claim = self.store.claim_assignment(handoff_assignment['id'], self.runtime.owner)
+        handoff_job = self.runtime._new_job(handoff_feature, kind='worker', prompt='Review', claim=handoff_claim)
+        self.runtime._bind(handoff_job, 'handoff-native', handoff_job['session_file'])
+        handoff = self.store.begin_handoff(handoff_assignment['id'], handoff_claim['generation'],
+                                           'begin-real-handoff', 'Continue review')
+        handoff_job['pending_handoff'] = handoff
+        self.runtime.environ.pop('HERDR_FIRST_MATE_ARCHITECT_MODEL')
+        handoff_jobs_before = {job['id'] for job in self.runtime._jobs()}
+        self.assertTrue(self.runtime._continue_handoff(handoff_job))
+        self.assertEqual(self.store.get_assignment(handoff_assignment['id'])['status'], 'blocked')
+        self.assertEqual({job['id'] for job in self.runtime._jobs()}, handoff_jobs_before)
 
     def test_started_or_locked_job_keeps_recorded_extension(self):
         feature = self.feature()

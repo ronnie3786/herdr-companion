@@ -40,9 +40,7 @@ struct FirstMateResourceSheet: View {
                 VStack(alignment: .leading, spacing: 20) {
                     if resource.nativeSessionID != nil {
                         if let selection = store.resourceModelSelection ?? resource.modelSelection(in: store.snapshot) {
-                            Label(selection.fullDisplayName, systemImage: "cpu")
-                                .herdrFont(.caption).foregroundStyle(.secondary)
-                                .textSelection(.enabled)
+                            FirstMateModelSelectionSummaryView(selection: selection)
                         }
                         FirstMateUsageSummaryView(
                             usage: store.resourceUsage ?? resource.usage(in: store.snapshot),

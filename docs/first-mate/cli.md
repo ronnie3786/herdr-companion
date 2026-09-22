@@ -68,10 +68,22 @@ workers through the feature's First Mate conversation.
 Provider configuration belongs on the companion host. First Mate inherits the
 provider credentials resolved from its private configuration, which may differ
 from an interactive shell. Set `[machines.desktop.first_mate].model` to a Pi
-provider/model identifier verified in that same environment. Pi's advertised
-catalog alone does not prove account access. Check a small real request before
-switching. Expired OAuth refresh tokens require Pi's `/login` flow for that
-provider; never copy credentials from another host.
+provider/model identifier verified in that same environment. Natural-language
+requests such as `Give me an architect review` use typed `model_profile:
+architect` for architecture/design reviews, architect audits, and a second
+opinion on an implementation. Set the independent
+`[machines.desktop.first_mate].architect_model` and optional
+`architect_thinking`. A model name or worker title alone does not override host
+pins. Architect work has no assignment, worker, legacy-model, or Pi-default
+fallback: an unset pin is shown as not configured and blocks only that work; it
+is never re-routed through planning or execution. Before its task prompt, Pi must
+report the exact provider-qualified model and configured effort through
+`get_state`; mismatch blocks the assignment and retains requested-versus-actual
+evidence. Acknowledgements state the requested role and pin; they claim actual
+model evidence only after `model_selection.actual_*` is observed. Pi's advertised catalog alone does not
+prove account access. Check a small real request before switching. Expired OAuth
+refresh tokens require Pi's `/login` flow for that provider; never copy credentials
+from another host.
 
 ## Feature model and thinking effort (companion 0.12.0b3+)
 

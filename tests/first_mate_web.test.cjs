@@ -397,7 +397,7 @@ test('agent and saved-session rows distinguish observed routing from requested r
   snapshot.assignments = [{
     id: 'worker', visit_id: 'work', title: 'Worker', role: 'implementation', status: 'running',
     model_selection: {
-      profile: 'execution', requested_model: 'synthetic/requested-worker', requested_thinking: 'low',
+      profile: 'unsafe/<execution>', requested_model: 'synthetic/requested-worker', requested_thinking: 'low',
       actual_model: 'synthetic/observed-worker', actual_thinking: 'high', source: 'host_policy',
     },
   }];
@@ -405,20 +405,73 @@ test('agent and saved-session rows distinguish observed routing from requested r
     native_session_id: 'planner', assignment_id: 'worker', role: 'planner', kind: 'worker', status: 'queued', generation: 1,
     ownership_status: 'queued', model_selection: {
       profile: 'planning', requested_model: 'unsafe/<planner>', requested_thinking: 'xhigh',
-      actual_model: null, actual_thinking: null, source: 'host_policy',
+      actual_model: null, actual_thinking: 'max', source: 'host_policy',
     },
   }];
   await app.reply('/features/a', snapshot);
   let html = app.element('#workspace').innerHTML;
   assert.match(html, /◇ observed-worker · high/);
-  assert.match(html, /title="Actual synthetic\/observed-worker · high"/);
-  assert.doesNotMatch(html, /requested-worker · low/);
+  assert.match(html, /title="Profile: unsafe\/&lt;execution&gt; · Requested: synthetic\/requested-worker · low · Actual: synthetic\/observed-worker · high"/);
+  assert.doesNotMatch(html, /unsafe\/<execution>/);
 
   await app.click({ agent: 'worker' });
   html = app.element('#dialog-body').innerHTML;
+  assert.match(html, /Profile: unsafe\/&lt;execution&gt; · Requested: synthetic\/requested-worker · low · Actual: synthetic\/observed-worker · high/);
   assert.match(html, /Requested &lt;planner&gt; · xhigh/);
-  assert.match(html, /title="Requested unsafe\/&lt;planner&gt; · xhigh"/);
+  assert.match(html, /title="Profile: planning · Requested: unsafe\/&lt;planner&gt; · xhigh · Actual: Unavailable — no observed runtime evidence"/);
   assert.doesNotMatch(html, /unsafe\/<planner>/);
+});
+
+test('unconfigured architect selections never imply Pi default', async () => {
+  const app = inspector();
+  await app.reply('/features', { ok: true, features: [feature('a')] });
+  const snapshot = detail('a');
+  snapshot.visits = [{ id: 'review', title: 'Architecture review', status: 'running' }];
+  snapshot.assignments = [
+    {
+      id: 'blank-architect', visit_id: 'review', title: 'Blank architect', role: 'architect', status: 'running',
+      model_selection: { profile: 'architect', requested_model: '', requested_thinking: 'high', actual_model: null, actual_thinking: null, source: 'host_policy' },
+    },
+    {
+      id: 'whitespace-architect', visit_id: 'review', title: 'Whitespace architect', role: 'architect', status: 'running',
+      model_selection: { profile: ' architect ', requested_model: ' \t ', requested_thinking: 'max', actual_model: null, actual_thinking: 'max', source: 'host_policy' },
+    },
+    {
+      id: 'default-planner', visit_id: 'review', title: 'Default planner', role: 'planner', status: 'running',
+      model_selection: { profile: 'planning', requested_model: '', requested_thinking: 'xhigh', actual_model: null, actual_thinking: null, source: 'host_policy' },
+    },
+  ];
+  await app.reply('/features/a', snapshot);
+  let html = app.element('#workspace').innerHTML;
+  assert.equal((html.match(/◇ Not configured/g) || []).length, 2);
+  assert.equal((html.match(/Requested Pi default/g) || []).length, 1);
+  assert.match(html, /◇ Requested Pi default · xhigh/);
+  assert.match(html, /title="Profile: architect · Requested: Not configured · Actual: Unavailable — no observed runtime evidence"/);
+  assert.doesNotMatch(html, /Requested Pi default · (?:high|max)/);
+
+  await app.click({ agent: 'whitespace-architect' });
+  html = app.element('#dialog-body').innerHTML;
+  assert.match(html, /Profile: architect · Requested: Not configured · Actual: Unavailable — no observed runtime evidence/);
+  assert.doesNotMatch(html, /Actual: .*max/);
+});
+
+test('assignment session detail preserves requested metadata without inventing actual evidence', async () => {
+  const app = inspector();
+  await app.reply('/features', { ok: true, features: [feature('a')] });
+  const snapshot = detail('a');
+  snapshot.visits = [{ id: 'review', title: 'Architecture review', status: 'running' }];
+  snapshot.assignments = [{
+    id: 'architect', visit_id: 'review', native_session_id: 'architect-session', title: 'Architect', role: 'architect', status: 'running',
+    model_selection: { profile: 'architect', requested_model: 'unsafe/<architect>', requested_thinking: 'high', actual_model: null, actual_thinking: 'max', source: 'host_policy' },
+  }];
+  await app.reply('/features/a', snapshot);
+  const opening = app.click({ agent: 'architect' });
+  await app.reply('/sessions/architect-session', { ok: true, native_session_id: 'architect-session', messages: [] });
+  await opening;
+  const html = app.element('#dialog-body').innerHTML;
+  assert.match(html, /Profile: architect · Requested: unsafe\/&lt;architect&gt; · high · Actual: Unavailable — no observed runtime evidence/);
+  assert.doesNotMatch(html, /Actual: .*max/);
+  assert.doesNotMatch(html, /unsafe\/<architect>/);
 });
 
 test('saved-session detail prefers response observation and retains it across pagination', async () => {
@@ -436,12 +489,12 @@ test('saved-session detail prefers response observation and retains it across pa
     model_selection: { profile: 'execution', requested_model: 'synthetic/worker', requested_thinking: 'high', actual_model: 'synthetic/clamped-worker', actual_thinking: 'medium', source: 'host_policy' },
   });
   await opening;
-  assert.match(app.element('#dialog-body').innerHTML, /Actual synthetic\/clamped-worker · medium/);
+  assert.match(app.element('#dialog-body').innerHTML, /Profile: execution · Requested: synthetic\/worker · high · Actual: synthetic\/clamped-worker · medium/);
 
   const earlier = app.click({ session: 'session-a', before: '2' });
   await app.reply('/sessions/session-a?before=2&limit=100', { ok: true, native_session_id: 'session-a', messages: [], next_before: null, total_messages: 1 });
   await earlier;
-  assert.match(app.element('#dialog-body').innerHTML, /Actual synthetic\/clamped-worker · medium/);
+  assert.match(app.element('#dialog-body').innerHTML, /Profile: execution · Requested: synthetic\/worker · high · Actual: synthetic\/clamped-worker · medium/);
 });
 
 test('old routing payloads omit model labels without affecting usage', async () => {

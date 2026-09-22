@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Observation
 import UniformTypeIdentifiers
@@ -24,7 +25,7 @@ final class PRReviewStore {
     private var client: (any PRReviewClient)?
     private var generation = 0
     private var machineID: String?
-    private let documentCache: PRReviewDocumentCache
+    private let documentResources: PRReviewDocumentResources
 
     private(set) var isDemo = false
     var reviews: [PRReviewSummary] = []
@@ -56,11 +57,26 @@ final class PRReviewStore {
     var unsupported = false
     var error: String?
     var capabilities: PRReviewCapabilities?
-    var documentPhases: [String: PRReviewDocumentPhase] = [:]
     var documentUploads: [String: PRReviewDocumentUpload] = [:]
-    var protectedDocumentURLs: Set<URL> = []
     var contextImportError: String?
     var unconfigured = false
+
+    /// Every document resource this store has published a phase for. A
+    /// connection change retires phases still marked `.downloading` so a slow
+    /// download cannot leave a Context row spinning without a retry.
+    @ObservationIgnored private var heldDocumentScopes: Set<PRReviewDocumentResources.Scope> = []
+    /// Window-lifetime cache protections handed out through this store.
+    @ObservationIgnored private var documentLeases: [ObjectIdentifier: PRReviewDocumentLease] = [:]
+
+    /// Download phases for the currently configured machine and review. The
+    /// state itself is shared, so a document downloaded through a popped-out
+    /// window still publishes Ready and Reveal in Finder to this rail.
+    var documentPhases: [String: PRReviewDocumentPhase] {
+        guard let machineID, let selectedReviewID else { return [:] }
+        return documentResources.phases(machineID: machineID, reviewID: selectedReviewID)
+    }
+
+    var documentCache: PRReviewDocumentCache { documentResources.cache }
 
     enum PRReviewDocumentPhase: Equatable {
         case idle
@@ -79,15 +95,46 @@ final class PRReviewStore {
 
         var url: URL
         var status: Status
+        /// SHA-256 of the bytes this attempt sent (lowercase hex), retained so
+        /// reconciliation can require the server document to match the
+        /// attempted content instead of trusting a filename.
+        var contentHash: String?
+        /// Byte count of the attempted upload, paired with `contentHash` when
+        /// the server reports its own `byte_size`.
+        var byteCount: Int64?
     }
 
-    init(documentCache: PRReviewDocumentCache = PRReviewDocumentCache()) {
-        self.documentCache = documentCache
+    /// One validated upload attempt, held only until its transfer finishes.
+    private struct PRReviewUploadPayload {
+        let data: Data
+        let digest: String
+        let mediaType: String
+    }
+
+    /// The connection and selection an asynchronous operation started under.
+    ///
+    /// `configure`, `reconnect`, and `invalidateConnection` bump `generation`,
+    /// and `select` changes the review. Either makes a late success or error
+    /// stale, so it must not publish state even when it names the review the
+    /// window still shows.
+    private struct PRReviewOperationScope: Equatable {
+        let generation: Int
+        let machineID: String?
+        let reviewID: String?
+    }
+
+    init(
+        documentCache: PRReviewDocumentCache = PRReviewDocumentCache(),
+        documentResources: PRReviewDocumentResources? = nil
+    ) {
+        self.documentResources = documentResources ?? PRReviewDocumentResources(cache: documentCache)
     }
 
     /// A new host must discard every server-specific selection before a late response arrives.
     func configure(client: (any PRReviewClient)?, machineID: String?, demo: Bool) {
         generation &+= 1
+        settleInterruptedProgress()
+        releaseOutstandingDocumentLeases()
         self.client = client
         self.machineID = machineID
         isDemo = demo
@@ -106,9 +153,7 @@ final class PRReviewStore {
         unsupported = false
         error = nil
         capabilities = nil
-        documentPhases = [:]
         documentUploads = [:]
-        protectedDocumentURLs = []
         contextImportError = nil
 
         if demo {
@@ -130,7 +175,68 @@ final class PRReviewStore {
         error = nil
     }
 
+    /// Replaces the transport for the same machine and review without
+    /// discarding the presentation this window already owns.
+    ///
+    /// A credential, URL, or host re-activation must not reset the open tab,
+    /// filters, or selected file. Bumping the generation rejects every
+    /// in-flight response from the previous client while the refresh reloads
+    /// the same review, so the pinned window keeps its own local state.
+    ///
+    /// Operations that were in flight when the transport changed can no longer
+    /// publish their completion, so their progress settles into a terminal,
+    /// retryable state here instead of spinning forever. Nothing is resent; a
+    /// following refresh reconciles uploads that did reach the server.
+    func reconnect(client: (any PRReviewClient)?, machineID: String?, demo: Bool) {
+        generation &+= 1
+        self.client = client
+        self.machineID = machineID
+        isDemo = demo
+        unconfigured = !demo && (client == nil || machineID == nil)
+        isRefreshing = false
+        loadingDiffIdentity = nil
+        diffLoadError = nil
+        diffLoadErrorIdentity = nil
+        settleInterruptedProgress()
+    }
+
+    /// Invalidates every in-flight request and drops access to the configured
+    /// client without touching this window's presentation.
+    ///
+    /// A host that becomes unavailable, or a window that stops, must not keep
+    /// a usable transport: a late response from the old client can no longer
+    /// install state, and a retained document window has nothing to retry
+    /// through until the host returns and the window is re-activated.
+    func invalidateConnection() {
+        generation &+= 1
+        client = nil
+        isDemo = false
+        unconfigured = true
+        isRefreshing = false
+        loadingDiffIdentity = nil
+        settleInterruptedProgress()
+        releaseOutstandingDocumentLeases()
+    }
+
     var currentMachineID: String? { machineID }
+
+    /// Captures an independent, host-pinned transport for a document window.
+    ///
+    /// A document window outlives this store: the main store can switch review
+    /// hosts, and a pop-out session invalidates its store when it closes.
+    /// Pinning the configured machine and client here keeps a later Try Again
+    /// on the host the document was opened from instead of whichever host this
+    /// store now points at.
+    func documentTransport(for document: PRReviewDocument) -> PRReviewDocumentTransport? {
+        guard let machineID, isDemo || client != nil else { return nil }
+        return PRReviewDocumentTransport(
+            machineID: machineID,
+            reviewID: document.reviewID,
+            isDemo: isDemo,
+            client: client,
+            resources: documentResources
+        )
+    }
 
     var selectedReview: PRReviewSummary? {
         (reviews + archivedReviews).first { $0.id == selectedReviewID }
@@ -194,7 +300,7 @@ final class PRReviewStore {
 
         if isDemo {
             hasLoaded = true
-            snapshot = PRReviewDemo.snapshot()
+            snapshot = PRReviewDemo.snapshot(for: selectedReviewID ?? PRReviewDemo.reviewID)
             error = nil
             return
         }
@@ -250,7 +356,6 @@ final class PRReviewStore {
     }
 
     func refreshSelected() async {
-        let refreshGeneration = generation
         guard let selectedReviewID,
               let client,
               !isDemo
@@ -258,18 +363,20 @@ final class PRReviewStore {
             return
         }
 
+        let scope = operationScope(reviewID: selectedReviewID)
+
         do {
             let value = try await client.prReview(id: selectedReviewID)
-            guard refreshGeneration == generation else {
-                return
-            }
+            guard isCurrentSelection(scope) else { return }
             receive(value)
             error = nil
         } catch {
-            guard refreshGeneration == generation else {
+            guard isCurrentSelection(scope),
+                  !HerdrCancellation.isCancellation(error)
+            else {
                 return
             }
-            if !HerdrCancellation.isCancellation(error) { record(error) }
+            record(error)
         }
     }
 
@@ -311,7 +418,7 @@ final class PRReviewStore {
         }
         if isDemo {
             guard currentDiffRequestIdentity == identity else { return }
-            diff = PRReviewDemo.diff()
+            diff = PRReviewDemo.diff(for: selectedReviewID)
             completedDiffIdentity = identity
             return
         }
@@ -363,6 +470,7 @@ final class PRReviewStore {
         } else {
             archivedReviews.insert(value.review, at: 0)
         }
+        reconcileSettledUploads(with: value)
     }
 
     func setViewed(paths: [String], viewed: Bool) async {
@@ -382,6 +490,8 @@ final class PRReviewStore {
             return
         }
 
+        let scope = operationScope(reviewID: selectedReviewID)
+
         do {
             let files = try await client.setPRReviewViewed(
                 id: selectedReviewID,
@@ -389,14 +499,20 @@ final class PRReviewStore {
                 viewed: viewed,
                 requestID: UUID().uuidString
             )
-            guard self.selectedReviewID == selectedReviewID,
-                  var current = self.snapshot
+            guard isCurrentSelection(scope),
+                  var current = self.snapshot,
+                  current.review.id == scope.reviewID
             else {
                 return
             }
             current.files = files
             self.snapshot = current
         } catch {
+            guard isCurrentSelection(scope),
+                  !HerdrCancellation.isCancellation(error)
+            else {
+                return
+            }
             record(error)
         }
     }
@@ -409,18 +525,26 @@ final class PRReviewStore {
         isCreating = true
         defer { isCreating = false }
 
+        let scope = operationScope(reviewID: selectedReviewID)
+
         do {
             let value = try await client.createPRReview(
                 url: url,
                 skillIDs: skillIDs,
                 requestID: UUID().uuidString
             )
+            guard isCurrentConnection(scope) else { return }
             receive(value)
             if !reviews.contains(where: { $0.id == value.review.id }) {
                 reviews.insert(value.review, at: 0)
             }
             select(value.review.id)
         } catch {
+            guard isCurrentConnection(scope),
+                  !HerdrCancellation.isCancellation(error)
+            else {
+                return
+            }
             record(error)
         }
     }
@@ -433,13 +557,21 @@ final class PRReviewStore {
             return
         }
 
+        let scope = operationScope(reviewID: selectedReviewID)
+
         do {
             let value = try await client.refreshPRReview(
                 id: selectedReviewID,
                 requestID: UUID().uuidString
             )
+            guard isCurrentSelection(scope) else { return }
             receive(value)
         } catch {
+            guard isCurrentSelection(scope),
+                  !HerdrCancellation.isCancellation(error)
+            else {
+                return
+            }
             record(error)
         }
     }
@@ -452,15 +584,23 @@ final class PRReviewStore {
             return
         }
 
+        let scope = operationScope(reviewID: selectedReviewID)
+
         do {
             let value = try await client.archivePRReview(
                 id: selectedReviewID,
                 archived: archived,
                 requestID: UUID().uuidString
             )
+            guard isCurrentSelection(scope) else { return }
             receive(value)
             await refresh()
         } catch {
+            guard isCurrentSelection(scope),
+                  !HerdrCancellation.isCancellation(error)
+            else {
+                return
+            }
             record(error)
         }
     }
@@ -473,14 +613,22 @@ final class PRReviewStore {
             return
         }
 
+        let scope = operationScope(reviewID: selectedReviewID)
+
         do {
             _ = try await client.createPRReviewRun(
                 id: selectedReviewID,
                 skillID: skillID,
                 requestID: UUID().uuidString
             )
+            guard isCurrentSelection(scope) else { return }
             await refreshSelected()
         } catch {
+            guard isCurrentSelection(scope),
+                  !HerdrCancellation.isCancellation(error)
+            else {
+                return
+            }
             record(error)
         }
     }
@@ -490,6 +638,8 @@ final class PRReviewStore {
             return
         }
 
+        let scope = operationScope(reviewID: run.reviewID)
+
         do {
             _ = try await client.finishPRReviewRun(
                 reviewID: run.reviewID,
@@ -498,8 +648,14 @@ final class PRReviewStore {
                 note: note,
                 requestID: UUID().uuidString
             )
+            guard isCurrentSelection(scope) else { return }
             await refreshSelected()
         } catch {
+            guard isCurrentSelection(scope),
+                  !HerdrCancellation.isCancellation(error)
+            else {
+                return
+            }
             record(error)
         }
     }
@@ -512,6 +668,8 @@ final class PRReviewStore {
             return
         }
 
+        let scope = operationScope(reviewID: selectedReviewID)
+
         do {
             _ = try await client.markPRReviewSkill(
                 reviewID: selectedReviewID,
@@ -520,8 +678,14 @@ final class PRReviewStore {
                 note: note,
                 requestID: UUID().uuidString
             )
+            guard isCurrentSelection(scope) else { return }
             await refreshSelected()
         } catch {
+            guard isCurrentSelection(scope),
+                  !HerdrCancellation.isCancellation(error)
+            else {
+                return
+            }
             record(error)
         }
     }
@@ -534,10 +698,18 @@ final class PRReviewStore {
             return
         }
 
+        let scope = operationScope(reviewID: selectedReviewID)
+
         do {
             _ = try await client.rankPRReview(id: selectedReviewID, requestID: UUID().uuidString)
+            guard isCurrentSelection(scope) else { return }
             await refreshSelected()
         } catch {
+            guard isCurrentSelection(scope),
+                  !HerdrCancellation.isCancellation(error)
+            else {
+                return
+            }
             record(error)
         }
     }
@@ -550,12 +722,27 @@ final class PRReviewStore {
             return
         }
 
+        let scope = operationScope(reviewID: selectedReviewID)
+
         do {
-            snapshot?.files = try await client.syncPRReviewViewed(
+            let files = try await client.syncPRReviewViewed(
                 id: selectedReviewID,
                 requestID: UUID().uuidString
             )
+            guard isCurrentSelection(scope),
+                  var current = snapshot,
+                  current.review.id == scope.reviewID
+            else {
+                return
+            }
+            current.files = files
+            snapshot = current
         } catch {
+            guard isCurrentSelection(scope),
+                  !HerdrCancellation.isCancellation(error)
+            else {
+                return
+            }
             record(error)
         }
     }
@@ -590,6 +777,8 @@ final class PRReviewStore {
         }
         guard let client else { return }
 
+        let scope = operationScope(reviewID: selectedReviewID)
+
         do {
             _ = try await client.addPRReviewSkill(.init(
                 id: id,
@@ -601,8 +790,14 @@ final class PRReviewStore {
                 description: description,
                 requestID: UUID().uuidString
             ))
+            guard isCurrentSelection(scope) else { return }
             await refreshSelected()
         } catch {
+            guard isCurrentSelection(scope),
+                  !HerdrCancellation.isCancellation(error)
+            else {
+                return
+            }
             record(error)
         }
     }
@@ -614,10 +809,18 @@ final class PRReviewStore {
         }
         guard let client else { return }
 
+        let scope = operationScope(reviewID: selectedReviewID)
+
         do {
             _ = try await client.removePRReviewSkill(id: id, requestID: UUID().uuidString)
+            guard isCurrentSelection(scope) else { return }
             await refreshSelected()
         } catch {
+            guard isCurrentSelection(scope),
+                  !HerdrCancellation.isCancellation(error)
+            else {
+                return
+            }
             record(error)
         }
     }
@@ -627,15 +830,53 @@ final class PRReviewStore {
 
         for url in urls {
             let reviewID = selectedReviewID
+            let scope = operationScope(reviewID: reviewID)
             let uploadKey = documentUploadKey(reviewID: reviewID, url: url)
-            documentUploads[uploadKey] = .init(url: url, status: .uploading)
+            var attemptedHash: String?
+            var attemptedByteCount: Int64?
             do {
-                let document = try await uploadDocument(url: url)
+                // The digest is computed before the transfer so a later
+                // snapshot can only reconcile this row when the server
+                // document's content_hash proves this attempt landed.
+                let payload = try Self.prepareUpload(url: url)
+                attemptedHash = payload.digest
+                attemptedByteCount = Int64(payload.data.count)
+                documentUploads[uploadKey] = .init(
+                    url: url,
+                    status: .uploading,
+                    contentHash: payload.digest,
+                    byteCount: attemptedByteCount
+                )
+                let document = try await uploadDocument(url: url, payload: payload)
+                guard isCurrentConnection(scope) else { return }
+                // The transfer row belongs to its own review, so it settles
+                // even when the user has since selected another review. A
+                // changed connection is settled by `settleInterruptedProgress`
+                // and this stale completion must not overwrite it.
+                documentUploads[uploadKey] = .init(
+                    url: url,
+                    status: .uploaded,
+                    contentHash: payload.digest,
+                    byteCount: attemptedByteCount
+                )
+                guard isCurrentSelection(scope) else { return }
                 appendDocument(document)
-                documentUploads[uploadKey] = .init(url: url, status: .uploaded)
             } catch {
+                guard isCurrentConnection(scope),
+                      !HerdrCancellation.isCancellation(error)
+                else {
+                    return
+                }
                 let message = error.localizedDescription
-                documentUploads[uploadKey] = .init(url: url, status: .failed(message))
+                // An attempt whose bytes were never read keeps no digest, so
+                // reconciliation stays conservative and preserves Retry.
+                documentUploads[uploadKey] = .init(
+                    url: url,
+                    status: .failed(message),
+                    contentHash: attemptedHash,
+                    byteCount: attemptedByteCount
+                )
+                guard isCurrentSelection(scope) else { return }
                 contextImportError = message
             }
         }
@@ -668,6 +909,7 @@ final class PRReviewStore {
             return
         }
         guard let selectedReviewID, let client else { return }
+        let scope = operationScope(reviewID: selectedReviewID)
 
         do {
             let document = try await client.addPRReviewDocument(
@@ -675,8 +917,14 @@ final class PRReviewStore {
                 payload: .link(url: validated.absoluteString, title: displayTitle),
                 requestID: UUID().uuidString
             )
+            guard isCurrentSelection(scope) else { return }
             appendDocument(document)
         } catch {
+            guard isCurrentSelection(scope),
+                  !HerdrCancellation.isCancellation(error)
+            else {
+                return
+            }
             record(error)
             contextImportError = error.localizedDescription
         }
@@ -685,7 +933,14 @@ final class PRReviewStore {
     func localURL(for document: PRReviewDocument) async throws -> URL {
         guard let machineID else { throw APIError.invalidResponse }
         let reviewID = document.reviewID
-        documentPhases[document.id] = .downloading
+        let scope = operationScope(reviewID: reviewID)
+        let resourceScope = documentResources.scope(
+            machineID: machineID,
+            reviewID: reviewID,
+            documentID: document.id
+        )
+        heldDocumentScopes.insert(resourceScope)
+        documentResources.setPhase(.downloading, for: resourceScope)
         let destination = try documentCache.prepareDestinationURL(
             machineID: machineID,
             reviewID: reviewID,
@@ -706,22 +961,45 @@ final class PRReviewStore {
                     )
                 }
             }
+            guard isCurrentConnection(scope) else { throw CancellationError() }
             try documentCache.markAccessed(destination)
-            documentPhases[document.id] = .ready(destination)
-            try? documentCache.cleanup(protecting: protectedDocumentURLs)
+            documentResources.setPhase(.ready(destination), for: resourceScope)
+            // The freshly installed destination is protected even before the
+            // presenting window takes its lease, so a second store's cleanup
+            // at the retention limit cannot evict the file just downloaded.
+            try? documentResources.cleanup(additionallyProtecting: [destination])
             return destination
         } catch {
-            documentPhases[document.id] = .failed(error.localizedDescription)
+            guard isCurrentConnection(scope) else { throw CancellationError() }
+            documentResources.setPhase(.failed(error.localizedDescription), for: resourceScope)
             throw error
         }
     }
 
-    func protectDocumentURL(_ url: URL) {
-        protectedDocumentURLs.insert(url.standardizedFileURL)
+    /// Takes a window-lifetime cache protection for a displayed document.
+    /// The lease keeps retention cleanup from evicting the file while the
+    /// window shows it; the shared phase still publishes Ready and Reveal to
+    /// every rail reading this review.
+    func acquireDocumentLease(for url: URL) -> PRReviewDocumentLease {
+        documentResources.acquireLease(for: url)
+        let lease = PRReviewDocumentLease(url: url) { [documentResources] in
+            documentResources.releaseLease(for: url)
+        }
+        documentLeases[ObjectIdentifier(lease)] = lease
+        return lease
     }
 
-    func unprotectDocumentURL(_ url: URL) {
-        protectedDocumentURLs.remove(url.standardizedFileURL)
+    func releaseDocumentLease(_ lease: PRReviewDocumentLease) {
+        lease.release()
+        documentLeases[ObjectIdentifier(lease)] = nil
+    }
+
+    /// Releases every protection this store still owns, e.g. when its window
+    /// closes. Double releases are already no-ops.
+    func releaseOutstandingDocumentLeases() {
+        let leases = documentLeases.values
+        documentLeases.removeAll()
+        for lease in leases { lease.release() }
     }
 
     func scroll(to path: String, line: Int, side: PRReviewSide) {
@@ -729,7 +1007,12 @@ final class PRReviewStore {
         scrollRequest = (path, line, side, (scrollRequest?.token ?? 0) + 1)
     }
 
-    private func uploadDocument(url: URL) async throws -> PRReviewDocument {
+    /// Reads and validates one upload attempt before it leaves the Mac.
+    ///
+    /// The SHA-256 digest travels with the upload row so reconciliation can
+    /// prove the server holds this attempt's bytes instead of trusting its
+    /// filename.
+    private static func prepareUpload(url: URL) throws -> PRReviewUploadPayload {
         let accessed = url.startAccessingSecurityScopedResource()
         defer {
             if accessed { url.stopAccessingSecurityScopedResource() }
@@ -745,7 +1028,11 @@ final class PRReviewStore {
         let data = try Data(contentsOf: url, options: .mappedIfSafe)
         let mediaType = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
             ?? "application/octet-stream"
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        return PRReviewUploadPayload(data: data, digest: digest, mediaType: mediaType)
+    }
 
+    private func uploadDocument(url: URL, payload: PRReviewUploadPayload) async throws -> PRReviewDocument {
         if isDemo {
             return Self.demoDocument(
                 id: "prdoc-upload-\(UUID().uuidString)",
@@ -754,7 +1041,7 @@ final class PRReviewStore {
                 title: url.deletingPathExtension().lastPathComponent,
                 filename: url.lastPathComponent,
                 url: nil,
-                byteSize: Int64(data.count),
+                byteSize: Int64(payload.data.count),
                 origin: "user",
                 downloadable: true
             )
@@ -764,8 +1051,8 @@ final class PRReviewStore {
             id: selectedReviewID,
             payload: .upload(
                 filename: url.lastPathComponent,
-                contentType: mediaType,
-                dataBase64: data.base64EncodedString(),
+                contentType: payload.mediaType,
+                dataBase64: payload.data.base64EncodedString(),
                 title: url.deletingPathExtension().lastPathComponent
             ),
             requestID: UUID().uuidString
@@ -894,6 +1181,80 @@ final class PRReviewStore {
 
     private func record(_ failure: Error) {
         error = failure.localizedDescription
+    }
+
+    /// A reconnect or host removal makes every in-flight operation's completion
+    /// stale. Upload rows and download rows must not keep spinning with no
+    /// Retry, so they settle into a terminal, retryable state here. The
+    /// operations themselves are never resent; the next refresh reconciles
+    /// uploads that did reach the server before the transport changed.
+    private func settleInterruptedProgress() {
+        let uploadMessage = "The connection changed before this upload finished. Retry to upload it again."
+        let downloadMessage = "This download was interrupted. Open the document to try again."
+        let interruptedUploads = documentUploads.filter { entry in
+            if case .uploading = entry.value.status { return true }
+            return false
+        }
+        for (key, upload) in interruptedUploads {
+            documentUploads[key] = .init(
+                url: upload.url,
+                status: .failed(uploadMessage),
+                contentHash: upload.contentHash,
+                byteCount: upload.byteCount
+            )
+        }
+        for scope in heldDocumentScopes where documentResources.phase(for: scope) == .downloading {
+            documentResources.setPhase(.failed(downloadMessage), for: scope)
+        }
+    }
+
+    /// A refreshed snapshot is the reconciliation point for uploads that were
+    /// interrupted by a connection change: if this review's document list
+    /// contains the attempted bytes — same filename, user origin, matching
+    /// server `content_hash`, and matching byte count — the server received
+    /// the upload after all, so the row stops offering Retry. A filename alone
+    /// is never evidence: an older document with the same name, or a rejected
+    /// transfer, keeps its failure and Retry.
+    private func reconcileSettledUploads(with value: PRReviewSnapshot) {
+        let reviewPrefix = "\(value.review.id)|"
+        let settledUploads = documentUploads.filter { entry in
+            guard entry.key.hasPrefix(reviewPrefix), case .failed = entry.value.status else { return false }
+            return true
+        }
+        for (key, upload) in settledUploads {
+            guard let attemptedHash = upload.contentHash, !attemptedHash.isEmpty else { continue }
+            let filename = upload.url.lastPathComponent
+            guard !filename.isEmpty,
+                  value.documents.contains(where: { document in
+                      document.filename == filename
+                          && document.origin.lowercased() == "user"
+                          && document.contentHash?.caseInsensitiveCompare(attemptedHash) == .orderedSame
+                          && (upload.byteCount == nil || document.byteSize == upload.byteCount)
+                  })
+            else { continue }
+            documentUploads[key] = .init(
+                url: upload.url,
+                status: .uploaded,
+                contentHash: attemptedHash,
+                byteCount: upload.byteCount
+            )
+        }
+    }
+
+    private func operationScope(reviewID: String?) -> PRReviewOperationScope {
+        PRReviewOperationScope(generation: generation, machineID: machineID, reviewID: reviewID)
+    }
+
+    /// True while the operation still belongs to this store's configured
+    /// connection. A reconnect or invalidation makes every earlier scope stale.
+    private func isCurrentConnection(_ scope: PRReviewOperationScope) -> Bool {
+        generation == scope.generation && machineID == scope.machineID
+    }
+
+    /// True while the operation still belongs to the configured connection and
+    /// the review it started for is still selected.
+    private func isCurrentSelection(_ scope: PRReviewOperationScope) -> Bool {
+        isCurrentConnection(scope) && selectedReviewID == scope.reviewID
     }
 
     private func documentUploadKey(reviewID: String?, url: URL) -> String {

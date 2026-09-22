@@ -7,6 +7,7 @@ struct PRReviewHTMLReportView: View {
     @State private var phase: PaneGitWebLoadPhase = .loading
     @State private var reloadID = 0
     @State private var localURL: URL?
+    @State private var lease: PRReviewDocumentLease?
 
     var body: some View {
         ZStack {
@@ -49,7 +50,8 @@ struct PRReviewHTMLReportView: View {
         .task(id: "\(document.id)|\(reloadID)") {
             do {
                 let url = try await store.localURL(for: document)
-                store.protectDocumentURL(url)
+                if let lease { store.releaseDocumentLease(lease) }
+                lease = store.acquireDocumentLease(for: url)
                 localURL = url
             } catch {
                 guard !HerdrCancellation.isCancellation(error) else { return }
@@ -57,7 +59,8 @@ struct PRReviewHTMLReportView: View {
             }
         }
         .onDisappear {
-            if let localURL { store.unprotectDocumentURL(localURL) }
+            if let lease { store.releaseDocumentLease(lease) }
+            lease = nil
         }
     }
 

@@ -133,6 +133,11 @@ struct PRReviewFilesView: View {
     }
 
     private func selectFirstFileIfNeeded() {
+        // `refresh()` publishes the review summaries before its snapshot
+        // arrives, so the mounted view briefly sees an empty file list.
+        // Normalizing against that temporary emptiness would drop a pop-out's
+        // seeded selection before its files load; wait for the snapshot.
+        guard store.snapshot != nil else { return }
         if store.selectedPath == nil || !store.orderedFiles.contains(where: { $0.path == store.selectedPath }) {
             store.selectedPath = store.orderedFiles.first?.path
         }

@@ -5,6 +5,31 @@ import WebKit
 @Suite("Embedded Mac reading theme", .serialized)
 @MainActor
 struct HerdrWebThemeTests {
+    @Test("Native PR Review styling shares the embedded Git palette")
+    func nativePRReviewSharesGitPalette() {
+        #expect(HerdrDiffStyle.addition == HerdrDiffStyle.ChangeColor(red: 46, green: 160, blue: 67))
+        #expect(HerdrDiffStyle.deletion == HerdrDiffStyle.ChangeColor(red: 248, green: 81, blue: 73))
+        #expect(HerdrDiffStyle.lineOpacity == 0.30)
+        #expect(HerdrDiffStyle.gutterOpacity == 0.42)
+        #expect(HerdrDiffStyle.emphasisOpacity == 0.55)
+        // The dark-scheme surface weights @pierre/diffs 1.3.2 mixes into a
+        // data-background diff; the native resolved colors depend on them.
+        #expect(HerdrDiffStyle.lineSurfaceWeight == 0.80)
+        #expect(HerdrDiffStyle.gutterSurfaceWeight == 0.85)
+
+        let css = HerdrWebTheme.css
+        for variable in [
+            "--diffs-bg-addition-override: rgb(46 160 67 / 0.30);",
+            "--diffs-bg-addition-number-override: rgb(46 160 67 / 0.42);",
+            "--diffs-bg-addition-emphasis-override: rgb(46 160 67 / 0.55);",
+            "--diffs-bg-deletion-override: rgb(248 81 73 / 0.30);",
+            "--diffs-bg-deletion-number-override: rgb(248 81 73 / 0.42);",
+            "--diffs-bg-deletion-emphasis-override: rgb(248 81 73 / 0.55);",
+        ] {
+            #expect(css.contains(variable), "Embedded Git theme is missing \(variable)")
+        }
+    }
+
     @Test("Report styling is installed separately from the embedded web theme")
     func installsReportStyle() async throws {
         let configuration = WKWebViewConfiguration()

@@ -135,12 +135,7 @@ enum HerdrWebTheme {
           --diffs-fg: \(hex(HerdrTheme.text));
           --diffs-fg-number: \(hex(HerdrTheme.muted));
           --diffs-bg-separator: \(hex(HerdrTheme.selection));
-          --diffs-bg-addition-override: rgb(46 160 67 / 0.30);
-          --diffs-bg-addition-number-override: rgb(46 160 67 / 0.42);
-          --diffs-bg-addition-emphasis-override: rgb(46 160 67 / 0.55);
-          --diffs-bg-deletion-override: rgb(248 81 73 / 0.30);
-          --diffs-bg-deletion-number-override: rgb(248 81 73 / 0.42);
-          --diffs-bg-deletion-emphasis-override: rgb(248 81 73 / 0.55);
+          \(HerdrDiffStyle.cssVariables)
           --diffs-bg-hover-override: \(hex(HerdrTheme.elevated));
           --diffs-bg-selection-override: \(hex(HerdrTheme.selection));
           --diffs-bg-selection-number-override: \(hex(HerdrTheme.selection));

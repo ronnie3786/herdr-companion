@@ -11,10 +11,38 @@ struct PRReviewStoreTests {
         store.configure(client: nil, machineID: "demo", demo: true)
         await store.refresh()
 
-        #expect(store.reviews.count == 1)
+        #expect(store.reviews.map(\.id) == [PRReviewDemo.reviewID, PRReviewDemo.secondReviewID])
         #expect(store.archivedReviews.count == 1)
         #expect(store.selectedReviewID == PRReviewDemo.reviewID)
         #expect(store.snapshot?.review.id == PRReviewDemo.reviewID)
+    }
+
+    @Test("Demo refresh and diff lookup follow the selected review")
+    func demoLookupIsReviewAware() async {
+        let store = PRReviewStore()
+        store.configure(client: nil, machineID: "demo", demo: true)
+        store.select(PRReviewDemo.secondReviewID)
+        await store.refresh()
+
+        #expect(store.snapshot?.review.id == PRReviewDemo.secondReviewID)
+        #expect(store.snapshot?.review.title == PRReviewDemo.snapshot(for: PRReviewDemo.secondReviewID).review.title)
+        #expect(store.snapshot?.files.map(\.path) == PRReviewDemo.snapshot(for: PRReviewDemo.secondReviewID).files.map(\.path))
+        let path = store.orderedFiles.first?.path
+        store.selectedPath = path
+        await store.loadDiff(for: path)
+
+        #expect(store.diff?.reviewID == PRReviewDemo.secondReviewID)
+        #expect(store.diff?.files.first?.path == path)
+        #expect(store.diff != PRReviewDemo.diff())
+    }
+
+    @Test("Default demo fixtures still describe the first review")
+    func defaultDemoFixturesAreUnchanged() {
+        #expect(PRReviewDemo.snapshot().review.id == PRReviewDemo.reviewID)
+        #expect(PRReviewDemo.diff().reviewID == PRReviewDemo.reviewID)
+        #expect(PRReviewDemo.snapshot(for: "unknowable").review.id == PRReviewDemo.reviewID)
+        #expect(PRReviewDemo.diff(for: "unknowable").reviewID == PRReviewDemo.reviewID)
+        #expect(PRReviewDemo.reviews().count == 2)
     }
 
     @Test("A late refresh cannot overwrite a newer configuration")

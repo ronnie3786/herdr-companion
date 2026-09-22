@@ -82,7 +82,11 @@ final class HerdrShellState {
     var detailScope: HerdrDetailScope = .session
     private(set) var firstMate = FirstMateStore()
     let firstMateFleet = FirstMateFleetIndex()
-    let prReview = PRReviewStore()
+    /// One cache coordinator per app process: the main rail and every popped
+    /// out review or document window share download phases and window-lifetime
+    /// cache protection, so no window can evict a file another is displaying.
+    let prReviewDocumentResources: PRReviewDocumentResources
+    let prReview: PRReviewStore
     var firstMateMachineID: String?
     var firstMateScope: FirstMateMachineScope?
     private(set) var activeFirstMateMachineID: String?
@@ -140,6 +144,9 @@ final class HerdrShellState {
         let historyStore = NavigationHistoryPersistenceStore(userDefaults: userDefaults)
         self.historyStore = historyStore
         self.history = NavigationHistory(snapshot: historyStore.load())
+        let documentResources = PRReviewDocumentResources()
+        self.prReviewDocumentResources = documentResources
+        self.prReview = PRReviewStore(documentResources: documentResources)
     }
 
     /// First Mate belongs to the process-owned shell, so a newly created main

@@ -20,10 +20,12 @@ const BASE_URL = "http://127.0.0.1:9092/api/v1";
 let fetchMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
-  fetchMock = vi.fn().mockResolvedValue(
-    new Response(JSON.stringify({ ok: true, files: [], diff: "" }), {
-      headers: { "content-type": "application/json" },
-    }),
+  fetchMock = vi.fn().mockImplementation(() =>
+    Promise.resolve(
+      new Response(JSON.stringify({ ok: true, files: [], diff: "" }), {
+        headers: { "content-type": "application/json" },
+      }),
+    ),
   );
   vi.stubGlobal("fetch", fetchMock);
   configureClient({ baseUrl: BASE_URL, onUnauthorized: undefined });

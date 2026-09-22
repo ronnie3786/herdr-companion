@@ -73,7 +73,7 @@ struct FirstMateGitView: View {
         }
         .background(FirstMatePalette(scheme: scheme).background)
         .task(id: loadIdentity) {
-            let client = configuration.map(HerdrAPIClient.init(configuration:))
+            let client = configuration.map { HerdrAPIClient(configuration: $0) }
             await catalog.load(
                 machineID: machineID,
                 featureID: featureID,

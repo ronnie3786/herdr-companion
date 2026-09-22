@@ -47,7 +47,11 @@ the running server and are the API-root discovery response.
   [First Mate reference](first-mate.md)
 - PR Review: `/api/v1/pr-reviews` and `/api/v1/pr-reviews/capabilities`
 - result files: `/api/v1/result-artifacts`
-- Git, files, and skills: advertised workspace or pane subroutes
+- Git, files, and skills: advertised workspace or pane subroutes. Servers with
+  `first-mate-git-v1` also expose
+  `GET /api/v1/first-mate/features/{featureId}/git/workspaces` and feature-scoped
+  `/api/v1/first-mate/features/{featureId}/git` operations. Select the exact
+  recorded project/assignment workspace; never substitute an arbitrary pane.
 - optional voice, response audio, fleet, cleanup, alerts, push, and live-activity
   routes only when advertised by current capabilities
 

@@ -41,6 +41,7 @@ final class FirstMateStore {
     private(set) var resourceLoading = false
     private(set) var resourceError: String?
     private(set) var resourceUsage: FirstMateUsage?
+    private(set) var resourceModelSelection: FirstMateModelSelection?
     private(set) var sessionNextBefore: Int?
     private(set) var sessionTotalMessages: Int?
     private(set) var sessionLoadedMessages = 0
@@ -83,6 +84,7 @@ final class FirstMateStore {
         resourceLoading = false
         resourceError = nil
         resourceUsage = nil
+        resourceModelSelection = nil
         resetSessionPagination()
         error = nil
         unsupported = false
@@ -337,6 +339,7 @@ final class FirstMateStore {
         resourceText = ""
         resourceError = nil
         resourceUsage = resource.usage(in: snapshot)
+        resourceModelSelection = resource.modelSelection(in: snapshot)
         resetSessionPagination()
         resourceLoading = true
         defer { if token == resourceGeneration { resourceLoading = false } }
@@ -361,6 +364,7 @@ final class FirstMateStore {
                 sessionTotalMessages = response.totalMessages
                 sessionLoadedMessages = response.messages?.count ?? 0
                 if let usage = response.usage { resourceUsage = usage }
+                if let selection = response.modelSelection { resourceModelSelection = selection }
                 content = response.messages?.map { "\($0.role.capitalized)\n\($0.text)" }.joined(separator: "\n\n")
                     ?? response.content ?? "The saved session does not have any messages yet."
             }
@@ -375,6 +379,7 @@ final class FirstMateStore {
         resourcePresentation = nil
         resourceLoading = false
         resourceUsage = nil
+        resourceModelSelection = nil
         resetSessionPagination()
     }
 
@@ -397,6 +402,7 @@ final class FirstMateStore {
             sessionNextBefore = response.nextBefore
             sessionTotalMessages = response.totalMessages ?? sessionTotalMessages
             if let usage = response.usage { resourceUsage = usage }
+            if let selection = response.modelSelection { resourceModelSelection = selection }
         } catch { if token == resourceGeneration { sessionPageError = error.localizedDescription } }
     }
 

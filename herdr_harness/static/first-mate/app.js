@@ -84,6 +84,19 @@
     return `<section class="usage-panel" aria-label="${escape(title)}" title="${escape(usageDescription(usage))}"><div class="usage-heading"><h2>${escape(title)}</h2><strong class="usage-total">${escape(compactCost(usage))}</strong></div><p>Pi-reported estimated USD. Not a provider invoice; subscription providers may report $0.00.</p><p><strong>${escape(number(usage.total_tokens))}</strong> total tokens · ${escape(number(usage.input_tokens))} input · ${escape(number(usage.output_tokens))} output</p>${cache}<p>${escape(coverage(usage))}</p>${warning}${models?`<div class="usage-models">${models}</div>`:''}</section>`;
   }
   const sessionKind = session => session?.kind==='advisor'?'Advisor':session?.kind==='coordinator'||(!session?.kind&&session?.role==='first_mate')?'First Mate coordinator':'Worker';
+  const selectionText = (selection, full=false) => {
+    if(!selection)return '';
+    const actual=typeof selection.actual_model==='string'?selection.actual_model.trim():'';
+    const requested=typeof selection.requested_model==='string'?selection.requested_model.trim():'';
+    const model=value=>{const parts=value.split('/').filter(Boolean);return full?value:(parts[parts.length-1]||value);};
+    if(actual){
+      const effort=typeof selection.actual_thinking==='string'?selection.actual_thinking.trim():'';
+      return `${full?'Actual ':''}${model(actual)}${effort?` · ${effort}`:''}`;
+    }
+    const effort=typeof selection.requested_thinking==='string'?selection.requested_thinking.trim():'';
+    return `Requested ${model(requested||'Pi default')}${effort?` · ${effort}`:''}`;
+  };
+  const selectionLine = selection => selection ? `<small class="model-selection" title="${escape(selectionText(selection,true))}">◇ ${escape(selectionText(selection))}</small>` : '';
   const base = new URL('../api/v1/first-mate/', location.href).pathname;
   const state = {features:[],selected:new URLSearchParams(location.search).get('feature'),detail:null,tab:'Overview',graph:false,showArchived:false,token:'',drafts:new Map(),pending:new Map(),generation:0,resourceGeneration:0,sessionView:null,refreshSequence:0,appliedRefresh:0,sending:new Set(),lastSignature:'',error:null};
   let noticeTimer;
@@ -164,8 +177,8 @@
   function renderTabs(){ $('#tabs').innerHTML=['Overview','Agents','Documents','Workflow'].map(tab=>`<button data-tab="${tab}" class="${state.tab===tab?'selected':''}" aria-current="${state.tab===tab?'page':'false'}">${tab}</button>`).join(''); }
   function documentsForVisit(visitId){const d=state.detail,ids=new Set(d.assignments.filter(a=>(a.visit_ids||[a.visit_id]).includes(visitId)).map(a=>a.id));return d.documents.filter(doc=>doc.visit_id===visitId||ids.has(doc.assignment_id));}
   function resources(visit){const d=state.detail,agents=d.assignments.filter(a=>(a.visit_ids||[a.visit_id]).includes(visit.id)),docs=documentsForVisit(visit.id);return `<div class="resources"><button data-resource="agents" data-visit="${escape(visit.id)}" ${agents.length?'':'disabled'}>${agents.length} agents</button><button data-resource="documents" data-visit="${escape(visit.id)}" ${docs.length?'':'disabled'}>${docs.length} documents</button></div>`;}
-  function agentRows(agents){return agents.map(a=>{const distinctSubtree=a.subtree_usage&&JSON.stringify(a.subtree_usage)!==JSON.stringify(a.usage);const own=distinctSubtree?`<small>Own · ${usageInline(a.usage)}</small>`:`<small>${usageInline(a.usage)}</small>`;const subtree=distinctSubtree?`<small>With descendants · ${usageInline(a.subtree_usage)}</small>`:'';return `<button class="row" data-agent="${escape(a.id)}"><span><strong>${escape(a.title||a.role)}</strong><small>${escape(a.role)} · Attempt ${escape(a.attempt||1)}</small>${own}${subtree}</span>${status(a.status||a.verdict)}</button>`;}).join('')||empty('No agents yet','Delegated assignments appear here when First Mate starts a stage.');}
-  function sessionRows(sessions){return sessions.map(s=>`<button class="row" data-session="${escape(s.native_session_id)}"><span><strong>${escape(sessionKind(s))} · generation ${escape(s.generation||1)}</strong><small>${escape(s.ownership_status||label(s.status))}</small><small>${usageInline(s.usage)}</small></span>${status(s.status)}</button>`).join('');}
+  function agentRows(agents){return agents.map(a=>{const distinctSubtree=a.subtree_usage&&JSON.stringify(a.subtree_usage)!==JSON.stringify(a.usage);const own=distinctSubtree?`<small>Own · ${usageInline(a.usage)}</small>`:`<small>${usageInline(a.usage)}</small>`;const subtree=distinctSubtree?`<small>With descendants · ${usageInline(a.subtree_usage)}</small>`:'';return `<button class="row" data-agent="${escape(a.id)}"><span><strong>${escape(a.title||a.role)}</strong><small>${escape(a.role)} · Attempt ${escape(a.attempt||1)}</small>${selectionLine(a.model_selection)}${own}${subtree}</span>${status(a.status||a.verdict)}</button>`;}).join('')||empty('No agents yet','Delegated assignments appear here when First Mate starts a stage.');}
+  function sessionRows(sessions){return sessions.map(s=>`<button class="row" data-session="${escape(s.native_session_id)}"><span><strong>${escape(sessionKind(s))} · generation ${escape(s.generation||1)}</strong><small>${escape(s.ownership_status||label(s.status))}</small>${selectionLine(s.model_selection)}<small>${usageInline(s.usage)}</small></span>${status(s.status)}</button>`).join('');}
   function docRows(docs){return docs.map(d=>`<button class="row" data-document="${escape(d.id)}"><span><strong>${escape(d.title)}</strong><small>${escape(d.media_type||'Document')} · ${escape(date(d.created_at))}</small></span><span aria-hidden="true">↗</span></button>`).join('')||empty('No documents yet','Plans, evidence, and review reports stay attached to the work that produced them.');}
   function visitCard(v,graph=false){return `<article class="${graph?'node':'visit'} ${escape(v.status)}"><h3>${escape(v.title||label(v.stage_key))}</h3>${status(v.status)}${resources(v)}</article>`;}
   function renderWorkspace(){
@@ -210,12 +223,13 @@
       if(generation!==state.generation || resource!==state.resourceGeneration)return;
       if(d.native_session_id!==id)throw Error('Saved session identity did not match.');
       if(before!==null && d.next_before!=null && (d.next_before<0 || d.next_before>=before))throw Error('Saved session cursor did not advance.');
-      const retainedUsage=(state.detail?.sessions||[]).find(session=>session.native_session_id===id)?.usage;
-      const messages=[...(d.messages||[]),...previous], usage=d.usage||previousView?.usage||retainedUsage;
-      state.sessionView={id,messages,usage};
+      const retained=(state.detail?.sessions||[]).find(session=>session.native_session_id===id);
+      const messages=[...(d.messages||[]),...previous], usage=d.usage||previousView?.usage||retained?.usage;
+      const modelSelection=d.model_selection||previousView?.modelSelection||retained?.model_selection;
+      state.sessionView={id,messages,usage,modelSelection};
       const paging=d.total_messages!=null?`<div class="document-meta">${messages.length} of ${escape(d.total_messages)} saved messages</div>`:'';
       const earlier=d.next_before!=null?`<button data-session="${escape(id)}" data-before="${escape(d.next_before)}">Load earlier messages</button>`:'';
-      modal('Saved agent session',`<p class="document-meta">${escape(id)}</p>${usagePanel(usage,'Whole-session usage')}${paging}${earlier}${messages.map(m=>`<article class="event"><strong>${escape(m.role)}</strong><div class="prose">${messageContent(m)}</div></article>`).join('')||empty('No saved messages yet','The exact session is registered, but it has not written a transcript yet.')}`);
+      modal('Saved agent session',`<p class="document-meta">${escape(id)}${modelSelection?`<br><span title="${escape(selectionText(modelSelection,true))}">${escape(selectionText(modelSelection,true))}</span>`:''}</p>${usagePanel(usage,'Whole-session usage')}${paging}${earlier}${messages.map(m=>`<article class="event"><strong>${escape(m.role)}</strong><div class="prose">${messageContent(m)}</div></article>`).join('')||empty('No saved messages yet','The exact session is registered, but it has not written a transcript yet.')}`);
     }catch(e){if(generation===state.generation && resource===state.resourceGeneration)notice(e.message);}
   }
   async function openAgent(id){const a=state.detail.assignments.find(a=>a.id===id);const sessions=(state.detail.sessions||[]).filter(s=>s.assignment_id===id);if(!sessions.length&&a?.native_session_id)return openSession(a.native_session_id);const own=a?.subtree_usage&&JSON.stringify(a.subtree_usage)!==JSON.stringify(a.usage)?`<p>Own · ${usageInline(a.usage)}<br>With descendants · ${usageInline(a.subtree_usage)}</p>`:`<p>${usageInline(a?.usage)}</p>`;modal(a?.title||'Assignment',`<p>${escape(label(a?.status))}</p>${own}${sessions.length?sessionRows(sessions):'<p class="document-meta">A saved session will appear after this assignment starts.</p>'}${state.detail.sessions_truncated?'<p>Showing recent session history. Older sessions remain retained on the companion host.</p>':''}`);}

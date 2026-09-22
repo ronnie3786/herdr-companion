@@ -40,11 +40,12 @@ struct FirstMateSessionResponse: Decodable, Sendable {
     var nextBefore: Int?
     var totalMessages: Int?
     var usage: FirstMateUsage? = nil
+    var modelSelection: FirstMateModelSelection? = nil
     enum CodingKeys: String, CodingKey {
         case ok, messages, content
         case nativeSessionID = "native_session_id"
         case nextBefore = "next_before", totalMessages = "total_messages"
-        case usage
+        case usage, modelSelection = "model_selection"
     }
 }
 
@@ -58,8 +59,9 @@ struct FirstMateModelCatalog: Decodable, Sendable {
     var models: [FirstMateModelOption]
     var defaultModel: String
     var thinkingLevels: [String]
+    var routing: FirstMateModelRouting? = nil
     enum CodingKeys: String, CodingKey {
-        case ok, models
+        case ok, models, routing
         case defaultModel = "default_model", thinkingLevels = "thinking_levels"
     }
 }

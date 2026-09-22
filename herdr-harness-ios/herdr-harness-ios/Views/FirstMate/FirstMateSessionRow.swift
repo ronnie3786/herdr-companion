@@ -21,6 +21,12 @@ struct FirstMateSessionRow: View {
                     Text(session.ownershipStatus.replacingOccurrences(of: "_", with: " ").capitalized)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                    if let selection = session.modelSelection {
+                        Label(selection.compactDisplayName, systemImage: "cpu")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel(selection.fullDisplayName)
+                    }
                     Text(FirstMateUsageFormatting.inlineSummary(session.usage))
                         .font(.footnote)
                         .foregroundStyle(.secondary)

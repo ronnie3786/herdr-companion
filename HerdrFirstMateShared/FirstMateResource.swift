@@ -45,4 +45,15 @@ enum FirstMateResource: Identifiable {
             return session.usage
         }
     }
+
+    func modelSelection(in snapshot: FirstMateSnapshot?) -> FirstMateModelSelection? {
+        switch self {
+        case .document:
+            return nil
+        case .session(let assignment):
+            return assignment.modelSelection
+        case .history(let session):
+            return session.modelSelection
+        }
+    }
 }

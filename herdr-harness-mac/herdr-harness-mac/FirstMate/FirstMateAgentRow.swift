@@ -17,6 +17,12 @@ struct FirstMateAgentRow: View {
                     Text(agent.title).herdrFont(.subheadline, weight: .medium)
                     Text("\(agent.role) · attempt \(agent.attempt) · revision \(agent.inputRevision)")
                         .herdrFont(.caption2).foregroundStyle(.secondary)
+                    if let selection = agent.modelSelection {
+                        Label(selection.compactDisplayName, systemImage: "cpu")
+                            .herdrFont(.caption2).foregroundStyle(.secondary)
+                            .help(selection.fullDisplayName)
+                            .accessibilityLabel(selection.fullDisplayName)
+                    }
                     if let subtree = agent.subtreeUsage, subtree != agent.usage {
                         Text("Own · \(FirstMateUsageFormatting.inlineSummary(agent.usage))")
                             .herdrFont(.caption).foregroundStyle(.secondary)

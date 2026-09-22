@@ -22,6 +22,12 @@ struct FirstMateAgentRow: View {
                     Text(agent.role.replacingOccurrences(of: "_", with: " ").capitalized)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                    if let selection = agent.modelSelection {
+                        Label(selection.compactDisplayName, systemImage: "cpu")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel(selection.fullDisplayName)
+                    }
                     if let subtree = agent.subtreeUsage, subtree != agent.usage {
                         Text("Own · \(FirstMateUsageFormatting.inlineSummary(agent.usage))")
                             .font(.footnote)

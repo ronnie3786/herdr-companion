@@ -33,7 +33,7 @@ struct FirstMateModelSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("First Mate model").herdrFont(.title3, weight: .semibold)
-            Text("Saved for this feature. Applies to the next First Mate turn; running agents and worker defaults keep their settings.")
+            Text("Saved for this feature and applied to the next First Mate turn. Host planning and execution defaults route new work separately.")
                 .herdrFont(.caption).foregroundStyle(.secondary)
             if feature.modelSettingsRevision == nil {
                 Label("Update this companion server to 0.12.0b3 or later to configure models here. You can keep chatting with its current model.", systemImage: "arrow.down.circle")
@@ -58,7 +58,7 @@ struct FirstMateModelSettingsView: View {
                                 .herdrFont(.caption).foregroundStyle(.secondary).padding()
                         }
                     }
-                }.frame(height: 225)
+                }.frame(height: 165)
                 Divider()
                 Picker("Thinking effort", selection: $thinking) {
                     Text("Automatic").tag("")
@@ -66,8 +66,17 @@ struct FirstMateModelSettingsView: View {
                         Text(level.capitalized).tag(level)
                     }
                 }.accessibilityIdentifier("first-mate-thinking-effort")
-                Text("Automatic keeps Pi's saved session or default effort. Pi adjusts levels to what the model supports. A listed model still needs valid provider access.")
+                Text("Automatic uses the configured host coordinator effort. When that is unset, Pi keeps the saved session effort or its default. Pi adjusts levels to what the model supports.")
                     .herdrFont(.caption2).foregroundStyle(.secondary)
+                if let routing = catalog?.routing {
+                    Divider()
+                    Text("Host routing defaults").herdrFont(.subheadline, weight: .semibold)
+                    routingRow("Coordinator", value: routing.coordinator)
+                    routingRow("Planning", value: routing.planning)
+                    routingRow("Execution", value: routing.execution)
+                    Text("These defaults apply to new dispatches and continuations. Running workers keep their current model until a safe checkpoint and handoff.")
+                        .herdrFont(.caption2).foregroundStyle(.secondary)
+                }
                 if let error {
                     Text(error).herdrFont(.caption).foregroundStyle(.orange).textSelection(.enabled)
                 }
@@ -100,6 +109,16 @@ struct FirstMateModelSettingsView: View {
             .background(model == id ? Color.accentColor.opacity(0.10) : Color.clear, in: .rect(cornerRadius: 7))
             .contentShape(.rect)
         }.buttonStyle(.plain).help(id.isEmpty ? "Use this host's default First Mate model" : id)
+    }
+
+    private func routingRow(_ title: String, value: FirstMateRoutingDefault) -> some View {
+        HStack {
+            Text(title).herdrFont(.caption).foregroundStyle(.secondary)
+            Spacer()
+            Text(value.compactDisplayName).herdrFont(.caption, weight: .medium)
+                .lineLimit(1).truncationMode(.middle)
+                .help([value.model, value.thinking].filter { !$0.isEmpty }.joined(separator: " · "))
+        }
     }
 
     private func loadCatalog() async {

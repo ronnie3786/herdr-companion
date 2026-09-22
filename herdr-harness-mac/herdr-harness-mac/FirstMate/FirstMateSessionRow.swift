@@ -14,6 +14,12 @@ struct FirstMateSessionRow: View {
                         .herdrFont(.subheadline, weight: .medium)
                     Text("\(session.ownershipStatus.capitalized) · \(session.createdAt.prefix(10))")
                         .herdrFont(.caption).foregroundStyle(.secondary)
+                    if let selection = session.modelSelection {
+                        Label(selection.compactDisplayName, systemImage: "cpu")
+                            .herdrFont(.caption).foregroundStyle(.secondary)
+                            .help(selection.fullDisplayName)
+                            .accessibilityLabel(selection.fullDisplayName)
+                    }
                     Text(FirstMateUsageFormatting.inlineSummary(session.usage))
                         .herdrFont(.caption).foregroundStyle(.secondary)
                 }

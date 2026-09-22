@@ -32,6 +32,7 @@ struct FirstMateFeature: Codable, Equatable, Identifiable, Sendable {
     var coordinatorThinking: String? = nil
     var modelSettingsRevision: Int? = nil
     var usage: FirstMateUsage? = nil
+    var modelSelection: FirstMateModelSelection? = nil
 
     var modelDisplayName: String {
         guard let model = coordinatorModel, !model.isEmpty else { return "Host default" }
@@ -45,7 +46,7 @@ struct FirstMateFeature: Codable, Equatable, Identifiable, Sendable {
         case archivedAt = "archived_at", archiveReason = "archive_reason"
         case coordinatorModel = "coordinator_model", coordinatorThinking = "coordinator_thinking"
         case modelSettingsRevision = "model_settings_revision"
-        case usage
+        case usage, modelSelection = "model_selection"
     }
     var isArchived: Bool { archivedAt != nil }
 }

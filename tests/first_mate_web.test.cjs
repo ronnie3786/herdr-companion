@@ -389,6 +389,73 @@ test('agent and session usage preserve tiny costs, descendants, models, and advi
   assert.doesNotMatch(html, /<unsafe>/);
 });
 
+test('agent and saved-session rows distinguish observed routing from requested routing', async () => {
+  const app = inspector();
+  await app.reply('/features', { ok: true, features: [feature('a')] });
+  const snapshot = detail('a');
+  snapshot.visits = [{ id: 'work', title: 'Implementation', status: 'running' }];
+  snapshot.assignments = [{
+    id: 'worker', visit_id: 'work', title: 'Worker', role: 'implementation', status: 'running',
+    model_selection: {
+      profile: 'execution', requested_model: 'synthetic/requested-worker', requested_thinking: 'low',
+      actual_model: 'synthetic/observed-worker', actual_thinking: 'high', source: 'host_policy',
+    },
+  }];
+  snapshot.sessions = [{
+    native_session_id: 'planner', role: 'planner', kind: 'worker', status: 'queued', generation: 1,
+    ownership_status: 'queued', model_selection: {
+      profile: 'planning', requested_model: 'unsafe/<planner>', requested_thinking: 'xhigh',
+      actual_model: null, actual_thinking: null, source: 'host_policy',
+    },
+  }];
+  await app.reply('/features/a', snapshot);
+  let html = app.element('#workspace').innerHTML;
+  assert.match(html, /◇ observed-worker · high/);
+  assert.match(html, /title="Actual synthetic\/observed-worker · high"/);
+  assert.doesNotMatch(html, /requested-worker · low/);
+
+  await app.click({ tab: 'Agents' });
+  html = app.element('#workspace').innerHTML;
+  assert.match(html, /Requested &lt;planner&gt; · xhigh/);
+  assert.match(html, /title="Requested unsafe\/&lt;planner&gt; · xhigh"/);
+  assert.doesNotMatch(html, /unsafe\/<planner>/);
+});
+
+test('saved-session detail prefers response observation and retains it across pagination', async () => {
+  const app = inspector();
+  const snapshot = detail('a');
+  snapshot.sessions = [{
+    native_session_id: 'session-a', assignment_id: 'worker', kind: 'worker', status: 'retained', generation: 1,
+    model_selection: { profile: 'execution', requested_model: 'synthetic/worker', requested_thinking: 'high', actual_model: null, actual_thinking: null, source: 'host_policy' },
+  }];
+  await app.reply('/features', { ok: true, features: [feature('a')] });
+  await app.reply('/features/a', snapshot);
+  const opening = app.click({ session: 'session-a' });
+  await app.reply('/sessions/session-a', {
+    ok: true, native_session_id: 'session-a', messages: [], next_before: 2, total_messages: 1,
+    model_selection: { profile: 'execution', requested_model: 'synthetic/worker', requested_thinking: 'high', actual_model: 'synthetic/clamped-worker', actual_thinking: 'medium', source: 'host_policy' },
+  });
+  await opening;
+  assert.match(app.element('#dialog-body').innerHTML, /Actual synthetic\/clamped-worker · medium/);
+
+  const earlier = app.click({ session: 'session-a', before: '2' });
+  await app.reply('/sessions/session-a?before=2&limit=100', { ok: true, native_session_id: 'session-a', messages: [], next_before: null, total_messages: 1 });
+  await earlier;
+  assert.match(app.element('#dialog-body').innerHTML, /Actual synthetic\/clamped-worker · medium/);
+});
+
+test('old routing payloads omit model labels without affecting usage', async () => {
+  const app = inspector();
+  await app.reply('/features', { ok: true, features: [feature('a')] });
+  const snapshot = detail('a');
+  snapshot.visits = [{ id: 'work', title: 'Implementation', status: 'running' }];
+  snapshot.assignments = [{ id: 'worker', visit_id: 'work', title: 'Worker', role: 'implementation', status: 'running', usage: usage({ cost_usd: 0.30 }) }];
+  await app.reply('/features/a', snapshot);
+  const html = app.element('#workspace').innerHTML;
+  assert.doesNotMatch(html, /class="model-selection"/);
+  assert.match(html, /\$0\.30 estimated/);
+});
+
 test('missing transcript usage falls back only to the exact retained session', async () => {
   const app = inspector();
   await app.reply('/features', { ok: true, features: [feature('a')] });

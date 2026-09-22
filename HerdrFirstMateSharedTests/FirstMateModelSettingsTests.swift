@@ -14,6 +14,46 @@ struct FirstMateModelSettingsTests {
         let feature = try JSONDecoder().decode(FirstMateFeature.self, from: data)
         #expect(feature.modelSettingsRevision == nil)
         #expect(feature.modelDisplayName == "Host default")
+        #expect(feature.modelSelection == nil)
+    }
+
+    @Test("Actual routing metadata stays distinct from the requested policy")
+    func actualSelection() throws {
+        let data = Data(#"{"id":"assignment","feature_id":"feature","visit_id":"visit","title":"Implement","role":"implementation","status":"running","attempt":1,"generation":1,"input_revision":2,"updated_at":"now","model_selection":{"profile":"execution","requested_model":"synthetic/requested","requested_thinking":"low","actual_model":"synthetic/observed","actual_thinking":"high","source":"host_policy"}}"#.utf8)
+        let assignment = try JSONDecoder().decode(FirstMateAssignment.self, from: data)
+        let selection = try #require(assignment.modelSelection)
+        #expect(selection.compactDisplayName == "observed · high")
+        #expect(selection.fullDisplayName == "Actual synthetic/observed · high")
+        #expect(selection.requestedThinking == "low")
+    }
+
+    @Test("Unknown actual routing is clearly labeled as requested")
+    func requestedSelection() throws {
+        let data = Data(#"{"native_session_id":"session","feature_id":"feature","assignment_id":"assignment","title":"Plan","role":"planner","status":"queued","generation":1,"created_at":"now","updated_at":"now","ownership_status":"queued","model_selection":{"profile":"planning","requested_model":"synthetic/planner","requested_thinking":"xhigh","actual_model":null,"actual_thinking":null,"source":"host_policy"}}"#.utf8)
+        let session = try JSONDecoder().decode(FirstMateSession.self, from: data)
+        #expect(session.modelSelection?.compactDisplayName == "Requested planner · xhigh")
+        #expect(session.modelSelection?.fullDisplayName == "Requested synthetic/planner · xhigh")
+    }
+
+    @Test("Old and routed catalogs both decode")
+    func catalogCompatibility() throws {
+        let old = Data(#"{"ok":true,"models":[],"default_model":"synthetic/default","thinking_levels":["low"]}"#.utf8)
+        #expect(try JSONDecoder().decode(FirstMateModelCatalog.self, from: old).routing == nil)
+
+        let routed = Data(#"{"ok":true,"models":[],"default_model":"synthetic/default","thinking_levels":["low"],"routing":{"coordinator":{"model":"synthetic/coordinator","thinking":"low"},"planning":{"model":"synthetic/planner","thinking":"high"},"execution":{"model":"synthetic/worker","thinking":"medium"}}}"#.utf8)
+        let catalog = try JSONDecoder().decode(FirstMateModelCatalog.self, from: routed)
+        #expect(catalog.routing?.coordinator.compactDisplayName == "coordinator · low")
+        #expect(catalog.routing?.planning.model == "synthetic/planner")
+        #expect(catalog.routing?.execution.thinking == "medium")
+    }
+
+    @Test("Session responses decode optional observed routing")
+    func sessionResponseSelection() throws {
+        let old = Data(#"{"ok":true,"native_session_id":"session","messages":[]}"#.utf8)
+        #expect(try JSONDecoder().decode(FirstMateSessionResponse.self, from: old).modelSelection == nil)
+
+        let current = Data(#"{"ok":true,"native_session_id":"session","messages":[],"model_selection":{"profile":"coordinator","requested_model":"synthetic/coordinator","requested_thinking":"medium","actual_model":"synthetic/coordinator","actual_thinking":"low","source":"feature_override"}}"#.utf8)
+        #expect(try JSONDecoder().decode(FirstMateSessionResponse.self, from: current).modelSelection?.compactDisplayName == "coordinator · low")
     }
 
     @Test("Stale polls cannot roll back saved model settings")

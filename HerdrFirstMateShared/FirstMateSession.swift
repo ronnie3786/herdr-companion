@@ -16,6 +16,7 @@ struct FirstMateSession: Codable, Equatable, Identifiable, Sendable {
     var kind: String? = nil
     var parentSessionID: String? = nil
     var usage: FirstMateUsage? = nil
+    var modelSelection: FirstMateModelSelection? = nil
     var id: String { nativeSessionID }
 
     var kindDisplayName: String {
@@ -32,7 +33,7 @@ struct FirstMateSession: Codable, Equatable, Identifiable, Sendable {
         case nativeSessionID = "native_session_id", featureID = "feature_id", assignmentID = "assignment_id"
         case inputRevision = "input_revision", createdAt = "created_at", updatedAt = "updated_at"
         case ownershipStatus = "ownership_status"
-        case kind, usage
+        case kind, usage, modelSelection = "model_selection"
         case parentSessionID = "parent_session_id"
     }
 }

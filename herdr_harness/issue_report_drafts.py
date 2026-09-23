@@ -24,10 +24,11 @@ MAX_BODY_SCALARS = 20_000
 MAX_EXECUTION_SECONDS = 60
 ALLOWED_REQUEST_FIELDS = frozenset({"profile", "kind", "text"})
 OUTPUT_SCHEMA = '{"title":"concise single-line issue title","body":"structured Markdown description"}'
-# Merged over the operator's global Pi settings through a trusted, server-owned
-# project workspace. One draft is one provider inference: Pi's automatic agent
-# retries, provider retries, and automatic compaction/overflow recovery are all
-# off. `cacheWarming` is included defensively; current Pi reads it globally.
+# Merged over the operator's global Pi settings through a trusted,
+# server-owned temporary workspace. One draft is one provider inference: Pi's
+# automatic agent retries, provider retries, and automatic compaction/overflow
+# recovery are all off. `cacheWarming` is included defensively; current Pi
+# reads it globally.
 RUNTIME_SETTINGS = {
     "retry": {"enabled": False, "maxRetries": 0, "provider": {"maxRetries": 0}},
     "compaction": {"enabled": False},

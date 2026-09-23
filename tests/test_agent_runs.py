@@ -84,15 +84,19 @@ def write_fake_pi(directory: Path) -> Path:
                 appends = []
                 if "--append-system-prompt" in argv:
                     index = argv.index("--append-system-prompt")
-                    if index + 1 < len(argv):
+                    if index + 1 < len(argv) and argv[index + 1]:
                         appends.append(argv[index + 1])
                 else:
                     root = agent_dir()
                     append_file = read_text(os.path.join(root, "APPEND_SYSTEM.md")) if root else None
                     if append_file:
                         appends.append(append_file)
+                # Pi 0.87 buildSystemPromptSections unconditionally adds a
+                # <cwd> section, even when --system-prompt replaces the base
+                # prompt, so the provider sees the expanded process cwd.
+                appends.append("<cwd>" + chr(10) + os.getcwd().replace(chr(92), "/") + chr(10) + "</cwd>")
                 separator = chr(10) + chr(10)
-                return base + separator.join([""] + appends)
+                return base + separator + separator.join(appends)
 
             def provider_invocations():
                 probe = os.environ.get("FAKE_AGENT_PROBE", "")
@@ -846,8 +850,16 @@ class AgentRunManagerTests(unittest.TestCase):
             self.assertEqual(capture["argv"][capture["argv"].index("--append-system-prompt") + 1], "")
             self.assertIn("--approve", capture["argv"])
             self.assertNotIn("--no-approve", capture["argv"])
-            self.assertTrue(capture["cwd"].endswith("draft-workspace"))
+            # Pi always appends the process cwd to the provider prompt, so the
+            # drafting workspace must sit under the neutral system temporary
+            # root rather than the private run store inside the operator home.
+            workspace = Path(capture["cwd"]).resolve()
+            self.assertEqual(workspace.parent, Path(tempfile.gettempdir()).resolve())
+            self.assertTrue(workspace.name.startswith("herdr-issue-draft-"))
             self.assertIn("exactly two string fields", capture["effectiveSystemPrompt"])
+            self.assertIn("<cwd>", capture["effectiveSystemPrompt"])
+            self.assertNotIn(str(directory), capture["effectiveSystemPrompt"])
+            self.assertNotIn("draft-workspace", capture["effectiveSystemPrompt"])
             self.assertEqual(capture["effectiveSettings"]["retry"]["enabled"], False)
             self.assertEqual(capture["effectiveSettings"]["retry"]["maxRetries"], 0)
             self.assertEqual(capture["effectiveSettings"]["retry"]["provider"]["maxRetries"], 0)

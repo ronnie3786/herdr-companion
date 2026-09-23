@@ -3,6 +3,7 @@ import os
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -30,9 +31,16 @@ from herdr_harness.issue_report_drafts import (
 from tests.test_agent_runs import wait_for_status, write_fake_pi
 
 
-def _manager(directory: Path, *, default_model: bool = True, settings_root: str | None = None, **extra) -> AgentRunManager:
-    home = directory / "home"
-    home.mkdir(exist_ok=True)
+def _manager(
+    directory: Path,
+    *,
+    default_model: bool = True,
+    settings_root: str | None = None,
+    home_dir: Path | None = None,
+    **extra,
+) -> AgentRunManager:
+    home = home_dir if home_dir is not None else directory / "home"
+    home.mkdir(parents=True, exist_ok=True)
     if default_model or settings_root is not None:
         root = Path(settings_root) if settings_root else home / ".pi" / "agent"
         root.mkdir(parents=True, exist_ok=True)
@@ -187,7 +195,11 @@ class IssueReportDraftRuntimeTests(unittest.TestCase):
                     self.assertIn("--no-skills", capture["argv"])
                     self.assertIn("--approve", capture["argv"])
                     self.assertNotIn("--no-approve", capture["argv"])
-                    self.assertTrue(capture["cwd"].endswith("draft-workspace"))
+                    self.assertEqual(
+                        Path(capture["cwd"]).resolve().parent,
+                        Path(tempfile.gettempdir()).resolve(),
+                    )
+                    self.assertTrue(Path(capture["cwd"]).name.startswith("herdr-issue-draft-"))
                     self.assertEqual(capture["argv"][capture["argv"].index("--thinking") + 1], "off")
                     self.assertEqual(capture["herdrAgentRunProfile"], PROFILE)
                     self.assertNotIn(text, " ".join(capture["argv"]))
@@ -212,30 +224,29 @@ class IssueReportDraftRuntimeTests(unittest.TestCase):
 
                     # Profile-local settings disable agent/provider retries and
                     # automatic compaction recovery without touching operator
-                    # settings; one draft is one provider invocation.
+                    # settings; one draft is one provider invocation. The
+                    # provider-bound prompt exposes only the neutral temporary
+                    # workspace cwd that Pi itself appends.
                     settings = capture["effectiveSettings"]
                     self.assertEqual(settings["retry"]["enabled"], False)
                     self.assertEqual(settings["retry"]["maxRetries"], 0)
                     self.assertEqual(settings["retry"]["provider"]["maxRetries"], 0)
                     self.assertEqual(settings["compaction"]["enabled"], False)
                     self.assertEqual(settings["cacheWarming"], "off")
-                    workspace_settings = json.loads(
-                        (directory / "runs" / run["id"] / "draft-workspace" / ".pi" / "settings.json").read_text(
-                            encoding="utf-8"
-                        )
+                    workspace = Path(capture["cwd"])
+                    self.assertEqual(workspace.resolve().parent, Path(tempfile.gettempdir()).resolve())
+                    self.assertTrue(workspace.name.startswith("herdr-issue-draft-"))
+                    self.assertIn("<cwd>", capture["effectiveSystemPrompt"])
+                    self.assertIn(
+                        workspace.as_posix(),
+                        capture["effectiveSystemPrompt"].replace("\\", "/"),
                     )
-                    self.assertNotIn("defaultProvider", workspace_settings)
-                    self.assertEqual(workspace_settings["retry"]["enabled"], False)
-                    self.assertEqual(workspace_settings["compaction"]["enabled"], False)
-                    workspace = directory / "runs" / run["id"] / "draft-workspace"
-                    self.assertEqual(stat.S_IMODE(workspace.stat().st_mode), 0o700)
-                    self.assertEqual(
-                        stat.S_IMODE((workspace / ".pi" / "settings.json").stat().st_mode), 0o600
-                    )
+                    self.assertNotIn("draft-workspace", capture["effectiveSystemPrompt"])
 
                     # A restricted one-shot draft never receives the pinned
                     # agent profile snapshot, and its private store stays 0700/0600.
                     self.assertNotIn("agentProfileSnapshot", manager._read(run["id"]))
+                    self.assertNotIn("draftWorkspace", run)
                     run_dir = directory / "runs" / run["id"]
                     self.assertEqual(stat.S_IMODE(run_dir.stat().st_mode), 0o700)
                     self.assertEqual(stat.S_IMODE((run_dir / "run.json").stat().st_mode), 0o600)
@@ -357,6 +368,142 @@ class IssueReportDraftRuntimeTests(unittest.TestCase):
                 self.assertNotEqual(run["status"], "failed")
             finally:
                 manager.stop()
+
+    def test_provider_prompt_never_contains_private_home_or_run_store_paths(self):
+        # Pi appends the process cwd to the provider-bound system prompt even
+        # when --system-prompt replaces the base prompt, so a workspace below
+        # HOME or the private run store would leak the operator's path.
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            home = directory / "SYNTHETIC-HOME-SENTINEL"
+            runs = directory / "SYNTHETIC-RUNSTORE-SENTINEL"
+            capture_path = directory / "capture.json"
+            manager = _manager(
+                directory,
+                home_dir=home,
+                HERDR_HARNESS_AGENT_RUNS_ROOT=str(runs),
+                FAKE_AGENT_CAPTURE=str(capture_path),
+            )
+            try:
+                started = start(manager, request=_request("bug", "plain request"), cwd=str(home))
+                wait_for_status(manager, started["run"]["id"], {"completed"})
+                capture = json.loads(capture_path.read_text(encoding="utf-8"))
+                effective = capture["effectiveSystemPrompt"]
+                charter = capture["argv"][capture["argv"].index("--system-prompt") + 1]
+                workspace = Path(capture["cwd"])
+                self.assertEqual(workspace.resolve().parent, Path(tempfile.gettempdir()).resolve())
+                self.assertTrue(workspace.name.startswith("herdr-issue-draft-"))
+                self.assertIn("<cwd>", effective)
+                self.assertIn(workspace.as_posix(), effective.replace("\\", "/"))
+                for sentinel in ("SYNTHETIC-HOME-SENTINEL", "SYNTHETIC-RUNSTORE-SENTINEL"):
+                    with self.subTest(sentinel=sentinel):
+                        self.assertNotIn(sentinel, effective)
+                        self.assertNotIn(sentinel, charter)
+                        self.assertNotIn(sentinel, capture["prompt"])
+                        self.assertNotIn(sentinel, str(workspace))
+            finally:
+                manager.stop()
+
+    def test_draft_workspace_is_neutral_temporary_with_restricted_settings(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            home = directory / "SYNTHETIC-HOME-SENTINEL"
+            runs = directory / "SYNTHETIC-RUNSTORE-SENTINEL"
+            manager = _manager(
+                directory,
+                home_dir=home,
+                HERDR_HARNESS_AGENT_RUNS_ROOT=str(runs),
+            )
+            try:
+                run_id = "agr_0123456789ab"
+                manager._write({"id": run_id, "status": "running", "cwd": str(home)})
+                workspace = manager._prepare_issue_draft_workspace(run_id)
+
+                self.assertEqual(workspace.resolve().parent, Path(tempfile.gettempdir()).resolve())
+                self.assertTrue(workspace.name.startswith("herdr-issue-draft-"))
+                self.assertNotIn("SYNTHETIC-HOME-SENTINEL", str(workspace))
+                self.assertNotIn("SYNTHETIC-RUNSTORE-SENTINEL", str(workspace))
+                self.assertEqual(stat.S_IMODE(workspace.stat().st_mode), 0o700)
+                config_dir = workspace / ".pi"
+                self.assertEqual(stat.S_IMODE(config_dir.stat().st_mode), 0o700)
+                settings_path = config_dir / "settings.json"
+                self.assertEqual(stat.S_IMODE(settings_path.stat().st_mode), 0o600)
+                settings = json.loads(settings_path.read_text(encoding="utf-8"))
+                self.assertNotIn("defaultProvider", settings)
+                self.assertEqual(settings["retry"]["enabled"], False)
+                self.assertEqual(settings["retry"]["maxRetries"], 0)
+                self.assertEqual(settings["retry"]["provider"]["maxRetries"], 0)
+                self.assertEqual(settings["compaction"]["enabled"], False)
+                self.assertEqual(settings["cacheWarming"], "off")
+                self.assertEqual(manager._read(run_id)["draftWorkspace"], str(workspace))
+                # The temporary path stays private: it is not part of the
+                # public run shape returned to clients.
+                self.assertNotIn("draftWorkspace", manager.get(run_id)["run"])
+
+                manager._discard_issue_draft_workspace(run_id)
+                self.assertFalse(workspace.exists())
+            finally:
+                manager.stop()
+
+    def test_completed_or_cancelled_drafts_remove_their_temporary_workspace(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = _manager(directory)
+            try:
+                started = start(manager, request=_request("feature"), cwd=str(directory / "home"))
+                run_id = wait_for_status(manager, started["run"]["id"], {"completed"})["run"]["id"]
+                workspace = Path(manager._read(run_id)["draftWorkspace"])
+                deadline = time.monotonic() + 5
+                while workspace.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertFalse(workspace.exists())
+            finally:
+                manager.stop()
+
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = _manager(directory, FAKE_AGENT_MODE="hang")
+            try:
+                started = start(manager, request=_request("bug"), cwd=str(directory / "home"))
+                run_id = started["run"]["id"]
+                deadline = time.monotonic() + 5
+                workspace = None
+                while time.monotonic() < deadline:
+                    value = manager._read(run_id).get("draftWorkspace")
+                    if value:
+                        workspace = Path(value)
+                        break
+                    time.sleep(0.01)
+                self.assertIsNotNone(workspace)
+                self.assertTrue(workspace.exists())
+                self.assertEqual(manager.cancel(run_id)["run"]["status"], "cancelled")
+                deadline = time.monotonic() + 5
+                while workspace.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertFalse(workspace.exists())
+            finally:
+                manager.stop()
+
+    def test_restart_recovery_removes_a_stale_draft_workspace(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = _manager(directory)
+            run_id = "agr_0123456789ab"
+            try:
+                manager._write({"id": run_id, "status": "running", "cwd": str(directory / "home")})
+                workspace = manager._prepare_issue_draft_workspace(run_id)
+                self.assertTrue(workspace.exists())
+            finally:
+                manager.stop()
+            # A crashed harness leaves the workspace and a running record; the
+            # next manager must fail the record and remove the workspace.
+            self.assertTrue(workspace.exists())
+            restarted = _manager(directory)
+            try:
+                self.assertEqual(restarted._read(run_id)["status"], "failed")
+                self.assertFalse(workspace.exists())
+            finally:
+                restarted.stop()
 
     def test_profile_runtime_overrides_yield_one_provider_invocation(self):
         # The probe counts the provider calls Pi would make with the effective

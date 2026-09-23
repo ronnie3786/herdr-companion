@@ -66,10 +66,15 @@ Drafting uses the companion server's dedicated, additive
   with the drafting charter and explicitly suppresses the discovered
   `SYSTEM.md` and `APPEND_SYSTEM.md`, so a companion's unrelated private
   instructions or global custom prompt can never enter the provider request.
-- **Exactly one inference.** A server-owned project workspace overrides only
-  this run's Pi settings: automatic agent retries, provider retries, and
-  automatic compaction/overflow recovery are off. The operator's Pi
-  configuration is never modified.
+- **Exactly one inference.** A short-lived, server-owned workspace beneath the
+  system temporary directory overrides only this run's Pi settings: automatic
+  agent retries, provider retries, and automatic compaction/overflow recovery
+  are off. The operator's Pi configuration is never modified. Pi appends the
+  process working directory to every system prompt, even when
+  `--system-prompt` replaces the base prompt, so the workspace never sits
+  inside the operator's home or the private run store; the server removes it
+  when the run reaches a terminal state, including on cancellation, deletion,
+  shutdown, or restart recovery of an interrupted run.
 - **Pi default model.** The server resolves the configured `defaultProvider`
   and `defaultModel` from that companion's Pi configuration directory (honoring
   `PI_CODING_AGENT_DIR`), validates the exact model against the live
@@ -153,6 +158,10 @@ to a transcript that would take the box over the limit.
   request to the selected companion's configured Pi. Environment details,
   attachments, topology, and conversation history are never part of a drafting
   request.
+- Drafting runs execute from a short-lived workspace under the system temporary
+  root, so the process working directory that Pi always appends to the provider
+  prompt never exposes the operator's home, configured state directory, or the
+  private run store.
 - A recording is sent only on Stop, only to the selected companion's configured
   transcription service. It is never attached to the issue.
 - Generated or transcribed text reaches GitHub only after the user reviews and

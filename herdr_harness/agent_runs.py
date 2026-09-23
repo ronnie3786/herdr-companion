@@ -85,6 +85,11 @@ SMART_RENAME_PROFILE = "smart-rename-v1"
 # sends plain English and receives exactly one JSON object with the report
 # title and structured body.
 ISSUE_REPORT_DRAFT_PROFILE = "issue-report-draft-v1"
+# Drafting workspaces are allocated directly under the neutral system
+# temporary root. Pi adds the process cwd to the provider-bound system prompt
+# even when `--system-prompt` replaces the base prompt, so the workspace path
+# must never reveal the operator's home or the private run store.
+ISSUE_REPORT_DRAFT_WORKSPACE_PREFIX = "herdr-issue-draft-"
 # Profiles that must reject provider errors and aborts even when the message
 # also carries text, and that can never be continued, promoted, or reused.
 ONE_SHOT_PROFILES = frozenset({
@@ -606,29 +611,71 @@ class AgentRunManager:
         return pinned
 
     def _prepare_issue_draft_workspace(self, run_id: str) -> Path:
-        """Create the server-owned cwd that keeps one drafting run one-shot.
+        """Create the neutral cwd that keeps one drafting run one-shot.
 
         Pi merges trusted project settings from ``<cwd>/.pi/settings.json`` over
         the operator's global settings. ``--approve`` trusts only this freshly
         created, otherwise empty workspace. The overrides disable automatic
         agent and provider retries plus automatic compaction/overflow recovery
-        for this run without touching the operator's Pi configuration. The
-        workspace lives inside the private run directory and is removed with it.
+        for this run without touching the operator's Pi configuration.
+
+        Pi 0.87.0's ``buildSystemPromptSections`` always appends the expanded
+        process cwd to the provider-bound system prompt, including when
+        ``--system-prompt`` replaces the base prompt, so the workspace is
+        allocated with :func:`tempfile.mkdtemp` beneath the neutral system
+        temporary root instead of the private run store inside the operator's
+        home. The recorded path is removed on every terminal path.
         """
         from .issue_report_drafts import RUNTIME_SETTINGS
 
-        workspace = self._run_dir(run_id) / "draft-workspace"
-        config_dir = workspace / ".pi"
-        config_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(workspace, 0o700)
-        os.chmod(config_dir, 0o700)
-        path = config_dir / "settings.json"
-        with path.open("w", encoding="utf-8") as handle:
-            json.dump(RUNTIME_SETTINGS, handle, separators=(",", ":"), ensure_ascii=False)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(path, 0o600)
+        workspace = Path(tempfile.mkdtemp(prefix=ISSUE_REPORT_DRAFT_WORKSPACE_PREFIX))
+        try:
+            os.chmod(workspace, 0o700)
+            config_dir = workspace / ".pi"
+            config_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            os.chmod(config_dir, 0o700)
+            path = config_dir / "settings.json"
+            with path.open("w", encoding="utf-8") as handle:
+                json.dump(RUNTIME_SETTINGS, handle, separators=(",", ":"), ensure_ascii=False)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(path, 0o600)
+            self._set(run_id, draftWorkspace=str(workspace))
+        except (AgentRunError, OSError, TypeError, ValueError):
+            shutil.rmtree(workspace, ignore_errors=True)
+            raise
         return workspace
+
+    def _discard_issue_draft_workspace(self, run_id: str, run: Optional[dict] = None) -> None:
+        """Remove a drafting workspace on every terminal path.
+
+        The recorded path is validated back to the neutral temporary root and
+        the manager's own prefix before a recursive delete, so a corrupted run
+        record cannot direct cleanup outside the server's own allocations.
+        Callers that already hold a run record pass it to avoid a second read.
+        """
+        if run is None:
+            try:
+                with self._lock:
+                    run = self._read(run_id)
+            except AgentRunError:
+                return
+        value = run.get("draftWorkspace")
+        if not isinstance(value, str) or not value:
+            return
+        workspace = Path(value)
+        if not workspace.is_absolute():
+            return
+        try:
+            resolved = workspace.resolve()
+            temporary_root = Path(tempfile.gettempdir()).resolve()
+        except (OSError, RuntimeError):
+            return
+        if resolved.parent != temporary_root:
+            return
+        if not resolved.name.startswith(ISSUE_REPORT_DRAFT_WORKSPACE_PREFIX):
+            return
+        shutil.rmtree(resolved, ignore_errors=True)
 
     def _run_dir(self, run_id: str) -> Path:
         if not _RUN_ID_RE.fullmatch(run_id):
@@ -701,6 +748,10 @@ class AgentRunManager:
                 )
                 self._write(run)
             self._prune_run_if_expired(run)
+            # A restart can leave a drafting workspace behind: the process is
+            # gone, so any recorded workspace is safe to remove now (and
+            # already-gone ones are a no-op).
+            self._discard_issue_draft_workspace(item.name, run)
 
     @staticmethod
     def _thread_root_id(run: dict) -> str:
@@ -731,6 +782,7 @@ class AgentRunManager:
     def _remove_thread(self, root_id: str) -> None:
         for member in self._thread_runs(root_id):
             member_id = str(member["id"])
+            self._discard_issue_draft_workspace(member_id, member)
             shutil.rmtree(self._run_dir(member_id), ignore_errors=True)
             self._clear_pending_steps(member_id)
 
@@ -1310,8 +1362,9 @@ class AgentRunManager:
                 # Project settings in a trusted, server-owned cwd turn off
                 # automatic agent/provider retries and automatic compaction
                 # recovery for this run without changing the operator's Pi
-                # settings. The workspace is created inside the private run
-                # directory and removed with it.
+                # settings. The workspace sits under the neutral system
+                # temporary root (Pi always adds cwd to the provider prompt)
+                # and is removed when the run reaches a terminal state.
                 try:
                     process_cwd = str(self._prepare_issue_draft_workspace(run_id))
                 except OSError as exc:
@@ -1501,6 +1554,7 @@ class AgentRunManager:
                 self._processes.pop(run_id, None)
                 self._clear_pending_steps(run_id)
                 self._threads.pop(run_id, None)
+            self._discard_issue_draft_workspace(run_id)
             if acquired:
                 self._slots.release()
 
@@ -1828,6 +1882,7 @@ class AgentRunManager:
             elif run.get("status") != "promoted":
                 # A follower owns no session directory, so single-run delete
                 # never affects the root session used by the rest of its thread.
+                self._discard_issue_draft_workspace(run_id)
                 shutil.rmtree(self._run_dir(run_id), ignore_errors=True)
                 self._clear_pending_steps(run_id)
             else:
@@ -1863,6 +1918,7 @@ class AgentRunManager:
         with self._lock:
             processes = list(self._processes.items())
             threads = list(self._threads.values())
+            run_ids = list(self._threads)
             self._cancel_requested.update(self._threads)
             for run_id in self._threads:
                 try:
@@ -1877,5 +1933,9 @@ class AgentRunManager:
         for thread in threads:
             if thread.is_alive():
                 thread.join(timeout=2)
+        # Defensive: `_execute` cleans its own workspace, but a stuck thread
+        # must not leave a private temporary workspace behind at shutdown.
+        for run_id in run_ids:
+            self._discard_issue_draft_workspace(run_id)
         if self._reaper_thread.is_alive():
             self._reaper_thread.join(timeout=2)

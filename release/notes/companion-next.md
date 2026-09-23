@@ -70,10 +70,15 @@ report sheet's optional smart input.
   cannot be continued or promoted, and no generic-agent fallback exists.
 - The run's system prompt is exclusively server-owned: Pi's own prompt is
   replaced and the discovered `SYSTEM.md`/`APPEND_SYSTEM.md` are suppressed, so
-  no private companion instruction can enter a drafting request. A
-  server-owned project workspace disables automatic agent/provider retries and
-  automatic compaction recovery for this run only, keeping one draft at one
-  provider inference without modifying operator Pi settings.
+  no private companion instruction can enter a drafting request. A short-lived,
+  server-owned workspace beneath the system temporary directory disables
+  automatic agent/provider retries and automatic compaction recovery for this
+  run only, keeping one draft at one provider inference without modifying
+  operator Pi settings. Pi appends the process working directory to every
+  system prompt, even when `--system-prompt` replaces the base prompt, so that
+  workspace never lives inside the operator's home or the private run store and
+  is removed when the run reaches a terminal state, including on cancellation,
+  deletion, shutdown, or restart recovery of an interrupted run.
 - The server resolves the configured `defaultProvider`/`defaultModel` from the
   companion's Pi configuration directory (honoring `PI_CODING_AGENT_DIR`),
   validates that exact model against `pi --list-models`, and pins it on the

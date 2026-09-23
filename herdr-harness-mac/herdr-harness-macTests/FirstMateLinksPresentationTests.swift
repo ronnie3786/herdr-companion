@@ -22,7 +22,10 @@ struct FirstMateLinksPresentationTests {
             updatedAt: "2030-01-01T12:00:00Z"
         )
         var opened: URL?
-        #expect(FirstMateLinkActions.open(link, opener: { opened = $0; return true }))
+        // Compute the call outside the macro so the injected opener stays a
+        // MainActor closure; the `#expect` rewrite requires a Sendable one.
+        let didOpen = FirstMateLinkActions.open(link, opener: { opened = $0; return true })
+        #expect(didOpen)
         #expect(opened?.absoluteString == link.url)
         #expect(link.hostLabel == "share.example.test:8443")
 
@@ -52,9 +55,11 @@ struct FirstMateLinksPresentationTests {
                 updatedAt: ""
             )
             var opened = false
-            #expect(!FirstMateLinkActions.open(link, opener: { _ in opened = true; return true }))
+            let didOpen = FirstMateLinkActions.open(link, opener: { _ in opened = true; return true })
+            let didCopy = FirstMateLinkActions.copy(link, pasteboard: pasteboard)
+            #expect(!didOpen)
             #expect(!opened)
-            #expect(!FirstMateLinkActions.copy(link, pasteboard: pasteboard))
+            #expect(!didCopy)
         }
         #expect(pasteboard.string(forType: .string) == nil)
     }
@@ -63,7 +68,9 @@ struct FirstMateLinksPresentationTests {
     func pullRequestProminence() {
         let snapshot = FirstMateDemo.features(step: 0)[0]
         #expect(snapshot.pullRequestLinks.map(\.id) == ["demo-link-pr-101", "demo-link-pr-7"])
-        #expect(snapshot.pullRequestLinks.allSatisfy(\.isPullRequest))
+        // An explicit closure keeps the `#expect` rewrite from treating the
+        // `rethrows` call as throwing; a key path would not compile here.
+        #expect(snapshot.pullRequestLinks.allSatisfy { $0.isPullRequest })
         #expect(snapshot.otherLinks.map(\.id) == ["demo-link-share"])
         #expect(snapshot.otherLinks.allSatisfy { !$0.isPullRequest })
         #expect(Set(snapshot.visibleLinks.map(\.id)).count == 3)

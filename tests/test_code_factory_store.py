@@ -14,6 +14,7 @@ SNAPSHOT_KEYS = {"ok", "generatedAt", "stats", "issues", "releases", "daemon"}
 ISSUE_KEYS = {
     "number", "title", "kind", "author", "url", "labels", "status", "stage", "stageLabel", "stageIndex",
     "attempts", "reviewRound", "ciFailures", "ciRerunRequested", "branch", "worktreePath", "worktreeCleaned", "prNumber", "prUrl", "headSha",
+    "rebaseAttempts", "failureRetries",
     "ciStatus", "mergeSha", "releaseTag", "releaseVersion", "releaseUrl", "error", "blockedReason",
     "planSummary", "createdAt", "updatedAt", "claimedAt", "finishedAt", "sessions", "events",
 }

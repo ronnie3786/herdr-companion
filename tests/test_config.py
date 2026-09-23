@@ -417,6 +417,9 @@ max_parallel_issues = 2
 max_review_rounds = 3
 max_ci_failures = 3
 session_timeout_seconds = 3600
+reviser_session_timeout_seconds = 7200
+max_rebase_attempts = 2
+max_transient_retries = 2
 verify_wait_seconds = 1800
 dashboard_host = "tailscale"
 dashboard_port = 9097
@@ -451,6 +454,9 @@ python = "python3"
             'HERDR_CODE_FACTORY_MAX_REVIEW_ROUNDS': '3',
             'HERDR_CODE_FACTORY_MAX_CI_FAILURES': '3',
             'HERDR_CODE_FACTORY_SESSION_TIMEOUT_SECONDS': '3600',
+            'HERDR_CODE_FACTORY_REVISER_SESSION_TIMEOUT_SECONDS': '7200',
+            'HERDR_CODE_FACTORY_MAX_REBASE_ATTEMPTS': '2',
+            'HERDR_CODE_FACTORY_MAX_TRANSIENT_RETRIES': '2',
             'HERDR_CODE_FACTORY_VERIFY_WAIT_SECONDS': '1800',
             'HERDR_CODE_FACTORY_DASHBOARD_HOST': 'tailscale',
             'HERDR_CODE_FACTORY_DASHBOARD_PORT': '9097',

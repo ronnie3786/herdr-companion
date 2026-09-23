@@ -49,12 +49,14 @@ MAX_JSON_BYTES = 2 * 1024 * 1024
 ISSUE_COLUMNS = (
     "number", "title", "kind", "author", "url", "labels_json", "status", "stage",
     "attempts", "review_round", "ci_failures", "ci_rerun_requested", "branch", "worktree_path",
-    "worktree_cleaned",
+    "worktree_cleaned", "rebase_attempts", "failure_retries",
     "pr_number", "pr_url", "head_sha", "ci_status", "merge_sha", "release_tag",
     "release_version", "release_url", "error", "blocked_reason", "plan_summary",
     "plan_json", "created_at", "updated_at", "claimed_at", "finished_at",
 )
-ISSUE_INTEGER_COLUMNS = frozenset({"number", "attempts", "review_round", "ci_failures", "pr_number"})
+ISSUE_INTEGER_COLUMNS = frozenset({
+    "number", "attempts", "review_round", "ci_failures", "pr_number", "rebase_attempts", "failure_retries",
+})
 RELEASE_COLUMNS = (
     "tag", "version", "channel", "status", "source_sha", "url", "notes_path",
     "output_dir", "issues_json", "error", "started_at", "finished_at",
@@ -74,6 +76,7 @@ CREATE TABLE IF NOT EXISTS issues(
  attempts INTEGER NOT NULL DEFAULT 0, review_round INTEGER NOT NULL DEFAULT 0,
  ci_failures INTEGER NOT NULL DEFAULT 0, ci_rerun_requested TEXT,
  branch TEXT, worktree_path TEXT, worktree_cleaned INTEGER NOT NULL DEFAULT 0,
+ rebase_attempts INTEGER NOT NULL DEFAULT 0, failure_retries INTEGER NOT NULL DEFAULT 0,
  pr_number INTEGER, pr_url TEXT, head_sha TEXT, ci_status TEXT, merge_sha TEXT,
  release_tag TEXT, release_version TEXT, release_url TEXT, error TEXT, blocked_reason TEXT,
  plan_summary TEXT, plan_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
@@ -205,6 +208,8 @@ class CodeFactoryStore:
         migrations = (
             ("ci_failures", "ALTER TABLE issues ADD COLUMN ci_failures INTEGER NOT NULL DEFAULT 0"),
             ("ci_rerun_requested", "ALTER TABLE issues ADD COLUMN ci_rerun_requested TEXT"),
+            ("rebase_attempts", "ALTER TABLE issues ADD COLUMN rebase_attempts INTEGER NOT NULL DEFAULT 0"),
+            ("failure_retries", "ALTER TABLE issues ADD COLUMN failure_retries INTEGER NOT NULL DEFAULT 0"),
         )
         for name, statement in migrations:
             if name not in columns:

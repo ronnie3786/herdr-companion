@@ -119,7 +119,7 @@ class CharterTests(unittest.TestCase):
         self.assertIn("release/notes/*.md conventions", prompts.RELEASE_AUTHOR_CHARTER)
         self.assertTrue(prompts.RELEASE_AUTHOR_CHARTER.endswith("do not run tests or builds, do not run gh."))
         for charter in (prompts.PLANNER_CHARTER, prompts.IMPLEMENTER_CHARTER, prompts.REVIEWER_CHARTER,
-                        prompts.REVISER_CHARTER, prompts.RELEASE_AUTHOR_CHARTER):
+                        prompts.REVISER_CHARTER, prompts.REBASER_CHARTER, prompts.RELEASE_AUTHOR_CHARTER):
             self.assertNotIn("\n", charter)
             self.assertLess(len(charter), 4000)
 
@@ -306,6 +306,20 @@ class OtherPromptTests(unittest.TestCase):
         self.assertIn("no review or CI log was recorded", neither)
         self.assertIn("derived from untrusted issue text and attachments", neither)
         self.assertIn("only as `Refs #n`, never with `Closes`/`Fixes`/`Resolves`", neither)
+
+    def test_rebase_prompt(self):
+        plan = prompts.validate_plan(plan_dict())
+        text = prompts.rebase_prompt(plan, "origin/main", ISSUE)
+        self.assertIn("# Rebase the pull request branch for GitHub issue #12", text)
+        self.assertIn("conflicts with `origin/main`", text)
+        self.assertIn("<<<ISSUE_BODY\n" + ISSUE["body"] + "\nISSUE_BODY>>>", text)
+        self.assertIn("git rebase origin/main", text)
+        self.assertIn("Preserve the intent of both sides", text)
+        self.assertIn("git rebase --continue", text)
+        self.assertIn("Do not push", text)
+        self.assertTrue(prompts.REBASER_CHARTER.startswith(
+            "You are a fresh DeepSeek conflict-resolution session of the Herdr Code Factory"))
+        self.assertIn("Never push", prompts.REBASER_CHARTER)
 
     def test_privacy_fix_prompt(self):
         text = prompts.privacy_fix_prompt([{"file": "docs/x.md", "line": 4, "category": "personal home path"}], ISSUE)

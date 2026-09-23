@@ -58,6 +58,7 @@ ACTIONS = ("retry", "skip", "cleanup", "release_now")
 RELEASE_RESUMABLE = frozenset({"failed", "verifying", "publishing"})
 RELEASE_RETRY_MIN_SECONDS = 600
 RELEASE_RETRY_MAX_SECONDS = 6 * 3600
+AUTO_RETRY_DELAY_SECONDS = 300
 VERIFY_POLL_MAX_ERRORS = 5
 PRIVACY_CHECK_SCRIPT = "scripts/check-public-source.py"
 RELEASE_VERSION_FILE = "release/macos.json"
@@ -68,6 +69,11 @@ MESSAGE_ME_SCRIPT = Path.home() / ".codex" / "skills" / "message-me" / "scripts"
 
 _ATTACHMENT_URL_RE = re.compile(
     r"https://github\.com/(?:user-attachments/[^\s)\]\"'<>]+|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/releases/download/[^\s)\]\"'<>]+)"
+)
+_TRANSIENT_ERROR_RE = re.compile(
+    r"\bHTTP 5\d\d\b|500 Internal Server Error|\b50[234]\b|connection (?:refused|reset|closed)"
+    r"|timed out|timeout|rate limit|temporarily unavailable|unexpected EOF",
+    re.IGNORECASE,
 )
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -244,6 +250,7 @@ class CodeFactory:
         self._release_failures = 0
         self._release_failed_at: float | None = None
         self._release_deferred_logged = False
+        self._transient_failures: dict[int, float] = {}
         self._login: str | None = None
         self._handlers: dict[str, Callable[[dict[str, Any]], str | None]] = {
             "intake": self._stage_intake,
@@ -411,6 +418,7 @@ class CodeFactory:
         }
         listed = self._github.list_issues(self._settings.trigger_label)
         counts["discovered"] = len(listed)
+        self._auto_retry_transient_failures()
         allowed = {login.lower() for login in self.allowed_authors()}
         open_numbers: set[int] = set()
         for item in listed:
@@ -474,6 +482,48 @@ class CodeFactory:
                               "use the release_now action to retry immediately")
         self._store.set_daemon("last_poll_at", utc_now())
         return counts
+
+    def _auto_retry_transient_failures(self) -> None:
+        """Requeue failed issues whose error looks transient (provider 5xx, network, timeout).
+
+        Bounded by ``max_transient_retries`` and a cooldown, so a still-broken provider
+        cannot create a hot loop while a genuine coding failure stays failed for a human.
+        The poller only flips the ledger back to ``active``; the same poll's discovery
+        loop submits it.
+        """
+        failed = {issue["number"]: issue for issue in self._store.list_issues("failed")}
+        for number in list(self._transient_failures):
+            if number not in failed:
+                self._transient_failures.pop(number, None)
+        for number, issue in failed.items():
+            if self.is_running(number):
+                continue
+            retries = int(issue.get("failureRetries") or 0)
+            if retries >= self._settings.max_transient_retries:
+                self._transient_failures.pop(number, None)
+                continue
+            stage = str(issue.get("stage") or "intake")
+            if not _TRANSIENT_ERROR_RE.search(str(issue.get("error") or "")):
+                continue
+            first_seen = self._transient_failures.get(number)
+            if first_seen is None:
+                self._transient_failures[number] = self._clock()
+                self._store.add_event(
+                    number, stage, "warning",
+                    f"Transient failure; retrying automatically in {AUTO_RETRY_DELAY_SECONDS // 60} minutes "
+                    f"(attempt {retries + 1}/{self._settings.max_transient_retries})",
+                )
+                continue
+            if self._clock() - first_seen < AUTO_RETRY_DELAY_SECONDS:
+                continue
+            self._transient_failures.pop(number, None)
+            self._store.update_issue(number, status="active", error=None, failureRetries=retries + 1)
+            self._store.add_event(
+                number, stage, "info",
+                f"Transient failure auto-retry {retries + 1}/{self._settings.max_transient_retries}",
+            )
+            self._log(f"issue #{number}: auto-retrying after a transient failure "
+                      f"({retries + 1}/{self._settings.max_transient_retries})")
 
     def _merged_closing_pull_request(self, remote: Mapping[str, Any]) -> dict[str, Any] | None:
         """Return the newest merged PR that GitHub says closed ``remote``.
@@ -609,7 +659,7 @@ class CodeFactory:
     def _advance(self, number: int, stage: str, next_stage: str) -> None:
         if next_stage not in STAGE_ORDER:
             raise CodeFactoryError(f"invalid next stage {next_stage!r}", code="invalid_request")
-        fields: dict[str, Any] = {"stage": next_stage}
+        fields: dict[str, Any] = {"stage": next_stage, "failureRetries": 0}
         if next_stage == "done":
             fields.update(status="done", finishedAt=utc_now())
         with self._lock:
@@ -827,7 +877,7 @@ class CodeFactory:
             result = self._pi.run(
                 prompt=prompt, cwd=str(cwd), model=model, thinking=thinking, session_dir=str(paths.sessions),
                 session_id=session_id, name=name, charter=charter, tools=tools, attachments=list(attachments),
-                timeout_seconds=self._settings.session_timeout_seconds, log_path=str(log_path),
+                timeout_seconds=self._settings.session_timeout_for(role), log_path=str(log_path),
                 cancel=lambda: self._cancel_requested(issue_number),
             )
         except BaseException as exc:
@@ -1275,7 +1325,8 @@ class CodeFactory:
         if not head:
             return "pull_request"
         pr_number = issue.get("prNumber")
-        if isinstance(pr_number, int) and self._head_moved(number, "verify", pr_number, head):
+        branch = issue.get("branch") or self._branch(number)
+        if isinstance(pr_number, int) and self._head_moved(number, "verify", branch, head):
             return "verify"
         status = self._wait_for_verify(
             head, lambda value: self._store.update_issue(number, ciStatus=value),
@@ -1316,21 +1367,25 @@ class CodeFactory:
         self._block(number, "verify", "ci_timeout", f"Verify did not finish within {self._settings.verify_wait_seconds} s")
         return None
 
-    def _head_moved(self, number: int, stage: str, pr_number: int, head: str) -> bool:
-        """True (after recording the new head) when the PR branch no longer points at the verified sha."""
+    def _head_moved(self, number: int, stage: str, branch: str, head: str) -> bool:
+        """True (after recording the new head) when the pushed branch tip no longer matches the verified sha.
+
+        ``origin/<branch>`` is authoritative. GitHub's pull request head field can briefly
+        report the pre-push commit after a revision, which previously moved the ledger
+        backwards and blocked a head whose Verify runs had already succeeded.
+        """
         if not head:
             return False
         try:
-            live = self._github.pull_request(pr_number)
+            pushed = self._git.remote_head(branch)
         except CodeFactoryError as exc:
-            self._store.add_event(number, stage, "warning", f"Could not read the pull request head: {_error_text(exc)}")
+            self._store.add_event(number, stage, "warning", f"Could not read origin/{branch}: {_error_text(exc)}")
             return False
-        live_head = str(live.get("headRefOid") or "").strip().lower()
-        if not live_head or live_head == head.lower():
+        if not pushed or pushed.lower() == head.lower():
             return False
-        self._store.update_issue(number, headSha=live_head, ciStatus=None)
+        self._store.update_issue(number, headSha=pushed, ciStatus=None)
         self._store.add_event(number, stage, "warning",
-                              f"The pull request head moved from {head[:12]} to {live_head[:12]} since it was verified; re-running Verify")
+                              f"The pull request head moved from {head[:12]} to {pushed[:12]} since it was verified; re-running Verify")
         return True
 
     @staticmethod
@@ -1352,19 +1407,25 @@ class CodeFactory:
         number = issue["number"]
         head = issue.get("headSha") or ""
         pr_number = int(issue["prNumber"])
-        if self._head_moved(number, "review", pr_number, head):
+        branch = issue.get("branch") or self._branch(number)
+        if self._head_moved(number, "review", branch, head):
             return "verify"
         paths = self._paths(number)
         cwd = self._ensure_worktree(issue)
         plan = self._ready_plan(issue, paths, "review")
         if plan is None:
             return "plan"
+        if self._pull_request_conflicts(number, "review", pr_number):
+            return self._rebase_conflicted_branch(issue, "review")
         review = self._pending_review(plan, head)
         if review is not None:
             round_number = max(1, int(issue["reviewRound"] or 0))
             self._store.add_event(number, "review", "info", f"Posting the stored review for round {round_number}; the earlier post failed")
         else:
-            round_number = int(issue["reviewRound"] or 0) + 1
+            # A rebase changes the head without a reviewable change of intent, so the next
+            # review re-checks it at the same round number instead of spending a new one.
+            grace = bool(plan.pop("reviewGrace", False))
+            round_number = max(1, int(issue["reviewRound"] or 0)) if grace else int(issue["reviewRound"] or 0) + 1
             if round_number > self._settings.max_review_rounds:
                 self._block(number, "review", "review_rounds_exhausted", f"{round_number - 1} review round(s) used")
                 return None
@@ -1419,8 +1480,21 @@ class CodeFactory:
         number = issue["number"]
         head = issue.get("headSha") or ""
         pr_number = issue.get("prNumber")
-        if isinstance(pr_number, int) and self._head_moved(number, "revise", pr_number, head):
+        branch = issue.get("branch") or self._branch(number)
+        if isinstance(pr_number, int) and self._head_moved(number, "revise", branch, head):
             return "verify"
+        # A resume or retry can land here after the ledger already recorded an exhausted
+        # budget; never spend a fresh reviser session when the bound cannot accept one.
+        ci_failures = int(issue.get("ciFailures") or 0)
+        if ci_failures > self._settings.max_ci_failures:
+            self._block(number, "revise", "ci_failures_exhausted",
+                        f"{ci_failures} CI failure(s) used; the revision budget is exhausted")
+            return None
+        review_round = int(issue.get("reviewRound") or 0)
+        if review_round > self._settings.max_review_rounds:
+            self._block(number, "revise", "review_rounds_exhausted",
+                        f"{review_round} review round(s) used; the revision budget is exhausted")
+            return None
         paths = self._paths(number)
         cwd = self._ensure_worktree(issue)
         plan = self._ready_plan(issue, paths, "revise")
@@ -1428,7 +1502,6 @@ class CodeFactory:
             return "plan"
         view = self._issue_view(issue, paths)
         round_number = int(issue["reviewRound"] or 0)
-        branch = issue.get("branch") or self._branch(number)
         review = plan.get("last_review") if isinstance(plan.get("last_review"), dict) else None
         if head and self._git.head(cwd) != head and self._resolve_optional(head):
             self._git.reset_hard(cwd, head)
@@ -1451,12 +1524,15 @@ class CodeFactory:
         number = issue["number"]
         pr_number = int(issue["prNumber"])
         head = issue.get("headSha") or ""
-        if self._head_moved(number, "merge", pr_number, head):
+        branch = issue.get("branch") or self._branch(number)
+        if self._head_moved(number, "merge", branch, head):
             return "verify"
         paths = self._paths(number)
         plan = self._ready_plan(issue, paths, "merge")
         if plan is None:
             return "plan"
+        if self._pull_request_conflicts(number, "merge", pr_number):
+            return self._rebase_conflicted_branch(issue, "merge")
         stored_review = plan.get("last_review")
         try:
             review = prompts.validate_review(stored_review, plan)
@@ -1487,6 +1563,104 @@ class CodeFactory:
         self._cleanup_worktree(self._store.get_issue(number) or issue, "merge")
         self._comment(number, "merge", prompts.merged_comment(merge_sha, pr_number, release_enabled=self._settings.release_enabled))
         return "release" if self._settings.release_enabled else "done"
+
+    def _pull_request_conflicts(self, number: int, stage: str, pr_number: int) -> bool:
+        """True when GitHub reports the pull request cannot merge because of conflicts.
+
+        ``mergeable`` and ``mergeStateStatus`` are computed lazily; ``UNKNOWN`` reads as
+        "no conflict yet" so a not-yet-computed status never rewrites a healthy branch.
+        """
+        try:
+            pull = self._github.pull_request(pr_number)
+        except CodeFactoryError as exc:
+            self._store.add_event(number, stage, "warning",
+                                  f"Could not read the pull request mergeability: {_error_text(exc)}")
+            return False
+        mergeable = str(pull.get("mergeable") or "").upper()
+        state = str(pull.get("mergeStateStatus") or "").upper()
+        return mergeable == "CONFLICTING" or state == "DIRTY"
+
+    def _rebase_conflicted_branch(self, issue: Mapping[str, Any], stage: str) -> str | None:
+        """Rebase a conflicted branch with a DeepSeek session, spending a bounded rebase budget.
+
+        A conflict is neither a review finding nor a CI failure, so the review round and
+        CI failure counters are preserved: after the forced push the issue re-runs Verify,
+        and the next review re-checks the rebased head at the same round number
+        (``reviewGrace``). The stale CI log is dropped because it belongs to the old head.
+        Retries are bounded by ``max_rebase_attempts`` and surfaced as
+        ``rebase_conflicts_exhausted`` for an explicit operator retry.
+        """
+        number = issue["number"]
+        attempts = int(issue.get("rebaseAttempts") or 0)
+        if attempts >= self._settings.max_rebase_attempts:
+            self._block(number, stage, "rebase_conflicts_exhausted",
+                        f"{attempts} rebase attempt(s) used; the pull request still conflicts with {self._base_ref()}")
+            return None
+        paths = self._paths(number)
+        cwd = self._ensure_worktree(issue)
+        plan = self._plan_for(issue)
+        branch = issue.get("branch") or self._branch(number)
+        head = str(issue.get("headSha") or "")
+        if not head:
+            self._block(number, stage, "rebase_failed", "the branch has no recorded head to rebase")
+            return None
+        self._git.fetch()
+        base = self._base_ref()
+        self._discard_leftovers(number, stage, cwd, "rebaser")
+        if head and self._git.head(cwd) != head and self._resolve_optional(head):
+            self._git.reset_hard(cwd, head)
+        self._session(
+            issue_number=number, role="rebase", model=self._settings.implementer_model,
+            thinking=self._settings.implementer_thinking,
+            prompt=prompts.rebase_prompt(plan, base, issue), cwd=cwd,
+            name=f"issue-{number} rebase {attempts + 1}", charter=prompts.REBASER_CHARTER,
+            tools=prompts.IMPLEMENTER_TOOLS, paths=paths,
+        )
+        self._store.update_issue(number, rebaseAttempts=attempts + 1)
+        if self._git.rebase_in_progress(cwd):
+            self._git.rebase_abort(cwd)
+            self._git.reset_hard(cwd, head or base)
+            self._block(number, stage, "rebase_failed",
+                        "the rebase session left an unfinished rebase; the branch was restored")
+            return None
+        self._git.commit_all(cwd, self._commit_message(number, "resolve merge conflicts"))
+        new_head = self._git.head(cwd)
+        if not new_head or new_head == head:
+            self._block(number, stage, "rebase_failed",
+                        "the rebase session did not change the branch head; the conflicts are unresolved")
+            return None
+        try:
+            self._git.push(cwd, "origin", f"HEAD:refs/heads/{branch}", lease=head)
+        except CodeFactoryError:
+            # The lease refused because the branch moved after the rebase started. That
+            # external head wins: re-verify it instead of clobbering it or failing out.
+            try:
+                moved = self._git.remote_head(branch)
+            except CodeFactoryError:
+                moved = ""
+            if moved and moved != head:
+                self._store.update_issue(number, headSha=moved, ciStatus=None)
+                self._store.add_event(
+                    number, stage, "warning",
+                    f"The branch moved to {moved[:12]} while it was being rebased; "
+                    "the external head wins and Verify will re-run",
+                )
+                return "verify"
+            raise
+        if int(issue.get("reviewRound") or 0) > 0:
+            plan["reviewGrace"] = True
+        plan.pop("ci_log", None)
+        self._save_plan(issue, plan, paths)
+        self._store.update_issue(
+            number, headSha=new_head, ciStatus=None, ciFailures=0, ciRerunRequested=None,
+        )
+        self._store.add_event(
+            number, stage, "success",
+            f"Rebased onto {base} to clear merge conflicts ({new_head[:12]}); "
+            "the rebase does not consume the review or CI budget",
+            {"rebaseAttempt": attempts + 1},
+        )
+        return "verify"
 
     # -- actions --------------------------------------------------------------------
 
@@ -1544,27 +1718,39 @@ class CodeFactory:
                         f"issue #{number} has no pull request head to revise",
                         code="invalid_request",
                     )
-                try:
-                    log = self._github.failed_run_log(head)
-                except CodeFactoryError as exc:
-                    message = f"Retry could not fetch the failed CI log; it remains blocked: {_error_text(exc)}"
-                    self._store.add_event(number, retry_stage, "warning", message)
-                    raise CodeFactoryError(message, code=exc.code) from exc
-                plan = self._plan_for(issue)
-                plan.update(
-                    ci_log=log[-prompts.MAX_LOG_CHARS:],
-                    last_review=None,
-                    last_review_head=None,
-                    last_review_posted=None,
-                )
-                self._save_plan(issue, plan, self._paths(number))
-                retry_stage = "revise"
-                retry_fields.update(ciFailures=0, ciRerunRequested=None, ciStatus="failure")
-                self._store.add_event(
-                    number, issue["stage"], "info",
-                    "CI recovery retry captured the failed log, reset the bounded CI budget, and will start a reviser",
-                    {"headSha": head},
-                )
+                current = GitHubClient.classify_runs(self._github.list_runs(head))
+                if current == "success":
+                    # The head already passed CI (the block came from a stale read). Re-verifying
+                    # the recorded head is cheap; a reviser session would rewrite a green branch.
+                    retry_stage = "verify"
+                    retry_fields.update(ciFailures=0, ciRerunRequested=None, ciStatus=None)
+                    self._store.add_event(
+                        number, issue["stage"], "info",
+                        "CI is already green on the recorded head; reset the bounded CI budget and will re-run Verify",
+                        {"headSha": head},
+                    )
+                else:
+                    try:
+                        log = self._github.failed_run_log(head)
+                    except CodeFactoryError as exc:
+                        message = f"Retry could not fetch the failed CI log; it remains blocked: {_error_text(exc)}"
+                        self._store.add_event(number, retry_stage, "warning", message)
+                        raise CodeFactoryError(message, code=exc.code) from exc
+                    plan = self._plan_for(issue)
+                    plan.update(
+                        ci_log=log[-prompts.MAX_LOG_CHARS:],
+                        last_review=None,
+                        last_review_head=None,
+                        last_review_posted=None,
+                    )
+                    self._save_plan(issue, plan, self._paths(number))
+                    retry_stage = "revise"
+                    retry_fields.update(ciFailures=0, ciRerunRequested=None, ciStatus="failure")
+                    self._store.add_event(
+                        number, issue["stage"], "info",
+                        "CI recovery retry captured the failed log, reset the bounded CI budget, and will start a reviser",
+                        {"headSha": head},
+                    )
             elif issue.get("blockedReason") == "review_rounds_exhausted":
                 retry_stage = "revise"
                 retry_fields.update(reviewRound=0)
@@ -1573,8 +1759,17 @@ class CodeFactory:
                     "Review recovery retry reset the bounded review budget and will start a reviser",
                     {"headSha": issue.get("headSha")},
                 )
+            elif issue.get("blockedReason") == "rebase_conflicts_exhausted":
+                retry_stage = "merge"
+                retry_fields.update(rebaseAttempts=0)
+                self._store.add_event(
+                    number, issue["stage"], "info",
+                    "Conflict recovery retry reset the bounded rebase budget and will re-check the merge",
+                    {"headSha": issue.get("headSha")},
+                )
             self._store.update_issue(
-                number, status="active", stage=retry_stage, error=None, blockedReason=None, **retry_fields,
+                number, status="active", stage=retry_stage, error=None, blockedReason=None,
+                failureRetries=0, **retry_fields,
             )
             self._store.add_event(number, retry_stage, "info", f"Retry requested at {STAGE_LABELS.get(retry_stage, retry_stage)}")
             queued = self._start_release() if retry_stage == "release" else self._submit(number)

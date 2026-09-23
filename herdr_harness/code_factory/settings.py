@@ -36,6 +36,9 @@ INTEGER_RANGES: dict[str, tuple[int, int]] = {
     "max_review_rounds": (0, 10),
     "max_ci_failures": (0, 10),
     "session_timeout_seconds": (60, 86400),
+    "reviser_session_timeout_seconds": (60, 86400),
+    "max_rebase_attempts": (0, 10),
+    "max_transient_retries": (0, 5),
     "verify_wait_seconds": (60, 86400),
     "dashboard_port": (1, 65535),
 }
@@ -188,6 +191,9 @@ class CodeFactorySettings:
     max_review_rounds: int = 3
     max_ci_failures: int = 3
     session_timeout_seconds: int = 3600
+    reviser_session_timeout_seconds: int = 7200
+    max_rebase_attempts: int = 2
+    max_transient_retries: int = 2
     verify_wait_seconds: int = 3600
     dashboard_host: str = "tailscale"
     dashboard_port: int = 9097
@@ -246,6 +252,11 @@ class CodeFactorySettings:
             max_review_rounds=_integer(environ, "MAX_REVIEW_ROUNDS", cls.max_review_rounds),
             max_ci_failures=_integer(environ, "MAX_CI_FAILURES", cls.max_ci_failures),
             session_timeout_seconds=_integer(environ, "SESSION_TIMEOUT_SECONDS", cls.session_timeout_seconds),
+            reviser_session_timeout_seconds=_integer(
+                environ, "REVISER_SESSION_TIMEOUT_SECONDS", cls.reviser_session_timeout_seconds
+            ),
+            max_rebase_attempts=_integer(environ, "MAX_REBASE_ATTEMPTS", cls.max_rebase_attempts),
+            max_transient_retries=_integer(environ, "MAX_TRANSIENT_RETRIES", cls.max_transient_retries),
             verify_wait_seconds=_integer(environ, "VERIFY_WAIT_SECONDS", cls.verify_wait_seconds),
             dashboard_host=_string(environ, "DASHBOARD_HOST", cls.dashboard_host, maximum=253),
             dashboard_port=_integer(environ, "DASHBOARD_PORT", cls.dashboard_port),
@@ -261,6 +272,17 @@ class CodeFactorySettings:
             machine=(environ.get("HERDR_MACHINE") or "").strip() or None,
         )
         return settings
+
+    def session_timeout_for(self, role: str) -> int:
+        """The timeout for one Pi role; long-form revision and rebase sessions get their own budget.
+
+        Revision and conflict-resolution sessions legitimately run for tens of minutes
+        (deep, multi-file fixes), while planners and reviewers finish in a few. One global
+        timeout either starved them or gave every other role hours of slack.
+        """
+        if role in ("reviser", "rebase"):
+            return self.reviser_session_timeout_seconds
+        return self.session_timeout_seconds
 
     @property
     def checkout_configured(self) -> bool:
@@ -293,6 +315,8 @@ class CodeFactorySettings:
             "release_channel": self.release_channel,
             "max_review_rounds": self.max_review_rounds,
             "max_ci_failures": self.max_ci_failures,
+            "reviser_session_timeout_seconds": self.reviser_session_timeout_seconds,
+            "max_rebase_attempts": self.max_rebase_attempts,
             "max_parallel_issues": self.max_parallel_issues,
             "poll_seconds": self.poll_seconds,
             "base_branch": self.base_branch,

@@ -81,13 +81,33 @@ This is an experimental personal automation. Read the safety section before enab
    `max_review_rounds`, while repeated CI failures are bounded separately by
    `max_ci_failures`. Exhausting either blocks the issue for a human with
    `review_rounds_exhausted` or `ci_failures_exhausted`, respectively.
-   Retrying `ci_failures_exhausted` is a supervisory recovery action: it captures the
-   latest failed log, grants one fresh bounded CI budget, and starts the reviser directly.
+   Revision sessions legitimately run long, so they get their own
+   `reviser_session_timeout_seconds` (default two hours) instead of the global
+   `session_timeout_seconds` that bounds planners, implementers and reviewers.
+   The stage re-checks the ledger before starting a session: a resume or retry that
+   arrives after the budget was already spent blocks instead of spending a fresh reviser.
+   Retrying `ci_failures_exhausted` first asks GitHub whether the recorded head is now
+   green; if it is, the daemon resets the bounded CI budget and re-runs Verify without
+   rewriting a green branch. A genuinely red head captures the latest failed log, grants
+   one fresh bounded CI budget, and starts the reviser directly.
    Retrying `review_rounds_exhausted` likewise grants one fresh bounded review budget and
    starts the reviser with Astra's latest feedback. Both recoveries remain bounded, so a
    reviser that cannot produce a working change blocks again instead of creating an
-   unlimited retry loop.
-10. **Merge and cleanup.** On approval the PR is squash-merged with its remote branch
+   unlimited retry loop. A session that fails on a transient provider error
+   (HTTP 5xx, connection reset, timeout, rate limit) is re-queued automatically at most
+   `max_transient_retries` times with a cooldown; a genuine coding failure stays failed
+   for a human.
+10. **Merge and cleanup.** Immediately before merge the daemon asks GitHub whether the
+    branch conflicts with the base. A conflicted branch goes to a fresh DeepSeek
+    conflict-resolution session (`ollama-cloud/deepseek-v4.1-flash:cloud`, thinking `max`)
+    that fetches the base, rebases, resolves every conflict preserving both sides' intent,
+    and leaves the rebase committed; the daemon then force-pushes with a lease pinned to
+    the head it recorded, re-runs Verify, and re-reviews the rebased head. A rebase is not
+    a review finding or a CI failure, so it does not consume the review round or the CI
+    failure budget: the next review re-checks the rebased head at the same round number
+    and Verify starts a fresh CI cycle. Conflict recovery has its own bounded
+    `max_rebase_attempts` and blocks as `rebase_conflicts_exhausted` (retryable) when it
+    cannot clear them. On approval the PR is squash-merged with its remote branch
     deleted, and the worktree and local branch are removed immediately. The dashboard
     shows a checkmark once the worktree is gone. If a request is instead delivered by a
     consolidated or replacement PR, the poller follows GitHub's authoritative
@@ -143,6 +163,10 @@ dashboard_token = { file = "~/.config/herdr-companion/secrets/code-factory-token
 dashboard_link = "https://factory.example.invalid:9097/" # Canonical private URL for Message Me.
 release_enabled = true
 release_channel = "preview"
+# session_timeout_seconds = 3600 # Planners, implementers and reviewers.
+# reviser_session_timeout_seconds = 7200 # Revision sessions legitimately run longer.
+# max_rebase_attempts = 2 # Conflict-resolution rebases; a rebase does not consume review/CI budget.
+# max_transient_retries = 2 # Automatic retries after a provider 5xx, network blip or timeout.
 ```
 
 `dashboard_host` is `127.0.0.1` for the HTTPS setup below, or `"tailscale"` to bind this
@@ -277,9 +301,11 @@ branch history cannot be rebuilt.
   resets the worktree if one leaves changes behind.
 - **Bounded automation.** At most four tasks per plan, a bounded number of review
   rounds and, separately, a bounded number of CI failures (each head commit gets one
-  automatic re-run of its failed jobs before a CI failure counts against that bound), one
-  release at a time, session timeouts, and a CI wait limit. Anything outside those bounds
-  stops as **blocked** with the reason on the issue and the dashboard.
+  automatic re-run of its failed jobs before a CI failure counts against that bound), a
+  bounded number of conflict-resolution rebases, a bounded number of automatic retries
+  after transient provider failures, per-role session timeouts, one release at a time,
+  and a CI wait limit. Anything outside those bounds stops as **blocked** or **failed**
+  with the reason on the issue and the dashboard.
 - **Sessions run as the operator.** Pi sessions are not sandboxed: they run with the
   daemon's user and environment (minus `HERDR_*` settings and GitHub tokens such as
   `GH_TOKEN`/`GITHUB_TOKEN`) and, for implementer roles, a shell tool. The daemon
@@ -310,9 +336,14 @@ branch history cannot be rebuilt.
   and reviewed (`--match-head-commit`) and carry an explicit body. Immediately before
   merge, the daemon revalidates that the exact head has a posted approval satisfying every
   current requirement. Legacy stored approvals without the structured assessment return
-  to review; pending review reposts are revalidated too. A branch that moved after review
-  goes back to CI, and squashed commit messages can never auto-close an issue early. The
-  release author's commit must change exactly
+  to review; pending review reposts are revalidated too. The pushed SHA is the ledger's
+  reference: `origin/<branch>` (not GitHub's lagging pull-request head field) decides
+  whether a branch moved after verification, so a stale read can never move the ledger
+  backwards onto an already-superseded commit. A branch that moved after review goes back
+  to CI, and squashed commit messages can never auto-close an issue early. A conflicting
+  branch is rebased and force-pushed with a lease pinned to the recorded head before it
+  can merge, so a concurrent external push is never clobbered. The release author's commit
+  must change exactly
   `release/macos.json` and the notes file and carry the exact commit subject before it
   is pushed, and the privacy check refuses to run when a branch modified
   `scripts/check-public-source.py` itself.

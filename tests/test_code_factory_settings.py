@@ -41,6 +41,9 @@ class DefaultsTests(unittest.TestCase):
         self.assertEqual(settings.max_review_rounds, 3)
         self.assertEqual(settings.max_ci_failures, 3)
         self.assertEqual(settings.session_timeout_seconds, 3600)
+        self.assertEqual(settings.reviser_session_timeout_seconds, 7200)
+        self.assertEqual(settings.max_rebase_attempts, 2)
+        self.assertEqual(settings.max_transient_retries, 2)
         self.assertEqual(settings.verify_wait_seconds, 3600)
         self.assertEqual(settings.dashboard_host, "tailscale")
         self.assertEqual(settings.dashboard_port, 9097)
@@ -98,6 +101,9 @@ class OverrideTests(unittest.TestCase):
             max_review_rounds="0",
             max_ci_failures="5",
             session_timeout_seconds="600",
+            reviser_session_timeout_seconds="1800",
+            max_rebase_attempts="3",
+            max_transient_retries="1",
             verify_wait_seconds="900",
             dashboard_host="127.0.0.1",
             dashboard_port="8080",
@@ -128,6 +134,9 @@ class OverrideTests(unittest.TestCase):
         self.assertEqual(settings.max_review_rounds, 0)
         self.assertEqual(settings.max_ci_failures, 5)
         self.assertEqual(settings.session_timeout_seconds, 600)
+        self.assertEqual(settings.reviser_session_timeout_seconds, 1800)
+        self.assertEqual(settings.max_rebase_attempts, 3)
+        self.assertEqual(settings.max_transient_retries, 1)
         self.assertEqual(settings.verify_wait_seconds, 900)
         self.assertEqual(settings.dashboard_host, "127.0.0.1")
         self.assertEqual(settings.dashboard_port, 8080)
@@ -159,6 +168,12 @@ class OverrideTests(unittest.TestCase):
         self.assertIsInstance(settings.as_dict()["state_path"], str)
         self.assertEqual(settings.public_summary()["repository"], "owner/repo")
         self.assertEqual(settings.public_summary()["max_ci_failures"], 3)
+        self.assertEqual(settings.public_summary()["reviser_session_timeout_seconds"], 7200)
+        self.assertEqual(settings.public_summary()["max_rebase_attempts"], 2)
+        self.assertEqual(settings.session_timeout_for("reviser"), 7200)
+        self.assertEqual(settings.session_timeout_for("rebase"), 7200)
+        self.assertEqual(settings.session_timeout_for("planner"), 3600)
+        self.assertEqual(settings.session_timeout_for("reviewer"), 3600)
 
 
 class ValidationTests(unittest.TestCase):
@@ -183,6 +198,9 @@ class ValidationTests(unittest.TestCase):
             "max_review_rounds": ("-1", "11"),
             "max_ci_failures": ("-1", "11"),
             "session_timeout_seconds": ("59", "86401"),
+            "reviser_session_timeout_seconds": ("59", "86401"),
+            "max_rebase_attempts": ("-1", "11"),
+            "max_transient_retries": ("-1", "6"),
             "verify_wait_seconds": ("10", "100000"),
             "dashboard_port": ("0", "65536"),
         }

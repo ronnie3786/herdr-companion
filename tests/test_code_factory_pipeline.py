@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import shutil
 import subprocess
@@ -38,6 +39,7 @@ MARKER = (
     '"size":4,"url":"https://github.com/owner/repo/releases/download/issue-attachments/isr_ab12-shot.png"}],'
     '"autofix":true,"environment":{},"kind":"bug","reportId":"isr_ab12","schema":1} -->'
 )
+_CONFLICT_BLOCK_RE = re.compile(r"<<<<<<<[^\n]*\n(.*?)=======\n(.*?)>>>>>>>[^\n]*\n", re.DOTALL)
 ISSUE_BODY = (
     "  The HUD crashes when I open it.\n\n"
     "![shot](https://github.com/owner/repo/releases/download/issue-attachments/isr_ab12-shot.png)\n"
@@ -345,6 +347,7 @@ class FakePi:
         self.on_call: Callable[[dict[str, Any]], None] | None = None
         self.implementer_extra_files: dict[str, str] = {}
         self.block_roles: set[str] = set()
+        self.rebase_noop = False
         self.session_started = threading.Event()
         self.reviewer_mentions_cwd = True
 
@@ -356,6 +359,8 @@ class FakePi:
             return "reviewer"
         if charter == prompts.REVISER_CHARTER:
             return "reviser"
+        if charter == prompts.REBASER_CHARTER:
+            return "rebase"
         if charter == prompts.RELEASE_AUTHOR_CHARTER:
             return "release-author"
         if charter == prompts.IMPLEMENTER_CHARTER:
@@ -390,6 +395,12 @@ class FakePi:
             (cwd / "app").mkdir(exist_ok=True)
             (cwd / "app" / f"revision_{name.rsplit(' ', 1)[-1]}.txt").write_text("revised\n")
             text = "Addressed the review feedback. Tests: NOT RUN."
+        elif role == "rebase":
+            if self.rebase_noop:
+                text = "Could not resolve the conflicts; the branch is unchanged."
+            else:
+                self._rebase(cwd)
+                text = "Rebased the branch. Tests: NOT RUN."
         elif role == "release-author":
             text = self._release(cwd, kwargs["prompt"])
         elif role == "privacy-fix":
@@ -420,6 +431,32 @@ class FakePi:
     def _scripted(queue: list[dict[str, Any] | str], default: dict[str, Any]) -> str:
         item = queue.pop(0) if queue else default
         return item if isinstance(item, str) else json_reply(item)
+
+    def _rebase(self, cwd: Path) -> None:
+        """A deterministic DeepSeek-style rebase: resolve conflicts by keeping both sides."""
+        subprocess.run(["git", "fetch", "--quiet", "origin"], cwd=cwd, env=self._env,
+                       check=True, capture_output=True)
+        editor = {**self._env, "GIT_EDITOR": "true"}
+        completed = subprocess.run(["git", "rebase", "origin/main"], cwd=cwd, env=editor,
+                                   capture_output=True, text=True)
+        if completed.returncode != 0:
+            conflicted = subprocess.run(
+                ["git", "diff", "--name-only", "--diff-filter=U"], cwd=cwd, env=self._env,
+                capture_output=True, text=True, check=True,
+            ).stdout.split()
+            for relative in conflicted:
+                target = cwd / relative
+                text = target.read_text(encoding="utf-8")
+                target.write_text(_CONFLICT_BLOCK_RE.sub(lambda match: match.group(1) + match.group(2), text),
+                                  encoding="utf-8")
+                subprocess.run(["git", "add", "--", relative], cwd=cwd, env=self._env,
+                               check=True, capture_output=True)
+            completed = subprocess.run(["git", "rebase", "--continue"], cwd=cwd, env=editor,
+                                       capture_output=True, text=True)
+            if completed.returncode != 0:
+                subprocess.run(["git", "rebase", "--abort"], cwd=cwd, env=self._env,
+                               check=False, capture_output=True)
+                raise AssertionError(f"fake rebase could not continue: {completed.stderr.strip()}")
 
     def _release(self, cwd: Path, prompt: str) -> str:
         part = "minor" if "--part minor" in prompt else "patch"
@@ -575,6 +612,8 @@ class PipelineTestCase(unittest.TestCase):
                 roles.append("reviewer")
             elif charter == prompts.REVISER_CHARTER:
                 roles.append("reviser")
+            elif charter == prompts.REBASER_CHARTER:
+                roles.append("rebase")
             elif charter == prompts.RELEASE_AUTHOR_CHARTER:
                 roles.append("release-author")
             else:
@@ -1069,6 +1108,197 @@ class BlockingAndActionTests(PipelineTestCase):
         self.assertEqual((issue["status"], issue["stage"], issue["blockedReason"]),
                          ("blocked", "verify", "ci_failures_exhausted"))
         self.assertTrue(any("Retry could not fetch the failed CI log" in message for message in self.events(12)))
+
+    def test_ci_retry_reuses_a_green_head_instead_of_spending_a_reviser(self):
+        self.factory = self.make_factory(max_ci_failures="1")
+        self.github.add_issue(12, "Crash when opening the HUD")
+        self.github.default_verify = "failure"
+        self.factory.poll_once()
+        issue = self.factory.run_issue(12)
+        self.assertEqual(issue["blockedReason"], "ci_failures_exhausted")
+        self.assertEqual(self.sessions(12).count("reviser"), 0)
+
+        # By retry time the recorded head's runs are green (the block came from a stale read).
+        self.github.default_verify = "success"
+        self.github.list_runs = lambda sha: [
+            {"status": "completed", "conclusion": "success", "databaseId": 99,
+             "url": "https://github.com/owner/repo/actions/runs/99"}
+        ]
+        result = self.factory.action(12, "retry")
+        retry = result["issue"]
+        self.assertEqual((retry["status"], retry["stage"]), ("active", "verify"))
+        self.assertEqual(retry["ciFailures"], 0)
+        self.assertTrue(any("CI is already green on the recorded head" in message for message in self.events(12)))
+
+        issue = self.factory.run_issue(12)
+        self.assertEqual((issue["status"], issue["stage"]), ("active", "release"))
+        self.assertEqual(self.sessions(12).count("reviser"), 0, "a green head is never re-revised")
+
+    def test_revise_refuses_when_the_ci_budget_is_already_exhausted(self):
+        self.factory = self.make_factory(max_ci_failures="1")
+        self.github.add_issue(12, "Crash when opening the HUD")
+        self.github.verify_script = ["failure", "failure"]
+        self.factory.poll_once()
+        issue = self.factory.run_issue(12)
+        self.assertEqual(issue["blockedReason"], "ci_failures_exhausted")
+
+        self.store.update_issue(12, status="active", stage="revise", ciFailures=2)
+        issue = self.factory.run_issue(12)
+        self.assertEqual((issue["status"], issue["stage"], issue["blockedReason"]),
+                         ("blocked", "revise", "ci_failures_exhausted"))
+        self.assertEqual(self.sessions(12).count("reviser"), 0)
+        self.assertTrue(any("the revision budget is exhausted" in message for message in self.events(12)))
+
+    def test_transient_failures_auto_retry_within_a_bound(self):
+        self.factory = self.make_factory(max_transient_retries="1")
+        self.github.add_issue(12, "Crash when opening the HUD")
+        self.github.verify_script = ["failure", "failure"]
+        self.pi.errors["reviser"] = "provider returned 500 Internal Server Error"
+        self.factory.poll_once()
+        issue = self.factory.run_issue(12)
+        self.assertEqual(issue["status"], "failed")
+        self.assertIn("500 Internal Server Error", issue["error"])
+
+        self.factory.poll_once()
+        self.assertEqual(self.store.get_issue(12)["status"], "failed", "the cooldown holds the retry")
+        self.assertTrue(any("Transient failure; retrying automatically" in message for message in self.events(12)))
+
+        self.clock.now += 300
+        self.factory.poll_once()
+        retry = self.store.get_issue(12)
+        self.assertEqual((retry["status"], retry["failureRetries"]), ("active", 1))
+        issue = self.factory.run_issue(12)
+        self.assertEqual(issue["status"], "failed")
+
+        self.clock.now += 600
+        self.factory.poll_once()
+        final = self.store.get_issue(12)
+        self.assertEqual(final["status"], "failed", "the auto-retry budget is spent")
+        self.assertEqual(final["failureRetries"], 1)
+        self.assertEqual(self.sessions(12).count("reviser"), 2)
+        self.assertTrue(any("Transient failure auto-retry 1/1" in message for message in self.events(12)))
+
+    def test_conflicted_pr_rebases_without_spending_a_review_round(self):
+        self.factory = self.make_factory(max_review_rounds="1")
+        self.github.add_issue(12, "Crash when opening the HUD")
+
+        pushed = {"conflict": False}
+
+        def conflict_then_clear(call: dict[str, Any]) -> None:
+            if call["name"] == "issue-12 review 1" and not pushed["conflict"]:
+                pushed["conflict"] = True
+                self.side_push("main", "app/task_t1.py", "Conflicting main change")
+                self.github.prs[100]["mergeable"] = "CONFLICTING"
+                self.github.prs[100]["mergeStateStatus"] = "DIRTY"
+            elif call["name"].startswith("issue-12 rebase"):
+                self.github.prs[100]["mergeable"] = "MERGEABLE"
+                self.github.prs[100]["mergeStateStatus"] = "CLEAN"
+
+        self.pi.on_call = conflict_then_clear
+        self.factory.poll_once()
+        issue = self.factory.run_issue(12)
+        self.assertEqual((issue["status"], issue["stage"]), ("active", "release"))
+        self.assertEqual(issue["reviewRound"], 1, "the rebase re-review reuses the round")
+        self.assertEqual(issue["rebaseAttempts"], 1)
+        self.assertEqual(issue["ciFailures"], 0, "the rebase starts a fresh CI cycle")
+        self.assertEqual(self.sessions(12).count("rebase"), 1)
+        self.assertEqual(self.sessions(12).count("reviewer"), 2)
+        self.assertTrue(any("Rebased onto origin/main" in message for message in self.events(12)))
+        self.assertTrue(any("does not consume the review or CI budget" in message for message in self.events(12)))
+        merged = self.git(["show", "main:app/task_t1.py"], cwd=self.remote)
+        self.assertIn("t1", merged)
+        self.assertIn("Conflicting main change", merged)
+
+    def test_rebase_failure_is_bounded_and_retryable(self):
+        self.factory = self.make_factory(max_review_rounds="1", max_rebase_attempts="1")
+        self.github.add_issue(12, "Crash when opening the HUD")
+
+        def keep_conflicted(call: dict[str, Any]) -> None:
+            if call["name"] == "issue-12 review 1":
+                self.side_push("main", "app/task_t1.py", "Conflicting main change")
+                self.github.prs[100]["mergeable"] = "CONFLICTING"
+
+        self.pi.on_call = keep_conflicted
+        self.pi.rebase_noop = True
+        self.factory.poll_once()
+        issue = self.factory.run_issue(12)
+        self.assertEqual((issue["status"], issue["stage"], issue["blockedReason"]),
+                         ("blocked", "merge", "rebase_failed"))
+        self.assertEqual(issue["rebaseAttempts"], 1)
+        self.assertEqual(self.sessions(12).count("rebase"), 1)
+
+        self.factory.action(12, "retry")
+        issue = self.factory.run_issue(12)
+        self.assertEqual(issue["blockedReason"], "rebase_conflicts_exhausted")
+        self.assertEqual(self.sessions(12).count("rebase"), 1, "the second attempt exceeds the bound")
+
+        result = self.factory.action(12, "retry")
+        self.assertEqual(result["issue"]["rebaseAttempts"], 0)
+        issue = self.factory.run_issue(12)
+        self.assertEqual(issue["blockedReason"], "rebase_failed", "the retry re-enters the bounded flow")
+        self.assertEqual(self.sessions(12).count("rebase"), 2)
+        self.assertTrue(any("reset the bounded rebase budget" in message for message in self.events(12)))
+
+    def test_rebase_push_that_loses_a_race_adopts_the_external_head(self):
+        self.github.add_issue(12, "Crash when opening the HUD")
+        racer: dict[str, str] = {}
+        state = {"main": False}
+
+        def conflict_then_race(call: dict[str, Any]) -> None:
+            if call["name"] == "issue-12 review 1" and not state["main"]:
+                state["main"] = True
+                self.side_push("main", "app/task_t1.py", "Conflicting main change")
+                self.github.prs[100]["mergeable"] = "CONFLICTING"
+            elif call["name"] == "issue-12 rebase 1":
+                racer["sha"] = self.side_push("codefactory/issue-12", "app/racer.txt", "Racer push")
+                # The racer's head does not resolve main's change, so the PR stays conflicted.
+            elif call["name"] == "issue-12 rebase 2":
+                self.github.prs[100]["mergeable"] = "MERGEABLE"
+                self.github.prs[100]["mergeStateStatus"] = "CLEAN"
+
+        self.pi.on_call = conflict_then_race
+        self.factory.poll_once()
+        issue = self.factory.run_issue(12)
+        self.assertEqual((issue["status"], issue["stage"]), ("active", "release"))
+        self.assertEqual(self.sessions(12).count("rebase"), 2, "the refused rebase is retried on the external head")
+        self.assertNotEqual(issue["headSha"], racer["sha"], "the final branch carries the conflict resolution")
+        self.assertTrue(any("the external head wins" in message for message in self.events(12)))
+        self.assertEqual(self.github.merges[0]["headSha"], issue["headSha"])
+        self.assertIn("Conflicting main change", self.git(["show", "main:app/task_t1.py"], cwd=self.remote))
+
+    def test_verify_ignores_a_stale_github_head_read(self):
+        self.github.add_issue(12, "Crash when opening the HUD")
+        create_pull_request = self.github.create_pull_request
+
+        def create_then_lag(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            pr = create_pull_request(*args, **kwargs)
+            # GitHub can briefly report the pre-push commit right after a revision.
+            self.github.prs[pr["number"]]["headRefOid"] = "0" * 40
+            return pr
+
+        self.github.create_pull_request = create_then_lag
+        self.factory.poll_once()
+        issue = self.factory.run_issue(12)
+        self.assertEqual((issue["status"], issue["stage"]), ("active", "release"))
+        self.assertEqual(self.github.merges[0]["headSha"], issue["headSha"],
+                         "the real pushed head was verified, reviewed and merged")
+        self.assertFalse(any(message.startswith("The pull request head moved") for message in self.events(12)))
+
+    def test_reviser_sessions_get_their_own_timeout(self):
+        self.factory = self.make_factory(reviser_session_timeout_seconds="120")
+        self.github.add_issue(12, "Crash when opening the HUD")
+        self.pi.reviews = [
+            good_review(verdict="request_changes", summary="Needs work.", blocking=["x"]),
+            good_review(),
+        ]
+        self.factory.poll_once()
+        self.factory.run_issue(12)
+        planner = next(call for call in self.pi.calls if call["charter"] == prompts.PLANNER_CHARTER)
+        reviewer = next(call for call in self.pi.calls if call["charter"] == prompts.REVIEWER_CHARTER)
+        reviser = next(call for call in self.pi.calls if call["charter"] == prompts.REVISER_CHARTER)
+        self.assertEqual(planner["timeout_seconds"], 60)
+        self.assertEqual(reviewer["timeout_seconds"], 60)
+        self.assertEqual(reviser["timeout_seconds"], 120)
 
     def test_session_row_is_finished_when_the_runner_raises(self):
         self.pi.raise_for["planner"] = CodeFactoryError("cwd must be an existing directory", code="invalid_request")

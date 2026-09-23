@@ -301,6 +301,27 @@ class GitRepository:
     def head(self, cwd: str | Path) -> str:
         return self._stdout(["rev-parse", "HEAD"], cwd=cwd).strip()
 
+    def remote_head(self, branch: str, remote: str = "origin") -> str:
+        """The tip of ``remote``'s ``branch``, read from the remote itself.
+
+        This is the authoritative answer immediately after a push: GitHub's pull
+        request head can briefly report the pre-push commit, which previously moved
+        the ledger backwards and blocked a head whose Verify runs had succeeded.
+        """
+        ref = f"refs/heads/{validate_branch(branch)}"
+        result = self._run(
+            ["ls-remote", validate_ref(remote, "remote"), ref],
+            check=False, timeout=max(self.timeout, 120),
+        )
+        if result.returncode != 0:
+            raise _failed(f"git ls-remote failed: {_trim(result.stderr)}")
+        text = result.stdout if isinstance(result.stdout, str) else ""
+        for line in str(text).splitlines():
+            sha, _, name = line.partition("\t")
+            if name.strip() == ref and sha.strip():
+                return sha.strip()
+        return ""
+
     def current_branch(self, cwd: str | Path) -> str | None:
         result = self._run(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd=cwd, check=False)
         text = result.stdout.strip() if isinstance(result.stdout, str) else ""
@@ -319,11 +340,22 @@ class GitRepository:
         self._run(["commit", "--quiet", "--no-verify", "-m", message], cwd=cwd)
         return self.head(cwd)
 
-    def push(self, cwd: str | Path, remote: str, refspec: str, *, force: bool = False) -> None:
+    def push(self, cwd: str | Path, remote: str, refspec: str, *, force: bool = False, lease: str | None = None) -> None:
         if not isinstance(refspec, str) or not refspec or len(refspec) > 512 or refspec.startswith("-") or " " in refspec:
             raise _invalid("invalid refspec")
         args = ["push", "--quiet", "--no-verify"]
-        if force:
+        if lease is not None:
+            # A rebase rewrites the branch, so it needs a forced push. The lease names the
+            # exact sha the caller expects the destination to hold, so the push is refused
+            # when anyone pushed after that sha was recorded -- even though the daemon
+            # fetches before rebasing, which would defeat a bare --force-with-lease.
+            destination = refspec.partition(":")[2]
+            if not destination:
+                raise _invalid("a leased push needs an explicit destination ref")
+            args.append(
+                f"--force-with-lease={validate_ref(destination, 'destination')}:{validate_ref(lease, 'lease')}"
+            )
+        elif force:
             args.append("--force")
         args += [validate_ref(remote, "remote"), refspec]
         self._run(args, cwd=cwd, timeout=max(self.timeout, 900))
@@ -344,6 +376,15 @@ class GitRepository:
         if result.returncode != 0:
             self._run(["rebase", "--abort"], cwd=cwd, check=False)
             raise _failed(f"git rebase failed: {_trim(result.stderr) or _trim(result.stdout) or 'conflict'}")
+
+    def rebase_in_progress(self, cwd: str | Path) -> bool:
+        """True while a rebase is paused on conflicts (or any rebase step is unfinished)."""
+        git_dir = Path(self._stdout(["rev-parse", "--absolute-git-dir"], cwd=cwd).strip())
+        return (git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists()
+
+    def rebase_abort(self, cwd: str | Path) -> None:
+        """Abort an unfinished rebase, leaving the pre-rebase head checked out."""
+        self._run(["rebase", "--abort"], cwd=cwd, check=False)
 
     def count_commits(self, cwd: str | Path, base_ref: str) -> int:
         """Commits reachable from HEAD but not from ``base_ref``."""

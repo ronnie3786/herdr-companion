@@ -126,12 +126,24 @@ final class IssueReportComposer {
         .sorted()
         .compactMap { UTType(filenameExtension: $0) }
 
-    var kind: IssueReportKind = .bug
-    var title = ""
-    var body = ""
+    var kind: IssueReportKind = .bug {
+        didSet { if kind != oldValue { draftRevision &+= 1 } }
+    }
+    var title = "" {
+        didSet { if title != oldValue { draftRevision &+= 1 } }
+    }
+    var body = "" {
+        didSet { if body != oldValue { draftRevision &+= 1 } }
+    }
     var autofix = true
-    var machineID = ""
+    var machineID = "" {
+        didSet { if machineID != oldValue { draftRevision &+= 1 } }
+    }
     var phase: Phase = .editing
+    /// True while the optional smart-input section is recording, transcribing,
+    /// or generating. Submission stays blocked so a mid-flight draft can never
+    /// race the report it is preparing. The smart-input state owns the value.
+    var isPreparing = false
     var attachmentError: String?
     /// Server-advertised limits. Lowering them re-checks the queue: files that
     /// no longer fit are removed with a message instead of failing after upload.
@@ -222,8 +234,82 @@ final class IssueReportComposer {
     /// description within the server's limits, a machine to file through, and
     /// no submission in flight or already filed.
     var canSubmit: Bool {
-        guard !isSubmitting, submittedRecord == nil else { return false }
+        guard !isSubmitting, submittedRecord == nil, !isPreparing else { return false }
         return (try? validatedDraft()) != nil
+    }
+
+    /// True while the optional smart-input section may start work: nothing is
+    /// being filed, nothing has been filed, and the sheet is still open.
+    var canPrepare: Bool { !isSubmitting && submittedRecord == nil && !isDiscarded }
+
+    // MARK: - Generated drafts
+
+    /// Monotonic revision of the fields a generated draft may replace. Title,
+    /// body, kind and target each advance it, so a result requested against
+    /// an older report can never overwrite newer edits.
+    private(set) var draftRevision = 0
+
+    /// The report identity a generated draft is requested against.
+    var draftToken: IssueReportDraftToken {
+        IssueReportDraftToken(revision: draftRevision, kind: kind, machineID: machineID)
+    }
+
+    /// The fields a generated draft replaced, kept for one guarded,
+    /// reversible step.
+    struct GeneratedDraftRestorePoint: Equatable, Sendable {
+        let title: String
+        let body: String
+        let revisionAfterApply: Int
+        let kind: IssueReportKind
+        let machineID: String
+    }
+
+    private(set) var generatedDraftRestorePoint: GeneratedDraftRestorePoint?
+
+    /// True only while restoring could not overwrite an intervening edit: the
+    /// generated fields are unchanged since they were applied, the report kind
+    /// and target still match, and nothing is being filed.
+    var canRestoreGeneratedDraft: Bool {
+        guard let point = generatedDraftRestorePoint else { return false }
+        return !isDiscarded && !isSubmitting && submittedRecord == nil
+            && point.revisionAfterApply == draftRevision
+            && point.kind == kind
+            && point.machineID == machineID
+    }
+
+    /// Replaces the title and description atomically with one validated
+    /// generated draft. Returns false without touching either field when the
+    /// token no longer matches (kind, target, or any field changed), the sheet
+    /// closed, or a submission is underway. The source text behind the smart
+    /// input is never part of this change.
+    @discardableResult
+    func applyGeneratedDraft(_ output: IssueReportDraftOutput, token: IssueReportDraftToken) -> Bool {
+        guard canPrepare else { return false }
+        guard token == draftToken else { return false }
+        let previousTitle = title
+        let previousBody = body
+        title = output.title
+        body = output.body
+        generatedDraftRestorePoint = GeneratedDraftRestorePoint(
+            title: previousTitle,
+            body: previousBody,
+            revisionAfterApply: draftRevision,
+            kind: kind,
+            machineID: machineID
+        )
+        return true
+    }
+
+    /// Restores the fields replaced by the last generated draft. One step
+    /// only: the restore point is consumed, and an intervening edit makes the
+    /// restoration unavailable instead of overwriting that edit.
+    @discardableResult
+    func restoreGeneratedDraft() -> Bool {
+        guard canRestoreGeneratedDraft, let point = generatedDraftRestorePoint else { return false }
+        generatedDraftRestorePoint = nil
+        title = point.title
+        body = point.body
+        return true
     }
 
     // MARK: - Attachments
@@ -338,6 +424,8 @@ final class IssueReportComposer {
     /// refuses to write any more. User files are never touched.
     func discardTemporaryFiles() {
         isDiscarded = true
+        isPreparing = false
+        generatedDraftRestorePoint = nil
         for attachment in attachments where attachment.ownership == .appTemporary {
             try? fileManager.removeItem(at: attachment.url)
         }
@@ -527,7 +615,7 @@ final class IssueReportComposer {
 
     /// The server's body rule: any scalar below U+0020 other than tab, newline
     /// and carriage return, or U+007F, is refused.
-    static func containsDisallowedControlCharacters(_ body: String) -> Bool {
+    nonisolated static func containsDisallowedControlCharacters(_ body: String) -> Bool {
         body.unicodeScalars.contains { scalar in
             (scalar.value < 0x20 && scalar != "\t" && scalar != "\n" && scalar != "\r") || scalar.value == 0x7F
         }

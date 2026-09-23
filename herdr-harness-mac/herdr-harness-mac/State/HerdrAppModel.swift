@@ -1572,6 +1572,18 @@ final class HerdrAppModel {
         return try await client.issueReportCapabilities()
     }
 
+    /// The per-machine drafting service behind the report sheet's optional
+    /// smart input. Nil in demo mode or when the machine has no active client,
+    /// so the section shows an unavailable state instead of sending anything.
+    /// The service preflights the exact companion's advertised
+    /// `issue-report-draft-v1` profile before it dispatches a run.
+    func issueReportDraftService(machineID: String) -> IssueReportDraftService? {
+        guard !isDemoMode, canControl(machineID: machineID), let client = client(forMachine: machineID) else {
+            return nil
+        }
+        return IssueReportDraftService.live(configuration: client.configuration)
+    }
+
     func submitIssueReport(_ request: IssueReportRequest, machineID: String) async throws -> IssueReportRecord {
         if isDemoMode {
             throw APIError.server(status: 503, message: "Reports are unavailable in demo mode.")

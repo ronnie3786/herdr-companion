@@ -25,6 +25,10 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
     private static let sampleCount = 40
 
     private(set) var status: HerdrVoiceRecorderStatus = .idle
+    /// True while the system microphone prompt is up and capture has not
+    /// started. A caller that glows only for actual capture must key off
+    /// `isRecording`, never a requested recording.
+    private(set) var isRequestingPermission = false
     private(set) var elapsedTime: TimeInterval = 0
     private(set) var outputURL: URL?
     private(set) var samples = HerdrVoiceRecorder.baselineSamples()
@@ -32,12 +36,23 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
     private(set) var playbackTime: TimeInterval = 0
     var errorMessage: String?
 
+    /// Called after any permission, status, or error change. Existing callers
+    /// never set it; the report sheet's adapter uses it to mirror capture
+    /// state (permission pending versus recording) without polling.
+    @ObservationIgnored var onStateChange: (() -> Void)?
+    /// Called exactly once each time a capture session ends with a file ready
+    /// to transcribe, whether by explicit `stopRecording()` or the automatic
+    /// duration limit. The generation check makes the two paths converge on
+    /// one callback instead of racing.
+    @ObservationIgnored var onCaptureFinished: (() -> Void)?
+
     // Reached from `deinit`, which is nonisolated, and never observed by a view.
     @ObservationIgnored nonisolated(unsafe) private var recorder: AVAudioRecorder?
     private var player: AVAudioPlayer?
     @ObservationIgnored nonisolated(unsafe) private var recordingTimer: Timer?
     private var playbackTimer: Timer?
     private var startGeneration = 0
+    @ObservationIgnored private var notifiedCaptureGeneration = -1
 
     var isRecording: Bool { status == .recording }
     var hasRecording: Bool { outputURL != nil || elapsedTime > 0 }
@@ -116,24 +131,31 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
 
     func startRecording() {
         errorMessage = nil
+        isRequestingPermission = false
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
             beginCapture()
         case .denied, .restricted:
             errorMessage = "Microphone access is disabled for Herdr."
+            notifyStateChange()
         case .notDetermined:
+            isRequestingPermission = true
+            notifyStateChange()
             let generation = startGeneration
             Task { @MainActor [weak self] in
                 let granted = await AVCaptureDevice.requestAccess(for: .audio)
                 guard let self, generation == self.startGeneration else { return }
+                self.isRequestingPermission = false
                 if granted {
                     self.beginCapture()
                 } else {
                     self.errorMessage = "Microphone access is required to record a voice note."
+                    self.notifyStateChange()
                 }
             }
         @unknown default:
             errorMessage = "Microphone permission is unavailable."
+            notifyStateChange()
         }
     }
 
@@ -164,9 +186,11 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
             samples = Self.baselineSamples()
             status = .recording
             startRecordingTimer()
+            notifyStateChange()
         } catch {
             cleanup(deleteFile: true)
             errorMessage = error.localizedDescription
+            notifyStateChange()
         }
     }
 
@@ -177,6 +201,8 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
         stopRecordingTimer()
         elapsedTime = min(duration, Self.maxDuration)
         status = outputURL == nil ? .idle : .finished
+        notifyCaptureFinishedIfNeeded()
+        notifyStateChange()
     }
 
     private func startRecordingTimer() {
@@ -215,6 +241,7 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
 
     private func cleanup(deleteFile: Bool) {
         startGeneration += 1
+        isRequestingPermission = false
         stopRecordingTimer()
         stopPlayback(reset: true)
         recorder?.stop()
@@ -229,10 +256,12 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
         errorMessage = nil
         samples = Self.baselineSamples()
         status = .idle
+        notifyStateChange()
     }
 
     private func discardCurrentFile() {
         startGeneration += 1
+        isRequestingPermission = false
         stopRecordingTimer()
         stopPlayback(reset: true)
         recorder?.stop()
@@ -304,7 +333,24 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
             if !flag {
                 errorMessage = "Recording failed."
             }
+            notifyCaptureFinishedIfNeeded()
+            notifyStateChange()
         }
+    }
+
+    private func notifyStateChange() {
+        onStateChange?()
+    }
+
+    /// One finished-capture callback per capture session. Both the explicit
+    /// Stop and the automatic duration completion land here, and the shared
+    /// generation marker makes a delegate callback after an explicit stop a
+    /// no-op instead of a second transcription.
+    private func notifyCaptureFinishedIfNeeded() {
+        guard status == .finished, outputURL != nil else { return }
+        guard notifiedCaptureGeneration != startGeneration else { return }
+        notifiedCaptureGeneration = startGeneration
+        onCaptureFinished?()
     }
 
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {

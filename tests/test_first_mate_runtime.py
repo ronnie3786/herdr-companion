@@ -566,7 +566,8 @@ class FirstMateRuntimeTests(unittest.TestCase):
     def test_system_completion_cannot_authorize_another_stage(self):
         feature = self.feature()
         job = {'feature_id':feature['id'],'kind':'coordinator','claim':{'role':'system','id':'not-human'}}
-        with self.assertRaises(ValueError): self.runtime._tool(job,'fm_begin_stage',{'title':'Bad','stage_key':'bad'},'bad')
+        with self.assertRaises(FirstMateError) as error: self.runtime._tool(job,'fm_begin_stage',{'title':'Bad','stage_key':'bad'},'bad')
+        self.assertEqual(error.exception.code, 'human_direction_required')
 
     def test_isolated_workspace_keeps_feature_checkout_untouched(self):
         feature = self.feature()

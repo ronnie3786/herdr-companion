@@ -231,8 +231,9 @@ class FirstMateRecoveryTests(unittest.TestCase):
             self.runtime._tool(coordinator, 'fm_recover', params, 'gate-bypass')
         self.assertEqual(error.exception.code, 'human_direction_required')
         coordinator['claim']['role'] = 'system'
-        with self.assertRaises(ValueError):
+        with self.assertRaises(FirstMateError) as error:
             self.runtime._tool(coordinator, 'fm_recover', params, 'system')
+        self.assertEqual(error.exception.code, 'human_direction_required')
 
     def test_unknown_finalization_retries_after_crash_without_duplicate_notice(self):
         feature, assignment, job = self.worker()

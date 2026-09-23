@@ -1,12 +1,12 @@
 # First Mate implementation contract
 
-Approved product decisions, 2026-09-13. This is implementation work in an isolated worktree. All examples and demos use synthetic work.
+Original product decisions, 2026-09-13; stage-continuation direction updated 2026-09-23. This is implementation work in an isolated worktree. All examples and demos use synthetic work.
 
 ## Product
 
-One human-facing First Mate conversation per feature. The human authorizes each major stage through plain English. Every completed stage pauses for human direction, including stages that previously continued automatically. Internal chunk/review loops are autonomous within the authorized scope; explicit internal human gates still hold. No reply is never approval. Quality is prioritized over token efficiency.
+One human-facing First Mate conversation per feature. A human can authorize an ordered sequence of major stages through plain English in one request. First Mate records those stage keys on the first visit; after each successful stage, the service may begin only the next recorded stage under the same human authorization. A stage without a recorded follow-up pauses for direction. Queued human redirection takes priority; explicit internal human gates still hold. No reply is never approval. Internal chunk/review loops are autonomous within the authorized scope. Quality is prioritized over token efficiency.
 
-Stage completion creates a concise coordinator message, evidence links, a suggested next step, and awaiting_direction state. Human changes version the plan and pause affected work safely. Two unsuccessful recovery attempts is the initial default unless a recipe is stricter. Preserve all history. Quiesce the predecessor at its saved checkpoint before starting a successor, and finalize its retained lineage only after successor verification. Session history remains available; deleting branches/worktrees is a separate explicit decision.
+Stage completion creates a concise coordinator message, evidence links and a suggested next step; it enters coordinating when an authorized follow-up remains, or awaiting_direction when none does. Human changes version the plan and pause affected work safely. Two unsuccessful recovery attempts is the initial default unless a recipe is stricter. Preserve all history. Quiesce the predecessor at its saved checkpoint before starting a successor, and finalize its retained lineage only after successor verification. Session history remains available; deleting branches/worktrees is a separate explicit decision.
 
 Start with one authoritative host, existing Herdr Companion server and Pi extension, integrated Mac feature, and reusable web inspector. Parent/session identity is durable and independent of terminal panes. Agent status is distinct from work verdict. Routine events and ten-second reconciliation are ordinary code. Model judgment is permitted for interpretation, advising, and synthesis. First Mate must never wait on workers in a long-running tool. User messages have priority over background coordinator turns.
 

@@ -56,8 +56,9 @@ CREATE TABLE IF NOT EXISTS fm_features(
 CREATE TABLE IF NOT EXISTS fm_visits(
  id TEXT PRIMARY KEY, feature_id TEXT NOT NULL REFERENCES fm_features(id),
  stage_key TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL, revision INTEGER NOT NULL,
- authorization_message_id TEXT NOT NULL UNIQUE, summary TEXT NOT NULL DEFAULT '',
- recommendation TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+ authorization_message_id TEXT NOT NULL, followup_stages_json TEXT NOT NULL DEFAULT '[]',
+ summary TEXT NOT NULL DEFAULT '', recommendation TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS fm_assignments(
  id TEXT PRIMARY KEY, feature_id TEXT NOT NULL REFERENCES fm_features(id),
  visit_id TEXT NOT NULL REFERENCES fm_visits(id), title TEXT NOT NULL, role TEXT NOT NULL,
@@ -146,6 +147,37 @@ class FirstMateStore:
             if name not in columns:
                 self._db.execute(f"ALTER TABLE fm_features ADD COLUMN {name} TEXT")
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(4,?)", (_now(),))
+        # Older stores constrain one human message to one visit. Rebuild under a
+        # writer lock so explicit multi-stage grants retain their real provenance.
+        legacy = self._db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='fm_visits'").fetchone()[0]
+        if "authorization_message_id TEXT NOT NULL UNIQUE" in legacy:
+            self._db.execute("PRAGMA foreign_keys=OFF")
+            try:
+                self._db.execute("BEGIN IMMEDIATE")
+                current = self._db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='fm_visits'").fetchone()[0]
+                if "authorization_message_id TEXT NOT NULL UNIQUE" in current:
+                    self._db.execute("""CREATE TABLE fm_visits_new(
+                        id TEXT PRIMARY KEY, feature_id TEXT NOT NULL REFERENCES fm_features(id),
+                        stage_key TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL, revision INTEGER NOT NULL,
+                        authorization_message_id TEXT NOT NULL, followup_stages_json TEXT NOT NULL DEFAULT '[]',
+                        summary TEXT NOT NULL DEFAULT '', recommendation TEXT NOT NULL DEFAULT '',
+                        created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
+                    self._db.execute("""INSERT INTO fm_visits_new(id,feature_id,stage_key,title,status,revision,authorization_message_id,summary,recommendation,created_at,updated_at)
+                        SELECT id,feature_id,stage_key,title,status,revision,authorization_message_id,summary,recommendation,created_at,updated_at FROM fm_visits""")
+                    self._db.execute("DROP TABLE fm_visits")
+                    self._db.execute("ALTER TABLE fm_visits_new RENAME TO fm_visits")
+                    self._db.execute("CREATE INDEX fm_visits_feature ON fm_visits(feature_id,created_at)")
+                self._db.execute("COMMIT")
+            except BaseException:
+                self._db.execute("ROLLBACK")
+                raise
+            finally:
+                self._db.execute("PRAGMA foreign_keys=ON")
+            if self._db.execute("PRAGMA foreign_key_check").fetchone():
+                raise FirstMateError("First Mate visit migration failed foreign-key validation")
+        elif "followup_stages_json" not in {row[1] for row in self._db.execute("PRAGMA table_info(fm_visits)")}:
+            self._db.execute("ALTER TABLE fm_visits ADD COLUMN followup_stages_json TEXT NOT NULL DEFAULT '[]'")
+        self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(5,?)", (_now(),))
 
     def close(self) -> None:
         with self._lock:
@@ -167,7 +199,7 @@ class FirstMateStore:
         if row is None:
             return None
         result = dict(row)
-        for name in ("metadata_json", "payload_json"):
+        for name in ("metadata_json", "payload_json", "followup_stages_json"):
             if name in result:
                 result[name[:-5]] = json.loads(result.pop(name))
         return result
@@ -470,8 +502,14 @@ class FirstMateStore:
             result = self._one("fm_messages", message_id)
             return self._save_receipt(f"release_message:{message_id}", request_id, payload, result) if request_id else result
 
-    def start_visit(self, feature_id: str, stage_key: str, title: str, request_id: str, expected_revision: int, authorization_message_id: str) -> dict:
-        payload = {"stage_key": _text(stage_key, "stage_key", 100), "title": _text(title, "title", 300), "expected_revision": expected_revision, "authorization_message_id": authorization_message_id}
+    def start_visit(self, feature_id: str, stage_key: str, title: str, request_id: str, expected_revision: int, authorization_message_id: str, *, followup_stages: list[str] | None = None) -> dict:
+        if followup_stages is None:
+            followup_stages = []
+        if (not isinstance(followup_stages, list) or len(followup_stages) > 8 or
+                any(not isinstance(key, str) or not key.strip() or len(key) > 100 for key in followup_stages) or
+                len(set(followup_stages + [stage_key])) != len(followup_stages) + 1):
+            raise FirstMateError("Invalid authorized follow-up stages", code="invalid_request", status=400)
+        payload = {"stage_key": _text(stage_key, "stage_key", 100), "title": _text(title, "title", 300), "expected_revision": expected_revision, "authorization_message_id": authorization_message_id, "followup_stages": followup_stages}
         with self._transaction():
             cached = self._receipt(f"visit:{feature_id}", request_id, payload)
             if cached is not None:
@@ -487,12 +525,22 @@ class FirstMateStore:
             authorization = self._one("fm_messages", authorization_message_id)
             if authorization["feature_id"] != feature_id or authorization["role"] != "user" or authorization["status"] not in {"processing", "done"}:
                 raise FirstMateError("A processed human direction is required", code="human_direction_required")
-            if feature["current_visit_id"] and current["status"] == "completed" and authorization["created_at"] <= current["updated_at"]:
+            reused = self._db.execute("SELECT id FROM fm_visits WHERE authorization_message_id=?", (authorization_message_id,)).fetchone()
+            if reused:
+                if (not feature["current_visit_id"] or current["status"] != "completed" or
+                        feature["status"] != "coordinating" or
+                        current["authorization_message_id"] != authorization_message_id or
+                        current["revision"] != expected_revision or
+                        not current["followup_stages"] or current["followup_stages"][0] != stage_key or
+                        followup_stages):
+                    raise FirstMateError("The next stage was not authorized by this direction", code="human_direction_required")
+                if self._db.execute("SELECT 1 FROM fm_messages WHERE feature_id=? AND role='user' AND status IN ('queued','processing')", (feature_id,)).fetchone():
+                    raise FirstMateError("Yield to new human direction before continuing", code="human_direction_required")
+                followup_stages = current["followup_stages"][1:]
+            elif feature["current_visit_id"] and current["status"] == "completed" and authorization["created_at"] <= current["updated_at"]:
                 raise FirstMateError("The next stage needs direction after the completed checkpoint", code="human_direction_required")
-            if self._db.execute("SELECT id FROM fm_visits WHERE authorization_message_id=?", (authorization_message_id,)).fetchone():
-                raise FirstMateError("Human direction already authorized a stage", code="human_direction_required")
             visit_id, now = _id("fmv"), _now()
-            self._db.execute("INSERT INTO fm_visits(id,feature_id,stage_key,title,status,revision,authorization_message_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)", (visit_id, feature_id, stage_key, title, "running", expected_revision, authorization_message_id, now, now))
+            self._db.execute("INSERT INTO fm_visits(id,feature_id,stage_key,title,status,revision,authorization_message_id,followup_stages_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (visit_id, feature_id, stage_key, title, "running", expected_revision, authorization_message_id, _json(followup_stages), now, now))
             self._db.execute("UPDATE fm_features SET status='running',current_visit_id=? WHERE id=?", (visit_id, feature_id))
             self._event(feature_id, "visit.started", f"{title} started", {"visit_id": visit_id, "authorization_message_id": authorization_message_id, "revision": expected_revision})
             return self._save_receipt(f"visit:{feature_id}", request_id, payload, self._one("fm_visits", visit_id))
@@ -689,9 +737,12 @@ class FirstMateStore:
             if visit["status"] != "running" or feature["status"] != "running" or not assignments or any(a["status"] != "completed" or a["revision"] != visit["revision"] for a in assignments):
                 raise FirstMateError("All current-revision assignments must complete before the stage", code="stage_incomplete")
             self._db.execute("UPDATE fm_visits SET status='completed',summary=?,recommendation=?,updated_at=? WHERE id=?", (summary, recommendation, _now(), visit_id))
-            self._db.execute("UPDATE fm_features SET status='awaiting_direction' WHERE id=?", (feature["id"],))
-            self._message(feature["id"], "assistant", summary + (f"\n\nSuggested next step: {recommendation}" if recommendation else "") + "\n\nAwaiting your direction.", status="done", metadata={"visit_id": visit_id, "checkpoint": True})
-            self._event(feature["id"], "visit.awaiting_direction", f"{visit['title']} complete. Awaiting human direction.", {"visit_id": visit_id, "revision": visit["revision"], "recommendation": recommendation})
+            continuing = bool(visit["followup_stages"])
+            self._db.execute("UPDATE fm_features SET status=? WHERE id=?", ("coordinating" if continuing else "awaiting_direction", feature["id"]))
+            self._message(feature["id"], "assistant", summary + (f"\n\nSuggested next step: {recommendation}" if recommendation else "") + (f"\n\nContinuing with the previously authorized {visit['followup_stages'][0]} stage." if continuing else "\n\nAwaiting your direction."), status="done", metadata={"visit_id": visit_id, "checkpoint": True})
+            self._event(feature["id"], "visit.completed" if continuing else "visit.awaiting_direction", f"{visit['title']} complete. Continuing within the original direction." if continuing else f"{visit['title']} complete. Awaiting human direction.", {"visit_id": visit_id, "revision": visit["revision"], "recommendation": recommendation})
+            if continuing:
+                self._message(feature["id"], "system", f"The {visit['title']} stage finished with evidence. The original human direction authorized {visit['followup_stages'][0]} next. Inspect the completed visit and queued human updates; begin only that authorized stage if still appropriate. Do not treat this system update as new permission.")
             return self._save_receipt(f"complete:{visit_id}", request_id, payload, self._one("fm_visits", visit_id))
 
     def queue_system_message(self, feature_id: str, text: str, request_id: str) -> dict:

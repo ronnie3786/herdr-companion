@@ -289,8 +289,11 @@ class FirstMateReliability:
             if not self.runtime._prepare_recovery_brief(job, state):
                 return False
             if not job.get('recovery_safe_to_continue'):
-                self._block(feature, 'The recovery advisor could not establish a safe next action. Work and evidence are retained.', 'advisor-blocked:' + job['id'], job=job)
-                return False
+                # Advisor uncertainty is not itself a human checkpoint. Once
+                # writer, backup and effect receipts pass, a fenced successor
+                # can inspect the predecessor or request a real human decision.
+                job['recovery_inspection_required'] = True
+                self.runtime._save_job(job)
             if job['recovery_backup']['status'] == 'saved':
                 archive = self.runtime.root / 'recovery-backups' / (job['id'] + '.zip')
                 if not archive.is_file() or archive.stat().st_size > 72 * 1024 * 1024 or hashlib.sha256(archive.read_bytes()).hexdigest() != job['recovery_backup']['sha256']:

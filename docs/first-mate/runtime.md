@@ -141,8 +141,8 @@ The First Mate extension registers tools only in a scoped managed process. Its
 private file spool carries stable tool request IDs and atomic replies; workers do
 not inherit the companion control token.
 
-- Coordinator: read reference-oriented status, begin one human-authorized major
-  stage, delegate, steer, retry, revise affected work, resolve explicit human
+- Coordinator: read reference-oriented status, record ordered stages from a human
+  request and begin only the next authorized stage, delegate, steer, retry, revise affected work, resolve explicit human
   gates, complete a stage and finish the feature. It can also read bounded
   feature Documents and saved sessions. Pi's normal configured tools, extensions,
   skills, prompt templates and project context remain available. Its charter
@@ -194,9 +194,11 @@ not silently treated as a code review.
 
 ## Human direction and background execution
 
-Every completed major stage records evidence, a recommendation and
-`awaiting_direction`. A system outcome cannot authorize another stage. Explicit
-internal gates have separate pending state and require a later human message;
+Every completed major stage records evidence and a recommendation. A recorded
+human-authorized follow-up enters `coordinating` and queues a background update;
+the coordinator may consume only that next stage under the same human message
+and revision. Otherwise it enters `awaiting_direction`. A system outcome cannot
+add stage authority. Explicit internal gates require a later human message;
 background repair and generic Resume cannot bypass them.
 
 Within a stage, independent assignments and bounded review/fix rounds run
@@ -272,11 +274,16 @@ No automatic cleanup, commit, push, or deployment is performed.
 
 Automatic recovery first verifies writer stop, preserves source changes, checks
 side-effect receipts, and obtains an independent safe-next-action assessment.
-The successor is fenced until it acknowledges the retained checkpoint. If safety
-cannot be established, inspect the evidence and direct First Mate to recover the
-assignment in the existing stage. `fm_recover` accepts an uncertain assignment
-without requiring a separate Pause first. It checks the prior writer stopped and uses the store's atomic
-recovery transition rather than a second Resume. It does not bypass pending human
+The successor is fenced until it acknowledges the retained checkpoint. If the
+advisor cannot establish a next action but external effect receipts are complete,
+a successor may read the exact predecessor session while fenced, then acknowledge
+a verified safe step or request genuine human direction. If effects cannot be
+established, inspect the evidence rather than restarting an unverified action.
+A background coordinator can request `fm_recover` in the existing stage without
+another human message, but must pass the automatic path's backup, effects,
+stopped-writer and advisor checks. Human-directed recovery after inspection can
+resolve an uncertainty without a separate Pause or Resume. Both paths use the
+store's atomic bounded recovery transition. It does not bypass pending human
 gates, another uncertain assignment, or the existing two-retry budget. Generic
 Resume cannot convert unresolved dispatches into running work. Successors receive
 the retained recovery facts and are instructed to preserve edits, verify uncertain

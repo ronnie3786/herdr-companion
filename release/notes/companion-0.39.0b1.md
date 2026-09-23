@@ -1,22 +1,17 @@
-# Companion 0.39.0b1
+# Companion 0.39.0b1 — First Mate reliability
 
-Companion/server package for the PR Review improvements in macOS 0.39.0-beta.1. Retains the Agent Profiles functionality from 0.38. Existing native and web API contracts remain compatible; PR Review needs no new configuration keys.
+Matching server, CLI, web assets, and Pi extension package for the Mac 0.39 preview. Existing authenticated First Mate endpoints remain compatible; `first-mate-runtime-health-v1` and `first-mate-reliability-v1` add optional health and recovery fields.
 
-- Ask Herdr's PR Review system prompt defaults to the short version unless more detail is requested.
-- Refresh handles new/rebased PR heads, coalesces overlapping requests and keeps the last usable review after an error.
-- Revision metadata and file lists publish atomically; old ranking jobs cannot overwrite a new revision. Changed patches reset their local viewed mark; unchanged patches retain it.
-- GitHub viewed-file sync failures no longer fail review preparation. Tracked edits in managed checkouts are preserved, with a retryable message instead of overwriting them.
-- Impact ranking asks for a brief, plain-English reason with review guidance.
-- Web assets share the Mac PR Review code renderer and roomier syntax-highlighted styling.
+The server performs persistent hourly progress checks without a client window or continuous model polling. Stale assignments receive a bounded read-only assessment and nudge. Automatic continuation requires verified writer stop, preserved work, trustworthy effect receipts, an assessed safe next action, and successor acknowledgement. Human stage boundaries remain authoritative.
 
-## Installation
+A guardian restarts dead scheduler threads with a retry budget; storage failures use bounded backoff instead of killing monitoring through diagnostic-write cascades. New launches require free-space reserve. Managed-worktree recovery ZIPs retain tracked/staged patches and non-ignored untracked source under size and quota limits. No automatic deletion or restore occurs.
 
-Install on the PR review host using its existing private configuration and the [server update procedure](https://github.com/ronnie3786/herdr-companion/blob/main/herdr_harness/README.md#update-the-server). Back up state consistently, create a new versioned virtual environment, install the wheel, verify it, and deliberately switch the service only when ready. Retain the prior environment for rollback.
+Defaults in private `[first_mate]` configuration: `auto_recovery = true`, `sweep_seconds = 3600`, `nudge_grace_seconds = 300`, `minimum_free_mb = 1024`. Set `auto_recovery = false` to require explicit missing-outcome recovery. Normal configured role tools remain available; automatic recovery advisors are restricted to read-only tools. A read-only workspace label alone never proves effect safety.
 
-```sh
-python3.11 -m venv /path/to/new-runtime
-/path/to/new-runtime/bin/python -m pip install ./herdr_companion-0.39.0b1-py3-none-any.whl
-/path/to/new-runtime/bin/herdr-server --help
-```
+## Installation and rollback
 
-The wheel includes web assets and the Pi package. Keep the configured authentication and state locations. This release does not remotely install anything or restart active services. The Mac Sparkle update does not install this package. Existing sessions retain their pinned Agent Profiles snapshots; follow the 0.38 adoption guidance before switching profile configuration.
+Use the repository's **Update the server** runbook. Verify artifact hashes, install the exact wheel into a new versioned Python 3.11+ environment, run `scripts/verify-installed.py`, validate the private configuration, and take consistent SQLite/state backups before switching the selected companion service. Update matching CLI wrappers and the installed Pi extension. Preserve private configuration, state, active executions, upstream Herdr, and the previous runtime for rollback.
+
+An app-only update does not activate server recovery. Already-started executions keep their original extension and ownership. Older executions without effect receipts require human inspection; they are not blindly replayed. Unstarted/new executions use the matching installed extension. Rollback restores only service/runtime definitions unless an independently reviewed data-recovery plan requires otherwise; never overwrite new user data with an old database.
+
+Existing 0.38 Agent Profiles and First Mate chat, archive, model routing, and usage remain included. See `docs/first-mate/reliability.md` for operating limits. A guardian thread is not a whole-process/host supervisor, and local recovery archives are not full or off-machine backups.

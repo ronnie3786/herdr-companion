@@ -18,14 +18,23 @@ Managed roles receive typed `fm_*` tools scoped to their validated feature/job:
 | Role | Typed workflow tools |
 | --- | --- |
 | Coordinator | `fm_status`, `fm_delegate`, `fm_begin_stage`, `fm_recover`, `fm_resolve_gate`, `fm_steer`, `fm_retry`, `fm_complete_stage`, `fm_revise`, `fm_finish_feature`, `fm_read_document`, `fm_read_session` |
-| Worker | `fm_status`, `fm_delegate`, `fm_retry`, `fm_wait_for_children`, `fm_outcome`, `fm_handoff`, `fm_acknowledge_handoff`, `fm_request_human`, `fm_read_document`, `fm_read_session` |
+| Worker | `fm_status`, `fm_delegate`, `fm_retry`, `fm_wait_for_children`, `fm_outcome`, `fm_handoff`, `fm_acknowledge_handoff`, `fm_progress`, `fm_acknowledge_recovery`, `fm_request_human`, `fm_read_document`, `fm_read_session` |
 | Advisor | `fm_status`, `fm_advice`, `fm_recovery_brief`, `fm_read_document`, `fm_read_session` |
 
 Use `fm_delegate`, never unmanaged Pi subprocesses. Do not poll: service code
 watches assignments and resumes the correct saved conversation. An agent exit or
 summary is not a workflow verdict. Evidence and system outcomes are not human
 authorization. Successor sessions must inspect and acknowledge the retained
-handoff before mutation. Current typed status is authoritative over old prose.
+handoff or recovery checkpoint before mutation. Current typed status is authoritative over old prose.
+
+Use `fm_progress` at meaningful milestones with evidence and the next action.
+Before a legitimate long build/wait, request a bounded lease; unchanged reports
+are not progress. The service checks stale work hourly, nudges it, verifies a stop,
+and continues only when preserved work and effect receipts establish a safe path.
+Recovery advisors have read-only tools; ordinary roles keep their configured tools.
+Missing receipts, uncertain external effects, human gates, and exhausted budgets
+require direction rather than blind replay. `fm_recover` handles stopped/uncertain
+execution; `fm_retry` handles a reported failure. Neither authorizes another stage.
 
 ## External management versus scoped self-management
 

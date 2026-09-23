@@ -18,7 +18,7 @@ Active Work linkage, or work item identity are deleted.
 ## Runtime boundary
 
 `FirstMateRuntime(store, environ=..., runtime_root=...)` exposes `start()`, `stop()`,
-`wake()`, `capabilities()`, `action(feature_id, action, request_id,
+`wake()`, `capabilities()`, `health()`, `action(feature_id, action, request_id,
 expected_revision=None)` and `session(native_session_id)`. HTTP authentication
 continues to belong to the companion service. Session lookup is scoped to retained
 First Mate executions and validates the exact native Pi session header.
@@ -132,6 +132,8 @@ Extension and routing refresh share the dispatch writer lock. An unstarted spool
 can adopt current policy immediately before launch; a started or writer-locked
 dispatch remains immutable. Retries, continuations, advisors, and handoff
 successors are new dispatches and resolve current policy.
+An already persisted typed outcome is not overwritten merely because the
+supervisor's final receipt is missing.
 
 ## Agent tools
 
@@ -148,11 +150,12 @@ not inherit the companion control token.
   `architect` explicitly for architecture/design reviews, architect audits, and
   second opinions on implementations. Names alone do not override host pins.
 - Worker: read feature evidence, delegate scoped children, yield until their
-  outcomes, retry a direct child, report a verdict with documents, request a
-  human decision, produce a checkpoint and acknowledge a predecessor's handoff.
-- Advisor: read evidence, use normal configured tools when needed,
-  return a bounded intervention decision or assemble an independent recovery
-  brief when the stopped predecessor cannot summarize.
+  outcomes, retry a direct child, record durable progress and bounded wait leases,
+  report a verdict with documents, request a human decision, produce a checkpoint
+  and acknowledge a predecessor's handoff or automatic recovery.
+- Advisor: return a bounded intervention decision or assemble an independent
+  recovery brief. Automatic stability/recovery assessments are restricted to
+  read-only tools; ordinary advisors retain normal configured tools.
 
 The coordinator is a small conversational router. Simple direction,
 clarification and status replies stay in the feature conversation and default to
@@ -218,6 +221,78 @@ membership. Old evidence retains its original revision and session provenance.
 
 ## Monitoring, recovery and handoff
 
+### Storage faults and engine health
+
+The scheduler catches both reconciliation failures and failures writing its error
+record. Diagnostic persistence is best-effort, never a prerequisite for keeping
+the loop alive. Failed passes retry with an interruptible 1–30 second exponential
+backoff; wake requests cannot create a tight disk-error loop. A job observation
+failure does not prevent observing other jobs, but that pass will not launch new
+work using incomplete writer counts. Failed atomic writes attempt to remove their
+partial temporary file without changing the previous committed file.
+
+`health()` is an in-memory, request-time observation independent of the scheduler's
+mutex, SQL writes, and diagnostic files. The authenticated capabilities, feature
+list and feature-detail responses include `runtime_health`. States are `starting`,
+`healthy`, `degraded`, `stalled` (no pass completed for 60 seconds), or `stopped`.
+It includes scheduler liveness, last successful pass, a safe error category and
+consecutive failed-pass count; it does not expose raw exception text. This reports
+monitoring health, not proof that a worker is making useful progress. It can detect
+a dead/stuck scheduler while the API still responds. An independent guardian
+restarts dead scheduler threads under the original manager lock (three per hour
+maximum). It does not replace a live hung thread or supervise the whole backend
+process. A timed-out scheduler stop retains its manager lock to prevent a second
+scheduler from taking ownership.
+
+The updated Mac app labels active features **Unverified** when the engine is
+unhealthy or refreshing fails. It shows storage/retry guidance and the last
+successful pass rather than claiming work continues. Older servers remain
+compatible but cannot establish engine health. A completely unavailable server
+still requires client connection-error handling; no process can guarantee a
+persisted alert while its storage is unwritable.
+
+### Uncertain worker recovery
+
+An orphaned dispatch is not blindly replayed. First Mate records a recovery notice,
+queues a coordinator system update (evidence, never authorization), then assesses
+whether a fresh checkpointed continuation is safe within the existing stage.
+Configured Message Hub delivery covers unknown dispatches, exhausted recovery,
+reliability blockers, and stage checkpoints. Delivery still uses durable receipts and
+never blindly resends an ambiguous notification. Nothing enables a notification
+provider by default.
+
+For stopped workers, a private `jobs/<job>/recovery-checkpoint.json` freezes the
+workspace path, observed branch/HEAD, bounded dirty/untracked file listing, exact
+saved session and latest handoff-document reference. These facts are also recorded
+in the feature journal for unknown dispatches. On Mac, expand **Workflow → Recovery
+checkpoint** to inspect them or open the predecessor session/latest handoff. Git
+inspection is read-only; checkpoints are evidence, **not backups**, and do not
+prove external side effects completed. Missing Git access is recorded explicitly.
+No automatic cleanup, commit, push, or deployment is performed.
+
+Automatic recovery first verifies writer stop, preserves source changes, checks
+side-effect receipts, and obtains an independent safe-next-action assessment.
+The successor is fenced until it acknowledges the retained checkpoint. If safety
+cannot be established, inspect the evidence and direct First Mate to recover the
+assignment in the existing stage. `fm_recover` accepts an uncertain assignment
+without requiring a separate Pause first. It checks the prior writer stopped and uses the store's atomic
+recovery transition rather than a second Resume. It does not bypass pending human
+gates, another uncertain assignment, or the existing two-retry budget. Generic
+Resume cannot convert unresolved dispatches into running work. Successors receive
+the retained recovery facts and are instructed to preserve edits, verify uncertain
+effects, and read the referenced handoff rather than every predecessor transcript.
+A crash between recording the unknown state and finalizing the job can retry the
+final receipt without duplicate notices or a replayed dispatch.
+
+The persistent hourly controller also checks unchanged progress, nudges stale
+live workers, verifies stop before continuation, wakes stranded coordinators,
+and stops repeated low-progress handoff churn. New launches require a free-space
+reserve. Bounded private source archives protect stopped recovery boundaries,
+not every live edit or the whole volume. See the [complete recovery ladder,
+configuration, safety rules, and limits](reliability.md).
+
+### Worker activity and context handoff
+
 Reconciliation is ordinary code. Every ten seconds the watchdog checks activity,
 repeated tool patterns, repetitive generated text and progress deadlines. It does
 not invoke a model for unchanged healthy work. Suspicious work receives an
@@ -257,7 +332,7 @@ the evidence back to First Mate. Interrupted executions are never labeled succes
 Run the focused suite from the repository with Python 3.11 or newer:
 
 ```sh
-python3 -m unittest tests.test_first_mate_store tests.test_first_mate_runtime tests.test_first_mate_acceptance tests.test_first_mate_usage
+python3 -m unittest tests.test_first_mate_store tests.test_first_mate_runtime tests.test_first_mate_acceptance tests.test_first_mate_usage tests.test_first_mate_recovery tests.test_first_mate_reliability
 node --test pi-semantic-bridge/test/first-mate.test.mjs
 ```
 
@@ -308,7 +383,10 @@ are `HERDR_HARNESS_FIRST_MATE_RUNS_ROOT`, `HERDR_STATE_DIR`,
 `HERDR_FIRST_MATE_ARCHITECT_MODEL`, `HERDR_FIRST_MATE_ARCHITECT_THINKING`,
 `HERDR_FIRST_MATE_MAX_WORKERS`,
 `HERDR_FIRST_MATE_CONTEXT_TARGET`, `HERDR_FIRST_MATE_STALL_SECONDS`, and
-`HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS`. The default runtime directory is
+`HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS`, `HERDR_FIRST_MATE_AUTO_RECOVERY`,
+`HERDR_FIRST_MATE_SWEEP_SECONDS`, `HERDR_FIRST_MATE_NUDGE_GRACE_SECONDS`, and
+`HERDR_FIRST_MATE_MINIMUM_FREE_MB`. See [reliability configuration](reliability.md#configuration-and-compatibility).
+The default runtime directory is
 `$HERDR_STATE_DIR/first-mate-runs`, falling back to
 `~/.local/share/herdr-companion/first-mate-runs`. Model authentication remains in
 Pi's existing provider configuration. Missing Pi or a missing bundled extension

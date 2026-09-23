@@ -98,7 +98,7 @@ struct FirstMateChatView: View {
                     Task { await store.perform("resume", expectedContext: context) }
                 }
             } label: {
-                FirstMateStatusLabel(status: snapshot.feature.status)
+                FirstMateStatusLabel(status: store.executionDisplayStatus(for: snapshot.feature))
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -152,6 +152,16 @@ struct FirstMateChatView: View {
                 .herdrFont(.caption)
                 .foregroundStyle(.secondary)
                 .padding(16)
+        } else if let warning = store.runtimeHealth?.warning {
+            FirstMateExecutionNotice(text: warning, lastSuccessAt: store.runtimeHealth?.lastSuccessAt)
+        } else if store.error != nil {
+            FirstMateExecutionNotice(text: "Live execution status is unavailable. Showing the last saved workflow.")
+        } else if snapshot.feature.status == "blocked" {
+            FirstMateExecutionNotice(text: snapshot.events.last(where: { $0.type == "reliability.blocked" })?.summary ?? "Work is blocked. Review the retained evidence and give First Mate direction.")
+        } else if snapshot.recoveryNeedsDirection {
+            FirstMateExecutionNotice(text: store.runtimeHealth?.automaticRecovery == true
+                ? "Checking retained work for a safe automatic continuation. Uncertain effects or human checkpoints will stop recovery and ask for your direction. See Stability & recovery in Workflow."
+                : "Execution was interrupted and needs your direction. Inspect the retained work and latest handoff in Workflow, then ask First Mate to recover the assignment after verifying uncertain effects.")
         } else if snapshot.feature.status == "awaiting_direction" {
             Label(
                 snapshot.currentVisit?.status == "completed"
@@ -165,8 +175,8 @@ struct FirstMateChatView: View {
             .padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.orange.opacity(0.05))
-        } else if ["running", "coordinating", "recovering"].contains(snapshot.feature.status) {
-            Label("Work continues in the background. You can talk here.", systemImage: "waveform.path")
+        } else if ["running", "coordinating"].contains(snapshot.feature.status) {
+            Label(store.runtimeHealth == nil ? "Last reported as active. This companion does not report execution health." : "Background monitoring is active. You can talk here.", systemImage: "waveform.path")
                 .herdrFont(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 20)

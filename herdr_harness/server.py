@@ -1070,7 +1070,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     "first-mate-v1", "first-mate-model-settings-v1", "first-mate-usage-v1",
                     "first-mate-archive-v1", "first-mate-attachments-v1",
                     "first-mate-context-v1", "first-mate-safe-model-settings-v1",
-                    "first-mate-git-v1",
+                    "first-mate-git-v1", "first-mate-runtime-health-v1", "first-mate-reliability-v1",
                 ], **runtime.capabilities()}
             if method == "GET" and tail == ["models"]:
                 return {"ok": True, **service.first_mate.model_catalog()}
@@ -1079,7 +1079,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     view = (query.get("view") or ["active"])[0]
                     if view not in {"active", "archived", "all"}:
                         raise HTTPValidationError("Invalid feature view", code="invalid_request")
-                    return {"ok": True, "features": features_view(view)}
+                    return {"ok": True, "features": features_view(view), "runtime_health": runtime.health()}
                 if method == "POST":
                     if set(body) - {"title", "goal", "cwd", "request_id", "work_item_id"}:
                         raise HTTPValidationError("Feature contains an unsupported field")
@@ -1166,7 +1166,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         )
                     raise HTTPValidationError("First Mate Git endpoint not found", code="not_found", status=404)
                 if len(tail) == 2 and method == "GET":
-                    return {"ok": True, **snapshot_view(feature_id)}
+                    return {"ok": True, **snapshot_view(feature_id), "runtime_health": runtime.health()}
                 if tail[2:] == ["model-settings"] and method == "POST":
                     store.set_model_settings(feature_id, body)
                     # Settings alone never enqueue a conversation turn or authorize work.

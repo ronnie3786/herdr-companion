@@ -20,6 +20,12 @@ protocol FirstMateClient: Sendable {
 struct FirstMateFeatureList: Decodable, Sendable {
     var ok: Bool
     var features: [FirstMateFeature]
+    var runtimeHealth: FirstMateRuntimeHealth? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case ok, features
+        case runtimeHealth = "runtime_health"
+    }
 }
 
 struct FirstMateCapabilities: Decodable, Sendable {

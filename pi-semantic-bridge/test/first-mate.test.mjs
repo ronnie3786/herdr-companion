@@ -165,6 +165,28 @@ test("advisor retains normal tools but cannot use another role's workflow action
   } finally { f.cleanup(); }
 });
 
+test("automatic recovery advisors cannot use mutating tools while ordinary advisors retain them", () => {
+  for (const flag of ["recovery_mode", "reliability_assessment"]) {
+    const f = fixture("advisor", {[flag]:true});
+    try {
+      for (const toolName of ["bash", "write", "edit", "synthetic_third_party"]) assert.equal(f.handlers.get("tool_call")({toolName}).block, true);
+      assert.equal(f.handlers.get("tool_call")({toolName:"read"}), undefined);
+    } finally { f.cleanup(); }
+  }
+});
+
+test("coordinator and read-only worker effects are recorded despite instructional workspace policy", () => {
+  for (const role of ["coordinator", "worker"]) {
+    const f = fixture(role, {safety_ledger_version:1,workspace_mode:"read_only"});
+    try {
+      f.handlers.get("session_start")({}, f.ctx);
+      assert.equal(f.handlers.get("tool_call")({toolName:"bash",toolCallId:"shell",input:{command:"synthetic lookup"}}), undefined);
+      const rows = readFileSync(join(f.root,"effects.jsonl"),"utf8").trim().split("\n").map(JSON.parse);
+      assert.equal(rows[1].scope, "external");
+    } finally { f.cleanup(); }
+  }
+});
+
 test("successor is fenced until verified acknowledgement", async () => {
   const f = fixture("worker", {handoff_id:"handoff-synthetic",workspace_mode:"isolated"});
   try {
@@ -197,6 +219,53 @@ test("model headroom lowers the 150k target for a smaller context window", async
     f.ctx.getContextUsage = () => ({tokens:115201,contextWindow:128000});
     await f.handlers.get("turn_end")({},f.ctx);
     assert.equal(f.messages.length,1);
+  } finally { f.cleanup(); }
+});
+
+test("automatic recovery successor can inspect evidence but is fenced until acknowledgement", async () => {
+  const f = fixture("worker", {requires_recovery_ack:true,workspace_mode:"isolated"});
+  try {
+    for (const toolName of ["write", "bash", "fm_delegate", "fm_progress"]) assert.equal(f.handlers.get("tool_call")({toolName}).block, true);
+    assert.equal(f.handlers.get("tool_call")({toolName:"fm_read_document"}), undefined);
+    const id = spoolRequestId("synthetic-job", "recovery-ack");
+    writeFileSync(join(f.root,"responses",id+".json"),JSON.stringify({ok:true,result:{acknowledged:true}}));
+    await f.tools.get("fm_acknowledge_recovery").execute("recovery-ack",{summary:"Verified safe next step"},undefined,undefined,f.ctx);
+    assert.equal(f.handlers.get("tool_call")({toolName:"write"}), undefined);
+  } finally { f.cleanup(); }
+});
+
+test("effect ledger persists before mutations and distinguishes local from external effects", () => {
+  const f = fixture("worker", {safety_ledger_version:1,workspace_mode:"isolated",cwd:tmpdir()});
+  try {
+    f.handlers.get("session_start")({}, f.ctx);
+    f.handlers.get("tool_call")({toolName:"write",toolCallId:"local",input:{path:join(f.root,"source.txt")}});
+    f.handlers.get("tool_result")({toolName:"write",toolCallId:"local",isError:false});
+    f.handlers.get("tool_call")({toolName:"bash",toolCallId:"external",input:{command:"synthetic build"}});
+    f.handlers.get("tool_result")({toolName:"bash",toolCallId:"external",isError:true});
+    const rows = readFileSync(join(f.root,"effects.jsonl"),"utf8").trim().split("\n").map(JSON.parse);
+    assert.deepEqual(rows[0], {type:"ledger_ready",version:1,job_id:"synthetic-job"});
+    assert.equal(rows[1].scope, "workspace");
+    assert.equal(rows[3].scope, "external");
+    assert.equal(rows[4].is_error, true);
+  } finally { f.cleanup(); }
+});
+
+test("unwritable effect ledger fails before a mutating tool is allowed", () => {
+  const f = fixture("worker", {safety_ledger_version:1,workspace_mode:"isolated"});
+  try {
+    mkdirSync(join(f.root,"effects.jsonl"));
+    assert.equal(f.handlers.get("tool_call")({toolName:"bash",toolCallId:"blocked",input:{command:"synthetic command"}}).block, true);
+  } finally { f.cleanup(); }
+});
+
+test("progress is scoped to workers and does not retire their executor", async () => {
+  const f = fixture("worker", {workspace_mode:"read_only"});
+  try {
+    assert.equal(f.handlers.get("tool_call")({toolName:"fm_progress"}), undefined);
+    const id = spoolRequestId("synthetic-job", "progress");
+    writeFileSync(join(f.root,"responses",id+".json"),JSON.stringify({ok:true,result:{retained:true}}));
+    await f.tools.get("fm_progress").execute("progress",{summary:"Finished parsing",next_action:"Run tests",evidence:"Parser updated"},undefined,undefined,f.ctx);
+    assert.equal(f.handlers.get("tool_call")({toolName:"read"}), undefined);
   } finally { f.cleanup(); }
 });
 

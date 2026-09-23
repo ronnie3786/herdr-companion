@@ -17,9 +17,10 @@ struct FirstMateAssignment: Codable, Equatable, Identifiable, Sendable {
     var usage: FirstMateUsage? = nil
     var subtreeUsage: FirstMateUsage? = nil
     var modelSelection: FirstMateModelSelection? = nil
+    var metadata: FirstMateAssignmentMetadata? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, title, role, status, verdict, attempt, generation
+        case id, title, role, status, verdict, attempt, generation, metadata
         case featureID = "feature_id", visitID = "visit_id", nativeSessionID = "native_session_id"
         case inputRevision = "input_revision", updatedAt = "updated_at"
         case visitIDs = "visit_ids"

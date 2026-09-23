@@ -135,11 +135,19 @@ max_workers = 8
 context_target = 150000
 stall_seconds = 600
 coordinator_timeout_seconds = 180
+# Service-owned checks continue with every client closed. No model polling.
+auto_recovery = true
+sweep_seconds = 3600 # Hourly stale-progress sweep (minimum 300 seconds).
+nudge_grace_seconds = 300 # Respond/provide a wait lease before a verified restart.
+minimum_free_mb = 1024 # Admission reserve on both state and workspace volumes.
+# Automatic continuation preserves stage/gate boundaries and requires safe receipts.
+# Private recovery archives: 64 MiB payload / 72 MiB serialized, 1 GiB total.
+# Archives are never automatically restored or deleted.
 # State defaults to first-mate.sqlite3 and first-mate-runs under server.state_dir.
 # message_hub_url = "https://messages.example.invalid/api/v1/messages"
 # message_hub_token_file = "~/.config/herdr-companion/secrets/message-hub-token"
 # app_url = "https://desktop.example.invalid/first-mate/"
-# A major-stage completion sends one Message Hub notification when configured.
+# Stage completion and unrecoverable stability failures notify when configured.
 # Ambiguous delivery is logged, without an automatic duplicate phone alert.
 
 [remote_activity]

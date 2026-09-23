@@ -103,7 +103,7 @@ class FirstMateNotifications:
                 events = self.store.get_events(feature["id"], after=row[0] if row else 0)
                 with self._db:
                     for event in events["events"]:
-                        if event["type"] != "visit.awaiting_direction":
+                        if event["type"] not in {"visit.awaiting_direction", "assignment.dispatch_unknown", "assignment.recovery_exhausted", "reliability.blocked"}:
                             continue
                         payload = {"title": feature["title"], "sender": "Herdr · First Mate", "text": event["summary"],
                                    "notify": True, "urgency": "active", "metadata": {"feature_id": feature["id"], "event_id": event["id"]}}
@@ -139,8 +139,8 @@ class FirstMateNotifications:
             for row in self._db.execute("SELECT * FROM deliveries WHERE logged=0 AND status NOT IN ('pending','sending')").fetchall():
                 status = row["status"]
                 self.store.append_event(row["feature_id"], "notification." + status,
-                                        {"delivered": "Stage notification delivered", "mac_only": "Stage message saved; phone delivery unconfirmed",
-                                         "failed": "Stage notification rejected", "unknown": "Stage notification delivery unknown"}[status],
+                                        {"delivered": "First Mate notification delivered", "mac_only": "First Mate message saved; phone delivery unconfirmed",
+                                         "failed": "First Mate notification rejected", "unknown": "First Mate notification delivery unknown"}[status],
                                         {"checkpoint_event_id": row["event_id"], **json.loads(row["receipt"] or "{}")}, request_id="notification:" + row["event_id"])
                 with self._db:
                     self._db.execute("UPDATE deliveries SET logged=1 WHERE event_id=?", (row["event_id"],))

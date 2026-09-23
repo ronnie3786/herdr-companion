@@ -44,6 +44,17 @@ class FirstMateNotificationTests(unittest.TestCase):
         events = self.store.get_events(self.feature["id"])["events"]
         self.assertEqual(sum(e["type"] == "notification.delivered" for e in events), 1)
 
+    def test_unknown_dispatch_and_exhausted_recovery_notify_once_each(self):
+        for event_type in ('assignment.dispatch_unknown', 'assignment.recovery_exhausted'):
+            self.store.append_event(self.feature['id'], event_type, 'Execution needs recovery direction.', {}, request_id=event_type)
+        notifier = self.notifier()
+        notifier.process()
+        notifier.process()
+        notifier.stop()
+        self.notifier().process()
+        self.assertEqual(len(self.calls), 3)  # initial stage plus two distinct failures
+        self.assertEqual(sum(call['text'] == 'Execution needs recovery direction.' for call in self.calls), 2)
+
     def test_ambiguous_delivery_is_logged_and_never_blindly_retried(self):
         def uncertain(payload):
             self.calls.append(payload)

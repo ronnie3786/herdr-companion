@@ -1,32 +1,14 @@
-# Herdr Companion 0.39.0 Preview 1
+# First Mate stability and recovery
 
-## PR Review polish
+Open **First Mate → Workflow → Stability & recovery** to see the hourly sweep schedule, durable progress checkpoints, recovery decisions, saved sessions, and source-archive references.
 
-- One shared diff renderer for PR Review, Chat Git and First Mate Git: syntax colors, roomier code lines, clear red/green changes and changed-word emphasis. Select All works with the offline WebKit renderer and Ask Herdr.
-- Ask Herdr questions remain as **Saved questions** bubbles below the diff. Reopen them after switching files, closing a review window or relaunching. Each thread retains its original file/revision; older questions are labeled after a refresh.
-- A short **Why** explanation is visible beside each file's Impact rating, in either file order.
-- Empty file filters keep the left-hand controls at the top.
-- Refresh errors keep the last usable review visible instead of replacing it with a dead end.
+- Distinguish stale execution from a healthy scheduler; show active work as **Unverified** when monitoring is unavailable.
+- Automatically assess and nudge workers that remain alive without observable progress, then continue from retained work only after a verified stop and safety checks.
+- Preserve stage approvals, uncertain external-action safeguards, retry budgets, and current role routing. Detect repeated handoffs without progress and stranded coordinators.
+- Add scheduler supervision, free-space admission checks, and bounded private recovery archives. No worktree cleanup, Git reset, commit, or automatic archive restore is performed.
 
-This release retains the Agent Profiles features published in 0.38. The previously planned 0.37 PR Review preview was not published; use this combined release.
+Requires companion **0.39.0b1** and its matching Pi extension for automatic monitoring/recovery (`first-mate-reliability-v1`). Older servers remain compatible but cannot provide these protections. The Mac updater does not install the server package.
 
-## Companion 0.39.0b1 — separate update
+Existing executions without trustworthy effect receipts require human inspection. A live hung scheduler is surfaced, not replaced by a competing scheduler. Recovery archives are local, bounded snapshots at stopped recovery boundaries—not full-machine or continuous backups.
 
-Install the separately published companion package on the PR review host for:
-
-- The Ask Herdr system instruction: “Always give me the ‘short version’ unless I ask for the long version or for more details.”
-- Safe refresh of new/rebased commits, coalesced duplicate refreshes, consistent revision/file snapshots, preserved tracked checkout edits, and nonfatal GitHub viewed-file sync failures.
-- Fresh impact rankings after revision changes, without late ranking jobs overwriting newer results.
-
-The Mac updater updates only the app. No server, CLI, Pi session or iPhone installation is changed by this release. Existing `pr-review-v1` servers remain compatible with the Mac-side PR Review UI changes. Browser/hosted Git pages need the matching companion web assets for the updated shared styling. Agent Profiles retains its separate matching-component requirements from 0.38.
-
-## Quick test
-
-1. Open a PR, select code, ask a question, dismiss the answer, then reopen its saved bubble. Switch files or relaunch and reopen it again.
-2. Check the visible Impact explanation; try a filter with no matches.
-3. Compare code colors/line spacing in PR Review, a chat's Git segment and First Mate Git.
-4. With companion 0.39.0b1 installed, refresh after a new commit. Confirm the review stays usable and older question bubbles identify their earlier revision. Ask for more detail to override the short-answer default.
-
-Saved question history is private to this Mac and starts with questions created in this version; older questions are not retroactively indexed.
-
-This preview uses Apple Development signing and signed Sparkle updates. It is not notarized.
+This preview preserves the published 0.38 Agent Profiles feature and existing First Mate chat, archive, usage, and role-selection behavior. See `docs/first-mate/reliability.md` for configuration and limits.

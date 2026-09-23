@@ -70,25 +70,27 @@ struct IssueReportWiringTests {
         #expect(!HerdrMacAppDelegate.takePendingIssueReport())
     }
 
-    @Test("⌘V is intercepted only for image-only clipboards outside the description")
+    @Test("⌘V is intercepted only for image-only clipboards outside a text editor")
     func pasteInterception() {
         let imageOnly: [NSPasteboard.PasteboardType] = [.tiff, .png]
         let imageAndText: [NSPasteboard.PasteboardType] = [.tiff, .string]
         let finderCopy: [NSPasteboard.PasteboardType] = [.fileURL, .string]
         let richText: [NSPasteboard.PasteboardType] = [.rtf, NSPasteboard.PasteboardType("public.utf16-external-plain-text")]
 
-        #expect(IssueReportPasteInterceptor.shouldIntercept(modifiers: .command, key: "v", isBodyFocused: false, pasteboardTypes: imageOnly))
-        #expect(IssueReportPasteInterceptor.shouldIntercept(modifiers: .command, key: "V", isBodyFocused: false, pasteboardTypes: imageOnly))
-        #expect(!IssueReportPasteInterceptor.shouldIntercept(modifiers: .command, key: "v", isBodyFocused: true, pasteboardTypes: imageOnly))
-        #expect(!IssueReportPasteInterceptor.shouldIntercept(modifiers: .command, key: "v", isBodyFocused: false, pasteboardTypes: imageAndText))
-        #expect(!IssueReportPasteInterceptor.shouldIntercept(modifiers: .command, key: "v", isBodyFocused: false, pasteboardTypes: finderCopy))
-        #expect(!IssueReportPasteInterceptor.shouldIntercept(modifiers: .command, key: "v", isBodyFocused: false, pasteboardTypes: richText))
-        #expect(!IssueReportPasteInterceptor.shouldIntercept(modifiers: .command, key: "v", isBodyFocused: false, pasteboardTypes: []))
-        #expect(!IssueReportPasteInterceptor.shouldIntercept(modifiers: [.command, .shift], key: "v", isBodyFocused: false, pasteboardTypes: imageOnly))
-        #expect(!IssueReportPasteInterceptor.shouldIntercept(modifiers: [.command, .option], key: "v", isBodyFocused: false, pasteboardTypes: imageOnly))
-        #expect(!IssueReportPasteInterceptor.shouldIntercept(modifiers: [], key: "v", isBodyFocused: false, pasteboardTypes: imageOnly))
-        #expect(!IssueReportPasteInterceptor.shouldIntercept(modifiers: .command, key: "c", isBodyFocused: false, pasteboardTypes: imageOnly))
-        #expect(!IssueReportPasteInterceptor.shouldIntercept(modifiers: .command, key: nil, isBodyFocused: false, pasteboardTypes: imageOnly))
+        // The smart-input box and the description editor both report text
+        // editing focus, so ordinary text keeps its own paste there.
+        #expect(IssueReportPasteInterceptor.shouldIntercept(modifiers: .command, key: "v", isTextEditingFocused: false, pasteboardTypes: imageOnly))
+        #expect(IssueReportPasteInterceptor.shouldIntercept(modifiers: .command, key: "V", isTextEditingFocused: false, pasteboardTypes: imageOnly))
+        #expect(!IssueReportPasteInterceptor.shouldIntercept(modifiers: .command, key: "v", isTextEditingFocused: true, pasteboardTypes: imageOnly))
+        #expect(!IssueReportPasteInterceptor.shouldIntercept(modifiers: .command, key: "v", isTextEditingFocused: false, pasteboardTypes: imageAndText))
+        #expect(!IssueReportPasteInterceptor.shouldIntercept(modifiers: .command, key: "v", isTextEditingFocused: false, pasteboardTypes: finderCopy))
+        #expect(!IssueReportPasteInterceptor.shouldIntercept(modifiers: .command, key: "v", isTextEditingFocused: false, pasteboardTypes: richText))
+        #expect(!IssueReportPasteInterceptor.shouldIntercept(modifiers: .command, key: "v", isTextEditingFocused: false, pasteboardTypes: []))
+        #expect(!IssueReportPasteInterceptor.shouldIntercept(modifiers: [.command, .shift], key: "v", isTextEditingFocused: false, pasteboardTypes: imageOnly))
+        #expect(!IssueReportPasteInterceptor.shouldIntercept(modifiers: [.command, .option], key: "v", isTextEditingFocused: false, pasteboardTypes: imageOnly))
+        #expect(!IssueReportPasteInterceptor.shouldIntercept(modifiers: [], key: "v", isTextEditingFocused: false, pasteboardTypes: imageOnly))
+        #expect(!IssueReportPasteInterceptor.shouldIntercept(modifiers: .command, key: "c", isTextEditingFocused: false, pasteboardTypes: imageOnly))
+        #expect(!IssueReportPasteInterceptor.shouldIntercept(modifiers: .command, key: nil, isTextEditingFocused: false, pasteboardTypes: imageOnly))
 
         #expect(IssueReportPasteInterceptor.holdsImageWithoutText([NSPasteboard.PasteboardType("public.heic")]))
         #expect(!IssueReportPasteInterceptor.holdsImageWithoutText([.fileURL]))
@@ -116,6 +118,67 @@ struct IssueReportWiringTests {
         pasteboard.setString("just text", forType: .string)
         #expect(!composer.importPasteboardImage(pasteboard))
         #expect(composer.attachments.count == 1)
+    }
+
+    @Test("The glow marks actual capture, never a pending permission request")
+    func glowFollowsCaptureOnly() {
+        #expect(IssueReportSmartInputPresentation.isGlowing(voiceState: .recording))
+        #expect(!IssueReportSmartInputPresentation.isGlowing(voiceState: .requestingPermission))
+        #expect(!IssueReportSmartInputPresentation.isGlowing(voiceState: .transcribing))
+        #expect(!IssueReportSmartInputPresentation.isGlowing(voiceState: .idle))
+        #expect(!IssueReportSmartInputPresentation.isGlowing(voiceState: .failed))
+
+        #expect(IssueReportSmartInputPresentation.micSymbol(voiceState: .recording) == "stop.fill")
+        #expect(IssueReportSmartInputPresentation.micSymbol(voiceState: .requestingPermission) == "xmark")
+        #expect(IssueReportSmartInputPresentation.micSymbol(voiceState: .idle) == "mic.fill")
+    }
+
+    @Test("Mic labels name the one action and never rely on the glow")
+    func micAccessibilityLabels() {
+        #expect(IssueReportSmartInputPresentation.micAccessibilityLabel(voiceState: .recording) == "Stop recording")
+        #expect(IssueReportSmartInputPresentation.micAccessibilityLabel(voiceState: .requestingPermission) == "Cancel recording")
+        #expect(IssueReportSmartInputPresentation.micAccessibilityLabel(voiceState: .transcribing) == "Transcribing recording")
+        #expect(IssueReportSmartInputPresentation.micAccessibilityLabel(voiceState: .idle) == "Record a description")
+        #expect(IssueReportSmartInputPresentation.micAccessibilityLabel(voiceState: .failed) == "Record a description")
+    }
+
+    @Test("Inline status copy covers drafting, permission, recording, and transcription")
+    func smartInputStatusCopy() {
+        #expect(IssueReportSmartInputPresentation.statusText(isDrafting: true, voiceState: .idle) == "Drafting with AI…")
+        #expect(IssueReportSmartInputPresentation.statusText(isDrafting: false, voiceState: .requestingPermission) == "Waiting for microphone permission…")
+        #expect(IssueReportSmartInputPresentation.statusText(isDrafting: false, voiceState: .recording) == "Recording…")
+        #expect(IssueReportSmartInputPresentation.statusText(isDrafting: false, voiceState: .transcribing) == "Transcribing…")
+        #expect(IssueReportSmartInputPresentation.statusText(isDrafting: false, voiceState: .idle) == nil)
+        #expect(IssueReportSmartInputPresentation.statusText(isDrafting: false, voiceState: .failed) == nil)
+    }
+
+    @Test("The preparation notice names the companion and keeps publication explicit")
+    func preparationNotice() {
+        let named = IssueReportSmartInputPresentation.preparationNotice(companionName: "Synthetic Companion")
+        #expect(named.contains("Synthetic Companion"))
+        #expect(named.contains("Pi"))
+        #expect(named.contains("transcription"))
+        #expect(named.contains("only File report files the issue"))
+
+        let unnamed = IssueReportSmartInputPresentation.preparationNotice(companionName: "   ")
+        #expect(unnamed.contains("the selected companion"))
+        #expect(!unnamed.contains("  "))
+    }
+
+    @Test("The UI-test fixture is off unless its launch argument is present")
+    func uiTestFixtureIsGated() {
+        #if DEBUG
+        // The unit-test process never passes the fixture arguments, so the
+        // deterministic doubles cannot leak into ordinary runs.
+        #expect(!IssueReportUITestFixture.isEnabled)
+        #expect(!IssueReportUITestFixture.draftsFailOnce)
+
+        #expect(IssueReportUITestFixture.draftTitle(for: .bug) == "Synthetic bug draft")
+        #expect(IssueReportUITestFixture.draftTitle(for: .feature) == "Synthetic feature draft")
+        #expect(IssueReportUITestFixture.draftBody(for: .bug).contains("bug"))
+        #expect(IssueReportUITestFixture.draftBody(for: .feature).contains("feature"))
+        #expect(IssueReportUITestFixture.transcript.contains("Synthetic"))
+        #endif
     }
 
     // MARK: - Helpers

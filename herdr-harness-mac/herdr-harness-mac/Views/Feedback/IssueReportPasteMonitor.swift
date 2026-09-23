@@ -10,11 +10,11 @@ import UniformTypeIdentifiers
 /// screenshot (PNG/TIFF, no string) is unreadable to it, so the key equivalent
 /// is disabled and the command never reaches SwiftUI. This local key monitor
 /// runs before that validation and routes such pastes to the composer; any
-/// clipboard with text keeps its ordinary text paste, and the description
-/// editor keeps its own paste entirely.
+/// clipboard with text keeps its ordinary text paste, and every text editor —
+/// the smart-input box and the description — keeps its own paste entirely.
 struct IssueReportPasteMonitor: NSViewRepresentable {
     let composer: IssueReportComposer
-    var isBodyFocused: Bool
+    var isTextEditingFocused: Bool
     var isEnabled: Bool
 
     func makeCoordinator() -> Coordinator { Coordinator(composer: composer) }
@@ -22,7 +22,7 @@ struct IssueReportPasteMonitor: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         context.coordinator.view = view
-        context.coordinator.isBodyFocused = isBodyFocused
+        context.coordinator.isTextEditingFocused = isTextEditingFocused
         context.coordinator.isEnabled = isEnabled
         context.coordinator.monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak coordinator = context.coordinator] event in
             guard let coordinator else { return event }
@@ -32,7 +32,7 @@ struct IssueReportPasteMonitor: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        context.coordinator.isBodyFocused = isBodyFocused
+        context.coordinator.isTextEditingFocused = isTextEditingFocused
         context.coordinator.isEnabled = isEnabled
     }
 
@@ -44,7 +44,7 @@ struct IssueReportPasteMonitor: NSViewRepresentable {
     @MainActor final class Coordinator {
         weak var view: NSView?
         var monitor: Any?
-        var isBodyFocused = false
+        var isTextEditingFocused = false
         var isEnabled = true
         let composer: IssueReportComposer
 
@@ -59,7 +59,7 @@ struct IssueReportPasteMonitor: NSViewRepresentable {
             guard IssueReportPasteInterceptor.shouldIntercept(
                 modifiers: event.modifierFlags,
                 key: event.charactersIgnoringModifiers,
-                isBodyFocused: isBodyFocused,
+                isTextEditingFocused: isTextEditingFocused,
                 pasteboardTypes: pasteboard.types ?? []
             ) else { return event }
             return composer.importPasteboardImage(pasteboard) ? nil : event
@@ -73,10 +73,10 @@ enum IssueReportPasteInterceptor {
     static func shouldIntercept(
         modifiers: NSEvent.ModifierFlags,
         key: String?,
-        isBodyFocused: Bool,
+        isTextEditingFocused: Bool,
         pasteboardTypes: [NSPasteboard.PasteboardType]
     ) -> Bool {
-        guard !isBodyFocused else { return false }
+        guard !isTextEditingFocused else { return false }
         guard modifiers.intersection([.command, .shift, .option, .control]) == [.command],
               key?.lowercased() == "v" else { return false }
         return holdsImageWithoutText(pasteboardTypes)

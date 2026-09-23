@@ -4,15 +4,20 @@ import UniformTypeIdentifiers
 
 /// Help ▸ Report a Bug or Request a Feature… (⌘⌥F).
 ///
-/// Collects a verbatim note plus optional screenshots or documents and files
-/// them as a public GitHub issue through this Mac's companion or the first
-/// connected companion in the roster. The sheet never sends machine names,
-/// URLs or tokens; the "Included details" group shows exactly what goes out.
+/// Collects a final title and verbatim description plus optional screenshots or
+/// documents and files them as a public GitHub issue through this Mac's
+/// companion or the first connected companion in the roster. An optional
+/// smart-input section above the fields can draft both fields from plain
+/// English, or transcribe one inline recording into the same box; neither
+/// action files anything. The sheet never sends machine names, URLs or tokens;
+/// the "Included details" group shows exactly what goes out.
 struct IssueReportView: View {
     @Bindable var model: HerdrAppModel
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var composer = IssueReportComposer()
+    @State private var smartInput: IssueReportSmartInput
     @State private var capabilityNotice: String?
     @State private var serverCapabilityList: [String] = []
     @State private var isDropTargeted = false
@@ -22,8 +27,22 @@ struct IssueReportView: View {
     @FocusState private var focusedField: Field?
 
     private enum Field: Hashable {
+        case smartInput
         case title
         case body
+    }
+
+    init(model: HerdrAppModel) {
+        self.model = model
+        #if DEBUG
+        if IssueReportUITestFixture.isEnabled {
+            _smartInput = State(
+                initialValue: IssueReportSmartInput(capture: IssueReportUITestFixture.makeCapture())
+            )
+            return
+        }
+        #endif
+        _smartInput = State(initialValue: IssueReportSmartInput())
     }
 
     var body: some View {
@@ -49,7 +68,7 @@ struct IssueReportView: View {
             .background(
                 IssueReportPasteMonitor(
                     composer: composer,
-                    isBodyFocused: focusedField == .body,
+                    isTextEditingFocused: focusedField == .body || focusedField == .smartInput,
                     isEnabled: composer.submittedRecord == nil && !composer.isSubmitting
                 )
             )
@@ -65,17 +84,23 @@ struct IssueReportView: View {
         .frame(minWidth: 640, minHeight: 620)
         .interactiveDismissDisabled(composer.isSubmitting)
         .onPasteCommand(of: [.image, .fileURL]) { providers in
-            // The description editor keeps its own paste; everywhere else ⌘V
-            // attaches the clipboard image or file.
-            guard focusedField != .body, composer.submittedRecord == nil, !composer.isSubmitting else { return }
+            // The smart-input box and description editor keep their own text
+            // paste; everywhere else ⌘V attaches the clipboard image or file.
+            guard focusedField != .body, focusedField != .smartInput,
+                  composer.submittedRecord == nil, !composer.isSubmitting else { return }
             composer.importItemProviders(providers)
         }
         .task {
             selectDefaultMachine()
-            focusedField = .title
+            smartInput.attach(composer: composer)
+            // The optional plain-English box is the fastest path, so it opens
+            // focused; every field stays reachable with the keyboard.
+            focusedField = .smartInput
         }
         .task(id: composer.machineID) {
+            configureSmartInput()
             await loadCapabilities()
+            await smartInput.refreshAvailability()
         }
         .onChange(of: model.machines) { _, _ in
             selectDefaultMachine()
@@ -86,6 +111,9 @@ struct IssueReportView: View {
         .onDisappear {
             submitTask?.cancel()
             submitTask = nil
+            // Cancels drafting and any capture, discards retained audio, and
+            // makes every late callback a no-op for this sheet.
+            smartInput.endSheet()
             composer.discardTemporaryFiles()
         }
     }
@@ -97,10 +125,14 @@ struct IssueReportView: View {
             Label("Report a bug or request a feature", systemImage: "ladybug")
                 .herdrFont(.title2, weight: .semibold)
                 .foregroundStyle(HerdrTheme.text)
-            Text("Your note is filed word for word as a GitHub issue, together with any screenshots or documents you attach.")
-                .herdrFont(.body)
-                .foregroundStyle(HerdrTheme.mist)
-                .fixedSize(horizontal: false, vertical: true)
+            Text(
+                "The final title and description are filed word for word as a public GitHub issue, together with any "
+                    + "screenshots or documents you attach. You can also describe it in your own words under Smart "
+                    + "input and let AI draft both fields — review and edit everything before filing."
+            )
+            .herdrFont(.body)
+            .foregroundStyle(HerdrTheme.mist)
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -122,6 +154,8 @@ struct IssueReportView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("issue-report-no-machine")
             }
+
+            smartInputSection()
 
             titleField
             bodyEditor
@@ -145,6 +179,255 @@ struct IssueReportView: View {
             return composer.importItemProviders(providers)
         }
         .disabled(composer.isSubmitting)
+    }
+
+    /// The optional plain-English entry point: one multiline box, one labeled
+    /// AI action, and one inline microphone that glows only while it captures.
+    /// No recorder sheet, waveform, timer, or playback UI is ever presented.
+    private func smartInputSection() -> some View {
+        @Bindable var smartInput = smartInput
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Label("Smart input", systemImage: "sparkles")
+                    .herdrFont(.caption, weight: .semibold)
+                    .foregroundStyle(HerdrTheme.accent)
+                Text("Optional")
+                    .herdrFont(.caption2)
+                    .foregroundStyle(HerdrTheme.muted)
+                Spacer()
+                Text("\(smartInput.source.unicodeScalars.count)/\(IssueReportDraftProfile.maxSourceCharacters)")
+                    .herdrFont(.caption2, monospacedDigit: true)
+                    .foregroundStyle(HerdrTheme.muted)
+                    .accessibilityIdentifier("issue-report-smart-count")
+            }
+
+            Text(IssueReportSmartInputPresentation.preparationNotice(companionName: selectedMachine?.name))
+                .herdrFont(.caption)
+                .foregroundStyle(HerdrTheme.mist)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("issue-report-smart-notice")
+
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $smartInput.source)
+                    .herdrFont(size: 14, relativeTo: .body)
+                    .scrollContentBackground(.hidden)
+                    .padding(8)
+                    .frame(minHeight: 96)
+                    .focused($focusedField, equals: .smartInput)
+                    .accessibilityIdentifier("issue-report-smart-source")
+                if smartInput.source.isEmpty {
+                    Text("Type what you want in your own words — or dictate it — then Draft with AI.")
+                        .herdrFont(size: 14, relativeTo: .body)
+                        .foregroundStyle(HerdrTheme.muted)
+                        .padding(.horizontal, 13)
+                        .padding(.top, 8)
+                        .allowsHitTesting(false)
+                }
+            }
+            .background(HerdrTheme.input)
+            .overlay {
+                RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+                    .strokeBorder(focusedField == .smartInput ? HerdrTheme.accent : HerdrTheme.separator, lineWidth: 1)
+            }
+            .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+
+            if let problem = smartInput.sourceProblem {
+                Label(problem, systemImage: "exclamationmark.triangle.fill")
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.alert)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("issue-report-smart-source-problem")
+            }
+
+            smartInputControls
+            smartInputNotices
+        }
+        .padding(12)
+        .background(HerdrTheme.elevated.opacity(0.6))
+        .overlay {
+            RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+                .strokeBorder(HerdrTheme.accent.opacity(0.25), lineWidth: 1)
+        }
+        .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+        .accessibilityIdentifier("issue-report-smart-input")
+    }
+
+    /// One row when it fits, stacked when larger text or a longer companion
+    /// status would otherwise clip the actions.
+    private var smartInputControls: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                micControl
+                statusIndicator
+                Spacer(minLength: 8)
+                restoreButton
+                draftButton
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 10) {
+                    micControl
+                    statusIndicator
+                }
+                HStack(spacing: 10) {
+                    Spacer(minLength: 0)
+                    restoreButton
+                    draftButton
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var statusIndicator: some View {
+        if let status = IssueReportSmartInputPresentation.statusText(
+            isDrafting: smartInput.isDrafting,
+            voiceState: smartInput.voiceState
+        ) {
+            HStack(spacing: 6) {
+                if smartInput.isDrafting || smartInput.voiceState == .transcribing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(HerdrTheme.mist)
+                }
+                Text(status)
+                    .herdrFont(.caption)
+                    .foregroundStyle(smartInput.isRecording ? HerdrTheme.alert : HerdrTheme.mist)
+                    .accessibilityIdentifier("issue-report-smart-status")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var restoreButton: some View {
+        if smartInput.canRestoreGeneratedDraft {
+            Button("Restore previous", systemImage: "arrow.uturn.backward") {
+                smartInput.restoreGeneratedDraft()
+            }
+            .accessibilityIdentifier("issue-report-smart-restore")
+            .help("Put back the title and description the generated draft replaced")
+        }
+    }
+
+    private var draftButton: some View {
+        Button {
+            smartInput.generate()
+        } label: {
+            Label("Draft with AI", systemImage: "sparkles")
+        }
+        .disabled(!smartInput.canGenerate)
+        .accessibilityIdentifier("issue-report-smart-draft")
+        .help("Write a title and structured description from the box above")
+    }
+
+    /// The one inline recording control. The glow is capture evidence only:
+    /// a pending permission prompt shows the cancel symbol instead, and the
+    /// accessible label always names the action, never the glow. Reduce Motion
+    /// removes the fade; the steady glow itself is unchanged.
+    private var micControl: some View {
+        Button {
+            smartInput.toggleRecording()
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(HerdrTheme.surface)
+                if IssueReportSmartInputPresentation.isGlowing(voiceState: smartInput.voiceState) {
+                    Circle()
+                        .strokeBorder(HerdrTheme.alert.opacity(0.85), lineWidth: 2)
+                    Circle()
+                        .fill(HerdrTheme.alert.opacity(0.3))
+                        .blur(radius: 5)
+                }
+                Image(systemName: IssueReportSmartInputPresentation.micSymbol(voiceState: smartInput.voiceState))
+                    .herdrFont(size: 13, weight: .semibold)
+                    .foregroundStyle(smartInput.isRecording ? HerdrTheme.alert : HerdrTheme.text)
+            }
+            .frame(width: 30, height: 30)
+            .contentShape(Circle())
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: smartInput.isRecording)
+        }
+        .buttonStyle(.plain)
+        .disabled(!smartInput.canToggleRecording)
+        .accessibilityLabel(
+            IssueReportSmartInputPresentation.micAccessibilityLabel(voiceState: smartInput.voiceState)
+        )
+        .accessibilityIdentifier("issue-report-smart-mic")
+        .help(smartInput.isRecording ? "Stop and transcribe this recording" : "Record a description and transcribe it")
+    }
+
+    /// Recoverable failures and capability states. Errors never replace the
+    /// typed source, and the AI action is disabled only when drafting itself
+    /// is unsupported — manual reporting and recording keep working.
+    @ViewBuilder
+    private var smartInputNotices: some View {
+        if let message = smartInput.draftErrorMessage {
+            smartNotice(
+                message: message,
+                symbol: "exclamationmark.triangle.fill",
+                tint: HerdrTheme.alert,
+                identifier: "issue-report-smart-draft-error"
+            ) {
+                Button("Try again") { smartInput.generate() }
+                    .disabled(!smartInput.canGenerate)
+                    .accessibilityIdentifier("issue-report-smart-retry")
+                Button("Dismiss") { smartInput.dismissDraftError() }
+                    .accessibilityIdentifier("issue-report-smart-draft-dismiss")
+            }
+        }
+        if let message = smartInput.voiceErrorMessage {
+            smartNotice(
+                message: message,
+                symbol: "exclamationmark.triangle.fill",
+                tint: HerdrTheme.alert,
+                identifier: "issue-report-smart-voice-error"
+            ) {
+                if smartInput.canRetryTranscription {
+                    Button("Retry transcription") { smartInput.retryTranscription() }
+                        .disabled(smartInput.isBusy)
+                        .accessibilityIdentifier("issue-report-smart-transcribe-retry")
+                    Button("Discard recording") { smartInput.discardFailedRecording() }
+                        .accessibilityIdentifier("issue-report-smart-discard")
+                } else {
+                    Button("Dismiss") { smartInput.dismissVoiceError() }
+                        .accessibilityIdentifier("issue-report-smart-voice-dismiss")
+                }
+            }
+        }
+        if let message = smartInput.availability.message {
+            smartNotice(
+                message: message,
+                symbol: "sparkles",
+                tint: HerdrTheme.warning,
+                identifier: "issue-report-smart-availability"
+            ) {
+                Button("Check again") {
+                    Task { await smartInput.refreshAvailability() }
+                }
+                .accessibilityIdentifier("issue-report-smart-recheck")
+            }
+        }
+    }
+
+    private func smartNotice(
+        message: String,
+        symbol: String,
+        tint: Color,
+        identifier: String,
+        @ViewBuilder actions: () -> some View
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(message, systemImage: symbol)
+                .herdrFont(.caption)
+                .foregroundStyle(tint)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                actions()
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.12))
+        .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+        .accessibilityIdentifier(identifier)
     }
 
     private var titleField: some View {
@@ -412,6 +695,31 @@ struct IssueReportView: View {
         ) ?? ""
     }
 
+    /// Binds the smart input to the exact selected companion. A live run uses
+    /// that companion's drafting service and quick-voice transcription; a
+    /// DEBUG UI fixture substitutes deterministic, microphone-free doubles.
+    private func configureSmartInput() {
+        let machineID = composer.machineID
+        #if DEBUG
+        if IssueReportUITestFixture.isEnabled {
+            smartInput.configure(
+                machineID: machineID,
+                service: IssueReportUITestFixture.makeDrafting(),
+                transcriber: IssueReportUITestFixture.makeTranscriber()
+            )
+            return
+        }
+        #endif
+        let model = self.model
+        smartInput.configure(
+            machineID: machineID,
+            service: model.issueReportDraftService(machineID: machineID),
+            transcriber: { url, machineID in
+                try await model.transcribeQuickVoice(at: url, machineID: machineID)
+            }
+        )
+    }
+
     private func submit() {
         guard composer.canSubmit, submitTask == nil else { return }
         let environment = environmentDetails
@@ -467,6 +775,8 @@ struct IssueReportView: View {
             }
         } catch {
             guard machineID == composer.machineID else { return }
+            // An older companion that cannot draft still accepts manual
+            // reporting; only the unsupported optional action is called out.
             capabilityNotice = Self.capabilityNotice(for: error)
         }
         let list = await fetchServerCapabilityList(machineID: machineID)

@@ -12,12 +12,16 @@ This is an experimental personal automation. Read the safety section before enab
 ## What happens, end to end
 
 1. **Report from the Mac app.** Help → **Report a Bug or Request a Feature…** (⌘⌥F), or
-   Settings → General → **Feedback**. Choose Bug or Feature request, write a title and a
-   description (sent exactly as written), attach screenshots or documents (file picker,
-   drag and drop, or ⌘V for an image), and check **Included details** to see the
-   environment fields that accompany the report. Leave **Start the automated fix
-   pipeline** on to add the `herdr-autofix` label. The report files through this Mac's
-   companion, or the first connected companion if this Mac's is unavailable.
+   Settings → General → **Feedback**. Choose Bug or Feature request, write the final title and
+   description, attach screenshots or documents (file picker, drag and drop, or ⌘V for an image),
+   and check **Included details** to see the environment fields that accompany the report. The
+   optional **Smart input** box can draft both fields from plain English with one bounded,
+   tool-free `issue-report-draft-v1` run (**Draft with AI**) or transcribe one inline recording
+   with the selected companion's configured transcription service; the generated fields stay
+   editable and neither action files anything. Only **File report** publishes the final edited
+   title and description verbatim. Leave **Start the automated fix pipeline** on to add the
+   `herdr-autofix` label. The report files through this Mac's companion, or the first connected
+   companion if this Mac's is unavailable.
 2. **The companion server files the issue.** The app posts to `/api/v1/issue-reports`.
    The server uses your authenticated `gh` CLI to create a public GitHub issue with the
    verbatim text, links to the attachments, and an environment table. Attachments are
@@ -299,7 +303,10 @@ branch history cannot be rebuilt.
   updater never installs server packages.
 - **Public repository.** Reports, attachments, plans, review comments, and release notes
   are public. The Mac app shows the repository name and excludes machine names,
-  hostnames, URLs, and workspace labels from the environment block.
+  hostnames, URLs, and workspace labels from the environment block. Smart-input text
+  and recordings are sent only to the selected companion's configured drafting and
+  transcription services; neither is published. Only the reviewed, edited title and
+  description reach GitHub.
 - **Outbound text gate.** Every text the daemon posts to GitHub (issue comments, the
   pull request title and body, review comments, the merge commit body) is scrubbed of
   local paths, tailnet names and addresses, private keys and GitHub tokens before it
@@ -361,6 +368,7 @@ reported unused runtimes.
 | Symptom | Check |
 | --- | --- |
 | The Mac app says to update the companion server | The running server does not advertise `issue-reports-v1`; install the newer package. |
+| AI drafting is unavailable but manual reporting works | The companion does not advertise `issue-report-draft-v1`, or its Pi has no usable default. Update the companion separately or write the report by hand; no generic-agent fallback is used. |
 | Report fails with `github_failed` | `gh auth status` on the server machine; repository configured under `[code_factory]`. |
 | Issue never leaves **Picked up** | Daemon not running, wrong `allowed_authors`, or missing trigger label. Run `doctor`. |
 | DeepSeek sessions fail immediately | `OLLAMA_API_KEY` is not available to the daemon; add it to `[environment]`. |
@@ -373,7 +381,7 @@ reported unused runtimes.
 Python:
 
 ```sh
-python3 -m unittest tests.test_issue_reports tests.test_issue_reports_http \
+python3 -m unittest tests.test_issue_reports tests.test_issue_reports_http tests.test_issue_report_drafts \
   tests.test_code_factory_settings tests.test_code_factory_store tests.test_code_factory_github \
   tests.test_code_factory_git tests.test_code_factory_pi tests.test_code_factory_prompts \
   tests.test_code_factory_pipeline tests.test_code_factory_dashboard tests.test_code_factory_cli
@@ -386,9 +394,19 @@ xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-
   -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test \
   -only-testing:herdr-harness-macTests/IssueReportComposerTests \
   -only-testing:herdr-harness-macTests/IssueReportModelsTests \
-  -only-testing:herdr-harness-macTests/IssueReportClientTests
+  -only-testing:herdr-harness-macTests/IssueReportClientTests \
+  -only-testing:herdr-harness-macTests/IssueReportDraftTests \
+  -only-testing:herdr-harness-macTests/IssueReportDraftServiceTests \
+  -only-testing:herdr-harness-macTests/IssueReportSmartInputTests \
+  -only-testing:herdr-harness-macTests/IssueReportWiringTests \
+  -only-testing:herdr-harness-macUITests/IssueReportSmartInputUITests
 ```
 
 Live check: file a report from the app with one screenshot, confirm the issue renders the
 image and the environment table, watch the dashboard move the issue through the stages,
-and confirm the released version appears in **Herdr Companion → Check for Updates…**.
+and confirm the released version appears in **Herdr Companion → Check for Updates…**. For the
+optional smart input, run the synthetic manual checklist in
+[docs/issue-report-smart-input.md](issue-report-smart-input.md): real microphone glow, automatic
+configured-service transcription, generated writing quality, the older-server manual fallback,
+and no publication before **File report**. Do not treat a passing fixture-backed UI run as a
+substitute for those checks.

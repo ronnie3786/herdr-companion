@@ -90,6 +90,19 @@ struct HerdrHudChatBubbleTests {
         #expect(HerdrHudSessionMetadata(cost: "$0.37").label(showsModel: true) == "Model …")
     }
 
+    @Test("A live running session maps to the agent bubble's status row")
+    func liveRunningSessionMatchesAgentBubble() async throws {
+        let fixture = try RunningChatFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.startRunningChat()
+        let status = HerdrHudChatBubblePresentation.status(for: fixture.session)
+        #expect(status.label == "Running")
+        #expect(status.symbol == "bolt.circle.fill")
+        #expect(status.color == AgentStatus.working.color)
+        #expect(!HerdrHudChatBubblePresentation.isReady(HerdrHudChatBubblePresentation.State(fixture.session)))
+        await fixture.stop()
+    }
+
     @Test("A running HUD chat sits beside a running agent bubble in both metadata phases",
           arguments: [false, true])
     func rendersRunningBubbleBesideAgent(showsModel: Bool) async throws {
@@ -111,7 +124,7 @@ struct HerdrHudChatBubbleTests {
             emoji: "",
             activity: "Running tests"
         )
-        let metadata = HerdrHudSessionMetadata(modelName: "Sonnet 4.5", cost: "$0.37")
+        let metadata = HerdrHudSessionMetadata(modelName: "Claude Sonnet 4.5", cost: "$0.37")
         let render = try await HerdrRenderHarness.render(
             showsModel ? "issue41-hud-chat-agent-model.png" : "issue41-hud-chat-agent-cost.png",
             size: CGSize(width: HerdrHudPlacement.chipWidth + 32, height: 300)
@@ -523,7 +536,7 @@ private final class RunningChatURLProtocol: URLProtocol, @unchecked Sendable {
         var runID = "agr_runningrender"
         var status = "running"
         var costUSD: Double = 0.37
-        var model = "synthetic/sonnet-4-5"
+        var model = "synthetic/claude-sonnet-4-5"
     }
 
     static let state = Mutex(State())

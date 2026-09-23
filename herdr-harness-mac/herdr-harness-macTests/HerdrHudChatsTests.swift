@@ -1534,7 +1534,7 @@ struct HerdrHudChatsTests {
         let session = fixture.chats.composer
         let selected = PiAvailableModel(
             provider: "synthetic",
-            modelID: "sonnet-4-5",
+            modelID: "claude-sonnet-4-5",
             name: nil,
             reasoning: true,
             contextWindow: nil
@@ -1548,21 +1548,21 @@ struct HerdrHudChatsTests {
         let runID = try #require(session.thread?.lastRunID)
         // The submission capture is the fallback until the server reports a run model.
         #expect(session.bubbleMetadata.cost == "$0.00")
-        #expect(session.bubbleMetadata.modelName == "Sonnet 4.5")
+        #expect(session.bubbleMetadata.modelName == "Claude Sonnet 4.5")
 
         // A composer change after submission never rewrites captured metadata.
         session.setSelectedModel(nil)
-        #expect(session.bubbleMetadata.modelName == "Sonnet 4.5")
+        #expect(session.bubbleMetadata.modelName == "Claude Sonnet 4.5")
 
         HudChatsURLProtocol.setCost(runID, 0.42)
-        HudChatsURLProtocol.setModel(runID, "synthetic/opus-4-5")
+        HudChatsURLProtocol.setModel(runID, "synthetic/claude-opus-4-5")
         try await wait { session.bubbleMetadata.cost == "$0.42" }
-        #expect(session.bubbleMetadata.modelName == "Opus 4.5")
+        #expect(session.bubbleMetadata.modelName == "Claude Opus 4.5")
 
         HudChatsURLProtocol.finish(runID)
         await task.value
         #expect(session.bubbleMetadata.cost == "$0.42")
-        #expect(session.bubbleMetadata.modelName == "Opus 4.5")
+        #expect(session.bubbleMetadata.modelName == "Claude Opus 4.5")
     }
 
     @Test("HUD chat bubble metadata sums distinct accepted turns across a continuation")
@@ -1670,9 +1670,9 @@ struct HerdrHudChatsTests {
         #expect(await session.refreshSavedHistoryPassivelyForTesting(model: fixture.model))
         #expect(session.bubbleMetadata.cost == "$0.99")
 
-        HudChatsURLProtocol.setModel(root, "synthetic/sonnet-4-5")
+        HudChatsURLProtocol.setModel(root, "synthetic/claude-sonnet-4-5")
         #expect(await session.refreshSavedHistoryPassivelyForTesting(model: fixture.model))
-        #expect(session.bubbleMetadata.modelName == "Sonnet 4.5")
+        #expect(session.bubbleMetadata.modelName == "Claude Sonnet 4.5")
     }
 
     @Test("Observing a restored running turn keeps the bubble metadata live")

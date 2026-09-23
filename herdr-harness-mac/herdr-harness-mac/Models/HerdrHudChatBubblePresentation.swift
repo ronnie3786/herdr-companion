@@ -38,6 +38,10 @@ enum HerdrHudChatBubblePresentation {
         Status(label: label(state), symbol: symbol(state), color: color(state))
     }
 
+    /// Building the state reads the main-actor session, so this convenience is
+    /// main-actor isolated. The pure status policy above stays callable from
+    /// any context that already holds a `State` value.
+    @MainActor
     static func status(for session: HerdrHudSession) -> Status {
         status(State(session))
     }
@@ -106,6 +110,7 @@ enum HerdrHudChatBubblePresentation {
     }
 }
 
+@MainActor
 extension HerdrHudChatBubblePresentation.State {
     init(_ session: HerdrHudSession) {
         self.init(

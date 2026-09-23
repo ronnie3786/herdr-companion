@@ -111,7 +111,9 @@ class IssueReportDraftValidationTests(unittest.TestCase):
         self.assertIn("expected versus actual", bug)
         self.assertIn("feature request", feature)
         self.assertIn("acceptance criteria", feature)
-        self.assertNotIn("reproduction steps", feature)
+        # The shared charter names *not inventing* reproduction steps for every
+        # kind; the feature-specific structure must not ask for them.
+        self.assertNotIn("reproduction steps", feature.removeprefix(CHARTER))
         self.assertTrue(charter_for("bug").startswith(CHARTER))
         with self.assertRaises(AgentRunError):
             charter_for("task")

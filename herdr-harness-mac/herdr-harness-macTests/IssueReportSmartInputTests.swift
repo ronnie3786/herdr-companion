@@ -152,7 +152,7 @@ struct IssueReportSmartInputTests {
         harness.drafting.outcome = .manual
 
         harness.smart.generate()
-        try await waitUntil("drafting") { harness.smart.isDrafting }
+        try await waitUntil("first draft started") { harness.drafting.draftCalls.count == 1 }
         #expect(harness.composer.isPreparing)
         #expect(!harness.composer.canSubmit)
 
@@ -299,6 +299,7 @@ struct IssueReportSmartInputTests {
         harness.smart.toggleRecording()
         harness.smart.toggleRecording()
         try await waitUntil("transcribing") { harness.smart.voiceState == .transcribing }
+        try await waitUntil("transcriber started") { harness.transcriber.calls.count == 1 }
 
         harness.smart.source = "typed first and more"
         harness.transcriber.resolve(.success("spoken words"))
@@ -454,7 +455,7 @@ struct IssueReportSmartInputTests {
         harness.drafting.outcome = .manual
 
         harness.smart.generate()
-        try await waitUntil("drafting") { harness.smart.isDrafting }
+        try await waitUntil("drafting") { harness.drafting.draftCalls.count == 1 }
 
         #expect(!harness.smart.canStartRecording)
         harness.smart.toggleRecording()

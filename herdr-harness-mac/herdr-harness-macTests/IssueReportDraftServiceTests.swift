@@ -38,7 +38,7 @@ struct IssueReportDraftServiceTests {
     func happyPath() async throws {
         let spy = DraftTransportSpy()
         let running = Self.makeRun(status: .running)
-        let completed = Self.makeRun(status: .completed, response: #"{"title":"Crash on launch","body":"## Steps\n1. Open"}"#)
+        let completed = Self.makeRun(status: .completed, response: ###"{"title":"Crash on launch","body":"## Steps\n1. Open"}"###)
         spy.startRun = running
         spy.fetchResponses = [running, completed]
         let service = IssueReportDraftService(transport: spy.transport, pollInterval: .milliseconds(1))

@@ -2,8 +2,17 @@
 
 Agent Profiles add optional personality and user preferences to Companion's
 existing app awareness. Open **Settings → Agent Profiles**, or **Fleet → Agent
-Profiles**. Select the **data machine** where the agent runs, not the computer
-showing the conversation.
+Profiles**. The chips at the top list every configured machine and the profile its
+agents use; pick the machine where the agent runs, not the computer showing the
+conversation. The editor shows that profile's Soul and User documents. When
+another machine owns the profile, saving writes to the owner and the change
+applies to every machine using it.
+
+- **Switch** chooses the machine's profile, creates a new one, or turns profiles
+  off. Unused, empty starter profiles are grouped under **Empty Profiles**.
+- **Add Notes for <machine>** edits machine-only additions.
+- **History** previews and restores earlier revisions.
+- **Preview What Agents See** shows the effective prompt and sync status.
 
 - **SOUL.md**: tone, personality, and collaboration preferences.
 - **USER.md**: relevant user preferences and context. Never add credentials.
@@ -42,7 +51,8 @@ assignment, not an automatic election or multi-master merge.
 ## Editing, conflicts, and proposals
 
 Edits use the revision that was read. A conflict preserves the editor's draft;
-reload and reconcile deliberately. Restoring history creates a new revision rather
+copy it, reload and reconcile deliberately. The app records a short reason for
+each change (for example "Edited Soul") because the server requires one. Restoring history creates a new revision rather
 than deleting later changes. The last 100 revisions are available per profile.
 The bounded proposal inbox retains pending proposals and recent decisions.
 
@@ -59,8 +69,8 @@ herdr-profiles --machine desktop propose PROFILE_UUID \
 ```
 
 Choose the **profile owner**, not a cache host, for a proposal. Proposing does not
-change effective instructions. Review the diff in Settings/Fleet and approve or
-reject it. A proposal based on an older revision cannot overwrite a newer edit.
+change effective instructions. A banner in Settings/Fleet opens a line-by-line
+diff to approve or decline. A proposal based on an older revision cannot overwrite a newer edit.
 ASK runs, First Mate coordinators/advisors and read-only workers cannot submit
 through this CLI; they can present suggested wording without mutating state.
 An isolated First Mate worker may propose an explicitly authorized preference

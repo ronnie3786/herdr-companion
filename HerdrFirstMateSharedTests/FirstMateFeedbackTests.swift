@@ -475,6 +475,12 @@ struct FirstMateFeedbackTests {
         await store.refresh()
         _ = store.acquireControlLease(available: true)
         let context = store.operationContext
+        // The chat surface and editor load the companion's catalog before a
+        // custom reason can be added; the local cache then reflects defaults
+        // plus additions instead of only the response's created category.
+        await store.loadFeedbackCategories(expectedContext: context)
+        #expect(store.feedbackCategoriesLoaded)
+        #expect(store.feedbackCategories.map(\.id) == FirstMateFeedbackDefaults.categories.map(\.id))
 
         let created = try #require(await store.addFeedbackCategory(
             label: "  Needs   more evidence ",
@@ -494,8 +500,10 @@ struct FirstMateFeedbackTests {
         #expect(failed == nil)
         #expect(store.feedbackCategoriesError != nil)
         #expect(!store.feedbackCategories.contains { $0.label == "Needs proof" })
+        #expect(store.feedbackCategories.count == FirstMateFeedbackDefaults.categories.count + 1)
 
         #expect(await store.addFeedbackCategory(label: "line\nbreak", expectedContext: context) == nil)
+        #expect(store.feedbackCategories.count == FirstMateFeedbackDefaults.categories.count + 1)
     }
 }
 

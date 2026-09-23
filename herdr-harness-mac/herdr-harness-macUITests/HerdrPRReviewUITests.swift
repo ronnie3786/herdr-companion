@@ -522,11 +522,14 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
     /// alone does not reliably detect overlap, and keyboard cycling depends
     /// on the user's configured shortcut and window order.
     @MainActor
-    private func bringForward(_ anchor: XCUIElement, in app: XCUIApplication, windowTitle: String = "PR Review") {
+    private func bringForward(_ anchor: XCUIElement, in app: XCUIApplication, windowTitle: String = "Herdr Companion") {
         XCTAssertTrue(anchor.exists)
         app.activate()
-        app.menuBars.menuBarItems["Window"].click()
-        let item = app.menuItems.matching(NSPredicate(
+        let windowMenu = app.menuBars.menuBarItems["Window"]
+        windowMenu.click()
+        // The main scene is listed as Herdr Companion, even when its document
+        // title is PR Review. View also has a PR Review navigation command.
+        let item = windowMenu.menuItems.matching(NSPredicate(
             format: "title == %@ OR label == %@", windowTitle, windowTitle
         )).firstMatch
         XCTAssertTrue(item.waitForExistence(timeout: 5), "Window menu must offer \(windowTitle)")

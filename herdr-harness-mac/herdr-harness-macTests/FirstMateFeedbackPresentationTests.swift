@@ -320,8 +320,92 @@ struct FirstMateFeedbackPresentationTests {
         let attempted = FirstMateFeedbackDraft(rating: .up)
         #expect(!(await store.saveFeedback(attempted, messageID: message.id, expectedContext: context)))
         #expect(store.feedbackSaveError(featureID: "synthetic-feature", messageID: message.id) != nil)
-        #expect(store.feedbackDraft(for: "synthetic-feature", messageID: message.id) == attempted)
+        var pinnedAttempt = attempted
+        pinnedAttempt.baseRevision = 0
+        #expect(store.feedbackDraft(for: "synthetic-feature", messageID: message.id) == pinnedAttempt)
         #expect(store.feedback(for: "synthetic-feature", messageID: message.id) == nil)
+    }
+
+    @Test("The footer defers writes until the record loads and shows conflict recovery")
+    func loadReadinessAndConflictPresentation() throws {
+        let message = syntheticMessage(id: "conflict", role: "assistant", status: "done", text: "Answer")
+        let saved = syntheticRecord(rating: .down, categoryIDs: ["too_long"], comment: "Note")
+
+        // A delayed read keeps the cached rating visible but disables writes,
+        // so an early click can never overwrite a record that has not loaded.
+        let beforeLoad = try #require(FirstMateResponseFeedbackPresentation.make(
+            message: message,
+            supported: true,
+            writable: true,
+            isSaving: false,
+            record: saved,
+            isFeedbackLoaded: false
+        ))
+        #expect(!beforeLoad.isWritable)
+        #expect(beforeLoad.rating == .down)
+        #expect(beforeLoad.statusText == "Not helpful · 1 reason, note")
+
+        let conflict = try #require(FirstMateResponseFeedbackPresentation.make(
+            message: message,
+            supported: true,
+            writable: true,
+            isSaving: false,
+            record: saved,
+            saveErrorMessage: "Feedback changed. Reload it before saving.",
+            hasConflict: true
+        ))
+        #expect(conflict.hasConflict)
+        #expect(conflict.isWritable)
+        #expect(conflict.hasSavedRating)
+        #expect(conflict.saveErrorMessage != nil)
+
+        for scheme in [ColorScheme.light, .dark] {
+            let view = NSHostingView(
+                rootView: FirstMateResponseFeedbackFooter(messageID: message.id, presentation: conflict)
+                    .environment(\.colorScheme, scheme)
+                    .environment(\.herdrFontScale, .xxxLarge)
+                    .frame(width: 420)
+            )
+            view.layoutSubtreeIfNeeded()
+            #expect(view.fittingSize.height > 10)
+        }
+    }
+
+    @Test("Editor state freezes saving while loading, saving, or conflicted")
+    func editorStateGating() {
+        func state(
+            loaded: Bool = true,
+            saving: Bool = false,
+            conflict: Bool = false,
+            categorySaving: Bool = false
+        ) -> FirstMateFeedbackEditorState {
+            FirstMateFeedbackEditorState(
+                draft: FirstMateFeedbackDraft(),
+                isTargetAlive: true,
+                isWritable: true,
+                isFeedbackLoaded: loaded,
+                isSaving: saving,
+                isAddingCategory: categorySaving,
+                isCategoriesLoaded: true,
+                isLoadingCategories: false,
+                showsUpgradeNotice: false,
+                ratingErrorMessage: nil,
+                categoryErrorMessage: nil,
+                saveErrorMessage: nil,
+                hasConflict: conflict
+            )
+        }
+
+        #expect(state().canSave)
+        #expect(!state(loaded: false).canSave)
+        #expect(!state(loaded: false).isEditable)
+        #expect(!state(saving: true).isEditable)
+        #expect(!state(saving: true).canSave)
+        #expect(!state(conflict: true).canSave)
+        #expect(state(conflict: true).hasConflict)
+        #expect(!state(categorySaving: true).canSave)
+        #expect(!state().isLoadingCategories)
+        #expect(state().isCategoriesLoaded)
     }
 
     @Test("The footer, message row, and pinned editor host in both appearances at the largest text size")

@@ -146,11 +146,15 @@ struct FirstMateChatView: View {
               currentContext.matchesFeature(message.featureID),
               FirstMateFeedbackEligibility.isEligible(message),
               store.feedbackSupported else { return }
-        // A response rated helpful (or unrated) starts a fresh negative draft;
-        // an existing negative rating keeps its saved reasons and note.
-        if store.feedback(for: message.featureID, messageID: message.id)?.rating != .down {
+        // A response rated helpful starts a fresh negative draft pinned to
+        // the loaded record's revision; an existing negative rating keeps its
+        // saved reasons and note. Before the first record load completes no
+        // draft is seeded from the empty cache.
+        if store.hasLoadedFeedback(for: message.featureID),
+           let record = store.feedback(for: message.featureID, messageID: message.id),
+           record.rating != .down {
             store.setFeedbackDraft(
-                FirstMateFeedbackDraft(rating: .down),
+                FirstMateFeedbackDraft(rating: .down, baseRevision: record.revision),
                 for: message.featureID,
                 messageID: message.id,
                 expectedContext: currentContext
@@ -209,7 +213,9 @@ struct FirstMateChatView: View {
                             writable: feedbackWritable,
                             isSaving: store.isSavingFeedback(featureID: message.featureID, messageID: message.id),
                             record: store.feedback(for: message.featureID, messageID: message.id),
-                            saveErrorMessage: store.feedbackSaveError(featureID: message.featureID, messageID: message.id)
+                            saveErrorMessage: store.feedbackSaveError(featureID: message.featureID, messageID: message.id),
+                            hasConflict: store.feedbackConflict(featureID: message.featureID, messageID: message.id),
+                            isFeedbackLoaded: store.hasLoadedFeedback(for: message.featureID)
                         )
                         FirstMateMessageView(
                             message: message,
@@ -253,6 +259,27 @@ struct FirstMateChatView: View {
                                     messageID: message.id
                                 )
                                 Task {
+                                    await store.saveFeedback(
+                                        draft,
+                                        messageID: message.id,
+                                        expectedContext: feedbackContext
+                                    )
+                                }
+                            },
+                            resolveFeedbackConflict: {
+                                // A stale revision is recovered only through this
+                                // explicit action: reload the latest record,
+                                // rebase the preserved up/clear payload, then
+                                // retry with the new revision and request ID.
+                                Task {
+                                    guard await store.resolveFeedbackConflict(
+                                        messageID: message.id,
+                                        expectedContext: feedbackContext
+                                    ) else { return }
+                                    let draft = store.feedbackDraft(
+                                        for: message.featureID,
+                                        messageID: message.id
+                                    )
                                     await store.saveFeedback(
                                         draft,
                                         messageID: message.id,

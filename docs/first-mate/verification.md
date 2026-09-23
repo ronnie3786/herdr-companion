@@ -44,3 +44,25 @@ The ignored `build/first-mate-delivery` directory contains a separately identifi
 - Session transcripts are paginated. Feature detail exposes the newest 1,000 session metadata records with a truncation flag; older records remain retained in the host ledger.
 
 See [the runtime guide](runtime.md) for configuration, ownership boundaries and recovery behavior, [Mac chat parity and its release checklist](chat-parity.md), and [the implementation contract](build-contract.md) for the shared API and human checkpoints.
+
+## First Mate response feedback (issue #42)
+
+Ratings, reusable reasons, and notes are stored only in the owning companion's
+private `first-mate.sqlite3`; the Mac keeps an in-memory cache. Exact-source
+automated results are recorded separately from synthetic rendered-UI and
+connected-app evidence. The rows below stay explicitly pending until the final
+gate executes them on the reviewed revision; a result is valid only when its
+tested revision matches the delivered source.
+
+| Surface | Protocol | Result |
+| --- | --- | --- |
+| Companion store, HTTP, runtime | `.venv/bin/python -m unittest tests.test_first_mate_feedback tests.test_first_mate_http tests.test_first_mate_runtime` | Pending final gate |
+| Shared native unit tests | Mac: `xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test -only-testing:herdr-harness-macTests`. iOS: the `herdr-harness-ios` test target with the same `HerdrFirstMateSharedTests`; it must not be skipped when shared sources change. | Pending final gate |
+| Synthetic rendered interactions | `xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test -only-testing:herdr-harness-macUITests/HerdrFirstMateFeedbackUITests` in demo mode only. This exercises the rendered rating controls, editor, custom reasons, note, Save/Cancel, and Remove rating against in-memory synthetic data. | Pending final gate |
+| Failure and retry behavior | Shared native tests force delayed loads, delayed and failed saves, revision conflicts for the editor, thumbs up, and Remove rating, and failed/slow category reads. Confirm the attempted payload and draft survive and that only the explicit reload actions recover conflicts. | Pending final gate |
+| Connected-app persistence | With a disposable on-disk companion state and synthetic features, save ratings, reasons, a custom category, and a multiline note; restart the companion; relaunch the Mac app and reconnect; confirm the exact values return; then inspect `first-mate.sqlite3` read-only with the query in [response feedback](response-feedback.md). No production data, host, or installation is used. | Pending final gate |
+| Public source guard | `scripts/check-public-source.py` plus the staged whitespace check. | Pending final gate |
+
+The synthetic demo stores feedback in memory only and is not connected-app
+persistence evidence. Generated screenshots and layout renders are presentation
+evidence, not installed-app verification.

@@ -14,6 +14,10 @@ in this feature changes prompts, preferences, models, or workflows.
   archived features remain rateable. This policy is independent of the
   three-reply quote window and of workflow status.
 - **Thumbs up** saves immediately and shows **Helpful**.
+- Rating controls are disabled until the retained ratings for that feature have
+  loaded completely. The cached rating stays visible while loading, and no
+  draft is seeded from the empty cache, so an early click can never overwrite a
+  record that has not arrived yet.
 - **Thumbs down** opens a small editor pinned to that exact response:
   - The three starting reasons appear with the exact requested wording:
     **Longer than it needed to be**, **Unnecessary message**, and
@@ -24,7 +28,11 @@ in this feature changes prompts, preferences, models, or workflows.
     that companion, trims and collapses whitespace, deduplicates
     case-insensitively, accepts at most 80 single-line scalars, and selects the
     new or equivalent reason for the current response. At most 100 categories
-    exist per companion.
+    exist per companion. Categories are append-only: a delayed full catalog read
+    merges by stable ID and never drops a category that was added while the read
+    was in flight. Until a full catalog read has succeeded, the editor shows
+    **Reload reasons** so the complete list can be fetched; adding one category
+    is not treated as a complete load.
   - **Notes** is an optional multiline field preserved exactly as typed,
     including Unicode and line breaks, up to 4000 Unicode scalars. The editor
     shows the running count and clamps further input at that boundary.
@@ -33,10 +41,24 @@ in this feature changes prompts, preferences, models, or workflows.
     editor and everything typed visible, reuses the same request identity, and
     offers **Retry save**; the previously saved rating is never changed
     optimistically.
+- Each editable draft is pinned to the retained revision it was loaded from.
+  A refresh that arrives while the editor is open updates the read-only cache
+  but never rebases the draft. Saving with a stale revision is rejected and
+  shows **Reload latest**; that explicit action reloads the record and rebases
+  the preserved reasons and note so the next **Save feedback** uses the new
+  revision and a fresh request identity. The editor cannot save a conflicting
+  draft before that reload.
+- While a save is in flight the editor freezes: category rows, the reusable
+  reason field, **Add**, the note, and **Cancel** are disabled and interactive
+  dismissal is blocked, so input typed after submission cannot be silently
+  discarded. On failure the same draft is restored exactly as submitted for
+  retry; on success the editor closes normally.
 - A failed **Thumbs up** or **Remove rating** save changes no rating and shows a
-  compact error with **Try again** under that response. The retry resubmits the
-  exact attempted payload and reuses its request identity, so a delayed or
-  duplicated retry cannot double-apply.
+  compact error under that response. A plain failure offers **Try again**, which
+  resubmits the exact attempted payload and reuses its request identity. A
+  stale-revision rejection instead offers **Reload and retry**, which reloads
+  the latest revision, rebases the preserved up/clear payload, and retries with
+  a fresh request identity only after that explicit action.
 - A response has one current rating. Selecting thumbs up on a negative response,
   or **Remove rating**, clears the reasons and note only after the save
   succeeds.
@@ -133,7 +155,7 @@ database while it is being written.
 
 ```sh
 sqlite3 -readonly "<private-state-dir>/first-mate.sqlite3" \
-  "SELECT feature_id, message_id, rating, category_ids, comment, revision, updated_at FROM fm_feedback ORDER BY updated_at;"
+  "SELECT feature_id, message_id, rating, category_ids_json AS category_ids, comment, revision, updated_at FROM fm_feedback ORDER BY updated_at;"
 ```
 
 Readback is inspect-only. There is no export, upload, or training route, and
@@ -153,6 +175,15 @@ state. Do not capture operator configuration or real conversations.
       the saved reasons and note.
 - [ ] Reopen the editor, confirm the saved reasons and note are prefilled, then
       Cancel and confirm the saved rating is unchanged.
+- [ ] Rate a response, open the editor, and edit it while another authorized
+      client advances the same response's feedback. Confirm the open draft is
+      not rebased, **Save feedback** reports the conflict, **Reload latest**
+      restores saving with the preserved note, and the retry succeeds. Repeat
+      with **Thumbs up** and **Remove rating** and confirm **Reload and retry**
+      recovers each attempted payload.
+- [ ] With a slow or interrupted save, confirm category rows, the note field,
+      **Add**, and **Cancel** are disabled while the save is in flight and that
+      the exact submitted draft comes back if the save fails.
 - [ ] Edit the selection and confirm the saved status updates only after Save.
 - [ ] Use **Remove rating** and confirm the active label clears and the up/down
       controls return to an unselected state. Confirm user messages never offer
@@ -160,7 +191,9 @@ state. Do not capture operator configuration or real conversations.
 - [ ] Add a custom reason on one response, rate a different response in the same
       feature, then switch to another feature and confirm the reason remains
       available on that companion while the first feature's rating does not
-      appear anywhere else.
+      appear anywhere else. If the full reason list failed to load, confirm the
+      editor shows **Reload reasons** until a full fetch succeeds and never
+      drops a reason added while a read was in flight.
 - [ ] Save feedback, restart the disposable companion, relaunch the Mac app,
       and reconnect: confirm the exact ratings, reasons, notes, and custom
       categories are restored from the companion database.
@@ -187,4 +220,5 @@ state. Do not capture operator configuration or real conversations.
 
 These items are a release-gate checklist, not claims of execution. Record
 exact-source automated results and synthetic rendered-UI evidence separately in
-the delivery report after the final gate.
+[First Mate delivery verification](verification.md); UI evidence is never
+recorded as connected-app persistence.

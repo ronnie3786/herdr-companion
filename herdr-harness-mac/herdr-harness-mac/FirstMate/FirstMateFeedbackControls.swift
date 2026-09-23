@@ -28,9 +28,10 @@ enum FirstMateFeedbackSurface {
 }
 
 /// One response footer's complete display state. `make` is the single place
-/// that combines response eligibility, capability, control availability,
-/// in-flight state, and the saved record, so the footer cannot accidentally
-/// inherit the quote window or depend on workflow closure.
+/// that combines response eligibility, capability, control availability, load
+/// readiness, in-flight state, conflict state, and the saved record, so the
+/// footer cannot accidentally inherit the quote window or depend on workflow
+/// closure.
 struct FirstMateResponseFeedbackPresentation: Equatable {
     var rating: FirstMateFeedbackRating?
     var isSaving: Bool
@@ -38,28 +39,34 @@ struct FirstMateResponseFeedbackPresentation: Equatable {
     var savedReasonCount: Int
     var hasSavedComment: Bool
     var saveErrorMessage: String?
+    var hasConflict: Bool
 
     /// Nil hides the footer entirely. A cached record with a saved rating keeps
     /// its footer visible read-only when the companion connection is offline;
     /// a reachable companion without `first-mate-feedback-v1` never produced
-    /// one, so it falls through to the single upgrade notice.
+    /// one, so it falls through to the single upgrade notice. Ratings stay
+    /// disabled until the first full record load, so a delayed read can never
+    /// be silently overwritten by an early click.
     static func make(
         message: FirstMateMessage,
         supported: Bool,
         writable: Bool,
         isSaving: Bool,
         record: FirstMateFeedback?,
-        saveErrorMessage: String? = nil
+        saveErrorMessage: String? = nil,
+        hasConflict: Bool = false,
+        isFeedbackLoaded: Bool = true
     ) -> FirstMateResponseFeedbackPresentation? {
         guard FirstMateFeedbackEligibility.isEligible(message) else { return nil }
         guard supported || record?.rating != nil else { return nil }
         return FirstMateResponseFeedbackPresentation(
             rating: record?.rating,
             isSaving: isSaving,
-            isWritable: supported && writable,
+            isWritable: supported && writable && isFeedbackLoaded,
             savedReasonCount: record?.categoryIDs.count ?? 0,
             hasSavedComment: !(record?.comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true),
-            saveErrorMessage: saveErrorMessage
+            saveErrorMessage: saveErrorMessage,
+            hasConflict: hasConflict
         )
     }
 
@@ -99,6 +106,7 @@ struct FirstMateResponseFeedbackFooter: View {
     var onEditFeedback: @MainActor () -> Void = {}
     var onRemoveRating: @MainActor () -> Void = {}
     var onRetry: @MainActor () -> Void = {}
+    var onResolveConflict: @MainActor () -> Void = {}
 
     @Environment(\.colorScheme) private var scheme
 
@@ -155,13 +163,26 @@ struct FirstMateResponseFeedbackFooter: View {
                         .foregroundStyle(.orange)
                         .lineLimit(2)
                         .accessibilityIdentifier("first-mate-feedback-error-\(messageID)")
-                    Button("Try again", action: onRetry)
-                        .buttonStyle(.link)
-                        .herdrFont(.caption)
-                        .disabled(!presentation.isWritable || presentation.isSaving)
-                        .accessibilityIdentifier("first-mate-feedback-retry-\(messageID)")
-                        .accessibilityLabel("Retry saving this rating")
-                        .help("Retry saving this rating")
+                    if presentation.hasConflict {
+                        // The attempted up/clear payload stays in the store; the
+                        // explicit action reloads the latest revision and then
+                        // retries it with a fresh request identity.
+                        Button("Reload and retry", action: onResolveConflict)
+                            .buttonStyle(.link)
+                            .herdrFont(.caption)
+                            .disabled(!presentation.isWritable || presentation.isSaving)
+                            .accessibilityIdentifier("first-mate-feedback-conflict-\(messageID)")
+                            .accessibilityLabel("Reload the latest rating and retry")
+                            .help("Reload the latest rating and retry")
+                    } else {
+                        Button("Try again", action: onRetry)
+                            .buttonStyle(.link)
+                            .herdrFont(.caption)
+                            .disabled(!presentation.isWritable || presentation.isSaving)
+                            .accessibilityIdentifier("first-mate-feedback-retry-\(messageID)")
+                            .accessibilityLabel("Retry saving this rating")
+                            .help("Retry saving this rating")
+                    }
                 }
             }
         }

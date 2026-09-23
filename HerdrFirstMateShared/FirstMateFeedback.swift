@@ -109,24 +109,34 @@ enum FirstMateFeedbackEligibility {
 /// Editable feedback for one response. `rating == .down` keeps reasons and a
 /// comment optional; a positive or cleared rating sends none. The draft itself
 /// is preserved exactly as typed so a failed save can restore it.
+///
+/// `baseRevision` pins the retained record revision this edit was initialized
+/// from. It stays pinned while the draft is editable, so a refresh arriving
+/// during an edit can never silently authorize the save over newer feedback.
+/// Only an explicit conflict-resolution action rebases it. A nil base revision
+/// means the draft was built before any record was loaded; saves pin the
+/// currently known revision at submission time.
 struct FirstMateFeedbackDraft: Equatable, Sendable {
     var rating: FirstMateFeedbackRating?
     var categoryIDs: [String]
     var comment: String
+    var baseRevision: Int?
 
     init(
         rating: FirstMateFeedbackRating? = .down,
         categoryIDs: [String] = [],
-        comment: String = ""
+        comment: String = "",
+        baseRevision: Int? = nil
     ) {
         self.rating = rating
         self.categoryIDs = categoryIDs
         self.comment = comment
+        self.baseRevision = baseRevision
     }
 
     var forRequest: FirstMateFeedbackDraft {
         guard rating == .down else {
-            return FirstMateFeedbackDraft(rating: rating, categoryIDs: [], comment: "")
+            return FirstMateFeedbackDraft(rating: rating, categoryIDs: [], comment: "", baseRevision: baseRevision)
         }
         return self
     }

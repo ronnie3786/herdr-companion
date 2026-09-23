@@ -300,13 +300,20 @@ struct FirstMateFeedbackTests {
         let known = try #require(store.feedback(for: featureID, messageID: "demo-mate-0"))
         #expect(known.revision == 1)
         #expect(known.comment == "Original")
-        #expect(store.feedbackDraft(for: featureID, messageID: "demo-mate-0") == draft)
+        #expect(store.feedbackDraft(for: featureID, messageID: "demo-mate-0") == draft.withBaseRevision(1))
+        #expect(store.feedbackConflict(featureID: featureID, messageID: "demo-mate-0"))
         #expect(store.feedbackSaveError(featureID: featureID, messageID: "demo-mate-0") != nil)
 
         // Reloading the newer revision makes an explicit retry safe and distinct.
         await store.loadFeedback(expectedContext: context)
         #expect(store.feedback(for: featureID, messageID: "demo-mate-0")?.revision == 2)
-        #expect(await store.saveFeedback(draft, messageID: "demo-mate-0", expectedContext: context))
+        #expect(await store.resolveFeedbackConflict(messageID: "demo-mate-0", expectedContext: context))
+        #expect(!store.feedbackConflict(featureID: featureID, messageID: "demo-mate-0"))
+        #expect(await store.saveFeedback(
+            store.feedbackDraft(for: featureID, messageID: "demo-mate-0"),
+            messageID: "demo-mate-0",
+            expectedContext: context
+        ))
         let saved = try #require(store.feedback(for: featureID, messageID: "demo-mate-0"))
         #expect(saved.revision == 3)
         #expect(saved.comment == "My retry")
@@ -335,7 +342,7 @@ struct FirstMateFeedbackTests {
 
         #expect(!(await store.saveFeedback(draft, messageID: "demo-mate-0", expectedContext: context)))
         #expect(store.feedback(for: featureID, messageID: "demo-mate-0") == nil)
-        #expect(store.feedbackDraft(for: featureID, messageID: "demo-mate-0") == draft)
+        #expect(store.feedbackDraft(for: featureID, messageID: "demo-mate-0") == draft.withBaseRevision(0))
         #expect(store.feedbackSaveError(featureID: featureID, messageID: "demo-mate-0") != nil)
         #expect(store.error == nil)
 
@@ -395,7 +402,7 @@ struct FirstMateFeedbackTests {
         )))
         #expect(await client.saveCallCount == 0)
         #expect(store.feedbackSaveError(featureID: featureID, messageID: "demo-mate-0") != nil)
-        #expect(store.feedbackDraft(for: featureID, messageID: "demo-mate-0") == readOnlyDraft)
+        #expect(store.feedbackDraft(for: featureID, messageID: "demo-mate-0") == readOnlyDraft.withBaseRevision(0))
 
         await store.loadFeedback(expectedContext: context)
         #expect(await client.feedbackCallCount == 1)
@@ -505,6 +512,310 @@ struct FirstMateFeedbackTests {
         #expect(await store.addFeedbackCategory(label: "line\nbreak", expectedContext: context) == nil)
         #expect(store.feedbackCategories.count == FirstMateFeedbackDefaults.categories.count + 1)
     }
+
+    @Test("An editor draft is never seeded before the record loads and prefills from its revision")
+    func editorDraftWaitsForLoadedRecord() async throws {
+        let client = FirstMateFeedbackTestClient()
+        let store = FirstMateStore()
+        store.configure(client: client, demo: false)
+        await store.refresh()
+        _ = store.acquireControlLease(available: true)
+        let featureID = try #require(store.selectedFeatureID)
+        let context = store.operationContext
+        await client.seedRecord(syntheticFeedbackRecord(
+            featureID: featureID,
+            messageID: "demo-mate-0",
+            rating: .down,
+            categoryIDs: [FirstMateFeedbackDefaults.tooLongID],
+            comment: "Saved explanation",
+            revision: 1
+        ))
+        await client.holdNextLoad()
+        let loading = Task { await store.loadFeedback(expectedContext: context) }
+        while !(await client.isWaitingForLoad) { await Task.yield() }
+
+        #expect(!store.hasLoadedFeedback(for: featureID))
+        // The empty cache must not seed a blank draft that would later win over
+        // the loaded record and silently clear its reasons and note.
+        store.setFeedbackDraft(
+            FirstMateFeedbackDraft(rating: .down),
+            for: featureID,
+            messageID: "demo-mate-0",
+            expectedContext: context
+        )
+        #expect(store.feedbackDraft(for: featureID, messageID: "demo-mate-0") == FirstMateFeedbackDraft())
+
+        await client.releaseLoad()
+        #expect(await loading.value)
+        #expect(store.hasLoadedFeedback(for: featureID))
+        let prefilled = store.feedbackDraft(for: featureID, messageID: "demo-mate-0")
+        #expect(prefilled.categoryIDs == [FirstMateFeedbackDefaults.tooLongID])
+        #expect(prefilled.comment == "Saved explanation")
+        #expect(prefilled.baseRevision == 1)
+
+        var edited = prefilled
+        edited.comment = "Saved explanation, edited"
+        #expect(await store.saveFeedback(edited, messageID: "demo-mate-0", expectedContext: context))
+        let saved = try #require(store.feedback(for: featureID, messageID: "demo-mate-0"))
+        #expect(saved.categoryIDs == [FirstMateFeedbackDefaults.tooLongID])
+        #expect(saved.comment == "Saved explanation, edited")
+        #expect(saved.revision == 2)
+    }
+
+    @Test("A refresh during an edit keeps the pinned revision until an explicit conflict resolution")
+    func refreshDuringEditCannotSilentlyRebase() async throws {
+        let client = FirstMateFeedbackTestClient()
+        await client.setEnforceRevisions(true)
+        let store = FirstMateStore()
+        store.configure(client: client, demo: false)
+        await store.refresh()
+        _ = store.acquireControlLease(available: true)
+        let featureID = try #require(store.selectedFeatureID)
+        let context = store.operationContext
+        await client.seedRecord(syntheticFeedbackRecord(
+            featureID: featureID,
+            messageID: "demo-mate-0",
+            rating: .down,
+            categoryIDs: [FirstMateFeedbackDefaults.tooLongID],
+            comment: "Original",
+            revision: 1
+        ))
+        #expect(await store.loadFeedback(expectedContext: context))
+        #expect(store.feedback(for: featureID, messageID: "demo-mate-0")?.revision == 1)
+
+        var draft = store.feedbackDraft(for: featureID, messageID: "demo-mate-0")
+        #expect(draft.baseRevision == 1)
+        draft.comment = "My in-progress edit"
+        store.setFeedbackDraft(draft, for: featureID, messageID: "demo-mate-0", expectedContext: context)
+
+        // Another client advances the record; a delayed refresh delivers it
+        // while the editor is still open.
+        await client.seedRecord(syntheticFeedbackRecord(
+            featureID: featureID,
+            messageID: "demo-mate-0",
+            rating: .down,
+            categoryIDs: [FirstMateFeedbackDefaults.unnecessaryMessageID],
+            comment: "Changed elsewhere",
+            revision: 2
+        ))
+        await client.holdNextLoad()
+        let loading = Task { await store.loadFeedback(expectedContext: context) }
+        while !(await client.isWaitingForLoad) { await Task.yield() }
+        await client.releaseLoad()
+        #expect(await loading.value)
+
+        #expect(store.feedback(for: featureID, messageID: "demo-mate-0")?.comment == "Changed elsewhere")
+        let pinned = store.feedbackDraft(for: featureID, messageID: "demo-mate-0")
+        #expect(pinned.baseRevision == 1)
+        #expect(pinned.comment == "My in-progress edit")
+
+        // Saving from the pinned draft is rejected instead of silently clearing
+        // the newer reasons, and the conflict is recorded for recovery.
+        #expect(!(await store.saveFeedback(pinned, messageID: "demo-mate-0", expectedContext: context)))
+        #expect(store.feedbackConflict(featureID: featureID, messageID: "demo-mate-0"))
+        #expect(store.feedback(for: featureID, messageID: "demo-mate-0")?.comment == "Changed elsewhere")
+
+        #expect(await store.resolveFeedbackConflict(messageID: "demo-mate-0", expectedContext: context))
+        #expect(!store.feedbackConflict(featureID: featureID, messageID: "demo-mate-0"))
+        let rebased = store.feedbackDraft(for: featureID, messageID: "demo-mate-0")
+        #expect(rebased.baseRevision == 2)
+        #expect(rebased.comment == "My in-progress edit")
+        #expect(await store.saveFeedback(rebased, messageID: "demo-mate-0", expectedContext: context))
+        let saved = try #require(store.feedback(for: featureID, messageID: "demo-mate-0"))
+        #expect(saved.revision == 3)
+        #expect(saved.comment == "My in-progress edit")
+        #expect(saved.categoryIDs == [FirstMateFeedbackDefaults.tooLongID])
+
+        let requests = await client.saveRequests
+        #expect(requests.map(\.expectedRevision) == [1, 2])
+        #expect(requests[0].requestID != requests[1].requestID)
+    }
+
+    @Test("Thumbs-up and Remove rating conflicts recover only through an explicit reload")
+    func quickRatingConflictRecovery() async throws {
+        let client = FirstMateFeedbackTestClient()
+        await client.setEnforceRevisions(true)
+        let store = FirstMateStore()
+        store.configure(client: client, demo: false)
+        await store.refresh()
+        _ = store.acquireControlLease(available: true)
+        let featureID = try #require(store.selectedFeatureID)
+        let context = store.operationContext
+        await client.seedRecord(syntheticFeedbackRecord(
+            featureID: featureID,
+            messageID: "demo-mate-0",
+            rating: .down,
+            comment: "Original",
+            revision: 1
+        ))
+        #expect(await store.loadFeedback(expectedContext: context))
+
+        // Thumbs up while another client advanced the revision: the known
+        // rating is unchanged and the attempted payload is preserved.
+        await client.seedRecord(syntheticFeedbackRecord(
+            featureID: featureID,
+            messageID: "demo-mate-0",
+            rating: .down,
+            comment: "Changed elsewhere",
+            revision: 2
+        ))
+        #expect(!(await store.rateFeedback(.up, messageID: "demo-mate-0", expectedContext: context)))
+        #expect(store.feedbackConflict(featureID: featureID, messageID: "demo-mate-0"))
+        #expect(store.feedback(for: featureID, messageID: "demo-mate-0")?.rating == .down)
+        #expect(store.feedbackSaveError(featureID: featureID, messageID: "demo-mate-0") != nil)
+
+        #expect(await store.resolveFeedbackConflict(messageID: "demo-mate-0", expectedContext: context))
+        let upDraft = store.feedbackDraft(for: featureID, messageID: "demo-mate-0")
+        #expect(upDraft.rating == .up)
+        #expect(upDraft.baseRevision == 2)
+        #expect(await store.saveFeedback(upDraft, messageID: "demo-mate-0", expectedContext: context))
+        #expect(store.feedback(for: featureID, messageID: "demo-mate-0")?.rating == .up)
+
+        // Remove rating repeats the same recovery path with a nil rating.
+        await client.seedRecord(syntheticFeedbackRecord(
+            featureID: featureID,
+            messageID: "demo-mate-0",
+            rating: .up,
+            comment: "",
+            revision: 4
+        ))
+        #expect(!(await store.saveFeedback(
+            FirstMateFeedbackDraft(rating: nil),
+            messageID: "demo-mate-0",
+            expectedContext: context
+        )))
+        #expect(store.feedbackConflict(featureID: featureID, messageID: "demo-mate-0"))
+        #expect(store.feedbackDraft(for: featureID, messageID: "demo-mate-0").rating == nil)
+
+        #expect(await store.resolveFeedbackConflict(messageID: "demo-mate-0", expectedContext: context))
+        let clearedDraft = store.feedbackDraft(for: featureID, messageID: "demo-mate-0")
+        #expect(clearedDraft.rating == nil)
+        #expect(clearedDraft.baseRevision == 4)
+        #expect(await store.saveFeedback(clearedDraft, messageID: "demo-mate-0", expectedContext: context))
+        let cleared = try #require(store.feedback(for: featureID, messageID: "demo-mate-0"))
+        #expect(cleared.rating == nil)
+        #expect(cleared.revision == 5)
+    }
+
+    @Test("A save in flight freezes the draft and a failed held save preserves the submission")
+    func saveInFlightFreezesEditsAndPreservesFailure() async throws {
+        let client = FirstMateFeedbackTestClient()
+        await client.holdNextSave(failingAfterRelease: true)
+        let store = FirstMateStore()
+        store.configure(client: client, demo: false)
+        await store.refresh()
+        _ = store.acquireControlLease(available: true)
+        let featureID = try #require(store.selectedFeatureID)
+        let context = store.operationContext
+        #expect(await store.loadFeedback(expectedContext: context))
+        let submitted = FirstMateFeedbackDraft(
+            rating: .down,
+            categoryIDs: [FirstMateFeedbackDefaults.tooLongID],
+            comment: "Submitted note\nline two"
+        )
+        let saving = Task { await store.saveFeedback(submitted, messageID: "demo-mate-0", expectedContext: context) }
+        while !(await client.isWaitingForSave) { await Task.yield() }
+        #expect(store.isSavingFeedback(featureID: featureID, messageID: "demo-mate-0"))
+        #if os(macOS)
+        let target = FirstMateFeedbackEditorTarget(
+            featureID: featureID,
+            messageID: "demo-mate-0",
+            responseText: "Synthetic answer",
+            expectedContext: context
+        )
+        let state = FirstMateFeedbackEditorState.make(store: store, target: target)
+        #expect(state.isSaving)
+        #expect(!state.isEditable)
+        #expect(!state.canSave)
+        #endif
+
+        // A view task racing the submission cannot change the in-flight
+        // payload or lose post-submit input silently.
+        store.setFeedbackDraft(
+            FirstMateFeedbackDraft(rating: .down, comment: "Late input"),
+            for: featureID,
+            messageID: "demo-mate-0",
+            expectedContext: context
+        )
+        #expect(store.feedbackDraft(for: featureID, messageID: "demo-mate-0").comment == "Submitted note\nline two")
+
+        await client.releaseSave()
+        #expect(!(await saving.value))
+        #expect(!store.isSavingFeedback(featureID: featureID, messageID: "demo-mate-0"))
+        let preserved = store.feedbackDraft(for: featureID, messageID: "demo-mate-0")
+        #expect(preserved.comment == "Submitted note\nline two")
+        #expect(preserved.categoryIDs == [FirstMateFeedbackDefaults.tooLongID])
+        #expect(preserved.baseRevision == 0)
+        #expect(store.feedbackSaveError(featureID: featureID, messageID: "demo-mate-0") != nil)
+        #expect(store.feedback(for: featureID, messageID: "demo-mate-0") == nil)
+    }
+
+    @Test("A delayed category read merges newer additions instead of replacing them")
+    func delayedCategoryLoadMergesAdditions() async throws {
+        let client = FirstMateFeedbackTestClient()
+        let store = FirstMateStore()
+        store.configure(client: client, demo: false)
+        await store.refresh()
+        _ = store.acquireControlLease(available: true)
+        let context = store.operationContext
+
+        await client.holdNextCategoryLoad()
+        let loading = Task { await store.loadFeedbackCategories(expectedContext: context) }
+        while !(await client.isWaitingForCategoryLoad) { await Task.yield() }
+        #expect(store.isLoadingFeedbackCategories)
+        #expect(!store.feedbackCategoriesLoaded)
+
+        // Add completes before the older full fetch and must survive it.
+        let created = try #require(await store.addFeedbackCategory(
+            label: "Needs more evidence",
+            expectedContext: context
+        ))
+        #expect(!store.feedbackCategoriesLoaded)
+        #expect(store.feedbackCategories.contains { $0.id == created.id })
+
+        await client.releaseCategoryLoad()
+        #expect(await loading.value)
+        #expect(store.feedbackCategoriesLoaded)
+        #expect(Set(store.feedbackCategories.map(\.id)) == Set(FirstMateFeedbackDefaults.categories.map(\.id) + [created.id]))
+        #expect(store.feedbackCategories.filter { $0.id == created.id }.count == 1)
+    }
+
+    @Test("A failed initial category load stays partial until a full fetch succeeds")
+    func failedCategoryLoadStaysPartial() async throws {
+        let client = FirstMateFeedbackTestClient()
+        let store = FirstMateStore()
+        store.configure(client: client, demo: false)
+        await store.refresh()
+        _ = store.acquireControlLease(available: true)
+        let context = store.operationContext
+
+        await client.failCategories(count: 1)
+        #expect(!(await store.loadFeedbackCategories(expectedContext: context)))
+        #expect(!store.feedbackCategoriesLoaded)
+        #expect(store.feedbackCategoriesError != nil)
+
+        // Receiving one created category is not a full catalog load.
+        let created = try #require(await store.addFeedbackCategory(
+            label: "Needs proof",
+            expectedContext: context
+        ))
+        #expect(store.feedbackCategories.contains { $0.id == created.id })
+        #expect(!store.feedbackCategoriesLoaded)
+
+        #expect(await store.loadFeedbackCategories(expectedContext: context))
+        #expect(store.feedbackCategoriesLoaded)
+        #expect(store.feedbackCategoriesError == nil)
+        #expect(Set(store.feedbackCategories.map(\.id)) == Set(FirstMateFeedbackDefaults.categories.map(\.id) + [created.id]))
+    }
+}
+
+private extension FirstMateFeedbackDraft {
+    /// Test helper for the revision pinned once a save is submitted.
+    func withBaseRevision(_ revision: Int) -> FirstMateFeedbackDraft {
+        var copy = self
+        copy.baseRevision = revision
+        return copy
+    }
 }
 
 private func syntheticFeedbackRecord(
@@ -549,6 +860,12 @@ private actor FirstMateFeedbackTestClient: FirstMateClient {
     private var holdLoads = false
     private var loadContinuation: CheckedContinuation<Void, Never>?
     private var heldLoadRecords: [FirstMateFeedback] = []
+    private var holdSaves = false
+    private var heldSaveFails = false
+    private var saveContinuation: CheckedContinuation<Void, Never>?
+    private var holdCategoryLoads = false
+    private var categoryLoadContinuation: CheckedContinuation<Void, Never>?
+    private var heldCategorySnapshot: [FirstMateFeedbackCategory] = []
     private var mismatchedFeedbackFeature = false
     private var mismatchedSaveIdentity = false
     private(set) var categoryCallCount = 0
@@ -563,6 +880,8 @@ private actor FirstMateFeedbackTestClient: FirstMateClient {
     }
 
     var isWaitingForLoad: Bool { loadContinuation != nil }
+    var isWaitingForSave: Bool { saveContinuation != nil }
+    var isWaitingForCategoryLoad: Bool { categoryLoadContinuation != nil }
 
     func seedRecord(_ record: FirstMateFeedback) {
         var records = feedbackRecords[record.featureID] ?? [:]
@@ -580,6 +899,19 @@ private actor FirstMateFeedbackTestClient: FirstMateClient {
     func releaseLoad() {
         loadContinuation?.resume()
         loadContinuation = nil
+    }
+    func holdNextSave(failingAfterRelease: Bool = false) {
+        holdSaves = true
+        heldSaveFails = failingAfterRelease
+    }
+    func releaseSave() {
+        saveContinuation?.resume()
+        saveContinuation = nil
+    }
+    func holdNextCategoryLoad() { holdCategoryLoads = true }
+    func releaseCategoryLoad() {
+        categoryLoadContinuation?.resume()
+        categoryLoadContinuation = nil
     }
 
     func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities {
@@ -628,6 +960,12 @@ private actor FirstMateFeedbackTestClient: FirstMateClient {
         if categoryFailuresRemaining > 0 {
             categoryFailuresRemaining -= 1
             throw URLError(.networkConnectionLost)
+        }
+        if holdCategoryLoads {
+            holdCategoryLoads = false
+            heldCategorySnapshot = categories
+            await withCheckedContinuation { categoryLoadContinuation = $0 }
+            return .init(ok: true, categories: heldCategorySnapshot)
         }
         return .init(ok: true, categories: categories)
     }
@@ -688,6 +1026,14 @@ private actor FirstMateFeedbackTestClient: FirstMateClient {
         if saveFailuresRemaining > 0 {
             saveFailuresRemaining -= 1
             throw URLError(.networkConnectionLost)
+        }
+        if holdSaves {
+            holdSaves = false
+            await withCheckedContinuation { saveContinuation = $0 }
+            if heldSaveFails {
+                heldSaveFails = false
+                throw URLError(.networkConnectionLost)
+            }
         }
         var records = feedbackRecords[featureID] ?? [:]
         let existing = records[messageID]

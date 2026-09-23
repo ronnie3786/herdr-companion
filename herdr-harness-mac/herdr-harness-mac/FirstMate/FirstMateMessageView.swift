@@ -10,6 +10,7 @@ struct FirstMateMessageView: View {
     var editFeedback: @MainActor () -> Void = {}
     var removeFeedback: @MainActor () -> Void = {}
     var retryFeedback: @MainActor () -> Void = {}
+    var resolveFeedbackConflict: @MainActor () -> Void = {}
 
     @Environment(\.colorScheme) private var scheme
     @Environment(\.herdrFontScale) private var fontScale
@@ -73,7 +74,8 @@ struct FirstMateMessageView: View {
                         onRateUp: { rateFeedback(.up) },
                         onEditFeedback: editFeedback,
                         onRemoveRating: removeFeedback,
-                        onRetry: retryFeedback
+                        onRetry: retryFeedback,
+                        onResolveConflict: resolveFeedbackConflict
                     )
                 }
             }

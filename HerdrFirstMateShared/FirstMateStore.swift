@@ -82,10 +82,12 @@ final class FirstMateStore {
     private(set) var isAddingFeedbackCategory = false
     private(set) var feedbackCategoriesError: String?
     private var feedbackRecords: [String: [String: FirstMateFeedback]] = [:]
+    private var loadedFeedbackFeatures: Set<String> = []
     private var loadingFeedbackFeatures: Set<String> = []
     private var feedbackErrors: [String: String] = [:]
     private var savingFeedbackKeys: Set<FeedbackKey> = []
     private var feedbackSaveErrors: [FeedbackKey: String] = [:]
+    private var feedbackConflicts: Set<FeedbackKey> = []
     private var feedbackDrafts: [FeedbackKey: FirstMateFeedbackDraft] = [:]
     private var pendingFeedbackRequests: [FeedbackKey: FirstMateFeedbackSaveRequest] = [:]
     private(set) var lastUpdated: Date?
@@ -168,10 +170,12 @@ final class FirstMateStore {
         isAddingFeedbackCategory = false
         feedbackCategoriesError = nil
         feedbackRecords = [:]
+        loadedFeedbackFeatures = []
         loadingFeedbackFeatures = []
         feedbackErrors = [:]
         savingFeedbackKeys = []
         feedbackSaveErrors = [:]
+        feedbackConflicts = []
         feedbackDrafts = [:]
         pendingFeedbackRequests = [:]
         activeControlLease = nil
@@ -590,58 +594,71 @@ final class FirstMateStore {
     // MARK: - Response feedback
 
     /// A companion's low-quality reason catalog, loaded only from a server that
-    /// advertises `first-mate-feedback-v1`.
-    func loadFeedbackCategories(expectedContext: OperationContext) async {
+    /// advertises `first-mate-feedback-v1`. Categories are append-only, so a
+    /// delayed read merges by stable ID instead of replacing newer additions,
+    /// and `feedbackCategoriesLoaded` becomes true only after a full fetch.
+    @discardableResult
+    func loadFeedbackCategories(expectedContext: OperationContext) async -> Bool {
         guard isCurrentFeedbackContext(expectedContext), feedbackSupported, !isDemo,
-              !isLoadingFeedbackCategories, let client else { return }
+              !isLoadingFeedbackCategories, let client else { return false }
         isLoadingFeedbackCategories = true
         feedbackCategoriesError = nil
         defer { if isCurrentFeedbackContext(expectedContext) { isLoadingFeedbackCategories = false } }
         do {
             let response = try await client.fetchFirstMateFeedbackCategories()
-            guard isCurrentFeedbackContext(expectedContext) else { return }
+            guard isCurrentFeedbackContext(expectedContext) else { return false }
             guard response.ok, response.categories.allSatisfy({ !$0.id.isEmpty && !$0.label.isEmpty }) else {
                 throw APIError.invalidResponse
             }
-            feedbackCategories = response.categories
+            for category in response.categories { mergeFeedbackCategory(category) }
             feedbackCategoriesLoaded = true
+            return true
         } catch is CancellationError {
-            return
+            return false
         } catch {
-            guard isCurrentFeedbackContext(expectedContext) else { return }
+            guard isCurrentFeedbackContext(expectedContext) else { return false }
             feedbackCategoriesError = error.localizedDescription
+            return false
         }
     }
 
     /// Loads every retained rating for one exact feature. A delayed completion
     /// updates only the feature it was captured for, and a lower revision can
-    /// never replace a newer local record.
-    func loadFeedback(expectedContext: OperationContext) async {
+    /// never replace a newer local record. Returns false when the full fetch
+    /// did not succeed so callers can distinguish loaded from partial state.
+    @discardableResult
+    func loadFeedback(expectedContext: OperationContext) async -> Bool {
         guard let featureID = expectedContext.featureID,
               isCurrentFeedbackContext(expectedContext), feedbackSupported, !isDemo,
-              !loadingFeedbackFeatures.contains(featureID), let client else { return }
+              !loadingFeedbackFeatures.contains(featureID), let client else { return false }
         loadingFeedbackFeatures.insert(featureID)
         feedbackErrors[featureID] = nil
         defer { if isCurrentFeedbackContext(expectedContext) { loadingFeedbackFeatures.remove(featureID) } }
         do {
             let response = try await client.fetchFirstMateFeedback(featureID: featureID)
-            guard isCurrentFeedbackContext(expectedContext) else { return }
+            guard isCurrentFeedbackContext(expectedContext) else { return false }
             guard response.ok, response.featureID == featureID,
                   response.records.allSatisfy({ $0.featureID == featureID && !$0.messageID.isEmpty }) else {
                 throw APIError.invalidResponse
             }
             for record in response.records { receiveFeedback(record, featureID: featureID) }
+            loadedFeedbackFeatures.insert(featureID)
+            return true
         } catch is CancellationError {
-            return
+            return false
         } catch {
-            guard isCurrentFeedbackContext(expectedContext) else { return }
+            guard isCurrentFeedbackContext(expectedContext) else { return false }
             feedbackErrors[featureID] = error.localizedDescription
+            return false
         }
     }
 
-    /// Saves the editor draft for one exact response. The loaded revision is
-    /// the only base used, safe retries reuse the failed request identity, and
-    /// a failure keeps both the known record and the editable draft intact.
+    /// Saves the editor draft for one exact response. The draft's pinned base
+    /// revision is the only base used, so a refresh that arrives mid-edit can
+    /// never silently authorize an overwrite; a stale revision is surfaced as
+    /// a conflict for explicit reload-and-retry recovery. Safe retries reuse
+    /// the failed request identity, and a failure keeps both the known record
+    /// and the editable draft intact.
     @discardableResult
     func saveFeedback(
         _ draft: FirstMateFeedbackDraft,
@@ -655,9 +672,16 @@ final class FirstMateStore {
         guard !savingFeedbackKeys.contains(key) else { return false }
         // The typed draft is retained before any write attempt so a rejection or
         // failure can restore the editable explanation with a visible retry.
-        feedbackDrafts[key] = draft
+        // A nil base revision is pinned once, at submission time, from the
+        // record the user could see.
+        var retainedDraft = draft
+        if retainedDraft.baseRevision == nil {
+            retainedDraft.baseRevision = feedbackRecords[featureID]?[messageID]?.revision ?? 0
+        }
+        feedbackDrafts[key] = retainedDraft
         feedbackSaveErrors[key] = nil
-        let requestDraft = draft.forRequest
+        feedbackConflicts.remove(key)
+        let requestDraft = retainedDraft.forRequest
         guard feedbackSupported else {
             feedbackSaveErrors[key] = "Update this companion server to rate First Mate responses."
             return false
@@ -670,6 +694,7 @@ final class FirstMateStore {
         if isDemo {
             feedbackDrafts[key] = nil
             feedbackSaveErrors[key] = nil
+            feedbackConflicts.remove(key)
             receiveFeedback(demoFeedback(from: requestDraft, featureID: featureID, messageID: messageID), featureID: featureID)
             return true
         }
@@ -677,7 +702,7 @@ final class FirstMateStore {
             feedbackSaveErrors[key] = "Connect to this feature's host to save feedback."
             return false
         }
-        let expectedRevision = feedbackRecords[featureID]?[messageID]?.revision ?? 0
+        let expectedRevision = retainedDraft.baseRevision ?? 0
         var request = FirstMateFeedbackSaveRequest(
             rating: requestDraft.rating,
             categoryIDs: requestDraft.categoryIDs,
@@ -713,6 +738,7 @@ final class FirstMateStore {
             pendingFeedbackRequests[key] = nil
             feedbackDrafts[key] = nil
             feedbackSaveErrors[key] = nil
+            feedbackConflicts.remove(key)
             return true
         } catch is CancellationError {
             return false
@@ -721,8 +747,33 @@ final class FirstMateStore {
             // The known record and the typed draft stay available for an
             // explicit retry; the saved rating is never optimistically changed.
             feedbackSaveErrors[key] = error.localizedDescription
+            if Self.isStaleRevisionError(error) { feedbackConflicts.insert(key) }
             return false
         }
+    }
+
+    /// Explicit resolution for a stale-revision rejection. Reloads the exact
+    /// feature's retained ratings, then rebases only the preserved local draft
+    /// onto the newly loaded revision so a deliberate retry uses the new
+    /// revision and a fresh request identity. The attempted up/clear payload
+    /// is kept exactly as submitted.
+    @discardableResult
+    func resolveFeedbackConflict(
+        messageID: String,
+        expectedContext: OperationContext
+    ) async -> Bool {
+        guard let featureID = expectedContext.featureID,
+              isCurrentFeedbackContext(expectedContext),
+              !messageID.isEmpty else { return false }
+        guard await loadFeedback(expectedContext: expectedContext) else { return false }
+        guard isCurrentFeedbackContext(expectedContext) else { return false }
+        let key = FeedbackKey(featureID, messageID)
+        var draft = feedbackDrafts[key] ?? feedbackDraft(for: featureID, messageID: messageID)
+        draft.baseRevision = feedbackRecords[featureID]?[messageID]?.revision ?? 0
+        feedbackDrafts[key] = draft
+        feedbackSaveErrors[key] = nil
+        feedbackConflicts.remove(key)
+        return true
     }
 
     /// Immediate positive rating, used by the thumbs-up control.
@@ -782,8 +833,10 @@ final class FirstMateStore {
             guard response.ok, !response.category.id.isEmpty, !response.category.label.isEmpty else {
                 throw APIError.invalidResponse
             }
-            receiveCategory(response.category)
-            feedbackCategoriesLoaded = true
+            mergeFeedbackCategory(response.category)
+            // A single-category response is not a full catalog: keep the
+            // loaded flag reserved for a successful full fetch so the editor
+            // can offer a category reload until the complete list is known.
             feedbackCategoriesError = nil
             return response.category
         } catch is CancellationError {
@@ -800,15 +853,18 @@ final class FirstMateStore {
     }
 
     /// The editor's starting point: an unsaved draft if one exists, otherwise
-    /// the saved record, otherwise an unselected negative rating.
+    /// the loaded record pinned to its retained revision, otherwise an
+    /// unselected negative rating. A draft is never seeded from the empty cache
+    /// before the first load completes.
     func feedbackDraft(for featureID: String, messageID: String) -> FirstMateFeedbackDraft {
         let key = FeedbackKey(featureID, messageID)
         if let draft = feedbackDrafts[key] { return draft }
-        if let record = feedbackRecords[featureID]?[messageID] {
+        if hasLoadedFeedback(for: featureID), let record = feedbackRecords[featureID]?[messageID] {
             return FirstMateFeedbackDraft(
                 rating: record.rating ?? .down,
                 categoryIDs: record.categoryIDs,
-                comment: record.comment
+                comment: record.comment,
+                baseRevision: record.revision
             )
         }
         return FirstMateFeedbackDraft()
@@ -824,8 +880,14 @@ final class FirstMateStore {
               contextFeature == featureID,
               isCurrentFeedbackContext(expectedContext) else { return }
         let key = FeedbackKey(featureID, messageID)
+        // The editor freezes while a save is in flight; the store keeps that
+        // invariant even if a view task races the submission, and an editor
+        // cannot seed a draft before the first record load completes.
+        guard !savingFeedbackKeys.contains(key),
+              hasLoadedFeedback(for: featureID) else { return }
         feedbackDrafts[key] = draft
         feedbackSaveErrors[key] = nil
+        feedbackConflicts.remove(key)
     }
 
     /// Cancelling an edit discards only that edit, never the saved rating.
@@ -833,6 +895,13 @@ final class FirstMateStore {
         let key = FeedbackKey(featureID, messageID)
         feedbackDrafts[key] = nil
         feedbackSaveErrors[key] = nil
+        feedbackConflicts.remove(key)
+    }
+
+    /// True once the retained ratings for this feature have loaded completely.
+    /// The synthetic demo and legacy fixture features are always loaded.
+    func hasLoadedFeedback(for featureID: String) -> Bool {
+        isDemo || loadedFeedbackFeatures.contains(featureID)
     }
 
     func canRate(messageID: String, featureID: String) -> Bool {
@@ -848,9 +917,19 @@ final class FirstMateStore {
     func feedbackSaveError(featureID: String, messageID: String) -> String? {
         feedbackSaveErrors[FeedbackKey(featureID, messageID)]
     }
+    /// True when the last save failed because another client advanced the
+    /// retained revision. Recovery reloads the record before retrying.
+    func feedbackConflict(featureID: String, messageID: String) -> Bool {
+        feedbackConflicts.contains(FeedbackKey(featureID, messageID))
+    }
 
     private func isCurrentFeedbackContext(_ context: OperationContext) -> Bool {
         context.generation == generation && context.lifecycleIdentity == lifecycleIdentity
+    }
+
+    private static func isStaleRevisionError(_ error: Error) -> Bool {
+        if case APIError.server(let status, _) = error { return status == 409 }
+        return false
     }
 
     /// A lower revision is a delayed read or a delayed receipt; the newer
@@ -863,13 +942,14 @@ final class FirstMateStore {
         feedbackRecords[featureID] = records
     }
 
-    private func receiveCategory(_ category: FirstMateFeedbackCategory) {
+    /// Categories are append-only user data. A delayed full fetch adds or
+    /// refreshes entries by stable ID and never removes a newer local addition.
+    private func mergeFeedbackCategory(_ category: FirstMateFeedbackCategory) {
         if let index = feedbackCategories.firstIndex(where: { $0.id == category.id }) {
             feedbackCategories[index] = category
         } else {
             feedbackCategories.append(category)
         }
-        feedbackCategoriesLoaded = true
     }
 
     private func demoFeedback(

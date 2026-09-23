@@ -27,20 +27,34 @@ extension FirstMateFeedbackDraft {
 
 /// Pure editor state derived from the store for one captured target. `make` is
 /// the only place the editor decides availability, so a stale feature, a
-/// reconnected lifecycle, a read-only workspace, and a missing capability all
-/// disable writing without hiding a saved rating.
+/// reconnected lifecycle, a read-only workspace, a pending save, an unloaded
+/// record, and a missing capability all disable writing without hiding a saved
+/// rating.
 struct FirstMateFeedbackEditorState: Equatable {
     var draft: FirstMateFeedbackDraft
     var isTargetAlive: Bool
     var isWritable: Bool
+    var isFeedbackLoaded: Bool
     var isSaving: Bool
     var isAddingCategory: Bool
+    var isCategoriesLoaded: Bool
+    var isLoadingCategories: Bool
     var showsUpgradeNotice: Bool
+    var ratingErrorMessage: String?
     var categoryErrorMessage: String?
     var saveErrorMessage: String?
+    var hasConflict: Bool
 
+    /// Input is frozen while a save is in flight and until the retained record
+    /// has loaded; the submitted draft stays exactly as typed.
+    var isEditable: Bool {
+        isTargetAlive && isWritable && isFeedbackLoaded && !isSaving
+    }
+
+    /// A stale-revision conflict must be explicitly resolved by reloading the
+    /// latest record before a retry can be submitted.
     var canSave: Bool {
-        isTargetAlive && isWritable && !isSaving && !isAddingCategory && !showsUpgradeNotice
+        isEditable && !isAddingCategory && !showsUpgradeNotice && !hasConflict
     }
 
     @MainActor
@@ -50,14 +64,21 @@ struct FirstMateFeedbackEditorState: Equatable {
         return FirstMateFeedbackEditorState(
             // The stored draft is the single source of truth: a failed save
             // keeps it, and discarding it restores the saved record prefill.
+            // Until the first record load completes it is never seeded from
+            // the empty cache.
             draft: store.feedbackDraft(for: target.featureID, messageID: target.messageID),
             isTargetAlive: isTargetAlive,
             isWritable: isTargetAlive && supported && store.controlAvailable,
+            isFeedbackLoaded: store.hasLoadedFeedback(for: target.featureID),
             isSaving: store.isSavingFeedback(featureID: target.featureID, messageID: target.messageID),
             isAddingCategory: store.isAddingFeedbackCategory,
+            isCategoriesLoaded: store.feedbackCategoriesLoaded,
+            isLoadingCategories: store.isLoadingFeedbackCategories,
             showsUpgradeNotice: !supported,
+            ratingErrorMessage: store.feedbackError(for: target.featureID),
             categoryErrorMessage: store.feedbackCategoriesError,
-            saveErrorMessage: store.feedbackSaveError(featureID: target.featureID, messageID: target.messageID)
+            saveErrorMessage: store.feedbackSaveError(featureID: target.featureID, messageID: target.messageID),
+            hasConflict: store.feedbackConflict(featureID: target.featureID, messageID: target.messageID)
         )
     }
 }
@@ -94,11 +115,19 @@ struct FirstMateFeedbackEditor: View {
                 if let error = state.saveErrorMessage {
                     HStack(spacing: 8) {
                         errorLabel(error, identifier: "first-mate-feedback-error")
-                        Button("Reload latest") {
-                            Task { await store.loadFeedback(expectedContext: target.expectedContext) }
+                        if state.hasConflict {
+                            // The pinned draft is kept exactly as submitted;
+                            // reloading rebases it to the latest revision so
+                            // the deliberate retry cannot silently overwrite.
+                            Button("Reload latest") {
+                                Task { await store.resolveFeedbackConflict(
+                                    messageID: target.messageID,
+                                    expectedContext: target.expectedContext
+                                ) }
+                            }
+                            .buttonStyle(.link)
+                            .accessibilityIdentifier("first-mate-feedback-reload")
                         }
-                        .buttonStyle(.link)
-                        .accessibilityIdentifier("first-mate-feedback-reload")
                     }
                 }
                 actionBar(state: state)
@@ -108,6 +137,7 @@ struct FirstMateFeedbackEditor: View {
         .frame(width: 480)
         .background(palette.background)
         .accessibilityIdentifier("first-mate-feedback-editor")
+        .interactiveDismissDisabled(editorState.isSaving)
         .task {
             await store.loadFeedback(expectedContext: target.expectedContext)
             guard !store.feedbackCategoriesLoaded else { return }
@@ -116,7 +146,10 @@ struct FirstMateFeedbackEditor: View {
         .onDisappear {
             // Dismissal, Escape, Cancel, and a feature/connection switch all
             // discard only the unsaved edit. A successful save already cleared
-            // it, and a failed save keeps the editor open for retry.
+            // it, and a failed save keeps the editor open for retry. While a
+            // save is in flight the draft is the submitted payload, so it is
+            // never discarded out from under the request.
+            guard !store.isSavingFeedback(featureID: target.featureID, messageID: target.messageID) else { return }
             store.discardFeedbackDraft(for: target.featureID, messageID: target.messageID)
         }
     }
@@ -142,6 +175,25 @@ struct FirstMateFeedbackEditor: View {
                 .herdrFont(.caption)
                 .foregroundStyle(.secondary)
 
+            if !state.isFeedbackLoaded {
+                HStack(spacing: 6) {
+                    if state.ratingErrorMessage == nil {
+                        ProgressView().controlSize(.small)
+                    }
+                    Text(state.ratingErrorMessage ?? "Loading the saved rating…")
+                        .herdrFont(.caption)
+                        .foregroundStyle(.secondary)
+                    if state.ratingErrorMessage != nil {
+                        Button("Try again") {
+                            Task { await store.loadFeedback(expectedContext: target.expectedContext) }
+                        }
+                        .buttonStyle(.link)
+                        .accessibilityIdentifier("first-mate-feedback-load-retry")
+                    }
+                }
+                .accessibilityIdentifier("first-mate-feedback-loading")
+            }
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(store.feedbackCategories) { category in
@@ -164,12 +216,25 @@ struct FirstMateFeedbackEditor: View {
             if let error = state.categoryErrorMessage {
                 errorLabel(error, identifier: "first-mate-feedback-category-error")
             }
+            if !state.isCategoriesLoaded, !state.isLoadingCategories {
+                HStack(spacing: 8) {
+                    Text("The full reason list has not loaded yet.")
+                        .herdrFont(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Reload reasons") {
+                        Task { await store.loadFeedbackCategories(expectedContext: target.expectedContext) }
+                    }
+                    .buttonStyle(.link)
+                    .accessibilityIdentifier("first-mate-feedback-categories-retry")
+                }
+            }
         }
     }
 
     private func categoryRow(_ category: FirstMateFeedbackCategory) -> some View {
         let selected = editorState.draft.categoryIDs.contains(category.id)
         return Button {
+            guard editorState.isEditable else { return }
             var updated = editorState.draft
             updated.rating = .down
             updated.categoryIDs = FirstMateFeedbackDraft.togglingCategory(category.id, in: updated.categoryIDs)
@@ -186,7 +251,7 @@ struct FirstMateFeedbackEditor: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .disabled(!editorState.isWritable || !editorState.isTargetAlive)
+        .disabled(!editorState.isEditable)
         .accessibilityIdentifier("first-mate-feedback-category-\(category.id)")
         .accessibilityLabel(category.label)
         .accessibilityValue(selected ? "Selected" : "Not selected")
@@ -198,7 +263,7 @@ struct FirstMateFeedbackEditor: View {
             TextField("Add a reusable reason", text: $newCategoryLabel)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("first-mate-feedback-add-category-field")
-                .disabled(!state.isWritable || !state.isTargetAlive || state.isAddingCategory)
+                .disabled(!state.isEditable || state.isAddingCategory)
                 .onSubmit { addCategory() }
             Button("Add") { addCategory() }
                 .disabled(!canAddCategory(state: state))
@@ -229,7 +294,7 @@ struct FirstMateFeedbackEditor: View {
                     .overlay { RoundedRectangle(cornerRadius: 8).stroke(palette.line) }
                     .accessibilityIdentifier("first-mate-feedback-comment")
                     .accessibilityLabel("Personal reason")
-                    .disabled(!state.isWritable || !state.isTargetAlive)
+                    .disabled(!state.isEditable)
                 if state.draft.comment.isEmpty {
                     Text("Add your own reason…")
                         .herdrFont(.body)
@@ -253,10 +318,12 @@ struct FirstMateFeedbackEditor: View {
         HStack {
             Spacer()
             Button("Cancel") {
+                guard !editorState.isSaving else { return }
                 store.discardFeedbackDraft(for: target.featureID, messageID: target.messageID)
                 dismiss()
             }
                 .keyboardShortcut(.cancelAction)
+                .disabled(state.isSaving)
                 .accessibilityIdentifier("first-mate-feedback-cancel")
             Button(state.saveErrorMessage == nil ? "Save feedback" : "Retry save") { save() }
                 .keyboardShortcut(.defaultAction)
@@ -270,10 +337,12 @@ struct FirstMateFeedbackEditor: View {
         HStack {
             Spacer()
             Button("Close") {
+                guard !editorState.isSaving else { return }
                 store.discardFeedbackDraft(for: target.featureID, messageID: target.messageID)
                 dismiss()
             }
                 .keyboardShortcut(.cancelAction)
+                .disabled(editorState.isSaving)
                 .accessibilityIdentifier("first-mate-feedback-cancel")
         }
     }
@@ -309,6 +378,9 @@ struct FirstMateFeedbackEditor: View {
         Binding(
             get: { editorState.draft.comment },
             set: { value in
+                // Typing during a pending save must never change the payload
+                // that is already in flight or discard it on completion.
+                guard editorState.isEditable else { return }
                 var updated = editorState.draft
                 updated.comment = FirstMateFeedbackCommentLimit.limited(value)
                 setDraft(updated)
@@ -326,13 +398,13 @@ struct FirstMateFeedbackEditor: View {
     }
 
     private func canAddCategory(state: FirstMateFeedbackEditorState) -> Bool {
-        state.isWritable
-            && state.isTargetAlive
+        state.isEditable
             && !state.isAddingCategory
             && !newCategoryLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func addCategory() {
+        guard editorState.isEditable else { return }
         let label = newCategoryLabel
         Task {
             guard let category = await store.addFeedbackCategory(
@@ -350,6 +422,7 @@ struct FirstMateFeedbackEditor: View {
     }
 
     private func save() {
+        guard editorState.canSave else { return }
         var draft = editorState.draft
         draft.rating = .down
         draft.comment = FirstMateFeedbackCommentLimit.limited(draft.comment)

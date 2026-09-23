@@ -301,6 +301,43 @@ class GitRepositoryTests(unittest.TestCase):
         self.assertTrue(self.repo.is_clean(path), "the failed rebase was aborted")
         self.assertEqual((path / "README.md").read_text(), "branch version\n")
 
+    def test_remote_head_and_leased_force_push(self):
+        path = self.worktrees / "issue-9"
+        self.repo.add_worktree(path, "codefactory/issue-9", "origin/main")
+        self.assertEqual(self.repo.remote_head("codefactory/issue-9"), "")
+        (path / "feature.txt").write_text("feature\n")
+        self.repo.commit_all(path, "Issue #9: feature")
+        self.repo.push(path, "origin", "HEAD:refs/heads/codefactory/issue-9")
+        pushed = self.repo.remote_head("codefactory/issue-9")
+        self.assertEqual(pushed, self.repo.head(path))
+
+        # A rebase rewrites the branch; the leased push is pinned to the recorded sha.
+        (path / "feature.txt").write_text("rebased\n")
+        self.repo.commit_all(path, "Issue #9: rebase")
+        with self.assertRaises(CodeFactoryError):
+            self.repo.push(path, "origin", "HEAD:refs/heads/codefactory/issue-9", lease="0" * 40)
+        self.repo.push(path, "origin", "HEAD:refs/heads/codefactory/issue-9", lease=pushed)
+        self.assertEqual(self.repo.remote_head("codefactory/issue-9"), self.repo.head(path))
+
+    def test_rebase_in_progress_and_abort(self):
+        path = self.worktrees / "issue-10"
+        self.repo.add_worktree(path, "codefactory/issue-10", "origin/main")
+        (path / "README.md").write_text("branch version\n")
+        self.repo.commit_all(path, "Issue #10: readme")
+        (self.checkout / "README.md").write_text("main version\n")
+        self.git(["add", "-A"], cwd=self.checkout)
+        self.git(["commit", "--quiet", "-m", "Conflicting"], cwd=self.checkout)
+        self.git(["push", "--quiet", "origin", "main"], cwd=self.checkout)
+        self.repo.fetch()
+        result = subprocess.run(["git", "rebase", "origin/main"], cwd=path, env=self.repo.environment(),
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(self.repo.rebase_in_progress(path))
+        self.repo.rebase_abort(path)
+        self.assertFalse(self.repo.rebase_in_progress(path))
+        self.assertTrue(self.repo.is_clean(path))
+        self.assertEqual((path / "README.md").read_text(), "branch version\n")
+
     def test_validation(self):
         for bad in ("", "-x", "a..b", "x/", "x.lock", "a//b", "bad name", 5):
             with self.subTest(bad=bad), self.assertRaises(CodeFactoryError):

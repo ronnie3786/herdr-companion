@@ -195,6 +195,10 @@ poll_seconds = 10
 # max_parallel_issues = 2
 # max_review_rounds = 3
 # max_ci_failures = 3
+# session_timeout_seconds = 3600 # Global Pi-session cap for planners, implementers and reviewers.
+# reviser_session_timeout_seconds = 7200 # Revision sessions legitimately run longer; bounded separately.
+# max_rebase_attempts = 2 # Bounded conflict-resolution rebases; a rebase does not consume review/CI budget.
+# max_transient_retries = 2 # Bounded automatic retries after a provider 5xx/network/timeout failure.
 # dashboard_host = "tailscale" # A literal IP/host, or "tailscale" to bind the Tailscale IPv4.
 # dashboard_port = 9097
 # dashboard_token = { file = "~/.config/herdr-companion/secrets/code-factory-token" }

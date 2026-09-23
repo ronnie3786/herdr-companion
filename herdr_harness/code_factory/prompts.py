@@ -93,6 +93,19 @@ RELEASE_AUTHOR_CHARTER = (
     "tests or builds, do not run gh."
 )
 
+REBASER_CHARTER = (
+    "You are a fresh DeepSeek conflict-resolution session of the Herdr Code Factory working "
+    "in a dedicated git worktree at the current directory. Your only job is to rebase the "
+    "current feature branch onto the freshly fetched base branch, resolve every merge "
+    "conflict so both sides' intent survives, and leave the worktree clean with the rebase "
+    "committed. Follow AGENTS.md, README.md and the repository's privacy rules (never write "
+    "personal paths, hostnames, tokens or captured data). Run focused tests only when they "
+    "are cheap to run; the final verification gate owns the full suite. Never push, never "
+    "change branches, never edit files outside this worktree, never touch "
+    "release/macos.json, and never run gh. Finish with a short summary: files with "
+    "conflicts, how each was resolved, and tests run (mark any test you did not run as NOT RUN)."
+)
+
 # -- tool sets and schemas --------------------------------------------------------
 
 PLANNER_TOOLS = "read,bash,grep,find,ls"
@@ -706,6 +719,30 @@ def reviser_prompt(
         "- Finish with the summary described in your charter.",
     ]
     return "\n\n".join(parts) + "\n"
+
+
+def rebase_prompt(plan: Mapping[str, Any], base_ref: str, issue: Mapping[str, Any]) -> str:
+    """The fresh DeepSeek request that rebases a conflicted branch onto the fetched base."""
+    number = _issue_number(issue)
+    return "\n\n".join([
+        f"# Rebase the pull request branch for GitHub issue #{number}: {_line(_issue_field(issue, 'title'))}",
+        f"The pull request cannot merge because this branch conflicts with `{_line(base_ref)}`.",
+        _issue_body_section(issue),
+        _plan_context(plan),
+        "## Instructions\n"
+        f"- Run `git rebase {_line(base_ref)}` (the base ref is already fetched) and resolve every conflict.\n"
+        "- Preserve the intent of both sides: keep this branch's issue work and fold in the base "
+        "branch changes. Never drop an upstream change to make the rebase finish, and never drop "
+        "behavior this issue needs.\n"
+        "- Resolve each conflicted file by editing it, `git add` it, and continue with "
+        "`git rebase --continue`. Finish with `git status` clean, no rebase in progress, and the "
+        "rebase committed.\n"
+        "- Run focused tests for the conflicted areas only when they are cheap; the final Verify gate "
+        "owns the full suite. Do not run the full suite.\n"
+        "- Do not push, do not change branches, do not create commits beyond what the rebase needs, "
+        "and do not run gh.\n"
+        "- Finish with the summary described in your charter.",
+    ]) + "\n"
 
 
 def privacy_fix_prompt(findings: Sequence[Mapping[str, Any]], issue: Mapping[str, Any]) -> str:

@@ -3,6 +3,7 @@ import SwiftUI
 
 struct PRReviewFilesView: View {
     @Bindable var store: PRReviewStore
+    @Bindable var comments = PRReviewCommentsSession()
     var canControl = false
     var questionHistory: PRReviewQuestionHistory?
     var openQuestion: (PRReviewQuestionHistory.Question) -> Void = { _ in }
@@ -80,18 +81,33 @@ struct PRReviewFilesView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .accessibilityIdentifier("pr-review-no-filter-matches")
                 } else {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 4) {
-                            ForEach(Array(store.orderedFiles.enumerated()), id: \.element.id) { index, file in
-                                PRReviewFileRow(file: file, index: index, selected: file.path == store.selectedPath,
-                                                guided: store.viewMode == .guided) {
-                                    store.selectedPath = file.path
-                                } setViewed: { viewed in
-                                    Task { await store.setViewed(paths: [file.path], viewed: viewed) }
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 4) {
+                                ForEach(Array(store.orderedFiles.enumerated()), id: \.element.id) { index, file in
+                                    PRReviewFileRow(file: file, index: index, selected: file.path == store.selectedPath,
+                                                    guided: store.viewMode == .guided) {
+                                        store.selectedPath = file.path
+                                    } setViewed: { viewed in
+                                        Task { await store.setViewed(paths: [file.path], viewed: viewed) }
+                                    }
+                                    .id(file.path)
                                 }
                             }
+                            .padding(8)
                         }
-                        .padding(8)
+                        .onAppear {
+                            guard let path = store.selectedPath,
+                                  store.orderedFiles.contains(where: { $0.path == path })
+                            else { return }
+                            proxy.scrollTo(path, anchor: .center)
+                        }
+                        .onChange(of: store.selectedPath) { _, path in
+                            guard let path,
+                                  store.orderedFiles.contains(where: { $0.path == path })
+                            else { return }
+                            withAnimation(.snappy) { proxy.scrollTo(path, anchor: .center) }
+                        }
                     }
                 }
             }
@@ -104,6 +120,7 @@ struct PRReviewFilesView: View {
             )
             PRReviewDiffView(
                 store: store,
+                comments: comments,
                 questionHistory: questionHistory,
                 openQuestion: openQuestion,
                 openURL: openURL,
@@ -269,6 +286,7 @@ struct PRReviewFileRow: View {
 
 struct PRReviewDiffView: View {
     @Bindable var store: PRReviewStore
+    @Bindable var comments = PRReviewCommentsSession()
     var questionHistory: PRReviewQuestionHistory?
     var openQuestion: (PRReviewQuestionHistory.Question) -> Void = { _ in }
     var openURL: (URL) -> Void = { _ in }
@@ -313,6 +331,7 @@ struct PRReviewDiffView: View {
                             highlight: highlight,
                             scrollRequest: scrollRequest,
                             askAI: askAI,
+                            addComment: addComment,
                             questionDraftChanged: questionDraftChanged,
                             onVisibleLinesChange: { path, start, end, side in
                                 store.visibleLines = (path, start, end, side)
@@ -410,6 +429,16 @@ struct PRReviewDiffView: View {
     private var highlight: (start: Int, end: Int, side: PRReviewSide)? {
         guard let highlight = store.highlight, highlight.path == store.selectedPath else { return nil }
         return (highlight.start, highlight.end, highlight.side)
+    }
+
+    /// The bundled renderer only offers Add comment while a store is attached
+    /// and the host can accept a selection, so existing ask-only call sites
+    /// keep their exact behavior.
+    private var addComment: ((PRReviewSelection) -> Void)? {
+        guard comments.isReady else { return nil }
+        return { selection in
+            comments.beginComposition(selection: selection, store: store)
+        }
     }
 
     private var scrollRequest: (path: String, line: Int, side: PRReviewSide, token: Int)? {

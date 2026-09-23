@@ -151,6 +151,7 @@ struct WorkspaceNavigationView: View {
             )
         }
         .task(id: PRReviewConnectionIdentity(configuration: prReviewConfiguration, generation: model.connectionGeneration, isDemo: model.isDemoMode, machineRevision: prReviewMachineID?.hashValue ?? model.prReviewMachineRevision)) {
+            shell.attachPRReviewCommentStore(model.prReviewComments)
             shell.configurePRReviewIfNeeded(configuration: prReviewConfiguration, machineID: prReviewMachineID, connectionGeneration: model.connectionGeneration, isDemo: model.isDemoMode)
             await shell.prReview.refresh()
             await applyPRReviewNavigationRequest()
@@ -459,6 +460,7 @@ struct WorkspaceNavigationView: View {
         case .prReview:
             PRReviewContainerView(
                 store: shell.prReview,
+                comments: shell.prReviewComments,
                 canControl: model.isDemoMode || prReviewConfiguration != nil,
                 openURL: { url in Task { try? await ActiveWorkLinkOpener.open(url) } },
                 askAI: { selection, view, rect in

@@ -1725,6 +1725,29 @@ struct HerdrHudChatsTests {
         #expect(chat.session.bubbleMetadata.cost == "$0.40")
     }
 
+    @Test("A passive refresh reconciles a revised earlier cost while the latest run is unchanged")
+    func passiveRefreshReconcilesRevisedEarlierCost() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let root = "agr_earliercost"
+        let first = HudChatsURLProtocol.appendExternal(root: root, prompt: "First turn")
+        HudChatsURLProtocol.setCost(first, 0.10)
+        let second = HudChatsURLProtocol.appendExternal(root: root, prompt: "Second turn")
+        HudChatsURLProtocol.setCost(second, 0.25)
+
+        let chatID = try await fixture.chats.openHistory(id: root, machineID: "synthetic", model: fixture.model)
+        let chat = try #require(fixture.chats.chats.first { $0.id == chatID })
+        #expect(chat.session.bubbleMetadata.cost == "$0.35")
+
+        // A cancelled run's reported cost can arrive after it was already
+        // marked terminal. The latest run stays untouched, so only comparing
+        // the earlier turn can prove the aggregate is still current.
+        HudChatsURLProtocol.setCost(first, 0.15)
+        #expect(await chat.session.refreshSavedHistoryPassivelyForTesting(model: fixture.model))
+
+        #expect(chat.session.bubbleMetadata.cost == "$0.40")
+    }
+
     @Test("Observing a restored running turn keeps the bubble metadata live")
     func restoredRunningTurnKeepsMetadataLive() async throws {
         let fixture = try Fixture()

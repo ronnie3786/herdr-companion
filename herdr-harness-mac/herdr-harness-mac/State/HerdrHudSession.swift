@@ -1483,6 +1483,7 @@ final class HerdrHudSession {
     ) -> Bool {
         guard historyIdentity == "\(machineID):\(rootRunID)",
               page.promotedPaneId == nil,
+              page.nextOffset == nil,
               chatMetadata.isComplete,
               chatMetadata.latestRunID == page.latestRunId,
               let thread,
@@ -1492,10 +1493,11 @@ final class HerdrHudSession {
               let localLatest = exchanges.first(where: { $0.id == page.latestRunId }),
               localLatest.status.isTerminal,
               let remoteLatest = page.turns.first(where: { $0.id == page.latestRunId }) else {
-            // A paginated page that omits the latest run, or an aggregate with
-            // an unresolved historical component, cannot prove the metadata is
-            // unchanged. Fall through to the full paginated fetch so the
-            // refresh task reconciles every turn.
+            // Only the complete page covers every turn. A page with more
+            // offsets, or an aggregate with an unresolved historical
+            // component, cannot prove the metadata is unchanged. Fall through
+            // to the full paginated fetch so the refresh task reconciles every
+            // turn.
             return false
         }
         guard remoteLatest.status == localLatest.status
@@ -1503,15 +1505,26 @@ final class HerdrHudSession {
             && remoteLatest.error == localLatest.error
             && remoteLatest.promotedPaneID == localLatest.promotedPaneID
         else { return false }
-        if let remoteModel = remoteLatest.model {
-            // A model that finally resolved on the server must replace the
-            // submission-time fallback so the bubble never keeps a stale
-            // composer-derived name.
-            guard chatMetadata.latestRunModelName == PiModelDisplayName.short(fullID: remoteModel) else {
-                return false
+        // A terminal report is not immutable: the server marks a cancelled run
+        // terminal before its stdout consumer drains, so an earlier turn's cost
+        // can be revised without the latest run changing. Reconcile the
+        // complete page into a scratch aggregate and compare every accepted
+        // turn against the live one, rather than trusting the latest sample
+        // alone. A model that finally resolved on the server also falls out of
+        // this comparison, replacing the submission-time fallback.
+        var authoritative = HerdrHudChatMetadataAccumulator()
+        authoritative.reconcile(
+            machineID: machineID,
+            rootRunID: page.rootRunId,
+            expectedTurnCount: page.turns.count,
+            samples: page.turns.map { run in
+                Self.metadataRunSample(
+                    for: run,
+                    fallbackModelName: exchanges.first(where: { $0.id == run.id })?.modelLabel
+                )
             }
-        }
-        return remoteLatest.costUSD == chatMetadata.latestRunCostUSD
+        )
+        return authoritative == chatMetadata
     }
 
     func clear(model: HerdrAppModel) async {

@@ -305,12 +305,14 @@ struct PRReviewRenderTests {
         // Controls contained: every header action, including the disclosure,
         // stays inside the diff pane; the layout test above covers reflow.
         let split = try #require(descendants(hosting).compactMap { $0 as? NSSplitView }.first)
-        let detail = try #require(split.subviews.last)
+        // A split view's raw `subviews` end with its trailing divider, so the
+        // last arranged pane is the diff pane that owns the header controls.
+        let detail = try #require(split.arrangedSubviews.last)
         let detailRect = detail.convert(detail.bounds, to: hosting)
         let actionButtons = descendants(detail).filter {
             String(describing: type(of: $0)).contains("FocusRingView")
         }
-        #expect(actionButtons.count >= 4,
+        #expect(actionButtons.count >= 5,
                 "The header should mount its disclosure and navigation buttons")
         for button in actionButtons {
             let frame = button.convert(button.bounds, to: hosting)

@@ -208,8 +208,12 @@ final class IssueReportDraftService: IssueReportDrafting {
                 throw Self.pollFailure(error)
             }
             do {
+                // Capture the id as an immutable value so the fetch always
+                // uses the run it was started for, even if polling state
+                // changes underneath it.
+                let runID = current.id
                 current = try await bounded(until: deadlineInstant) { [self] in
-                    try await transport.fetch(machineID, current.id)
+                    try await transport.fetch(machineID, runID)
                 }
             } catch {
                 cancelQuietly(runID: current.id, machineID: machineID)

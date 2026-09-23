@@ -358,15 +358,18 @@ def wait_for_status(manager: AgentRunManager, run_id: str, statuses, timeout=5):
 
 
 class AgentRunManagerTests(unittest.TestCase):
-    def manager(self, directory: Path, *, clock=time.monotonic, **extra) -> AgentRunManager:
+    def manager(
+        self, directory: Path, *, clock=time.monotonic, default_model: bool = False, **extra
+    ) -> AgentRunManager:
         home = directory / "home"
         home.mkdir(exist_ok=True)
-        settings_path = home / ".pi" / "agent" / "settings.json"
-        settings_path.parent.mkdir(parents=True, exist_ok=True)
-        settings_path.write_text(
-            json.dumps({"defaultProvider": "openai-codex", "defaultModel": "gpt-5.6-luna"}),
-            encoding="utf-8",
-        )
+        if default_model:
+            settings_path = home / ".pi" / "agent" / "settings.json"
+            settings_path.parent.mkdir(parents=True, exist_ok=True)
+            settings_path.write_text(
+                json.dumps({"defaultProvider": "openai-codex", "defaultModel": "gpt-5.6-luna"}),
+                encoding="utf-8",
+            )
         fake_pi = write_fake_pi(directory)
         environ = {
             "HOME": str(home),
@@ -385,7 +388,7 @@ class AgentRunManagerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
             capture = directory / "capture.json"
-            manager = self.manager(directory, FAKE_AGENT_CAPTURE=str(capture))
+            manager = self.manager(directory, default_model=True, FAKE_AGENT_CAPTURE=str(capture))
             self.addCleanup(manager.stop)
             manager._profile_snapshot = lambda: {"prompt": "<!-- herdr-agent-profile:v1 -->\nSynthetic tone", "revision": 1}
             first = manager.start(prompt="Hello", label="Synthetic", cwd=str(directory / "home"), topology={})
@@ -817,7 +820,7 @@ class AgentRunManagerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw_directory:
             directory = Path(raw_directory)
             capture_path = directory / "capture.json"
-            manager = self.manager(directory, FAKE_AGENT_CAPTURE=str(capture_path))
+            manager = self.manager(directory, default_model=True, FAKE_AGENT_CAPTURE=str(capture_path))
 
             started = manager.start(
                 prompt="Synthetic request",

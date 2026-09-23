@@ -142,12 +142,12 @@ struct IssueReportDraftTests {
         let joined = try IssueReportDraftOutput.parse(#"{"title":"Add 👩\u200D💻 shortcuts","body":"Body"}"#)
         #expect(joined.title == "Add 👩\u{200D}💻 shortcuts")
 
-        for json in (
+        for json in [
             #"{"title":"Line\u000Abreak","body":"Body"}"#,
             #"{"title":"Line\u2028separator","body":"Body"}"#,
             #"{"title":"Line\u2029paragraph","body":"Body"}"#,
             #"{"title":"Tabbed\u0009title","body":"Body"}"#
-        ) {
+        ] {
             #expect(throws: IssueReportDraftOutputError.titleHasControlCharacters) {
                 try IssueReportDraftOutput.parse(json)
             }

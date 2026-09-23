@@ -279,7 +279,9 @@ struct IssueReportDraftServiceTests {
         )
 
         let task = Task { try await service.draft(kind: .bug, text: "cancel me", machineID: "machine-1") }
-        try await Task.sleep(for: .milliseconds(20))
+        // Wait until the run is actually polling, so cancellation is exercised
+        // after the remote run exists and its cleanup cancel is meaningful.
+        await Self.waitUntil("the run starts polling") { !spy.fetchCalls.isEmpty }
         task.cancel()
         let result = await task.result
 
@@ -398,7 +400,10 @@ struct IssueReportDraftServiceTests {
         )
 
         let task = Task { try await service.draft(kind: .bug, text: "cancel me", machineID: "machine-1") }
-        try await Task.sleep(for: .milliseconds(20))
+        // Wait until the started run is being polled, so cancellation lands on
+        // an in-flight request instead of racing the preflight or start.
+        let polling = try await Self.waitForRequest("GET /api/v1/agent-runs/\(runID)")
+        #expect(polling.contains("GET /api/v1/agent-runs/\(runID)"))
         task.cancel()
         let result = await task.result
         guard case let .failure(error) = result else {

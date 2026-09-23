@@ -5,6 +5,10 @@ struct FirstMateMessageView: View {
     var canQuote = false
     var quoteSource = "First Mate"
     var saveQuote: @MainActor (ChatQuote) async throws -> Void = { _ in }
+    var feedback: FirstMateResponseFeedbackPresentation?
+    var rateFeedback: @MainActor (FirstMateFeedbackRating) -> Void = { _ in }
+    var editFeedback: @MainActor () -> Void = {}
+    var removeFeedback: @MainActor () -> Void = {}
 
     @Environment(\.colorScheme) private var scheme
     @Environment(\.herdrFontScale) private var fontScale
@@ -59,6 +63,16 @@ struct FirstMateMessageView: View {
                 .overlay {
                     RoundedRectangle(cornerRadius: 9)
                         .stroke(palette.line)
+                }
+
+                if !human, let feedback {
+                    FirstMateResponseFeedbackFooter(
+                        messageID: message.id,
+                        presentation: feedback,
+                        onRateUp: { rateFeedback(.up) },
+                        onEditFeedback: editFeedback,
+                        onRemoveRating: removeFeedback
+                    )
                 }
             }
         }

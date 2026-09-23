@@ -9,6 +9,7 @@ struct FirstMateChatView: View {
 
     @Environment(\.colorScheme) private var scheme
     @State private var followsLatest = true
+    @State private var feedbackEditor: FirstMateFeedbackEditorTarget?
 
     private var featureIsClosed: Bool {
         ["completed", "cancelled"].contains(snapshot.feature.status)
@@ -29,6 +30,7 @@ struct FirstMateChatView: View {
 
             transcript
             featureStatus
+            feedbackNotices
 
             if featureIsClosed {
                 EmptyView()
@@ -76,6 +78,90 @@ struct FirstMateChatView: View {
             }
         }
         .background(FirstMatePalette(scheme: scheme).background)
+        .task(id: feedbackLoadID) { await loadFeedback() }
+        .onChange(of: store.operationContext) { _, _ in feedbackEditor = nil }
+        .sheet(item: $feedbackEditor) { target in
+            FirstMateFeedbackEditor(store: store, target: target)
+        }
+    }
+
+    private var feedbackLoadID: String {
+        "\(snapshot.feature.id)|\(store.lifecycle.opaqueID)|\(store.feedbackSupported)"
+    }
+
+    private var showsFeedbackUpgradeNotice: Bool {
+        FirstMateFeedbackSurface.showsUpgradeNotice(
+            hasLoaded: store.hasLoaded,
+            unsupported: store.unsupported,
+            supported: store.feedbackSupported
+        )
+    }
+
+    @ViewBuilder
+    private var feedbackNotices: some View {
+        let featureID = snapshot.feature.id
+        if showsFeedbackUpgradeNotice || store.feedbackError(for: featureID) != nil {
+            VStack(alignment: .leading, spacing: 6) {
+                if showsFeedbackUpgradeNotice {
+                    Label(
+                        "Update this feature's companion server to rate First Mate responses.",
+                        systemImage: "arrow.down.circle"
+                    )
+                    .accessibilityIdentifier("first-mate-feedback-upgrade")
+                }
+                if let error = store.feedbackError(for: featureID) {
+                    HStack(spacing: 8) {
+                        Label(error, systemImage: "exclamationmark.triangle")
+                        Button("Try again") {
+                            let context = store.operationContext
+                            Task { await store.loadFeedback(expectedContext: context) }
+                        }
+                        .buttonStyle(.link)
+                        .accessibilityIdentifier("first-mate-feedback-reload")
+                    }
+                }
+            }
+            .herdrFont(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func loadFeedback() async {
+        guard store.feedbackSupported else { return }
+        let context = store.operationContext
+        await store.loadFeedback(expectedContext: context)
+        guard store.feedbackSupported else { return }
+        await store.loadFeedbackCategories(expectedContext: context)
+    }
+
+    private func openFeedbackEditor(
+        for message: FirstMateMessage,
+        expectedContext: FirstMateStore.OperationContext
+    ) {
+        let currentContext = store.operationContext
+        guard expectedContext == currentContext,
+              currentContext.matchesFeature(message.featureID),
+              FirstMateFeedbackEligibility.isEligible(message),
+              store.feedbackSupported else { return }
+        // A response rated helpful (or unrated) starts a fresh negative draft;
+        // an existing negative rating keeps its saved reasons and note.
+        if store.feedback(for: message.featureID, messageID: message.id)?.rating != .down {
+            store.setFeedbackDraft(
+                FirstMateFeedbackDraft(rating: .down),
+                for: message.featureID,
+                messageID: message.id,
+                expectedContext: currentContext
+            )
+        }
+        feedbackEditor = FirstMateFeedbackEditorTarget(
+            featureID: message.featureID,
+            messageID: message.id,
+            responseText: message.text,
+            expectedContext: currentContext
+        )
     }
 
     private var header: some View {
@@ -110,10 +196,20 @@ struct FirstMateChatView: View {
     private var transcript: some View {
         let eligibleQuoteIDs = FirstMateQuoteEligibility.messageIDs(in: snapshot.messages)
         let quoteContext = store.operationContext
+        let feedbackContext = store.operationContext
+        let feedbackSupported = store.feedbackSupported
+        let feedbackWritable = store.controlAvailable
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 24) {
                     ForEach(snapshot.messages.filter { ["user", "human", "assistant"].contains($0.role) }) { message in
+                        let feedback = FirstMateResponseFeedbackPresentation.make(
+                            message: message,
+                            supported: feedbackSupported,
+                            writable: feedbackWritable,
+                            isSaving: store.isSavingFeedback(featureID: message.featureID, messageID: message.id),
+                            record: store.feedback(for: message.featureID, messageID: message.id)
+                        )
                         FirstMateMessageView(
                             message: message,
                             canQuote: canControl && !featureIsClosed && eligibleQuoteIDs.contains(message.id),
@@ -124,6 +220,28 @@ struct FirstMateChatView: View {
                                     sourceMessageID: message.id,
                                     expectedContext: quoteContext
                                 )
+                            },
+                            feedback: feedback,
+                            rateFeedback: { rating in
+                                Task {
+                                    await store.rateFeedback(
+                                        rating,
+                                        messageID: message.id,
+                                        expectedContext: feedbackContext
+                                    )
+                                }
+                            },
+                            editFeedback: {
+                                openFeedbackEditor(for: message, expectedContext: feedbackContext)
+                            },
+                            removeFeedback: {
+                                Task {
+                                    await store.saveFeedback(
+                                        FirstMateFeedbackDraft(rating: nil),
+                                        messageID: message.id,
+                                        expectedContext: feedbackContext
+                                    )
+                                }
                             }
                         )
                     }

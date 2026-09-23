@@ -529,6 +529,49 @@ test('missing transcript usage falls back only to the exact retained session', a
   assert.doesNotMatch(html, /\$9\.00/);
 });
 
+test('additive link fields stay inert for existing document browsing', async () => {
+  const app = inspector();
+  const snapshot = detail('a');
+  snapshot.documents = [{
+    id: 'document-a', feature_id: 'a', visit_id: 'visit-a', assignment_id: 'worker',
+    title: 'Existing evidence', media_type: 'text/markdown', content_hash: 'synthetic-hash',
+    created_at: '2026-09-21T20:00:00Z',
+  }];
+  snapshot.links = [
+    {
+      id: 'link-pr', feature_id: 'a', url: 'https://github.com/synthetic-owner/synthetic-repo/pull/4',
+      title: 'synthetic-owner/synthetic-repo #4', kind: 'pull_request', source: 'user',
+      provenance: {}, title_source: 'user', hidden: false,
+      created_at: '2026-09-21T20:00:00Z', updated_at: '2026-09-21T20:00:00Z',
+    },
+    {
+      id: 'link-hidden', feature_id: 'a',
+      url: 'http://share.example.test:8443/private/report?token=synthetic#summary',
+      title: 'share.example.test', kind: 'link', source: 'discovery',
+      provenance: { native_session_id: 'session-a' }, hidden: true,
+      created_at: '2026-09-21T20:00:00Z', updated_at: '2026-09-21T20:00:00Z',
+    },
+  ];
+  snapshot.future_additive = { nested: ['values'] };
+  snapshot.feature.future_flag = true;
+  await app.reply('/features', { ok: true, features: [feature('a')], future_additive: [] });
+  await app.reply('/features/a', snapshot);
+  await app.click({ tab: 'Documents' });
+  const documents = app.element('#workspace').innerHTML;
+  assert.match(documents, /Feature documents/);
+  assert.match(documents, /data-document="document-a"/);
+  assert.doesNotMatch(documents, /github\.com|share\.example\.test/);
+  assert.doesNotMatch(documents, /data-link/);
+  const opening = app.click({ document: 'document-a' });
+  await app.reply('/documents/document-a', {
+    ok: true,
+    document: { id: 'document-a', feature_id: 'a', title: 'Existing evidence', media_type: 'text/markdown', content: 'Synthetic evidence' },
+  });
+  await opening;
+  assert.match(app.element('#dialog-body').innerHTML, /Synthetic evidence/);
+  assert.equal(app.requests.filter(request => request.options.method === 'POST').length, 0);
+});
+
 test('whole-session usage is independent of transcript pagination and survives older pages', async () => {
   const app = inspector();
   await app.refresh('a');

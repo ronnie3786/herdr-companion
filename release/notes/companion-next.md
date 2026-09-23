@@ -1,5 +1,23 @@
 # Next companion update, unreleased
 
+## First Mate feature links
+
+- Adds `first-mate-links-v1` as an additive authenticated API capability. First
+  Mate detail snapshots gain a `links` array containing visible and hidden
+  feature links.
+- `POST /api/v1/first-mate/features/{featureId}/links` saves a bounded absolute
+  HTTP(S) URL with an optional title and kind. Recognized exact GitHub pull
+  request URLs canonicalize to their pull request root and deduplicate;
+  draft/ready/merged/closed state is never inferred, fetched, or published.
+- `POST /api/v1/first-mate/features/{featureId}/links/{linkId}/visibility`
+  reversibly hides or restores one feature-owned link. Both routes are
+  receipt-idempotent, reject client-supplied provenance, never enqueue
+  coordinator work, and return the same full snapshot as the detail endpoint.
+- Existing databases migrate additively. Older clients safely ignore the new
+  snapshot field, and links stay private on the owning companion.
+- Install and restart the companion separately from the Mac app. A native app
+  update does not install or restart companion server packages.
+
 ## First Mate archive
 
 - Adds `first-mate-archive-v1` as an additive authenticated API capability.

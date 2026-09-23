@@ -1,0 +1,6 @@
+# Generated offline renderer. Whitespace inside bundled JS template literals is
+# source data and must not be trimmed; the frontend drift test verifies bytes.
+herdr-harness-mac/herdr-harness-mac/Resources/PRReviewDiffRenderer.js linguist-generated=true -whitespace
+herdr-harness-mac/herdr-harness-mac/Resources/PRReviewDiffRenderer.css linguist-generated=true
+herdr-harness-mac/herdr-harness-mac/Resources/PRReviewDiffRenderer.html linguist-generated=true
+herdr-harness-mac/herdr-harness-mac/Resources/PRReviewDiffRenderer-LICENSES.txt linguist-generated=true

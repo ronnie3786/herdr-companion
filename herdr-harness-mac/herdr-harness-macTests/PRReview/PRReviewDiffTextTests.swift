@@ -120,8 +120,18 @@ struct PRReviewDiffTextTests {
         defer { mounted.window.close() }
         _ = await waitUntil { mounted.view.renderedIdentity != nil }
 
-        let width = try await mounted.view.evaluateJavaScript("document.documentElement.scrollWidth") as? Double
-        #expect((width ?? 0) > 500)
+        let scrolls = try await mounted.view.evaluateJavaScript("""
+        (() => {
+          const root = document.querySelector('diffs-container').shadowRoot;
+          const scroll = [...root.querySelectorAll('*')].find(element =>
+            element.scrollWidth > element.clientWidth &&
+            ['auto', 'scroll'].includes(getComputedStyle(element).overflowX));
+          if (!scroll) return false;
+          scroll.scrollLeft = scroll.scrollWidth;
+          return scroll.scrollLeft > 0;
+        })()
+        """) as? Bool
+        #expect(scrolls == true, "Long code must be horizontally reachable inside the shared renderer")
     }
 
     @Test("A scroll requested before page readiness reaches the requested hunk") @MainActor

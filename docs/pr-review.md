@@ -86,7 +86,7 @@ and explains each position above the diff. ⌥↑ and ⌥↓ move between files;
 marks a file viewed (also on GitHub when syncing is enabled). **Rank files** re-runs the ranking;
 `herdr-pr-review set-rankings` lets an agent supply its own.
 
-**Diff and Ask AI.** PR Review, Chat Git and First Mate Git use one shared code renderer and theme: syntax-highlighted code, roomier lines, old/new line numbers, full-width green/red row tints, stronger gutters and changed-word emphasis. The PR Review renderer is bundled in the Mac app; rendering a loaded patch does not fetch scripts, fonts or grammars from the network. Display options remain shared; review-specific selection and navigation are adapters around that renderer.
+**Diff and Ask AI.** PR Review, Chat Git and First Mate Git use one shared code renderer and theme: syntax-highlighted code, roomier lines, old/new line numbers, full-width green/red row tints, stronger gutters and changed-word emphasis. The PR Review renderer is bundled in the Mac app; rendering a loaded patch does not fetch scripts, fonts or grammars from the network. Review-specific selection and navigation are adapters around that renderer; the existing Git workbench retains its split/unified and wrap controls.
 Deleted text files show their removal hunks. Long files scroll vertically
 and horizontally. If the patch is truncated, Herdr shows every available hunk with a partial-diff
 notice and a link to the full diff. Select code and choose **Ask AI** (floating button or right-click).

@@ -7,6 +7,9 @@ import { dirname, join } from "node:path";
 export default defineConfig({
   plugins: [react(), {
     name: "bundled-diff-licenses",
+    // WKWebView's file origin cannot CORS-load ES modules. This is one closed,
+    // offline bundle, so emit a classic deferred script, with no remote access.
+    transformIndexHtml: { order: "post", handler: (html) => html.replace('type="module"', "defer").replace(/ crossorigin/g, "") },
     generateBundle() {
       const packages = new Map<string, string>();
       for (const id of this.getModuleIds()) {
@@ -50,6 +53,8 @@ export default defineConfig({
     rollupOptions: {
       input: fileURLToPath(new URL("PRReviewDiffRenderer.html", import.meta.url)),
       output: {
+        format: "iife",
+        name: "HerdrNativeDiff",
         inlineDynamicImports: true,
         entryFileNames: "PRReviewDiffRenderer.js",
         assetFileNames: "PRReviewDiffRenderer.[ext]",

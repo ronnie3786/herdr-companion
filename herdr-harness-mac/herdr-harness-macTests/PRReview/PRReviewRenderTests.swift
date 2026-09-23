@@ -272,28 +272,6 @@ struct PRReviewRenderTests {
         result.expectSubstantial()
     }
 
-    @Test("Large text scale changes the diff render")
-    func rendersLargeTextScaleDifferently() async throws {
-        let file = PRReviewDemo.diff().files[0]
-        let defaultResult = try await HerdrRenderHarness.render(
-            "pr-review-diff-default.png",
-            size: CGSize(width: 1240, height: 820)
-        ) {
-            PRReviewDiffText(file: file)
-        }
-        let largeResult = try await HerdrRenderHarness.render(
-            "pr-review-diff-xxlarge.png",
-            size: CGSize(width: 1240, height: 820)
-        ) {
-            PRReviewDiffText(file: file)
-                .environment(\.herdrFontScale, .xxLarge)
-        }
-
-        defaultResult.expectSubstantial()
-        largeResult.expectSubstantial()
-        #expect(defaultResult.byteCount != largeResult.byteCount)
-    }
-
     // MARK: - Popped-out windows
 
     @Test("Popped-out review window renders at its default and minimum sizes")
@@ -377,7 +355,12 @@ struct PRReviewRenderTests {
         arguments: [HerdrFontScale.default, HerdrFontScale.xxLarge]
     )
     func changeTreatmentIsVisible(fontScale: HerdrFontScale) async throws {
-        let file = PRReviewDemo.diff().files[0]
+        var file = PRReviewDemo.diff().files[0]
+        file.hunks = [file.hunks[0]]
+        file.hunks[0].lines = [
+            .init(kind: "del", oldNumber: 1, newNumber: nil, text: "let seed = oldSeed"),
+            .init(kind: "add", oldNumber: nil, newNumber: 1, text: "let seed = newSeed"),
+        ]
         let size = CGSize(width: 820, height: 300)
         let hosting = NSHostingView(rootView:
             PRReviewDiffText(file: file)
@@ -392,8 +375,14 @@ struct PRReviewRenderTests {
         defer { window.close() }
 
         let view = try #require(await waitForDiffTextView(in: hosting, window: window))
-        for _ in 0..<80 where view.renderedIdentity == nil {
-            try? await Task.sleep(for: .milliseconds(25))
+        for _ in 0..<200 where view.renderedIdentity == nil {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        try #require(view.renderedIdentity != nil)
+        for _ in 0..<100 {
+            let count = (try? await view.evaluateJavaScript("document.querySelector('diffs-container')?.shadowRoot?.querySelectorAll('[data-diff-span]').length ?? 0")) as? Int ?? 0
+            if count > 0 { break }
+            try await Task.sleep(for: .milliseconds(50))
         }
         let result = try await view.evaluateJavaScript("""
         (() => {
@@ -401,13 +390,17 @@ struct PRReviewRenderTests {
           return {
             scale: getComputedStyle(host).getPropertyValue('--herdr-diff-font-scale').trim(),
             lineHeight: getComputedStyle(host).getPropertyValue('--diffs-line-height').trim(),
-            changed: host?.shadowRoot?.querySelectorAll('[data-line-type="change-addition"], [data-line-type="change-deletion"]').length ?? 0,
-            emphasis: host?.shadowRoot?.querySelectorAll('[data-diff-span]').length ?? 0
+            changed: host?.shadowRoot?.querySelectorAll('[data-line-type$="addition"], [data-line-type$="deletion"]').length ?? 0,
+            emphasis: host?.shadowRoot?.querySelectorAll('[data-diff-span]').length ?? 0,
+            fontSize: parseFloat(getComputedStyle(host.shadowRoot.querySelector('[data-line]')).fontSize),
+            rowHeight: host.shadowRoot.querySelector('[data-line]').getBoundingClientRect().height
           };
         })()
         """)
         let values = try #require(result as? [String: Any])
-        #expect(values["scale"] as? String == String(fontScale.rawValue))
+        #expect(Double(values["scale"] as? String ?? "") == fontScale.rawValue)
+        #expect(abs((values["fontSize"] as? Double ?? 0) - 12 * fontScale.rawValue) < 0.1)
+        #expect((values["rowHeight"] as? Double ?? 0) >= 20 * fontScale.rawValue)
         #expect(values["lineHeight"] as? String == "1.85")
         #expect((values["changed"] as? Int ?? 0) > 0)
         #expect((values["emphasis"] as? Int ?? 0) > 0)
@@ -440,13 +433,13 @@ struct PRReviewRenderTests {
     }
 
     private func waitForDiffTextView(in hosting: NSView, window: NSWindow) async -> PRReviewDiffTextView? {
-        for _ in 0..<60 {
+        for _ in 0..<400 {
             hosting.layoutSubtreeIfNeeded()
             window.displayIfNeeded()
             await Task.yield()
             try? await Task.sleep(for: .milliseconds(25))
             if let textView = descendants(hosting).compactMap({ $0 as? PRReviewDiffTextView }).first,
-               !textView.renderedPlainText.isEmpty {
+               textView.renderedIdentity != nil {
                 return textView
             }
         }

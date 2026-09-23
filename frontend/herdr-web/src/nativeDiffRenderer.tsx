@@ -161,14 +161,14 @@ function App() {
       setAskTarget(null);
     };
     const selectAll = (event: KeyboardEvent) => {
-      const shadow = diffHost()?.shadowRoot;
-      if (!event.metaKey || event.key.toLowerCase() !== "a" || shadow == null) return;
+      const lines = renderedLines();
+      const first = lines[0];
+      const last = lines[lines.length - 1];
+      if (!event.metaKey || event.key.toLowerCase() !== "a" || first == null || last == null) return;
       event.preventDefault();
-      const range = document.createRange();
-      range.selectNodeContents(shadow);
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
+      // WebKit silently ignores addRange for a range inside a shadow root.
+      // Base/extent works across its composed tree and excludes styles/gutters.
+      window.getSelection()?.setBaseAndExtent(first, 0, last, last.childNodes.length);
       evaluate();
     };
     document.addEventListener("keydown", selectAll);

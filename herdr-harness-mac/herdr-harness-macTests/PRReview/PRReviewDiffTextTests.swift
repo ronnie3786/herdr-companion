@@ -112,6 +112,27 @@ struct PRReviewDiffTextTests {
         #expect(values["deletion"] as? String == "rgba(248, 81, 73, 0.30)")
     }
 
+    @Test("Select All reaches code inside WebKit's shadow tree") @MainActor
+    func selectAllEnablesAsk() async throws {
+        let mounted = mount(file: PRReviewDemo.diff().files[0])
+        defer { mounted.view.tearDown(); mounted.window.close() }
+        let ready = await waitUntil { mounted.view.renderedIdentity != nil }
+        try #require(ready)
+        let selected = try await mounted.view.evaluateJavaScript("""
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', metaKey: true, bubbles: true }));
+        window.getSelection().toString();
+        """) as? String
+        #expect(selected?.contains("struct SeedCatalog {}") == true)
+        #expect(selected?.contains("--diffs-") == false, "Select code, not the shadow stylesheet")
+        var showsAsk = false
+        for _ in 0..<50 {
+            showsAsk = (try await mounted.view.evaluateJavaScript("document.querySelector('.native-ask') !== null")) as? Bool ?? false
+            if showsAsk { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(showsAsk, "A real shadow-tree selection must expose the Ask action")
+    }
+
     @Test("Long lines retain horizontal overflow") @MainActor
     func longLinesScrollHorizontally() async throws {
         var file = PRReviewDemo.diff().files[0]

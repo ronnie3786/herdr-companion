@@ -97,7 +97,7 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
         // Closing one window neither closes the other nor archives its review.
         let close = secondWindow.buttons[XCUIIdentifierCloseWindow]
         XCTAssertTrue(close.waitForExistence(timeout: 5), "A review window should be closable")
-        bringForward(close, in: app)
+        bringForward(close, in: app, windowTitle: SyntheticReview.secondTitle)
         close.click()
         XCTAssertTrue(secondWindow.waitForNonExistence(timeout: 5))
         XCTAssertTrue(firstWindow.exists, "Closing one review window must not close another")
@@ -145,7 +145,7 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
         )
 
         // Return to the chats while the review window stays open.
-        let back = main.buttons["pr-review-back"]
+        let back = main.buttons["All sessions"]
         bringForward(back, in: app)
         back.click()
         XCTAssertTrue(
@@ -154,8 +154,9 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
         )
 
         main.buttons["sidebar-pane-demo1|w1:p2"].click()
-        selectChatMode(in: app)
-        let editor = app.textViews["composer-draft-editor"]
+        // These fixtures are Claude/Codex sessions, not semantic Pi chats.
+        // Their native session composer is available in Terminal mode.
+        let editor = main.textViews["prompt-composer"]
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
         editor.click()
         editor.typeText("Synthetic garden draft")
@@ -179,7 +180,7 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
 
         // Returning restores the unsent draft untouched.
         main.buttons["sidebar-pane-demo1|w1:p2"].click()
-        let restored = app.textViews["composer-draft-editor"]
+        let restored = main.textViews["prompt-composer"]
         XCTAssertTrue(restored.waitForExistence(timeout: 10))
         XCTAssertEqual(
             restored.value as? String,
@@ -268,11 +269,11 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
 
         // Selecting a different file in one window never retargets the other.
         let secondFile = control("pr-review-file-1", in: secondWindow)
-        bringForward(secondFile, in: app)
+        bringForward(secondFile, in: app, windowTitle: SyntheticReview.secondTitle)
         secondFile.click()
         XCTAssertTrue(
             secondWindow.staticTexts
-                .matching(NSPredicate(format: "label CONTAINS[c] %@", "Tests/WateringTests.swift"))
+                .matching(NSPredicate(format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@", "Tests/WateringTests.swift", "Tests/WateringTests.swift"))
                 .firstMatch
                 .waitForExistence(timeout: 10),
             "The second window should select its own file"
@@ -286,7 +287,7 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
         // Ask AI stays reachable through the popped-out diff's context menu.
         let diff = firstWindow.webViews.firstMatch
         XCTAssertTrue(diff.waitForExistence(timeout: 10))
-        bringForward(diff, in: app)
+        bringForward(diff, in: app, windowTitle: SyntheticReview.firstTitle)
         diff.click()
         app.typeKey("a", modifierFlags: .command)
         diff.rightClick()
@@ -299,7 +300,7 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
                 ],
                 timeout: 5
             ) != nil,
-            "Ask AI should present its question field in the popped-out window"
+            "Ask AI should present its question field in the popped-out window; tree: \(app.debugDescription)"
         )
 
         let question = app.control(identifier: "pr-review-ask-field")
@@ -308,7 +309,7 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
         app.buttons["pr-review-send-question"].click()
         let saved = firstWindow.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Explain this synthetic selection briefly")).firstMatch
         XCTAssertTrue(saved.waitForExistence(timeout: 10), "Sending a question must leave a durable bubble in the diff")
-        bringForward(saved, in: app)
+        bringForward(saved, in: app, windowTitle: SyntheticReview.firstTitle)
         saved.click()
         let answer = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", "Ask Herdr · PR #42")).firstMatch
         XCTAssertTrue(answer.waitForExistence(timeout: 10), "The saved bubble must reopen its conversation")
@@ -369,32 +370,6 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
         item.click()
     }
 
-    @MainActor
-    private func selectChatMode(in app: XCUIApplication) {
-        guard let menu = waitForFirst(
-            of: [
-                app.control(identifier: "pane-mode-toggle"),
-                app.control(named: "Pane actions"),
-            ],
-            timeout: 5
-        ) else {
-            return XCTFail("The pane session should expose its actions menu")
-        }
-        menu.click()
-
-        guard let chat = waitForFirst(
-            of: [
-                app.menuItems["Chat"],
-                app.control(identifier: "pane-mode-chat"),
-                app.control(named: "Chat view"),
-            ],
-            timeout: 5
-        ) else {
-            return XCTFail("The pane menu should expose Chat")
-        }
-        chat.click()
-    }
-
     /// Clicks one tab in a review window's segmented picker. The segment label
     /// carries a count ("Context (4)", "Agents (1 running)"), so the match is a
     /// label prefix across every Mac role a segment can publish.
@@ -424,7 +399,7 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
             XCTFail("The tab picker should offer \(title)", file: file, line: line)
             return
         }
-        bringForward(segment, in: app)
+        bringForward(segment, in: app, windowTitle: SyntheticReview.firstTitle)
         segment.click()
     }
 
@@ -451,7 +426,7 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
         let container = control("pr-review-container", in: main)
         let scope = container.exists ? container : main
         return scope.staticTexts
-            .matching(NSPredicate(format: "label CONTAINS[c] %@", SyntheticReview.firstAdditionsSummary))
+            .matching(NSPredicate(format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@", SyntheticReview.firstAdditionsSummary, SyntheticReview.firstAdditionsSummary))
             .firstMatch
     }
 
@@ -463,32 +438,25 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) -> XCUIElement {
-        let deadline = Date().addingTimeInterval(10)
-        repeat {
-            for window in app.windows.allElementsBoundByIndex where window.exists {
-                if window.descendants(matching: .any)
-                    .matching(identifier: "nav-history-controls").firstMatch.exists {
-                    return window
-                }
-            }
-            Thread.sleep(forTimeInterval: 0.15)
-        } while Date() < deadline
-
-        XCTFail("The main shell window should stay addressable beside review windows", file: file, line: line)
-        return app.windows.firstMatch
+        // Keep the identity predicate in the query. An element bound to a
+        // global window index silently retargets when another window opens.
+        let window = app.windows.containing(.any, identifier: "nav-history-controls").firstMatch
+        XCTAssertTrue(
+            window.waitForExistence(timeout: 10),
+            "The main shell window should stay addressable beside review windows",
+            file: file,
+            line: line
+        )
+        return window
     }
 
-    /// Every window whose own identifier or a descendant carries this
-    /// machine/review target. Counting these instead of `windows.firstMatch`
-    /// is what makes "no duplicate window" a real assertion.
+    /// Every window whose review root carries this machine/review target.
+    /// Retain that predicate so later window ordering cannot retarget a query.
+    /// Counting matches still makes "no duplicate window" a real assertion.
     @MainActor
     private func reviewWindows(in app: XCUIApplication, reviewID: String) -> [XCUIElement] {
         let identifier = SyntheticReview.windowIdentifier(reviewID)
-        return app.windows.allElementsBoundByIndex.filter { window in
-            guard window.exists else { return false }
-            if window.identifier == identifier { return true }
-            return window.descendants(matching: .any).matching(identifier: identifier).firstMatch.exists
-        }
+        return app.windows.containing(.any, identifier: identifier).allElementsBoundByIndex
     }
 
     @MainActor
@@ -533,31 +501,36 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
         )
         let expected = diffText.filter { !$0.isWhitespace }
         var rendered = ""
-        for _ in 0..<100 {
-            rendered = diff.staticTexts.allElementsBoundByIndex.map(\.label).joined()
+        let deadline = Date().addingTimeInterval(10)
+        repeat {
+            // WebKit's macOS AXStaticText exposes code as its value, not label.
+            rendered = diff.staticTexts.allElementsBoundByIndex.map {
+                ($0.value as? String) ?? $0.label
+            }.joined()
             if rendered.filter({ !$0.isWhitespace }).contains(expected) { break }
             Thread.sleep(forTimeInterval: 0.1)
-        }
+        } while Date() < deadline
         XCTAssertTrue(
             rendered.filter({ !$0.isWhitespace }).contains(expected),
-            "A review window should render its own diff text, found: \(rendered.prefix(160))",
+            "A review window should render its own diff text, found: \(rendered.prefix(160)); tree: \(diff.debugDescription)",
             file: file,
             line: line
         )
     }
 
-    /// New `WindowGroup` windows become key when they open, so each interaction
-    /// batch first brings its own anchor forward. `isHittable` answers whether
-    /// the anchor's screen point resolves to that window right now; ⌘` is the
-    /// system's cycle-through-windows command.
+    /// Choose the exact window through the native Window menu. Hittability
+    /// alone does not reliably detect overlap, and keyboard cycling depends
+    /// on the user's configured shortcut and window order.
     @MainActor
-    private func bringForward(_ anchor: XCUIElement, in app: XCUIApplication, attempts: Int = 6) {
-        guard anchor.exists else { return }
-        for _ in 0..<attempts {
-            if anchor.isHittable { return }
-            app.typeKey("`", modifierFlags: .command)
-            Thread.sleep(forTimeInterval: 0.3)
-        }
+    private func bringForward(_ anchor: XCUIElement, in app: XCUIApplication, windowTitle: String = "PR Review") {
+        XCTAssertTrue(anchor.exists)
+        app.activate()
+        app.menuBars.menuBarItems["Window"].click()
+        let item = app.menuItems.matching(NSPredicate(
+            format: "title == %@ OR label == %@", windowTitle, windowTitle
+        )).firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 5), "Window menu must offer \(windowTitle)")
+        item.click()
     }
 
     // MARK: - Synthetic evidence

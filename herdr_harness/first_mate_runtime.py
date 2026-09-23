@@ -1409,7 +1409,8 @@ class FirstMateRuntime:
                     for execution in self._jobs():
                         if execution["kind"] == "worker" and execution["claim"]["id"] == assignment["id"] and _locked(self._job_dir(execution) / "writer.lock"):
                             raise DeferredOperation()
-                return self.store.complete_visit(feature["current_visit_id"], params["summary"], params["recommendation"], request_id)
+                return self.store.complete_visit(feature["current_visit_id"], params["summary"], params["recommendation"], request_id,
+                                                 native_session_id=job.get("native_session_id"))
             if action == "fm_revise":
                 revisions = job.setdefault("operation_revisions", {})
                 if request_id not in revisions:
@@ -1512,7 +1513,8 @@ class FirstMateRuntime:
                 reply = state.get("response") or "First Mate could not complete this response. Your message and execution evidence are retained."
                 if state.get("error"):
                     reply += "\n\nCoordinator needs attention: " + str(state["error"])[:700]
-                self.store.finish_message(claim["id"], job["owner"], reply=reply)
+                self.store.finish_message(claim["id"], job["owner"], reply=reply,
+                                          native_session_id=job.get("native_session_id"))
             self._rotate_coordinator_if_needed(job)
         elif job["kind"] == "worker":
             assignment = self.store.get_assignment(claim["id"])
@@ -1649,7 +1651,8 @@ class FirstMateRuntime:
             self.store.mark_dispatch_unknown(job["claim"]["id"], job["claim"]["generation"], reason,
                                              "unknown:" + job["id"])
         elif job["kind"] == "coordinator":
-            self.store.finish_message(job["claim"]["id"], job["owner"], reply=reason)
+            self.store.finish_message(job["claim"]["id"], job["owner"], reply=reason,
+                                      native_session_id=job.get("native_session_id"))
         job["unknown_recorded"] = True
         self._save_job(job)
         _write_json(self._job_dir(job) / "finalized.json", {"at": utc_now(), "unknown": True})

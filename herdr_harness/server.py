@@ -415,6 +415,7 @@ def api_description() -> dict:
             "first-mate-attachments-v1",
             "first-mate-context-v1",
             "first-mate-safe-model-settings-v1",
+            "first-mate-feedback-v1",
             "first-mate-git-v1",
             "pr-review-v1",
             "pi-session-context-v1",
@@ -433,6 +434,8 @@ def api_description() -> dict:
             "firstMate": "/api/v1/first-mate/features",
             "firstMateCapabilities": "/api/v1/first-mate/capabilities",
             "firstMateAttachment": "/api/v1/first-mate/features/{featureId}/attachments",
+            "firstMateFeedbackCategories": "/api/v1/first-mate/feedback-categories",
+            "firstMateFeedback": "/api/v1/first-mate/features/{featureId}/feedback",
             "firstMateGit": "/api/v1/first-mate/features/{featureId}/git",
             "prReviews": "/api/v1/pr-reviews",
             "prReview": "/api/v1/pr-reviews/{reviewId}",
@@ -505,6 +508,8 @@ def api_description() -> dict:
         "mutations": [
             "POST /api/v1/notes|notes/import",
             "POST /api/v1/first-mate/features/{featureId}/attachments",
+            "POST /api/v1/first-mate/feedback-categories",
+            "POST /api/v1/first-mate/features/{featureId}/messages/{messageId}/feedback",
             "PATCH|DELETE /api/v1/notes/{noteId}",
             "POST /api/v1/workspaces",
             "PATCH|DELETE /api/v1/workspaces/{workspaceId}",
@@ -1063,10 +1068,20 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     "first-mate-v1", "first-mate-model-settings-v1", "first-mate-usage-v1",
                     "first-mate-archive-v1", "first-mate-attachments-v1",
                     "first-mate-context-v1", "first-mate-safe-model-settings-v1",
+                    "first-mate-feedback-v1",
                     "first-mate-git-v1",
                 ], **runtime.capabilities()}
             if method == "GET" and tail == ["models"]:
                 return {"ok": True, **service.first_mate.model_catalog()}
+            if tail == ["feedback-categories"]:
+                if method == "GET":
+                    return {"ok": True, "categories": store.list_feedback_categories()}
+                if method == "POST":
+                    if set(body) != {"label", "request_id"}:
+                        raise HTTPValidationError("Feedback category must contain exactly label and request_id")
+                    label = _string(body.get("label"), "label", maximum=80)
+                    request_id = _string(body.get("request_id"), "request_id", maximum=200)
+                    return {"ok": True, "category": store.create_feedback_category(label, request_id)}
             if tail == ["features"]:
                 if method == "GET":
                     view = (query.get("view") or ["active"])[0]
@@ -1160,6 +1175,14 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     raise HTTPValidationError("First Mate Git endpoint not found", code="not_found", status=404)
                 if len(tail) == 2 and method == "GET":
                     return {"ok": True, **snapshot_view(feature_id)}
+                if tail[2:] == ["feedback"] and method == "GET":
+                    return {"ok": True, "feature_id": feature_id, "records": store.list_feedback(feature_id)}
+                if len(tail) == 5 and tail[2] == "messages" and tail[4] == "feedback" and method == "POST":
+                    if set(body) != {"rating", "category_ids", "comment", "expected_revision", "request_id"}:
+                        raise HTTPValidationError("Feedback must contain exactly rating, category_ids, comment, expected_revision, and request_id")
+                    message_id = _string(tail[3], "message_id", maximum=128)
+                    return {"ok": True, "feature_id": feature_id,
+                            "feedback": store.rate_feedback(feature_id, message_id, body)}
                 if tail[2:] == ["model-settings"] and method == "POST":
                     store.set_model_settings(feature_id, body)
                     # Settings alone never enqueue a conversation turn or authorize work.

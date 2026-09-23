@@ -63,6 +63,7 @@ final class FirstMateStore {
     private(set) var safeModelSettingsSupported = false
     private(set) var controlAvailable = false
     private(set) var lastUpdated: Date?
+    private(set) var runtimeHealth: FirstMateRuntimeHealth?
     var openedResource: FirstMateResource?
     var resourcePresentation: FirstMateResourcePresentation?
     private(set) var resourceText = ""
@@ -99,6 +100,15 @@ final class FirstMateStore {
         return hasText
         #endif
     }
+
+    func executionDisplayStatus(for feature: FirstMateFeature) -> String {
+        if !isDemo, ["running", "coordinating", "recovering"].contains(feature.status),
+           error != nil || runtimeHealth?.warning != nil {
+            return "unverified"
+        }
+        return feature.status
+    }
+
     var filteredFeatures: [FirstMateFeature] {
         features.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.goal.localizedCaseInsensitiveContains(search) }
     }
@@ -144,6 +154,7 @@ final class FirstMateStore {
         #if os(macOS)
         composerDrafts.discardAll()
         #endif
+        runtimeHealth = nil
         if demo {
             demoStep = 0
             for value in FirstMateDemo.features(step: 0) { receive(value) }
@@ -204,6 +215,7 @@ final class FirstMateStore {
            (existing.feature.modelSettingsRevision ?? 0) > (value.feature.modelSettingsRevision ?? 0) { return }
         if value.hasDetails, let existing = snapshots[value.feature.id], existing.feature.revision == value.feature.revision,
            (existing.events.map(\.sequence).max() ?? 0) > (value.events.map(\.sequence).max() ?? 0) { return }
+        if let health = value.runtimeHealth { runtimeHealth = health }
         if !value.hasDetails, var existing = snapshots[value.feature.id] {
             // Mutations acknowledge the feature; their omitted arrays and usage are not deletions.
             // A delayed mutation may have the same feature/settings revisions as a
@@ -276,6 +288,7 @@ final class FirstMateStore {
             let list = try await client.fetchFirstMateFeatures(scope: showArchived ? .all : .active)
             guard capturedGeneration == generation else { return }
             guard list.ok else { throw APIError.invalidResponse }
+            runtimeHealth = list.runtimeHealth
             features = list.features.map { feature in
                 guard let cached = snapshots[feature.id]?.feature else { return feature }
                 if cached.revision > feature.revision || cached.updatedAt > feature.updatedAt {

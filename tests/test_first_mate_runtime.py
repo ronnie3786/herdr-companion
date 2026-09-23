@@ -25,6 +25,8 @@ import hashlib,json,os,sys,time,uuid
 from pathlib import Path
 root=Path(os.environ['HERDR_FIRST_MATE_JOB_DIR'])
 job=json.loads((root/'job.json').read_text())
+if job.get('safety_ledger_version')==1 and not (root/'effects.jsonl').exists():
+ (root/'effects.jsonl').write_text(json.dumps({'type':'ledger_ready','version':1,'job_id':job['id']})+'\n')
 (root/'argv.json').write_text(json.dumps(sys.argv))
 session=Path(job['session_file'])
 session.parent.mkdir(parents=True,exist_ok=True)
@@ -93,6 +95,8 @@ for line in sys.stdin:
      tool('fm_complete_stage',{'summary':'Plan inspected and complete','recommendation':'Review the plan and choose implementation'},'complete')
     response='Awaiting your direction.'
   elif job['kind']=='worker':
+   if job.get('requires_recovery_ack'):
+    tool('fm_acknowledge_recovery',{'summary':'Retained checkpoint inspected; next safe action verified'},'recovery-ack')
    if 'slow' in job['prompt']:
     time.sleep(1)
    if 'nested review' in job['prompt'] and not job['claim'].get('metadata',{}).get('parent_assignment_id') and not job.get('parent_job_id'):
@@ -121,7 +125,7 @@ for line in sys.stdin:
     tool('fm_outcome',{'verdict':'success','summary':'Requirements verified; plan written','documents':[{'title':'Synthetic plan','content':'# Plan\nImplement and verify the synthetic flow.'}]},'outcome')
     response='Plan ready.'
   else:
-   if job.get('recovery_mode'): tool('fm_recovery_brief',{'summary':'Prior task inspected README. Verify current state before continuing.'},'brief')
+   if job.get('recovery_mode'): tool('fm_recovery_brief',{'summary':'Prior task inspected README. Verify current state before continuing.','safe_to_continue':True},'brief')
    else: tool('fm_advice',{'decision':'continue','reason':'The observed activity is expected'},'advice')
    response='Continue.'
   save('assistant',response)
@@ -156,7 +160,7 @@ class FirstMateRuntimeTests(unittest.TestCase):
         def record_supervisor(*args, **kwargs):
             child = popen(*args, **kwargs)
             directory = kwargs.get('env', {}).get('HERDR_FIRST_MATE_JOB_DIR')
-            if directory and Path(directory).is_relative_to(self.root):
+            if directory and Path(directory).resolve().is_relative_to(self.root.resolve()):
                 self.children.append((child, Path(directory)))
             return child
 
@@ -173,7 +177,9 @@ class FirstMateRuntimeTests(unittest.TestCase):
         for child, directory in self.children:
             if child.poll() is None:
                 _write_json(directory / 'controls' / 'test-stop.json', {'action': 'abort'})
-        deadline = time.monotonic() + 1
+        # The supervisor allows ten seconds for graceful abort, then terminates
+        # its Pi process group. Killing it earlier can orphan a startup writer.
+        deadline = time.monotonic() + 20
         while any(child.poll() is None for child, _ in self.children) and time.monotonic() < deadline:
             time.sleep(.03)
         for child, directory in self.children:
@@ -188,6 +194,8 @@ class FirstMateRuntimeTests(unittest.TestCase):
                     child.terminate()
                     child.wait(timeout=2)
         self.store.close()
+        for _, directory in self.children:
+            self.assertFalse(_locked(directory / 'writer.lock'), 'Synthetic writer must stop before its storage is removed')
         self.temp.cleanup()
 
     def feature(self, goal='Plan the synthetic feature'):
@@ -205,9 +213,11 @@ class FirstMateRuntimeTests(unittest.TestCase):
         self.assertEqual([job['feature_id'] for job in launched], [feature['id']])
         self.assertEqual(launched[0]['kind'], 'coordinator')
 
-    def until(self, predicate, timeout=12):
-        deadline = time.time() + timeout
-        while time.time() < deadline:
+    def until(self, predicate, timeout=45):
+        # These are process/ownership checks, not latency benchmarks. Several
+        # sequential Python starts and fsyncs must fit on a busy development Mac.
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
             self.runtime.reconcile()
             if predicate(): return
             time.sleep(.08)
@@ -416,6 +426,7 @@ class FirstMateRuntimeTests(unittest.TestCase):
         feature = self.feature()
         self.until(lambda: self.store.get_feature(feature['id'])['status']=='awaiting_direction')
         snapshot = self.store.snapshot(feature['id'])
+        self.assertTrue(self.children, 'Canonical runtime paths must retain supervisor ownership for teardown')
         self.assertEqual(len(snapshot['visits']), 1)
         self.assertEqual(snapshot['assignments'][0]['verdict'], 'success')
         self.assertEqual(len(snapshot['documents']), 1)
@@ -427,7 +438,7 @@ class FirstMateRuntimeTests(unittest.TestCase):
 
     def test_nested_workers_yield_and_resume_exact_parent_session_without_polling(self):
         feature = self.feature('Plan nested review of the synthetic feature')
-        self.until(lambda: self.store.get_feature(feature['id'])['status']=='awaiting_direction', timeout=20)
+        self.until(lambda: self.store.get_feature(feature['id'])['status']=='awaiting_direction', timeout=60)
         assignments = self.store.snapshot(feature['id'])['assignments']
         self.assertEqual(len(assignments), 3)
         parent = next(a for a in assignments if not a['metadata'].get('parent_assignment_id'))
@@ -448,7 +459,7 @@ class FirstMateRuntimeTests(unittest.TestCase):
 
     def test_seven_independent_reviewers_retain_exact_documents_and_sessions(self):
         feature = self.feature('Plan seven reviews of the synthetic baseline')
-        self.until(lambda: self.store.get_feature(feature['id'])['status']=='awaiting_direction', timeout=20)
+        self.until(lambda: self.store.get_feature(feature['id'])['status']=='awaiting_direction', timeout=60)
         snapshot = self.store.snapshot(feature['id'])
         self.assertEqual(len(snapshot['assignments']), 7)
         sessions = {a['native_session_id'] for a in snapshot['assignments']}
@@ -485,7 +496,7 @@ class FirstMateRuntimeTests(unittest.TestCase):
 
     def test_missing_outcome_never_success_and_recovery_is_bounded(self):
         feature = self.feature('Plan missing outcome')
-        self.until(lambda: self.store.get_feature(feature['id'])['status']=='blocked', timeout=18)
+        self.until(lambda: self.store.get_feature(feature['id'])['status']=='blocked', timeout=60)
         assignment = self.store.snapshot(feature['id'])['assignments'][0]
         self.assertEqual(assignment['status'], 'blocked')
         self.assertEqual(assignment['generation'], 3)

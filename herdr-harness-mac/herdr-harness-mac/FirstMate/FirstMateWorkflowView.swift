@@ -42,6 +42,17 @@ struct FirstMateWorkflowView: View {
                     }
                 }
             }
+            Divider()
+            FirstMateReliabilityView(health: store.runtimeHealth, snapshot: snapshot)
+            ForEach(snapshot.events.filter { $0.featureID == snapshot.feature.id && $0.recoveryCheckpoint?.workspacePath != nil }.suffix(10)) { event in
+                if let checkpoint = event.recoveryCheckpoint {
+                    DisclosureGroup("Recovery checkpoint · \(event.createdAt)") {
+                        FirstMateRecoveryFactsView(store: store, snapshot: snapshot, checkpoint: checkpoint)
+                            .padding(.top, 8)
+                    }
+                    .herdrFont(.subheadline)
+                }
+            }
             if snapshot.visits.isEmpty {
                 ContentUnavailableView("The journey starts with a plan", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
             }

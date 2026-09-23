@@ -10,6 +10,7 @@ verdict. No model is invoked for unchanged routine monitoring.
 from __future__ import annotations
 
 import argparse
+import errno
 import fcntl
 import hashlib
 import json
@@ -17,6 +18,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import shutil
 import subprocess
 import sys
 import threading
@@ -94,6 +96,10 @@ an action the human already authorized. Do not merge, publish, deploy or delete
 worktrees unless that exact action is authorized in the current stage. Record a
 direction change with fm_revise before replacement work. There is one continuing
 conversation per feature, but every dispatch receives this charter again.
+For an uncertain dispatch that automatic recovery cannot safely continue,
+explain the interruption and retained facts, then await human recovery direction.
+Use fm_recover for that stopped execution, not fm_retry (for reported failures).
+Never use Pause/Resume around an unresolved dispatch or an internal human gate.
 """
 WORKER_PROMPT = """You are an independent Pi worker managed by Herdr First Mate.
 Your assignment is scoped to one authorized workflow stage. Work on that
@@ -131,6 +137,13 @@ read_only as an instruction not to edit workspace files, commits or branches, an
 do not perform unrelated or unauthorized actions; it is not a security sandbox
 or tool capability boundary. An isolated assignment owns its designated worktree
 within the assignment scope.
+Use fm_progress at meaningful milestones with completed work, concrete evidence,
+and the exact next step. Before a long build or external wait, record its evidence
+and a bounded wait_seconds lease; do not send empty heartbeats or polling turns.
+A recovery successor must inspect its retained facts and fm_acknowledge_recovery
+before mutation. Continue from existing edits; never replay uncertain external
+side effects or advance a human gate. Prefer the latest checkpoint and targeted
+reads over reloading every predecessor's context.
 """
 ADVISOR_PROMPT = """You are the read-only advisor for a potentially unhealthy Pi
 assignment. Inspect the evidence supplied. Repetition can be legitimate; do not
@@ -201,18 +214,25 @@ def _coordinator_state(snapshot: dict, claim: dict | None = None) -> dict:
 def _write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
-    with temporary.open("x", encoding="utf-8") as handle:
-        os.chmod(temporary, 0o600)
-        json.dump(value, handle, ensure_ascii=False)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temporary, path)
-    # Dispatch metadata must survive power loss as well as process restarts.
-    descriptor = os.open(path.parent, os.O_RDONLY)
     try:
-        os.fsync(descriptor)
+        with temporary.open("x", encoding="utf-8") as handle:
+            os.chmod(temporary, 0o600)
+            json.dump(value, handle, ensure_ascii=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        # Dispatch metadata must survive power loss as well as process restarts.
+        descriptor = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
     finally:
-        os.close(descriptor)
+        # A failed flush must not leave more debris on an already full volume.
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _read_json(path: Path, default: Any = None) -> Any:
@@ -250,6 +270,31 @@ def _records(path: Path, offset: int = 0) -> tuple[list[dict], int]:
                 offset = handle.tell()
     except OSError:
         return result, offset
+
+
+def _recent_records(path: Path, *, maximum: int = 100, max_bytes: int = 2 * 1024 * 1024) -> list[dict]:
+    """Bounded recent evidence; long-running workers can have huge spools."""
+    try:
+        with path.open("rb") as handle:
+            size = os.fstat(handle.fileno()).st_size
+            start = max(0, size - max_bytes)
+            handle.seek(start)
+            raw = handle.read(max_bytes)
+        if start:
+            raw = raw.partition(b"\n")[2]
+        result = []
+        for line in raw.splitlines(keepends=True):
+            if not line.endswith(b"\n"):
+                continue
+            try:
+                value = json.loads(line)
+                if isinstance(value, dict):
+                    result.append(value)
+            except (ValueError, UnicodeError):
+                pass
+        return result[-maximum:]
+    except OSError:
+        return []
 
 
 def _locked(path: Path) -> bool:
@@ -361,22 +406,67 @@ class FirstMateRuntime:
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
+        self._guardian: threading.Thread | None = None
+        self._guardian_restarts: list[float] = []
+        self.minimum_free_bytes = _bounded(self.environ, "HERDR_FIRST_MATE_MINIMUM_FREE_MB", 1024, 64, 102400) * 1024 * 1024
         self._mutex = threading.RLock()
         self._manager_lock = None
+        # Health reads must not take the reconciliation mutex or write to disk.
+        self._health_lock = threading.Lock()
+        self._last_progress = time.monotonic()
+        self._last_success_at: str | None = None
+        self._last_error_kind: str | None = None
+        self._error_serial = 0
+        self._consecutive_failures = 0
         self._last_watch = 0.0
         self._catalog_lock = threading.Lock()
         self._catalog_cache = None
         self._catalog_at = 0.0
         self.usage = FirstMateUsage(self.root / "sessions")
         self.context = FirstMateContext(self.jobs_root, self.context_target)
+        from .first_mate_reliability import FirstMateReliability
+        self.reliability = FirstMateReliability(self)
 
     def capabilities(self) -> dict:
         return {"available": bool(self.pi_bin and self.extension and self.extension.is_file()),
                 "pi_available": bool(self.pi_bin), "saved_sessions": True,
                 "durable_dispatch": True, "context_handoff_target": self.context_target,
-                "max_workers": self.max_workers,
+                "max_workers": self.max_workers, "runtime_health": self.health(),
                 "reason": ("Pi is not installed or executable on this host" if not self.pi_bin else
                            "The managed First Mate Pi extension is unavailable" if not self.extension or not self.extension.is_file() else None)}
+
+    def health(self) -> dict:
+        """Request-time liveness, independent of the scheduler and its storage."""
+        with self._health_lock:
+            alive = bool(self._thread and self._thread.is_alive())
+            age = max(0, time.monotonic() - self._last_progress)
+            status = ("stopped" if not alive or self._stop.is_set() else
+                      "stalled" if age > 60 else
+                      "degraded" if self._last_error_kind else
+                      "healthy" if self._last_success_at else "starting")
+            return {"status": status, "scheduler_alive": alive,
+                    "last_success_at": self._last_success_at,
+                    "error_kind": self._last_error_kind,
+                    "consecutive_failures": self._consecutive_failures,
+                    "guardian_alive": bool(self._guardian and self._guardian.is_alive()),
+                    "scheduler_restarts": sum(time.monotonic() - at < 3600 for at in self._guardian_restarts), **self.reliability.health()}
+
+    def _record_runtime_error(self, exc: Exception, path: Path) -> None:
+        kind = {errno.ENOSPC: "storage_full", errno.EDQUOT: "storage_full",
+                errno.EROFS: "storage_unwritable", errno.EACCES: "storage_unwritable"}.get(getattr(exc, "errno", None), "reconciliation_failed")
+        if getattr(exc, "storage_low", False):
+            kind = "storage_low"
+        if "database or disk is full" in str(exc).lower():
+            kind = "storage_full"
+        with self._health_lock:
+            self._error_serial += 1
+            self._last_error_kind = kind
+        # Diagnostic persistence is strictly best-effort. Never try to persist
+        # the failure of this write: storage may be exactly what failed.
+        try:
+            _write_json(path, {"at": utc_now(), "error": str(exc)[:1000]})
+        except Exception:
+            pass
 
     def model_catalog(self) -> dict:
         from .first_mate_models import read_model_catalog
@@ -615,6 +705,10 @@ class FirstMateRuntime:
         with self._mutex:
             if self._thread and self._thread.is_alive():
                 return
+            # A terminated scheduler may still own our manager descriptor.
+            if self._manager_lock:
+                self._manager_lock.close()
+                self._manager_lock = None
             handle = (self.root / "manager.lock").open("a")
             try:
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -623,16 +717,55 @@ class FirstMateRuntime:
                 return
             self._manager_lock = handle
             self._stop.clear()
+            with self._health_lock:
+                self._last_progress = time.monotonic()
             self._thread = threading.Thread(target=self._loop, name="first-mate-runtime", daemon=True)
             self._thread.start()
+            if not self._guardian or not self._guardian.is_alive():
+                self._guardian = threading.Thread(target=self._supervise, name="first-mate-guardian", daemon=True)
+                self._guardian.start()
+
+    def _supervise(self) -> None:
+        while not self._stop.wait(10):
+            try:
+                self._supervise_once()
+            except Exception as exc:
+                self._record_runtime_error(exc, self.root / "guardian-error.json")
+
+    def _supervise_once(self) -> None:
+        """Never replace a live (even hung) scheduler or surrender its fence."""
+        if self._stop.is_set() or not self._manager_lock or self._manager_lock.closed:
+            return
+        if self._thread and self._thread.is_alive():
+            self.wake()
+            return
+        if not self._mutex.acquire(blocking=False):
+            return
+        try:
+            if self._stop.is_set() or (self._thread and self._thread.is_alive()):
+                return
+            now = time.monotonic()
+            self._guardian_restarts = [at for at in self._guardian_restarts if now - at < 3600]
+            if len(self._guardian_restarts) >= 3:
+                return
+            self._guardian_restarts.append(now)
+            with self._health_lock:
+                self._last_progress = now
+            self._thread = threading.Thread(target=self._loop, name="first-mate-runtime", daemon=True)
+            self._thread.start()
+        finally:
+            self._mutex.release()
 
     def stop(self) -> None:
         """Stop reconciliation, preserving detached Pi workers for reattachment."""
         self._stop.set()
         self._wake.set()
+        if self._guardian and self._guardian is not threading.current_thread():
+            self._guardian.join(timeout=2)
         if self._thread and self._thread is not threading.current_thread():
             self._thread.join(timeout=5)
-        if self._manager_lock:
+        # A timed-out join is not a stopped scheduler. Keep its fencing lock.
+        if self._manager_lock and not (self._thread and self._thread.is_alive()):
             self._manager_lock.close()
             self._manager_lock = None
 
@@ -701,11 +834,27 @@ class FirstMateRuntime:
 
     def _loop(self) -> None:
         while not self._stop.is_set():
+            with self._health_lock:
+                errors_before = self._error_serial
             try:
                 self.reconcile()
             except Exception as exc:
-                _write_json(self.root / "runtime-error.json", {"time": utc_now(), "error": str(exc)[:1000]})
-            self._wake.wait(0.25)
+                self._record_runtime_error(exc, self.root / "runtime-error.json")
+            with self._health_lock:
+                self._last_progress = time.monotonic()
+                failed = self._error_serial != errors_before
+                if failed:
+                    self._consecutive_failures += 1
+                else:
+                    self._last_success_at = utc_now()
+                    self._last_error_kind = None
+                    self._consecutive_failures = 0
+                delay = min(30, 2 ** min(self._consecutive_failures - 1, 5)) if failed else 0.25
+            if failed:
+                # Ignore wake storms during storage failure, but stop promptly.
+                self._stop.wait(delay)
+            else:
+                self._wake.wait(delay)
             self._wake.clear()
 
     def _jobs(self) -> list[dict]:
@@ -718,9 +867,23 @@ class FirstMateRuntime:
     def _save_job(self, job: dict) -> None:
         _write_json(self._job_dir(job) / "job.json", job)
 
-    def _control(self, job: dict, action: str, text: str = "") -> None:
+    def _control(self, job: dict, action: str, text: str = "", *, request_id: str | None = None) -> None:
         directory = self._job_dir(job) / "controls"
-        _write_json(directory / (uuid.uuid4().hex + ".json"), {"action": action, "text": text})
+        identity = hashlib.sha256(request_id.encode()).hexdigest() if request_id else uuid.uuid4().hex
+        path = directory / (identity + ".json")
+        payload = {"action": action, "text": text}
+        if path.exists():
+            if _read_json(path) != payload:
+                raise FirstMateError("Control request identity was reused with a different payload")
+            return
+        _write_json(path, payload)
+
+    def _require_storage(self, cwd: str) -> None:
+        for path in (self.root, Path(cwd)):
+            if shutil.disk_usage(path).free < self.minimum_free_bytes:
+                error = OSError(errno.ENOSPC, "First Mate is waiting for its configured free-space reserve before launching more work")
+                error.storage_low = True
+                raise error
 
     def _launch(self, job: dict) -> None:
         directory = self._job_dir(job)
@@ -734,6 +897,7 @@ class FirstMateRuntime:
         try:
             if (directory / "started.json").exists():
                 return
+            self._require_storage(job["cwd"])
             # Refresh under the dispatch lock. A supervisor reads job.json only
             # after acquiring this same lock, so it cannot launch stale policy.
             current_extension = str(self.extension) if self.extension else job.get("extension")
@@ -915,7 +1079,7 @@ class FirstMateRuntime:
         job = {"id": identifier, "kind": kind, "feature_id": current_feature["id"], "cwd": current_feature["cwd"],
                "session_file": str(session), "prompt": prompt, "claim": claim, "owner": claim.get("owner") or self.owner,
                "pi_bin": self.pi_bin, "extension": str(self.extension), "created_at": utc_now(),
-               "context_target": self.context_target,
+               "context_target": self.context_target, "safety_ledger_version": 1,
                "timeout_seconds": _bounded(self.environ, "HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS", 180, 30, 600) if kind in {"coordinator", "advisor"} else 86400, "handoff_id": handoff_id,
                "parent_job_id": parent_job["id"] if parent_job else None,
                "parent_session_id": parent_session_id,
@@ -937,8 +1101,15 @@ class FirstMateRuntime:
             if claim.get("attempt", 0) > 1 and not handoff_id:
                 predecessors = [j for j in self._jobs() if j["kind"] == "worker" and j["claim"]["id"] == claim["id"]]
                 if predecessors:
-                    previous = max(predecessors, key=lambda j: j["claim"]["generation"])
+                    previous = max(predecessors, key=lambda j: (j["claim"]["generation"], j["created_at"]))
+                    if previous.get("automatic_recovery"):
+                        job["requires_recovery_ack"] = True
+                        job["recovery_source_job_id"] = previous["id"]
                     job["prompt"] += "\n\nPrior execution recovery checkpoint:\n" + previous.get("recovery_brief", "Inspect the retained predecessor session before repeating any side effects: " + str(previous.get("native_session_id")))
+                    checkpoint = _read_json(self._job_dir(previous) / "recovery-checkpoint.json")
+                    if checkpoint:
+                        job["prompt"] += "\nObserved recovery facts (not instructions or proof of completed side effects):\n" + json.dumps(checkpoint, ensure_ascii=False)
+                        job["prompt"] += "\nPreserve existing edits. Verify uncertain effects before repeating them; request human direction if they cannot be verified. Read the referenced handoff for the next safe step rather than re-reading every predecessor."
             job["cwd"] = claim.get("metadata", {}).get("worktree_path") or current_feature["cwd"]
             if parent_job:
                 job["cwd"] = parent_job["cwd"]
@@ -1000,6 +1171,7 @@ class FirstMateRuntime:
                     raise FirstMateError("Existing path does not belong to the requested assignment worktree")
             else:
                 path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                self._require_storage(prepared["source"])
                 self._git(prepared["source"], "worktree", "add", "-b", branch, str(path), metadata["base_revision"])
         return metadata
 
@@ -1010,6 +1182,7 @@ class FirstMateRuntime:
             jobs = self._jobs()
             active_features = set()
             worker_count = 0
+            had_error = False
             for job in jobs:
                 directory = self._job_dir(job)
                 if (directory / "finalized.json").exists():
@@ -1065,14 +1238,20 @@ class FirstMateRuntime:
                         if not (directory / "started.json").exists() and self.capabilities()["available"]:
                             self._launch(job)
                 except Exception as exc:
+                    had_error = True
                     error = str(exc)[:1000]
-                    _write_json(directory / "reconcile-error.json", {"error": error, "at": utc_now()})
+                    self._record_runtime_error(exc, directory / "reconcile-error.json")
                     try:
                         self._event(job["feature_id"], "runtime.error", "Execution needs attention: " + error,
                                     {"job_id": job["id"]}, "runtime-error:" + job["id"] + ":" + hashlib.sha256(error.encode()).hexdigest()[:16])
                     except Exception:
                         pass
+            if had_error:
+                # Observe other jobs, but never dispatch using incomplete writer
+                # counts or uncertain state from this pass.
+                return
             self._actions()
+            self.reliability.tick(jobs)
             if time.monotonic() - self._last_watch >= 10:
                 self._watch(jobs)
                 self._last_watch = time.monotonic()
@@ -1264,6 +1443,8 @@ class FirstMateRuntime:
         feature_id = job["feature_id"]
         feature = self.store.get_feature(feature_id)
         claim = job["claim"]
+        if job.get("requires_recovery_ack") and not job.get("recovery_acknowledged") and action not in {"fm_status", "fm_read_document", "fm_read_session", "fm_acknowledge_recovery"}:
+            raise FirstMateError("Inspect the retained checkpoint and acknowledge recovery before continuing")
         if action == "fm_status":
             if job["kind"] == "coordinator":
                 snapshot = self.store.snapshot(feature_id)
@@ -1371,10 +1552,10 @@ class FirstMateRuntime:
                 if any(execution["kind"] == "worker" and execution["claim"]["id"] == assignment["id"]
                        and _locked(self._job_dir(execution) / "writer.lock") for execution in self._jobs()):
                     raise FirstMateError("The prior worker is still alive; pause it before retrying an uncertain dispatch")
-                result = self.store.recover_assignment(assignment["id"], assignment["generation"], params["reason"], request_id, verified_stopped=True)
-                if feature["status"] == "recovering" and result["status"] == "queued":
-                    self.store.feature_action(feature_id, "resume", "recover-resume:" + request_id)
-                return result
+                # The store transitions recovering -> running atomically, only
+                # after all uncertain assignments settle. A second resume both
+                # fails on success and could bypass another unresolved writer.
+                return self.store.recover_assignment(assignment["id"], assignment["generation"], params["reason"], request_id, verified_stopped=True)
             if action == "fm_resolve_gate":
                 assignment = self.store.get_assignment(params["assignment_id"])
                 if assignment["feature_id"] != feature_id:
@@ -1461,6 +1642,21 @@ class FirstMateRuntime:
             if action == "fm_finish_feature":
                 return self.store.feature_action(feature_id, "complete", request_id)
         elif job["kind"] == "worker":
+            if action == "fm_progress":
+                return self.store.record_progress(claim["id"], claim["generation"], job["native_session_id"],
+                    params["summary"], params["next_action"], params["evidence"], params.get("wait_seconds", 0), request_id)
+            if action == "fm_acknowledge_recovery":
+                assignment = self.store.get_assignment(claim["id"])
+                if not job.get("requires_recovery_ack") or assignment["status"] != "running" or assignment["generation"] != claim["generation"] or assignment["native_session_id"] != job["native_session_id"] or feature["status"] != "running":
+                    raise FirstMateError("This executor cannot acknowledge recovery")
+                summary = params.get("summary")
+                if not isinstance(summary, str) or not summary.strip() or len(summary) > 8000:
+                    raise FirstMateError("Provide a bounded evidence-based recovery acknowledgement")
+                self._event(feature_id, "reliability.recovery_acknowledged", summary,
+                    {"assignment_id": claim["id"], "source_job_id": job["recovery_source_job_id"], "generation": claim["generation"]}, "recovery-ack:" + request_id)
+                job["recovery_acknowledged"] = True
+                self._save_job(job)
+                return {"acknowledged": True}
             if action == "fm_outcome":
                 code_revision = None
                 try:
@@ -1505,6 +1701,7 @@ class FirstMateRuntime:
                 if not parent or not job.get("recovery_mode"):
                     raise FirstMateError("This advisor does not own a recovery checkpoint")
                 parent["recovery_brief"] = params["summary"]
+                parent["recovery_safe_to_continue"] = params.get("safe_to_continue") is True
                 self._save_job(parent)
                 job["advice_recorded"] = True
                 self._save_job(job)
@@ -1551,6 +1748,10 @@ class FirstMateRuntime:
                     # concurrent human pause, cancellation, gate, or scope revision.
                     self.store.acknowledge_stopped(
                         claim["id"], claim["generation"], "startup-stopped:" + job["id"], status="paused")
+            elif not current_execution or assignment["status"] in (TERMINAL - {"paused"}) | {"queued"}:
+                # An old spool cannot relaunch its saved handoff after a newer
+                # recovery already took ownership or the typed outcome settled.
+                pass
             elif job.get("waiting_children") and not job.get("cancel_requested"):
                 if not self._continue_children(job):
                     return
@@ -1564,11 +1765,14 @@ class FirstMateRuntime:
                 if assignment["status"] == "paused" and assignment.get("metadata", {}).get("human_gate"):
                     self.store.acknowledge_stopped(claim["id"], claim["generation"], "gate-stopped:" + job["id"], status="paused")
                 elif assignment["status"] not in TERMINAL:
-                    if assignment.get("recovery_count", 0) < 2 and not self._prepare_recovery_brief(job, state):
-                        return
-                    self.store.recover_assignment(claim["id"], claim["generation"],
-                        "Pi stopped without a structured outcome. " + str(state.get("error") or "A clean exit is not evidence of success."),
-                        "missing-outcome:" + job["id"], verified_stopped=True)
+                    if self.reliability.enabled:
+                        if not self.reliability.recover(job, state):
+                            return
+                    else:
+                        checkpoint = self._recovery_checkpoint(job)
+                        self._event(job["feature_id"], "recovery.checkpoint", "Automatic recovery is disabled; retained facts are ready for inspection.", checkpoint, "manual-checkpoint:" + job["id"])
+                        self.store.mark_dispatch_unknown(claim["id"], claim["generation"],
+                            "Worker stopped without a structured outcome. Automatic recovery is disabled; awaiting human direction.", "manual-recovery:" + job["id"])
         elif job["kind"] == "advisor" and not job.get("advice_recorded"):
             self._event(job["feature_id"], "advisor.failed", "Advisor ended without an assessment", {"job_id": job["id"]}, "advisor-failed:" + job["id"])
         self._event(job["feature_id"], "execution.stopped", "Saved execution ended; history retained", {
@@ -1615,10 +1819,11 @@ class FirstMateRuntime:
             job["recovery_brief"] = "The independent recovery advisor produced no checkpoint. Inspect the retained predecessor session " + str(job.get("native_session_id")) + " and verify every side effect before continuing. Failure: " + str(state.get("error", "missing outcome"))
             self._save_job(job)
             return True
-        evidence, _ = _records(self._job_dir(job) / "events.jsonl")
+        checkpoint = self._recovery_checkpoint(job)
+        evidence = _recent_records(self._job_dir(job) / "events.jsonl", maximum=200)
         evidence = [e for e in evidence if e.get("type") in {"message_end", "tool_execution_start", "tool_execution_end"}][-80:]
         advisor = self._new_job(feature, kind="advisor", claim={"id": "recovery:" + job["id"]}, parent_job=job,
-            prompt="The predecessor is stopped and cannot reliably summarize. Produce a recovery brief with fm_recovery_brief. Include observed work, uncertain side effects, files/commits, verification, blockers and the exact next safe action. Distinguish evidence from inference. Do not attempt the assignment.\nAssignment:\n" + job["prompt"] + "\nRetained recent evidence:\n" + json.dumps([_ledger_event(e) for e in evidence], ensure_ascii=False))
+            prompt="The predecessor is stopped and cannot reliably summarize. Produce a recovery brief with fm_recovery_brief, setting safe_to_continue true ONLY if the retained evidence establishes a safe next action within this same authorized stage. Set it false if external effects are uncertain or a human decision is needed. Include observed work, uncertain side effects, files/commits, verification, blockers and the exact next safe action. Distinguish evidence from inference. Do not attempt the assignment.\nAssignment:\n" + job["prompt"] + "\nObserved workspace checkpoint:\n" + json.dumps(checkpoint, ensure_ascii=False) + "\nRetained recent evidence:\n" + json.dumps([_ledger_event(e) for e in evidence], ensure_ascii=False))
         advisor["recovery_mode"] = True
         self._save_job(advisor)
         job["recovery_job_id"] = advisor["id"]
@@ -1654,24 +1859,58 @@ class FirstMateRuntime:
         self.store.rotate_coordinator_session(job["feature_id"], job["native_session_id"],
                                               "rotate:" + job["id"], verified_stopped=True)
 
+    def _recovery_checkpoint(self, job: dict) -> dict:
+        """Freeze bounded, read-only facts once; never commit or clean user work."""
+        path = self._job_dir(job) / "recovery-checkpoint.json"
+        checkpoint = _read_json(path)
+        if checkpoint:
+            return checkpoint
+        snapshot = self.store.snapshot(job["feature_id"])
+        handoffs = [h for h in snapshot["handoffs"] if h["assignment_id"] == job["claim"]["id"]
+                    and h["predecessor_generation"] <= job["claim"]["generation"]]
+        latest = max(handoffs, key=lambda h: h["predecessor_generation"], default=None)
+        checkpoint = {"job_id": job["id"], "assignment_id": job["claim"]["id"],
+                      "generation": job["claim"]["generation"], "observed_at": utc_now(),
+                      "native_session_id": job.get("native_session_id"), "session_file": job["session_file"],
+                      "workspace_path": job["cwd"], "side_effects_verified": False,
+                      "handoff_document_id": latest["document_id"] if latest else None,
+                      "current_position": next((a.get("metadata", {}).get("progress") for a in snapshot["assignments"] if a["id"] == job["claim"]["id"]), None)}
+        try:
+            checkpoint["head"] = self._git(job["cwd"], "rev-parse", "HEAD")
+            checkpoint["branch"] = self._git(job["cwd"], "branch", "--show-current")
+            status = self._git(job["cwd"], "--no-optional-locks", "status", "--porcelain", "--untracked-files=normal")
+            checkpoint["working_tree_status"] = status[:16000]
+            checkpoint["status_truncated"] = len(status) > 16000
+        except (OSError, subprocess.TimeoutExpired, FirstMateError):
+            checkpoint["workspace_observation"] = "unavailable; inspect the retained workspace before continuing"
+        _write_json(path, checkpoint)
+        return checkpoint
+
     def _unknown(self, job: dict) -> None:
-        if job.get("unknown_recorded"):
-            return
-        reason = "Supervisor disappeared without a final receipt. Dispatch will not be replayed automatically."
-        self._event(job["feature_id"], "dispatch.unknown", reason, {"job_id": job["id"]}, "unknown:" + job["id"])
-        if job["kind"] == "worker":
-            self.store.mark_dispatch_unknown(job["claim"]["id"], job["claim"]["generation"], reason,
-                                             "unknown:" + job["id"])
-        elif job["kind"] == "coordinator":
-            self.store.finish_message(job["claim"]["id"], job["owner"], reply=reason)
-        job["unknown_recorded"] = True
-        self._save_job(job)
+        if not job.get("unknown_recorded"):
+            reason = "Supervisor disappeared without a final receipt. Dispatch will not be replayed automatically."
+            self._event(job["feature_id"], "dispatch.unknown", reason, {"job_id": job["id"]}, "unknown:" + job["id"])
+            if job["kind"] == "worker":
+                checkpoint = self._recovery_checkpoint(job)
+                self._event(job["feature_id"], "recovery.checkpoint", "Recovery facts retained; inspect the workspace and latest handoff before continuing.",
+                            checkpoint, "recovery-facts:" + job["id"])
+                assignment = self.store.get_assignment(job["claim"]["id"])
+                # A durable typed outcome wins over a missing supervisor receipt.
+                if assignment["generation"] == job["claim"]["generation"] and assignment["status"] not in TERMINAL | {"queued"}:
+                    self.store.mark_dispatch_unknown(job["claim"]["id"], job["claim"]["generation"], reason,
+                                                     "unknown:" + job["id"])
+            elif job["kind"] == "coordinator":
+                self.store.finish_message(job["claim"]["id"], job["owner"], reply=reason)
+            job["unknown_recorded"] = True
+            self._save_job(job)
+        # Retry this write even if the durable job marker survived but the final
+        # receipt did not. No repeated dispatch or permanently unfinished spool.
         _write_json(self._job_dir(job) / "finalized.json", {"at": utc_now(), "unknown": True})
 
     def _continue_handoff(self, job: dict) -> bool:
         handoff = job["pending_handoff"]
         feature = self.store.get_feature(job["feature_id"])
-        if feature["status"] in {"paused", "cancelled"}:
+        if feature["status"] != "running" or not self.reliability.allow_handoff(job):
             return False
         claim = {**job["claim"], "dispatch_id": "handoff:" + handoff["id"]}
         try:
@@ -1695,6 +1934,13 @@ class FirstMateRuntime:
             directory = self._job_dir(job)
             if job["kind"] != "worker" or (directory / "finalized.json").exists():
                 continue
+            feature = self.store.get_feature(job["feature_id"])
+            assignment = self.store.get_assignment(job["claim"]["id"])
+            if feature["status"] != "running" or assignment["generation"] != job["claim"]["generation"] or self.reliability.owns(job):
+                continue
+            progress = assignment.get("metadata", {}).get("progress", {})
+            if progress.get("wait_until_epoch", 0) and progress["wait_until_epoch"] > time.time():
+                continue
             if job.get("handoff_deadline") and time.time() > job["handoff_deadline"] and not job.get("pending_handoff"):
                 self._control(job, "abort", "Worker did not produce a checkpoint after the advisor's handoff deadline")
                 job.pop("handoff_deadline", None)
@@ -1708,9 +1954,10 @@ class FirstMateRuntime:
             state = _read_json(directory / "status.json", {})
             if state.get("ended") or not state.get("accepted"):
                 continue
-            events, _ = _records(directory / "events.jsonl")
+            events = _recent_records(directory / "events.jsonl", maximum=200)
             recent = events[-100:]
-            observed_since = events[int(job.get("watch_cursor", 0)):]
+            previous = next((i for i, event in enumerate(events) if event.get("id") == job.get("watch_last_event_id")), -1)
+            observed_since = events[previous + 1:]
             calls = [hashlib.sha256(json.dumps({"tool": e.get("toolName"), "args": e.get("args")}, sort_keys=True).encode()).hexdigest()
                      for e in observed_since if e.get("type") == "tool_execution_start"]
             repetition = len(calls) >= 8 and len(set(calls[-8:])) <= 2
@@ -1727,7 +1974,8 @@ class FirstMateRuntime:
             advisor = self._new_job(feature, kind="advisor", claim={"id": f"advisor:{job['id']}:{round_number}"}, parent_job=job,
                                     prompt="Assignment:\n" + job["prompt"] + "\nWatchdog signal: " + reason
                                     + "\nRecent observable evidence:\n" + json.dumps([_ledger_event(e) for e in recent], ensure_ascii=False))
-            job.update(advisor_job_id=advisor["id"], advisor_round=round_number, watch_cursor=len(events), last_assessment_epoch=time.time())
+            job.update(advisor_job_id=advisor["id"], advisor_round=round_number,
+                       watch_last_event_id=events[-1].get("id") if events else None, last_assessment_epoch=time.time())
             self._save_job(job)
             self._launch(advisor)
 
@@ -1741,7 +1989,12 @@ class FirstMateRuntime:
         self._event(job["feature_id"], "advisor.assessment", params["reason"], {
             "job_id": job["id"], "target_job_id": parent["id"], **params}, "advice:" + request_id)
         assignment = self.store.get_assignment(parent["claim"]["id"])
-        if assignment["status"] != "running":
+        if job.get("reliability_assessment"):
+            applied = self.reliability.advice(job, params)
+            job["advice_recorded"] = True
+            self._save_job(job)
+            return {"decision": decision, "recorded": True, "applied": applied}
+        if assignment["status"] != "running" or assignment["generation"] != parent["claim"]["generation"]:
             job["advice_recorded"] = True
             self._save_job(job)
             return {"decision": decision, "recorded": True, "applied": False, "reason": "The target execution already settled or paused"}
@@ -1847,6 +2100,9 @@ def _pi_command(job: dict) -> list[str]:
     command = [job["pi_bin"], "--mode", "rpc", "--session", job["session_file"],
                "--name", "First Mate" if job["kind"] == "coordinator" else job["claim"].get("title", "First Mate advisor"),
                prompt_flag, charter, "--extension", job["extension"]]
+    if job["kind"] == "advisor" and (job.get("recovery_mode") or job.get("reliability_assessment")):
+        command += ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files",
+                    "--tools", "read,grep,find,ls,fm_status,fm_read_document,fm_read_session,fm_advice,fm_recovery_brief"]
     parent_session_id = job.get("parent_session_id")
     if parent_session_id is not None:
         if not FirstMateRuntime._valid_pi_parent_session_id(parent_session_id):

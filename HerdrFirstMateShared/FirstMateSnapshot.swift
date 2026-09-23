@@ -11,6 +11,7 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
     var hasDetails: Bool
     var sessions: [FirstMateSession]
     var sessionsTruncated: Bool
+    var runtimeHealth: FirstMateRuntimeHealth? = nil
 
     init(feature: FirstMateFeature, visits: [FirstMateVisit] = [], assignments: [FirstMateAssignment] = [],
          documents: [FirstMateDocument] = [], messages: [FirstMateMessage] = [], events: [FirstMateEvent] = [], sessions: [FirstMateSession] = [], sessionsTruncated: Bool = false) {
@@ -29,6 +30,7 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case ok, feature, visits, assignments, documents, messages, events, sessions
         case sessionsTruncated = "sessions_truncated"
+        case runtimeHealth = "runtime_health"
     }
 
     init(from decoder: Decoder) throws {
@@ -43,6 +45,11 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
         hasDetails = c.contains(.visits) && c.contains(.messages) && c.contains(.events)
         sessions = try c.decodeIfPresent([FirstMateSession].self, forKey: .sessions) ?? []
         sessionsTruncated = try c.decodeIfPresent(Bool.self, forKey: .sessionsTruncated) ?? false
+        runtimeHealth = try c.decodeIfPresent(FirstMateRuntimeHealth.self, forKey: .runtimeHealth)
+    }
+
+    var recoveryNeedsDirection: Bool {
+        feature.status == "recovering" || assignments.contains { $0.status == "recovering" }
     }
 
     var currentVisit: FirstMateVisit? { visits.first { $0.id == feature.currentVisitID } }

@@ -28,6 +28,11 @@ struct FirstMateSidebarView: View {
             .foregroundStyle(FirstMatePalette(scheme: scheme).text)
             .background(FirstMatePalette(scheme: scheme).surface, in: .rect(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(FirstMatePalette(scheme: scheme).line))
+            if let warning = store.runtimeHealth?.warning {
+                Label("Execution needs attention", systemImage: "exclamationmark.triangle.fill")
+                    .herdrFont(.caption).foregroundStyle(.orange)
+                    .help(warning)
+            }
             Text("YOUR FEATURES").herdrFont(.caption2, weight: .semibold).foregroundStyle(.secondary)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 5) {
@@ -101,14 +106,14 @@ struct FirstMateSidebarView: View {
                                     }
                                     .herdrFont(.caption)
                                     .foregroundStyle(.secondary)
-                                    FirstMateStatusLabel(status: feature.status)
+                                    FirstMateStatusLabel(status: store.executionDisplayStatus(for: feature))
                                 }
                                 Spacer(minLength: 0)
                             }
                             .padding(12).frame(maxWidth: .infinity, alignment: .leading)
                             .background(store.selectedFeatureID == feature.id ? FirstMatePalette(scheme: scheme).accent.opacity(0.12) : .clear, in: .rect(cornerRadius: 9))
                         }
-                        .accessibilityLabel("\(feature.title), \(feature.workItemID ?? "Idea"), status \(feature.status.replacingOccurrences(of: "_", with: " ")), \(FirstMateUsageFormatting.taskAccessibilityDescription(feature.usage))")
+                        .accessibilityLabel("\(feature.title), \(feature.workItemID ?? "Idea"), status \(store.executionDisplayStatus(for: feature).replacingOccurrences(of: "_", with: " ")), \(FirstMateUsageFormatting.taskAccessibilityDescription(feature.usage))")
                         .accessibilityAddTraits(store.selectedFeatureID == feature.id ? .isSelected : [])
                         .help(FirstMateUsageFormatting.taskAccessibilityDescription(feature.usage))
                         .buttonStyle(.plain)

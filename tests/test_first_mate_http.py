@@ -23,8 +23,8 @@ class FirstMateHTTPTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.store = FirstMateStore(Path(self.temp.name) / "work.sqlite3")
         self.wakes = []
-        runtime = SimpleNamespace(capabilities=lambda: {"available": True}, session=lambda identity, **paging: {"ok": True, "native_session_id": identity, "messages": [], **paging})
         self.git_calls = []
+        runtime = SimpleNamespace(capabilities=lambda: {"available": True}, health=lambda: {"status": "degraded", "scheduler_alive": True, "error_kind": "storage_full", "last_success_at": None, "consecutive_failures": 1}, session=lambda identity, **paging: {"ok": True, "native_session_id": identity, "messages": [], **paging})
         self.service = SimpleNamespace(
             environ={
                 "HERDR_HARNESS_API_TOKEN": "synthetic-main-token",
@@ -107,6 +107,19 @@ class FirstMateHTTPTests(unittest.TestCase):
         self.assertEqual(detail["visits"], [])
         self.assertEqual(detail["feature"]["status"], "ready")
         self.assertEqual(detail["messages"][-1]["text"], body["text"])
+
+    def test_runtime_health_is_additive_authenticated_and_does_not_mutate_feature_state(self):
+        _, data = self.create()
+        identity = data['feature']['id']
+        before = self.store.snapshot(identity)
+        code, detail = self.request(f'/api/v1/first-mate/features/{identity}')
+        self.assertEqual(code, 200)
+        self.assertEqual(detail['runtime_health']['status'], 'degraded')
+        self.assertEqual(detail['runtime_health']['error_kind'], 'storage_full')
+        self.assertEqual(self.store.snapshot(identity), before)
+        self.assertEqual(self.request(f'/api/v1/first-mate/features/{identity}', token=None)[0], 401)
+        _, capabilities = self.request('/api/v1/first-mate/capabilities')
+        self.assertIn('first-mate-runtime-health-v1', capabilities['capabilities'])
 
     def test_request_id_reuse_cannot_change_a_direction(self):
         _, data = self.create()

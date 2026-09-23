@@ -89,6 +89,8 @@ ENVIRONMENT_FIELDS = {
         "max_workers": "HERDR_FIRST_MATE_MAX_WORKERS",
         "context_target": "HERDR_FIRST_MATE_CONTEXT_TARGET", "stall_seconds": "HERDR_FIRST_MATE_STALL_SECONDS",
         "coordinator_timeout_seconds": "HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS",
+        "auto_recovery": "HERDR_FIRST_MATE_AUTO_RECOVERY", "sweep_seconds": "HERDR_FIRST_MATE_SWEEP_SECONDS",
+        "nudge_grace_seconds": "HERDR_FIRST_MATE_NUDGE_GRACE_SECONDS", "minimum_free_mb": "HERDR_FIRST_MATE_MINIMUM_FREE_MB",
         "store_path": "HERDR_HARNESS_FIRST_MATE_STORE_PATH", "runs_root": "HERDR_HARNESS_FIRST_MATE_RUNS_ROOT",
         "message_hub_url": "HERDR_FIRST_MATE_MESSAGE_HUB_URL",
         "message_hub_token": "HERDR_FIRST_MATE_MESSAGE_HUB_TOKEN", "app_url": "HERDR_FIRST_MATE_APP_URL",

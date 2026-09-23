@@ -93,6 +93,38 @@ architect row includes `configured`; an unset architect model remains a readable
 Older clients ignore these additions, and newer clients accept older servers that
 omit architect routing.
 
+## Runtime-health extension
+
+Capability `first-mate-runtime-health-v1` adds optional `runtime_health` to GET
+`/features`, GET `/features/{id}`, and `/capabilities` (the latter alongside
+existing capability metadata). Fields: `status`, `scheduler_alive`,
+`last_success_at` (nullable UTC string), `error_kind` (nullable safe category), and
+`consecutive_failures`. This is request-time engine health, independent of workflow
+status. Clients must not rewrite workflow facts or treat scheduler liveness as a
+worker verdict. Older clients ignore it; newer clients accept its absence.
+
+A `recovery.checkpoint` event may include machine-observed facts in `payload`:
+`job_id`, `assignment_id`, `generation`, `observed_at`, `native_session_id`,
+`session_file`, `workspace_path`, `head`, `branch`, `working_tree_status`,
+`status_truncated`, `handoff_document_id`, and `side_effects_verified:false`.
+Git fields may be absent with `workspace_observation` explaining unavailable
+inspection. Advisor-authored events of the same type can omit workspace fields.
+These private observations are not themselves a backup or an authorization receipt.
+
+Capability `first-mate-reliability-v1` extends `runtime_health` with optional
+`guardian_alive`, `scheduler_restarts` (current-hour count), `automatic_recovery`,
+`sweep_interval_seconds`, `last_sweep_at`, and `next_sweep_at`. Recovery checkpoint
+payloads may additionally provide `backup_path`, `backup_sha256`, and
+`current_position`. Archive paths identify private files on the companion host,
+not local client paths to open or restore automatically.
+
+Assignments may expose `metadata.progress` with `summary`, `next_action`,
+`evidence`, `recorded_at`, `recorded_epoch`, `position_epoch`, `wait_until_epoch`,
+`generation`, and `native_session_id`. These are worker-reported checkpoints, not
+success verdicts. `reliability.*` events retain interventions and their reasons.
+The existing status vocabulary, authentication, writer fencing, and human stage
+authorization rules are unchanged. See [stability behavior](reliability.md).
+
 ## Implementation layers
 
 - `first_mate_store.py`: SQLite transactions, deduplication, event ledger, assignments, attempts, message queue, handoffs and human gates.

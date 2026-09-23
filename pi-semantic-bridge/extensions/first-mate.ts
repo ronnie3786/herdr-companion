@@ -5,8 +5,8 @@
 import { Type } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createHash, randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   appendCompanionAwareness,
@@ -52,19 +52,38 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
     mkdirSync(join(root, "responses"), { recursive: true, mode: 0o700 });
     let retired = false;
     let checkpointRequested = false;
-    let successorAcknowledged = !job.handoff_id;
+    let successorAcknowledged = !job.handoff_id && !job.requires_recovery_ack;
+    const restrictedAdvisor = role === "advisor" && (job.recovery_mode || job.reliability_assessment);
     const roleTools = new Set(role === "coordinator" ? [
       "fm_status", "fm_delegate", "fm_begin_stage", "fm_recover",
       "fm_resolve_gate", "fm_steer", "fm_retry", "fm_complete_stage",
       "fm_revise", "fm_finish_feature", "fm_read_document", "fm_read_session",
     ] : role === "worker" ? [
       "fm_status", "fm_read_document", "fm_read_session", "fm_outcome",
-      "fm_handoff", "fm_acknowledge_handoff", "fm_request_human",
+      "fm_handoff", "fm_acknowledge_handoff", "fm_acknowledge_recovery", "fm_progress", "fm_request_human",
       "fm_delegate", "fm_retry", "fm_wait_for_children",
     ] : [
       "fm_status", "fm_read_document", "fm_read_session", "fm_advice",
       "fm_recovery_brief",
     ]);
+    const effects = new Set<string>();
+    const retainEffect = (value: unknown) => {
+      const path = join(root, "effects.jsonl");
+      const descriptor = openSync(path, "a", 0o600);
+      try {
+        appendFileSync(descriptor, `${JSON.stringify(value)}\n`);
+        fsyncSync(descriptor);
+      } finally { closeSync(descriptor); }
+    };
+    const workspaceEffect = (input: any) => {
+      if (typeof input?.path !== "string" || typeof job.cwd !== "string") return false;
+      const target = resolve(job.cwd, input.path);
+      let ancestor = target;
+      while (!existsSync(ancestor) && dirname(ancestor) !== ancestor) ancestor = dirname(ancestor);
+      const actual = resolve(realpathSync(ancestor), relative(ancestor, target));
+      const workspace = realpathSync(job.cwd);
+      return actual.startsWith(workspace + sep);
+    };
 
     const identity = (ctx: ExtensionContext) => ({
       native_session_id: ctx.sessionManager.getSessionId(),
@@ -95,7 +114,7 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
       async execute(toolCallId, params, signal, _update, ctx) {
         const result = await request(toolCallId, name, params, signal, ctx);
         if (["fm_outcome", "fm_handoff", "fm_advice", "fm_request_human", "fm_recovery_brief", "fm_wait_for_children"].includes(name)) retired = true;
-        if (name === "fm_acknowledge_handoff") successorAcknowledged = true;
+        if (["fm_acknowledge_handoff", "fm_acknowledge_recovery"].includes(name)) successorAcknowledged = true;
         return result;
       },
     });
@@ -134,6 +153,11 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
       }));
       register("fm_finish_feature", "Mark the agreed feature destination achieved only after the human explicitly confirms completion. Retain all history.", Type.Object({ summary: text("Delivered destination and evidence") }));
     } else if (role === "worker") {
+      register("fm_progress", "Save the durable current position at a meaningful milestone. Include concrete evidence and the exact next action, not a heartbeat. Before a long build/wait, request a lease of at most one hour with wait_seconds. Repeating unchanged text is not new progress.", Type.Object({
+        summary: Type.String({ maxLength: 4000 }), next_action: Type.String({ maxLength: 2000 }),
+        evidence: Type.String({ maxLength: 4000 }), wait_seconds: Type.Optional(Type.Integer({ minimum: 0, maximum: 3600 })),
+      }));
+      register("fm_acknowledge_recovery", "Before mutation in an automatic recovery successor, inspect retained progress, workspace facts and the recovery brief. Confirm the next safe action and how uncertain effects were checked. Do not repeat an unverified external action or bypass a human gate.", Type.Object({ summary: Type.String({ maxLength: 8000 }) }));
       register("fm_retry", "Retry only a directly delegated child within this authorized stage after its stopped execution reported failure or requested changes. Prior evidence remains retained.", Type.Object({ assignment_id: text("Direct child assignment ID"), prompt: text("Complete corrected assignment and evidence required") }));
       register("fm_wait_for_children", "Yield this worker conversation while its delegated children run. Save a checkpoint and end your turn. The service resumes this exact native conversation when they settle, without model polling.", Type.Object({ summary: text("Current assignment state, delegated work, acceptance criteria and what to do when children report") }));
       register("fm_outcome", "Report the assignment's structured verdict and durable deliverables. An ordinary final answer or clean exit does not count as completion. End your turn after this tool succeeds.", Type.Object({
@@ -148,14 +172,19 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
         summary: text("Verified workspace, understood constraints and next concrete action"),
       }));
     } else {
-      register("fm_recovery_brief", "Save an independent evidence-based checkpoint when the stopped predecessor could not summarize. Use only for a recovery assignment, then end.", Type.Object({ summary: text("Observed work, uncertain side effects, files/commits, checks, blockers and next safe action") }));
+      register("fm_recovery_brief", "Save an independent evidence-based checkpoint when the stopped predecessor could not summarize. Use only for a recovery assignment, then end.", Type.Object({ summary: text("Observed work, uncertain side effects, files/commits, checks, blockers and next safe action"), safe_to_continue: Type.Optional(Type.Boolean({ description: "True only when observed evidence establishes a safe continuation in this authorized stage, without repeating uncertain effects or bypassing human direction" })) }));
       register("fm_advice", "Return an evidence-based watchdog assessment. You cannot modify the assignment or its workspace. End after this report.", Type.Object({
         decision: Type.Union(["continue", "steer", "handoff", "pause"].map(value => Type.Literal(value))),
         reason: text("Observed evidence and why this action is appropriate"),
         instruction: Type.Optional(text("A bounded steering instruction or handoff guidance")),
       }));
     }
-    pi.on("session_start", (_event, ctx) => observe("session_started", {}, ctx));
+    pi.on("session_start", (_event, ctx) => {
+      if (job.safety_ledger_version === 1 && !existsSync(join(root, "effects.jsonl"))) {
+        retainEffect({ type: "ledger_ready", version: 1, job_id: job.id });
+      }
+      observe("session_started", {}, ctx);
+    });
     pi.on("turn_end", (_event, ctx) => {
       const usage = ctx.getContextUsage();
       observe("context_usage", usage ?? {}, ctx);
@@ -176,12 +205,34 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
     });
     pi.on("tool_call", (event) => {
       if (retired) return { block: true, reason: "This execution has reported its outcome or checkpoint. End the turn now.", terminate: true };
-      if (!successorAcknowledged && !["fm_acknowledge_handoff", "fm_status", "read", "ls", "find", "grep"].includes(event.toolName)) {
-        return { block: true, reason: "Inspect the handoff and workspace, then acknowledge with fm_acknowledge_handoff before executing work." };
+      if (!successorAcknowledged && !["fm_acknowledge_handoff", "fm_acknowledge_recovery", "fm_status", "fm_read_document", "fm_read_session", "read", "ls", "find", "grep"].includes(event.toolName)) {
+        return { block: true, reason: "Inspect the retained checkpoint and workspace, then acknowledge the handoff or recovery before executing work." };
       }
       if (event.toolName.startsWith("fm_") && !roleTools.has(event.toolName)) {
         return { block: true, reason: "This First Mate workflow action is unavailable to the current role." };
       }
+      if (restrictedAdvisor && !["read", "ls", "find", "grep", "fm_status", "fm_read_document", "fm_read_session", "fm_advice", "fm_recovery_brief"].includes(event.toolName)) {
+        return { block: true, reason: "Automatic recovery assessment is read-only; return evidence through the advisor tools." };
+      }
+      if (job.safety_ledger_version === 1 && !event.toolName.startsWith("fm_") && !["read", "grep", "find", "ls"].includes(event.toolName)) {
+        // Explicitly block on failure: extension-handler exceptions alone are
+        // not an authorization boundary. Persist before permitting the effect.
+        try {
+          if (!existsSync(join(root, "effects.jsonl"))) {
+            retainEffect({ type: "ledger_ready", version: 1, job_id: job.id });
+          }
+          retainEffect({ type: "start", id: event.toolCallId, tool: event.toolName,
+            scope: ["edit", "write"].includes(event.toolName) && workspaceEffect(event.input) ? "workspace" : "external" });
+          effects.add(event.toolCallId);
+        } catch {
+          return { block: true, reason: "The durable effect ledger is unavailable. Preserve work and wait for storage recovery; this action was not started." };
+        }
+      }
+    });
+    pi.on("tool_result", (event) => {
+      if (!effects.has(event.toolCallId)) return;
+      retainEffect({ type: "end", id: event.toolCallId, is_error: Boolean(event.isError) });
+      effects.delete(event.toolCallId);
     });
   };
 }

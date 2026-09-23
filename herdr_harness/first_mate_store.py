@@ -11,6 +11,7 @@ import json
 import os
 import sqlite3
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -787,6 +788,9 @@ class FirstMateStore:
                         self._db.execute("UPDATE fm_assignments SET status='queued',updated_at=? WHERE id=?", (_now(), assignment["id"]))
                 if pending_gate:
                     status = "awaiting_direction"
+                elif self._db.execute("SELECT 1 FROM fm_assignments WHERE feature_id=? AND status='recovering'", (feature_id,)).fetchone():
+                    # Resume is not permission to replay an uncertain dispatch.
+                    status = "recovering"
             if action in {"cancel", "complete"}:
                 active = self._db.execute("SELECT id FROM fm_assignments WHERE feature_id=? AND status IN ('dispatching','running','handoff_pending','awaiting_ack','recovering','waiting_children')", (feature_id,)).fetchone()
                 live_session = self._db.execute("SELECT 1 FROM fm_sessions WHERE feature_id=? AND assignment_id IS NOT NULL AND status='active'", (feature_id,)).fetchone()
@@ -882,6 +886,62 @@ class FirstMateStore:
         self._db.execute("UPDATE fm_features SET goal=?,revision=?,status=?,current_visit_id=?,updated_at=? WHERE id=?", (goal, revision, status, visit_id, now, feature["id"]))
         self._event(feature["id"], "feature.revised_selectively", "Affected work revised; explicitly unaffected assignments continue", {"previous_revision": expected_revision, "revision": revision, "previous_goal": feature["goal"], "goal": goal, "authorization_message_id": authorization_message_id, "previous_visit_id": previous_visit["id"], "visit_id": visit_id, "affected_assignment_ids": affected_assignment_ids, "carried_assignment_ids": [assignment["id"] for assignment in carried], "carry_forward_evidence": carry_forward_evidence})
         return self._save_receipt(f"revision:{feature['id']}", request_id, payload, self._one("fm_features", feature["id"]))
+
+    def record_progress(self, assignment_id: str, generation: int, native_session_id: str,
+                        summary: str, next_action: str, evidence: str, wait_seconds: int,
+                        request_id: str) -> dict:
+        """One durable current position, independent of a particular Pi process."""
+        payload = {"generation": generation, "native_session_id": native_session_id,
+                   "summary": _text(summary, "summary", 4000),
+                   "next_action": _text(next_action, "next_action", 2000),
+                   "evidence": _text(evidence, "evidence", 4000), "wait_seconds": wait_seconds}
+        if isinstance(wait_seconds, bool) or not isinstance(wait_seconds, int) or not 0 <= wait_seconds <= 3600:
+            raise FirstMateError("A progress wait lease is limited to one hour", code="invalid_request", status=400)
+        with self._transaction():
+            cached = self._receipt(f"progress:{assignment_id}", request_id, payload)
+            if cached is not None:
+                return cached
+            assignment = self._execution(assignment_id, generation, native_session_id)
+            feature = self._one("fm_features", assignment["feature_id"])
+            if assignment["status"] != "running" or feature["status"] != "running":
+                raise FirstMateError("Only a current running worker can record progress")
+            now = time.time()
+            previous = assignment["metadata"].get("progress", {})
+            unchanged = previous.get("generation") == generation and all(previous.get(key) == payload[key] for key in ("summary", "next_action", "evidence"))
+            position_epoch = previous.get("position_epoch", previous.get("recorded_epoch", now)) if unchanged else now
+            progress = {**payload, "recorded_at": _now(), "recorded_epoch": now, "position_epoch": position_epoch,
+                        "wait_until_epoch": min(now + wait_seconds, position_epoch + 3600) if wait_seconds else None}
+            metadata = {**assignment["metadata"], "progress": progress}
+            self._db.execute("UPDATE fm_assignments SET metadata_json=?,updated_at=? WHERE id=?", (_json(metadata), _now(), assignment_id))
+            self._event(feature["id"], "assignment.progress", summary + " Next: " + next_action,
+                        {"assignment_id": assignment_id, **progress})
+            return self._save_receipt(f"progress:{assignment_id}", request_id, payload, progress)
+
+    def block_reliability(self, feature_id: str, revision: int, reason: str, request_id: str, *,
+                          stopped_assignment_id: str | None = None, stopped_generation: int | None = None) -> dict:
+        payload = {"revision": revision, "reason": _text(reason, "reason", 4000),
+                   "stopped_assignment_id": stopped_assignment_id, "stopped_generation": stopped_generation}
+        with self._transaction():
+            cached = self._receipt(f"reliability_block:{feature_id}", request_id, payload)
+            if cached is not None:
+                return cached
+            feature = self._one("fm_features", feature_id)
+            self._revision(feature, revision)
+            if feature["status"] not in {"running", "recovering"}:
+                raise FirstMateError("Automatic recovery cannot change this checkpoint")
+            if self._db.execute("SELECT 1 FROM fm_messages WHERE feature_id=? AND role='user' AND status IN ('queued','processing')", (feature_id,)).fetchone():
+                raise FirstMateError("Automatic recovery must yield to human direction", code="human_direction_required")
+            if stopped_assignment_id is not None:
+                assignment = self._execution(stopped_assignment_id, stopped_generation)
+                if assignment["feature_id"] != feature_id or assignment["status"] in {"completed", "cancelled", "superseded", "queued"}:
+                    raise FirstMateError("Stopped recovery target changed")
+                self._db.execute("UPDATE fm_assignments SET status='blocked',owner=NULL,summary=?,updated_at=? WHERE id=?", (reason, _now(), stopped_assignment_id))
+                self._db.execute("UPDATE fm_attempts SET status='interrupted',summary=?,updated_at=? WHERE assignment_id=? AND generation=?", (reason, _now(), stopped_assignment_id, stopped_generation))
+                self._db.execute("UPDATE fm_sessions SET status='retained',updated_at=? WHERE assignment_id=? AND generation=?", (_now(), stopped_assignment_id, stopped_generation))
+            self._db.execute("UPDATE fm_features SET status='blocked',updated_at=? WHERE id=?", (_now(), feature_id))
+            self._message(feature_id, "system", "Automatic recovery needs direction: " + reason)
+            self._event(feature_id, "reliability.blocked", reason, {"revision": revision})
+            return self._save_receipt(f"reliability_block:{feature_id}", request_id, payload, self._one("fm_features", feature_id))
 
     def request_human_gate(self, assignment_id: str, generation: int, native_session_id: str, reason: str, request_id: str) -> dict:
         """Pause an internal checkpoint without claiming the major stage is done."""
@@ -1052,17 +1112,27 @@ class FirstMateStore:
                 self._one("fm_assignments", assignment_id),
             )
 
-    def recover_assignment(self, assignment_id: str, generation: int, reason: str, request_id: str, verified_stopped: bool = False) -> dict:
+    def recover_assignment(self, assignment_id: str, generation: int, reason: str, request_id: str, verified_stopped: bool = False, *, automatic: bool = False) -> dict:
         payload = {"generation": generation, "reason": _text(reason, "reason"), "verified_stopped": verified_stopped}
+        if automatic:
+            payload["automatic"] = True
         with self._transaction():
             cached = self._receipt(f"recover:{assignment_id}", request_id, payload)
             if cached is not None:
                 return cached
             assignment = self._execution(assignment_id, generation)
+            if automatic:
+                feature = self._one("fm_features", assignment["feature_id"])
+                waiting_human = self._db.execute("SELECT 1 FROM fm_messages WHERE feature_id=? AND role='user' AND status IN ('queued','processing')", (feature["id"],)).fetchone()
+                gates = self._db.execute("SELECT metadata_json FROM fm_assignments WHERE feature_id=?", (feature["id"],)).fetchall()
+                if feature["status"] not in {"running", "recovering"} or waiting_human or any(json.loads(row[0]).get("human_gate", {}).get("status") == "pending" for row in gates):
+                    raise FirstMateError("Automatic recovery must yield to human direction", code="human_direction_required")
             if not verified_stopped:
                 raise FirstMateError("Verify execution stopped before recovery", code="writer_not_stopped")
             if assignment["status"] in {"completed", "cancelled", "superseded", "queued"}:
                 raise FirstMateError("Execution is not recoverable")
+            if assignment["metadata"].get("human_gate", {}).get("status") == "pending":
+                raise FirstMateError("Resolve the internal checkpoint with human direction before recovery", code="human_direction_required")
             count = assignment["recovery_count"] + 1
             status = "queued" if count <= 2 else "blocked"
             self._db.execute("UPDATE fm_attempts SET status='interrupted',summary=?,updated_at=? WHERE assignment_id=? AND generation=?", (reason, _now(), assignment_id, generation))
@@ -1070,7 +1140,10 @@ class FirstMateStore:
             self._db.execute("UPDATE fm_assignments SET status=?,owner=NULL,recovery_count=?,summary=?,verdict=NULL,updated_at=? WHERE id=?", (status, count, reason, _now(), assignment_id))
             self._db.execute("UPDATE fm_handoffs SET status='failed',updated_at=? WHERE assignment_id=? AND status<>'completed'", (_now(), assignment_id))
             if status == "queued":
-                self._db.execute("UPDATE fm_features SET status='running' WHERE id=? AND status='recovering' AND NOT EXISTS (SELECT 1 FROM fm_assignments WHERE feature_id=? AND status='recovering')", (assignment["feature_id"], assignment["feature_id"]))
+                # Explicit human recovery may release a reliability blocker, but
+                # never a Pause or a human checkpoint. Automatic repair cannot.
+                resumable = "('recovering')" if automatic else "('recovering','blocked')"
+                self._db.execute(f"UPDATE fm_features SET status='running' WHERE id=? AND status IN {resumable} AND NOT EXISTS (SELECT 1 FROM fm_assignments WHERE feature_id=? AND status='recovering')", (assignment["feature_id"], assignment["feature_id"]))
             if status == "blocked":
                 self._db.execute("UPDATE fm_features SET status='blocked' WHERE id=?", (assignment["feature_id"],))
                 self._message(assignment["feature_id"], "system", "Recovery limit reached: " + reason, metadata={"assignment_id": assignment_id, "recovery_count": count})
@@ -1163,10 +1236,12 @@ class FirstMateStore:
             if cached is not None:
                 return cached
             assignment = self._execution(assignment_id, generation)
-            if assignment["status"] not in {"dispatching", "running", "recovering", "awaiting_ack", "handoff_pending"}:
+            if assignment["status"] not in {"dispatching", "running", "recovering", "awaiting_ack", "handoff_pending", "waiting_children"}:
                 raise FirstMateError("Execution is not unresolved")
             self._db.execute("UPDATE fm_assignments SET status='recovering',summary=?,updated_at=? WHERE id=?", (reason, _now(), assignment_id))
             self._db.execute("UPDATE fm_features SET status='recovering' WHERE id=? AND status NOT IN ('paused','cancelled','completed')", (assignment["feature_id"],))
+            self._db.execute("UPDATE fm_attempts SET status='unknown',summary=?,updated_at=? WHERE assignment_id=? AND generation=?", (reason, _now(), assignment_id, generation))
+            self._message(assignment["feature_id"], "system", reason + " Work and saved sessions are retained. Ask the human for recovery direction; do not silently replay uncertain side effects.", metadata={"assignment_id": assignment_id, "generation": generation})
             self._event(assignment["feature_id"], "assignment.dispatch_unknown", reason, {"assignment_id": assignment_id, "generation": generation, "dispatch_id": assignment["dispatch_id"], "replay_allowed": False})
             return self._save_receipt(f"dispatch_unknown:{assignment_id}", request_id, payload, self._one("fm_assignments", assignment_id))
 

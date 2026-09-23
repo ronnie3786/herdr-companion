@@ -101,11 +101,13 @@ authorization, or writer ownership.
 
 Storage accepts only bounded absolute HTTP(S) URLs without embedded
 credentials, control characters, malformed hosts, or malformed ports; other
-schemes are rejected. A recognized exact
-`https://github.com/<owner>/<repo>/pull/<number>` path canonicalizes to its pull
-request root, so `/files` subpaths, query strings, and fragments deduplicate into
-one record, and recognized URLs are classified as `pull_request`. General URLs
-preserve their path, query, and fragment. Other HTTP(S) hosts, including
+schemes are rejected. Bracketed IPv6 literals, with or without a custom port,
+path, query, and fragment, are valid destinations and keep their brackets. A
+recognized exact `https://github.com/<owner>/<repo>/pull/<number>` path
+canonicalizes to its pull request root with owner and repository casing folded,
+so `/files` subpaths, query strings, fragments, and casing variants deduplicate
+into one record, and recognized URLs are classified as `pull_request`. General
+URLs preserve their path, query, and fragment. Other HTTP(S) hosts, including
 enterprise installations, can be explicitly saved with `kind: "pull_request"`.
 The kind never claims draft, ready, merged, or closed state, and the companion
 never calls GitHub, `gh`, or the destination. Duplicate saves are quiet: the

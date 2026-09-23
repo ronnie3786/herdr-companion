@@ -40,6 +40,9 @@ final class FirstMateStore {
     private(set) var snapshots: [String: FirstMateSnapshot] = [:]
     var selectedFeatureID: String?
     var inspector = FirstMateInspector.overview
+    /// The Documents inspector's Documents/Links sub-tab. Shared so the
+    /// prominent PR section can open the Links collection directly.
+    var documentsMode = FirstMateDocumentsMode.documents
     var graphMode = false
     var selectedVisitID: String?
     var draft = ""
@@ -161,6 +164,7 @@ final class FirstMateStore {
         isSending = false
         isCreating = false
         showArchived = false
+        documentsMode = .documents
         hasLoaded = false
         lastUpdated = nil
         #if os(macOS)
@@ -201,6 +205,12 @@ final class FirstMateStore {
         error = nil
         linkMutationError = nil
         closeResource()
+    }
+
+    /// Navigates from Overview to the Documents inspector's Links collection.
+    func showLinksCollection() {
+        inspector = .documents
+        documentsMode = .links
     }
 
     func composerDraft(for context: OperationContext) -> String {

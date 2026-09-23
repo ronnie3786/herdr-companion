@@ -288,6 +288,106 @@ struct FirstMateLinksTests {
         let old = try JSONDecoder().decode(FirstMateCapabilities.self, from: JSONSerialization.data(withJSONObject: ["ok": true, "capabilities": ["first-mate-v1"]]))
         #expect(!old.supportsLinks)
     }
+
+    @Test("GitHub pull request identity folds owner and repository casing")
+    func pullRequestCaseFolding() throws {
+        let upper = try #require(FirstMateLinkClassifier.normalize(
+            url: "https://github.com/Example-Org/Sample-App/pull/42/files#diff-1"))
+        let lower = try #require(FirstMateLinkClassifier.normalize(
+            url: "https://github.com/example-org/sample-app/pull/42"))
+        #expect(upper.url == "https://github.com/example-org/sample-app/pull/42")
+        #expect(upper.url == lower.url)
+        #expect(upper.pullRequest == lower.pullRequest)
+        #expect(upper.title == "example-org/sample-app #42")
+        // General URL paths never fold their casing.
+        let general = try #require(FirstMateLinkClassifier.normalize(
+            url: "https://Share.Example.Test/Path-Case?Query=Keep#Fragment"))
+        #expect(general.url == "https://share.example.test/Path-Case?Query=Keep#Fragment")
+    }
+
+    @Test("Bracketed IPv6 share links round-trip and keep only valid forms")
+    func ipv6Destinations() throws {
+        let share = "https://[2001:db8::42]:8443/review?tab=links#evidence"
+        #expect(FirstMateLinkURL.validated(share)?.absoluteString == share)
+        let normalized = try #require(FirstMateLinkClassifier.normalize(url: share))
+        #expect(normalized.kind == "link")
+        #expect(normalized.url == share)
+        #expect(normalized.title == "[2001:db8::42]")
+        #expect(FirstMateLinkURL.validated("http://[2001:db8::42]/review") != nil)
+        #expect(FirstMateLinkURL.validated("https://[2001:db8::42]:8443/review")?.host != nil)
+        for invalid in [
+            "https://[]:8443/review",
+            "https://[fe80::1%25en0]:8443/review",
+            "https://[2001:db8::42]:0/review",
+            "https://user:secret@[2001:db8::42]/review",
+            "https://[2001:db8::42]:70000/review",
+        ] {
+            #expect(FirstMateLinkURL.validated(invalid) == nil)
+        }
+    }
+
+    @Test("Add-form drafts stay scoped and survive a delayed save")
+    func draftIsolation() {
+        var box = FirstMateLinkDraftBox()
+        let first = FirstMateLinkDraftBox.key(lifecycleID: "life-1", featureID: "feature-a")
+        let second = FirstMateLinkDraftBox.key(lifecycleID: "life-1", featureID: "feature-b")
+        box.setURL("https://share.example.test/first", for: first)
+        box.setTitle("First", for: first)
+        box.setClassification(.link, for: first)
+        #expect(box.state(for: second).draft.isEmpty)
+        #expect(box.state(for: second).classification == .automatic)
+
+        // A completed save clears only the destination it submitted.
+        let submitted = box.state(for: first).draft
+        box.complete(first, submitted: submitted)
+        #expect(box.state(for: first).draft == FirstMateLinkDraft())
+        #expect(box.state(for: first).classification == .automatic)
+        #expect(box.state(for: second).draft.isEmpty)
+
+        // An edit made while the request is pending is never discarded.
+        box.setURL("https://share.example.test/second", for: second)
+        let pending = box.state(for: second).draft
+        box.setTitle("Edited while pending", for: second)
+        box.complete(second, submitted: pending)
+        #expect(box.state(for: second).draft.title == "Edited while pending")
+        #expect(box.state(for: second).draft.url == "https://share.example.test/second")
+
+        // A replacement companion lifecycle cannot surface another host's draft.
+        let replacement = FirstMateLinkDraftBox.key(lifecycleID: "life-2", featureID: "feature-b")
+        #expect(box.state(for: replacement).draft.isEmpty)
+    }
+
+    @Test("Manage links navigates to the Links collection inside Documents")
+    func manageLinksNavigation() {
+        let store = FirstMateStore()
+        store.configure(client: nil, demo: true)
+        store.inspector = .overview
+        store.documentsMode = .documents
+        store.showLinksCollection()
+        #expect(store.inspector == .documents)
+        #expect(store.documentsMode == .links)
+    }
+
+    @Test("Case-variant PR references resolve to one saved row")
+    func pullRequestCaseVariantDedupe() async throws {
+        let client = FirstMateLinksTestClient(features: FirstMateDemo.features(step: 0))
+        let store = FirstMateStore()
+        store.configure(client: client, demo: false)
+        _ = store.acquireControlLease(available: true)
+        await store.refresh()
+        let first = FirstMateDemo.features(step: 0)[0]
+        store.receive(first)
+        store.select(first.feature.id)
+        let canonical = "https://github.com/example-org/sample-app/pull/202"
+        #expect(await store.saveLink(
+            FirstMateLinkDraft(url: "https://github.com/Example-Org/Sample-App/pull/202"),
+            expectedContext: store.operationContext))
+        #expect(await store.saveLink(
+            FirstMateLinkDraft(url: "https://github.com/example-org/sample-app/pull/202"),
+            expectedContext: store.operationContext))
+        let matches = store.snapshot?.links.filter { $0.url == canonical } ?? []
+        #expect(matches.count == 1)
+    }
 }
 
 private actor FirstMateLinksTestClient: FirstMateClient {

@@ -11,11 +11,16 @@ import unittest
 from unittest.mock import patch
 
 from herdr_harness.first_mate_link_discovery import (
+    MAX_RECORD_BYTES,
+    TEXT_CHUNK_CHARS,
     FirstMateLinkDiscovery,
     github_pull_requests,
     message_texts,
 )
 from herdr_harness.first_mate_store import FirstMateStore
+
+
+import herdr_harness.first_mate_link_discovery as link_discovery_module
 
 
 def session_rows(native_id, messages):
@@ -255,15 +260,133 @@ class FirstMateLinkDiscoveryTests(unittest.TestCase):
         discovery = FirstMateLinkDiscovery(self.store, root=self.root, minimum_interval=0.0,
                                            max_sources_per_pass=64)
         passes = 0
-        while True:
-            result = discovery.scan_once(force=True)
-            passes += 1
-            self.assertLessEqual(result["attempted"], 64)
-            if len(self.store.list_links(self.feature["id"])) >= total:
-                break
-            self.assertLess(passes, 40, "bounded passes must still reach every managed session")
+        with patch.object(self.store, "snapshot", side_effect=AssertionError("full snapshot read")), \
+             patch.object(self.store, "list_assignments", side_effect=AssertionError("unbounded assignments read")), \
+             patch.object(self.store, "list_session_records", side_effect=AssertionError("unbounded ledger read")):
+            while True:
+                result = discovery.scan_once(force=True)
+                passes += 1
+                self.assertLessEqual(result["attempted"], 64)
+                self.assertLessEqual(result["sources"], 64)
+                if len(self.store.list_links(self.feature["id"])) >= total:
+                    break
+                self.assertLess(passes, 40, "bounded passes must still reach every managed session")
         self.assertEqual(len(self.store.list_links(self.feature["id"])), total)
         self.assertGreater(passes, 10)
+
+    def test_inventory_never_reads_full_snapshots_or_unbounded_ledgers(self):
+        visit = self.visit()
+        evidence = self.add_session("native-light", [
+            ("assistant", "Session https://github.com/synthetic-owner/synthetic-repo/pull/80"),
+        ], visit=visit)
+        self.store.record_outcome(
+            evidence["assignment"]["id"], evidence["claim"]["generation"], "native-light", 1,
+            "success", "Outcome https://github.com/synthetic-owner/synthetic-repo/pull/81",
+            "outcome-light",
+            documents=[{"title": "Evidence",
+                        "content": "Document https://github.com/synthetic-owner/synthetic-repo/pull/82"}],
+        )
+        self.store.complete_visit(visit["id"],
+                                  "Visit https://github.com/synthetic-owner/synthetic-repo/pull/83",
+                                  "", "complete-light")
+        with patch.object(self.store, "snapshot", side_effect=AssertionError("full snapshot read")), \
+             patch.object(self.store, "list_assignments", side_effect=AssertionError("unbounded assignments read")), \
+             patch.object(self.store, "list_session_records", side_effect=AssertionError("unbounded ledger read")), \
+             patch.object(self.store, "get_document", side_effect=AssertionError("full document read")):
+            self.discovery.scan_once(force=True)
+        links = self.urls()
+        for suffix in ("80", "81", "82", "83"):
+            self.assertIn("https://github.com/synthetic-owner/synthetic-repo/pull/" + suffix, links)
+
+    def test_oversized_records_are_skipped_in_resumable_bounded_steps(self):
+        visit = self.visit()
+        assignment = self.store.create_assignment(visit["id"], {
+            "title": "Evidence", "role": "reviewer", "prompt": "Inspect",
+            "request_id": "assignment-huge", "input_revision": 1,
+        })
+        claim = self.store.claim_assignment(assignment["id"], "worker-huge")
+        native_id = "native-huge"
+        path = self.root / "sessions" / native_id / "session.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        huge = json.dumps({"type": "message", "message": {"role": "user", "content": "x" * 40000}})
+        valid = json.dumps({"type": "message", "message": {"role": "assistant",
+            "content": "https://github.com/synthetic-owner/synthetic-repo/pull/77"}})
+        path.write_text(json.dumps({"type": "session", "id": native_id, "version": 3}) + "\n" + huge + "\n" + valid + "\n",
+                        encoding="utf-8")
+        self.store.bind_session(assignment["id"], claim["generation"], "worker-huge", native_id, str(path))
+        discovery = FirstMateLinkDiscovery(self.store, root=self.root, minimum_interval=0.0,
+                                           max_sources_per_pass=1, max_bytes_per_pass=4096,
+                                           max_bytes_per_source=4096)
+        reads = []
+        original = link_discovery_module._read_records
+
+        def counting(*args, **kwargs):
+            result = original(*args, **kwargs)
+            reads.append(result[2])
+            return result
+
+        with patch.object(link_discovery_module, "MAX_RECORD_BYTES", 8192), \
+             patch.object(link_discovery_module, "_read_records", side_effect=counting):
+            passes = 0
+            while "https://github.com/synthetic-owner/synthetic-repo/pull/77" not in self.urls():
+                discovery.scan_once(force=True)
+                passes += 1
+                self.assertLess(passes, 60, "bounded skipping must still reach the following record")
+        self.assertGreater(passes, 1)
+        self.assertGreater(len(reads), 1)
+        # A complete record may overshoot by one line cap; skipping never drains
+        # an arbitrary amount in one pass.
+        self.assertLessEqual(max(reads), 8192 + 1)
+
+    def test_documents_are_scanned_in_bounded_resumable_slices(self):
+        evidence = self.add_session("native-doc", [("user", "No link here.")])
+        tail = "https://github.com/synthetic-owner/synthetic-repo/pull/90"
+        self.store.record_outcome(
+            evidence["assignment"]["id"], evidence["claim"]["generation"], "native-doc", 1,
+            "success", "Accepted outcome without a link.", "outcome-doc",
+            documents=[{"title": "Long evidence", "content": ("x" * 40000) + " " + tail}],
+        )
+        discovery = FirstMateLinkDiscovery(self.store, root=self.root, minimum_interval=0.0,
+                                           max_sources_per_pass=8, max_bytes_per_pass=4096,
+                                           max_bytes_per_source=4096)
+        slices = []
+        original = self.store.link_discovery_document_slice
+
+        def counting(document_id, verdicts, *, offset=0, limit=64):
+            slices.append((offset, limit))
+            return original(document_id, verdicts, offset=offset, limit=limit)
+
+        with patch.object(self.store, "link_discovery_document_slice", side_effect=counting), \
+             patch.object(self.store, "get_document", side_effect=AssertionError("full document read")):
+            passes = 0
+            while tail not in self.urls():
+                discovery.scan_once(force=True)
+                passes += 1
+                self.assertLess(passes, 60, "sliced documents must still reach their tail")
+        self.assertGreater(passes, 1)
+        self.assertTrue(slices)
+        offsets = [offset for offset, _ in slices]
+        self.assertEqual(offsets, sorted(offsets))
+        self.assertGreater(offsets[-1], 0)
+        self.assertTrue(all(0 < limit <= TEXT_CHUNK_CHARS for _, limit in slices))
+
+    def test_case_variant_pr_references_deduplicate_and_keep_hidden_state(self):
+        self.add_session("native-casing", [
+            ("assistant", "Upper https://github.com/Synthetic-Owner/Synthetic-Repo/pull/60/files#diff-1"),
+            ("assistant", "Lower https://github.com/synthetic-owner/synthetic-repo/pull/60"),
+        ])
+        self.discovery.scan_once(force=True)
+        links = self.store.list_links(self.feature["id"])
+        self.assertEqual(len(links), 1)
+        self.assertEqual(links[0]["url"], "https://github.com/synthetic-owner/synthetic-repo/pull/60")
+        self.store.set_link_visibility(self.feature["id"], links[0]["id"],
+                                       {"hidden": True, "request_id": "hide-casing"})
+        self.discovery.cursor_path.unlink()
+        self.discovery.scan_once(force=True)
+        retained = self.store.list_links(self.feature["id"])
+        self.assertEqual(len(retained), 1)
+        self.assertTrue(retained[0]["hidden"])
+        self.assertEqual(retained[0]["id"], links[0]["id"])
 
     def test_foreign_mismatched_ambiguous_and_malformed_sources_are_ignored(self):
         foreign = self.base / "foreign-session.jsonl"

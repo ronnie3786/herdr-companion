@@ -416,6 +416,46 @@ class FirstMateHTTPTests(unittest.TestCase):
             self.assertEqual(after[key], before[key])
         self.assertEqual(self.wakes, wakes)
 
+    def test_link_save_round_trips_ipv6_and_folds_github_casing(self):
+        _, data = self.create()
+        identity = data["feature"]["id"]
+        path = f"/api/v1/first-mate/features/{identity}/links"
+        ipv6 = "https://[2001:db8::42]:8443/review?tab=links#evidence"
+        code, saved = self.request(path, {"url": ipv6, "request_id": "link-ipv6"})
+        self.assertEqual(code, 200)
+        self.assertEqual(saved["link"]["url"], ipv6)
+        self.assertEqual(saved["link"]["kind"], "link")
+        self.assertEqual(saved["link"]["title"], "[2001:db8::42]")
+        code, invalid = self.request(path, {"url": "https://user:secret@[2001:db8::42]/review", "request_id": "link-ipv6-credentials"})
+        self.assertEqual(code, 400)
+        self.assertEqual(len(self.store.list_links(identity)), 1)
+
+        code, upper = self.request(path, {
+            "url": "https://github.com/Synthetic-Owner/Synthetic-Repo/pull/42/files#diff-1",
+            "request_id": "link-casing-upper",
+        })
+        self.assertEqual(code, 200)
+        self.assertEqual(upper["link"]["url"], "https://github.com/synthetic-owner/synthetic-repo/pull/42")
+        code, lower = self.request(path, {
+            "url": "https://github.com/synthetic-owner/synthetic-repo/pull/42",
+            "request_id": "link-casing-lower",
+        })
+        self.assertEqual(code, 200)
+        self.assertEqual(lower["link"]["id"], upper["link"]["id"])
+        self.assertEqual(len(lower["links"]), 2)
+        visibility = f"{path}/{upper['link']['id']}/visibility"
+        code, hidden = self.request(visibility, {"hidden": True, "request_id": "hide-casing"})
+        self.assertEqual(code, 200)
+        self.assertTrue(hidden["link"]["hidden"])
+        code, replay = self.request(path, {
+            "url": "https://github.com/SYNTHETIC-OWNER/SYNTHETIC-REPO/pull/42",
+            "request_id": "link-casing-replay",
+        })
+        self.assertEqual(code, 200)
+        self.assertEqual(replay["link"]["id"], upper["link"]["id"])
+        self.assertTrue(replay["link"]["hidden"])
+        self.assertEqual(len(self.store.list_links(identity)), 2)
+
     def test_link_mutations_reject_forged_provenance_cross_feature_ids_and_invalid_inputs(self):
         _, data = self.create()
         identity = data["feature"]["id"]

@@ -565,6 +565,24 @@ class FirstMateStoreTests(unittest.TestCase):
         self.assertEqual(len({result["id"] for result in successes}), 1)
         self.assertEqual(len([link for link in self.store.list_links(feature_id) if link["url"].endswith("/pull/12")]), 1)
 
+    def test_case_variant_pull_request_references_share_one_hidden_row(self):
+        feature_id = self.feature["id"]
+        first = self.store.save_link(feature_id, {
+            "url": "https://github.com/Synthetic-Owner/Synthetic-Repo/pull/42/files#diff-1",
+            "request_id": "link-casing-upper",
+        })
+        self.assertEqual(first["url"], "https://github.com/synthetic-owner/synthetic-repo/pull/42")
+        self.store.set_link_visibility(feature_id, first["id"], {"hidden": True, "request_id": "hide-casing"})
+        variant = self.store.register_link(
+            feature_id, url="https://github.com/synthetic-owner/synthetic-repo/pull/42", source="discovery",
+            provenance={"native_session_id": "synthetic-session-casing"})
+        self.assertEqual(variant["id"], first["id"])
+        self.assertTrue(variant["hidden"])
+        self.assertEqual(variant["title"], "synthetic-owner/synthetic-repo #42")
+        self.assertEqual(len(self.store.list_links(feature_id)), 1)
+        with contextlib.closing(sqlite3.connect(str(self.path))) as raw:
+            self.assertEqual(raw.execute("SELECT COUNT(*) FROM fm_links").fetchone()[0], 1)
+
     def test_discovery_and_agent_upserts_preserve_user_titles_provenance_and_hidden_state(self):
         feature_id = self.feature["id"]
         hidden = self.store.save_link(feature_id, {

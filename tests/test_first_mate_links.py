@@ -64,6 +64,43 @@ class FirstMateLinkTests(unittest.TestCase):
         self.assertEqual(normalized["title"], "github.example.test")
         self.assertNotIn("number", normalized)
 
+    def test_github_owner_and_repository_casing_folds_without_touching_paths(self):
+        canonical = "https://github.com/synthetic-owner/synthetic-repo/pull/42/files#diff-1"
+        for value in (
+            "https://github.com/Synthetic-Owner/Synthetic-Repo/pull/42/files#diff-1",
+            "https://github.com/SYNTHETIC-OWNER/SYNTHETIC-REPO/pull/42",
+            canonical,
+        ):
+            with self.subTest(value=value):
+                normalized = normalize_link(value)
+                self.assertEqual(normalized["url"], "https://github.com/synthetic-owner/synthetic-repo/pull/42")
+                self.assertEqual(normalized["owner"], "synthetic-owner")
+                self.assertEqual(normalized["repo"], "synthetic-repo")
+                self.assertEqual(normalized["title"], "synthetic-owner/synthetic-repo #42")
+        # General link paths keep their exact casing.
+        general = normalize_link("https://Share.Example.Test/Path-Case?Query=Keep#Fragment")
+        self.assertEqual(general["url"], "https://share.example.test/Path-Case?Query=Keep#Fragment")
+
+    def test_bracketed_ipv6_share_links_round_trip_and_keep_brackets(self):
+        value = "https://[2001:db8::42]:8443/review?tab=links#evidence"
+        normalized = normalize_link(value)
+        self.assertEqual(normalized["url"], value)
+        self.assertEqual(normalized["kind"], "link")
+        self.assertEqual(normalized["title"], "[2001:db8::42]")
+        self.assertEqual(normalize_link("http://[2001:db8::42]/review")["url"], "http://[2001:db8::42]/review")
+        self.assertEqual(normalize_link("https://[2001:DB8::42]:8443/review")["url"],
+                         "https://[2001:db8::42]:8443/review")
+        for value in (
+            "https://[]:8443/review",
+            "https://[fe80::1%25en0]:8443/review",
+            "https://[2001:db8::42]:0/review",
+            "https://[2001:db8::42]:70000/review",
+            "https://user:secret@[2001:db8::42]/review",
+            "https://[2001:db8::42/review",
+        ):
+            with self.subTest(value=value):
+                self.assert_invalid(value)
+
     def test_general_links_preserve_meaningful_components(self):
         value = "http://share.example.test:8443/private/report?token=synthetic&view=summary#section-2"
         normalized = normalize_link(value)

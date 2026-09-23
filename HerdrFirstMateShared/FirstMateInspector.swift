@@ -12,3 +12,13 @@ enum FirstMateInspector: String, CaseIterable, Identifiable {
         }
     }
 }
+
+/// The Documents inspector's Documents/Links sub-tabs. Shared so Overview's
+/// link management can navigate directly to the Links collection.
+enum FirstMateDocumentsMode: String, CaseIterable, Identifiable {
+    case documents = "Documents"
+    case links = "Links"
+
+    var id: Self { self }
+    var title: String { rawValue }
+}

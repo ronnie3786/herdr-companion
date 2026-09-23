@@ -7,14 +7,18 @@
   feature links.
 - `POST /api/v1/first-mate/features/{featureId}/links` saves a bounded absolute
   HTTP(S) URL with an optional title and kind. Recognized exact GitHub pull
-  request URLs canonicalize to their pull request root and deduplicate;
-  draft/ready/merged/closed state is never inferred, fetched, or published.
+  request URLs canonicalize to their pull request root with owner/repository
+  casing folded, and deduplicate across casing variants; bracketed IPv6
+  literals with a port, path, query, and fragment round-trip unchanged.
+  Draft/ready/merged/closed state is never inferred, fetched, or published.
 - `POST /api/v1/first-mate/features/{featureId}/links/{linkId}/visibility`
   reversibly hides or restores one feature-owned link. Both routes are
   receipt-idempotent, reject client-supplied provenance, never enqueue
   coordinator work, and return the same full snapshot as the detail endpoint.
 - Existing databases migrate additively. Older clients safely ignore the new
-  snapshot field, and links stay private on the owning companion.
+  snapshot field, and links stay private on the owning companion. Discovery
+  reads only paged, lightweight feature-owned inventory and bounded content
+  slices; it never reads a public snapshot or drains an over-long record.
 - Install and restart the companion separately from the Mac app. A native app
   update does not install or restart companion server packages.
 

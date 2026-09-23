@@ -160,11 +160,13 @@ herdr-first-mate restore-link FEATURE_ID LINK_ID --request-id feature-restore-1
 `links` returns the feature's complete retained link list, including hidden
 rows, so a native client can offer Restore. `add-link` accepts the exact URL and
 an optional title and classification (`pull_request` or `link`). Recognizable
-github.com pull-request paths canonicalize to the pull-request root, so a link
-to its files page and a link to the conversation deduplicate; a draft PR and a
+github.com pull-request paths canonicalize to the pull-request root with owner
+and repository casing folded, so a link to its files page, a link to the
+conversation, and a casing variant deduplicate; a draft PR and a
 ready-for-review PR are the same record. General links preserve their path,
-query, and fragment. Credentials in a URL, non-HTTP(S) schemes, control
-characters, and malformed hosts or ports are rejected with no side effect.
+query, and fragment, and bracketed IPv6 destinations are accepted with their
+brackets intact. Credentials in a URL, non-HTTP(S) schemes, control characters,
+and malformed hosts or ports are rejected with no side effect.
 
 `hide-link` and `restore-link` address the exact feature and link IDs; a link ID
 from another feature returns 404 and is never changed. Hiding is reversible and

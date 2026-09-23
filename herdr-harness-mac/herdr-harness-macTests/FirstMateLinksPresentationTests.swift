@@ -34,6 +34,56 @@ struct FirstMateLinksPresentationTests {
         #expect(pasteboard.string(forType: .string) == link.url)
     }
 
+    @Test("Bracketed IPv6 share URLs Open and Copy their exact saved destination")
+    func ipv6Destinations() {
+        let url = "https://[2001:db8::42]:8443/review?tab=links#evidence"
+        let link = FirstMateLink(
+            id: "link-ipv6",
+            featureID: "feature-a",
+            url: url,
+            kind: "link",
+            title: "Synthetic IPv6 share",
+            source: "user",
+            createdAt: "2030-01-01T12:00:00Z",
+            updatedAt: "2030-01-01T12:00:00Z"
+        )
+        #expect(link.destination?.absoluteString == url)
+        #expect(link.hostLabel == "[2001:db8::42]:8443")
+        var opened: URL?
+        let didOpen = FirstMateLinkActions.open(link, opener: { opened = $0; return true })
+        #expect(didOpen)
+        #expect(opened?.absoluteString == url)
+        let pasteboard = NSPasteboard.withUniqueName()
+        #expect(FirstMateLinkActions.copy(link, pasteboard: pasteboard))
+        #expect(pasteboard.string(forType: .string) == url)
+
+        // Credentialed and malformed IPv6 destinations never reach the system.
+        for rejected in [
+            "https://user:secret@[2001:db8::42]/review",
+            "https://[2001:db8::42]:0/review",
+            "https://[2001:db8::42]:70000/review",
+            "https://[fe80::1%25en0]:8443/review",
+        ] {
+            let unsafe = FirstMateLink(
+                id: "link-ipv6-unsafe",
+                featureID: "feature-a",
+                url: rejected,
+                kind: "link",
+                title: "Unsafe IPv6",
+                source: "user",
+                createdAt: "",
+                updatedAt: ""
+            )
+            #expect(unsafe.destination == nil)
+            var rejectedOpen = false
+            // Compute the call outside the macro so the injected opener stays a
+            // MainActor closure; the `#expect` rewrite requires a Sendable one.
+            let didOpen = FirstMateLinkActions.open(unsafe, opener: { _ in rejectedOpen = true; return true })
+            #expect(!didOpen)
+            #expect(!rejectedOpen)
+        }
+    }
+
     @Test("A rejected destination never reaches the injected opener or pasteboard")
     func rejectsUnsafeDestinations() {
         let pasteboard = NSPasteboard.withUniqueName()

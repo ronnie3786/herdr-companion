@@ -392,6 +392,145 @@ class FirstMateStore:
                 "SELECT * FROM fm_links " + where + " ORDER BY created_at,id", args
             )]
 
+    # -- bounded link-discovery inventory -----------------------------------
+    #
+    # Link discovery must never read a public snapshot, an event stream, or a
+    # message table just to learn which evidence exists. These queries return
+    # only the small ownership/identity columns needed to page through managed
+    # evidence, and every caller supplies an explicit page limit. Content is
+    # read later through the matching ``*_slice`` methods, one bounded chunk per
+    # source, so a pass can stop between records or characters.
+
+    @staticmethod
+    def _discovery_limit(limit: Any) -> int:
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise FirstMateError("Invalid discovery limit", code="invalid_request", status=400)
+        return max(1, min(limit, 1000))
+
+    def link_discovery_sessions(self, *, after: Any = None, limit: int = 64) -> list[dict]:
+        """One lightweight page of the managed session ledger, ordered by ID."""
+        size = self._discovery_limit(limit)
+        cursor = after if isinstance(after, str) and after else None
+        with self._lock:
+            if cursor is None:
+                rows = self._db.execute(
+                    "SELECT native_session_id,feature_id,assignment_id,session_file FROM fm_sessions "
+                    "ORDER BY native_session_id LIMIT ?", (size,)).fetchall()
+            else:
+                rows = self._db.execute(
+                    "SELECT native_session_id,feature_id,assignment_id,session_file FROM fm_sessions "
+                    "WHERE native_session_id>? ORDER BY native_session_id LIMIT ?", (cursor, size)).fetchall()
+            return [dict(row) for row in rows]
+
+    def link_discovery_session_owner(self, native_session_id: str) -> dict | None:
+        """The single ledger owner of a native session ID, if any."""
+        _text(native_session_id, "native_session_id", 500)
+        with self._lock:
+            row = self._db.execute(
+                "SELECT native_session_id,feature_id,assignment_id,session_file FROM fm_sessions "
+                "WHERE native_session_id=?", (native_session_id,)).fetchone()
+            return dict(row) if row is not None else None
+
+    def link_discovery_session_by_file(self, session_file: str) -> dict | None:
+        """The single ledger owner of a session path, if any."""
+        _text(session_file, "session_file", 4000)
+        with self._lock:
+            row = self._db.execute(
+                "SELECT native_session_id,feature_id,assignment_id,session_file FROM fm_sessions "
+                "WHERE session_file=?", (session_file,)).fetchone()
+            return dict(row) if row is not None else None
+
+    def link_discovery_outcomes(self, verdicts: tuple[str, ...], *, after: Any = None,
+                                limit: int = 64) -> list[dict]:
+        """One page of accepted outcome summaries, without loading any events."""
+        size = self._discovery_limit(limit)
+        cursor = after if isinstance(after, str) and after else None
+        placeholders = ",".join("?" for _ in verdicts)
+        base = ("SELECT id,feature_id,native_session_id,updated_at,length(summary) AS text_length "
+                f"FROM fm_assignments WHERE verdict IN ({placeholders}) AND length(summary)>0")
+        with self._lock:
+            if cursor is None:
+                rows = self._db.execute(base + " ORDER BY id LIMIT ?", (*verdicts, size)).fetchall()
+            else:
+                rows = self._db.execute(base + " AND id>? ORDER BY id LIMIT ?",
+                                        (*verdicts, cursor, size)).fetchall()
+            return [dict(row) for row in rows]
+
+    def link_discovery_outcome_slice(self, assignment_id: str, verdicts: tuple[str, ...], *,
+                                     offset: int = 0, limit: int = 64) -> dict | None:
+        """One bounded character slice of one accepted outcome summary."""
+        _text(assignment_id, "assignment_id", 200)
+        start = max(0, int(offset))
+        size = self._discovery_limit(limit)
+        placeholders = ",".join("?" for _ in verdicts)
+        with self._lock:
+            row = self._db.execute(
+                "SELECT feature_id,native_session_id,updated_at,length(summary) AS text_length,"
+                f"substr(summary,?,?) AS text FROM fm_assignments WHERE id=? AND verdict IN ({placeholders})",
+                (start + 1, size, assignment_id, *verdicts)).fetchone()
+            return self._decode(row) if row is not None else None
+
+    def link_discovery_visits(self, *, after: Any = None, limit: int = 64) -> list[dict]:
+        """One page of completed visit summaries, without loading documents."""
+        size = self._discovery_limit(limit)
+        cursor = after if isinstance(after, str) and after else None
+        base = ("SELECT id,feature_id,authorization_message_id,updated_at,"
+                "length(summary) AS text_length FROM fm_visits "
+                "WHERE status='completed' AND length(summary)>0")
+        with self._lock:
+            if cursor is None:
+                rows = self._db.execute(base + " ORDER BY id LIMIT ?", (size,)).fetchall()
+            else:
+                rows = self._db.execute(base + " AND id>? ORDER BY id LIMIT ?", (cursor, size)).fetchall()
+            return [dict(row) for row in rows]
+
+    def link_discovery_visit_slice(self, visit_id: str, *, offset: int = 0,
+                                   limit: int = 64) -> dict | None:
+        """One bounded character slice of one completed visit summary."""
+        _text(visit_id, "visit_id", 200)
+        start = max(0, int(offset))
+        size = self._discovery_limit(limit)
+        with self._lock:
+            row = self._db.execute(
+                "SELECT feature_id,authorization_message_id,updated_at,length(summary) AS text_length,"
+                "substr(summary,?,?) AS text FROM fm_visits WHERE id=? AND status='completed'",
+                (start + 1, size, visit_id)).fetchone()
+            return self._decode(row) if row is not None else None
+
+    def link_discovery_documents(self, verdicts: tuple[str, ...], *, after: Any = None,
+                                 limit: int = 64) -> list[dict]:
+        """One page of documents owned by accepted outcomes, without their content."""
+        size = self._discovery_limit(limit)
+        cursor = after if isinstance(after, str) and after else None
+        placeholders = ",".join("?" for _ in verdicts)
+        base = ("SELECT d.id,d.feature_id,d.assignment_id,d.native_session_id,"
+                "length(d.content) AS text_length FROM fm_documents d "
+                "JOIN fm_assignments a ON a.id=d.assignment_id "
+                f"WHERE a.verdict IN ({placeholders}) AND length(d.content)>0")
+        with self._lock:
+            if cursor is None:
+                rows = self._db.execute(base + " ORDER BY d.id LIMIT ?", (*verdicts, size)).fetchall()
+            else:
+                rows = self._db.execute(base + " AND d.id>? ORDER BY d.id LIMIT ?",
+                                        (*verdicts, cursor, size)).fetchall()
+            return [dict(row) for row in rows]
+
+    def link_discovery_document_slice(self, document_id: str, verdicts: tuple[str, ...], *,
+                                      offset: int = 0, limit: int = 64) -> dict | None:
+        """One bounded character slice of one accepted-outcome document."""
+        _text(document_id, "document_id", 200)
+        start = max(0, int(offset))
+        size = self._discovery_limit(limit)
+        placeholders = ",".join("?" for _ in verdicts)
+        with self._lock:
+            row = self._db.execute(
+                "SELECT d.feature_id,d.assignment_id,d.native_session_id,"
+                "length(d.content) AS text_length, substr(d.content,?,?) AS text "
+                "FROM fm_documents d JOIN fm_assignments a ON a.id=d.assignment_id "
+                f"WHERE d.id=? AND a.verdict IN ({placeholders})",
+                (start + 1, size, document_id, *verdicts)).fetchone()
+            return self._decode(row) if row is not None else None
+
     def _upsert_link(self, feature_id: str, normalized: Mapping[str, Any], *, source: str,
                      provenance: Mapping[str, str], title_source: str) -> dict:
         """Create one feature-scoped link or apply only the allowed duplicate update.

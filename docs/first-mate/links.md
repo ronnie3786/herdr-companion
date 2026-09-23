@@ -13,7 +13,8 @@ advance a workflow stage.
 - **Overview** leads with a **Pull requests** section above the ordinary
   overview content. Every visible pull request is listed individually with its
   title, host, full destination, provenance, and **Open** and **Copy** actions;
-  **Manage links** jumps to the full collection.
+  **Manage links** opens the **Documents** inspector directly on the **Links**
+  collection.
 - **Documents** repeats the same prominent section at the top, above a
   **Documents / Links** segmented control. The existing Documents sub-tab is
   unchanged: it still lists feature evidence with its producing agent and visit.
@@ -41,11 +42,15 @@ Users can add a link from **Documents → Links** with:
 - an optional classification: **Automatic**, **Pull request**, or **Link**.
 
 **Automatic** lets the companion classify an exact `github.com` pull request
-URL. The explicit **Pull request** classification covers enterprise GitHub and
-other HTTP(S) hosts without trusting host-name resemblance. Invalid URLs
-(relative addresses, non-HTTP(S) schemes, embedded credentials, control
-characters, malformed hosts or ports, or values over 4,096 characters) are
-rejected when saving and again before opening or copying.
+URL; owner and repository casing folds so casing variants deduplicate into one
+record without rewriting general URL paths. The explicit **Pull request**
+classification covers enterprise GitHub and other HTTP(S) hosts without
+trusting host-name resemblance. Invalid URLs (relative addresses, non-HTTP(S)
+schemes, embedded credentials, control characters, malformed hosts or ports, or
+values over 4,096 characters) are rejected when saving and again before opening
+or copying. Bracketed IPv6 literals are valid destinations too, including a
+custom port, path, query, and fragment; the brackets are preserved when the host
+is displayed and Open and Copy still use the exact saved URL.
 
 The same explicit save is available through the authenticated API, the
 `herdr-first-mate add-link` CLI, and the scoped `fm_save_link` Pi tool for
@@ -71,7 +76,10 @@ Discovery boundaries:
   so ordinary documentation or tool-output URLs do not become bookmarks.
 - Only validated feature-owned sources are read. Unrelated session files,
   arbitrary Pi history, and thinking blocks are never scanned.
-- The scan is incremental with private cursors and is bounded per pass.
+- The scan is incremental with private cursors and is bounded per pass:
+  lightweight paged inventory, record-unit session reads that leave a partial
+  final line for its next append and skip an over-long line in bounded steps,
+  and chunked outcome, visit, and document slices with an overlap tail.
 - Text is treated as data. The companion never calls GitHub, `gh`, or the
   destination, and it never infers draft, ready, merged, or closed state. The UI
   says **Pull request** without claiming a lifecycle status.
@@ -83,8 +91,10 @@ Discovery boundaries:
 General links can be any bounded absolute HTTP(S) address. Path, query, port,
 and fragment are preserved exactly, so a private share URL such as
 `https://share.example.test:8443/review/abc?tab=links#evidence` round-trips
-without losing meaningful components. Saving such a URL stores it privately; it
-does not create, configure, or publish a share.
+without losing meaningful components. The same holds for a bracketed IPv6
+destination such as
+`https://[2001:db8::42]:8443/review?tab=links#evidence`. Saving such a URL
+stores it privately; it does not create, configure, or publish a share.
 
 ## Compatibility and deployment
 

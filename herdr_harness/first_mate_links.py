@@ -6,13 +6,15 @@ a URL. Storage and the authenticated API own durability; this module only
 answers whether an absolute HTTP(S) URL is bounded and safe to retain, and how
 to recognize an exact GitHub pull request.
 
-General links preserve their path, query, and fragment. Recognized GitHub pull
-request paths collapse to the pull request root so repeated references to the
-same PR deduplicate. The classification says nothing about draft, ready,
+General links preserve their path, query, and fragment; bracketed IPv6 hosts
+keep their brackets. Recognized GitHub pull request paths collapse to the pull
+request root with owner and repository casing folded so repeated references to
+the same PR deduplicate. The classification says nothing about draft, ready,
 merged, or closed state.
 """
 from __future__ import annotations
 
+import ipaddress
 import re
 from typing import Any, Mapping
 from urllib.parse import SplitResult, urlsplit, urlunsplit
@@ -33,6 +35,20 @@ PROVENANCE_FIELDS = (
 _PR_PATH = re.compile(r"^/([^/]+)/([^/]+)/pull/(\d+)(?:/.*)?$")
 _HOST_LABEL = r"(?!-)[A-Za-z0-9-]{1,63}(?<!-)"
 _HOST = re.compile(rf"^{_HOST_LABEL}(?:\.{_HOST_LABEL})*$")
+
+
+def _ipv6_literal(hostname: str) -> str | None:
+    """Return the bracket-free hostname when it is a plain IPv6 literal.
+
+    Zone identifiers (``%``) are rejected: they are not part of the requested
+    share-URL shape and keeping them out avoids host-parsing surprises.
+    """
+    if not hostname or "%" in hostname or ":" not in hostname:
+        return None
+    try:
+        return str(ipaddress.IPv6Address(hostname))
+    except ipaddress.AddressValueError:
+        return None
 
 
 class LinkValidationError(ValueError):
@@ -66,7 +82,10 @@ def _parse_absolute_http_url(value: Any) -> SplitResult:
     if parsed.username is not None or parsed.password is not None:
         raise LinkValidationError("URL credentials are not allowed")
     hostname = parsed.hostname or ""
-    if not hostname or len(hostname) > 253 or not _HOST.fullmatch(hostname):
+    if not hostname or len(hostname) > 253:
+        raise LinkValidationError("URL host is malformed")
+    ipv6 = _ipv6_literal(hostname)
+    if ipv6 is None and not _HOST.fullmatch(hostname):
         raise LinkValidationError("URL host is malformed")
     try:
         port = parsed.port
@@ -74,7 +93,8 @@ def _parse_absolute_http_url(value: Any) -> SplitResult:
         raise LinkValidationError("URL port is malformed") from exc
     if port is not None and not 1 <= port <= 65535:
         raise LinkValidationError("URL port is malformed")
-    expected_netloc = hostname if port is None else f"{hostname}:{port}"
+    host_literal = f"[{hostname}]" if ipv6 is not None else hostname
+    expected_netloc = host_literal if port is None else f"{host_literal}:{port}"
     if parsed.netloc.lower() != expected_netloc.lower():
         raise LinkValidationError("URL host is malformed")
     return parsed
@@ -96,6 +116,9 @@ def parse_github_pull_request(value: Any) -> dict[str, Any] | None:
     if match is None:
         return None
     owner, repo, number = match.groups()
+    # GitHub owner and repository names are case-insensitive, so the canonical
+    # identity folds their casing. General URL paths are never rewritten.
+    owner, repo = owner.lower(), repo.lower()
     return {
         "url": f"https://github.com/{owner}/{repo}/pull/{int(number)}",
         "host": "github.com",
@@ -113,6 +136,8 @@ def default_link_title(canonical_url: str, kind: str) -> str:
             owner, repo, number = match.groups()
             return f"{owner}/{repo} #{int(number)}"
     hostname = urlsplit(canonical_url).hostname or ""
+    if _ipv6_literal(hostname) is not None:
+        hostname = f"[{hostname}]"
     return hostname[:MAX_TITLE_LENGTH]
 
 
@@ -139,9 +164,12 @@ def normalize_link(value: Any, *, title: Any = None, kind: Any = None) -> dict[s
     if pull_request is not None:
         canonical_url = pull_request["url"]
     else:
+        hostname = parsed.hostname or ""
+        host_literal = f"[{hostname}]" if _ipv6_literal(hostname) is not None else hostname
+        authority = host_literal + (f":{parsed.port}" if parsed.port is not None else "")
         canonical_url = urlunsplit((
             parsed.scheme.lower(),
-            parsed.hostname + (f":{parsed.port}" if parsed.port is not None else ""),
+            authority,
             parsed.path,
             parsed.query,
             parsed.fragment,

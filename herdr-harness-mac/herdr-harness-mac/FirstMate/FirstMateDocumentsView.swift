@@ -1,29 +1,20 @@
 import SwiftUI
 
-enum FirstMateDocumentsMode: String, CaseIterable, Identifiable {
-    case documents = "Documents"
-    case links = "Links"
-
-    var id: Self { self }
-    var title: String { rawValue }
-}
-
 struct FirstMateDocumentsView: View {
     @Bindable var store: FirstMateStore
     let snapshot: FirstMateSnapshot
-    @State private var mode = FirstMateDocumentsMode.documents
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             FirstMatePullRequestsSection(store: store, snapshot: snapshot, surface: .documents)
-            Picker("Documents and links", selection: $mode) {
+            Picker("Documents and links", selection: $store.documentsMode) {
                 ForEach(FirstMateDocumentsMode.allCases) { value in
                     Text(value.title).tag(value)
                 }
             }
             .pickerStyle(.segmented)
             .accessibilityIdentifier("first-mate-documents-picker")
-            switch mode {
+            switch store.documentsMode {
             case .documents:
                 documents
             case .links:

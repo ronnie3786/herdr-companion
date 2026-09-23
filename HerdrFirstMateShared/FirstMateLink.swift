@@ -1,4 +1,5 @@
 import Foundation
+import Network
 
 /// One private, feature-scoped link retained by the companion.
 ///
@@ -72,8 +73,9 @@ struct FirstMateLink: Codable, Equatable, Identifiable, Sendable {
     /// The inspectable host, including a non-default port when one was saved.
     var hostLabel: String? {
         guard let components = URLComponents(string: url), let host = components.host else { return nil }
-        guard let port = components.port else { return host }
-        return "\(host):\(port)"
+        let displayHost = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+        guard let port = components.port else { return displayHost }
+        return "\(displayHost):\(port)"
     }
 
     /// A validated destination. Opening and copying always go through this.
@@ -138,7 +140,7 @@ struct FirstMateLinkDraft: Equatable, Sendable {
     }
 }
 
-/// The optional classification the Add form offers.
+/// Optional classification the Add form offers.
 enum FirstMateLinkClassification: String, CaseIterable, Identifiable, Sendable {
     case automatic
     case pullRequest = "pull_request"
@@ -153,6 +155,58 @@ enum FirstMateLinkClassification: String, CaseIterable, Identifiable, Sendable {
         }
     }
     var kind: String? { self == .automatic ? nil : rawValue }
+}
+
+/// Editable Add-form state for one destination.
+struct FirstMateLinkDraftState: Equatable, Sendable {
+    var draft = FirstMateLinkDraft()
+    var classification = FirstMateLinkClassification.automatic
+}
+
+/// Deterministic, destination-scoped Add-form state.
+///
+/// Keys combine the store lifecycle marker with the feature ID, so a draft can
+/// never appear under another feature or a replacement companion. Completing a
+/// save clears only the submitted destination, and only when the visible draft
+/// still equals what was submitted, so edits made while a request is pending
+/// survive a delayed response.
+struct FirstMateLinkDraftBox: Equatable, Sendable {
+    private var states: [String: FirstMateLinkDraftState] = [:]
+
+    static func key(lifecycleID: String, featureID: String) -> String {
+        lifecycleID + "|" + featureID
+    }
+
+    func state(for key: String) -> FirstMateLinkDraftState {
+        states[key] ?? FirstMateLinkDraftState()
+    }
+
+    mutating func setURL(_ value: String, for key: String) {
+        var state = state(for: key)
+        state.draft.url = value
+        states[key] = state
+    }
+
+    mutating func setTitle(_ value: String, for key: String) {
+        var state = state(for: key)
+        state.draft.title = value
+        states[key] = state
+    }
+
+    mutating func setClassification(_ value: FirstMateLinkClassification, for key: String) {
+        var state = state(for: key)
+        state.classification = value
+        state.draft.kind = value.kind
+        states[key] = state
+    }
+
+    /// Clears the submitted destination only when its draft is unchanged.
+    mutating func complete(_ key: String, submitted: FirstMateLinkDraft) {
+        guard var state = states[key], state.draft == submitted else { return }
+        state.draft = FirstMateLinkDraft()
+        state.classification = .automatic
+        states[key] = state
+    }
 }
 
 /// Deterministic link ordering. The companion's creation order is retained and
@@ -231,8 +285,10 @@ enum FirstMateLinkClassifier {
               let repoRange = Range(match.range(at: 2), in: path),
               let numberRange = Range(match.range(at: 3), in: path),
               let number = Int(path[numberRange]) else { return nil }
-        let owner = String(path[ownerRange])
-        let repo = String(path[repoRange])
+        // GitHub owner and repository names are case-insensitive, so the
+        // canonical identity folds their casing. General URL paths stay intact.
+        let owner = String(path[ownerRange]).lowercased()
+        let repo = String(path[repoRange]).lowercased()
         return FirstMatePullRequestIdentity(
             owner: owner,
             repo: repo,
@@ -245,7 +301,9 @@ enum FirstMateLinkClassifier {
         if kind == "pull_request", let identity = URL(string: canonicalURL).flatMap(githubPullRequest) {
             return "\(identity.owner)/\(identity.repo) #\(identity.number)"
         }
-        return URLComponents(string: canonicalURL)?.host ?? canonicalURL
+        guard let host = URLComponents(string: canonicalURL)?.host else { return canonicalURL }
+        let bare = host.hasPrefix("[") && host.hasSuffix("]") ? String(host.dropFirst().dropLast()) : host
+        return FirstMateLinkURL.isIPv6Literal(bare) ? "[\(bare)]" : host
     }
 
     private static func canonicalGeneralURL(_ url: URL) -> String {
@@ -253,7 +311,10 @@ enum FirstMateLinkClassifier {
             return url.absoluteString
         }
         components.scheme = components.scheme?.lowercased()
-        components.host = components.host?.lowercased()
+        if let host = components.host {
+            let bare = host.hasPrefix("[") && host.hasSuffix("]") ? String(host.dropFirst().dropLast()) : host
+            components.host = bare.lowercased()
+        }
         return components.url?.absoluteString ?? url.absoluteString
     }
 }
@@ -286,11 +347,21 @@ enum FirstMateLinkURL {
     }
 
     /// Host labels use letters, digits, and inner hyphens, matching the
-    /// companion's existing convention. IPv6 literals are not accepted there.
+    /// companion's existing convention. Bracketed IPv6 literals are valid
+    /// destinations too: their brackets are preserved by the displayed host
+    /// label and by Open/Copy, which use the exact saved URL.
     static func isValidHost(_ host: String) -> Bool {
+        let bare = host.hasPrefix("[") && host.hasSuffix("]") ? String(host.dropFirst().dropLast()) : host
+        if isIPv6Literal(bare) { return true }
         guard !host.isEmpty, host.count <= 253 else { return false }
         let label = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
         let pattern = "^\(label)(?:\\.\(label))*$"
         return host.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    /// True for a plain (bracket-free), zone-free IPv6 literal.
+    static func isIPv6Literal(_ host: String) -> Bool {
+        guard !host.isEmpty, !host.contains("%") else { return false }
+        return IPv6Address(host) != nil
     }
 }

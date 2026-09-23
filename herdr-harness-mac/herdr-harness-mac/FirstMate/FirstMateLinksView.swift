@@ -26,7 +26,7 @@ struct FirstMatePullRequestsSection: View {
                 }
                 Spacer()
                 if surface == .overview {
-                    Button("Manage links") { store.inspector = .documents }
+                    Button("Manage links") { store.showLinksCollection() }
                         .buttonStyle(.plain).herdrFont(.caption)
                         .foregroundStyle(FirstMatePalette(scheme: scheme).accent)
                         .accessibilityIdentifier("first-mate-pr-manage-links")
@@ -90,9 +90,29 @@ struct FirstMateLinksView: View {
     @Bindable var store: FirstMateStore
     let snapshot: FirstMateSnapshot
     @Environment(\.colorScheme) private var scheme
-    @State private var draft = FirstMateLinkDraft()
-    @State private var classification = FirstMateLinkClassification.automatic
+    @State private var drafts = FirstMateLinkDraftBox()
     @State private var showHidden = false
+
+    /// The store lifecycle plus feature ID scopes every draft, so switching
+    /// features or companions never surfaces another destination's input.
+    private var destinationKey: String {
+        FirstMateLinkDraftBox.key(lifecycleID: store.lifecycle.opaqueID, featureID: snapshot.feature.id)
+    }
+
+    private var draftState: FirstMateLinkDraftState { drafts.state(for: destinationKey) }
+
+    private var urlText: Binding<String> {
+        Binding(get: { draftState.draft.url }, set: { drafts.setURL($0, for: destinationKey) })
+    }
+
+    private var titleText: Binding<String> {
+        Binding(get: { draftState.draft.title }, set: { drafts.setTitle($0, for: destinationKey) })
+    }
+
+    private var classification: Binding<FirstMateLinkClassification> {
+        Binding(get: { draftState.classification },
+                set: { drafts.setClassification($0, for: destinationKey) })
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -107,18 +127,19 @@ struct FirstMateLinksView: View {
                 .herdrFont(.caption)
                 .accessibilityIdentifier("first-mate-links-show-hidden")
         }
+        .onChange(of: store.lifecycle) { drafts = FirstMateLinkDraftBox() }
     }
 
     private var addForm: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("ADD A LINK").herdrFont(.caption, weight: .semibold).foregroundStyle(.secondary)
-            TextField("https://…", text: $draft.url)
+            TextField("https://…", text: urlText)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("first-mate-link-add-url")
-            TextField("Optional title", text: $draft.title)
+            TextField("Optional title", text: titleText)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("first-mate-link-add-title")
-            Picker("Classification", selection: $classification) {
+            Picker("Classification", selection: classification) {
                 ForEach(FirstMateLinkClassification.allCases) { value in
                     Text(value.title).tag(value)
                 }
@@ -129,7 +150,7 @@ struct FirstMateLinksView: View {
             HStack(spacing: 10) {
                 Button("Add link") { save() }
                     .buttonStyle(.borderedProminent)
-                    .disabled(store.isSavingLink || draft.isEmpty || !store.canManageLinks || !store.canMutateLinks)
+                    .disabled(store.isSavingLink || draftState.draft.isEmpty || !store.canManageLinks || !store.canMutateLinks)
                     .accessibilityIdentifier("first-mate-link-add-submit")
                 if store.isSavingLink {
                     ProgressView().controlSize(.small)
@@ -170,11 +191,15 @@ struct FirstMateLinksView: View {
 
     private func save() {
         let context = store.operationContext
-        let pending = FirstMateLinkDraft(url: draft.url, title: draft.title, kind: classification.kind)
+        let key = destinationKey
+        let pending = draftState.draft
+        guard !pending.isEmpty else { return }
         Task {
             guard await store.saveLink(pending, expectedContext: context) else { return }
-            draft = FirstMateLinkDraft()
-            classification = .automatic
+            // Clear only the submitted destination and only when the visible
+            // draft still matches it, so an edit made while the request was
+            // pending is never discarded.
+            drafts.complete(key, submitted: pending)
         }
     }
 }

@@ -32,6 +32,22 @@ final class HerdrFirstMateLinksUITests: HerdrUITestCase {
             "Pull requests should precede ordinary overview content"
         )
 
+        // Manage links navigates straight to the Links collection.
+        let manageLinks = control("first-mate-pr-manage-links", in: main)
+        XCTAssertTrue(manageLinks.waitForExistence(timeout: 5))
+        manageLinks.click()
+        let managedPicker = control("first-mate-documents-picker", in: main)
+        XCTAssertTrue(managedPicker.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            control("first-mate-link-add-url", in: main).waitForExistence(timeout: 5),
+            "Manage links should open the Links collection directly"
+        )
+        XCTAssertFalse(
+            control("first-mate-document-doc-demo-planner", in: main).exists,
+            "The Links collection must not list document rows"
+        )
+        selectSegment("Documents", in: managedPicker, app: app)
+
         // The same PR leads Documents, above the Documents/Links control.
         control("first-mate-tab-documents", in: main).click()
         let documentsSection = control("first-mate-pr-section-documents", in: main)

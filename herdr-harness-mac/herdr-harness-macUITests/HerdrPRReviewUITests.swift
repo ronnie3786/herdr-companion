@@ -320,6 +320,211 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
         saveWindowScreenshot("pr-review-pop-out-second", window: secondWindow, directory: screenshotDirectory)
     }
 
+    // MARK: - Deleted-file disclosure
+
+    @MainActor
+    func testDeletedFilesAreMarkedCollapsedAndExpandThroughControls() throws {
+        let app = launchDemoApp()
+        defer { app.terminate() }
+        _ = openPRReview(app)
+        let main = mainWindow(in: app)
+
+        // R1: a modified file that contains removal lines is never labeled deleted.
+        let modifiedRow = control("pr-review-file-0", in: main)
+        XCTAssertTrue(modifiedRow.waitForExistence(timeout: 10))
+        XCTAssertEqual(deletedBadgeCount(in: modifiedRow), 0,
+                       "A modified file with removal lines must not carry a Deleted badge")
+        XCTAssertFalse(control("pr-review-deleted-indicator", in: main).exists)
+
+        // R1/R3: filtering leaves the deleted source file as the only visible row,
+        // so the rail badge and the collapsed default are unambiguous.
+        setFileFilter(SyntheticReview.deletedSourceSearchTerm, in: main, app: app)
+        let deletedRow = control("pr-review-file-0", in: main)
+        XCTAssertTrue(deletedRow.waitForExistence(timeout: 5))
+        let deletedBadge = control("pr-review-file-deleted-0", in: main)
+        XCTAssertTrue(deletedBadge.waitForExistence(timeout: 5),
+                      "The file rail should label a deleted file with readable text")
+        XCTAssertEqual(deletedBadge.label, "Deleted file")
+        deletedRow.click()
+
+        XCTAssertTrue(headerPath(SyntheticReview.deletedSourcePath, in: main).waitForExistence(timeout: 5))
+        XCTAssertTrue(control("pr-review-deleted-indicator", in: main).waitForExistence(timeout: 5),
+                      "The selected deleted file's header should repeat the Deleted indicator")
+        XCTAssertTrue(text(SyntheticReview.deletedSourceSummary, in: main).waitForExistence(timeout: 5))
+        XCTAssertTrue(control("pr-review-deleted-content-hidden", in: main).waitForExistence(timeout: 10),
+                      "A selected deleted file should explain that its content is hidden")
+        XCTAssertTrue(main.webViews.firstMatch.waitForNonExistence(timeout: 5),
+                      "A collapsed deleted file must not mount the code renderer")
+
+        let disclosure = control("pr-review-deleted-content-disclosure", in: main)
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 5))
+        XCTAssertEqual(disclosure.label, "Show deleted content")
+        XCTAssertEqual(disclosure.value as? String, "Collapsed")
+        XCTAssertTrue(disclosure.isEnabled)
+
+        // R2 pointer path: Show deleted content reveals the removal hunk and
+        // the same control hides it again.
+        disclosure.click()
+        XCTAssertTrue(waitForDiffText(SyntheticReview.deletedSourceRemovedLine, in: main),
+                      "Expanding a deleted source file must reveal its removed code")
+        XCTAssertEqual(disclosure.label, "Hide deleted content")
+        XCTAssertEqual(disclosure.value as? String, "Expanded")
+        disclosure.click()
+        XCTAssertTrue(control("pr-review-deleted-content-hidden", in: main).waitForExistence(timeout: 5))
+        XCTAssertTrue(main.webViews.firstMatch.waitForNonExistence(timeout: 5),
+                      "Hide deleted content must unmount the code renderer")
+        XCTAssertEqual(disclosure.value as? String, "Collapsed")
+
+        // R2 keyboard path: Tab establishes focus on the disclosure and Space
+        // expands and collapses it. No pointer press touches the disclosure
+        // below, so this only passes when keyboard activation really works.
+        setFileFilter(SyntheticReview.deletedSourceSearchTerm, in: main, app: app)
+        focusWithTab(disclosure, in: main, app: app)
+        app.typeKey(.space, modifierFlags: [])
+        XCTAssertTrue(waitForDiffText(SyntheticReview.deletedSourceRemovedLine, in: main),
+                      "Space on the keyboard-focused disclosure must expand deleted content")
+        XCTAssertEqual(disclosure.value as? String, "Expanded")
+        app.typeKey(.space, modifierFlags: [])
+        XCTAssertTrue(control("pr-review-deleted-content-hidden", in: main).waitForExistence(timeout: 5),
+                      "Space on the keyboard-focused disclosure must collapse deleted content")
+        XCTAssertEqual(disclosure.value as? String, "Collapsed")
+
+        // Disclosure survives keyboard file navigation in both states.
+        setFileFilter("Legacy", in: main, app: app)
+        XCTAssertTrue(control("pr-review-file-1", in: main).waitForExistence(timeout: 5))
+        disclosure.click()
+        XCTAssertTrue(waitForDiffText(SyntheticReview.deletedSourceRemovedLine, in: main))
+        app.typeKey(.downArrow, modifierFlags: .option)
+        XCTAssertTrue(headerPath(SyntheticReview.deletedLongPath, in: main).waitForExistence(timeout: 5),
+                      "⌥↓ should move keyboard selection to the next deleted file")
+        XCTAssertTrue(control("pr-review-deleted-content-hidden", in: main).waitForExistence(timeout: 5),
+                      "A deleted file the reviewer has not disclosed stays collapsed")
+        app.typeKey(.upArrow, modifierFlags: .option)
+        XCTAssertTrue(headerPath(SyntheticReview.deletedSourcePath, in: main).waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForDiffText(SyntheticReview.deletedSourceRemovedLine, in: main),
+                      "An expanded deleted file stays expanded after navigating away and back")
+        disclosure.click()
+        XCTAssertTrue(control("pr-review-deleted-content-hidden", in: main).waitForExistence(timeout: 5))
+        app.typeKey(.downArrow, modifierFlags: .option)
+        app.typeKey(.upArrow, modifierFlags: .option)
+        XCTAssertTrue(headerPath(SyntheticReview.deletedSourcePath, in: main).waitForExistence(timeout: 5))
+        XCTAssertTrue(control("pr-review-deleted-content-hidden", in: main).waitForExistence(timeout: 5),
+                      "A collapsed deleted file stays collapsed across keyboard navigation")
+
+        // Long path: the complete path stays accessible and disclosure works.
+        app.typeKey(.downArrow, modifierFlags: .option)
+        XCTAssertTrue(headerPath(SyntheticReview.deletedLongPath, in: main).waitForExistence(timeout: 5))
+        XCTAssertTrue(control("pr-review-deleted-indicator", in: main).waitForExistence(timeout: 5))
+        XCTAssertTrue(text(SyntheticReview.deletedLongPathSummary, in: main).waitForExistence(timeout: 5))
+        XCTAssertTrue(control("pr-review-deleted-content-hidden", in: main).waitForExistence(timeout: 5))
+        disclosure.click()
+        XCTAssertTrue(waitForDiffText(SyntheticReview.deletedLongPathRemovedLine, in: main),
+                      "A long-path deleted file expands like any other")
+        disclosure.click()
+        XCTAssertTrue(control("pr-review-deleted-content-hidden", in: main).waitForExistence(timeout: 5))
+
+        // Prose: the same disclosure works for a deleted document.
+        setFileFilter(SyntheticReview.deletedProseSearchTerm, in: main, app: app)
+        let proseRow = control("pr-review-file-0", in: main)
+        XCTAssertTrue(proseRow.waitForExistence(timeout: 5))
+        XCTAssertTrue(control("pr-review-file-deleted-0", in: main).waitForExistence(timeout: 5))
+        proseRow.click()
+        XCTAssertTrue(headerPath(SyntheticReview.deletedProsePath, in: main).waitForExistence(timeout: 5))
+        XCTAssertTrue(control("pr-review-deleted-indicator", in: main).waitForExistence(timeout: 5))
+        XCTAssertTrue(text(SyntheticReview.deletedProseSummary, in: main).waitForExistence(timeout: 5))
+        XCTAssertTrue(control("pr-review-deleted-content-hidden", in: main).waitForExistence(timeout: 5))
+        XCTAssertTrue(main.webViews.firstMatch.waitForNonExistence(timeout: 5))
+        disclosure.click()
+        XCTAssertTrue(waitForDiffText(SyntheticReview.deletedProseRemovedLine, in: main),
+                      "Expanding a deleted prose file must reveal its removed text")
+        disclosure.click()
+        XCTAssertTrue(control("pr-review-deleted-content-hidden", in: main).waitForExistence(timeout: 5))
+
+        // Ask AI on expanded removed code. A nonempty draft blocks collapse.
+        setFileFilter(SyntheticReview.deletedSourceSearchTerm, in: main, app: app)
+        let sourceRow = control("pr-review-file-0", in: main)
+        XCTAssertTrue(sourceRow.waitForExistence(timeout: 5))
+        sourceRow.click()
+        disclosure.click()
+        XCTAssertTrue(waitForDiffText(SyntheticReview.deletedSourceRemovedLine, in: main))
+        let diff = main.webViews.firstMatch
+        XCTAssertTrue(diff.waitForExistence(timeout: 10))
+        diff.click()
+        app.typeKey("a", modifierFlags: .command)
+        diff.rightClick()
+        guard let question = waitForFirst(
+            of: [app.textFields["pr-review-ask-field"], app.control(identifier: "pr-review-ask-field")],
+            timeout: 5
+        ) else {
+            XCTFail("Selecting removed code should offer Ask AI; tree: \(app.debugDescription)")
+            return
+        }
+        question.click()
+        question.typeText(SyntheticReview.deletedSourceQuestion)
+        XCTAssertEqual(question.value as? String, SyntheticReview.deletedSourceQuestion)
+        XCTAssertTrue(waitForDisabled(disclosure),
+                      "A nonempty Ask AI draft must protect the expanded deleted content")
+        XCTAssertTrue(waitForDiffText(SyntheticReview.deletedSourceRemovedLine, in: main),
+                      "The removed code stays visible while the draft is open")
+        let cancel = app.buttons["Cancel"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+        cancel.click()
+        XCTAssertTrue(waitForEnabled(disclosure), "Cancelling the draft should re-enable the disclosure")
+        disclosure.click()
+        XCTAssertTrue(control("pr-review-deleted-content-hidden", in: main).waitForExistence(timeout: 5))
+        XCTAssertTrue(main.webViews.firstMatch.waitForNonExistence(timeout: 5))
+
+        saveScreenshot("pr-review-deleted-files", app: app, directory: screenshotDirectory)
+    }
+
+    @MainActor
+    func testDeletedDisclosureIsIndependentBetweenMainAndPopOutWindows() throws {
+        let app = launchDemoApp()
+        defer { app.terminate() }
+        _ = openPRReview(app)
+        let main = mainWindow(in: app)
+
+        setFileFilter(SyntheticReview.deletedSourceSearchTerm, in: main, app: app)
+        let row = control("pr-review-file-0", in: main)
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        row.click()
+
+        let mainDisclosure = control("pr-review-deleted-content-disclosure", in: main)
+        XCTAssertTrue(mainDisclosure.waitForExistence(timeout: 10))
+        XCTAssertEqual(mainDisclosure.value as? String, "Collapsed")
+        mainDisclosure.click()
+        XCTAssertTrue(waitForDiffText(SyntheticReview.deletedSourceRemovedLine, in: main))
+
+        choosePopOut(SyntheticReview.firstID, from: headerAnchor(in: main), in: app)
+        let window = waitForReviewWindow(SyntheticReview.firstID, in: app)
+        let windowDisclosure = control("pr-review-deleted-content-disclosure", in: window)
+        XCTAssertTrue(windowDisclosure.waitForExistence(timeout: 10))
+        XCTAssertEqual(windowDisclosure.value as? String, "Collapsed",
+                       "A popped-out window starts with its own collapsed deleted content")
+        XCTAssertTrue(control("pr-review-deleted-content-hidden", in: window).waitForExistence(timeout: 5))
+        XCTAssertTrue(window.webViews.firstMatch.waitForNonExistence(timeout: 5))
+
+        windowDisclosure.click()
+        XCTAssertTrue(waitForDiffText(SyntheticReview.deletedSourceRemovedLine, in: window))
+        XCTAssertEqual(mainDisclosure.value as? String, "Expanded",
+                       "Expanding in the pop-out must not collapse the main window")
+        XCTAssertTrue(waitForDiffText(SyntheticReview.deletedSourceRemovedLine, in: main))
+
+        bringForward(mainDisclosure, in: app)
+        mainDisclosure.click()
+        XCTAssertTrue(control("pr-review-deleted-content-hidden", in: main).waitForExistence(timeout: 5))
+        XCTAssertTrue(main.webViews.firstMatch.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(windowDisclosure.value as? String, "Expanded",
+                       "Collapsing in the main window must not collapse the pop-out")
+        XCTAssertTrue(waitForDiffText(SyntheticReview.deletedSourceRemovedLine, in: window))
+
+        bringForward(windowDisclosure, in: app, windowTitle: SyntheticReview.firstTitle)
+        windowDisclosure.click()
+        XCTAssertTrue(control("pr-review-deleted-content-hidden", in: window).waitForExistence(timeout: 5))
+
+        saveWindowScreenshot("pr-review-deleted-window", window: window, directory: screenshotDirectory)
+    }
+
     // MARK: - Shared steps
 
     /// Opens the review rail and returns with both synthetic active reviews
@@ -417,6 +622,130 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
         window.staticTexts
             .matching(NSPredicate(format: "label == %@ OR value == %@", title, title))
             .firstMatch
+    }
+
+    /// The complete path in the selected-file header, where long paths stay
+    /// available to accessibility even when the row truncates for layout.
+    @MainActor
+    private func headerPath(_ path: String, in window: XCUIElement) -> XCUIElement {
+        window.staticTexts
+            .matching(NSPredicate(format: "label == %@ OR value == %@", path, path))
+            .firstMatch
+    }
+
+    /// Visible SwiftUI text scoped to one window, matching either AXLabel or
+    /// AXValue. The app-wide helper in the support file cannot be scoped.
+    @MainActor
+    private func text(_ fragment: String, in window: XCUIElement) -> XCUIElement {
+        window.staticTexts
+            .matching(NSPredicate(format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@", fragment, fragment))
+            .firstMatch
+    }
+
+    /// How many textual Deleted badges a file row publishes.
+    @MainActor
+    private func deletedBadgeCount(in row: XCUIElement) -> Int {
+        row.descendants(matching: .any)
+            .matching(NSPredicate(
+                format: "label == %@ OR identifier BEGINSWITH %@",
+                "Deleted file",
+                "pr-review-file-deleted-"
+            ))
+            .count
+    }
+
+    /// Replaces the rail search text while keeping file order deterministic.
+    @MainActor
+    private func setFileFilter(
+        _ term: String,
+        in window: XCUIElement,
+        app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let search = window.textFields["Filter files"]
+        XCTAssertTrue(
+            search.waitForExistence(timeout: 5),
+            "The review rail should keep its file filter",
+            file: file,
+            line: line
+        )
+        search.click()
+        app.typeKey("a", modifierFlags: .command)
+        search.typeText(term)
+    }
+
+    /// Polls for a deleted file's removed text in the window's mounted renderer.
+    @MainActor
+    private func waitForDiffText(
+        _ fragment: String,
+        in window: XCUIElement,
+        timeout: TimeInterval = 10
+    ) -> Bool {
+        let diff = window.webViews.firstMatch
+        guard diff.waitForExistence(timeout: timeout) else { return false }
+        let expected = fragment.filter { !$0.isWhitespace }
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            let rendered = diff.staticTexts.allElementsBoundByIndex.map {
+                ($0.value as? String) ?? $0.label
+            }.joined()
+            if rendered.filter({ !$0.isWhitespace }).contains(expected) { return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        } while Date() < deadline
+        return false
+    }
+
+    @MainActor
+    private func waitForEnabled(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if element.exists && element.isEnabled { return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        } while Date() < deadline
+        return element.exists && element.isEnabled
+    }
+
+    @MainActor
+    private func waitForDisabled(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if element.exists && !element.isEnabled { return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        } while Date() < deadline
+        return element.exists && !element.isEnabled
+    }
+
+    /// Whether `element` owns keyboard focus. macOS does not expose
+    /// `XCUIElement.hasFocus`, but XCUITest matches the AX
+    /// `hasKeyboardFocus` attribute through a predicate.
+    @MainActor
+    private func hasKeyboardFocus(_ element: XCUIElement, in window: XCUIElement) -> Bool {
+        guard element.exists, !element.identifier.isEmpty else { return false }
+        return window.descendants(matching: .any)
+            .matching(identifier: element.identifier)
+            .matching(NSPredicate(format: "hasKeyboardFocus == 1"))
+            .firstMatch
+            .exists
+    }
+
+    /// Moves keyboard focus onto `element` with Tab alone and fails rather
+    /// than clicking, so the assertions that follow are keyboard-only.
+    @MainActor
+    private func focusWithTab(
+        _ element: XCUIElement,
+        in window: XCUIElement,
+        app: XCUIApplication,
+        attempts: Int = 64,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard !hasKeyboardFocus(element, in: window) else { return }
+        for _ in 0..<attempts {
+            app.typeKey(.tab, modifierFlags: [])
+            if hasKeyboardFocus(element, in: window) { return }
+        }
+        XCTFail("Tab should move keyboard focus onto the deleted-content disclosure", file: file, line: line)
     }
 
     /// The header's additions/deletions summary is unique to the review detail,
@@ -572,7 +901,22 @@ private enum SyntheticReview {
     static let secondTitle = "Tune watering reminders"
     static let firstDiff = "struct SeedCatalog {}"
     static let secondDiff = "struct ReminderSchedule {}"
-    static let firstAdditionsSummary = "+84 −12"
+    static let firstAdditionsSummary = "+84 −23"
+
+    // Deleted-file fixtures appended to the first synthetic review by
+    // `PRReviewDemo`, indexed after the seven original files.
+    static let deletedSourcePath = "Sources/Legacy/SeedCatalogMigration.swift"
+    static let deletedSourceSearchTerm = "SeedCatalogMigration.swift"
+    static let deletedSourceSummary = "Deleted · 5 lines removed"
+    static let deletedSourceRemovedLine = "struct SeedCatalogMigration {"
+    static let deletedSourceQuestion = "Why remove this synthetic migration helper?"
+    static let deletedProsePath = "Docs/Guides/seed-catalog-rollout.md"
+    static let deletedProseSearchTerm = "seed-catalog-rollout.md"
+    static let deletedProseSummary = "Deleted · 4 lines removed"
+    static let deletedProseRemovedLine = "Retire this archived copy."
+    static let deletedLongPath = "Sources/Legacy/Compatibility/SeedCatalogLegacyCompatibilityShimsAndMigrationHelpers.swift"
+    static let deletedLongPathSummary = "Deleted · 2 lines removed"
+    static let deletedLongPathRemovedLine = "enum SeedCatalogLegacyCompatibilityShims { static let enabled = false }"
 
     static func rowIdentifier(_ reviewID: String) -> String {
         "pr-review-review-\(reviewID)"

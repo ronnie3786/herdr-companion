@@ -87,9 +87,9 @@ marks a file viewed (also on GitHub when syncing is enabled). **Rank files** re-
 `herdr-pr-review set-rankings` lets an agent supply its own.
 
 **Diff and Ask AI.** PR Review, Chat Git and First Mate Git use one shared code renderer and theme: syntax-highlighted code, roomier lines, old/new line numbers, full-width green/red row tints, stronger gutters and changed-word emphasis. The PR Review renderer is bundled in the Mac app; rendering a loaded patch does not fetch scripts, fonts or grammars from the network. Review-specific selection and navigation are adapters around that renderer; the existing Git workbench retains its split/unified and wrap controls.
-Deleted text files show their removal hunks. Long files scroll vertically
-and horizontally. If the patch is truncated, Herdr shows every available hunk with a partial-diff
-notice and a link to the full diff. Select code and choose **Ask AI** (floating button or right-click).
+Deleted text files carry a textual **Deleted** label in the file rail and the selected-file header and start collapsed. The selected file shows its path and a compact removal summary with a **Show deleted content** control instead of its removed lines; **Show deleted content** mounts the shared renderer for the available removal hunks, and **Hide deleted content** unmounts it again. The choice is per file and held in memory for the current host, review, base SHA and head SHA in each window: it survives file navigation, viewed updates and unchanged polling, and resets for another host, review, revision, a newly opened window, or an app relaunch. It never syncs between clients and is independent between the main window and pop-outs. A modified file that only removes lines stays expanded normally; deletion is always the companion's explicit `deleted` status, never a removal count or an all-red hunk. A deleted binary or hunk-less diff keeps its honest message instead of offering a control with no effect. Long files scroll vertically
+and horizontally, and the selected-file action row wraps onto another line when enlarged text or a minimum-size window would otherwise crowd it. If the patch is truncated, Herdr shows every available hunk with a partial-diff
+notice and a link to the full diff; a deleted file keeps that notice and link available while its content is hidden. An explicit line-navigation or highlight request for a collapsed deleted file reveals its content so the requested line is reachable, while hiding drops its reported visible lines and a stale request never reopens what was hidden manually. While an Ask AI selection draft is nonempty, hiding is unavailable so the draft cannot be discarded, and the control is focusable and announces its **Expanded** or **Collapsed** state to keyboard and VoiceOver users. Disclosure is presentation-only: it never marks a file viewed, submits a question, alters the patch, or changes the review. Select code and choose **Ask AI** (floating button or right-click).
 The question carries the file, the exact selection, whether it is on the before or after side,
 the line range, up to 40 surrounding lines, the PR summary, and the review agents' findings for
 that file as reference only. Answers come from the `pr-review-question-v1` profile: a Pi run
@@ -228,11 +228,16 @@ for byte, so an improvement cannot silently ship to only one surface.
 - Python: `.venv/bin/python -m unittest tests.test_pr_review_store tests.test_pr_review_runtime tests.test_pr_review_http tests.test_pr_review_cli tests.test_pr_review_questions tests.test_pr_review_diff`.
 - Mac unit (required exact-SHA Verify): `xcodebuild … test -only-testing:herdr-harness-macTests/PRReview*`.
   That suite covers the client contract, store and window scoping, routing identity, saved
-  question persistence, refresh presentation, the local WebKit renderer and synthetic demo layouts.
+  question persistence, refresh presentation, deleted-file disclosure and renderer mounting,
+  the local WebKit renderer and synthetic demo layouts.
 - Mac interactive (final gate): `xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test -only-testing:herdr-harness-macUITests/HerdrPRReviewUITests`.
   That suite exercises the row and header context menus, two concurrent review windows with
   independent tabs and files, chat navigation with an unsent draft, duplicate-window focus, and
-  close-versus-archive. It is recorded as pending until the final gate executes it; generated
+  close-versus-archive. Deleted-file coverage selects the synthetic deleted source, prose and
+  long-path fixtures, verifies the textual Deleted label and the collapsed default with no mounted
+  renderer, expands and collapses the removal hunks through Show/Hide deleted content, checks
+  keyboard navigation and independent main/pop-out choices, and proves a nonempty Ask AI draft
+  blocks collapse. It is recorded as pending until the final gate executes it; generated
   render PNGs and screenshots are layout evidence, not installed-app verification.
 - Manual: [MANUAL_TEST_CHECKLIST.md](../herdr-harness-mac/MANUAL_TEST_CHECKLIST.md) → PR Review,
   including the production Git renderer comparison and simultaneous review/chat windows.
@@ -253,3 +258,7 @@ for byte, so an improvement cannot silently ship to only one surface.
 - Pop-out windows are secondary Mac windows inside the same process, not separate launches.
   They share the app's credentials and reuse the machine/review-scoped PR Review endpoints, so
   they add no server capability beyond `pr-review-v1`.
+- Deleted-file disclosure is window-local, in-memory presentation. It survives file navigation and
+  unchanged refreshes in the same window, but resets for another host, review, base/head revision,
+  a newly opened window, or an app relaunch; it is never synchronized and never changes viewed
+  state or the patch. No companion support beyond `pr-review-v1` is required.

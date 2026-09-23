@@ -19,6 +19,16 @@ struct PRReviewDiffRequestIdentity: Equatable, Hashable, Sendable {
     let headSHA: String
 }
 
+/// One window's deleted-file disclosure belongs to a single host, review, base
+/// SHA, and head SHA. Metadata-only review revision bumps deliberately do not
+/// reset it.
+struct PRReviewDeletedDisclosureScope: Equatable {
+    let machineID: String?
+    let reviewID: String
+    let baseSHA: String
+    let headSHA: String
+}
+
 @MainActor
 @Observable
 final class PRReviewStore {
@@ -47,6 +57,12 @@ final class PRReviewStore {
     var highlight: (path: String, start: Int, end: Int, side: PRReviewSide)?
     var scrollRequest: (path: String, line: Int, side: PRReviewSide, token: Int)?
     var visibleLines: (path: String, start: Int, end: Int, side: PRReviewSide)?
+    /// Window-local disclosure of deleted-file content, keyed by the full path
+    /// within one host, review, base SHA, and head SHA. Choices survive file
+    /// navigation and unchanged polling but never leak into another review or
+    /// revision.
+    private(set) var expandedDeletedPaths: Set<String> = []
+    @ObservationIgnored private var deletedDisclosureScope: PRReviewDeletedDisclosureScope?
     var isCreating = false
     /// Sheet presentation is separate from the request-in-flight state above.
     var isPresentingStartSheet = false
@@ -156,6 +172,8 @@ final class PRReviewStore {
         capabilities = nil
         documentUploads = [:]
         contextImportError = nil
+        expandedDeletedPaths = []
+        deletedDisclosureScope = nil
 
         if demo {
             reviews = PRReviewDemo.reviews()
@@ -175,6 +193,8 @@ final class PRReviewStore {
         completedDiffIdentity = nil
         selectedPath = nil
         error = nil
+        expandedDeletedPaths = []
+        deletedDisclosureScope = nil
     }
 
     /// Replaces the transport for the same machine and review without
@@ -191,6 +211,7 @@ final class PRReviewStore {
     /// following refresh reconciles uploads that did reach the server.
     func reconnect(client: (any PRReviewClient)?, machineID: String?, demo: Bool) {
         generation &+= 1
+        let machineChanged = self.machineID != machineID
         self.client = client
         self.machineID = machineID
         isDemo = demo
@@ -199,6 +220,10 @@ final class PRReviewStore {
         loadingDiffIdentity = nil
         diffLoadError = nil
         diffLoadErrorIdentity = nil
+        if machineChanged {
+            deletedDisclosureScope = nil
+            resetDeletedContentDisclosure()
+        }
         settleInterruptedProgress()
     }
 
@@ -399,6 +424,20 @@ final class PRReviewStore {
         return diffLoadError
     }
 
+    /// The loaded diff only while it belongs to the current review revision.
+    /// `receive()` retains the previous diff while its replacement loads, so
+    /// callers must validate review, base SHA, and head SHA before trusting
+    /// the retained content or its file statuses.
+    var currentDiff: PRReviewDiff? {
+        guard let diff,
+              let review = snapshot?.review ?? selectedReview,
+              diff.reviewID.isEmpty || diff.reviewID == review.id,
+              review.baseSHA.isEmpty || diff.baseSHA == review.baseSHA,
+              review.headSHA.isEmpty || diff.headSHA == review.headSHA
+        else { return nil }
+        return diff
+    }
+
     func loadDiff(for path: String?) async {
         guard let path,
               let selectedReviewID,
@@ -465,6 +504,7 @@ final class PRReviewStore {
 
         snapshot = value
         selectedReviewID = value.review.id
+        syncDeletedDisclosureScope(for: value.review)
         if reviews.contains(where: { $0.id == value.review.id }) || archivedReviews.contains(where: { $0.id == value.review.id }) {
             replaceReview(value.review)
         } else if value.review.archivedAt == nil {
@@ -1013,6 +1053,50 @@ final class PRReviewStore {
     func scroll(to path: String, line: Int, side: PRReviewSide) {
         selectedPath = path
         scrollRequest = (path, line, side, (scrollRequest?.token ?? 0) + 1)
+        revealDeletedContent(path: path)
+    }
+
+    /// True when the snapshot or the current revision's diff explicitly
+    /// reports `path` as deleted. Removal counts and filenames never decide,
+    /// and a diff retained from an earlier revision is not consulted.
+    func isDeletedFile(path: String) -> Bool {
+        if snapshot?.files.first(where: { $0.path == path })?.isDeleted == true { return true }
+        return currentDiff?.files.first(where: { $0.path == path })?.isDeleted == true
+    }
+
+    func isDeletedContentExpanded(path: String) -> Bool {
+        expandedDeletedPaths.contains(path)
+    }
+
+    /// Explicitly shows or hides a deleted file's removed lines. Hiding also
+    /// drops line-visibility reporting that belonged to the unmounted content.
+    func setDeletedContentExpanded(_ expanded: Bool, path: String) {
+        if expanded {
+            expandedDeletedPaths.insert(path)
+        } else {
+            expandedDeletedPaths.remove(path)
+            if visibleLines?.path == path {
+                visibleLines = nil
+            }
+        }
+    }
+
+    /// A new scroll or highlight request for a deleted file reveals its content
+    /// so the requested line can be reached. Only request transitions call
+    /// this, so an older request never reopens manually hidden content.
+    func revealDeletedContent(path: String) {
+        guard isDeletedFile(path: path) else { return }
+        expandedDeletedPaths.insert(path)
+    }
+
+    /// Records an explicit highlight request. The reveal happens here, once per
+    /// accepted request, instead of in a view `onChange`: repeating identical
+    /// coordinates is still a new request, and a request that arrives before
+    /// the Files view mounts is not lost. Ordinary rerenders never call this,
+    /// so they cannot reopen manually collapsed content.
+    func highlightLines(path: String, start: Int, end: Int, side: PRReviewSide) {
+        highlight = (path, start, end, side)
+        revealDeletedContent(path: path)
     }
 
     /// Reads and validates one upload attempt before it leaves the Mac.
@@ -1252,6 +1336,29 @@ final class PRReviewStore {
 
     private func operationScope(reviewID: String?) -> PRReviewOperationScope {
         PRReviewOperationScope(generation: generation, machineID: machineID, reviewID: reviewID)
+    }
+
+    /// Captures the host, review, and revision a disclosure choice belongs to.
+    /// The review's general revision counter is intentionally not part of the
+    /// scope: it also advances for metadata that does not invalidate content.
+    private func syncDeletedDisclosureScope(for review: PRReviewSummary) {
+        let scope = PRReviewDeletedDisclosureScope(
+            machineID: machineID,
+            reviewID: review.id,
+            baseSHA: review.baseSHA,
+            headSHA: review.headSHA
+        )
+        guard scope != deletedDisclosureScope else { return }
+        deletedDisclosureScope = scope
+        resetDeletedContentDisclosure()
+    }
+
+    private func resetDeletedContentDisclosure() {
+        let previouslyExpanded = expandedDeletedPaths
+        expandedDeletedPaths = []
+        if let visible = visibleLines, previouslyExpanded.contains(visible.path) {
+            visibleLines = nil
+        }
     }
 
     /// True while the operation still belongs to this store's configured

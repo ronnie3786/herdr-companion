@@ -389,7 +389,9 @@ private actor DiffResponseGate {
     }
 }
 
-private final class TestPRReviewClient: PRReviewClient, @unchecked Sendable {
+/// Shared by the PR Review store suites; internal so a deleted-file revision
+/// regression can drive a failing diff load with the same stub.
+final class TestPRReviewClient: PRReviewClient, @unchecked Sendable {
     private let delay: Duration?
     private let capabilitiesError: APIError?
     private let reviewError: APIError?

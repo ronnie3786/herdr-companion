@@ -46,6 +46,49 @@ struct AgentControlRoutingTests {
         }
     }
 
+    @Test("Highlighting a deleted file's line reveals its content at request ingestion")
+    func prReviewHighlightRevealsDeletedContentAtIngestion() async throws {
+        let fixture = makeFixture()
+        fixture.shell.configurePRReviewIfNeeded(
+            configuration: nil,
+            machineID: "demo",
+            connectionGeneration: fixture.model.connectionGeneration,
+            isDemo: true
+        )
+        await fixture.shell.prReview.refresh()
+        fixture.shell.show(.prReview, model: fixture.model)
+        let path = try #require(
+            fixture.shell.prReview.snapshot?.files.first(where: { $0.isDeleted })?.path
+        )
+        #expect(!fixture.shell.prReview.isDeletedContentExpanded(path: path))
+
+        let parameters: [String: PiJSONValue] = [
+            "path": .string(path),
+            "start": .number(3),
+            "end": .number(3),
+            "side": .string("before"),
+        ]
+        _ = try await fixture.controller.executeForTesting(
+            command(action: "pr-review.highlight-lines", parameters: parameters),
+            serverMapping: [:]
+        )
+
+        #expect(fixture.shell.prReview.highlight?.path == path)
+        #expect(fixture.shell.prReview.isDeletedContentExpanded(path: path),
+                "The agent-control command must reveal deleted content at ingestion")
+
+        // An identical repeated request is accepted as a new request after a
+        // manual collapse instead of being ignored by coordinate equality.
+        fixture.shell.prReview.setDeletedContentExpanded(false, path: path)
+        #expect(!fixture.shell.prReview.isDeletedContentExpanded(path: path))
+        _ = try await fixture.controller.executeForTesting(
+            command(action: "pr-review.highlight-lines", parameters: parameters),
+            serverMapping: [:]
+        )
+        #expect(fixture.shell.prReview.isDeletedContentExpanded(path: path),
+                "Repeating the same highlight must reveal the content again")
+    }
+
     @Test("Exact pane routing rejects stale terminal, session, and server identities while accepting CLI aliases")
     func staleIdentityRejection() async throws {
         let fixture = makeFixture()

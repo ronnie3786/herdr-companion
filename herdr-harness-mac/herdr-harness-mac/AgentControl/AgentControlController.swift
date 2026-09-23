@@ -728,7 +728,15 @@ final class AgentControlController {
             let visible = await Self.waitForVisibleLine(path: path, line: Int(line), side: side, store: shell.prReview)
             return .completed(["path": .string(path), "line": .number(line), "side": .string(side.rawValue), "visible": .bool(visible)])
         case "pr-review.highlight-lines":
-            try requirePRReviewOpen(shell: shell, model: model); let path = try requiredString("path", command.parameters); guard case let .number(start)? = command.parameters["start"], case let .number(end)? = command.parameters["end"] else { throw AgentControlCommandError.invalid("Missing line range.") }; let side = command.parameters["side"]?.stringValue.flatMap(PRReviewSide.init(rawValue:)) ?? .after; shell.prReview.highlight = (path, Int(start), Int(end), side); stateDidChange(); return .completed(["path": .string(path), "start": .number(start), "end": .number(end), "side": .string(side.rawValue)])
+            try requirePRReviewOpen(shell: shell, model: model)
+            let path = try requiredString("path", command.parameters)
+            guard case let .number(start)? = command.parameters["start"], case let .number(end)? = command.parameters["end"] else {
+                throw AgentControlCommandError.invalid("Missing line range.")
+            }
+            let side = command.parameters["side"]?.stringValue.flatMap(PRReviewSide.init(rawValue:)) ?? .after
+            shell.prReview.highlightLines(path: path, start: Int(start), end: Int(end), side: side)
+            stateDidChange()
+            return .completed(["path": .string(path), "start": .number(start), "end": .number(end), "side": .string(side.rawValue)])
         case "pr-review.clear-highlight":
             try requirePRReviewOpen(shell: shell, model: model); shell.prReview.highlight = nil; stateDidChange(); return .completed()
         case "pr-review.set-filter":

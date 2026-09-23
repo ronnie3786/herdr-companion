@@ -51,6 +51,75 @@ struct PRReviewDiffTextTests {
         #expect(PRReviewDiffRenderer.patch(for: deleted).contains("+++ /dev/null"))
     }
 
+    @Test("Deleted files render removal hunks with original-side line numbers")
+    @MainActor
+    func deletedFileRemovalHunksKeepOldSideEvidence() async throws {
+        let file = deletedFixture()
+        let patch = PRReviewDiffRenderer.patch(for: file)
+        #expect(patch.contains("deleted file mode 100644"))
+        #expect(patch.contains("+++ /dev/null"))
+        #expect(patch.contains("-let obsoleteSeed = 1"))
+
+        let mounted = mount(file: file)
+        defer { mounted.view.tearDown(); mounted.window.close() }
+        let ready = await waitUntil { mounted.view.isRendererReady && mounted.view.renderedIdentity != nil }
+        try #require(ready)
+        #expect(mounted.view.renderedPlainText.contains("-let obsoleteSeed = 1"))
+        #expect(mounted.view.renderedPlainText.contains("-let legacySeed = 2"))
+
+        var result: [String: Any]?
+        for _ in 0..<100 {
+            if let evaluated = try? await mounted.view.evaluateJavaScript("""
+            (() => {
+              const root = document.querySelector('diffs-container')?.shadowRoot;
+              if (!root) return null;
+              const line = root.querySelector('[data-line="6"]');
+              if (!line) return null;
+              return {
+                type: line.getAttribute('data-line-type'),
+                text: line.textContent
+              };
+            })()
+            """) {
+                result = evaluated as? [String: Any]
+            }
+            if result != nil { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let values = try #require(result)
+        #expect((values["type"] as? String)?.contains("deletion") == true)
+        #expect((values["text"] as? String)?.contains("let obsoleteSeed = 1") == true)
+    }
+
+    @Test("A before-side highlight marks the removal line in a deleted file")
+    @MainActor
+    func beforeSideHighlightMarksDeletedRemovalLine() async throws {
+        let mounted = mount(
+            file: deletedFixture(),
+            size: CGSize(width: 700, height: 260),
+            highlight: (start: 6, end: 6, side: .before)
+        )
+        defer { mounted.view.tearDown(); mounted.window.close() }
+        let ready = await waitUntil { mounted.view.isRendererReady && mounted.view.renderedIdentity != nil }
+        try #require(ready)
+
+        var marked = false
+        for _ in 0..<100 {
+            if let evaluated = try? await mounted.view.evaluateJavaScript("""
+            (() => {
+              const root = document.querySelector('diffs-container')?.shadowRoot;
+              const line = root?.querySelector('[data-line="6"]');
+              return line?.hasAttribute('data-selected-line') === true;
+            })()
+            """) {
+                marked = (evaluated as? Bool) ?? false
+            }
+            if marked { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(marked, "A before-side highlight must mark the deletion line, not an after-side line")
+    }
+
     @Test("Payload carries font scale and highlighted side")
     func payloadCarriesPresentationInputs() throws {
         let payload = PRReviewDiffRenderer.payload(
@@ -177,12 +246,38 @@ struct PRReviewDiffTextTests {
     }
 
     @MainActor
+    private func deletedFixture() -> PRReviewDiffFile {
+        var file = PRReviewDemo.diff().files[0]
+        file.status = "deleted"
+        file.hunks = [
+            .init(
+                oldStart: 6,
+                oldLines: 2,
+                newStart: 0,
+                newLines: 0,
+                header: "@@",
+                lines: [
+                    .init(kind: "del", oldNumber: 6, newNumber: nil, text: "let obsoleteSeed = 1"),
+                    .init(kind: "del", oldNumber: 7, newNumber: nil, text: "let legacySeed = 2"),
+                ]
+            )
+        ]
+        return file
+    }
+
+    @MainActor
     private func mount(
         file: PRReviewDiffFile,
-        size: CGSize = CGSize(width: 760, height: 360)
+        size: CGSize = CGSize(width: 760, height: 360),
+        highlight: (start: Int, end: Int, side: PRReviewSide)? = nil
     ) -> (window: NSWindow, view: PRReviewDiffTextView) {
         let hosting = NSHostingView(rootView:
-            PRReviewDiffText(file: file, baseSHA: "synthetic-base", headSHA: "synthetic-head")
+            PRReviewDiffText(
+                file: file,
+                baseSHA: "synthetic-base",
+                headSHA: "synthetic-head",
+                highlight: highlight
+            )
                 .frame(width: size.width, height: size.height)
                 .environment(\.colorScheme, .dark)
         )

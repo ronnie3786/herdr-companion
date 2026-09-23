@@ -116,7 +116,11 @@ struct HerdrHudChatMetadataAccumulator: Equatable, Sendable {
             latestRunCostUSD = Self.validCost(sample.costUSD)
             latestRunModelName = Self.normalizedModelName(sample.modelName)
         }
-        knownTurnCount = max(expectedTurnCount, observedRunCount)
+        // The authoritative count is the only source of coverage. Never widen
+        // it to match the observed samples: extra samples mean the aggregate
+        // and the conversation disagree, and coverage must stay unknown rather
+        // than report a total that includes foreign turns.
+        knownTurnCount = expectedTurnCount
         return self != previous
     }
 
@@ -169,7 +173,11 @@ struct HerdrHudChatMetadataAccumulator: Equatable, Sendable {
             latestRunModelName = latest.modelName
         }
         if let expectedTurnCount {
-            knownTurnCount = max(expectedTurnCount, observedRunCount)
+            // Keep the authoritative count exactly. A sample list that holds
+            // more turns than that count contains foreign or duplicated turns;
+            // coverage stays unknown instead of summing them into a supposedly
+            // complete total.
+            knownTurnCount = expectedTurnCount
         }
         return self != previous
     }

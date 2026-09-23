@@ -1675,6 +1675,56 @@ struct HerdrHudChatsTests {
         #expect(session.bubbleMetadata.modelName == "Claude Sonnet 4.5")
     }
 
+    @Test("A passive refresh reconciles metadata for a latest run on a later page")
+    func passiveRefreshReconcilesPaginatedLatestMetadata() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let root = "agr_paginationmetadata"
+        for index in 0..<51 {
+            let id = HudChatsURLProtocol.appendExternal(root: root, prompt: "Turn \(index)")
+            HudChatsURLProtocol.setCost(id, 0.01)
+        }
+
+        let chatID = try await fixture.chats.openHistory(id: root, machineID: "synthetic", model: fixture.model)
+        let chat = try #require(fixture.chats.chats.first { $0.id == chatID })
+        #expect(chat.session.bubbleMetadata.cost == "$0.51")
+
+        // Page one holds fifty turns, so the latest sample is only visible on
+        // the second page. Its late report must still reach the aggregate.
+        let latest = try #require(chat.session.thread?.lastRunID)
+        HudChatsURLProtocol.setCost(latest, 0.99)
+        HudChatsURLProtocol.setModel(latest, "synthetic/claude-opus-4-5")
+        #expect(await chat.session.refreshSavedHistoryPassivelyForTesting(model: fixture.model))
+
+        #expect(chat.session.bubbleMetadata.cost == "$1.49")
+        #expect(chat.session.bubbleMetadata.modelName == "Claude Opus 4.5")
+    }
+
+    @Test("A passive refresh recovers a previously missing historical cost")
+    func passiveRefreshRecoversMissingHistoricalCost() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let root = "agr_missinghistory"
+        let first = HudChatsURLProtocol.appendExternal(root: root, prompt: "First turn")
+        HudChatsURLProtocol.setMissingCost(first, true)
+        let second = HudChatsURLProtocol.appendExternal(root: root, prompt: "Second turn")
+        HudChatsURLProtocol.setCost(second, 0.25)
+
+        let chatID = try await fixture.chats.openHistory(id: root, machineID: "synthetic", model: fixture.model)
+        let chat = try #require(fixture.chats.chats.first { $0.id == chatID })
+        #expect(chat.session.chatMetadata.hasEstablishedCoverage)
+        #expect(!chat.session.chatMetadata.isComplete)
+        #expect(chat.session.bubbleMetadata.cost == nil)
+
+        // The latest sample stays unchanged; the earlier turn's cost is what
+        // finally arrives, so the fast path must not skip reconciliation.
+        HudChatsURLProtocol.setMissingCost(first, false)
+        HudChatsURLProtocol.setCost(first, 0.15)
+        #expect(await chat.session.refreshSavedHistoryPassivelyForTesting(model: fixture.model))
+
+        #expect(chat.session.bubbleMetadata.cost == "$0.40")
+    }
+
     @Test("Observing a restored running turn keeps the bubble metadata live")
     func restoredRunningTurnKeepsMetadataLive() async throws {
         let fixture = try Fixture()
@@ -1770,6 +1820,7 @@ private final class HudChatsURLProtocol: URLProtocol, @unchecked Sendable {
         var starts: [Start] = []
         var statuses: [String: String] = [:]
         var runCosts: [String: Double] = [:]
+        var missingCostIDs: Set<String> = []
         var runModels: [String: String] = [:]
         var deleteCount = 0
         var cancellationCount = 0
@@ -1814,6 +1865,11 @@ private final class HudChatsURLProtocol: URLProtocol, @unchecked Sendable {
     static func setCost(_ id: String, _ cost: Double?) {
         state.withLock { state in
             if let cost { state.runCosts[id] = cost } else { state.runCosts[id] = nil }
+        }
+    }
+    static func setMissingCost(_ id: String, _ missing: Bool) {
+        state.withLock { state in
+            if missing { state.missingCostIDs.insert(id) } else { state.missingCostIDs.remove(id) }
         }
     }
     static func setModel(_ id: String, _ model: String?) {
@@ -1944,8 +2000,10 @@ private final class HudChatsURLProtocol: URLProtocol, @unchecked Sendable {
     private static func run(_ start: Start, state: State) -> [String: Any] {
         var run: [String: Any] = ["id": start.id, "status": state.statuses[start.id] ?? "running",
                                   "prompt": start.prompt, "createdAt": "2026-09-01T12:00:00Z",
-                                  "threadRootRunId": start.root, "sessionFile": "synthetic.jsonl",
-                                  "costUSD": state.runCosts[start.id] ?? 0]
+                                  "threadRootRunId": start.root, "sessionFile": "synthetic.jsonl"]
+        if !state.missingCostIDs.contains(start.id) {
+            run["costUSD"] = state.runCosts[start.id] ?? 0
+        }
         if let model = state.runModels[start.id] { run["model"] = model }
         if let cwd = start.cwd { run["cwd"] = cwd }
         if state.statuses[start.id] == "completed" { run["response"] = "Answer for \(start.prompt)" }

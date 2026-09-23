@@ -269,6 +269,54 @@ struct HerdrHudChatMetadataTests {
         #expect(unproven.totalCostUSD == nil)
     }
 
+    @Test("Reconcile keeps the authoritative count and never completes foreign coverage")
+    func reconcileDoesNotWidenAuthoritativeCoverage() {
+        var accumulator = Accumulator()
+        accumulator.reconcile(
+            machineID: "alpha",
+            rootRunID: "root-1",
+            expectedTurnCount: 1,
+            samples: [
+                Sample(id: "foreign-run", costUSD: 1.00, modelName: "Foreign Model"),
+                Sample(id: "run-1", costUSD: 2.00, modelName: "Current Model"),
+            ]
+        )
+
+        #expect(accumulator.observedRunCount == 2)
+        #expect(accumulator.knownTurnCount == 1)
+        #expect(!accumulator.hasEstablishedCoverage)
+        #expect(!accumulator.isComplete)
+        #expect(accumulator.totalCostUSD == nil)
+        #expect(accumulator.metadata.cost == nil)
+    }
+
+    @Test("A stale authoritative count keeps a newly accepted run's coverage unknown")
+    func staleAuthoritativeCountKeepsAcceptedRunUnknown() {
+        var accumulator = Accumulator()
+        accumulator.reconcile(
+            machineID: "alpha",
+            rootRunID: "root-1",
+            expectedTurnCount: 2,
+            samples: [
+                Sample(id: "run-1", costUSD: 1.00, modelName: nil),
+                Sample(id: "run-2", costUSD: 2.00, modelName: nil),
+            ]
+        )
+        #expect(accumulator.isComplete)
+
+        accumulator.recordAcceptedRun(
+            machineID: "alpha",
+            rootRunID: "root-1",
+            expectedTurnCount: 2,
+            sample: Sample(id: "run-3", costUSD: 3.00, modelName: nil)
+        )
+
+        #expect(accumulator.observedRunCount == 3)
+        #expect(!accumulator.hasEstablishedCoverage)
+        #expect(!accumulator.isComplete)
+        #expect(accumulator.totalCostUSD == nil)
+    }
+
     @Test("Changing machines or roots resets the aggregate for the same run ID")
     func identityReplacementResetsSamples() {
         var accumulator = Accumulator()

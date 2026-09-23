@@ -130,15 +130,17 @@ struct HerdrHudChatBubbleTests {
             isMuted: false,
             since: nil,
             emoji: "",
-            activity: "Running tests"
+            activity: "Compiling the synthetic fixture"
         )
-        let metadata = HerdrHudSessionMetadata(modelName: "Claude Sonnet 4.5", cost: "$0.37")
+        // Distinct synthetic values per bubble, so one surface's metadata text
+        // can never satisfy the other surface's assertion.
+        let agentMetadata = HerdrHudSessionMetadata(modelName: "Agentmark9", cost: "$9.99")
         let render = try await HerdrRenderHarness.render(
             showsModel ? "issue41-hud-chat-agent-model.png" : "issue41-hud-chat-agent-cost.png",
             size: CGSize(width: HerdrHudPlacement.chipWidth + 32, height: 300)
         ) {
             VStack(alignment: .leading, spacing: 12) {
-                HerdrHudSessionBubbleLabel(chip: agent, metadata: metadata)
+                HerdrHudSessionBubbleLabel(chip: agent, metadata: agentMetadata)
                 HerdrHudChatBubbleView(chat: chat, model: fixture.model, controller: fixture.controller)
             }
             .padding(16)
@@ -146,11 +148,46 @@ struct HerdrHudChatBubbleTests {
         }
         render.expectSubstantial(minimumBytes: 3_000)
 
-        let visible = try recognizedText(in: render.url)
+        let lines = try recognizedLines(in: render.url)
+        let visible = lines.map(\.text).joined(separator: " ")
+        let agentValue = showsModel ? "Agentmark9" : "$9.99"
+        let chatValue = showsModel ? "Fixture7" : "$0.37"
         #expect(visible.contains("HUD chat"))
         #expect(visible.contains("Running"))
-        #expect(visible.contains(showsModel ? "Sonnet 4.5" : "$0.37"))
+        // Normalized matching keeps this independent of OCR spacing.
+        #expect(normalizedText(visible).contains(normalizedText(agentValue)))
+        #expect(normalizedText(visible).contains(normalizedText(chatValue)))
         #expect(!visible.contains("Example Mac"))
+
+        // Both metadata rows must sit trailing on their own bubble's status
+        // row, without overlapping it, and the two bubbles must not overlap.
+        // Distinct values identify each row; per-substring boxes keep the
+        // checks honest even if OCR groups a whole row into one observation.
+        let agentMetadataLine = try #require(lines.first {
+            normalizedText($0.text).contains(normalizedText(agentValue))
+        })
+        let chatMetadataLine = try #require(lines.first {
+            normalizedText($0.text).contains(normalizedText(chatValue))
+        })
+        let agentStatusLine = try #require(lines.first {
+            $0.text.contains("Running") && verticalOverlap($0.boundingBox, agentMetadataLine.boundingBox) > 0
+        })
+        let chatStatusLine = try #require(lines.first {
+            $0.text.contains("Running") && verticalOverlap($0.boundingBox, chatMetadataLine.boundingBox) > 0
+        })
+        let agentMetadataBox = agentMetadataLine.boundingBox(for: agentValue)
+        let chatMetadataBox = chatMetadataLine.boundingBox(for: chatValue)
+        let agentStatusBox = agentStatusLine.boundingBox(for: "Running")
+        let chatStatusBox = chatStatusLine.boundingBox(for: "Running")
+        #expect(!agentMetadataBox.intersects(agentStatusBox))
+        #expect(!chatMetadataBox.intersects(chatStatusBox))
+        #expect(agentMetadataBox.minX >= agentStatusBox.maxX)
+        #expect(chatMetadataBox.minX >= chatStatusBox.maxX)
+        #expect(!agentMetadataBox.intersects(chatMetadataBox))
+        #expect(agentStatusBox.minY > chatStatusBox.maxY)
+        // Identical bubble widths and trailing alignment put both metadata
+        // rows on the same right edge.
+        #expect(abs(agentMetadataBox.maxX - chatMetadataBox.maxX) < 0.05)
         await fixture.stop()
     }
 
@@ -364,13 +401,27 @@ private extension HerdrHudChatBubbleTests {
     }
 
     func recognizedText(in url: URL) throws -> String {
+        try recognizedLines(in: url).map(\.text).joined(separator: " ")
+    }
+
+    func recognizedLines(in url: URL) throws -> [RecognizedLine] {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.minimumTextHeight = 0.005
         try HerdrOCR.perform(request, url: url)
-        return (request.results ?? [])
-            .compactMap { $0.topCandidates(1).first?.string }
-            .joined(separator: " ")
+        return (request.results ?? []).compactMap { observation in
+            guard let candidate = observation.topCandidates(1).first else { return nil }
+            return RecognizedLine(text: candidate.string, observation: observation)
+        }
+    }
+
+    /// Case- and spacing-insensitive text for OCR comparisons.
+    func normalizedText(_ text: String) -> String {
+        text.lowercased().filter { $0.isLetter || $0.isNumber }
+    }
+
+    func verticalOverlap(_ lhs: CGRect, _ rhs: CGRect) -> CGFloat {
+        max(0, min(lhs.maxY, rhs.maxY) - max(lhs.minY, rhs.minY))
     }
 
     func bitmap(of render: HerdrRenderHarness.RenderResult) throws -> NSBitmapImageRep {
@@ -414,6 +465,50 @@ private extension HerdrHudChatBubbleTests {
     func verticalHalves(of bitmap: NSBitmapImageRep) -> (Range<Int>, Range<Int>) {
         let middle = bitmap.pixelsHigh / 2
         return (0..<middle, middle..<bitmap.pixelsHigh)
+    }
+}
+
+/// One recognized OCR line with its normalized, bottom-left-origin bounding
+/// box, used to verify per-bubble text placement rather than whole-image text.
+private struct RecognizedLine {
+    let text: String
+    let observation: VNRecognizedTextObservation
+
+    var boundingBox: CGRect { observation.boundingBox }
+
+    /// The exact box of `value` within this observation. OCR may group a whole
+    /// row into one observation, so the substring box keeps status/metadata
+    /// separation checks meaningful; the whole observation is the fallback.
+    func boundingBox(for value: String) -> CGRect {
+        guard let range = range(of: value),
+              let candidate = observation.topCandidates(1).first,
+              let box = try? candidate.boundingBox(for: range)?.boundingBox
+        else { return boundingBox }
+        return box
+    }
+
+    /// The character range whose alphanumeric content matches `value`, so an
+    /// OCR-inserted space or punctuation change inside one value still yields
+    /// its own box instead of the whole row.
+    private func range(of value: String) -> Range<String.Index>? {
+        if let exact = text.range(of: value) { return exact }
+        let target = value.lowercased().filter { $0.isLetter || $0.isNumber }
+        guard !target.isEmpty else { return nil }
+        var start = text.startIndex
+        while start < text.endIndex {
+            var index = start
+            var matched: [Character] = []
+            while index < text.endIndex, matched.count < target.count {
+                let character = text[index]
+                index = text.index(after: index)
+                if character.isLetter || character.isNumber {
+                    matched.append(contentsOf: character.lowercased())
+                }
+            }
+            if String(matched) == target { return start..<index }
+            start = text.index(after: start)
+        }
+        return nil
     }
 }
 
@@ -544,7 +639,7 @@ private final class RunningChatURLProtocol: URLProtocol, @unchecked Sendable {
         var runID = "agr_runningrender"
         var status = "running"
         var costUSD: Double = 0.37
-        var model = "synthetic/claude-sonnet-4-5"
+        var model = "synthetic/fixture7"
     }
 
     static let state = Mutex(State())

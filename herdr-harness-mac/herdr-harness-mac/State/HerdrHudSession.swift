@@ -1483,31 +1483,35 @@ final class HerdrHudSession {
     ) -> Bool {
         guard historyIdentity == "\(machineID):\(rootRunID)",
               page.promotedPaneId == nil,
-              chatMetadata.hasEstablishedCoverage,
+              chatMetadata.isComplete,
               chatMetadata.latestRunID == page.latestRunId,
               let thread,
               thread.machineID == machineID,
               thread.rootRunID == page.rootRunId,
               thread.lastRunID == page.latestRunId,
               let localLatest = exchanges.first(where: { $0.id == page.latestRunId }),
-              localLatest.status.isTerminal else { return false }
-        if let remoteLatest = page.turns.first(where: { $0.id == page.latestRunId }) {
-            guard remoteLatest.status == localLatest.status
-                && remoteLatest.response == localLatest.response
-                && remoteLatest.error == localLatest.error
-                && remoteLatest.promotedPaneID == localLatest.promotedPaneID
-            else { return false }
-            if let remoteModel = remoteLatest.model {
-                // A model that finally resolved on the server must replace the
-                // submission-time fallback so the bubble never keeps a stale
-                // composer-derived name.
-                guard chatMetadata.latestRunModelName == PiModelDisplayName.short(fullID: remoteModel) else {
-                    return false
-                }
-            }
-            return remoteLatest.costUSD == chatMetadata.latestRunCostUSD
+              localLatest.status.isTerminal,
+              let remoteLatest = page.turns.first(where: { $0.id == page.latestRunId }) else {
+            // A paginated page that omits the latest run, or an aggregate with
+            // an unresolved historical component, cannot prove the metadata is
+            // unchanged. Fall through to the full paginated fetch so the
+            // refresh task reconciles every turn.
+            return false
         }
-        return page.nextOffset != nil
+        guard remoteLatest.status == localLatest.status
+            && remoteLatest.response == localLatest.response
+            && remoteLatest.error == localLatest.error
+            && remoteLatest.promotedPaneID == localLatest.promotedPaneID
+        else { return false }
+        if let remoteModel = remoteLatest.model {
+            // A model that finally resolved on the server must replace the
+            // submission-time fallback so the bubble never keeps a stale
+            // composer-derived name.
+            guard chatMetadata.latestRunModelName == PiModelDisplayName.short(fullID: remoteModel) else {
+                return false
+            }
+        }
+        return remoteLatest.costUSD == chatMetadata.latestRunCostUSD
     }
 
     func clear(model: HerdrAppModel) async {
@@ -1639,8 +1643,9 @@ final class HerdrHudSession {
 
     /// A persisted aggregate is trusted only for the exact restored identity.
     /// A version-1 cache without one is rebuilt from its transcript only when
-    /// that cache proves it still holds every accepted turn; otherwise the
-    /// cost stays unknown until full history establishes coverage.
+    /// the retained turns provably belong to this machine and root, starting
+    /// at the root run and ending at the thread's last accepted run; otherwise
+    /// the cost stays unknown until full history establishes coverage.
     private func restoreChatMetadata(
         _ snapshot: HerdrHudPersistenceSnapshot,
         exchanges: [HerdrHudExchange]
@@ -1656,21 +1661,65 @@ final class HerdrHudSession {
         // A persisted run that was still in flight when the cache was written
         // has a partial cost; its aggregate is unproven until history reloads.
         let hasInterruptedExchange = snapshot.exchanges.contains { !$0.status.isTerminal }
+        let legacy = Self.legacyChatMetadataSamples(
+            exchanges: exchanges,
+            identity: identity,
+            lastRunID: thread?.lastRunID
+        )
         chatMetadata = HerdrHudChatMetadataAccumulator()
         chatMetadata.reconcile(
             machineID: identity.machineID,
             rootRunID: identity.rootRunID,
-            expectedTurnCount: hasInterruptedExchange ? nil : thread?.turnCount,
-            samples: exchanges
-                .filter { !$0.id.hasPrefix("hud-pending-") }
-                .map {
-                    HerdrHudChatMetadataAccumulator.RunSample(
-                        id: $0.id,
-                        costUSD: $0.costUSD,
-                        modelName: $0.modelLabel
-                    )
-                }
+            expectedTurnCount: hasInterruptedExchange || !legacy.coverageIsProvable
+                ? nil
+                : thread?.turnCount,
+            samples: legacy.samples
         )
+    }
+
+    /// A version-1 cache has no identity of its own, so its retained turns may
+    /// contain previous roots or machines. Only the range that begins at the
+    /// conversation's root run, stays on the restored machine, and ends at the
+    /// thread's last accepted run is provably part of this conversation and can
+    /// establish coverage. When that range is unavailable, at most the
+    /// thread's own last run is kept: older retained turns may belong to a
+    /// replaced root, and sealing them could later be summed into an accepted
+    /// run's total.
+    private static func legacyChatMetadataSamples(
+        exchanges: [HerdrHudExchange],
+        identity: HerdrHudChatMetadataAccumulator.Identity,
+        lastRunID: String?
+    ) -> (samples: [HerdrHudChatMetadataAccumulator.RunSample], coverageIsProvable: Bool) {
+        let sameMachine = exchanges.filter {
+            $0.machineID == identity.machineID && !$0.id.hasPrefix("hud-pending-")
+        }
+        let rootScoped = sameMachine.firstIndex { $0.id == identity.rootRunID }
+            .map { Array(sameMachine[$0...]) } ?? []
+        let scoped: [HerdrHudExchange]
+        let coverageIsProvable: Bool
+        if !rootScoped.isEmpty, let lastRunID, rootScoped.last?.id == lastRunID {
+            scoped = rootScoped
+            coverageIsProvable = true
+        } else if !rootScoped.isEmpty, lastRunID == nil {
+            // Without an accepted-turn count the total stays unknown, but the
+            // retained suffix is still provably same-machine and after the root.
+            scoped = rootScoped
+            coverageIsProvable = false
+        } else if let lastRunID, let last = sameMachine.first(where: { $0.id == lastRunID }) {
+            scoped = [last]
+            coverageIsProvable = false
+        } else {
+            scoped = []
+            coverageIsProvable = false
+        }
+        let samples = scoped.map {
+            HerdrHudChatMetadataAccumulator.RunSample(
+                id: $0.id,
+                costUSD: $0.costUSD,
+                modelName: $0.modelLabel
+            )
+        }
+        return (samples, coverageIsProvable)
     }
 
     /// Mirrors `historyIdentity`, so persisted metadata is only trusted for the

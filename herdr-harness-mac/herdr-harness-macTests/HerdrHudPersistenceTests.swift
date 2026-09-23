@@ -265,7 +265,10 @@ struct HerdrHudPersistenceTests {
         let session = makeSession(fileURL: fileURL)
         await session.waitForPersistenceRestoreForTesting()
 
-        #expect(session.chatMetadata.observedRunCount == 10)
+        // Only the thread's own last run is provable once the root fell out of
+        // the capped transcript; the missing prefix keeps the total unknown.
+        #expect(session.chatMetadata.observedRunCount == 1)
+        #expect(!session.chatMetadata.hasEstablishedCoverage)
         #expect(session.bubbleMetadata.cost == nil)
     }
 
@@ -368,6 +371,108 @@ struct HerdrHudPersistenceTests {
         #expect(session.bubbleMetadata.cost == "$0.00")
     }
 
+    @Test("A legacy cache mixing machines rebuilds only the matching machine's turns")
+    func mixedMachineLegacyCacheIsScopedToItsMachine() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("hud-thread.json")
+        let thread = HerdrHudSession.HerdrHudThread(
+            machineID: "demo1",
+            rootRunID: "new-root",
+            lastRunID: "new-root",
+            turnCount: 1
+        )
+        try HerdrHudPersistenceSnapshot(
+            thread: thread,
+            exchanges: [
+                exchange(
+                    id: "stale-run", prompt: "Other machine", response: "Done",
+                    modelLabel: "Stale Model", machineID: "demo2", costUSD: 1.00
+                ),
+                exchange(
+                    id: "new-root", prompt: "New conversation", response: "Done",
+                    modelLabel: "Fresh Model", costUSD: 2.00
+                ),
+            ]
+        ).save(to: fileURL)
+
+        let session = makeSession(fileURL: fileURL)
+        await session.waitForPersistenceRestoreForTesting()
+
+        #expect(session.chatMetadata.hasEstablishedCoverage)
+        #expect(session.chatMetadata.observedRunCount == 1)
+        #expect(session.bubbleMetadata.cost == "$2.00")
+        #expect(session.bubbleMetadata.modelName == "Fresh Model")
+    }
+
+    @Test("A legacy cache retaining a replaced root rebuilds only the current root's turns")
+    func replacedRootLegacyCacheRebuildsOnlyCurrentRoot() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("hud-thread.json")
+        let thread = HerdrHudSession.HerdrHudThread(
+            machineID: "demo1",
+            rootRunID: "new-root",
+            lastRunID: "new-root",
+            turnCount: 1
+        )
+        try HerdrHudPersistenceSnapshot(
+            thread: thread,
+            exchanges: [
+                exchange(
+                    id: "old-root", prompt: "Old conversation", response: "Done",
+                    modelLabel: "Old Model", costUSD: 1.00
+                ),
+                exchange(
+                    id: "new-root", prompt: "New conversation", response: "Done",
+                    modelLabel: "New Model", costUSD: 2.00
+                ),
+            ]
+        ).save(to: fileURL)
+
+        let session = makeSession(fileURL: fileURL)
+        await session.waitForPersistenceRestoreForTesting()
+
+        #expect(session.chatMetadata.hasEstablishedCoverage)
+        #expect(session.chatMetadata.observedRunCount == 1)
+        #expect(session.bubbleMetadata.cost == "$2.00")
+        #expect(session.bubbleMetadata.modelName == "New Model")
+    }
+
+    @Test("A legacy cache without its root anchor never reports a foreign total")
+    func legacyCacheWithoutRootAnchorKeepsCostUnknown() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("hud-thread.json")
+        let thread = HerdrHudSession.HerdrHudThread(
+            machineID: "demo1",
+            rootRunID: "evicted-root",
+            lastRunID: "run-2",
+            turnCount: 2
+        )
+        try HerdrHudPersistenceSnapshot(
+            thread: thread,
+            exchanges: [
+                exchange(
+                    id: "old-root", prompt: "Old conversation", response: "Done",
+                    modelLabel: "Old Model", costUSD: 1.00
+                ),
+                exchange(
+                    id: "run-2", prompt: "Current conversation", response: "Done",
+                    modelLabel: "Current Model", costUSD: 2.00
+                ),
+            ]
+        ).save(to: fileURL)
+
+        let session = makeSession(fileURL: fileURL)
+        await session.waitForPersistenceRestoreForTesting()
+
+        #expect(!session.chatMetadata.hasEstablishedCoverage)
+        #expect(session.chatMetadata.observedRunCount == 1)
+        #expect(session.bubbleMetadata.cost == nil)
+        #expect(session.bubbleMetadata.modelName == "Current Model")
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("HerdrHudPersistenceTests-\(UUID().uuidString)", isDirectory: true)
@@ -396,17 +501,19 @@ struct HerdrHudPersistenceTests {
         status: HeadlessAgentRunStatus = .completed,
         modelLabel: String = "default",
         steps: [HerdrHudStep] = [],
-        workingFolderPath: String = HerdrHudWorkingFolder.homePath
+        workingFolderPath: String = HerdrHudWorkingFolder.homePath,
+        machineID: String = "demo1",
+        costUSD: Double? = 1.23
     ) -> HerdrHudExchange {
         HerdrHudExchange(
             id: id,
-            machineID: "demo1",
+            machineID: machineID,
             prompt: prompt,
             sentPrompt: prompt,
             response: response,
             error: nil,
             status: status,
-            costUSD: 1.23,
+            costUSD: costUSD,
             createdAt: Date(timeIntervalSince1970: 1_700_000_000),
             promotedPaneID: nil,
             attachmentFilenames: ["image.png"],

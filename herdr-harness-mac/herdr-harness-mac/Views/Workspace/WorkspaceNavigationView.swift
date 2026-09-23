@@ -529,7 +529,7 @@ struct WorkspaceNavigationView: View {
                 }
             }
         case .fleet:
-            FleetManagementSheet(model: model, isEmbedded: true)
+            FleetDestinationView(model: model)
         case .attention:
             AttentionView(model: model) { pane, _ in
                 openSession(pane)

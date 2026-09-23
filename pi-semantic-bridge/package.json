@@ -11,6 +11,7 @@
     "extensions": [
       "./extensions/pi-semantic-bridge.ts",
       "./extensions/companion-awareness.ts",
+      "./extensions/agent-profiles.ts",
       "./extensions/notes-discovery.ts",
       "./extensions/active-work-discovery.ts",
       "./extensions/control-discovery.ts",

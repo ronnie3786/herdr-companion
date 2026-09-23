@@ -341,8 +341,9 @@ class FirstMateRuntime:
     """Run saved Pi coordinators and workers independently of client windows."""
 
     def __init__(self, store: Any, *, environ: Mapping[str, str] | None = None,
-                 runtime_root: str | Path | None = None) -> None:
+                 runtime_root: str | Path | None = None, profile_snapshot=None) -> None:
         self.store = store
+        self._profile_snapshot = profile_snapshot
         self.environ = dict(os.environ if environ is None else environ)
         self.root = Path(runtime_root or self.environ.get("HERDR_HARNESS_FIRST_MATE_RUNS_ROOT") or self.environ.get("HERDR_FIRST_MATE_RUNTIME_ROOT")
                          or str(Path(self.environ.get("HERDR_STATE_DIR") or "~/.local/share/herdr-companion").expanduser() / "first-mate-runs")).expanduser().resolve()
@@ -769,10 +770,13 @@ class FirstMateRuntime:
         # dormant while every unrelated configured extension remains available.
         child_env.pop("HERDR_FIRST_MATE_ROLE", None)
         child_env["HERDR_FIRST_MATE_MANAGED_ROLE"] = job["kind"]
+        child_env["HERDR_FIRST_MATE_WORKSPACE_MODE"] = job.get("workspace_mode", "read_only")
         child_env["HERDR_FIRST_MATE_CONTEXT_TARGET"] = str(self.context_target)
         child_env["PI_SKIP_VERSION_CHECK"] = "1"
         with (directory / "supervisor.log").open("ab") as output:
-            child = subprocess.Popen([sys.executable, "-m", "herdr_harness.first_mate_runtime", "--runner", str(directory)],
+            # The explicitly pinned PYTHONPATH must win over a same-named
+            # package in the feature checkout (which can be an older revision).
+            child = subprocess.Popen([sys.executable, "-P", "-m", "herdr_harness.first_mate_runtime", "--runner", str(directory)],
                              cwd=job["cwd"], env=child_env, stdin=subprocess.DEVNULL,
                              stdout=output, stderr=output, start_new_session=True)
             # Reap the detached supervisor when this service remains alive;
@@ -918,6 +922,16 @@ class FirstMateRuntime:
                "parent_session_source": parent_session_source,
                "workspace_mode": claim.get("metadata", {}).get("workspace_mode", "read_only"),
                "charter": {"coordinator": COORDINATOR_PROMPT, "worker": WORKER_PROMPT, "advisor": ADVISOR_PROMPT}[kind]}
+        if self._profile_snapshot:
+            # Keep coordinator conversations and assignment retries pinned; new
+            # independent assignments resolve the host's currently accepted copy.
+            predecessors = [prior for prior in self._jobs()
+                            if prior.get("feature_id") == current_feature["id"] and prior.get("kind") == kind
+                            and (prior.get("session_file") == str(session) if kind == "coordinator"
+                                 else prior.get("claim", {}).get("id") == claim.get("id"))
+                            and "agent_profile_snapshot" in prior]
+            job["agent_profile_snapshot"] = (min(predecessors, key=lambda prior: prior["created_at"])["agent_profile_snapshot"]
+                                             if predecessors else self._profile_snapshot())
         self._apply_policy(job, current_feature)
         if kind == "worker":
             if claim.get("attempt", 0) > 1 and not handoff_id:
@@ -1822,6 +1836,13 @@ def _pi_command(job: dict) -> list[str]:
     charter = {"coordinator": COORDINATOR_PROMPT,
                "worker": WORKER_PROMPT,
                "advisor": ADVISOR_PROMPT}[job["kind"]]
+    snapshot = job.get("agent_profile_snapshot")
+    if isinstance(snapshot, dict) and snapshot.get("prompt"):
+        from .agent_profiles import write_prompt_snapshot
+        # The service owns this session directory. Rebuild from the pinned data
+        # plus the current role charter, without putting personal data in argv.
+        charter = write_prompt_snapshot(Path(job["session_file"]).parent / "profile-charter.md",
+                                        charter + "\n\n" + snapshot["prompt"])
     prompt_flag = "--system-prompt" if job["kind"] == "coordinator" else "--append-system-prompt"
     command = [job["pi_bin"], "--mode", "rpc", "--session", job["session_file"],
                "--name", "First Mate" if job["kind"] == "coordinator" else job["claim"].get("title", "First Mate advisor"),

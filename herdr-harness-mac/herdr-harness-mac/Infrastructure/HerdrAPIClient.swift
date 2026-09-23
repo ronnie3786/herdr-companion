@@ -167,7 +167,7 @@ private struct PRReviewEventsResponse: Decodable, Sendable {
     let events: [PRReviewEvent]
 }
 
-actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient {
+actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, AgentProfilesClient {
     /// Nonisolated so the model can bind refreshed topology to the endpoint
     /// that produced it without another actor hop.
     nonisolated let configuration: ServerConfiguration
@@ -434,6 +434,19 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient {
 
     func fetchHealthProbe() async throws -> HealthProbeResponse {
         try await request(path: "/api/v1/health")
+    }
+
+    func fetchAgentProfiles() async throws -> AgentProfilesOverview {
+        try await request(path: "/api/v1/agent-profiles")
+    }
+
+    func fetchAgentProfile(id: String) async throws -> AgentProfileHistoryResponse {
+        guard UUID(uuidString: id) != nil else { throw APIError.invalidResponse }
+        return try await request(path: "/api/v1/agent-profiles/profiles/\(id)")
+    }
+
+    func mutateAgentProfiles(_ mutation: AgentProfileMutation) async throws -> AgentProfileMutationResponse {
+        try await request(path: "/api/v1/agent-profiles", method: "POST", body: mutation)
     }
 
     /// Reads the machine's inventory from the Fleet contract. Fleet is kept as
@@ -1610,6 +1623,9 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient {
         }
         if path == "/api/v1/response-audio/capabilities" {
             return 8
+        }
+        if path.hasPrefix("/api/v1/agent-profiles") {
+            return 30
         }
         if path.hasPrefix("/api/v1/response-audio/") {
             return 150

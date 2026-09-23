@@ -43,6 +43,7 @@ from .control_validation import (
 from .fleet import FleetError, FleetManager
 from .network import public_base_url
 from .notes import NotesError, MAX_NOTE_BYTES, MAX_NOTES
+from .agent_profiles import ProfileError
 from .pi_semantic import PI_SEMANTIC_PROTOCOL, PiSemanticError, valid_pi_session_id
 from .secret_file import (
     SecretFileError,
@@ -419,6 +420,7 @@ def api_description() -> dict:
             "pr-review-v1",
             "pi-session-context-v1",
             "agent-control-v1",
+            "agent-profiles-v1",
             "discovery-v1",
             "chat-tab-colors-v1",
             "issue-reports-v1",
@@ -463,6 +465,7 @@ def api_description() -> dict:
             "responseAudioPrepare": "/api/v1/response-audio/prepare",
             "responseAudioSpeech": "/api/v1/response-audio/speech",
             "resultArtifacts": "/api/v1/result-artifacts",
+            "agentProfiles": "/api/v1/agent-profiles",
             "notes": "/api/v1/notes",
             "note": "/api/v1/notes/{noteId}",
             "notesImport": "/api/v1/notes/import",
@@ -503,6 +506,7 @@ def api_description() -> dict:
             "customScheme": "herdr://pane/{paneId}",
         },
         "mutations": [
+            "POST /api/v1/agent-profiles",
             "POST /api/v1/notes|notes/import",
             "POST /api/v1/first-mate/features/{featureId}/attachments",
             "PATCH|DELETE /api/v1/notes/{noteId}",
@@ -552,6 +556,7 @@ def api_description() -> dict:
         ],
         "sseEvents": [
             "notes.changed",
+            "agent_profiles.changed",
             "pr_review.updated",
             "snapshot.updated",
             "alert.created",
@@ -892,6 +897,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             except HTTPValidationError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except ControlError as exc:
+                self._error(exc.status, exc.code, str(exc))
+            except ProfileError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except NotesError as exc:
                 self._json_response({"ok": False, "error": {"code": exc.code, "message": str(exc)},
@@ -1643,6 +1650,21 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 return service.issue_reports.capabilities()
             if method == "POST" and tail == ["issue-reports"]:
                 return service.issue_reports.submit(body), 201
+            if tail and tail[0] == "agent-profiles":
+                if self._authorization_scope != "main":
+                    return self._error(403, "agent_profiles_scope_forbidden", "Agent profiles require full authentication")
+                if method == "GET" and tail == ["agent-profiles"]:
+                    return service.agent_profiles.overview()
+                if method == "GET" and tail == ["agent-profiles", "effective"]:
+                    return {"ok": True, "effective": service.agent_profiles.snapshot()}
+                if method == "GET" and len(tail) == 3 and tail[1] == "profiles":
+                    return service.agent_profiles.get(tail[2])
+                if method == "GET" and len(tail) == 4 and tail[1] == "profiles" and tail[3] == "current":
+                    return service.agent_profiles.get(tail[2], include_history=False)
+                if method == "POST" and tail == ["agent-profiles"]:
+                    result = service.agent_profiles.mutate(body)
+                    service.broker.publish("agent_profiles.changed", {"generatedAt": utc_now()})
+                    return result
             if tail == ["notes"]:
                 if method == "GET":
                     return service.notes.list((query.get("q") or [""])[0])

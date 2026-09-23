@@ -77,6 +77,14 @@ struct HerdrHudChatBubbleTests {
         #expect(!HerdrHudChatBubblePresentation.isReady(.init(lastStatus: .running, hasUnseenAnswer: true)))
     }
 
+    @Test("Reduced-motion resolution prefers an explicit override over the system value")
+    func reducedMotionPolicy() {
+        #expect(HerdrHudSessionMetadataView.usesReducedMotion(systemValue: false, override: nil) == false)
+        #expect(HerdrHudSessionMetadataView.usesReducedMotion(systemValue: true, override: nil) == true)
+        #expect(HerdrHudSessionMetadataView.usesReducedMotion(systemValue: false, override: true) == true)
+        #expect(HerdrHudSessionMetadataView.usesReducedMotion(systemValue: true, override: false) == false)
+    }
+
     @Test("Metadata keeps both values for accessibility and never invents a missing one")
     func metadataPolicy() {
         let both = HerdrHudSessionMetadata(modelName: "Sonnet 4.5", cost: "$0.37")
@@ -351,7 +359,7 @@ private extension HerdrHudChatBubbleTests {
                 .padding(8)
                 .environment(\.herdrHudShowsModel, showsModel)
                 .environment(\.herdrFontScale, scale)
-                .environment(\.accessibilityReduceMotion, reduceMotion)
+                .environment(\.herdrHudReduceMotionOverride, reduceMotion)
         }
     }
 

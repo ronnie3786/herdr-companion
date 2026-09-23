@@ -74,8 +74,15 @@ REVIEWER_CHARTER = (
     "run read-only commands and read files; do not modify files, do not run tests or builds, never commit "
     "or push. Be concrete: every requested change must name a file and describe the fix. Approve "
     "only with positive evidence for every original requirement; CI and agreement with the plan "
-    "alone are not evidence. Send ordinary defects, incomplete behavior, and reversible product "
-    "decisions to the reviser with a concrete best-practice fix. Do not ask the operator for "
+    "alone are not evidence. A requirement whose evidence is inherently post-install (rendered "
+    "UI, device or connected-app behavior, a live service or credential, human listening) is "
+    "`deferred`: record the code/test evidence that covers the path and the exact post-install "
+    "check, and let the operator verify it after install instead of blocking the merge. Reserve "
+    "`request_changes` for concrete correctness defects or regressions, security or privacy "
+    "problems, and a narrowed request; ordinary improvements, pre-existing behavior, and "
+    "speculative edge cases are non-blocking notes, not new blocking requirements. Send ordinary "
+    "defects and reversible product decisions to the reviser with a concrete best-practice fix. "
+    "Do not ask the operator for "
     "reassurance or a choice between reasonable reversible options. Human input is reserved for "
     "a high-risk authority boundary involving security or privacy, credentials or access, "
     "destructive or irreversible data loss, money or legal/compliance obligations, or external "
@@ -137,7 +144,7 @@ PLAN_SCHEMA: dict[str, Any] = {
 REVIEW_SCHEMA: dict[str, Any] = {
     "verdict": "approve|request_changes",
     "summary": "...",
-    "requirements_assessment": [{"id": "R1", "status": "satisfied|unmet|unverified", "evidence": "concrete evidence"}],
+    "requirements_assessment": [{"id": "R1", "status": "satisfied|unmet|unverified|deferred", "evidence": "concrete evidence; for deferred, the code/test evidence plus the exact post-install check"}],
     "plan_adjustment_assessment": {"narrows_request": False, "explanation": "comparison with original request"},
     "configuration_variation": {
         "status": "considered|not_applicable", "counterexample": "alternate valid configuration",
@@ -179,7 +186,7 @@ TEXT_DOCUMENT_EXTENSIONS = frozenset({
 KINDS = ("bug", "feature")
 RISKS = ("low", "medium", "high")
 VERDICTS = ("approve", "request_changes")
-REQUIREMENT_STATUSES = ("satisfied", "unmet", "unverified")
+REQUIREMENT_STATUSES = ("satisfied", "unmet", "unverified", "deferred")
 ASSUMPTION_STATUSES = ("confirmed", "unresolved")
 CONFIGURATION_VARIATION_STATUSES = ("considered", "not_applicable")
 
@@ -655,6 +662,15 @@ def reviewer_prompt(
         "compare that request with the plan; do not assume the plan is complete or authoritative.\n"
         "- Assess every plan requirement ID exactly once. `satisfied` needs concrete code/test evidence or "
         "explicit installed-UI evidence. A green CI result or agreement with the plan alone is insufficient.\n"
+        "- Use `deferred` when the requirement is implemented and code/test-covered but its acceptance "
+        "evidence is inherently post-install (rendered UI, device or connected-app behavior, a live service "
+        "or credential, human listening). State the code/test evidence that covers the path and the exact "
+        "check the operator runs after install; `deferred` requirements never block approval. Use "
+        "`unverified` only when repository evidence was available but missing.\n"
+        "- Reserve `blocking` and `request_changes` for concrete correctness defects or regressions, security "
+        "or privacy problems, and a narrowed request. Each blocking item must name a file and a specific fix. "
+        "Improvements, pre-existing behavior, and speculative edge cases belong in `non_blocking`; do not "
+        "invent new blocking requirements for a diff that already satisfies the original request.\n"
         "- Say whether the plan narrowed, softened, or converted an exact outcome into an example. If it did, "
         "request changes; do not approve implementation of the narrower plan.\n"
         "- Consider at least one alternate valid configuration so screenshot labels, IDs, names, or ordering "
@@ -669,8 +685,9 @@ def reviewer_prompt(
         "or a choice between reasonable reversible options.\n"
         "- Check every acceptance criterion, tests, privacy, API compatibility and docs. Each inline comment "
         "needs a repository-relative `path` and a `line` in the new version.\n"
-        "- List blocking problems under `blocking`; `request_changes` whenever any exist. Approve only when "
-        "every requirement is positively satisfied and the change is safe to merge and release.",
+        "- List blocking problems under `blocking`; `request_changes` whenever any exist. Approve when every "
+        "requirement is satisfied or deferred, the change is safe to merge and release, and no blocking item "
+        "is present.",
         "## Output\nEnd your reply with exactly one fenced ```json block matching this schema:\n" + _schema(REVIEW_SCHEMA),
     ]
     return "\n\n".join(parts) + "\n"
@@ -935,6 +952,11 @@ def review_body(round_number: int, review: Mapping[str, Any]) -> str:
         f"- {_line(item.get('id'))} [{_line(item.get('status'))}]: {_line(item.get('evidence'))}"
         for item in (review.get("requirements_assessment") or []) if isinstance(item, Mapping)
     ]
+    deferred = [
+        f"- {_line(item.get('id'))}: {_line(item.get('evidence'))}"
+        for item in (review.get("requirements_assessment") or [])
+        if isinstance(item, Mapping) and str(item.get("status") or "").lower() == "deferred"
+    ]
     adjustment = review.get("plan_adjustment_assessment") if isinstance(review.get("plan_adjustment_assessment"), Mapping) else {}
     variation = review.get("configuration_variation") if isinstance(review.get("configuration_variation"), Mapping) else {}
     evidence = "\n".join([
@@ -948,6 +970,8 @@ def review_body(round_number: int, review: Mapping[str, Any]) -> str:
         parts = [heading, summary, evidence]
         if blocking:
             parts.append("**Blocking**\n" + _bullets(blocking))
+        if deferred:
+            parts.append("**Pending operator verification (post-install)**\n" + "\n".join(deferred))
         if notes:
             parts.append("**Non-blocking**\n" + _bullets(notes))
         elif omitted:
@@ -1246,7 +1270,7 @@ def validate_review(review: Any, plan: Mapping[str, Any]) -> dict[str, Any]:
         assessed_ids.add(requirement_id)
         status = _string(item.get("status"), f"requirements_assessment[{index}].status", maximum=20).lower()
         if status not in REQUIREMENT_STATUSES:
-            raise _invalid(f"requirements_assessment[{index}].status must be satisfied, unmet or unverified")
+            raise _invalid(f"requirements_assessment[{index}].status must be satisfied, unmet, unverified or deferred")
         evidence = _string(item.get("evidence"), f"requirements_assessment[{index}].evidence", maximum=4000)
         if status == "satisfied" and evidence.lower().strip(" .") in {
             "ci passed", "tests passed", "matches the plan", "plan agrees", "green ci",
@@ -1312,9 +1336,9 @@ def validate_review(review: Any, plan: Mapping[str, Any]) -> dict[str, Any]:
     if unresolved and not needs_human:
         raise _invalid("unresolved plan assumptions require review needs_human to be true")
     if verdict == "approve":
-        incomplete = [item["id"] for item in assessments if item["status"] != "satisfied"]
+        incomplete = [item["id"] for item in assessments if item["status"] in ("unmet", "unverified")]
         if incomplete:
-            raise _invalid("approve requires every requirement to be satisfied: " + ", ".join(incomplete))
+            raise _invalid("approve requires every requirement to be satisfied or deferred: " + ", ".join(incomplete))
         if adjustment["narrows_request"]:
             raise _invalid("approve is invalid when the plan narrows the original request")
         if blocking:

@@ -60,8 +60,17 @@ This is an experimental personal automation. Read the safety section before enab
    assessment with concrete evidence. The review also records whether the plan narrowed
    the request and a counterexample using another valid configuration (or a justified
    not-applicable result). CI/plan agreement alone is not evidence, and code/test evidence
-   is not described as installed or deployed UI verification. Missing, unmet, unverified,
-   narrowed, unresolved, stale, or unposted approval data blocks merge. Ordinary reversible
+   is not described as installed or deployed UI verification. Requirements whose acceptance
+   evidence is inherently post-install (rendered UI, device or connected-app behavior, a live
+   service or credential, human listening) are marked `deferred`: the review records the
+   code/test evidence that covers the path plus the exact check the operator runs after
+   install, and lists them under **Pending operator verification** in the review body instead
+   of spending another revision round. Unmet defects, repository-verifiable evidence marked
+   `unverified`, a narrowed request, unresolved assumptions, and stale or unposted approval
+   data still block merge. Blocking items are reserved for concrete correctness defects or
+   regressions, security or privacy problems, and a narrowed request; each names a file and a
+   specific fix, while ordinary improvements, pre-existing behavior, and speculative edge
+   cases are non-blocking notes. Ordinary reversible
    findings go to a reviser with Astra's recommended best-practice fix; review asks a human
    only for the same high-risk authority boundaries used during planning. A narrowing finding
    starts a fresh plan with the original request and bounded prior review evidence (requirement

@@ -1284,6 +1284,22 @@ class BlockingAndActionTests(PipelineTestCase):
                          "the real pushed head was verified, reviewed and merged")
         self.assertFalse(any(message.startswith("The pull request head moved") for message in self.events(12)))
 
+    def test_deferred_evidence_approves_and_records_the_operator_check(self):
+        self.github.add_issue(12, "Crash when opening the HUD")
+        review = good_review()
+        review["requirements_assessment"][0].update(
+            status="deferred",
+            evidence="Source and tests cover the path; verify the rendered HUD after install.",
+        )
+        self.pi.reviews = [review]
+        self.factory.poll_once()
+        issue = self.factory.run_issue(12)
+        self.assertEqual((issue["status"], issue["stage"]), ("active", "release"))
+        body = self.github.reviews[-1]["body"]
+        self.assertIn("**Pending operator verification (post-install)**", body)
+        self.assertIn("verify the rendered HUD after install", body)
+        self.assertEqual(self.github.merges[0]["headSha"], issue["headSha"])
+
     def test_reviser_sessions_get_their_own_timeout(self):
         self.factory = self.make_factory(reviser_session_timeout_seconds="120")
         self.github.add_issue(12, "Crash when opening the HUD")

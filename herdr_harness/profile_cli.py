@@ -50,8 +50,10 @@ def main(argv=None, *, environ=None, stdout=None, stderr=None):
         if args.command == "get":
             result = client.request("GET", path + "/profiles/" + identifier(args.id))
         elif args.command == "propose":
-            if env.get("HERDR_AGENT_RUN_MODE", "").lower() == "ask" or env.get("HERDR_FIRST_MATE_MANAGED_ROLE"):
-                raise CLIError("This restricted or managed process cannot mutate profile state; ask the operator to submit the proposal", "profile_read_only")
+            role = env.get("HERDR_FIRST_MATE_MANAGED_ROLE")
+            managed_read_only = role and (role != "worker" or env.get("HERDR_FIRST_MATE_WORKSPACE_MODE") != "isolated")
+            if env.get("HERDR_AGENT_RUN_MODE", "").lower() == "ask" or managed_read_only:
+                raise CLIError("This read-only process cannot mutate profile state; ask the operator to submit the proposal", "profile_read_only")
             def document(filename):
                 with Path(filename).expanduser().open(encoding="utf-8") as stream:
                     return text(stream.read(16385), "document")

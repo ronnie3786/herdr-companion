@@ -171,7 +171,8 @@ class AgentProfileHTTPTests(unittest.TestCase):
     def setUp(self):
         self.service = FakeHTTPService()
         self.service.agent_profiles = AgentProfiles(machine_id="desktop")
-        self.service.environ.update(HERDR_HARNESS_API_TOKEN="synthetic-profile-token")
+        self.service.environ.update(HERDR_HARNESS_API_TOKEN="synthetic-profile-token",
+                                    HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN="synthetic-board-only-token")
         self.server = make_server(self.service, host="127.0.0.1", port=0)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -217,6 +218,11 @@ class AgentProfileHTTPTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as caught:
             self.request(token="wrong")
         self.assertEqual(caught.exception.code, 401)
+        with self.assertRaises(urllib.error.HTTPError) as scoped:
+            self.request(token="synthetic-board-only-token")
+        # Scoped credentials are ineligible on this route, so authentication
+        # rejects them before a profile handler or resource lookup runs.
+        self.assertEqual(scoped.exception.code, 401)
         overview = self.request()
         self.assertEqual(overview["capability"], "agent-profiles-v1")
         p = overview["profiles"][0]

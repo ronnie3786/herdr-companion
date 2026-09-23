@@ -9,7 +9,7 @@ const saved = { prompt: `${PROFILE_MARKER}\nSynthetic preferences`, binding: { r
 function harness(load) {
   const handlers = new Map(), entries = [];
   createAgentProfilesExtension(pane, load)({ on(name, fn) { handlers.set(name, fn); }, appendEntry(type, data) { entries.push({ type: "custom", customType: type, data }); } });
-  return { handlers, entries, start() { handlers.get("session_start")({}, { sessionManager: { getBranch: () => entries } }); } };
+  return { handlers, entries, start() { handlers.get("session_start")({}, { sessionManager: { getEntries: () => entries, getBranch: () => [] } }); } };
 }
 
 test("only pane conversations load; managed jobs and restricted profiles never discover personal context", () => {
@@ -18,7 +18,7 @@ test("only pane conversations load; managed jobs and restricted profiles never d
     { ...pane, HERDR_AGENT_RUN_PROFILE: "response-brief-v1" }]) assert.equal(profileEligible(env), false);
 });
 
-test("profile stays pinned through turns, compaction branch entries and reload; injection deduplicates", async () => {
+test("profile stays pinned through turns, compaction, navigation before its entry and reload; injection deduplicates", async () => {
   let calls = 0;
   const h = harness(async () => { calls++; return saved; });
   h.start();
@@ -46,7 +46,7 @@ test("unavailable backend does not pin invented defaults; successful empty bindi
   assert.equal(h.entries.length, 1);
 });
 
-test("switching to another branch/session never retains a previous profile in memory", async () => {
+test("switching to another session never retains a previous profile in memory", async () => {
   let value = saved;
   const h = harness(async () => value);
   h.start();

@@ -55,7 +55,9 @@ export function createAgentProfilesExtension(environment: NodeJS.ProcessEnv = pr
 		pi.on("session_start", (_event, ctx) => {
 			pinned = undefined;
 			loaded = false;
-			for (const entry of ctx.sessionManager.getBranch()) {
+			// This is conversation-wide identity, not branch-local tool state.
+			// Tree navigation before the snapshot must not unpin it on reload.
+			for (const entry of ctx.sessionManager.getEntries()) {
 				if (entry.type === "custom" && entry.customType === ENTRY) {
 					pinned = snapshot(entry.data);
 					loaded = pinned !== undefined;

@@ -61,8 +61,10 @@ herdr-profiles --machine desktop propose PROFILE_UUID \
 Choose the **profile owner**, not a cache host, for a proposal. Proposing does not
 change effective instructions. Review the diff in Settings/Fleet and approve or
 reject it. A proposal based on an older revision cannot overwrite a newer edit.
-ASK and managed First Mate processes cannot submit through this CLI; they can
-present suggested wording to the user without mutating state. These policy checks
+ASK runs, First Mate coordinators/advisors and read-only workers cannot submit
+through this CLI; they can present suggested wording without mutating state.
+An isolated First Mate worker may propose an explicitly authorized preference
+change, still requiring review and preserving its assignment scope. These policy checks
 are not an OS sandbox: ordinary agents with filesystem/shell access retain their
 existing permissions and must preserve the user's scope.
 

@@ -40,9 +40,13 @@ class ProfileCLITests(unittest.TestCase):
             self.assertEqual(method, "POST")
             self.assertEqual(body["action"], "propose")
             self.assertEqual(body["requestId"], rid)
-            for env in [{"HERDR_AGENT_RUN_MODE": "ask"}, {"HERDR_FIRST_MATE_MANAGED_ROLE": "coordinator"}]:
+            for env in [{"HERDR_AGENT_RUN_MODE": "ask"}, {"HERDR_FIRST_MATE_MANAGED_ROLE": "coordinator"},
+                        {"HERDR_FIRST_MATE_MANAGED_ROLE": "advisor"},
+                        {"HERDR_FIRST_MATE_MANAGED_ROLE": "worker", "HERDR_FIRST_MATE_WORKSPACE_MODE": "read_only"}]:
                 self.assertEqual(main(args, environ=env, stderr=io.StringIO()), 2)
             self.assertEqual(len(client.requests), 1)
+            self.assertEqual(main(args, environ={"HERDR_FIRST_MATE_MANAGED_ROLE": "worker", "HERDR_FIRST_MATE_WORKSPACE_MODE": "isolated"}, stdout=io.StringIO()), 0)
+            self.assertEqual(client.requests[-1][2]["action"], "propose")
 
 
 if __name__ == "__main__":

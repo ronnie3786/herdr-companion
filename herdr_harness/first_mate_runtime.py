@@ -770,10 +770,13 @@ class FirstMateRuntime:
         # dormant while every unrelated configured extension remains available.
         child_env.pop("HERDR_FIRST_MATE_ROLE", None)
         child_env["HERDR_FIRST_MATE_MANAGED_ROLE"] = job["kind"]
+        child_env["HERDR_FIRST_MATE_WORKSPACE_MODE"] = job.get("workspace_mode", "read_only")
         child_env["HERDR_FIRST_MATE_CONTEXT_TARGET"] = str(self.context_target)
         child_env["PI_SKIP_VERSION_CHECK"] = "1"
         with (directory / "supervisor.log").open("ab") as output:
-            child = subprocess.Popen([sys.executable, "-m", "herdr_harness.first_mate_runtime", "--runner", str(directory)],
+            # The explicitly pinned PYTHONPATH must win over a same-named
+            # package in the feature checkout (which can be an older revision).
+            child = subprocess.Popen([sys.executable, "-P", "-m", "herdr_harness.first_mate_runtime", "--runner", str(directory)],
                              cwd=job["cwd"], env=child_env, stdin=subprocess.DEVNULL,
                              stdout=output, stderr=output, start_new_session=True)
             # Reap the detached supervisor when this service remains alive;

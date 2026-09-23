@@ -297,7 +297,12 @@ class FirstMateFeedbackTests(unittest.TestCase):
             if item["role"] == "assistant")
         self.store.rotate_coordinator_session(
             feature["id"], "synthetic-session-a", "rotate-1", verified_stopped=True)
-        self.store.claim_message(feature["id"], "coordinator")
+        # A rotated context attaches by claiming newly queued human direction; the
+        # retired session must never lend its identity to the new coordinator.
+        self.store.append_human_message(
+            feature["id"], "Synthetic follow-up direction", "rotate-direction")
+        successor = self.store.claim_message(feature["id"], "coordinator")
+        self.assertIsNotNone(successor)
         self.store.bind_coordinator_session(
             feature["id"], "coordinator", "synthetic-session-b", "/tmp/synthetic-pi/b.jsonl")
         record = self.store.rate_feedback(feature["id"], reply["id"], self.body(request_id="rate-after-rotation"))
@@ -332,7 +337,10 @@ class FirstMateFeedbackTests(unittest.TestCase):
             rating="up", request_id="unavailable-session"))
         self.assertIsNone(record["provenance"]["coordinator_session_id"])
         self.assertEqual(record["provenance"]["session_provenance"], "unavailable")
+        self.store.append_human_message(
+            self.feature["id"], "Synthetic follow-up direction", "follow-up-direction")
         message = self.store.claim_message(self.feature["id"], "coordinator")
+        self.assertIsNotNone(message)
         self.assert_code("session_mismatch", lambda: self.store.finish_message(
             message["id"], "coordinator", reply="Invalid identity.", native_session_id="synthetic-unknown"))
         visit = self.store.start_visit(

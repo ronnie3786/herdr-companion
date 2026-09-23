@@ -654,6 +654,28 @@ private actor OutageFeedbackClient: FirstMateClient {
         return snapshot
     }
 
+    // The feedback regression never creates, sends, acts, or reads sessions;
+    // these satisfy the client contract without reaching outside the process.
+    func createFirstMateFeature(title: String, goal: String, cwd: String, requestID: String) async throws -> FirstMateSnapshot {
+        throw APIError.invalidResponse
+    }
+
+    func sendFirstMateMessage(featureID: String, text: String, requestID: String) async throws -> FirstMateSnapshot {
+        throw APIError.invalidResponse
+    }
+
+    func performFirstMateAction(featureID: String, action: String, requestID: String) async throws -> FirstMateSnapshot {
+        throw APIError.invalidResponse
+    }
+
+    func fetchFirstMateDocument(_ id: String) async throws -> FirstMateDocumentResponse {
+        throw APIError.invalidResponse
+    }
+
+    func fetchFirstMateSession(_ id: String, before: Int?) async throws -> FirstMateSessionResponse {
+        throw APIError.invalidResponse
+    }
+
     func fetchFirstMateFeedback(featureID: String) async throws -> FirstMateFeatureFeedbackResponse {
         guard featureID == snapshot.feature.id else { throw APIError.invalidResponse }
         return .init(ok: true, featureID: featureID, records: [])

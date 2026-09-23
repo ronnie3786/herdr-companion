@@ -5,7 +5,9 @@ request; this profile returns exactly one JSON object with the report title and
 a structured Markdown body. Drafting never files anything: public submission
 stays a separate, explicit step. The run receives no tools, extensions, skills,
 context files, profile snapshot, awareness bootstrap, or topology, and the
-source text travels only on stdin.
+source text travels only on stdin. Its system prompt is exclusively
+server-owned, its model is the companion's validated configured Pi default, and
+profile-local settings disable automatic retries and compaction recovery.
 """
 from __future__ import annotations
 
@@ -22,6 +24,15 @@ MAX_BODY_SCALARS = 20_000
 MAX_EXECUTION_SECONDS = 60
 ALLOWED_REQUEST_FIELDS = frozenset({"profile", "kind", "text"})
 OUTPUT_SCHEMA = '{"title":"concise single-line issue title","body":"structured Markdown description"}'
+# Merged over the operator's global Pi settings through a trusted, server-owned
+# project workspace. One draft is one provider inference: Pi's automatic agent
+# retries, provider retries, and automatic compaction/overflow recovery are all
+# off. `cacheWarming` is included defensively; current Pi reads it globally.
+RUNTIME_SETTINGS = {
+    "retry": {"enabled": False, "maxRetries": 0, "provider": {"maxRetries": 0}},
+    "compaction": {"enabled": False},
+    "cacheWarming": "off",
+}
 _KIND_GUIDANCE = {
     "bug": (
         "This is a bug report. Structure the body around the observed problem and its impact, "
@@ -105,7 +116,12 @@ def input_prompt(run: dict) -> str:
 
 
 def start(manager, *, request: dict, cwd: str) -> dict:
-    """Validate a draft request and start one explicit, bounded drafting run."""
+    """Validate a draft request and start one explicit, bounded drafting run.
+
+    The run store resolves and pins the companion's validated configured Pi
+    default, so an unset or unavailable default fails with an actionable error
+    instead of letting Pi choose another provider or model.
+    """
     kind, text = validate_request(request)
     return manager.start(
         prompt=text,

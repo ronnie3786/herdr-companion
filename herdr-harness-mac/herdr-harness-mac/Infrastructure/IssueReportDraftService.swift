@@ -33,6 +33,8 @@ final class IssueReportDraftService: IssueReportDrafting {
     private let transport: IssueReportDraftTransport
     private let pollInterval: Duration
     private let deadline: Duration
+    /// Internal bound for the detached best-effort remote cancel.
+    private static let cancelTimeout: Duration = .seconds(5)
 
     init(
         transport: IssueReportDraftTransport,
@@ -48,7 +50,9 @@ final class IssueReportDraftService: IssueReportDrafting {
     /// configuration the rest of the app uses for that machine.
     static func live(
         configuration: ServerConfiguration,
-        session: URLSession = .shared
+        session: URLSession = .shared,
+        pollInterval: Duration = IssueReportDraftProfile.pollInterval,
+        deadline: Duration = IssueReportDraftProfile.deadline
     ) -> IssueReportDraftService {
         let http = IssueReportDraftHTTPClient(configuration: configuration, session: session)
         return IssueReportDraftService(
@@ -57,7 +61,9 @@ final class IssueReportDraftService: IssueReportDrafting {
                 start: { _, request in try await http.start(request) },
                 fetch: { _, runID in try await http.fetch(runID: runID) },
                 cancel: { _, runID in try await http.cancel(runID: runID) }
-            )
+            ),
+            pollInterval: pollInterval,
+            deadline: deadline
         )
     }
 
@@ -68,7 +74,7 @@ final class IssueReportDraftService: IssueReportDrafting {
             return capabilities.profiles.contains(IssueReportDraftProfile.identifier)
                 ? .available
                 : .unsupportedCompanion
-        } catch is CancellationError {
+        } catch where Self.isCancellation(error) {
             return .unknown
         } catch {
             return .unavailable(error.localizedDescription)
@@ -88,16 +94,19 @@ final class IssueReportDraftService: IssueReportDrafting {
         }
         guard !machineID.isEmpty else { throw IssueReportDraftError.noCompanion }
 
-        // Preflight the exact companion's advertised profile before sending.
-        // An older companion must never receive this prompt through a generic
-        // route that could run it with tools.
+        // One deadline covers the preflight, the start request, and every
+        // poll. Late preflight or start responses and terminal fetches that
+        // arrive after it are refused instead of being accepted.
+        let clock = ContinuousClock()
+        let deadlineInstant = clock.now.advanced(by: deadline)
+
         let capabilities: AssistantCapabilities
         do {
-            capabilities = try await transport.capabilities(machineID)
-        } catch is CancellationError {
-            throw IssueReportDraftError.cancelled
+            capabilities = try await bounded(until: deadlineInstant) { [self] in
+                try await transport.capabilities(machineID)
+            }
         } catch {
-            throw IssueReportDraftError.companionUnavailable(error.localizedDescription)
+            throw preflightFailure(error)
         }
         guard capabilities.profiles.contains(IssueReportDraftProfile.identifier) else {
             throw IssueReportDraftError.unsupportedCompanion
@@ -105,14 +114,14 @@ final class IssueReportDraftService: IssueReportDrafting {
 
         let run: HeadlessAgentRun
         do {
-            run = try await transport.start(machineID, IssueReportDraftRequest(kind: kind, text: text))
-        } catch is CancellationError {
-            throw IssueReportDraftError.cancelled
+            run = try await bounded(until: deadlineInstant) { [self] in
+                try await transport.start(machineID, IssueReportDraftRequest(kind: kind, text: text))
+            }
         } catch {
-            throw IssueReportDraftError.startFailed(error.localizedDescription)
+            throw startFailure(error)
         }
 
-        let finished = try await pollToCompletion(run, machineID: machineID)
+        let finished = try await pollToCompletion(run, machineID: machineID, deadlineInstant: deadlineInstant)
         switch finished.status {
         case .completed, .promoted:
             let response = (finished.response ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -132,47 +141,119 @@ final class IssueReportDraftService: IssueReportDrafting {
         }
     }
 
-    /// Polls one started run to a terminal status. A cancellation or an
-    /// expired deadline cancels the remote run and throws; a failed poll ends
-    /// the request instead of silently starting another one.
-    private func pollToCompletion(
-        _ run: HeadlessAgentRun,
-        machineID: String
-    ) async throws -> HeadlessAgentRun {
-        var current = run
+    /// Runs one transport step inside the shared deadline. The loser of the
+    /// race is cancelled, so a preflight, start, or fetch that outlives its
+    /// budget cannot keep the sheet busy or deliver a late result.
+    private func bounded<T: Sendable>(
+        until instant: ContinuousClock.Instant,
+        _ operation: @escaping @MainActor @Sendable () async throws -> T
+    ) async throws -> T {
         let clock = ContinuousClock()
-        let deadlineInstant = clock.now.advanced(by: deadline)
-        while !current.status.isTerminal {
-            if Task.isCancelled {
-                await cancelQuietly(runID: current.id, machineID: machineID)
-                throw IssueReportDraftError.cancelled
-            }
-            if clock.now >= deadlineInstant {
-                await cancelQuietly(runID: current.id, machineID: machineID)
+        guard clock.now < instant else { throw IssueReportDraftError.timedOut }
+        return try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(until: instant, clock: clock)
                 throw IssueReportDraftError.timedOut
             }
-            do {
-                try await Task.sleep(for: pollInterval)
-            } catch {
-                await cancelQuietly(runID: current.id, machineID: machineID)
+            defer { group.cancelAll() }
+            guard let first = try await group.next() else { throw IssueReportDraftError.timedOut }
+            return first
+        }
+    }
+
+    private func preflightFailure(_ error: any Error) -> IssueReportDraftError {
+        if Self.isCancellation(error) { return .cancelled }
+        if let draft = error as? IssueReportDraftError { return draft }
+        return .companionUnavailable(error.localizedDescription)
+    }
+
+    private func startFailure(_ error: any Error) -> IssueReportDraftError {
+        if Self.isCancellation(error) { return .cancelled }
+        if let draft = error as? IssueReportDraftError { return draft }
+        return .startFailed(error.localizedDescription)
+    }
+
+    private static func isCancellation(_ error: any Error) -> Bool {
+        if error is CancellationError { return true }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return true }
+        if let draft = error as? IssueReportDraftError, draft == .cancelled { return true }
+        return false
+    }
+
+    /// Polls one started run to a terminal status inside the shared deadline.
+    /// A cancellation or an expired deadline cancels the remote run and
+    /// throws; an abandoned polling failure best-effort cancels too, and the
+    /// request never starts a second one.
+    private func pollToCompletion(
+        _ run: HeadlessAgentRun,
+        machineID: String,
+        deadlineInstant: ContinuousClock.Instant
+    ) async throws -> HeadlessAgentRun {
+        let clock = ContinuousClock()
+        var current = run
+        while !current.status.isTerminal {
+            if Task.isCancelled {
+                cancelQuietly(runID: current.id, machineID: machineID)
                 throw IssueReportDraftError.cancelled
             }
             do {
-                current = try await transport.fetch(machineID, current.id)
-            } catch is CancellationError {
-                await cancelQuietly(runID: current.id, machineID: machineID)
-                throw IssueReportDraftError.cancelled
+                try await bounded(until: deadlineInstant) { [self] in
+                    try await Task.sleep(for: pollInterval)
+                }
             } catch {
-                throw IssueReportDraftError.runFailed(error.localizedDescription)
+                if Self.isCancellation(error) || (error as? IssueReportDraftError) == .timedOut {
+                    cancelQuietly(runID: current.id, machineID: machineID)
+                }
+                throw Self.pollFailure(error)
             }
+            do {
+                current = try await bounded(until: deadlineInstant) { [self] in
+                    try await transport.fetch(machineID, current.id)
+                }
+            } catch {
+                cancelQuietly(runID: current.id, machineID: machineID)
+                throw Self.pollFailure(error)
+            }
+        }
+        guard !Task.isCancelled else {
+            cancelQuietly(runID: current.id, machineID: machineID)
+            throw IssueReportDraftError.cancelled
+        }
+        guard clock.now < deadlineInstant else {
+            // A terminal response that arrives after the deadline is refused:
+            // the user already saw the timeout, so accepting it later would
+            // contradict the sheet and the reported outcome.
+            cancelQuietly(runID: current.id, machineID: machineID)
+            throw IssueReportDraftError.timedOut
         }
         return current
     }
 
-    /// Best-effort stop of a run the client is abandoning. A failure here must
-    /// not mask the original timeout or cancellation.
-    private func cancelQuietly(runID: String, machineID: String) async {
-        _ = try? await transport.cancel(machineID, runID)
+    private static func pollFailure(_ error: any Error) -> IssueReportDraftError {
+        if isCancellation(error) { return .cancelled }
+        if let draft = error as? IssueReportDraftError { return draft }
+        return .runFailed(error.localizedDescription)
+    }
+
+    /// Best-effort stop of a run the client is abandoning.
+    ///
+    /// The request runs in an independent, non-cancelled task so a caller that
+    /// was just cancelled can still deliver it. The service never awaits it,
+    /// so cleanup cannot extend the sheet's busy state, and an internal
+    /// timeout drops the request if the transport cannot answer.
+    private func cancelQuietly(runID: String, machineID: String) {
+        Task.detached(priority: .utility) { [self] in
+            let cancel = Task { @MainActor [self] in
+                _ = try? await transport.cancel(machineID, runID)
+            }
+            let timeout = Task {
+                try? await Task.sleep(for: Self.cancelTimeout)
+                cancel.cancel()
+            }
+            _ = await cancel.value
+            timeout.cancel()
+        }
     }
 }
 

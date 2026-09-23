@@ -1447,7 +1447,11 @@ class HerdrHTTPTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw_directory:
             directory = Path(raw_directory)
             home = directory / "home"
-            home.mkdir()
+            (home / ".pi" / "agent").mkdir(parents=True)
+            (home / ".pi" / "agent" / "settings.json").write_text(
+                json.dumps({"defaultProvider": "openai-codex", "defaultModel": "gpt-5.6-luna"}),
+                encoding="utf-8",
+            )
             fake_pi = write_fake_pi(directory)
             draft = json.dumps({"title": "Synthetic title", "body": "Synthetic body"})
             service = HerdrService(

@@ -125,7 +125,37 @@ struct IssueReportDraftTests {
         #expect(IssueReportDraftProfile.containsUnsupportedControls("bell\u{0007}"))
         #expect(IssueReportDraftProfile.containsUnsupportedControls("escape\u{001B}[31m"))
         #expect(IssueReportDraftProfile.containsUnsupportedControls("delete\u{007F}"))
+        #expect(IssueReportDraftProfile.containsUnsupportedControls("c1\u{0085}next-line"))
         #expect(IssueReportDraftProfile.sourceProblem("bell\u{0007}") == .sourceHasControlCharacters)
+
+        // A joined emoji carries a zero-width joiner (a format character, Cf)
+        // and a Unicode line separator is not a control: both are ordinary
+        // plain-English input that must reach the drafting run.
+        #expect(!IssueReportDraftProfile.containsUnsupportedControls("Add 👩\u{200D}💻 shortcuts"))
+        #expect(IssueReportDraftProfile.sourceProblem("Add 👩\u{200D}💻 shortcuts") == nil)
+        #expect(!IssueReportDraftProfile.containsUnsupportedControls("first\u{2028}second"))
+        #expect(IssueReportDraftProfile.sourceProblem("first\u{2028}second") == nil)
+    }
+
+    @Test("Title validation enforces one line while keeping emoji joiners")
+    func titlePolicy() throws {
+        let joined = try IssueReportDraftOutput.parse(#"{"title":"Add 👩\u200D💻 shortcuts","body":"Body"}"#)
+        #expect(joined.title == "Add 👩\u{200D}💻 shortcuts")
+
+        for json in (
+            #"{"title":"Line\u000Abreak","body":"Body"}"#,
+            #"{"title":"Line\u2028separator","body":"Body"}"#,
+            #"{"title":"Line\u2029paragraph","body":"Body"}"#,
+            #"{"title":"Tabbed\u0009title","body":"Body"}"#
+        ) {
+            #expect(throws: IssueReportDraftOutputError.titleHasControlCharacters) {
+                try IssueReportDraftOutput.parse(json)
+            }
+        }
+
+        // Line and paragraph separators stay valid in a Markdown body.
+        let body = try IssueReportDraftOutput.parse(#"{"title":"Title","body":"first\u2028second\u2029third"}"#)
+        #expect(body.body == "first\u{2028}second\u{2029}third")
     }
 
     @Test("Error messages keep typed text and name the upgrade path")

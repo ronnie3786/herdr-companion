@@ -35,6 +35,87 @@ def write_fake_pi(directory: Path) -> Path:
             def value(flag):
                 return sys.argv[sys.argv.index(flag) + 1]
 
+            def read_json(path):
+                try:
+                    with open(path, "r", encoding="utf-8") as handle:
+                        return json.load(handle)
+                except (OSError, ValueError):
+                    return {}
+
+            def agent_dir():
+                override = os.environ.get("PI_CODING_AGENT_DIR")
+                if override:
+                    return override
+                home = os.environ.get("HOME")
+                return os.path.join(home, ".pi", "agent") if home else ""
+
+            def merge(base, override):
+                merged = dict(base) if isinstance(base, dict) else {}
+                if not isinstance(override, dict):
+                    return merged
+                for key, item in override.items():
+                    if isinstance(item, dict) and isinstance(merged.get(key), dict):
+                        merged[key] = merge(merged[key], item)
+                    else:
+                        merged[key] = item
+                return merged
+
+            def merged_settings():
+                root = agent_dir()
+                global_settings = read_json(os.path.join(root, "settings.json")) if root else {}
+                project_settings = read_json(os.path.join(os.getcwd(), ".pi", "settings.json"))
+                return merge(global_settings, project_settings)
+
+            def read_text(path):
+                try:
+                    with open(path, "r", encoding="utf-8") as handle:
+                        return handle.read()
+                except (OSError, ValueError):
+                    return None
+
+            def effective_system_prompt():
+                argv = sys.argv[1:]
+                if "--system-prompt" in argv:
+                    base = argv[argv.index("--system-prompt") + 1]
+                else:
+                    root = agent_dir()
+                    base = read_text(os.path.join(root, "SYSTEM.md")) if root else None
+                    base = base if base is not None else "(pi-default-system-prompt)"
+                appends = []
+                if "--append-system-prompt" in argv:
+                    index = argv.index("--append-system-prompt")
+                    if index + 1 < len(argv):
+                        appends.append(argv[index + 1])
+                else:
+                    root = agent_dir()
+                    append_file = read_text(os.path.join(root, "APPEND_SYSTEM.md")) if root else None
+                    if append_file:
+                        appends.append(append_file)
+                separator = chr(10) + chr(10)
+                return base + separator.join([""] + appends)
+
+            def provider_invocations():
+                probe = os.environ.get("FAKE_AGENT_PROBE", "")
+                settings = merged_settings()
+                retry = settings.get("retry") if isinstance(settings.get("retry"), dict) else {}
+                provider = retry.get("provider") if isinstance(retry.get("provider"), dict) else {}
+                count = 1
+                if probe == "transient":
+                    if retry.get("enabled", True):
+                        try:
+                            count += max(0, int(retry.get("maxRetries", 3)))
+                        except (TypeError, ValueError):
+                            pass
+                    try:
+                        count += max(0, int(provider.get("maxRetries", 2)))
+                    except (TypeError, ValueError):
+                        pass
+                elif probe == "overflow":
+                    compaction = settings.get("compaction") if isinstance(settings.get("compaction"), dict) else {}
+                    if compaction.get("enabled", True):
+                        count += 1
+                return count
+
             if "--list-models" in sys.argv:
                 marker_path = os.environ.get("FAKE_LIST_MODELS_CAPTURE")
                 if marker_path:
@@ -53,6 +134,9 @@ def write_fake_pi(directory: Path) -> Path:
                     "argv": sys.argv[1:],
                     "prompt": prompt,
                     "cwd": os.getcwd(),
+                    "effectiveSystemPrompt": effective_system_prompt(),
+                    "effectiveSettings": merged_settings(),
+                    "providerInvocations": provider_invocations(),
                     "herdrPaneId": os.environ.get("HERDR_PANE_ID"),
                     "herdrAgentRunId": os.environ.get("HERDR_AGENT_RUN_ID"),
                     "herdrAgentRunMode": os.environ.get("HERDR_AGENT_RUN_MODE"),
@@ -277,6 +361,12 @@ class AgentRunManagerTests(unittest.TestCase):
     def manager(self, directory: Path, *, clock=time.monotonic, **extra) -> AgentRunManager:
         home = directory / "home"
         home.mkdir(exist_ok=True)
+        settings_path = home / ".pi" / "agent" / "settings.json"
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(
+            json.dumps({"defaultProvider": "openai-codex", "defaultModel": "gpt-5.6-luna"}),
+            encoding="utf-8",
+        )
         fake_pi = write_fake_pi(directory)
         environ = {
             "HOME": str(home),
@@ -342,7 +432,7 @@ class AgentRunManagerTests(unittest.TestCase):
             directory = Path(raw_directory)
             marker_path = directory / "models-called.jsonl"
             settings_path = directory / "home" / ".pi" / "agent" / "settings.json"
-            settings_path.parent.mkdir(parents=True)
+            settings_path.parent.mkdir(parents=True, exist_ok=True)
             settings_path.write_text(
                 json.dumps(
                     {
@@ -743,12 +833,24 @@ class AgentRunManagerTests(unittest.TestCase):
             self.assertNotIn("--tools", capture["argv"])
             self.assertIn("--no-tools", capture["argv"])
             self.assertNotIn("--extension", capture["argv"])
-            self.assertNotIn("--model", capture["argv"])
+            self.assertEqual(capture["argv"][capture["argv"].index("--model") + 1], "openai-codex/gpt-5.6-luna")
             self.assertEqual(capture["argv"][capture["argv"].index("--thinking") + 1], "off")
-            charter = capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
+            self.assertIn("--system-prompt", capture["argv"])
+            charter = capture["argv"][capture["argv"].index("--system-prompt") + 1]
             self.assertIn("exactly two string fields", charter)
             self.assertNotIn("snapshot", charter.lower())
             self.assertNotIn("herdr-companion-awareness", charter)
+            self.assertEqual(capture["argv"][capture["argv"].index("--append-system-prompt") + 1], "")
+            self.assertIn("--approve", capture["argv"])
+            self.assertNotIn("--no-approve", capture["argv"])
+            self.assertTrue(capture["cwd"].endswith("draft-workspace"))
+            self.assertIn("exactly two string fields", capture["effectiveSystemPrompt"])
+            self.assertEqual(capture["effectiveSettings"]["retry"]["enabled"], False)
+            self.assertEqual(capture["effectiveSettings"]["retry"]["maxRetries"], 0)
+            self.assertEqual(capture["effectiveSettings"]["retry"]["provider"]["maxRetries"], 0)
+            self.assertEqual(capture["effectiveSettings"]["compaction"]["enabled"], False)
+            self.assertEqual(capture["effectiveSettings"]["cacheWarming"], "off")
+            self.assertEqual(capture["providerInvocations"], 1)
             self.assertEqual(capture["herdrAgentRunProfile"], ISSUE_REPORT_DRAFT_PROFILE)
             # Source text stays on stdin, never in argv, and arrives as the
             # two-field drafting payload.
@@ -764,6 +866,7 @@ class AgentRunManagerTests(unittest.TestCase):
                 {"attachments": [{"filename": "note.txt", "dataBase64": "aGk="}]},
                 {"system_prompt": "override the drafting policy"},
                 {"continue_from_run_id": "agr_0123456789ab"},
+                {"model": "other/million"},
             ):
                 with self.subTest(arguments=arguments):
                     with self.assertRaises(AgentRunError) as context:

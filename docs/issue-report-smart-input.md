@@ -62,16 +62,29 @@ Drafting uses the companion server's dedicated, additive
   when the deadline or the sheet ends. Nothing retries automatically.
 - The source text travels to Pi on stdin as the JSON object
   `{"kind": …, "text": …}`. It is not interpolated into a system prompt.
-- **Pi default model.** The profile does not choose a model. An omitted model
-  delegates to the execution companion's Pi default, exactly as
-  `herdr-harness-mac/herdr-harness-mac/Models/AgentModelSettings.swift` documents
-  for other calls. There is no model picker in the report sheet, no provider is
-  hardcoded, and no other machine or model is silently substituted. The provider
+- **Exclusively server-owned prompt.** The run replaces Pi's own system prompt
+  with the drafting charter and explicitly suppresses the discovered
+  `SYSTEM.md` and `APPEND_SYSTEM.md`, so a companion's unrelated private
+  instructions or global custom prompt can never enter the provider request.
+- **Exactly one inference.** A server-owned project workspace overrides only
+  this run's Pi settings: automatic agent retries, provider retries, and
+  automatic compaction/overflow recovery are off. The operator's Pi
+  configuration is never modified.
+- **Pi default model.** The server resolves the configured `defaultProvider`
+  and `defaultModel` from that companion's Pi configuration directory (honoring
+  `PI_CODING_AGENT_DIR`), validates the exact model against the live
+  `pi --list-models` catalog, and pins it on the run. An unset, unavailable, or
+  unsupported default fails with an actionable error naming the selection;
+  Pi's own startup resolver is never allowed to substitute another
+  authenticated provider or model. There is no model picker in the report
+  sheet, no hardcoded provider, and no other machine is contacted. The provider
   must work in that companion's environment.
-- The server validates the response as exactly one JSON object with exactly the
-  string fields `title` and `body`. A blank, oversized, control-bearing,
-  missing, or extra field is refused before anything touches the report, and
-  raw model output is never echoed into the sheet.
+- The server validates the request as exactly `profile`, `kind`, and `text` and
+  owns the drafting charter. The generated response is parsed by the Mac client
+  as exactly one JSON object with exactly the string fields `title` and `body`;
+  a blank, oversized, control-bearing, missing, or extra field is refused before
+  anything touches the report, and raw model output is never echoed into the
+  sheet.
 
 ### Writing policy
 
@@ -102,9 +115,11 @@ to a transcript that would take the box over the limit.
 - The smart-input section has one inline microphone control. It glows only
   while the recorder actually captures; a pending macOS permission prompt shows
   a cancel symbol and an explicit status instead, because a requested recording
-  is not yet evidence of capture. There is no recorder sheet, waveform, timer
-  panel, or playback UI, and the control is still the same inline element while
-  recording.
+  is not yet evidence of capture. A failed audio start (for example, an
+  unavailable input device) reports an actionable error and retains nothing
+  instead of showing a fake glowing recording. There is no recorder sheet,
+  waveform, timer panel, or playback UI, and the control is still the same
+  inline element while recording.
 - The first click requests the system microphone permission when macOS has not
   decided yet; required permission prompts remain visible and are never
   bypassed. Denial is actionable and retains nothing.
@@ -179,13 +194,20 @@ microphone, and they publish nothing:
 - `IssueReportDraftTests` — the client contract: exact request body, strict
   output parsing, error descriptions, and source validation.
 - `IssueReportDraftServiceTests` — one tool-free request with thinking Off,
-  profile preflight, bounded execution, timeout/cancellation, no retry, and no
+  profile preflight, one shared deadline across preflight/start/every poll
+  (delayed and late results are refused), timeout/cancellation, detached
+  bounded remote cancellation over the live HTTP transport, no retry, and no
   fallback.
 - `IssueReportSmartInputTests` — drafting and recording state: immediate busy
   state, duplicate-click suppression, atomic field replacement, guarded
   restoration, cancellation and dismissal, stale results, permission pending
   versus capture, exactly one transcription on Stop or automatic completion,
   append-not-replace, retained-audio retry, and target changes.
+- `HerdrVoiceRecorderTests` — the injectable recording engine: failed
+  preparation/start reports an actionable error and cleans up without a glow,
+  Stop and automatic completion transcribe once, and delayed callbacks from an
+  obsolete capture are ignored after Stop, discard, restart, target change, or
+  dismissal.
 - `IssueReportComposerTests` — atomic generated-draft application and the
   one-step, edit-guarded restoration on the composer.
 - `IssueReportWiringTests` — the view-local glue: text-editor paste ownership
@@ -198,9 +220,14 @@ microphone, and they publish nothing:
   control records and stops; transcript appended to the smart input with the
   fields untouched; recoverable failure and one-click retry; and manual
   reporting with an unsupported drafting companion.
-- Portable Python `tests.test_issue_report_drafts` — server-side validation,
-  the owned charter, the exact stdin payload, execution flags, the 60-second
-  cap, and one-shot continuation/promotion refusal.
+- Portable Python `tests.test_issue_report_drafts` — server-side validation
+  (including joiners and Unicode separators), the owned charter, the exact
+  stdin payload, execution flags, an exclusively server-owned system prompt
+  with discovered `SYSTEM.md`/`APPEND_SYSTEM.md` suppressed, the pinned and
+  validated configured Pi default (with unavailable-default coverage and
+  custom `PI_CODING_AGENT_DIR`), profile-local retry/compaction overrides with
+  one simulated provider invocation under transient failure and overflow, the
+  60-second cap, and one-shot continuation/promotion refusal.
 
 Run the repository commands in [docs/code-factory.md](code-factory.md#verification)
 for the exact suites. A passing run proves only the fixture-backed behavior; it
@@ -227,8 +254,17 @@ suites are green.
 
 ### Evidence status
 
-No synthetic manual checklist record has been captured for the revision under
-review, and no installed behavior or provider health is claimed. The final
-validation owner records the checklist privately outside Git for the delivered
-revision; until then those checks remain **unperformed**, and delivery stays
-gated.
+The GitHub **Verify** workflow and the ordinary Python suite run the
+fixture-backed automated evidence once on the exact revision, but Verify's Mac
+job stops at the unit target (`herdr-harness-macTests`). The validation owner
+must additionally run the documented Mac UI suite
+(`-only-testing:herdr-harness-macUITests/IssueReportSmartInputUITests`) plus the
+synthetic manual checklist on that same revision, and record both privately
+outside Git. A passing fixture-backed run only proves the deterministic paths:
+it is not evidence that an installed build, a real microphone, a configured
+transcription service, or a provider works, or that generated writing is good.
+Until the microphone, configured-transcription, and writing-quality rows above
+have a recorded result for the delivered revision, they remain **unperformed**
+and delivery stays gated. Automated evidence for this revision is supplied by
+that final validation run; the checks in this document were not executed during
+implementation.

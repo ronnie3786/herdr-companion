@@ -305,6 +305,17 @@ def _resolve_pi_bin(environ: Mapping[str, str]) -> Optional[str]:
     return None
 
 
+def _pi_agent_dir(environ: Mapping[str, str]) -> Path:
+    """Resolve Pi's agent/configuration directory exactly as Pi itself does."""
+    override = environ.get("PI_CODING_AGENT_DIR")
+    if override:
+        return Path(override).expanduser()
+    home = environ.get("HOME")
+    if home:
+        return Path(home) / ".pi" / "agent"
+    return Path("~/.pi/agent").expanduser()
+
+
 def _child_path(pi_bin: str, existing: Optional[str]) -> str:
     values: list[str] = []
     for value in (
@@ -538,12 +549,7 @@ class AgentRunManager:
                 status=502,
             )
 
-        home = self.environ.get("HOME")
-        settings_path = (
-            Path(home) / ".pi" / "agent" / "settings.json"
-            if home
-            else Path("~/.pi/agent/settings.json").expanduser()
-        )
+        settings_path = _pi_agent_dir({**os.environ, **self.environ}) / "settings.json"
         default = None
         try:
             settings = json.loads(settings_path.read_text(encoding="utf-8"))
@@ -558,6 +564,71 @@ class AgentRunManager:
             self._cached_models = copy.deepcopy(catalog)
             self._models_expire_at = now + MODEL_LIST_CACHE_SECONDS
         return catalog
+
+    def resolve_issue_report_draft_model(self) -> str:
+        """Resolve and validate the configured Pi default for one drafting run.
+
+        Omitting the model delegates to Pi's own startup resolver, which may
+        silently choose another authenticated provider or model when the saved
+        default cannot be used. Drafting therefore pins the configured default
+        exactly and fails with an actionable error instead of substituting.
+        """
+        catalog = self.list_models()
+        default = catalog.get("default")
+        provider = default.get("provider") if isinstance(default, dict) else None
+        model_id = default.get("id") if isinstance(default, dict) else None
+        if not isinstance(provider, str) or not provider or not isinstance(model_id, str) or not model_id:
+            raise AgentRunError(
+                "This companion has no Pi default model configured. "
+                "Choose a default model in Pi settings on that machine, then try again.",
+                code="issue_report_draft_model_unavailable",
+                status=422,
+            )
+        models = catalog.get("models")
+        available = isinstance(models, list) and any(
+            isinstance(item, dict) and item.get("provider") == provider and item.get("id") == model_id
+            for item in models
+        )
+        if not available:
+            raise AgentRunError(
+                f"The companion's configured Pi default model ({provider}/{model_id}) is not available. "
+                "Check that machine's Pi provider configuration, then try again.",
+                code="issue_report_draft_model_unavailable",
+                status=422,
+            )
+        pinned = f"{provider}/{model_id}"
+        if not MODEL_PATTERN.fullmatch(pinned):
+            raise AgentRunError(
+                "The companion's configured Pi default model is not a supported selection.",
+                code="issue_report_draft_model_unavailable",
+                status=422,
+            )
+        return pinned
+
+    def _prepare_issue_draft_workspace(self, run_id: str) -> Path:
+        """Create the server-owned cwd that keeps one drafting run one-shot.
+
+        Pi merges trusted project settings from ``<cwd>/.pi/settings.json`` over
+        the operator's global settings. ``--approve`` trusts only this freshly
+        created, otherwise empty workspace. The overrides disable automatic
+        agent and provider retries plus automatic compaction/overflow recovery
+        for this run without touching the operator's Pi configuration. The
+        workspace lives inside the private run directory and is removed with it.
+        """
+        from .issue_report_drafts import RUNTIME_SETTINGS
+
+        workspace = self._run_dir(run_id) / "draft-workspace"
+        config_dir = workspace / ".pi"
+        config_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(workspace, 0o700)
+        os.chmod(config_dir, 0o700)
+        path = config_dir / "settings.json"
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(RUNTIME_SETTINGS, handle, separators=(",", ":"), ensure_ascii=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(path, 0o600)
+        return workspace
 
     def _run_dir(self, run_id: str) -> Path:
         if not _RUN_ID_RE.fullmatch(run_id):
@@ -749,7 +820,9 @@ class AgentRunManager:
             # Defense in depth: the dedicated service path already enforces
             # this, and no caller may turn a drafting run into a continuable,
             # state-changing, file-bearing, or higher-thinking one. Omitting
-            # the level selects the required Off reasoning level.
+            # the level selects the required Off reasoning level. The run also
+            # pins the companion's validated Pi default instead of letting Pi
+            # silently substitute another provider or model.
             if thinking_level is None:
                 thinking_level = "off"
             if (
@@ -764,6 +837,14 @@ class AgentRunManager:
                     code="invalid_issue_report_draft",
                     status=400,
                 )
+            configured_model = self.resolve_issue_report_draft_model()
+            if model is not None and model != configured_model:
+                raise AgentRunError(
+                    "Issue report drafts always use the companion's configured default model.",
+                    code="invalid_issue_report_draft",
+                    status=400,
+                )
+            model = configured_model
         prepared_attachments = _prepare_attachments(attachments)
         try:
             encoded_topology = json.dumps(
@@ -1168,6 +1249,18 @@ class AgentRunManager:
             if isinstance(snapshot, dict) and snapshot.get("prompt"):
                 from .agent_profiles import write_prompt_snapshot
                 charter = write_prompt_snapshot(self._run_dir(run_id) / "profile-charter.md", charter + "\n\n" + snapshot["prompt"])
+            drafting = profile == ISSUE_REPORT_DRAFT_PROFILE
+            if drafting:
+                # A drafting request must not inherit any companion-private
+                # system prompt: `--system-prompt` replaces Pi's default and
+                # the discovered SYSTEM.md, and an empty `--append-system-prompt`
+                # suppresses the discovered APPEND_SYSTEM.md (a supplied value
+                # makes Pi skip file discovery entirely).
+                prompt_flags = ["--system-prompt", charter, "--append-system-prompt", ""]
+                project_trust_flag = "--approve"
+            else:
+                prompt_flags = ["--append-system-prompt", charter]
+                project_trust_flag = "--no-approve"
             command = [
                 pi_bin,
                 "-p",
@@ -1181,13 +1274,12 @@ class AgentRunManager:
                 str(run["sessionId"]),
                 "--name",
                 str(run["label"]),
-                "--append-system-prompt",
-                charter,
+                *prompt_flags,
                 "--no-context-files",
                 "--no-extensions",
                 "--no-skills",
                 "--no-prompt-templates",
-                "--no-approve",
+                project_trust_flag,
             ]
             if profile in {
                 "contextual-question-v1",
@@ -1213,6 +1305,23 @@ class AgentRunManager:
                     "--no-prompt-templates", "--no-approve",
                 }]
                 extension_path = None  # Normal installed packages own their tools.
+            process_cwd = str(run["cwd"])
+            if drafting:
+                # Project settings in a trusted, server-owned cwd turn off
+                # automatic agent/provider retries and automatic compaction
+                # recovery for this run without changing the operator's Pi
+                # settings. The workspace is created inside the private run
+                # directory and removed with it.
+                try:
+                    process_cwd = str(self._prepare_issue_draft_workspace(run_id))
+                except OSError as exc:
+                    self._set(
+                        run_id,
+                        status="failed",
+                        error=f"The drafting workspace could not be prepared: {str(exc)[:200]}",
+                        finishedAt=self._now(),
+                    )
+                    return
             if extension_path is not None:
                 # --no-extensions disables discovery only. Explicit packages
                 # remain loadable, keeping private runs isolated while making
@@ -1256,7 +1365,7 @@ class AgentRunManager:
             try:
                 process = subprocess.Popen(
                     command,
-                    cwd=str(run["cwd"]),
+                    cwd=process_cwd,
                     env=child_env,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,

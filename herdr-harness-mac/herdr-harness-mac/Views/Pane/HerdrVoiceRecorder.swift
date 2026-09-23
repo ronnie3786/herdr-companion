@@ -8,6 +8,25 @@ enum HerdrVoiceRecorderStatus: Equatable {
     case finished
 }
 
+/// The minimal recording surface `HerdrVoiceRecorder` drives.
+///
+/// `AVAudioRecorder` is the app implementation. Deterministic tests inject a
+/// plain fake through `makeRecordingEngine`, so preparation/start failures and
+/// delayed completion callbacks never touch a real microphone or audio device.
+protocol HerdrRecordingEngine: AnyObject {
+    var delegate: (any AVAudioRecorderDelegate)? { get set }
+    var isMeteringEnabled: Bool { get set }
+    var isRecording: Bool { get }
+    var currentTime: TimeInterval { get }
+    func prepareToRecord() -> Bool
+    func record(forDuration duration: TimeInterval) -> Bool
+    func stop()
+    func updateMeters()
+    func averagePower(forChannel channelNumber: Int) -> Float
+}
+
+extension AVAudioRecorder: HerdrRecordingEngine {}
+
 /// The shared record/preview engine behind both voice entry points.
 ///
 /// Mac notes: macOS has no `AVAudioSession`, so the iOS category/activation
@@ -23,6 +42,8 @@ enum HerdrVoiceRecorderStatus: Equatable {
 final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayerDelegate {
     static let maxDuration: TimeInterval = 10 * 60
     private static let sampleCount = 40
+    private static let captureStartFailureMessage = "The microphone could not start recording. "
+        + "Check the audio input device and try again."
 
     private(set) var status: HerdrVoiceRecorderStatus = .idle
     /// True while the system microphone prompt is up and capture has not
@@ -36,6 +57,21 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
     private(set) var playbackTime: TimeInterval = 0
     var errorMessage: String?
 
+    /// Microphone-permission seams. The app uses the system APIs; tests inject
+    /// an authorized or denied status so no real prompt or capture runs.
+    @ObservationIgnored var microphoneAuthorizationStatus: @MainActor () -> AVAuthorizationStatus = {
+        AVCaptureDevice.authorizationStatus(for: .audio)
+    }
+    @ObservationIgnored var requestMicrophoneAccess: @MainActor () async -> Bool = {
+        await AVCaptureDevice.requestAccess(for: .audio)
+    }
+
+    /// The recording-engine factory. Tests replace it with a fake engine to
+    /// exercise failed preparation/start and delayed delegate callbacks.
+    @ObservationIgnored var makeRecordingEngine: @MainActor (URL, [String: Any]) throws -> any HerdrRecordingEngine = { url, settings in
+        try AVAudioRecorder(url: url, settings: settings)
+    }
+
     /// Called after any permission, status, or error change. Existing callers
     /// never set it; the report sheet's adapter uses it to mirror capture
     /// state (permission pending versus recording) without polling.
@@ -47,7 +83,7 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
     @ObservationIgnored var onCaptureFinished: (() -> Void)?
 
     // Reached from `deinit`, which is nonisolated, and never observed by a view.
-    @ObservationIgnored nonisolated(unsafe) private var recorder: AVAudioRecorder?
+    @ObservationIgnored nonisolated(unsafe) private var recorder: (any HerdrRecordingEngine)?
     private var player: AVAudioPlayer?
     @ObservationIgnored nonisolated(unsafe) private var recordingTimer: Timer?
     private var playbackTimer: Timer?
@@ -132,7 +168,7 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
     func startRecording() {
         errorMessage = nil
         isRequestingPermission = false
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        switch microphoneAuthorizationStatus() {
         case .authorized:
             beginCapture()
         case .denied, .restricted:
@@ -143,8 +179,9 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
             notifyStateChange()
             let generation = startGeneration
             Task { @MainActor [weak self] in
-                let granted = await AVCaptureDevice.requestAccess(for: .audio)
-                guard let self, generation == self.startGeneration else { return }
+                guard let self else { return }
+                let granted = await self.requestMicrophoneAccess()
+                guard generation == self.startGeneration else { return }
                 self.isRequestingPermission = false
                 if granted {
                     self.beginCapture()
@@ -160,6 +197,7 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
     }
 
     private func beginCapture() {
+        errorMessage = nil
         do {
             discardCurrentFile()
 
@@ -172,15 +210,29 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
                 AVLinearPCMIsFloatKey: false,
                 AVLinearPCMIsBigEndianKey: false,
             ]
-            let recorder = try AVAudioRecorder(url: outputURL, settings: settings)
-            recorder.delegate = self
-            recorder.isMeteringEnabled = true
-            recorder.prepareToRecord()
-            try VoiceRecordingPolicy.applyCompleteProtection(to: outputURL)
-            recorder.record(forDuration: Self.maxDuration)
-
-            self.recorder = recorder
+            let engine = try makeRecordingEngine(outputURL, settings)
+            engine.delegate = self
+            engine.isMeteringEnabled = true
+            self.recorder = engine
             self.outputURL = outputURL
+            // Both calls report whether capture actually started. A glowing
+            // Stop control must never appear for an unavailable audio device,
+            // so a failed attempt cleans up and becomes an actionable error
+            // instead of a fake recording.
+            guard engine.prepareToRecord() else {
+                cleanup(deleteFile: true)
+                errorMessage = Self.captureStartFailureMessage
+                notifyStateChange()
+                return
+            }
+            try VoiceRecordingPolicy.applyCompleteProtection(to: outputURL)
+            guard engine.record(forDuration: Self.maxDuration) else {
+                cleanup(deleteFile: true)
+                errorMessage = Self.captureStartFailureMessage
+                notifyStateChange()
+                return
+            }
+
             elapsedTime = 0
             playbackTime = 0
             samples = Self.baselineSamples()
@@ -325,17 +377,29 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
     }
 
     nonisolated func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
-        Task { @MainActor in
-            stopRecordingTimer()
-            self.recorder = nil
-            elapsedTime = min(max(elapsedTime, recorder.currentTime), Self.maxDuration)
-            status = flag && outputURL != nil ? .finished : .idle
-            if !flag {
-                errorMessage = "Recording failed."
-            }
-            notifyCaptureFinishedIfNeeded()
-            notifyStateChange()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.handleCaptureFinished(recorder, successfully: flag)
         }
+    }
+
+    /// One finished-capture path for the delegate callback and the
+    /// deterministic test seam. A callback from a recorder that is no longer
+    /// current (after an explicit Stop, discard, restart, target change, or
+    /// dismissal) is ignored, so an obsolete capture can never clear the new
+    /// one, mark its file finished, or invoke the new transcription callback.
+    func handleCaptureFinished(_ engine: any HerdrRecordingEngine, successfully flag: Bool) {
+        guard let current = recorder, current === engine else { return }
+        let duration = engine.currentTime
+        stopRecordingTimer()
+        recorder = nil
+        elapsedTime = min(max(elapsedTime, duration), Self.maxDuration)
+        status = flag && outputURL != nil ? .finished : .idle
+        if !flag {
+            errorMessage = "Recording failed."
+        }
+        notifyCaptureFinishedIfNeeded()
+        notifyStateChange()
     }
 
     private func notifyStateChange() {

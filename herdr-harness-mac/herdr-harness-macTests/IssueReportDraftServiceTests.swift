@@ -153,6 +153,9 @@ struct IssueReportDraftServiceTests {
         }
         #expect(spy.startCalls.count == 1)
         #expect(spy.fetchCalls == ["run-1"])
+        // An abandoned polling failure still best-effort cancels the remote run.
+        await Self.waitUntil("remote cancel") { spy.cancelCalls == ["run-1"] }
+        #expect(spy.cancelCalls == ["run-1"])
     }
 
     @Test("A run that outlives the deadline is cancelled and fails")
@@ -172,6 +175,96 @@ struct IssueReportDraftServiceTests {
             #expect(error as? IssueReportDraftError == .timedOut)
         }
         #expect(spy.startCalls.count == 1)
+        await Self.waitUntil("remote cancel") { spy.cancelCalls == ["run-1"] }
+        #expect(spy.cancelCalls == ["run-1"])
+    }
+
+    @Test("A delayed preflight is refused at the shared deadline before any start")
+    func delayedPreflightTimesOut() async {
+        let spy = DraftTransportSpy()
+        spy.capabilityDelay = .milliseconds(300)
+        let service = IssueReportDraftService(
+            transport: spy.transport,
+            pollInterval: .milliseconds(1),
+            deadline: .milliseconds(30)
+        )
+
+        do {
+            _ = try await service.draft(kind: .bug, text: "slow preflight", machineID: "machine-1")
+            Issue.record("Expected a timeout")
+        } catch {
+            #expect(error as? IssueReportDraftError == .timedOut)
+        }
+        #expect(spy.capabilityCalls == ["machine-1"])
+        #expect(spy.startCalls.isEmpty)
+        #expect(spy.fetchCalls.isEmpty)
+        #expect(spy.cancelCalls.isEmpty)
+    }
+
+    @Test("A delayed start is refused at the shared deadline")
+    func delayedStartTimesOut() async {
+        let spy = DraftTransportSpy()
+        spy.startDelay = .milliseconds(300)
+        let service = IssueReportDraftService(
+            transport: spy.transport,
+            pollInterval: .milliseconds(1),
+            deadline: .milliseconds(30)
+        )
+
+        do {
+            _ = try await service.draft(kind: .bug, text: "slow start", machineID: "machine-1")
+            Issue.record("Expected a timeout")
+        } catch {
+            #expect(error as? IssueReportDraftError == .timedOut)
+        }
+        #expect(spy.startCalls.count == 1)
+        #expect(spy.fetchCalls.isEmpty)
+        #expect(spy.cancelCalls.isEmpty)
+    }
+
+    @Test("A terminal fetch after the deadline is rejected and the run is cancelled")
+    func lateTerminalFetchIsRejected() async {
+        let spy = DraftTransportSpy()
+        spy.startRun = Self.makeRun(status: .running)
+        spy.fetchResponses = [Self.makeRun(status: .running), Self.makeRun(status: .completed, response: #"{"title":"Late","body":"Late"}"#)]
+        spy.fetchDelays = [.milliseconds(1), .milliseconds(300)]
+        let service = IssueReportDraftService(
+            transport: spy.transport,
+            pollInterval: .milliseconds(1),
+            deadline: .milliseconds(40)
+        )
+
+        do {
+            _ = try await service.draft(kind: .bug, text: "slow fetch", machineID: "machine-1")
+            Issue.record("Expected a timeout")
+        } catch {
+            #expect(error as? IssueReportDraftError == .timedOut)
+        }
+        #expect(spy.fetchCalls == ["run-1", "run-1"])
+        await Self.waitUntil("remote cancel") { spy.cancelCalls == ["run-1"] }
+        #expect(spy.cancelCalls == ["run-1"])
+    }
+
+    @Test("The cleanup cancel cannot extend the busy state when the transport ignores cancellation")
+    func cleanupIsFireAndForget() async {
+        let spy = DraftTransportSpy()
+        spy.startRun = Self.makeRun(status: .running)
+        spy.cancelDelay = .seconds(30)
+        let service = IssueReportDraftService(
+            transport: spy.transport,
+            pollInterval: .milliseconds(1),
+            deadline: .milliseconds(30)
+        )
+
+        let start = ContinuousClock().now
+        do {
+            _ = try await service.draft(kind: .bug, text: "slow request", machineID: "machine-1")
+            Issue.record("Expected a timeout")
+        } catch {
+            #expect(error as? IssueReportDraftError == .timedOut)
+        }
+        #expect(start.duration(to: ContinuousClock().now) < .milliseconds(500))
+        await Self.waitUntil("remote cancel") { spy.cancelCalls == ["run-1"] }
         #expect(spy.cancelCalls == ["run-1"])
     }
 
@@ -196,6 +289,7 @@ struct IssueReportDraftServiceTests {
         }
         #expect(error as? IssueReportDraftError == .cancelled)
         #expect(spy.startCalls.count == 1)
+        await Self.waitUntil("remote cancel") { spy.cancelCalls == ["run-1"] }
         #expect(spy.cancelCalls == ["run-1"])
     }
 
@@ -269,7 +363,125 @@ struct IssueReportDraftServiceTests {
         )
     }
 
+    @Test("A deadline reaches the live HTTP transport as a cancel POST")
+    func liveDeadlinePostsCancel() async throws {
+        let runID = "agr_deadline"
+        IssueReportDraftStubURLProtocol.reset(replies: Self.heldRunReplies(runID: runID))
+        let service = IssueReportDraftService.live(
+            configuration: try #require(ServerConfiguration(urlString: "http://localhost:9092", token: "test")),
+            session: Self.stubSession(),
+            pollInterval: .milliseconds(1),
+            deadline: .milliseconds(40)
+        )
+
+        do {
+            _ = try await service.draft(kind: .bug, text: "slow request", machineID: "machine-1")
+            Issue.record("Expected a timeout")
+        } catch {
+            #expect(error as? IssueReportDraftError == .timedOut)
+        }
+        let keys = try await Self.waitForRequest("POST /api/v1/agent-runs/\(runID)/cancel")
+        #expect(keys.contains("POST /api/v1/agent-runs/\(runID)/cancel"))
+        #expect(keys.contains("GET /api/v1/agent-runs/\(runID)"))
+        #expect(keys.filter { $0 == "POST /api/v1/agent-runs" }.count == 1)
+    }
+
+    @Test("Caller cancellation reaches the live HTTP transport as a cancel POST")
+    func liveCallerCancellationPostsCancel() async throws {
+        let runID = "agr_cancel"
+        IssueReportDraftStubURLProtocol.reset(replies: Self.heldRunReplies(runID: runID))
+        let service = IssueReportDraftService.live(
+            configuration: try #require(ServerConfiguration(urlString: "http://localhost:9092", token: "test")),
+            session: Self.stubSession(),
+            pollInterval: .milliseconds(1),
+            deadline: .seconds(5)
+        )
+
+        let task = Task { try await service.draft(kind: .bug, text: "cancel me", machineID: "machine-1") }
+        try await Task.sleep(for: .milliseconds(20))
+        task.cancel()
+        let result = await task.result
+        guard case let .failure(error) = result else {
+            Issue.record("Expected the draft to fail with cancellation")
+            return
+        }
+        #expect(error as? IssueReportDraftError == .cancelled)
+        let keys = try await Self.waitForRequest("POST /api/v1/agent-runs/\(runID)/cancel")
+        #expect(keys.contains("POST /api/v1/agent-runs/\(runID)/cancel"))
+    }
+
+    @Test("A cancelled fetch over HTTP maps to cancellation and cancels the run")
+    func liveFetchCancellationPostsCancel() async throws {
+        let runID = "agr_fetch_cancel"
+        var replies = Self.heldRunReplies(runID: runID)
+        replies["GET /api/v1/agent-runs/\(runID)"] = .init(status: 0, body: "", failWithCancellation: true)
+        IssueReportDraftStubURLProtocol.reset(replies: replies)
+        let service = IssueReportDraftService.live(
+            configuration: try #require(ServerConfiguration(urlString: "http://localhost:9092", token: "test")),
+            session: Self.stubSession(),
+            pollInterval: .milliseconds(1),
+            deadline: .seconds(5)
+        )
+
+        do {
+            _ = try await service.draft(kind: .bug, text: "fetch cancel", machineID: "machine-1")
+            Issue.record("Expected cancellation")
+        } catch {
+            #expect(error as? IssueReportDraftError == .cancelled)
+        }
+        let keys = try await Self.waitForRequest("POST /api/v1/agent-runs/\(runID)/cancel")
+        #expect(keys.contains("POST /api/v1/agent-runs/\(runID)/cancel"))
+    }
+
     // MARK: - Helpers
+
+    private static func heldRunReplies(runID: String) -> [String: IssueReportDraftStubURLProtocol.Reply] {
+        [
+            "GET /api/v1/agent-runs/capabilities": .init(
+                status: 200,
+                body: #"{"ok":true,"profiles":["issue-report-draft-v1"]}"#
+            ),
+            "POST /api/v1/agent-runs": .init(status: 202, body: runEnvelope(status: "running", id: runID)),
+            "GET /api/v1/agent-runs/\(runID)": .init(status: 0, body: "", hold: true),
+            "POST /api/v1/agent-runs/\(runID)/cancel": .init(
+                status: 200,
+                body: runEnvelope(status: "cancelled", id: runID)
+            ),
+        ]
+    }
+
+    /// Polls the recorded transport keys until `key` appears or the timeout
+    /// elapses; the best-effort cancel is intentionally fire-and-forget.
+    private static func waitForRequest(_ key: String, timeout: Duration = .seconds(2)) async throws -> [String] {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            let keys = recordedKeys()
+            if keys.contains(key) { return keys }
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        return recordedKeys()
+    }
+
+    private static func recordedKeys() -> [String] {
+        IssueReportDraftStubURLProtocol.recordedRequests().map { "\($0.method) \($0.path)" }
+    }
+
+    private static func waitUntil(
+        _ description: String,
+        timeout: Duration = .seconds(2),
+        _ condition: () -> Bool
+    ) async {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while !condition() {
+            if clock.now >= deadline {
+                Issue.record("Timed out waiting for \(description)")
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+    }
 
     private static func stubSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
@@ -332,11 +544,15 @@ struct IssueReportDraftServiceTests {
 private final class DraftTransportSpy {
     var capabilityProfiles: [String] = [IssueReportDraftProfile.identifier]
     var capabilityError: (any Error)?
+    var capabilityDelay: Duration?
     var startError: (any Error)?
+    var startDelay: Duration?
     var startRun = IssueReportDraftServiceTests.makeRun(status: .completed, response: #"{"title":"T","body":"B"}"#)
     var fetchResponses: [HeadlessAgentRun] = []
+    var fetchDelays: [Duration] = []
     var fetchError: (any Error)?
     var cancelError: (any Error)?
+    var cancelDelay: Duration?
     private(set) var capabilityCalls: [String] = []
     private(set) var startCalls: [(machineID: String, request: IssueReportDraftRequest)] = []
     private(set) var fetchCalls: [String] = []
@@ -347,18 +563,21 @@ private final class DraftTransportSpy {
             capabilities: { [weak self] machineID in
                 guard let self else { throw APIError.invalidResponse }
                 self.capabilityCalls.append(machineID)
+                if let delay = self.capabilityDelay { try await Task.sleep(for: delay) }
                 if let error = self.capabilityError { throw error }
                 return AssistantCapabilities(profiles: self.capabilityProfiles)
             },
             start: { [weak self] machineID, request in
                 guard let self else { throw APIError.invalidResponse }
                 self.startCalls.append((machineID, request))
+                if let delay = self.startDelay { try await Task.sleep(for: delay) }
                 if let error = self.startError { throw error }
                 return self.startRun
             },
             fetch: { [weak self] _, runID in
                 guard let self else { throw APIError.invalidResponse }
                 self.fetchCalls.append(runID)
+                if !self.fetchDelays.isEmpty { try await Task.sleep(for: self.fetchDelays.removeFirst()) }
                 if let error = self.fetchError { throw error }
                 if self.fetchResponses.isEmpty { return self.startRun }
                 return self.fetchResponses.removeFirst()
@@ -366,6 +585,7 @@ private final class DraftTransportSpy {
             cancel: { [weak self] _, runID in
                 guard let self else { throw APIError.invalidResponse }
                 self.cancelCalls.append(runID)
+                if let delay = self.cancelDelay { try await Task.sleep(for: delay) }
                 if let error = self.cancelError { throw error }
                 return self.startRun
             }
@@ -379,6 +599,11 @@ private final class IssueReportDraftStubURLProtocol: URLProtocol {
     struct Reply: Sendable {
         let status: Int
         let body: String
+        /// Keep the request pending until URLSession cancels it; used to test
+        /// deadline and caller cancellation reaching the transport.
+        var hold: Bool = false
+        /// Fail the request as `URLError(.cancelled)` without responding.
+        var failWithCancellation: Bool = false
     }
 
     struct RecordedRequest: Sendable {
@@ -420,13 +645,21 @@ private final class IssueReportDraftStubURLProtocol: URLProtocol {
             authorization: request.value(forHTTPHeaderField: "Authorization"),
             timeout: request.timeoutInterval
         )
-        let (status, reply): (Int, String) = Self.state.withLock { current in
+        let match: Reply? = Self.state.withLock { current in
             current.requests.append(recorded)
-            guard let match = current.replies["\(method) \(path)"] else {
-                return (404, #"{"ok":false,"error":{"code":"not_found","message":"Not found"}}"#)
-            }
-            return (match.status, match.body)
+            return current.replies["\(method) \(path)"]
         }
+        if let match, match.failWithCancellation {
+            client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
+            return
+        }
+        if let match, match.hold {
+            // Never answer; the URLSession task's cancellation (from the shared
+            // deadline or the caller) ends this request through stopLoading.
+            return
+        }
+        let (status, reply) = match.map { ($0.status, $0.body) }
+            ?? (404, #"{"ok":false,"error":{"code":"not_found","message":"Not found"}}"#)
         guard let response = HTTPURLResponse(
             url: url,
             statusCode: status,

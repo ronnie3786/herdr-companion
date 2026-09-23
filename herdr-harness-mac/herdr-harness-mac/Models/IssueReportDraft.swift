@@ -21,16 +21,31 @@ enum IssueReportDraftProfile {
     static let deadline: Duration = .seconds(maxExecutionSeconds)
     static let pollInterval: Duration = .milliseconds(250)
 
-    /// True when `text` contains a control character the draft profile refuses
-    /// (every `Cc` scalar except tab, newline and carriage return). The server
-    /// uses Python's `unicodedata.category`; this matches it.
+    /// True when `text` contains a Unicode control character (`Cc`) other
+    /// than tab, newline and carriage return. The server uses Python's
+    /// `unicodedata.category == "Cc"`; this matches it. Format characters such
+    /// as the zero-width joiner that joins an emoji are not controls and stay
+    /// valid.
     static func containsUnsupportedControls(_ text: String) -> Bool {
         text.unicodeScalars.contains { scalar in
-            CharacterSet.controlCharacters.contains(scalar)
-                && scalar != "\n"
-                && scalar != "\r"
-                && scalar != "\t"
+            isControl(scalar) && scalar != "\n" && scalar != "\r" && scalar != "\t"
         }
+    }
+
+    /// True when a generated title cannot be a single GitHub line: every
+    /// control scalar (including tab and newlines) plus the Unicode line and
+    /// paragraph separators. Format characters and emoji sequences stay valid.
+    static func containsDisallowedTitleCharacters(_ title: String) -> Bool {
+        title.unicodeScalars.contains { scalar in
+            isControl(scalar)
+                || scalar.properties.generalCategory == .lineSeparator
+                || scalar.properties.generalCategory == .paragraphSeparator
+        }
+    }
+
+    /// `Cc` is exactly the set the companion's drafting source rule rejects.
+    private static func isControl(_ scalar: Unicode.Scalar) -> Bool {
+        scalar.properties.generalCategory == .control
     }
 
     /// Why `text` cannot be sent for drafting, excluding "blank" (an empty box
@@ -100,7 +115,7 @@ enum IssueReportDraftOutputError: Error, Equatable, Sendable {
         case .blankBody:
             "the description was blank"
         case .titleHasControlCharacters:
-            "the title contained control characters"
+            "the title contained control or line-separator characters"
         case .bodyHasControlCharacters:
             "the description contained unsupported control characters"
         case let .titleTooLong(maximum):
@@ -141,7 +156,7 @@ extension IssueReportDraftOutput {
         guard cleanTitle.unicodeScalars.count <= IssueReportDraftProfile.maxTitleCharacters else {
             throw IssueReportDraftOutputError.titleTooLong(maximum: IssueReportDraftProfile.maxTitleCharacters)
         }
-        guard !cleanTitle.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+        guard !IssueReportDraftProfile.containsDisallowedTitleCharacters(cleanTitle) else {
             throw IssueReportDraftOutputError.titleHasControlCharacters
         }
 

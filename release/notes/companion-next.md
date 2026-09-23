@@ -68,6 +68,18 @@ report sheet's optional smart input.
   awareness bootstrap. If a configured execution timeout is shorter, the
   shorter value applies; the profile is capped at 60 seconds. The stored run
   cannot be continued or promoted, and no generic-agent fallback exists.
+- The run's system prompt is exclusively server-owned: Pi's own prompt is
+  replaced and the discovered `SYSTEM.md`/`APPEND_SYSTEM.md` are suppressed, so
+  no private companion instruction can enter a drafting request. A
+  server-owned project workspace disables automatic agent/provider retries and
+  automatic compaction recovery for this run only, keeping one draft at one
+  provider inference without modifying operator Pi settings.
+- The server resolves the configured `defaultProvider`/`defaultModel` from the
+  companion's Pi configuration directory (honoring `PI_CODING_AGENT_DIR`),
+  validates that exact model against `pi --list-models`, and pins it on the
+  run. An unset, unavailable, or unsupported default returns an actionable
+  error instead of letting Pi substitute another authenticated provider or
+  model.
 - The source text travels on Pi's stdin as the exact JSON object
   `{"kind": …, "text": …}`. The server owns the drafting charter: a concise
   single-line title and structured Markdown body for the chosen kind that

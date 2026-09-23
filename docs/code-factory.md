@@ -387,6 +387,10 @@ python3 -m unittest tests.test_issue_reports tests.test_issue_reports_http tests
   tests.test_code_factory_pipeline tests.test_code_factory_dashboard tests.test_code_factory_cli
 ```
 
+The GitHub **Verify** Mac job runs only `-only-testing:herdr-harness-macTests`.
+The expanded command below adds the UI suite for the validation owner; it is not
+part of Verify and must be run explicitly on the delivered revision.
+
 Mac (from the repository root):
 
 ```sh
@@ -398,6 +402,7 @@ xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-
   -only-testing:herdr-harness-macTests/IssueReportDraftTests \
   -only-testing:herdr-harness-macTests/IssueReportDraftServiceTests \
   -only-testing:herdr-harness-macTests/IssueReportSmartInputTests \
+  -only-testing:herdr-harness-macTests/HerdrVoiceRecorderTests \
   -only-testing:herdr-harness-macTests/IssueReportWiringTests \
   -only-testing:herdr-harness-macUITests/IssueReportSmartInputUITests
 ```
@@ -405,7 +410,8 @@ xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-
 Live check: file a report from the app with one screenshot, confirm the issue renders the
 image and the environment table, watch the dashboard move the issue through the stages,
 and confirm the released version appears in **Herdr Companion → Check for Updates…**. For the
-optional smart input, run the synthetic manual checklist in
+optional smart input, the validation owner runs the Mac UI suite
+(`IssueReportSmartInputUITests`) plus the synthetic manual checklist in
 [docs/issue-report-smart-input.md](issue-report-smart-input.md): real microphone glow, automatic
 configured-service transcription, generated writing quality, the older-server manual fallback,
 and no publication before **File report**. Do not treat a passing fixture-backed UI run as a

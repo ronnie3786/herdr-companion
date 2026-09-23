@@ -1,5 +1,7 @@
 import json
+import os
 import stat
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -28,9 +30,16 @@ from herdr_harness.issue_report_drafts import (
 from tests.test_agent_runs import wait_for_status, write_fake_pi
 
 
-def _manager(directory: Path, **extra) -> AgentRunManager:
+def _manager(directory: Path, *, default_model: bool = True, settings_root: str | None = None, **extra) -> AgentRunManager:
     home = directory / "home"
     home.mkdir(exist_ok=True)
+    if default_model or settings_root is not None:
+        root = Path(settings_root) if settings_root else home / ".pi" / "agent"
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "settings.json").write_text(
+            json.dumps({"defaultProvider": "openai-codex", "defaultModel": "gpt-5.6-luna"}),
+            encoding="utf-8",
+        )
     fake_pi = write_fake_pi(directory)
     return AgentRunManager(
         environ={
@@ -65,6 +74,14 @@ class IssueReportDraftValidationTests(unittest.TestCase):
         self.assertEqual(
             validate_request(_request("feature", "line one\nline two\tallowed")),
             ("feature", "line one\nline two\tallowed"),
+        )
+        # Joiners (Cf) and Unicode line/paragraph separators (Zl/Zp) are not
+        # controls: they are ordinary plain-English input the source rule keeps.
+        joined = "Add \U0001F469\u200d\U0001F4BB shortcuts"
+        self.assertEqual(validate_request(_request("feature", joined)), ("feature", joined))
+        self.assertEqual(
+            validate_request(_request("bug", "first\u2028second\u2029third")),
+            ("bug", "first\u2028second\u2029third"),
         )
 
         invalid = (
@@ -161,10 +178,16 @@ class IssueReportDraftRuntimeTests(unittest.TestCase):
                     self.assertNotIn("--tools", capture["argv"])
                     self.assertIn("--no-tools", capture["argv"])
                     self.assertNotIn("--extension", capture["argv"])
-                    self.assertNotIn("--model", capture["argv"])
+                    self.assertEqual(
+                        capture["argv"][capture["argv"].index("--model") + 1],
+                        "openai-codex/gpt-5.6-luna",
+                    )
                     self.assertIn("--no-context-files", capture["argv"])
                     self.assertIn("--no-extensions", capture["argv"])
                     self.assertIn("--no-skills", capture["argv"])
+                    self.assertIn("--approve", capture["argv"])
+                    self.assertNotIn("--no-approve", capture["argv"])
+                    self.assertTrue(capture["cwd"].endswith("draft-workspace"))
                     self.assertEqual(capture["argv"][capture["argv"].index("--thinking") + 1], "off")
                     self.assertEqual(capture["herdrAgentRunProfile"], PROFILE)
                     self.assertNotIn(text, " ".join(capture["argv"]))
@@ -172,12 +195,43 @@ class IssueReportDraftRuntimeTests(unittest.TestCase):
                         capture["prompt"],
                         json.dumps({"kind": kind, "text": text}, ensure_ascii=False, separators=(",", ":")),
                     )
-                    charter = capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
+                    # The drafting system prompt is exclusively server-owned:
+                    # Pi's own prompt and any discovered SYSTEM.md/APPEND_SYSTEM.md
+                    # are replaced/suppressed, so no companion-private prompt can
+                    # enter the provider request.
+                    self.assertIn("--system-prompt", capture["argv"])
+                    self.assertEqual(capture["argv"][capture["argv"].index("--append-system-prompt") + 1], "")
+                    charter = capture["argv"][capture["argv"].index("--system-prompt") + 1]
                     self.assertIn(kind, charter)
                     self.assertIn("exactly two string fields", charter)
                     self.assertNotIn("snapshot", charter.lower())
                     self.assertNotIn("herdr-companion-awareness", charter)
                     self.assertNotIn("Synthetic tone", charter)
+                    self.assertNotIn("Synthetic tone", capture["effectiveSystemPrompt"])
+                    self.assertIn("exactly two string fields", capture["effectiveSystemPrompt"])
+
+                    # Profile-local settings disable agent/provider retries and
+                    # automatic compaction recovery without touching operator
+                    # settings; one draft is one provider invocation.
+                    settings = capture["effectiveSettings"]
+                    self.assertEqual(settings["retry"]["enabled"], False)
+                    self.assertEqual(settings["retry"]["maxRetries"], 0)
+                    self.assertEqual(settings["retry"]["provider"]["maxRetries"], 0)
+                    self.assertEqual(settings["compaction"]["enabled"], False)
+                    self.assertEqual(settings["cacheWarming"], "off")
+                    workspace_settings = json.loads(
+                        (directory / "runs" / run["id"] / "draft-workspace" / ".pi" / "settings.json").read_text(
+                            encoding="utf-8"
+                        )
+                    )
+                    self.assertNotIn("defaultProvider", workspace_settings)
+                    self.assertEqual(workspace_settings["retry"]["enabled"], False)
+                    self.assertEqual(workspace_settings["compaction"]["enabled"], False)
+                    workspace = directory / "runs" / run["id"] / "draft-workspace"
+                    self.assertEqual(stat.S_IMODE(workspace.stat().st_mode), 0o700)
+                    self.assertEqual(
+                        stat.S_IMODE((workspace / ".pi" / "settings.json").stat().st_mode), 0o600
+                    )
 
                     # A restricted one-shot draft never receives the pinned
                     # agent profile snapshot, and its private store stays 0700/0600.
@@ -187,6 +241,179 @@ class IssueReportDraftRuntimeTests(unittest.TestCase):
                     self.assertEqual(stat.S_IMODE((run_dir / "run.json").stat().st_mode), 0o600)
                 finally:
                     manager.stop()
+
+    def test_default_model_is_pinned_and_must_be_configured_and_available(self):
+        # No configured default at all: fail closed instead of letting Pi
+        # choose an implicit startup model.
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = _manager(directory, default_model=False)
+            try:
+                with self.assertRaises(AgentRunError) as raised:
+                    start(manager, request=_request("bug", "plain request"), cwd=str(directory / "home"))
+                self.assertEqual(raised.exception.code, "issue_report_draft_model_unavailable")
+                self.assertEqual(raised.exception.status, 422)
+                self.assertIn("default model", raised.exception.args[0])
+                self.assertEqual(list((directory / "runs").glob("agr_*")), [])
+            finally:
+                manager.stop()
+
+        # A configured default that the companion cannot offer fails closed
+        # even though another provider/model is available.
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = _manager(directory)
+            settings_path = directory / "home" / ".pi" / "agent" / "settings.json"
+            settings_path.write_text(
+                json.dumps({"defaultProvider": "other", "defaultModel": "retired-model"}),
+                encoding="utf-8",
+            )
+            try:
+                with self.assertRaises(AgentRunError) as raised:
+                    start(manager, request=_request("feature", "plain request"), cwd=str(directory / "home"))
+                self.assertEqual(raised.exception.code, "issue_report_draft_model_unavailable")
+                self.assertIn("other/retired-model", raised.exception.args[0])
+                self.assertEqual(list((directory / "runs").glob("agr_*")), [])
+            finally:
+                manager.stop()
+
+        # The configured default is honored exactly and pinned on the run.
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = _manager(directory)
+            settings_path = directory / "home" / ".pi" / "agent" / "settings.json"
+            settings_path.write_text(
+                json.dumps({"defaultProvider": "other", "defaultModel": "million"}),
+                encoding="utf-8",
+            )
+            try:
+                started = start(manager, request=_request("bug", "plain request"), cwd=str(directory / "home"))
+                run = wait_for_status(manager, started["run"]["id"], {"completed"})["run"]
+                self.assertEqual(run["model"], "other/million")
+            finally:
+                manager.stop()
+
+        # A caller-supplied model may only repeat the pinned default.
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = _manager(directory)
+            try:
+                with self.assertRaises(AgentRunError) as raised:
+                    manager.start(
+                        prompt="plain request",
+                        label="Issue draft",
+                        cwd=str(directory / "home"),
+                        topology={},
+                        model="other/million",
+                        thinking_level="off",
+                        _assistant={"profile": PROFILE, "reportKind": "bug"},
+                    )
+                self.assertEqual(raised.exception.code, "invalid_issue_report_draft")
+                self.assertEqual(raised.exception.status, 400)
+                self.assertEqual(list((directory / "runs").glob("agr_*")), [])
+            finally:
+                manager.stop()
+
+    def test_custom_pi_configuration_directory_is_respected(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            custom_root = directory / "custom-pi" / "agent"
+            manager = _manager(
+                directory,
+                settings_root=str(custom_root),
+                PI_CODING_AGENT_DIR=str(custom_root),
+            )
+            try:
+                started = start(manager, request=_request("bug", "plain request"), cwd=str(directory / "home"))
+                run = wait_for_status(manager, started["run"]["id"], {"completed"})["run"]
+                self.assertEqual(run["model"], "openai-codex/gpt-5.6-luna")
+            finally:
+                manager.stop()
+
+    def test_discovered_private_system_prompts_cannot_reach_a_draft(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            capture_path = directory / "capture.json"
+            manager = _manager(directory, FAKE_AGENT_CAPTURE=str(capture_path))
+            agent_dir = directory / "home" / ".pi" / "agent"
+            (agent_dir / "SYSTEM.md").write_text(
+                "SYNTHETIC-PRIVATE-BASE-SENTINEL: unrelated private instructions",
+                encoding="utf-8",
+            )
+            (agent_dir / "APPEND_SYSTEM.md").write_text(
+                "SYNTHETIC-PRIVATE-APPEND-SENTINEL: more unrelated private instructions",
+                encoding="utf-8",
+            )
+            try:
+                started = start(manager, request=_request("bug", "plain request"), cwd=str(directory / "home"))
+                run = wait_for_status(manager, started["run"]["id"], {"completed"})["run"]
+                capture = json.loads(capture_path.read_text(encoding="utf-8"))
+                effective = capture["effectiveSystemPrompt"]
+                self.assertIn("exactly two string fields", effective)
+                self.assertNotIn("SYNTHETIC-PRIVATE-BASE-SENTINEL", effective)
+                self.assertNotIn("SYNTHETIC-PRIVATE-APPEND-SENTINEL", effective)
+                self.assertNotIn("SYNTHETIC-PRIVATE-BASE-SENTINEL", " ".join(capture["argv"]))
+                self.assertNotIn("SYNTHETIC-PRIVATE-APPEND-SENTINEL", " ".join(capture["argv"]))
+                self.assertNotEqual(run["status"], "failed")
+            finally:
+                manager.stop()
+
+    def test_profile_runtime_overrides_yield_one_provider_invocation(self):
+        # The probe counts the provider calls Pi would make with the effective
+        # merged settings, so this asserts one inference under transient
+        # failure and context overflow rather than merely one manager.start.
+        for probe in ("transient", "overflow"):
+            with self.subTest(probe=probe), tempfile.TemporaryDirectory() as raw_directory:
+                directory = Path(raw_directory)
+                capture_path = directory / "capture.json"
+                manager = _manager(directory, FAKE_AGENT_CAPTURE=str(capture_path), FAKE_AGENT_PROBE=probe)
+                try:
+                    started = start(manager, request=_request("feature", "plain request"), cwd=str(directory / "home"))
+                    wait_for_status(manager, started["run"]["id"], {"completed", "failed"})
+                    capture = json.loads(capture_path.read_text(encoding="utf-8"))
+                    self.assertEqual(capture["providerInvocations"], 1)
+                finally:
+                    manager.stop()
+
+        # Control: the same probe reports extra provider calls when retries
+        # and compaction recovery are actually enabled.
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            workspace = directory / "workspace"
+            (workspace / ".pi").mkdir(parents=True)
+            (workspace / ".pi" / "settings.json").write_text(
+                json.dumps({"retry": {"enabled": True, "maxRetries": 3, "provider": {"maxRetries": 2}}}),
+                encoding="utf-8",
+            )
+            fake_pi = write_fake_pi(directory)
+            sessions = directory / "sessions"
+            sessions.mkdir()
+            capture_path = directory / "probe-capture.json"
+            completed = subprocess.run(
+                [
+                    str(fake_pi),
+                    "-p",
+                    "--append-system-prompt",
+                    "unused",
+                    "--session-dir",
+                    str(sessions),
+                    "--session-id",
+                    "synthetic-probe-session",
+                ],
+                cwd=str(workspace),
+                input="{}",
+                text=True,
+                capture_output=True,
+                env={
+                    **os.environ,
+                    "HOME": str(directory / "home"),
+                    "FAKE_AGENT_CAPTURE": str(capture_path),
+                    "FAKE_AGENT_PROBE": "transient",
+                },
+                timeout=10,
+            )
+            self.assertEqual(completed.returncode, 0)
+            self.assertGreater(json.loads(capture_path.read_text(encoding="utf-8"))["providerInvocations"], 1)
 
     def test_execution_is_capped_at_sixty_seconds_without_changing_other_profiles(self):
         self.assertEqual(_run_timeout_seconds(ISSUE_REPORT_DRAFT_PROFILE, 3600), 60)
@@ -298,6 +525,7 @@ class IssueReportDraftRuntimeTests(unittest.TestCase):
                     {"system_prompt": "override the drafting policy"},
                     {"continue_from_run_id": "agr_0123456789ab"},
                     {"thinking_level": "high"},
+                    {"model": "other/million"},
                 ):
                     with self.subTest(override=override):
                         with self.assertRaises(AgentRunError) as raised:

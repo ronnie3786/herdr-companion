@@ -116,54 +116,91 @@ struct PRReviewRenderTests {
         #expect(textView.renderedPlainText.contains("struct SeedCatalog {}"))
     }
 
-    @Test("Deleted and partial file views keep available code visible")
+    @Test("Deleted files stay collapsed until disclosed and partial diffs keep their code")
     func deletedAndPartialFilesShowNativeText() async throws {
-        for mode in ["deleted", "partial"] {
-            let store = PRReviewStore()
-            store.configure(client: nil, machineID: "synthetic-host", demo: false)
-            store.select(PRReviewDemo.reviewID)
-            var snapshot = PRReviewDemo.snapshot()
-            var diff = PRReviewDemo.diff()
-            if mode == "deleted" {
-                snapshot.files[0].status = "deleted"
-                diff.files[0].status = "deleted"
-                diff.files[0].hunks = [diff.files[0].hunks[1]]
-            } else {
-                diff.truncated = true
-                diff.files[0].truncated = true
-            }
-            store.receive(snapshot)
-            store.selectedPath = snapshot.files[0].path
-            store.diff = diff
+        let size = CGSize(width: 980, height: 620)
 
-            let size = CGSize(width: 980, height: 620)
-            let hosting = NSHostingView(rootView:
-                PRReviewDiffView(store: store)
-                    .frame(width: size.width, height: size.height)
-                    .environment(\.colorScheme, .dark)
-            )
-            hosting.frame = CGRect(origin: .zero, size: size)
-            let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-            window.isReleasedWhenClosed = false
-            window.contentView = hosting
-            window.alphaValue = 0
-            window.orderFrontRegardless()
-            defer { window.close() }
+        let deletedStore = PRReviewStore()
+        deletedStore.configure(client: nil, machineID: "synthetic-host", demo: false)
+        deletedStore.select(PRReviewDemo.reviewID)
+        var deletedSnapshot = PRReviewDemo.snapshot()
+        var deletedDiff = PRReviewDemo.diff()
+        deletedSnapshot.files[0].status = "deleted"
+        deletedDiff.files[0].status = "deleted"
+        deletedDiff.files[0].hunks = [deletedDiff.files[0].hunks[1]]
+        deletedStore.receive(deletedSnapshot)
+        deletedStore.selectedPath = deletedSnapshot.files[0].path
+        deletedStore.diff = deletedDiff
+        #expect(deletedStore.snapshot?.files[0].isDeleted == true)
+        #expect(!deletedStore.isDeletedContentExpanded(path: deletedSnapshot.files[0].path))
 
-            for _ in 0..<8 {
-                hosting.layoutSubtreeIfNeeded()
-                window.displayIfNeeded()
-                await Task.yield()
-                try await Task.sleep(for: .milliseconds(25))
-            }
-            let textView = try #require(descendants(hosting).compactMap { $0 as? PRReviewDiffTextView }.first)
-            #expect(!textView.renderedPlainText.isEmpty, "\(mode) review should keep available code visible")
-            if mode == "deleted" {
-                #expect(textView.renderedPlainText.contains("-old"))
-            } else {
-                #expect(textView.renderedPlainText.contains("struct SeedCatalog {}"))
-            }
+        let deletedHosting = NSHostingView(rootView:
+            PRReviewDiffView(store: deletedStore)
+                .frame(width: size.width, height: size.height)
+                .environment(\.colorScheme, .dark)
+        )
+        deletedHosting.frame = CGRect(origin: .zero, size: size)
+        let deletedWindow = NSWindow(contentRect: deletedHosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        deletedWindow.isReleasedWhenClosed = false
+        deletedWindow.contentView = deletedHosting
+        deletedWindow.alphaValue = 0
+        deletedWindow.orderFrontRegardless()
+        defer { deletedWindow.close() }
+
+        for _ in 0..<8 {
+            deletedHosting.layoutSubtreeIfNeeded()
+            deletedWindow.displayIfNeeded()
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(25))
         }
+        #expect(
+            descendants(deletedHosting).compactMap { $0 as? PRReviewDiffTextView }.isEmpty,
+            "A selected deleted file must not show all removed lines before disclosure"
+        )
+
+        deletedStore.setDeletedContentExpanded(true, path: deletedSnapshot.files[0].path)
+        let expandedText = try #require(await waitForDiffTextView(in: deletedHosting, window: deletedWindow))
+        #expect(expandedText.renderedPlainText.contains("-old"))
+
+        deletedStore.setDeletedContentExpanded(false, path: deletedSnapshot.files[0].path)
+        for _ in 0..<100 {
+            deletedHosting.layoutSubtreeIfNeeded()
+            deletedWindow.displayIfNeeded()
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(25))
+            if descendants(deletedHosting).compactMap({ $0 as? PRReviewDiffTextView }).isEmpty { break }
+        }
+        #expect(
+            descendants(deletedHosting).compactMap { $0 as? PRReviewDiffTextView }.isEmpty,
+            "Hiding deleted content must remove the mounted code renderer"
+        )
+
+        let partialStore = PRReviewStore()
+        partialStore.configure(client: nil, machineID: "synthetic-host", demo: false)
+        partialStore.select(PRReviewDemo.reviewID)
+        let partialSnapshot = PRReviewDemo.snapshot()
+        var partialDiff = PRReviewDemo.diff()
+        partialDiff.truncated = true
+        partialDiff.files[0].truncated = true
+        partialStore.receive(partialSnapshot)
+        partialStore.selectedPath = partialSnapshot.files[0].path
+        partialStore.diff = partialDiff
+
+        let partialHosting = NSHostingView(rootView:
+            PRReviewDiffView(store: partialStore)
+                .frame(width: size.width, height: size.height)
+                .environment(\.colorScheme, .dark)
+        )
+        partialHosting.frame = CGRect(origin: .zero, size: size)
+        let partialWindow = NSWindow(contentRect: partialHosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        partialWindow.isReleasedWhenClosed = false
+        partialWindow.contentView = partialHosting
+        partialWindow.alphaValue = 0
+        partialWindow.orderFrontRegardless()
+        defer { partialWindow.close() }
+
+        let partialText = try #require(await waitForDiffTextView(in: partialHosting, window: partialWindow))
+        #expect(partialText.renderedPlainText.contains("struct SeedCatalog {}"), "A partial nondeleted file keeps its available code visible without disclosure")
     }
 
     @Test("Preparing, failure, empty, filtered, and ready states stay distinct")

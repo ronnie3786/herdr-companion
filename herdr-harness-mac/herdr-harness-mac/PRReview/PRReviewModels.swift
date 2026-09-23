@@ -79,6 +79,24 @@ enum PRReviewSkillKind: String, Codable, Equatable, Sendable {
     }
 }
 
+/// Deleted is an explicit companion status, never inferred from removal
+/// counts, filenames, or red hunks. Both the file list and the diff endpoint
+/// report the same stable value.
+enum PRReviewDeletedStatus {
+    static func matches(_ status: String) -> Bool {
+        status.trimmingCharacters(in: .whitespacesAndNewlines)
+            .caseInsensitiveCompare("deleted") == .orderedSame
+    }
+}
+
+extension PRReviewFile {
+    var isDeleted: Bool { PRReviewDeletedStatus.matches(status) }
+}
+
+extension PRReviewDiffFile {
+    var isDeleted: Bool { PRReviewDeletedStatus.matches(status) }
+}
+
 enum PRReviewSide: String, Codable, Equatable, Sendable {
     case before
     case after

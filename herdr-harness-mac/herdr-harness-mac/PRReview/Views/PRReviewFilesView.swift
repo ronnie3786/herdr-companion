@@ -220,6 +220,60 @@ enum PRReviewFilesPresentation: Equatable {
     }
 }
 
+/// Copy and accessibility values for the deleted-file disclosure. Keeping the
+/// presentation in one value type lets the row, the selected-file header, and
+/// tests agree on the exact wording without relying on color.
+enum PRReviewDeletedFileDisclosure {
+    static let badgeLabel = "Deleted"
+    static let showLabel = "Show deleted content"
+    static let hideLabel = "Hide deleted content"
+    static let expandedValue = "Expanded"
+    static let collapsedValue = "Collapsed"
+    static let accessibilityIdentifier = "pr-review-deleted-content-disclosure"
+
+    static func actionLabel(expanded: Bool) -> String {
+        expanded ? hideLabel : showLabel
+    }
+
+    static func stateDescription(expanded: Bool) -> String {
+        expanded ? expandedValue : collapsedValue
+    }
+
+    /// A compact, textual deletion summary that stays readable without color.
+    static func summary(deletions: Int) -> String {
+        deletions == 1 ? "Deleted · 1 line removed" : "Deleted · \(deletions) lines removed"
+    }
+
+    static func hiddenDetail(deletions: Int) -> String {
+        deletions == 1
+            ? "1 removed line is hidden. Choose Show deleted content to inspect it."
+            : "\(deletions) removed lines are hidden. Choose Show deleted content to inspect them."
+    }
+
+    /// Keeping content and a nonempty Ask AI draft are mutually exclusive:
+    /// hiding while the reviewer is typing would discard their question.
+    static func canToggle(expanded: Bool, hasQuestionDraft: Bool) -> Bool {
+        !(expanded && hasQuestionDraft)
+    }
+}
+
+/// A text badge, so the deleted state never depends on red coloring alone.
+struct PRReviewDeletedIndicator: View {
+    var accessibilityIdentifier: String
+
+    var body: some View {
+        Text(PRReviewDeletedFileDisclosure.badgeLabel)
+            .herdrFont(.caption2, weight: .semibold)
+            .foregroundStyle(HerdrTheme.text)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(HerdrTheme.elevated, in: .capsule)
+            .fixedSize()
+            .accessibilityLabel("Deleted file")
+            .accessibilityIdentifier(accessibilityIdentifier)
+    }
+}
+
 struct PRReviewFileRow: View {
     let file: PRReviewFile
     let index: Int
@@ -232,8 +286,13 @@ struct PRReviewFileRow: View {
         HStack(spacing: 8) {
             Circle().fill(impactColor).frame(width: 8, height: 8).help(file.impactReason ?? "Not ranked")
             VStack(alignment: .leading, spacing: 2) {
-                Text(file.path.split(separator: "/").last.map(String.init) ?? file.path)
-                    .herdrFont(.subheadline, weight: .semibold).lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(file.path.split(separator: "/").last.map(String.init) ?? file.path)
+                        .herdrFont(.subheadline, weight: .semibold).lineLimit(1)
+                    if file.isDeleted {
+                        PRReviewDeletedIndicator(accessibilityIdentifier: "pr-review-file-deleted-\(index)")
+                    }
+                }
                 Text(directoryHint).herdrFont(.caption2).foregroundStyle(HerdrTheme.mist).lineLimit(1).truncationMode(.head)
                 if guided, let order = file.guidedOrder {
                     Text("#\(order) · \(file.guidedReason ?? "Guided review order")")
@@ -248,6 +307,7 @@ struct PRReviewFileRow: View {
         .padding(8)
         .contentShape(Rectangle())
         .background(selected ? HerdrTheme.selection : .clear, in: .rect(cornerRadius: HerdrTheme.compactRadius))
+        .help(file.path)
         .onTapGesture(perform: select)
         .accessibilityIdentifier("pr-review-file-\(index)")
     }
@@ -274,6 +334,7 @@ struct PRReviewDiffView: View {
     var openURL: (URL) -> Void = { _ in }
     var askAI: (PRReviewSelection, NSView, CGRect) -> Void = { _, _, _ in }
     var questionDraftChanged: (Bool) -> Void = { _ in }
+    @State private var hasQuestionDraft = false
 
     private var file: PRReviewFile? { store.snapshot?.files.first { $0.path == store.selectedPath } }
     private var currentDiff: PRReviewDiff? {
@@ -306,19 +367,11 @@ struct PRReviewDiffView: View {
                         )
                     } else {
                         if diffFile.truncated || currentDiff?.truncated == true { partialDiffWarning }
-                        PRReviewDiffText(
-                            file: diffFile,
-                            baseSHA: currentDiff?.baseSHA ?? "",
-                            headSHA: currentDiff?.headSHA ?? "",
-                            highlight: highlight,
-                            scrollRequest: scrollRequest,
-                            askAI: askAI,
-                            questionDraftChanged: questionDraftChanged,
-                            onVisibleLinesChange: { path, start, end, side in
-                                store.visibleLines = (path, start, end, side)
-                            }
-                        )
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        if deletedContentIsHidden {
+                            deletedContentHidden(file)
+                        } else {
+                            diffText(diffFile)
+                        }
                     }
                 } else if store.completedDiffIdentity == store.currentDiffRequestIdentity {
                     unavailable(
@@ -350,12 +403,24 @@ struct PRReviewDiffView: View {
         .onChange(of: store.scrollRequest?.token) { _, _ in
             guard let request = store.scrollRequest else { return }
             store.selectedPath = request.path
+            store.revealDeletedContent(path: request.path)
+        }
+        .onChange(of: highlightIdentity) { _, _ in
+            guard let path = store.highlight?.path else { return }
+            store.revealDeletedContent(path: path)
+        }
+        .onChange(of: store.selectedPath) { _, _ in
+            hasQuestionDraft = false
+            store.visibleLines = nil
+        }
+        .onChange(of: codeContentVisible) { _, visible in
+            if !visible { store.visibleLines = nil }
         }
     }
 
     private var partialDiffWarning: some View {
         HStack(spacing: 8) {
-            Label("Partial diff. Available code is shown below.", systemImage: "exclamationmark.triangle")
+            Label(partialDiffWarningText, systemImage: "exclamationmark.triangle")
                 .herdrFont(.caption)
                 .foregroundStyle(HerdrTheme.working)
             Spacer()
@@ -368,12 +433,23 @@ struct PRReviewDiffView: View {
         .accessibilityIdentifier("pr-review-partial-diff")
     }
 
+    private var partialDiffWarningText: String {
+        deletedContentIsHidden
+            ? "Partial diff. Removed code is hidden until you show deleted content."
+            : "Partial diff. Available code is shown below."
+    }
+
     private func header(_ file: PRReviewFile) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(file.path).herdrFont(.headline).lineLimit(1)
-                    Text("\(file.status) · \(file.impact?.rawValue ?? "unranked")").herdrFont(.caption).foregroundStyle(HerdrTheme.mist)
+                    HStack(spacing: 6) {
+                        Text(file.path).herdrFont(.headline).lineLimit(1).help(file.path)
+                        if selectedFileIsDeleted {
+                            PRReviewDeletedIndicator(accessibilityIdentifier: "pr-review-deleted-indicator")
+                        }
+                    }
+                    Text(headerSummary(file)).herdrFont(.caption).foregroundStyle(HerdrTheme.mist)
                 }
                 Spacer()
             }
@@ -390,6 +466,9 @@ struct PRReviewDiffView: View {
                     .lineLimit(2)
             }
             HStack(spacing: 8) {
+                if showsDeletedContentDisclosure {
+                    deletedContentDisclosureButton(file)
+                }
                 Spacer()
                 Button("Previous") { store.selectedPath = store.previousFile()?.path }
                     .keyboardShortcut(.upArrow, modifiers: .option)
@@ -410,6 +489,93 @@ struct PRReviewDiffView: View {
     private var highlight: (start: Int, end: Int, side: PRReviewSide)? {
         guard let highlight = store.highlight, highlight.path == store.selectedPath else { return nil }
         return (highlight.start, highlight.end, highlight.side)
+    }
+
+    private var highlightIdentity: String? {
+        guard let highlight = store.highlight else { return nil }
+        return "\(highlight.path)\u{1f}\(highlight.side.rawValue)\u{1f}\(highlight.start)\u{1f}\(highlight.end)"
+    }
+
+    private var selectedFileIsDeleted: Bool {
+        guard let path = store.selectedPath else { return false }
+        return store.isDeletedFile(path: path)
+    }
+
+    /// True when the selected file is deleted and its removed lines are hidden.
+    private var deletedContentIsHidden: Bool {
+        guard file != nil, selectedFileIsDeleted, let path = store.selectedPath else { return false }
+        return !store.isDeletedContentExpanded(path: path)
+    }
+
+    /// A deleted binary or hunk-less diff has nothing textual to disclose, so
+    /// its honest message stands alone instead of offering a control with no
+    /// effect. While the diff is still loading, the control stays available.
+    private var showsDeletedContentDisclosure: Bool {
+        guard selectedFileIsDeleted else { return false }
+        guard let diffFile else { return true }
+        return !diffFile.binary && !diffFile.hunks.isEmpty
+    }
+
+    /// True while a native code renderer is mounted for the selected file.
+    /// Collapsing deleted content must also stop its line reporting.
+    private var codeContentVisible: Bool {
+        guard file != nil, let diffFile, !diffFile.binary, !diffFile.hunks.isEmpty else { return false }
+        guard store.currentDiffLoadError == nil else { return false }
+        return !deletedContentIsHidden
+    }
+
+    private func headerSummary(_ file: PRReviewFile) -> String {
+        let impact = file.impact?.rawValue ?? "unranked"
+        guard selectedFileIsDeleted else { return "\(file.status) · \(impact)" }
+        return "\(PRReviewDeletedFileDisclosure.summary(deletions: file.deletions)) · \(impact)"
+    }
+
+    private func deletedContentDisclosureButton(_ file: PRReviewFile) -> some View {
+        let expanded = store.isDeletedContentExpanded(path: file.path)
+        return Button(PRReviewDeletedFileDisclosure.actionLabel(expanded: expanded)) {
+            store.setDeletedContentExpanded(!expanded, path: file.path)
+        }
+        .focusable()
+        .help(expanded ? "Hide the removed lines for this deleted file" : "Show the removed lines for this deleted file")
+        .accessibilityLabel(PRReviewDeletedFileDisclosure.actionLabel(expanded: expanded))
+        .accessibilityValue(PRReviewDeletedFileDisclosure.stateDescription(expanded: expanded))
+        .accessibilityHint("Toggles the removed lines for this deleted file")
+        .accessibilityIdentifier(PRReviewDeletedFileDisclosure.accessibilityIdentifier)
+        .disabled(!PRReviewDeletedFileDisclosure.canToggle(expanded: expanded, hasQuestionDraft: hasQuestionDraft))
+    }
+
+    private func diffText(_ diffFile: PRReviewDiffFile) -> some View {
+        PRReviewDiffText(
+            file: diffFile,
+            baseSHA: currentDiff?.baseSHA ?? "",
+            headSHA: currentDiff?.headSHA ?? "",
+            highlight: highlight,
+            scrollRequest: scrollRequest,
+            askAI: askAI,
+            questionDraftChanged: { isNonEmpty in
+                hasQuestionDraft = isNonEmpty
+                questionDraftChanged(isNonEmpty)
+            },
+            onVisibleLinesChange: { path, start, end, side in
+                guard store.selectedPath == path else { return }
+                if store.isDeletedFile(path: path),
+                   !store.isDeletedContentExpanded(path: path) {
+                    return
+                }
+                store.visibleLines = (path, start, end, side)
+            }
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func deletedContentHidden(_ file: PRReviewFile) -> some View {
+        ContentUnavailableView {
+            Label("Deleted content is hidden", systemImage: "eye.slash")
+        } description: {
+            Text(PRReviewDeletedFileDisclosure.hiddenDetail(deletions: file.deletions))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("pr-review-deleted-content-hidden")
     }
 
     private var scrollRequest: (path: String, line: Int, side: PRReviewSide, token: Int)? {

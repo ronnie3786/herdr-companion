@@ -3175,6 +3175,12 @@ class HerdrService:
             _assistant={"profile": SMART_RENAME_PROFILE},
         )
 
+    def start_issue_report_draft(self, request: dict) -> dict:
+        """One-shot, tool-free issue drafting for the Mac report sheet."""
+        from .issue_report_drafts import start
+
+        return start(self.agent_runs, request=request, cwd=str(self._server_home()))
+
     def get_agent_run(self, run_id: str) -> dict:
         return self.agent_runs.get(run_id)
 

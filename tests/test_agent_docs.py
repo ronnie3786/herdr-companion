@@ -83,6 +83,7 @@ class AgentDocsTests(unittest.TestCase):
         for profile in agent_docs.RESTRICTED_AGENT_PROFILES:
             with self.subTest(profile=profile):
                 self.assertIsNone(agent_docs.agent_run_bootstrap(environment, profile))
+        self.assertIn("issue-report-draft-v1", agent_docs.RESTRICTED_AGENT_PROFILES)
 
         hud = agent_docs.agent_run_bootstrap(environment, "hud-chat-v1")
         self.assertIn("independent saved HUD chat", hud)

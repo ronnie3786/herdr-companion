@@ -40,6 +40,14 @@ def fail(message: str, code: str = "invalid_assistant_context", status: int = 40
 
 def capabilities() -> dict:
     from .agent_runs import SMART_RENAME_PROFILE
+    from .issue_report_drafts import (
+        KINDS as ISSUE_REPORT_DRAFT_KINDS,
+        MAX_BODY_SCALARS,
+        MAX_EXECUTION_SECONDS,
+        MAX_SOURCE_SCALARS,
+        MAX_TITLE_SCALARS,
+        PROFILE as ISSUE_REPORT_DRAFT_PROFILE_V1,
+    )
     from .response_briefs import (
         LENGTH_OPTIONS,
         LENGTH_POLICY_VERSION,
@@ -47,7 +55,7 @@ def capabilities() -> dict:
         PROFILE as RESPONSE_BRIEF_PROFILE,
     )
 
-    return {"ok": True, "profiles": [PROFILE, PR_REVIEW_PROFILE, "hud-chat-v1", RESPONSE_BRIEF_PROFILE, SMART_RENAME_PROFILE], "contextVersions": [1],
+    return {"ok": True, "profiles": [PROFILE, PR_REVIEW_PROFILE, "hud-chat-v1", RESPONSE_BRIEF_PROFILE, SMART_RENAME_PROFILE, ISSUE_REPORT_DRAFT_PROFILE_V1], "contextVersions": [1],
             "hudChats": {"retention": "indefinite", "tools": "normal-pi", "history": "/api/v1/hud-chats"},
             "hudChatWorkingDirectory": True,
             "prReviewQuestions": {"version": 1, "tools": "read-only-in-checkout", "scope": "reviewId"},
@@ -56,6 +64,15 @@ def capabilities() -> dict:
                                "tools": "none", "oneShot": True,
                                "maxOutputBytes": MAX_OUTPUT_BYTES, "requiresParentSessionId": True},
             "smartRename": {"version": 1, "tools": "none", "oneShot": True},
+            "issueReportDrafts": {"version": 1, "tools": "none", "oneShot": True,
+                                 "kinds": list(ISSUE_REPORT_DRAFT_KINDS),
+                                 "requestFields": ["kind", "text"],
+                                 "outputFields": ["title", "body"],
+                                 "responseFormat": "json",
+                                 "maxSourceCharacters": MAX_SOURCE_SCALARS,
+                                 "maxTitleCharacters": MAX_TITLE_SCALARS,
+                                 "maxBodyCharacters": MAX_BODY_SCALARS,
+                                 "maxSeconds": MAX_EXECUTION_SECONDS},
             "tools": "supplied-context-only", "strictContinuation": True,
             "idempotency": True, "history": True, "observation": ["poll"],
             "maxContextBytes": MAX_CONTEXT_BYTES, "maxItemBytes": MAX_ITEM_BYTES}

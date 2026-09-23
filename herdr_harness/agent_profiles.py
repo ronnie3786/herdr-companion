@@ -16,7 +16,13 @@ from .alerts import utc_now
 CAPABILITY = "agent-profiles-v1"
 MARKER = "<!-- herdr-agent-profile:v1 -->"
 MAX_DOCUMENT_BYTES = 16 * 1024
-RESTRICTED_PROFILES = {"contextual-question-v1", "pr-review-question-v1", "response-brief-v1", "smart-rename-v1"}
+RESTRICTED_PROFILES = {
+    "contextual-question-v1",
+    "pr-review-question-v1",
+    "response-brief-v1",
+    "smart-rename-v1",
+    "issue-report-draft-v1",
+}
 
 
 class ProfileError(ValueError):

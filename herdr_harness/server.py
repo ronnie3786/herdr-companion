@@ -20,7 +20,7 @@ from . import attachments, chat_tab_colors, issue_reports, response_audio, resul
 from .active_work import ActiveWorkError
 from .first_mate_store import FirstMateError
 from .pr_review_store import PRReviewError
-from .agent_runs import SMART_RENAME_PROFILE, AgentRunError, MAX_ATTACHMENTS, MODEL_PATTERN, THINKING_LEVELS
+from .agent_runs import ISSUE_REPORT_DRAFT_PROFILE, SMART_RENAME_PROFILE, AgentRunError, MAX_ATTACHMENTS, MODEL_PATTERN, THINKING_LEVELS
 from .alerts import utc_now
 from .issue_reports import IssueReportError
 from .client import HerdrAPIError, HerdrClientError
@@ -2493,6 +2493,16 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         raise HTTPValidationError("Save HUD chat request must be empty")
                     return retain_legacy(service.agent_runs, run_id)
             if method == "POST" and tail == ["agent-runs"]:
+                if body.get("profile") == ISSUE_REPORT_DRAFT_PROFILE:
+                    # Issue drafting is one-shot and tool-free: only the report
+                    # kind and the smart-input text are accepted, so the profile
+                    # can never carry files, a working directory, context scope,
+                    # a system prompt, a model override, or a continuation.
+                    # Deep validation runs again in the profile service path.
+                    from .issue_report_drafts import validate_request
+
+                    validate_request(body)
+                    return service.start_issue_report_draft(body), 202
                 if any(
                     key not in {
                         "prompt",

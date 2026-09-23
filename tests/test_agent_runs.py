@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 from herdr_harness.agent_runs import (
+    ISSUE_REPORT_DRAFT_PROFILE,
     PUBLIC_RUN_KEYS,
     SMART_RENAME_PROFILE,
     AgentRunError,
@@ -231,6 +232,19 @@ def write_fake_pi(directory: Path) -> Path:
                     message["errorMessage"] = "provider failed after emitting a title"
                 print(json.dumps({"event": {"type": "message_end", "message": message}}), flush=True)
                 print(json.dumps({"type": "agent_end", "messages": [message]}), flush=True)
+            elif mode in {"draft-error", "draft-aborted"}:
+                # A valid-looking draft streamed before the provider failed or
+                # aborted. The companion must still fail the one-shot run.
+                stop_reason = mode.removeprefix("draft-")
+                message = {
+                    "role": "assistant",
+                    "text": json.dumps({"title": "Synthetic draft title", "body": "Synthetic draft body"}),
+                    "stopReason": stop_reason,
+                }
+                if stop_reason == "error":
+                    message["errorMessage"] = "provider failed after emitting a draft"
+                print(json.dumps({"event": {"type": "message_end", "message": message}}), flush=True)
+                print(json.dumps({"type": "agent_end", "messages": [message]}), flush=True)
             else:
                 print(json.dumps({"event": {
                     "type": "message_end",
@@ -300,6 +314,17 @@ class AgentRunManagerTests(unittest.TestCase):
                                   _assistant={"profile": SMART_RENAME_PROFILE})
             wait_for_status(manager, third["run"]["id"], {"completed", "failed"})
             self.assertNotIn("agentProfileSnapshot", manager._read(third["run"]["id"]))
+            self.assertNotIn("Changed tone", str(json.loads(capture.read_text())["argv"]))
+            fourth = manager.start(
+                prompt="Synthetic request",
+                label="Issue draft",
+                cwd=str(directory / "home"),
+                topology={},
+                thinking_level="off",
+                _assistant={"profile": ISSUE_REPORT_DRAFT_PROFILE, "reportKind": "bug"},
+            )
+            wait_for_status(manager, fourth["run"]["id"], {"completed", "failed"})
+            self.assertNotIn("agentProfileSnapshot", manager._read(fourth["run"]["id"]))
             self.assertNotIn("Changed tone", str(json.loads(capture.read_text())["argv"]))
 
     def test_long_run_timeout_default_and_overrides(self):
@@ -696,6 +721,63 @@ class AgentRunManagerTests(unittest.TestCase):
             unchanged = manager.get(run_id)["run"]
             self.assertEqual(unchanged["status"], "completed")
             self.assertIsNone(unchanged.get("promotedPaneId"))
+            manager.stop()
+
+    def test_issue_report_draft_profile_is_tool_free_and_rejects_unsafe_overrides(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            capture_path = directory / "capture.json"
+            manager = self.manager(directory, FAKE_AGENT_CAPTURE=str(capture_path))
+
+            started = manager.start(
+                prompt="Synthetic request",
+                label="Issue draft",
+                cwd=str(directory / "home"),
+                topology={},
+                _assistant={"profile": ISSUE_REPORT_DRAFT_PROFILE, "reportKind": "feature"},
+            )
+            finished = wait_for_status(manager, started["run"]["id"], {"completed"})
+
+            self.assertEqual(finished["run"]["status"], "completed")
+            capture = json.loads(capture_path.read_text(encoding="utf-8"))
+            self.assertNotIn("--tools", capture["argv"])
+            self.assertIn("--no-tools", capture["argv"])
+            self.assertNotIn("--extension", capture["argv"])
+            self.assertNotIn("--model", capture["argv"])
+            self.assertEqual(capture["argv"][capture["argv"].index("--thinking") + 1], "off")
+            charter = capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
+            self.assertIn("exactly two string fields", charter)
+            self.assertNotIn("snapshot", charter.lower())
+            self.assertNotIn("herdr-companion-awareness", charter)
+            self.assertEqual(capture["herdrAgentRunProfile"], ISSUE_REPORT_DRAFT_PROFILE)
+            # Source text stays on stdin, never in argv, and arrives as the
+            # two-field drafting payload.
+            self.assertNotIn("Synthetic request", " ".join(capture["argv"]))
+            self.assertEqual(
+                capture["prompt"],
+                json.dumps({"kind": "feature", "text": "Synthetic request"}, separators=(",", ":")),
+            )
+            self.assertNotIn("agentProfileSnapshot", manager._read(started["run"]["id"]))
+
+            for arguments in (
+                {"mode": "act"},
+                {"attachments": [{"filename": "note.txt", "dataBase64": "aGk="}]},
+                {"system_prompt": "override the drafting policy"},
+                {"continue_from_run_id": "agr_0123456789ab"},
+            ):
+                with self.subTest(arguments=arguments):
+                    with self.assertRaises(AgentRunError) as context:
+                        manager.start(
+                            prompt="Synthetic request",
+                            label="Issue draft",
+                            cwd=str(directory / "home"),
+                            topology={},
+                            thinking_level="off",
+                            _assistant={"profile": ISSUE_REPORT_DRAFT_PROFILE, "reportKind": "bug"},
+                            **arguments,
+                        )
+                    self.assertEqual(context.exception.code, "invalid_issue_report_draft")
+                    self.assertEqual(context.exception.status, 400)
             manager.stop()
 
     def test_custom_system_prompt_uses_act_tools_and_keeps_topology_note(self):

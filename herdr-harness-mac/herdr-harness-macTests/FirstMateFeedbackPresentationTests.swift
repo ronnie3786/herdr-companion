@@ -1,4 +1,5 @@
 import AppKit
+import Foundation
 import SwiftUI
 import Testing
 @testable import herdr_harness_mac
@@ -307,6 +308,76 @@ struct FirstMateFeedbackPresentationTests {
         }
     }
 
+    @Test("A failed save then a failed capability refresh keeps the visible draft and recovery")
+    func failedSaveThenCapabilityOutage() async throws {
+        let client = OutageFeedbackClient()
+        let store = FirstMateStore()
+        store.configure(client: client, demo: false)
+        await store.refresh()
+        _ = store.acquireControlLease(available: true)
+        let featureID = try #require(store.selectedFeatureID)
+        let context = store.operationContext
+        #expect(store.feedbackCapability == .supported)
+        #expect(await store.loadFeedback(expectedContext: context))
+
+        let attempted = FirstMateFeedbackDraft(
+            rating: .down,
+            categoryIDs: [FirstMateFeedbackDefaults.tooLongID],
+            comment: "Line one\nLine two"
+        )
+        #expect(!(await store.saveFeedback(attempted, messageID: "demo-mate-0", expectedContext: context)))
+        #expect(store.feedbackSaveError(featureID: featureID, messageID: "demo-mate-0") != nil)
+
+        // The workspace's periodic refresh now fails at the capability route.
+        // That is temporary unavailability, never a confirmed old server, so
+        // the editor keeps the attempted draft, the save error, and connection
+        // recovery and must not swap in server-upgrade guidance.
+        await client.failNextCapabilities()
+        await store.refresh()
+        #expect(store.feedbackCapability == .unknown)
+        #expect(!store.feedbackSupported)
+        #expect(!FirstMateFeedbackSurface.showsUpgradeNotice(
+            hasLoaded: store.hasLoaded,
+            capability: store.feedbackCapability,
+            surfaceUnsupported: store.unsupported
+        ))
+
+        let target = FirstMateFeedbackEditorTarget(
+            featureID: featureID,
+            messageID: "demo-mate-0",
+            responseText: "Synthetic answer",
+            expectedContext: context
+        )
+        var state = FirstMateFeedbackEditorState.make(store: store, target: target)
+        #expect(state.isTargetAlive)
+        #expect(state.showsConnectionNotice)
+        #expect(!state.showsUpgradeNotice)
+        #expect(state.isEditable)
+        #expect(!state.canSave)
+        #expect(state.saveErrorMessage != nil)
+        #expect(state.draft.comment == "Line one\nLine two")
+        #expect(state.draft.categoryIDs == [FirstMateFeedbackDefaults.tooLongID])
+
+        for scheme in [ColorScheme.light, .dark] {
+            let editor = NSHostingView(
+                rootView: FirstMateFeedbackEditor(store: store, target: target)
+                    .environment(\.colorScheme, scheme)
+                    .environment(\.herdrFontScale, .xxxLarge)
+                    .frame(width: 480)
+            )
+            editor.layoutSubtreeIfNeeded()
+            #expect(editor.fittingSize.height > 200)
+        }
+
+        // Recovery restores server writes and leaves the typed draft intact.
+        await store.refresh()
+        #expect(store.feedbackCapability == .supported)
+        state = FirstMateFeedbackEditorState.make(store: store, target: target)
+        #expect(!state.showsConnectionNotice)
+        #expect(state.canSave)
+        #expect(state.draft.comment == "Line one\nLine two")
+    }
+
     @Test("A failed rating save keeps the previous state and offers an explicit retry")
     func failedSaveRetry() async throws {
         let message = syntheticMessage(id: "failed-save", role: "assistant", status: "done", text: "Answer")
@@ -554,4 +625,49 @@ private func syntheticRecord(
             sessionProvenance: "verified"
         )
     )
+}
+
+/// Synthetic companion for the transient-outage presentation regression. It
+/// serves one real demo snapshot and can fail the capability route or the
+/// feedback save on demand; nothing leaves the test process.
+private actor OutageFeedbackClient: FirstMateClient {
+    private let snapshot = FirstMateDemo.features(step: 0)[0]
+    private var capabilityFailuresRemaining = 0
+    private var saveFailuresRemaining = 1
+
+    func failNextCapabilities() { capabilityFailuresRemaining += 1 }
+
+    func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities {
+        if capabilityFailuresRemaining > 0 {
+            capabilityFailuresRemaining -= 1
+            throw URLError(.networkConnectionLost)
+        }
+        return .init(ok: true, capabilities: ["first-mate-v1", "first-mate-feedback-v1"])
+    }
+
+    func fetchFirstMateFeatures() async throws -> FirstMateFeatureList {
+        .init(ok: true, features: [snapshot.feature])
+    }
+
+    func fetchFirstMateFeature(_ id: String) async throws -> FirstMateSnapshot {
+        guard id == snapshot.feature.id else { throw APIError.invalidResponse }
+        return snapshot
+    }
+
+    func fetchFirstMateFeedback(featureID: String) async throws -> FirstMateFeatureFeedbackResponse {
+        guard featureID == snapshot.feature.id else { throw APIError.invalidResponse }
+        return .init(ok: true, featureID: featureID, records: [])
+    }
+
+    func saveFirstMateFeedback(
+        featureID: String,
+        messageID: String,
+        request: FirstMateFeedbackSaveRequest
+    ) async throws -> FirstMateFeedbackMutationResponse {
+        if saveFailuresRemaining > 0 {
+            saveFailuresRemaining -= 1
+            throw URLError(.networkConnectionLost)
+        }
+        throw APIError.invalidResponse
+    }
 }

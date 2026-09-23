@@ -4,6 +4,8 @@ import XCTest
 /// response, reason, and rating comes from the built-in in-memory demo; no
 /// companion server, operator database, or network connection participates.
 final class HerdrFirstMateFeedbackUITests: HerdrUITestCase {
+    private let screenshotDirectory = HerdrFirstMateFeedbackUITests.resolvedScreenshotDirectory()
+
     @MainActor
     func testRatingReasonsCustomTextEditingAndRemoval() {
         let app = launchDemoApp()
@@ -28,6 +30,8 @@ final class HerdrFirstMateFeedbackUITests: HerdrUITestCase {
         up.click()
         XCTAssertTrue(waitForLabel("Helpful", of: status))
         XCTAssertTrue(waitForLabel("Helpful response, selected", of: up))
+        saveScreenshot("first-mate-feedback-01-helpful-rating", app: app, directory: screenshotDirectory)
+        saveAccessibilitySnapshot("first-mate-feedback-01-helpful-rating", app: app)
 
         // Thumbs down opens the pinned editor with the three requested reasons,
         // initially unselected.
@@ -50,6 +54,8 @@ final class HerdrFirstMateFeedbackUITests: HerdrUITestCase {
             XCTAssertTrue(waitForLabel(label, of: row), "The requested reason wording should stay exact")
             XCTAssertTrue(waitForValue("Not selected", of: row))
         }
+        saveScreenshot("first-mate-feedback-02-editor-default-reasons", app: app, directory: screenshotDirectory)
+        saveAccessibilitySnapshot("first-mate-feedback-02-editor-default-reasons", app: app)
 
         // Multiple reasons plus a multiline custom note.
         let tooLong = app.control(identifier: "first-mate-feedback-category-too_long")
@@ -68,6 +74,8 @@ final class HerdrFirstMateFeedbackUITests: HerdrUITestCase {
         comment.typeText("Synthetic note line one")
         comment.typeKey(.return, modifierFlags: [])
         comment.typeText("line two")
+        saveScreenshot("first-mate-feedback-03-editor-reasons-and-note", app: app, directory: screenshotDirectory)
+        saveAccessibilitySnapshot("first-mate-feedback-03-editor-reasons-and-note", app: app)
 
         let save = app.control(identifier: "first-mate-feedback-save")
         save.click()
@@ -75,6 +83,8 @@ final class HerdrFirstMateFeedbackUITests: HerdrUITestCase {
         XCTAssertTrue(waitForLabelContaining("3 reasons", in: status))
         XCTAssertTrue(waitForLabelContaining("note", in: status))
         XCTAssertTrue(waitForLabel("Not helpful response, selected", of: down))
+        saveScreenshot("first-mate-feedback-04-saved-negative-rating", app: app, directory: screenshotDirectory)
+        saveAccessibilitySnapshot("first-mate-feedback-04-saved-negative-rating", app: app)
 
         // Reopening is prefilled; Cancel leaves the saved rating unchanged.
         down.click()
@@ -108,6 +118,8 @@ final class HerdrFirstMateFeedbackUITests: HerdrUITestCase {
         XCTAssertTrue(waitForLabel("Rate this response", of: status))
         XCTAssertTrue(waitForLabel("Helpful response", of: up))
         XCTAssertTrue(waitForLabel("Not helpful response", of: down))
+        saveScreenshot("first-mate-feedback-05-cleared-rating", app: app, directory: screenshotDirectory)
+        saveAccessibilitySnapshot("first-mate-feedback-05-cleared-rating", app: app)
     }
 
     @MainActor
@@ -137,6 +149,8 @@ final class HerdrFirstMateFeedbackUITests: HerdrUITestCase {
         let custom = customCategoryRow(Self.customReason, in: app)
         XCTAssertTrue(custom.waitForExistence(timeout: 5), "Adding a reason should persist it in the catalog")
         XCTAssertTrue(waitForValue("Selected", of: custom), "A newly added reason should be selected")
+        saveScreenshot("first-mate-feedback-06-custom-reason-selected", app: app, directory: screenshotDirectory)
+        saveAccessibilitySnapshot("first-mate-feedback-06-custom-reason-selected", app: app)
         app.control(identifier: "first-mate-feedback-save").click()
         XCTAssertTrue(
             app.control(identifier: "first-mate-feedback-editor").waitForNonExistence(timeout: 5)
@@ -155,6 +169,8 @@ final class HerdrFirstMateFeedbackUITests: HerdrUITestCase {
             app.control(identifier: "first-mate-feedback-status-\(Self.firstMessage)").waitForNonExistence(timeout: 5),
             "Switching features must not retarget or leak another feature's feedback"
         )
+        saveScreenshot("first-mate-feedback-07-second-feature-unrated", app: app, directory: screenshotDirectory)
+        saveAccessibilitySnapshot("first-mate-feedback-07-second-feature-unrated", app: app)
         welcomeDown.click()
         let reused = customCategoryRow(Self.customReason, in: app)
         XCTAssertTrue(reused.waitForExistence(timeout: 5), "The added reason should remain available")
@@ -293,4 +309,20 @@ final class HerdrFirstMateFeedbackUITests: HerdrUITestCase {
         ("unnecessary_message", "Unnecessary message"),
         ("incorrect_assumption", "Incorrect assumption"),
     ]
+
+    /// Mirrors the other Mac suites: prefer `/tmp` for the PNG copies and fall
+    /// back to the runner's container. `XCTAttachment` carries the screenshots
+    /// and accessibility snapshots into the `.xcresult` either way, so the
+    /// rendered-UI evidence survives a runner without `/tmp` write access.
+    private static func resolvedScreenshotDirectory() -> URL {
+        let preferred = URL(fileURLWithPath: "/tmp/herdr-first-mate-feedback-screens", isDirectory: true)
+        let fileManager = FileManager.default
+        if (try? fileManager.createDirectory(at: preferred, withIntermediateDirectories: true)) != nil {
+            return preferred
+        }
+
+        let fallback = fileManager.temporaryDirectory.appending(path: "herdr-first-mate-feedback-screens")
+        try? fileManager.createDirectory(at: fallback, withIntermediateDirectories: true)
+        return fallback
+    }
 }

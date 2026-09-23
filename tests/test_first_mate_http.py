@@ -509,6 +509,47 @@ class FirstMateHTTPTests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(records["records"][0]["rating"], "down")
 
+    def test_feedback_survives_a_companion_restart_and_reconnect(self):
+        _, created = self.create()
+        feature_id = created["feature"]["id"]
+        reply = self.completed_reply(feature_id, session="synthetic-restart-coordinator")
+        custom = self.request(
+            "/api/v1/first-mate/feedback-categories",
+            {"label": "Shorter next time", "request_id": "category-restart"})[1]["category"]
+        base = f"/api/v1/first-mate/features/{feature_id}"
+        code, saved = self.request(base + f"/messages/{reply['id']}/feedback", self.feedback_body(
+            category_ids=["too_long", custom["id"]],
+            comment="Kept across a synthetic restart.\nSecond line — naïve ✓",
+            request_id="feedback-restart"))
+        self.assertEqual(code, 200)
+        record = saved["feedback"]
+
+        # A disposable companion restart: stop the handler, close the store,
+        # then reopen the same on-disk database and serve it again. This is the
+        # HTTP-level companion half of the connected-app persistence check; the
+        # Mac relaunch half stays an explicit final-gate step.
+        self._restart_companion()
+
+        code, records = self.request(base + "/feedback")
+        self.assertEqual(code, 200)
+        self.assertEqual(records, {"ok": True, "feature_id": feature_id, "records": [record]})
+        code, categories = self.request("/api/v1/first-mate/feedback-categories")
+        self.assertEqual(code, 200)
+        self.assertIn(custom["id"], [item["id"] for item in categories["categories"]])
+        self.assertEqual(saved["feedback"]["provenance"]["coordinator_session_id"], "synthetic-restart-coordinator")
+
+    def _restart_companion(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+        self.store.close()
+        self.store = FirstMateStore(Path(self.temp.name) / "work.sqlite3")
+        self.service.first_mate_store = self.store
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.service))
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.origin = f"http://127.0.0.1:{self.server.server_port}"
+
     def test_events_and_validation(self):
         _, data = self.create()
         identity = data["feature"]["id"]

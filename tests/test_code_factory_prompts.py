@@ -115,6 +115,9 @@ class CharterTests(unittest.TestCase):
         self.assertTrue(prompts.REVIEWER_CHARTER.startswith("You are Astra performing a code review for the Herdr Code Factory."))
         self.assertIn("Approve only with positive evidence for every original requirement", prompts.REVIEWER_CHARTER)
         self.assertIn("reasonable reversible options", prompts.REVIEWER_CHARTER)
+        self.assertIn("is `deferred`", prompts.REVIEWER_CHARTER)
+        self.assertIn("operator verify it after install", prompts.REVIEWER_CHARTER)
+        self.assertIn("non-blocking notes, not new blocking requirements", prompts.REVIEWER_CHARTER)
         self.assertTrue(prompts.RELEASE_AUTHOR_CHARTER.startswith("You are a DeepSeek release-preparation session of the Herdr Code Factory"))
         self.assertIn("release/notes/*.md conventions", prompts.RELEASE_AUTHOR_CHARTER)
         self.assertTrue(prompts.RELEASE_AUTHOR_CHARTER.endswith("do not run tests or builds, do not run gh."))
@@ -277,6 +280,10 @@ class OtherPromptTests(unittest.TestCase):
         self.assertIn("independently derive observable outcomes", text)
         self.assertIn("alternate valid configuration", text)
         self.assertIn("Never claim CI proves a deployed or installed user-visible result", text)
+        self.assertIn("Use `deferred` when the requirement is implemented and code/test-covered", text)
+        self.assertIn("`deferred` requirements never block approval", text)
+        self.assertIn("Reserve `blocking` and `request_changes` for concrete correctness defects", text)
+        self.assertIn("Improvements, pre-existing behavior, and speculative edge cases belong in `non_blocking`", text)
         self.assertIn('"verdict": "approve|request_changes"', text)
         self.assertIn('"comments"', text)
         long = prompts.reviewer_prompt(ISSUE, plan, {"number": 1}, "d" * 500_000, None, None, 1)
@@ -667,6 +674,36 @@ class ValidateReviewTests(unittest.TestCase):
             with self.subTest(expected=expected), self.assertRaises(CodeFactoryError) as caught:
                 prompts.validate_review(raw, plan)
             self.assertIn(expected, str(caught.exception))
+
+    def test_deferred_requirements_allow_approval(self):
+        plan = prompts.validate_plan(plan_dict())
+        raw = review_dict(plan)
+        raw["requirements_assessment"][1].update(
+            status="deferred",
+            evidence="Source and tests cover the code path; verify the rendered bubble after install.",
+        )
+        review = prompts.validate_review(raw, plan)
+        self.assertEqual(review["verdict"], "approve")
+        self.assertEqual(review["requirements_assessment"][1]["status"], "deferred")
+        body = prompts.review_body(1, review)
+        self.assertIn("**Pending operator verification (post-install)**", body)
+        self.assertIn("- R2: Source and tests cover the code path; verify the rendered bubble after install.", body)
+
+    def test_unverified_requirement_still_blocks_approval(self):
+        plan = prompts.validate_plan(plan_dict())
+        raw = review_dict(plan)
+        raw["requirements_assessment"][0]["status"] = "unverified"
+        with self.assertRaises(CodeFactoryError) as caught:
+            prompts.validate_review(raw, plan)
+        self.assertIn("satisfied or deferred", str(caught.exception))
+
+    def test_unknown_requirement_status_is_rejected(self):
+        plan = prompts.validate_plan(plan_dict())
+        raw = review_dict(plan)
+        raw["requirements_assessment"][0]["status"] = "postponed"
+        with self.assertRaises(CodeFactoryError) as caught:
+            prompts.validate_review(raw, plan)
+        self.assertIn("satisfied, unmet, unverified or deferred", str(caught.exception))
 
     def test_full_plan_and_required_boolean_flags_gate_approval(self):
         plan = prompts.validate_plan(plan_dict())

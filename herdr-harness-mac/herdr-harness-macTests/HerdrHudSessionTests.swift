@@ -81,6 +81,28 @@ struct HerdrHudSessionTests {
         #expect(thread.turnCount == 2)
     }
 
+    @Test("Demo continuations keep the thread's original root after the second turn")
+    func demoLaterTurnsKeepThreadRoot() async throws {
+        let model = makeDemoModel()
+        let session = makeSession()
+        session.draft = "First turn"
+        await session.submit(model: model)
+        let firstRun = try #require(session.lastHeadlessRunForTesting)
+
+        for prompt in ["Second turn", "Third turn"] {
+            session.draft = prompt
+            await session.submit(model: model)
+        }
+
+        let thirdRun = try #require(session.lastHeadlessRunForTesting)
+        let thread = try #require(session.thread)
+        #expect(thirdRun.threadRootRunId == firstRun.id)
+        #expect(thread.rootRunID == firstRun.id)
+        #expect(thread.lastRunID == thirdRun.id)
+        #expect(thread.turnCount == 3)
+        #expect(session.exchanges.map(\.prompt) == ["First turn", "Second turn", "Third turn"])
+    }
+
     @Test("A reaped continuation response resets the HUD thread")
     func reapedContinuationResponseResetsThread() async throws {
         let model = makeDemoModel()

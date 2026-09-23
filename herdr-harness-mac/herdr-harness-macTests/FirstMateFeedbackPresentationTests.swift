@@ -264,6 +264,66 @@ struct FirstMateFeedbackPresentationTests {
         #expect(!FirstMateFeedbackSurface.showsUpgradeNotice(hasLoaded: true, unsupported: true, supported: true))
     }
 
+    @Test("A failed rating save keeps the previous state and offers an explicit retry")
+    func failedSaveRetry() async throws {
+        let message = syntheticMessage(id: "failed-save", role: "assistant", status: "done", text: "Answer")
+        let saved = syntheticRecord(rating: .down, categoryIDs: ["too_long"], comment: "Note")
+        let failed = try #require(FirstMateResponseFeedbackPresentation.make(
+            message: message,
+            supported: true,
+            writable: true,
+            isSaving: false,
+            record: saved,
+            saveErrorMessage: "Connect to this feature's host to save feedback."
+        ))
+        #expect(failed.rating == .down)
+        #expect(failed.hasSavedRating)
+        #expect(failed.isWritable)
+        #expect(failed.saveErrorMessage == "Connect to this feature's host to save feedback.")
+
+        // The next successful render clears the compact error row.
+        let recovered = try #require(FirstMateResponseFeedbackPresentation.make(
+            message: message,
+            supported: true,
+            writable: true,
+            isSaving: false,
+            record: saved
+        ))
+        #expect(recovered.saveErrorMessage == nil)
+
+        // The error row only appears when a failure is reported.
+        for scheme in [ColorScheme.light, .dark] {
+            let withError = NSHostingView(
+                rootView: FirstMateResponseFeedbackFooter(messageID: message.id, presentation: failed)
+                    .environment(\.colorScheme, scheme)
+                    .environment(\.herdrFontScale, .xxxLarge)
+                    .frame(width: 420)
+            )
+            let withoutError = NSHostingView(
+                rootView: FirstMateResponseFeedbackFooter(messageID: message.id, presentation: recovered)
+                    .environment(\.colorScheme, scheme)
+                    .environment(\.herdrFontScale, .xxxLarge)
+                    .frame(width: 420)
+            )
+            withError.layoutSubtreeIfNeeded()
+            withoutError.layoutSubtreeIfNeeded()
+            #expect(withError.fittingSize.height > withoutError.fittingSize.height)
+        }
+
+        // A real store failure keeps the attempted draft for retry and never
+        // invents a saved rating over the previous state.
+        let store = FirstMateStore()
+        store.configure(client: nil, demo: false)
+        _ = store.acquireControlLease(available: true)
+        store.selectedFeatureID = "synthetic-feature"
+        let context = store.operationContext
+        let attempted = FirstMateFeedbackDraft(rating: .up)
+        #expect(!(await store.saveFeedback(attempted, messageID: message.id, expectedContext: context)))
+        #expect(store.feedbackSaveError(featureID: "synthetic-feature", messageID: message.id) != nil)
+        #expect(store.feedbackDraft(for: "synthetic-feature", messageID: message.id) == attempted)
+        #expect(store.feedback(for: "synthetic-feature", messageID: message.id) == nil)
+    }
+
     @Test("The footer, message row, and pinned editor host in both appearances at the largest text size")
     func rendering() throws {
         let message = syntheticMessage(id: "render", role: "assistant", status: "done", text: "A **completed** synthetic answer.")

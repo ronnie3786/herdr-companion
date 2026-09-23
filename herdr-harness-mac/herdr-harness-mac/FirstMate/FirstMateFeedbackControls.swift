@@ -37,6 +37,7 @@ struct FirstMateResponseFeedbackPresentation: Equatable {
     var isWritable: Bool
     var savedReasonCount: Int
     var hasSavedComment: Bool
+    var saveErrorMessage: String?
 
     /// Nil hides the footer entirely. A cached record with a saved rating keeps
     /// its footer visible read-only when the companion connection is offline;
@@ -47,7 +48,8 @@ struct FirstMateResponseFeedbackPresentation: Equatable {
         supported: Bool,
         writable: Bool,
         isSaving: Bool,
-        record: FirstMateFeedback?
+        record: FirstMateFeedback?,
+        saveErrorMessage: String? = nil
     ) -> FirstMateResponseFeedbackPresentation? {
         guard FirstMateFeedbackEligibility.isEligible(message) else { return nil }
         guard supported || record?.rating != nil else { return nil }
@@ -56,7 +58,8 @@ struct FirstMateResponseFeedbackPresentation: Equatable {
             isSaving: isSaving,
             isWritable: supported && writable,
             savedReasonCount: record?.categoryIDs.count ?? 0,
-            hasSavedComment: !(record?.comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            hasSavedComment: !(record?.comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true),
+            saveErrorMessage: saveErrorMessage
         )
     }
 
@@ -95,51 +98,71 @@ struct FirstMateResponseFeedbackFooter: View {
     var onRateUp: @MainActor () -> Void = {}
     var onEditFeedback: @MainActor () -> Void = {}
     var onRemoveRating: @MainActor () -> Void = {}
+    var onRetry: @MainActor () -> Void = {}
 
     @Environment(\.colorScheme) private var scheme
 
     private var palette: FirstMatePalette { FirstMatePalette(scheme: scheme) }
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text(presentation.statusText ?? "Rate this response")
-                .herdrFont(.caption)
-                .foregroundStyle(presentation.statusText == nil ? Color.secondary.opacity(0.65) : Color.secondary)
-                .lineLimit(1)
-                .accessibilityIdentifier("first-mate-feedback-status-\(messageID)")
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(presentation.statusText ?? "Rate this response")
+                    .herdrFont(.caption)
+                    .foregroundStyle(presentation.statusText == nil ? Color.secondary.opacity(0.65) : Color.secondary)
+                    .lineLimit(1)
+                    .accessibilityIdentifier("first-mate-feedback-status-\(messageID)")
 
-            Spacer(minLength: 6)
+                Spacer(minLength: 6)
 
-            if presentation.isSaving {
-                ProgressView()
-                    .controlSize(.mini)
-                    .accessibilityIdentifier("first-mate-feedback-saving-\(messageID)")
-                    .accessibilityLabel("Saving rating")
+                if presentation.isSaving {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .accessibilityIdentifier("first-mate-feedback-saving-\(messageID)")
+                        .accessibilityLabel("Saving rating")
+                }
+
+                thumb(up: true)
+                thumb(up: false)
+
+                if presentation.isSelectedDown {
+                    Button("Edit", action: onEditFeedback)
+                        .buttonStyle(.borderless)
+                        .herdrFont(.caption)
+                        .foregroundStyle(palette.accent)
+                        .disabled(!presentation.isWritable || presentation.isSaving)
+                        .accessibilityIdentifier("first-mate-feedback-edit-\(messageID)")
+                        .accessibilityLabel("Edit response feedback")
+                        .help("Edit response feedback")
+                }
+
+                if presentation.hasSavedRating {
+                    Button("Remove rating", action: onRemoveRating)
+                        .buttonStyle(.borderless)
+                        .herdrFont(.caption)
+                        .foregroundStyle(palette.secondaryText)
+                        .disabled(!presentation.isWritable || presentation.isSaving)
+                        .accessibilityIdentifier("first-mate-feedback-remove-\(messageID)")
+                        .accessibilityLabel("Remove rating")
+                        .help("Remove this response's rating")
+                }
             }
 
-            thumb(up: true)
-            thumb(up: false)
-
-            if presentation.isSelectedDown {
-                Button("Edit", action: onEditFeedback)
-                    .buttonStyle(.borderless)
-                    .herdrFont(.caption)
-                    .foregroundStyle(palette.accent)
-                    .disabled(!presentation.isWritable || presentation.isSaving)
-                    .accessibilityIdentifier("first-mate-feedback-edit-\(messageID)")
-                    .accessibilityLabel("Edit response feedback")
-                    .help("Edit response feedback")
-            }
-
-            if presentation.hasSavedRating {
-                Button("Remove rating", action: onRemoveRating)
-                    .buttonStyle(.borderless)
-                    .herdrFont(.caption)
-                    .foregroundStyle(palette.secondaryText)
-                    .disabled(!presentation.isWritable || presentation.isSaving)
-                    .accessibilityIdentifier("first-mate-feedback-remove-\(messageID)")
-                    .accessibilityLabel("Remove rating")
-                    .help("Remove this response's rating")
+            if let saveErrorMessage = presentation.saveErrorMessage {
+                HStack(spacing: 6) {
+                    Label(saveErrorMessage, systemImage: "exclamationmark.triangle")
+                        .herdrFont(.caption)
+                        .foregroundStyle(.orange)
+                        .lineLimit(2)
+                        .accessibilityIdentifier("first-mate-feedback-error-\(messageID)")
+                    Button("Try again", action: onRetry)
+                        .buttonStyle(.link)
+                        .herdrFont(.caption)
+                        .disabled(!presentation.isWritable || presentation.isSaving)
+                        .accessibilityIdentifier("first-mate-feedback-retry-\(messageID)")
+                        .accessibilityLabel("Retry saving this rating")
+                        .help("Retry saving this rating")
+                }
             }
         }
         .padding(.top, 2)

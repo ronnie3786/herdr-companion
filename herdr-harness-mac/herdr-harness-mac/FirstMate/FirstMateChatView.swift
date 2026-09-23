@@ -208,7 +208,8 @@ struct FirstMateChatView: View {
                             supported: feedbackSupported,
                             writable: feedbackWritable,
                             isSaving: store.isSavingFeedback(featureID: message.featureID, messageID: message.id),
-                            record: store.feedback(for: message.featureID, messageID: message.id)
+                            record: store.feedback(for: message.featureID, messageID: message.id),
+                            saveErrorMessage: store.feedbackSaveError(featureID: message.featureID, messageID: message.id)
                         )
                         FirstMateMessageView(
                             message: message,
@@ -238,6 +239,22 @@ struct FirstMateChatView: View {
                                 Task {
                                     await store.saveFeedback(
                                         FirstMateFeedbackDraft(rating: nil),
+                                        messageID: message.id,
+                                        expectedContext: feedbackContext
+                                    )
+                                }
+                            },
+                            retryFeedback: {
+                                // A failed thumbs-up or Remove rating keeps its
+                                // attempted draft in the store, so retry resubmits
+                                // that exact payload and reuses its request identity.
+                                let draft = store.feedbackDraft(
+                                    for: message.featureID,
+                                    messageID: message.id
+                                )
+                                Task {
+                                    await store.saveFeedback(
+                                        draft,
                                         messageID: message.id,
                                         expectedContext: feedbackContext
                                     )

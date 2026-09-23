@@ -33,6 +33,10 @@ in this feature changes prompts, preferences, models, or workflows.
     editor and everything typed visible, reuses the same request identity, and
     offers **Retry save**; the previously saved rating is never changed
     optimistically.
+- A failed **Thumbs up** or **Remove rating** save changes no rating and shows a
+  compact error with **Try again** under that response. The retry resubmits the
+  exact attempted payload and reuses its request identity, so a delayed or
+  duplicated retry cannot double-apply.
 - A response has one current rating. Selecting thumbs up on a negative response,
   or **Remove rating**, clears the reasons and note only after the save
   succeeds.
@@ -163,7 +167,9 @@ state. Do not capture operator configuration or real conversations.
 - [ ] Force a save failure (for example by disconnecting the host mid-request)
       and confirm the editor stays open with the typed content, the previously
       saved rating is unchanged, and **Retry save** reuses the same request and
-      succeeds after reconnecting.
+      succeeds after reconnecting. Also confirm a failed thumbs-up or
+      **Remove rating** keeps the previous label and shows the compact
+      **Try again** retry under that response.
 - [ ] Against a companion without `first-mate-feedback-v1`, confirm exactly one
       upgrade notice appears and no feedback request is sent. After separately
       installing and restarting the updated companion, confirm the controls

@@ -9,7 +9,7 @@ import urllib.error
 import urllib.request
 import uuid
 
-from herdr_harness.agent_profiles import AgentProfiles, ProfileError, MARKER, MAX_DOCUMENT_BYTES
+from herdr_harness.agent_profiles import AgentProfiles, ProfileError, MARKER, MAX_DOCUMENT_BYTES, configured_remote_fetch
 from herdr_harness.server import make_server
 from tests.test_herdr_http import FakeHTTPService
 
@@ -189,6 +189,29 @@ class AgentProfileHTTPTests(unittest.TestCase):
                                          headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
         with urllib.request.urlopen(request, timeout=3) as response:
             return json.load(response)
+
+    def test_configured_remote_sync_uses_selected_owner_not_inherited_credentials(self):
+        self.service.agent_profiles.machine_id = "owner"
+        profile = self.service.agent_profiles.overview()["profiles"][1]
+        with tempfile.TemporaryDirectory() as root:
+            config = Path(root) / "config.toml"
+            origin = self.url.removesuffix("/api/v1/agent-profiles")
+            config.write_text('version = 1\nmachine = "client"\n'
+                              '[machines.owner]\nname = "Owner"\nurl = ' + json.dumps(origin) + '\n'
+                              '[machines.owner.server]\napi_token = "synthetic-profile-token"\n'
+                              '[machines.client]\nname = "Client"\nurl = "http://127.0.0.1:1"\n'
+                              '[machines.client.server]\napi_token = "synthetic-client-token"\n')
+            config.chmod(0o600)
+            fetch = configured_remote_fetch({"HERDR_CONFIG": str(config), "HERDR_HARNESS_API_TOKEN": "wrong-inherited", "HERDR_MACHINE": "client"})
+            payload = fetch("owner", profile["id"])
+            self.assertNotIn("history", payload)
+            self.assertEqual(payload["machineId"], "owner")
+            client = AgentProfiles(machine_id="client", remote_fetch=fetch)
+            try:
+                client.mutate(mutation("assign", expectedRevision=0, ownerMachineId="owner", profileId=profile["id"], soul="", user=""))
+                self.assertEqual(client.snapshot()["profile"], profile)
+            finally:
+                client.close()
 
     def test_authentication_routes_and_conflicts(self):
         with self.assertRaises(urllib.error.HTTPError) as caught:

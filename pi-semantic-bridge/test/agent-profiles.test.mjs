@@ -66,7 +66,7 @@ test("transport is bounded, authenticated, no-redirect, and quiet for missing cr
     assert.deepEqual(await fetchProfile(env), saved);
     assert.equal(options.redirect, "error");
     assert.equal(options.headers.Authorization, "Bearer synthetic-token");
-    globalThis.fetch = async () => new Response("x".repeat(256 * 1024 + 1));
+    globalThis.fetch = async () => new Response("x".repeat(512 * 1024 + 1));
     assert.equal(await fetchProfile(env), undefined);
     assert.equal(await fetchProfile({}), undefined);
   } finally { globalThis.fetch = original; }

@@ -72,7 +72,7 @@ def main(argv=None, *, environ=None, stdout=None, stderr=None):
         error = {"ok": False, "error": {"code": getattr(exc, "code", "profile_cli_error"),
                  "message": "Profile command failed; check the selected machine, input files, and expected revision"}}
         print(json.dumps(error), file=stderr)
-        return 4 if getattr(exc, "status", None) == 409 else 2
+        return 4 if getattr(exc, "http_status", getattr(exc, "status", None)) == 409 else 2
 
 
 if __name__ == "__main__":

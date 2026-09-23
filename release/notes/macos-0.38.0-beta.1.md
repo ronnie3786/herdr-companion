@@ -8,7 +8,7 @@
 
 ## Required components
 
-Install companion **0.37.0b1**, including its `herdr-profiles` CLI and matching Pi package, on each participating agent host. This Mac update does not install the server. Older servers show an upgrade requirement in the profile editor; existing client APIs remain compatible.
+Install companion **0.38.0b1**, including its `herdr-profiles` CLI and matching Pi package, on each participating agent host. This Mac update does not install the server. Older servers show an upgrade requirement in the profile editor; existing client APIs remain compatible.
 
 New installations start with empty, unassigned Personal and Work profiles. Select the data machine and profile owner deliberately. Documents are private service data, not repository files, and should never contain credentials. See `docs/agent-profiles.md` for setup, sync, retention and adoption boundaries.
 

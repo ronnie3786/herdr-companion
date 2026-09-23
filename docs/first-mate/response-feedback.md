@@ -32,22 +32,29 @@ in this feature changes prompts, preferences, models, or workflows.
     merges by stable ID and never drops a category that was added while the read
     was in flight. Until a full catalog read has succeeded, the editor shows
     **Reload reasons** so the complete list can be fetched; adding one category
-    is not treated as a complete load.
+    is not treated as a complete load. A request that is confirmed after the
+    editor is cancelled, dismissed, or invalidated by a feature switch or
+    reconnect remains available in the catalog, but it never recreates or
+    reselects the discarded draft; reopening the response starts from the
+    retained rating.
   - **Notes** is an optional multiline field preserved exactly as typed,
     including Unicode and line breaks, up to 4000 Unicode scalars. The editor
     shows the running count and clamps further input at that boundary.
   - **Save feedback** records the negative rating even when no reason or note is
-    selected. **Cancel** (or Escape) changes no rating. A failed save keeps the
-    editor and everything typed visible, reuses the same request identity, and
-    offers **Retry save**; the previously saved rating is never changed
-    optimistically.
+    selected. **Cancel** (or Escape) changes no rating and discards the edit,
+    including a reusable reason confirmed after cancellation. A failed save
+    keeps the editor and everything typed visible, reuses the same request
+    identity, and offers **Retry save**; the previously saved rating is never
+    changed optimistically.
 - Each editable draft is pinned to the retained revision it was loaded from.
-  A refresh that arrives while the editor is open updates the read-only cache
-  but never rebases the draft. Saving with a stale revision is rejected and
-  shows **Reload latest**; that explicit action reloads the record and rebases
-  the preserved reasons and note so the next **Save feedback** uses the new
-  revision and a fresh request identity. The editor cannot save a conflicting
-  draft before that reload.
+  A successful fetch that found no record pins revision zero, so a delayed read
+  that discovers another client's first rating conflicts with the typed draft
+  instead of silently replacing it. A refresh that arrives while the editor is
+  open updates the read-only cache but never rebases the draft. Saving with a
+  stale revision is rejected and shows **Reload latest**; that explicit action
+  reloads the record and rebases the preserved reasons and note so the next
+  **Save feedback** uses the new revision and a fresh request identity. The
+  editor cannot save a conflicting draft before that reload.
 - While a save is in flight the editor freezes: category rows, the reusable
   reason field, **Add**, the note, and **Cancel** are disabled and interactive
   dismissal is blocked, so input typed after submission cannot be silently

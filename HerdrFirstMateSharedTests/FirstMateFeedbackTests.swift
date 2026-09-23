@@ -631,6 +631,70 @@ struct FirstMateFeedbackTests {
         #expect(requests[0].requestID != requests[1].requestID)
     }
 
+    @Test("An empty loaded record pins revision zero so a delayed first rating conflicts")
+    func emptyLoadedRecordPinsRevisionZero() async throws {
+        let client = FirstMateFeedbackTestClient()
+        await client.setEnforceRevisions(true)
+        let store = FirstMateStore()
+        store.configure(client: client, demo: false)
+        await store.refresh()
+        _ = store.acquireControlLease(available: true)
+        let featureID = try #require(store.selectedFeatureID)
+        let context = store.operationContext
+
+        // A successful fetch that found no record pins the editor at zero, so
+        // an emptied cache is never mistaken for "no revision yet".
+        #expect(await store.loadFeedback(expectedContext: context))
+        #expect(store.hasLoadedFeedback(for: featureID))
+        #expect(store.feedbackDraft(for: featureID, messageID: "demo-mate-0").baseRevision == 0)
+
+        // A caller that supplies a fresh untyped struct inherits the zero pin
+        // instead of silently losing it while the user edits.
+        store.setFeedbackDraft(
+            FirstMateFeedbackDraft(rating: .down, comment: "My in-progress edit"),
+            for: featureID,
+            messageID: "demo-mate-0",
+            expectedContext: context
+        )
+        let typed = store.feedbackDraft(for: featureID, messageID: "demo-mate-0")
+        #expect(typed.baseRevision == 0)
+        #expect(typed.comment == "My in-progress edit")
+
+        // Another client creates the first rating while a delayed refresh is
+        // in flight. The typed draft keeps its original zero pin.
+        await client.seedRecord(syntheticFeedbackRecord(
+            featureID: featureID,
+            messageID: "demo-mate-0",
+            rating: .down,
+            comment: "Changed elsewhere",
+            revision: 1
+        ))
+        await client.holdNextLoad()
+        let loading = Task { await store.loadFeedback(expectedContext: context) }
+        while !(await client.isWaitingForLoad) { await Task.yield() }
+        await client.releaseLoad()
+        #expect(await loading.value)
+
+        let pinned = store.feedbackDraft(for: featureID, messageID: "demo-mate-0")
+        #expect(pinned.baseRevision == 0)
+        #expect(pinned.comment == "My in-progress edit")
+        #expect(!(await store.saveFeedback(pinned, messageID: "demo-mate-0", expectedContext: context)))
+        #expect(store.feedbackConflict(featureID: featureID, messageID: "demo-mate-0"))
+        #expect(store.feedback(for: featureID, messageID: "demo-mate-0")?.comment == "Changed elsewhere")
+        var requests = await client.saveRequests
+        #expect(requests.map(\.expectedRevision) == [0])
+
+        // Only the explicit reload rebases the preserved draft for retry.
+        #expect(await store.resolveFeedbackConflict(messageID: "demo-mate-0", expectedContext: context))
+        let rebased = store.feedbackDraft(for: featureID, messageID: "demo-mate-0")
+        #expect(rebased.baseRevision == 1)
+        #expect(rebased.comment == "My in-progress edit")
+        #expect(await store.saveFeedback(rebased, messageID: "demo-mate-0", expectedContext: context))
+        #expect(store.feedback(for: featureID, messageID: "demo-mate-0")?.comment == "My in-progress edit")
+        requests = await client.saveRequests
+        #expect(requests.map(\.expectedRevision) == [0, 1])
+    }
+
     @Test("Thumbs-up and Remove rating conflicts recover only through an explicit reload")
     func quickRatingConflictRecovery() async throws {
         let client = FirstMateFeedbackTestClient()
@@ -807,6 +871,154 @@ struct FirstMateFeedbackTests {
         #expect(store.feedbackCategoriesError == nil)
         #expect(Set(store.feedbackCategories.map(\.id)) == Set(FirstMateFeedbackDefaults.categories.map(\.id) + [created.id]))
     }
+
+#if os(macOS)
+    @Test("A held category completion cannot recreate a cancelled editor draft")
+    func cancelledCategoryAddCannotResurrectDraft() async throws {
+        let setup = try await heldCategorySetup()
+        let target = FirstMateFeedbackEditorTarget(
+            featureID: setup.featureID,
+            messageID: "demo-mate-0",
+            responseText: "Synthetic answer",
+            expectedContext: setup.context
+        )
+        let session = FirstMateFeedbackEditorSession()
+        let token = session.currentToken
+        await setup.client.holdNextCategoryCreate()
+        let adding = Task {
+            await session.addCategory(
+                label: "Needs more evidence",
+                token: token,
+                store: setup.store,
+                target: target
+            )
+        }
+        while !(await setup.client.isWaitingForCategoryCreate) { await Task.yield() }
+
+        // Cancel discards and invalidates the editor while the write is held.
+        session.invalidate()
+        setup.store.discardFeedbackDraft(for: setup.featureID, messageID: "demo-mate-0")
+        await setup.client.releaseCategoryCreate()
+        #expect(!(await adding.value))
+
+        // The confirmed reason stays in the companion catalog, but the
+        // cancelled draft is not resurrected or preselected.
+        #expect(setup.store.feedbackCategories.contains { $0.label == "Needs more evidence" })
+        let draft = setup.store.feedbackDraft(for: setup.featureID, messageID: "demo-mate-0")
+        #expect(draft.rating == .down)
+        #expect(draft.categoryIDs.isEmpty)
+        #expect(draft.comment.isEmpty)
+        #expect(setup.store.feedback(for: setup.featureID, messageID: "demo-mate-0") == nil)
+    }
+
+    @Test("Switching features fences a held category completion from the previous feature")
+    func featureSwitchFencesCategoryCompletion() async throws {
+        let setup = try await heldCategorySetup()
+        let target = FirstMateFeedbackEditorTarget(
+            featureID: setup.featureID,
+            messageID: "demo-mate-0",
+            responseText: "Synthetic answer",
+            expectedContext: setup.context
+        )
+        let session = FirstMateFeedbackEditorSession()
+        let token = session.currentToken
+        await setup.client.holdNextCategoryCreate()
+        let adding = Task {
+            await session.addCategory(
+                label: "Needs more evidence",
+                token: token,
+                store: setup.store,
+                target: target
+            )
+        }
+        while !(await setup.client.isWaitingForCategoryCreate) { await Task.yield() }
+
+        // The target feature is replaced before the held request completes.
+        let otherFeatureID = try #require(setup.store.features.first { $0.id != setup.featureID }?.id)
+        setup.store.select(otherFeatureID)
+        setup.store.discardFeedbackDraft(for: setup.featureID, messageID: "demo-mate-0")
+        await setup.client.releaseCategoryCreate()
+        #expect(!(await adding.value))
+
+        #expect(setup.store.selectedFeatureID == otherFeatureID)
+        #expect(setup.store.feedbackCategories.contains { $0.label == "Needs more evidence" })
+        #expect(setup.store.feedbackDraft(for: setup.featureID, messageID: "demo-mate-0").categoryIDs.isEmpty)
+        #expect(setup.store.feedback(for: otherFeatureID, messageID: "demo-search-welcome") == nil)
+    }
+
+    @Test("A stale completion cannot mutate a reopened editor for the same response")
+    func reopenedEditorIgnoresStaleCategoryCompletion() async throws {
+        let setup = try await heldCategorySetup()
+        let target = FirstMateFeedbackEditorTarget(
+            featureID: setup.featureID,
+            messageID: "demo-mate-0",
+            responseText: "Synthetic answer",
+            expectedContext: setup.context
+        )
+
+        let closed = FirstMateFeedbackEditorSession()
+        let closedToken = closed.currentToken
+        await setup.client.holdNextCategoryCreate()
+        let staleAdd = Task {
+            await closed.addCategory(
+                label: "Needs more evidence",
+                token: closedToken,
+                store: setup.store,
+                target: target
+            )
+        }
+        while !(await setup.client.isWaitingForCategoryCreate) { await Task.yield() }
+        closed.invalidate()
+        setup.store.discardFeedbackDraft(for: setup.featureID, messageID: "demo-mate-0")
+
+        // Reopen the same response before the held request resumes. The stale
+        // completion stays in the catalog but never selects itself on the
+        // reopened draft.
+        let reopened = FirstMateFeedbackEditorSession()
+        await setup.client.releaseCategoryCreate()
+        #expect(!(await staleAdd.value))
+        #expect(setup.store.feedbackCategories.contains { $0.label == "Needs more evidence" })
+        #expect(setup.store.feedbackDraft(for: setup.featureID, messageID: "demo-mate-0").categoryIDs.isEmpty)
+
+        // The reopened editor can still deliberately add and select its own
+        // reason through the same fence.
+        let freshToken = reopened.currentToken
+        await setup.client.holdNextCategoryCreate()
+        let freshAdd = Task {
+            await reopened.addCategory(
+                label: "Second reason",
+                token: freshToken,
+                store: setup.store,
+                target: target
+            )
+        }
+        while !(await setup.client.isWaitingForCategoryCreate) { await Task.yield() }
+        await setup.client.releaseCategoryCreate()
+        #expect(await freshAdd.value)
+        let second = try #require(setup.store.feedbackCategories.first { $0.label == "Second reason" })
+        #expect(setup.store.feedbackDraft(for: setup.featureID, messageID: "demo-mate-0").categoryIDs == [second.id])
+    }
+
+    /// A writable store with a loaded, empty record cache and reason catalog
+    /// for the first synthetic feature.
+    private func heldCategorySetup() async throws -> (
+        store: FirstMateStore,
+        client: FirstMateFeedbackTestClient,
+        featureID: String,
+        context: FirstMateStore.OperationContext
+    ) {
+        let client = FirstMateFeedbackTestClient()
+        let store = FirstMateStore()
+        store.configure(client: client, demo: false)
+        await store.refresh()
+        _ = store.acquireControlLease(available: true)
+        let featureID = try #require(store.selectedFeatureID)
+        let context = store.operationContext
+        #expect(await store.loadFeedback(expectedContext: context))
+        #expect(await store.loadFeedbackCategories(expectedContext: context))
+        return (store, client, featureID, context)
+    }
+#endif
 }
 
 private extension FirstMateFeedbackDraft {
@@ -866,6 +1078,8 @@ private actor FirstMateFeedbackTestClient: FirstMateClient {
     private var holdCategoryLoads = false
     private var categoryLoadContinuation: CheckedContinuation<Void, Never>?
     private var heldCategorySnapshot: [FirstMateFeedbackCategory] = []
+    private var holdCategoryCreates = false
+    private var categoryCreateContinuation: CheckedContinuation<Void, Never>?
     private var mismatchedFeedbackFeature = false
     private var mismatchedSaveIdentity = false
     private(set) var categoryCallCount = 0
@@ -882,6 +1096,7 @@ private actor FirstMateFeedbackTestClient: FirstMateClient {
     var isWaitingForLoad: Bool { loadContinuation != nil }
     var isWaitingForSave: Bool { saveContinuation != nil }
     var isWaitingForCategoryLoad: Bool { categoryLoadContinuation != nil }
+    var isWaitingForCategoryCreate: Bool { categoryCreateContinuation != nil }
 
     func seedRecord(_ record: FirstMateFeedback) {
         var records = feedbackRecords[record.featureID] ?? [:]
@@ -912,6 +1127,11 @@ private actor FirstMateFeedbackTestClient: FirstMateClient {
     func releaseCategoryLoad() {
         categoryLoadContinuation?.resume()
         categoryLoadContinuation = nil
+    }
+    func holdNextCategoryCreate() { holdCategoryCreates = true }
+    func releaseCategoryCreate() {
+        categoryCreateContinuation?.resume()
+        categoryCreateContinuation = nil
     }
 
     func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities {
@@ -975,6 +1195,10 @@ private actor FirstMateFeedbackTestClient: FirstMateClient {
         if categoryFailuresRemaining > 0 {
             categoryFailuresRemaining -= 1
             throw URLError(.networkConnectionLost)
+        }
+        if holdCategoryCreates {
+            holdCategoryCreates = false
+            await withCheckedContinuation { categoryCreateContinuation = $0 }
         }
         let collapsed = label.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
         let normalized = collapsed.lowercased()

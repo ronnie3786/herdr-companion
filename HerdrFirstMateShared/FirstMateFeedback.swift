@@ -111,11 +111,12 @@ enum FirstMateFeedbackEligibility {
 /// is preserved exactly as typed so a failed save can restore it.
 ///
 /// `baseRevision` pins the retained record revision this edit was initialized
-/// from. It stays pinned while the draft is editable, so a refresh arriving
-/// during an edit can never silently authorize the save over newer feedback.
-/// Only an explicit conflict-resolution action rebases it. A nil base revision
-/// means the draft was built before any record was loaded; saves pin the
-/// currently known revision at submission time.
+/// from; a completed fetch that found no record pins zero. It stays pinned
+/// while the draft is editable, so a refresh arriving during an edit can never
+/// silently authorize the save over newer feedback. Only an explicit
+/// conflict-resolution action rebases it. A nil base revision means the draft
+/// was built before any record load completed; saves pin the currently known
+/// revision at submission time.
 struct FirstMateFeedbackDraft: Equatable, Sendable {
     var rating: FirstMateFeedbackRating?
     var categoryIDs: [String]

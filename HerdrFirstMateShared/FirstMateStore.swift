@@ -672,8 +672,9 @@ final class FirstMateStore {
         guard !savingFeedbackKeys.contains(key) else { return false }
         // The typed draft is retained before any write attempt so a rejection or
         // failure can restore the editable explanation with a visible retry.
-        // A nil base revision is pinned once, at submission time, from the
-        // record the user could see.
+        // Editor drafts already carry the pin their load established; a nil
+        // base revision means a quick action, which is pinned once at
+        // submission time from the record the user could see.
         var retainedDraft = draft
         if retainedDraft.baseRevision == nil {
             retainedDraft.baseRevision = feedbackRecords[featureID]?[messageID]?.revision ?? 0
@@ -855,11 +856,14 @@ final class FirstMateStore {
     /// The editor's starting point: an unsaved draft if one exists, otherwise
     /// the loaded record pinned to its retained revision, otherwise an
     /// unselected negative rating. A draft is never seeded from the empty cache
-    /// before the first load completes.
+    /// before the first load completes, and a completed fetch that found no
+    /// record pins revision zero so a delayed first rating conflicts instead of
+    /// authorizing a silent overwrite.
     func feedbackDraft(for featureID: String, messageID: String) -> FirstMateFeedbackDraft {
         let key = FeedbackKey(featureID, messageID)
         if let draft = feedbackDrafts[key] { return draft }
-        if hasLoadedFeedback(for: featureID), let record = feedbackRecords[featureID]?[messageID] {
+        guard hasLoadedFeedback(for: featureID) else { return FirstMateFeedbackDraft() }
+        if let record = feedbackRecords[featureID]?[messageID] {
             return FirstMateFeedbackDraft(
                 rating: record.rating ?? .down,
                 categoryIDs: record.categoryIDs,
@@ -867,7 +871,7 @@ final class FirstMateStore {
                 baseRevision: record.revision
             )
         }
-        return FirstMateFeedbackDraft()
+        return FirstMateFeedbackDraft(baseRevision: 0)
     }
 
     func setFeedbackDraft(
@@ -885,7 +889,17 @@ final class FirstMateStore {
         // cannot seed a draft before the first record load completes.
         guard !savingFeedbackKeys.contains(key),
               hasLoadedFeedback(for: featureID) else { return }
-        feedbackDrafts[key] = draft
+        // An edit never loses the revision it was pinned to: a caller that
+        // supplies a fresh struct inherits the existing draft's pin, then the
+        // visible record, then the loaded-but-absent zero pin. A refresh that
+        // arrives mid-edit can therefore never authorize an overwrite.
+        var pinnedDraft = draft
+        if pinnedDraft.baseRevision == nil {
+            pinnedDraft.baseRevision = feedbackDrafts[key]?.baseRevision
+                ?? feedbackRecords[featureID]?[messageID]?.revision
+                ?? 0
+        }
+        feedbackDrafts[key] = pinnedDraft
         feedbackSaveErrors[key] = nil
         feedbackConflicts.remove(key)
     }

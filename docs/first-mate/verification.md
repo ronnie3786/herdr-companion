@@ -48,20 +48,25 @@ See [the runtime guide](runtime.md) for configuration, ownership boundaries and 
 ## First Mate response feedback (issue #42)
 
 Ratings, reusable reasons, and notes are stored only in the owning companion's
-private `first-mate.sqlite3`; the Mac keeps an in-memory cache. Exact-source
-automated results are recorded separately from synthetic rendered-UI and
-connected-app evidence. The rows below stay explicitly pending until the final
-gate executes them on the reviewed revision; a result is valid only when its
-tested revision matches the delivered source.
+private `first-mate.sqlite3`; the Mac keeps an in-memory cache. The final gate
+completes this table on the delivered revision, recording exact-source
+automated results separately from synthetic rendered-UI and connected-app
+evidence. A row is complete only when its **Tested revision** matches the
+delivered source revision and its **Evidence** cell names the captured log,
+artifact, or screenshot; a result from another revision is not evidence. The
+Verify workflow's Mac job runs `herdr-harness-macTests` only, so the rendered UI
+test and the connected-app checklist below are additional required gate items.
 
-| Surface | Protocol | Result |
-| --- | --- | --- |
-| Companion store, HTTP, runtime | `.venv/bin/python -m unittest tests.test_first_mate_feedback tests.test_first_mate_http tests.test_first_mate_runtime` | Pending final gate |
-| Shared native unit tests | Mac: `xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test -only-testing:herdr-harness-macTests`. iOS: the `herdr-harness-ios` test target with the same `HerdrFirstMateSharedTests`; it must not be skipped when shared sources change. | Pending final gate |
-| Synthetic rendered interactions | `xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test -only-testing:herdr-harness-macUITests/HerdrFirstMateFeedbackUITests` in demo mode only. This exercises the rendered rating controls, editor, custom reasons, note, Save/Cancel, and Remove rating against in-memory synthetic data. | Pending final gate |
-| Failure and retry behavior | Shared native tests force delayed loads, delayed and failed saves, revision conflicts for the editor, thumbs up, and Remove rating, and failed/slow category reads. Confirm the attempted payload and draft survive and that only the explicit reload actions recover conflicts. | Pending final gate |
-| Connected-app persistence | With a disposable on-disk companion state and synthetic features, save ratings, reasons, a custom category, and a multiline note; restart the companion; relaunch the Mac app and reconnect; confirm the exact values return; then inspect `first-mate.sqlite3` read-only with the query in [response feedback](response-feedback.md). No production data, host, or installation is used. | Pending final gate |
-| Public source guard | `scripts/check-public-source.py` plus the staged whitespace check. | Pending final gate |
+| Gate item | Exact-source protocol | Tested revision | Result | Evidence |
+| --- | --- | --- | --- | --- |
+| Companion store, HTTP, runtime | `.venv/bin/python -m unittest tests.test_first_mate_feedback tests.test_first_mate_http tests.test_first_mate_runtime` | Pending final gate | Pending final gate | Pending final gate |
+| Shared native unit tests (Mac and iOS) | Mac: `xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test -only-testing:herdr-harness-macTests`. iOS: the `herdr-harness-iosTests` target with the same `HerdrFirstMateSharedTests`; it must not be skipped when shared sources change. | Pending final gate | Pending final gate | Pending final gate |
+| Synthetic rendered interactions | `xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test -only-testing:herdr-harness-macUITests/HerdrFirstMateFeedbackUITests` in demo mode only. This exercises the rendered rating controls, editor, custom reasons, note, Save/Cancel, cancel-and-reopen catalog behavior, and Remove rating against in-memory synthetic data. Capture the rendered windows and accessibility states as artifacts. | Pending final gate | Pending final gate | Pending final gate |
+| Historical, closed, and archived responses | In the synthetic demo, rate an older response, a checkpoint summary, and a response inside a closed or archived feature. Confirm the controls and saved states render, the editor stays pinned to the rated message, and no feature status, revision, workflow event, or queued message changes. | Pending final gate | Pending final gate | Pending final gate |
+| Failure and retry behavior | Shared native tests force delayed loads, delayed and failed saves, revision conflicts for the editor, thumbs up, and Remove rating, and failed/slow category reads. Confirm the attempted payload and draft survive and that only the explicit reload actions recover conflicts. | Pending final gate | Pending final gate | Pending final gate |
+| Alternate-host isolation | Against two disposable companions with duplicate synthetic feature and message labels, save distinct ratings, switch hosts, and reconnect. Confirm each connection restores only its own feedback, an open editor dismisses instead of retargeting, and no save reaches the other host. | Pending final gate | Pending final gate | Pending final gate |
+| Connected-app persistence and relaunch | With a disposable on-disk companion state and synthetic features, save ratings, reasons, a custom category, and a multiline note; restart the companion; relaunch the Mac app and reconnect; confirm the exact values return; then inspect `first-mate.sqlite3` read-only with the query in [response feedback](response-feedback.md). No production data, host, or installation is used. | Pending final gate | Pending final gate | Pending final gate |
+| Public source guard | `scripts/check-public-source.py` plus the staged whitespace check. | Pending final gate | Pending final gate | Pending final gate |
 
 The synthetic demo stores feedback in memory only and is not connected-app
 persistence evidence. Generated screenshots and layout renders are presentation

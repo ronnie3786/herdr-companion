@@ -83,6 +83,57 @@ struct FirstMateFeedbackEditorState: Equatable {
     }
 }
 
+/// Owns one open editor's lifetime so completion work that outlives the editor
+/// can never resurrect a cancelled draft or mutate a reopened one. A confirmed
+/// category is already merged into the shared catalog; only the draft
+/// selection is fenced.
+@MainActor
+final class FirstMateFeedbackEditorSession {
+    private var token = UUID()
+
+    /// The token an in-flight category write must present when it completes.
+    var currentToken: UUID { token }
+
+    /// Rotated by Cancel, Close, dismissal, and disappearance. A completion
+    /// still holding the previous token is stale even when it resumes later.
+    func invalidate() { token = UUID() }
+
+    /// Adds a reusable reason and selects it on this editor's draft only while
+    /// the same editor is still open and writable. Returns true exactly when
+    /// the draft was updated, so a stale completion cannot clear or mutate
+    /// state that belongs to a different editor instance.
+    @discardableResult
+    func addCategory(
+        label: String,
+        token capturedToken: UUID,
+        store: FirstMateStore,
+        target: FirstMateFeedbackEditorTarget
+    ) async -> Bool {
+        guard let category = await store.addFeedbackCategory(
+            label: label,
+            expectedContext: target.expectedContext
+        ) else { return false }
+        guard capturedToken == token,
+              target.expectedContext == store.operationContext,
+              store.hasLoadedFeedback(for: target.featureID),
+              !store.isSavingFeedback(featureID: target.featureID, messageID: target.messageID) else {
+            return false
+        }
+        var updated = store.feedbackDraft(for: target.featureID, messageID: target.messageID)
+        updated.rating = .down
+        if !updated.categoryIDs.contains(category.id) {
+            updated.categoryIDs.append(category.id)
+        }
+        store.setFeedbackDraft(
+            updated,
+            for: target.featureID,
+            messageID: target.messageID,
+            expectedContext: target.expectedContext
+        )
+        return true
+    }
+}
+
 /// The compact thumbs-down editor: the three starting reasons, reusable custom
 /// reasons with an explicit Add action, and an optional bounded multiline note.
 /// Save records a negative rating even with nothing selected. Cancel (or any
@@ -93,7 +144,14 @@ struct FirstMateFeedbackEditor: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
+    @State private var session: FirstMateFeedbackEditorSession
     @State private var newCategoryLabel = ""
+
+    init(store: FirstMateStore, target: FirstMateFeedbackEditorTarget) {
+        self.store = store
+        self.target = target
+        _session = State(initialValue: FirstMateFeedbackEditorSession())
+    }
 
     private var palette: FirstMatePalette { FirstMatePalette(scheme: scheme) }
     private var editorState: FirstMateFeedbackEditorState { .make(store: store, target: target) }
@@ -145,10 +203,12 @@ struct FirstMateFeedbackEditor: View {
         }
         .onDisappear {
             // Dismissal, Escape, Cancel, and a feature/connection switch all
-            // discard only the unsaved edit. A successful save already cleared
-            // it, and a failed save keeps the editor open for retry. While a
+            // discard only the unsaved edit and fence any category completion
+            // that is still in flight. A successful save already cleared the
+            // draft, and a failed save keeps the editor open for retry. While a
             // save is in flight the draft is the submitted payload, so it is
             // never discarded out from under the request.
+            session.invalidate()
             guard !store.isSavingFeedback(featureID: target.featureID, messageID: target.messageID) else { return }
             store.discardFeedbackDraft(for: target.featureID, messageID: target.messageID)
         }
@@ -319,6 +379,7 @@ struct FirstMateFeedbackEditor: View {
             Spacer()
             Button("Cancel") {
                 guard !editorState.isSaving else { return }
+                session.invalidate()
                 store.discardFeedbackDraft(for: target.featureID, messageID: target.messageID)
                 dismiss()
             }
@@ -338,6 +399,7 @@ struct FirstMateFeedbackEditor: View {
             Spacer()
             Button("Close") {
                 guard !editorState.isSaving else { return }
+                session.invalidate()
                 store.discardFeedbackDraft(for: target.featureID, messageID: target.messageID)
                 dismiss()
             }
@@ -406,18 +468,20 @@ struct FirstMateFeedbackEditor: View {
     private func addCategory() {
         guard editorState.isEditable else { return }
         let label = newCategoryLabel
+        let capturedSession = session
+        let token = capturedSession.currentToken
         Task {
-            guard let category = await store.addFeedbackCategory(
+            // The category is confirmed in the shared catalog even when this
+            // editor has already been cancelled, but only a still-current
+            // editor may select it on its draft or clear its pending field.
+            if await capturedSession.addCategory(
                 label: label,
-                expectedContext: target.expectedContext
-            ) else { return }
-            var updated = editorState.draft
-            updated.rating = .down
-            if !updated.categoryIDs.contains(category.id) {
-                updated.categoryIDs.append(category.id)
+                token: token,
+                store: store,
+                target: target
+            ) {
+                newCategoryLabel = ""
             }
-            setDraft(updated)
-            newCategoryLabel = ""
         }
     }
 

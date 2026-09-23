@@ -173,6 +173,46 @@ final class HerdrFirstMateFeedbackUITests: HerdrUITestCase {
         )
     }
 
+    @MainActor
+    func testCancelledCustomReasonStaysInCatalogWithoutResurrectingTheDraft() {
+        let app = launchDemoApp()
+        defer { app.terminate() }
+
+        let firstMate = app.buttons["open-first-mate"]
+        XCTAssertTrue(firstMate.waitForExistence(timeout: 10))
+        firstMate.click()
+
+        let down = app.control(identifier: "first-mate-feedback-down-\(Self.firstMessage)")
+        XCTAssertTrue(down.waitForExistence(timeout: 10))
+        down.click()
+        XCTAssertTrue(app.control(identifier: "first-mate-feedback-editor").waitForExistence(timeout: 5))
+
+        // Add a reusable reason, then cancel the edit that had selected it.
+        let field = app.textFields["first-mate-feedback-add-category-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.click()
+        field.typeText(Self.cancelledReason)
+        app.control(identifier: "first-mate-feedback-add-category").click()
+        let custom = customCategoryRow(Self.cancelledReason, in: app)
+        XCTAssertTrue(custom.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForValue("Selected", of: custom))
+        app.control(identifier: "first-mate-feedback-cancel").click()
+        XCTAssertTrue(
+            app.control(identifier: "first-mate-feedback-editor").waitForNonExistence(timeout: 5),
+            "Cancel should dismiss the editor"
+        )
+
+        // Reopening starts from the retained state: the confirmed reason is
+        // still offered by the catalog, but the cancelled edit never
+        // reselects it or restores the discarded draft.
+        down.click()
+        XCTAssertTrue(custom.waitForExistence(timeout: 5), "A confirmed reason stays in the companion's catalog")
+        XCTAssertTrue(waitForValue("Not selected", of: custom), "Cancel must not resurrect the discarded draft")
+        let status = app.control(identifier: "first-mate-feedback-status-\(Self.firstMessage)")
+        XCTAssertTrue(waitForLabel("Rate this response", of: status))
+        app.control(identifier: "first-mate-feedback-cancel").click()
+    }
+
     // MARK: - Helpers
 
     @MainActor
@@ -247,6 +287,7 @@ final class HerdrFirstMateFeedbackUITests: HerdrUITestCase {
     private static let userMessage = "demo-user-0"
     private static let responseFragment = "I traced the session boundary"
     private static let customReason = "Needs more evidence"
+    private static let cancelledReason = "Cancelled reason"
     private static let defaultReasons = [
         ("too_long", "Longer than it needed to be"),
         ("unnecessary_message", "Unnecessary message"),

@@ -18,9 +18,17 @@ body { overflow: auto; background: var(--herdr-diff-background); }
 .native-diff { min-width: max-content; min-height: 100vh; background: var(--herdr-diff-background); }
 .native-diff > diffs-container { display: block; min-width: 100%; color-scheme: dark; }
 
-.native-ask {
+.native-selection-actions {
   position: fixed;
   z-index: 100;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100vw - 16px);
+}
+.native-ask,
+.native-comment {
   min-width: 92px;
   height: 30px;
   padding: 0 10px;
@@ -31,9 +39,14 @@ body { overflow: auto; background: var(--herdr-diff-background); }
   font: 600 12px/28px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
   box-shadow: 0 5px 18px rgba(0, 0, 0, 0.32);
   cursor: pointer;
+  white-space: nowrap;
 }
-.native-ask:hover { background: #343648; }
+.native-ask:hover,
+.native-comment:hover { background: #343648; }
+.native-ask:focus-visible,
+.native-comment:focus-visible { outline: 2px solid #b8aaff; outline-offset: 2px; }
 .native-ask span { color: #b8aaff; margin-right: 4px; }
+.native-comment span { color: #7ee787; margin-right: 4px; }
 
 .hz-diff-plain-fallback { min-width: max-content; padding: 18px; color: var(--herdr-diff-foreground); }
 .hz-diff-plain-fallback > span { display: block; margin-bottom: 12px; color: #ffb04a; font-size: 12px; }

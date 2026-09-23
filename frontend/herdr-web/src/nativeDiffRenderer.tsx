@@ -15,10 +15,39 @@ interface NativeDiffPayload {
   highlight?: { start: number; end: number; side: "old" | "new" };
 }
 interface ScrollRequest { line: number; side: "old" | "new"; identity: string }
-interface AskTarget {
+interface SelectionTarget {
   context: ReturnType<typeof selectionAskContext>;
   rect: { x: number; y: number; width: number; height: number };
-  button: { left: number; top: number };
+  bounds: { left: number; top: number; bottom: number; width: number };
+}
+
+// The floating selection controls must stay reachable on a narrow WebKit
+// viewport and when the host enlarges text, so the group wraps instead of
+// overflowing the visible code.
+const ACTIONS_MARGIN = 8;
+const ACTIONS_HEIGHT = 30;
+const ASK_ACTION_WIDTH = 92;
+const COMMENT_ACTION_WIDTH = 122;
+const ACTIONS_GAP = 6;
+
+/** Places the floating control group beside the selection and inside the viewport. */
+function selectionActionsPosition(bounds: SelectionTarget["bounds"], commenting: boolean) {
+  const contentWidth = commenting ? ASK_ACTION_WIDTH + ACTIONS_GAP + COMMENT_ACTION_WIDTH : ASK_ACTION_WIDTH;
+  const availableWidth = Math.max(ACTIONS_MARGIN, window.innerWidth - ACTIONS_MARGIN * 2);
+  // The stylesheet wraps the group when the viewport cannot fit one row, so
+  // reserve the wrapped height before deciding whether to flip above.
+  const rows = commenting && contentWidth > availableWidth ? 2 : 1;
+  const height = rows * ACTIONS_HEIGHT + (rows - 1) * ACTIONS_GAP;
+  const width = Math.min(contentWidth, availableWidth);
+  const left = Math.min(
+    Math.max(bounds.left + bounds.width / 2 - width / 2, ACTIONS_MARGIN),
+    Math.max(ACTIONS_MARGIN, window.innerWidth - width - ACTIONS_MARGIN),
+  );
+  const below = bounds.bottom + ACTIONS_MARGIN;
+  const top = below + height <= window.innerHeight - ACTIONS_MARGIN
+    ? below
+    : Math.max(ACTIONS_MARGIN, bounds.top - height - ACTIONS_MARGIN);
+  return { left, top };
 }
 
 declare global {
@@ -27,11 +56,13 @@ declare global {
       renderJSON(encoded: string): void;
       scrollToLine(request: ScrollRequest): void;
       reportVisibleLines(): void;
+      setCommentingEnabled(enabled: boolean): void;
     };
   }
 }
 
 let updatePayload: ((payload: NativeDiffPayload) => void) | undefined;
+let updateCommenting: ((enabled: boolean) => void) | undefined;
 let currentPayload: NativeDiffPayload | null = null;
 let pendingScroll: ScrollRequest | null = null;
 
@@ -73,20 +104,27 @@ function applyPendingScroll() {
 
 function App() {
   const [payload, setPayload] = useState<NativeDiffPayload | null>(null);
-  const [askTarget, setAskTarget] = useState<AskTarget | null>(null);
+  const [selectionTarget, setSelectionTarget] = useState<SelectionTarget | null>(null);
+  const [commentingEnabled, setCommentingEnabled] = useState(false);
   const hostRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     updatePayload = (next) => {
       if (currentPayload?.identity !== next.identity) pendingScroll = null;
       currentPayload = next;
-      setAskTarget(null);
+      setSelectionTarget(null);
       setPayload(next);
+    };
+    // Enabling or disabling local commenting invalidates the measured action
+    // position, so the next selection re-measures the floating controls.
+    updateCommenting = (enabled) => {
+      setSelectionTarget(null);
+      setCommentingEnabled(enabled);
     };
     // The native host may send immediately in response. Never announce before
     // React has installed the receiver, or the first patch can be lost.
     post({ kind: "bridgeReady" });
-    return () => { updatePayload = undefined; };
+    return () => { updatePayload = undefined; updateCommenting = undefined; };
   }, []);
 
   const selectedLines = useMemo<SelectedLineRange | null>(() => {
@@ -108,7 +146,7 @@ function App() {
   useEffect(() => {
     let timer: number | undefined;
     const schedule = () => {
-      setAskTarget(null);
+      setSelectionTarget(null);
       window.clearTimeout(timer);
       timer = window.setTimeout(reportVisibleLines, 80);
     };
@@ -122,7 +160,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    function selectionTarget(): AskTarget | null {
+    function measureSelection(): SelectionTarget | null {
       const container = hostRef.current;
       const host = diffHost();
       const selection = window.getSelection();
@@ -147,18 +185,19 @@ function App() {
       const visible = rectangles.filter((rect) => rect.bottom > 0 && rect.top < window.innerHeight);
       const bounds = visible[visible.length - 1];
       if (bounds === undefined) return null;
-      const left = Math.max(8, Math.min(bounds.left + bounds.width / 2 - 46, window.innerWidth - 100));
-      const top = bounds.bottom + 38 < window.innerHeight ? bounds.bottom + 8 : Math.max(8, bounds.top - 38);
-      return { context, rect: { x: bounds.x, y: bounds.y, width: Math.max(1, bounds.width), height: Math.max(1, bounds.height) },
-        button: { left, top } };
+      return {
+        context,
+        rect: { x: bounds.x, y: bounds.y, width: Math.max(1, bounds.width), height: Math.max(1, bounds.height) },
+        bounds: { left: bounds.left, top: bounds.top, bottom: bounds.bottom, width: bounds.width },
+      };
     }
-    const evaluate = () => setAskTarget(selectionTarget());
+    const evaluate = () => setSelectionTarget(measureSelection());
     const contextMenu = (event: MouseEvent) => {
-      const target = selectionTarget();
+      const target = measureSelection();
       if (target === null || payload === null) return;
       event.preventDefault();
       postAsk(payload, target);
-      setAskTarget(null);
+      setSelectionTarget(null);
     };
     const selectAll = (event: KeyboardEvent) => {
       const lines = renderedLines();
@@ -188,18 +227,33 @@ function App() {
     <main ref={hostRef} className="native-diff" data-render-identity={payload.identity}>
       <SharedDiffRenderer file={payload.path} patch={payload.patch} fontScale={payload.fontScale}
         selectedLines={selectedLines} disableWorkerPool onRendered={onRendered} />
-      {askTarget !== null ? (
-        <button className="native-ask" style={askTarget.button} onPointerDown={(event) => event.preventDefault()}
-          onClick={() => { postAsk(payload, askTarget); setAskTarget(null); }}>
-          <span aria-hidden="true">✦</span> Ask AI
-        </button>
+      {selectionTarget !== null ? (
+        <div className="native-selection-actions"
+          style={selectionActionsPosition(selectionTarget.bounds, commentingEnabled)}>
+          <button type="button" className="native-ask"
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={() => { postAsk(payload, selectionTarget); setSelectionTarget(null); }}>
+            <span aria-hidden="true">✦</span> Ask AI
+          </button>
+          {commentingEnabled ? (
+            <button type="button" className="native-comment"
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => { postComment(payload, selectionTarget); setSelectionTarget(null); }}>
+              <span aria-hidden="true">✎</span> Add comment
+            </button>
+          ) : null}
+        </div>
       ) : null}
     </main>
   );
 }
-function postAsk(payload: NativeDiffPayload, target: AskTarget) {
+function postAsk(payload: NativeDiffPayload, target: SelectionTarget) {
   post({ kind: "ask", identity: payload.identity, path: payload.path, oldPath: payload.oldPath,
     ...target.context, rect: target.rect });
+}
+function postComment(payload: NativeDiffPayload, target: SelectionTarget) {
+  post({ kind: "comment", identity: payload.identity, path: payload.path, oldPath: payload.oldPath,
+    ...target.context });
 }
 function isDeletion(line: HTMLElement) {
   return line.dataset.lineType === "deletion" || line.dataset.lineType === "change-deletion";
@@ -223,5 +277,6 @@ window.herdrNativeDiff = {
   },
   scrollToLine(request) { pendingScroll = request; applyPendingScroll(); },
   reportVisibleLines,
+  setCommentingEnabled(enabled) { updateCommenting?.(enabled); },
 };
 createRoot(document.getElementById("root")!).render(<App />);

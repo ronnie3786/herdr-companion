@@ -136,6 +136,55 @@ struct PiConversationReducerTests {
         #expect(reducer.phase == .idle)
     }
 
+    @Test("A terminal compaction outcome clears activity without publishing success")
+    func terminalCompactionNeverCreatesCompletion() throws {
+        var reducer = PiConversationReducer()
+        reducer.replace(with: try decodeSnapshot(entries: "[]"))
+        _ = reducer.apply(try envelope(1, "{\"type\":\"session_before_compact\",\"reason\":\"manual\",\"willRetry\":false}"))
+
+        for (cursor, outcome) in [(2, "completed"), (3, "failed"), (4, "aborted"), (5, "settled")] {
+            _ = reducer.apply(try envelope(cursor, "{\"type\":\"session_compact_end\",\"reason\":\"manual\",\"outcome\":\"\(outcome)\"}"))
+            #expect(reducer.compactionActivity == nil)
+            #expect(reducer.compactionCompletion == nil)
+        }
+    }
+
+    @Test("A live session_compact boundary defers success and the committed cursor")
+    func liveCompactionBoundaryDefersSuccess() throws {
+        var reducer = PiConversationReducer()
+        reducer.replace(with: try decodeSnapshot(entries: "[]", cursor: "4"))
+        _ = reducer.apply(try envelope(5, "{\"type\":\"session_before_compact\",\"reason\":\"threshold\",\"willRetry\":false}"))
+
+        let boundary = reducer.apply(try envelope(6, """
+        {"type":"session_compact","reason":"threshold","compactionEntry":{"type":"compaction","id":"compact-live"}}
+        """))
+
+        #expect(boundary == .needsSnapshot)
+        #expect(reducer.compactionCompletion == nil)
+        #expect(reducer.cursor == "5")
+        #expect(reducer.compactionActivity == PiCompactionActivity(reason: .threshold, willRetry: false))
+    }
+
+    @Test("Completion is independent of agent phase and bridge connectivity")
+    func completionSurvivesPhaseAndDisconnect() throws {
+        var reducer = PiConversationReducer()
+        reducer.replace(with: try decodeSnapshot(entries: """
+        [{"type":"compaction","id":"compact-1","summary":"Synthetic summary"}]
+        """))
+
+        _ = reducer.apply(try envelope(1, "{\"type\":\"agent_start\"}"))
+        #expect(reducer.phase == .working)
+        #expect(reducer.compactionCompletion?.evidence == .entry("compact-1"))
+
+        _ = reducer.apply(try envelope(2, "{\"type\":\"agent_settled\"}"))
+        #expect(reducer.phase == .idle)
+        #expect(reducer.compactionCompletion?.evidence == .entry("compact-1"))
+
+        _ = reducer.apply(try envelope(3, "{\"type\":\"bridge.connection\",\"connected\":false}"))
+        #expect(!reducer.bridgeConnected)
+        #expect(reducer.compactionCompletion?.evidence == .entry("compact-1"))
+    }
+
     @Test("Agent settlement clears compaction immediately while native compaction defers to its snapshot")
     func lifecycleClearsCompaction() throws {
         var reducer = PiConversationReducer()

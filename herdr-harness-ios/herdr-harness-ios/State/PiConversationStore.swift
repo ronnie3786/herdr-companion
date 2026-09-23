@@ -89,6 +89,12 @@ final class PiConversationStore {
     private(set) var pendingInteractions: [PiPendingInteraction] = []
     private(set) var phase: PiConversationPhase = .idle
     private(set) var compactionActivity: PiCompactionActivity?
+    /// Confirmed compaction-completion evidence for the composer cue. Kept
+    /// separate from `compactionActivity`: clearing the spinner is never proof
+    /// of success, and the cue outlives ordinary refreshes until the next
+    /// accepted local submission, another compaction attempt, or a session
+    /// change.
+    private(set) var compactionCompletion: PiCompactionCompletion?
     private(set) var connection: PiConversationConnection = .loading
     private(set) var revision = 0
     private(set) var isTruncated = false
@@ -110,6 +116,10 @@ final class PiConversationStore {
     private(set) var transport: PiStreamTransport = .liveStream
 
     @ObservationIgnored private var reducer = PiConversationReducer()
+    /// Live `session_compact` success evidence captured before an authoritative
+    /// recovery. It is carried through the private candidate until the matching
+    /// commit publishes it, and never mutates a committed cursor by itself.
+    @ObservationIgnored private var pendingCompactionCompletion: PiCompactionCompletion?
     @ObservationIgnored private var activePaneScope: String?
     @ObservationIgnored private var activeFollowID: UUID?
     @ObservationIgnored private var projectionGeneration = 0
@@ -131,6 +141,9 @@ final class PiConversationStore {
     @ObservationIgnored var sleepClock: any PiConversationSleepClock = PiConversationSystemClock()
     @ObservationIgnored var snapshotProvider: (@MainActor (HerdrPane) async throws -> PiConversationSnapshot)?
     @ObservationIgnored var eventsProvider: (@MainActor (HerdrPane, String?) async -> AsyncThrowingStream<PiConversationStreamEvent, any Error>?)?
+    /// Deterministic submission seam for tests; production sends through the
+    /// model.
+    @ObservationIgnored var submitProvider: (@MainActor (String, PiPromptDisposition, HerdrPane) async throws -> Void)?
     @ObservationIgnored var recoveryProgress: (@MainActor (String?) -> Void)?
     @ObservationIgnored var publishObserver: (@MainActor (PiSessionCost?, Int) -> Void)?
 
@@ -176,10 +189,15 @@ final class PiConversationStore {
         commandNotice = nil
         defer { if activePaneScope == nil || activePaneScope == pane.id { isSubmitting = false } }
         do {
-            try await model.sendPiConversationPrompt(text, disposition: disposition, to: pane)
+            if let submitProvider {
+                try await submitProvider(text, disposition, pane)
+            } else {
+                try await model.sendPiConversationPrompt(text, disposition: disposition, to: pane)
+            }
             guard ownsOperation(generation, pane: pane) else { return false }
             lastError = nil
             commandNotice = disposition == .followUp ? "Follow-up queued" : nil
+            acknowledgeCompactionCompletion()
             return true
         } catch {
             guard ownsOperation(generation, pane: pane) else { return false }
@@ -295,6 +313,15 @@ final class PiConversationStore {
         commandNotice = nil
     }
 
+    /// Dismisses only the composer completion cue after an accepted local
+    /// submission. The durable transcript notice is untouched, and this never
+    /// sends anything by itself.
+    func acknowledgeCompactionCompletion() {
+        guard reducer.compactionCompletion != nil else { return }
+        reducer.acknowledgeCompactionCompletion()
+        publishReducerState()
+    }
+
     /// Consumes one live stream until it ends or the reducer requests an
     /// authoritative snapshot. Returning immediately on reset is important:
     /// healthy SSE connections are intentionally long-lived, so merely setting
@@ -310,7 +337,13 @@ final class PiConversationStore {
                 // It says nothing about the extension socket behind it.
                 continue
             case let .envelope(envelope):
-                if reducer.rehydrationReason(for: envelope) != nil { return true }
+                if reducer.rehydrationReason(for: envelope) != nil {
+                    recordPendingCompactionCompletion(
+                        in: envelope,
+                        sessionID: envelope.sessionID ?? reducer.sessionID
+                    )
+                    return true
+                }
                 let previousPhase = reducer.phase
                 let previousCompactionActivity = reducer.compactionActivity
                 let previousTurnCount = reducer.turns.count
@@ -360,6 +393,8 @@ final class PiConversationStore {
         pendingInteractions = []
         phase = .idle
         compactionActivity = nil
+        compactionCompletion = nil
+        pendingCompactionCompletion = nil
         connection = .loading
         revision &+= 1
         isTruncated = false
@@ -419,6 +454,7 @@ final class PiConversationStore {
         pendingInteractions = reducer.pendingInteractions
         phase = reducer.phase
         compactionActivity = reducer.compactionActivity
+        compactionCompletion = reducer.compactionCompletion
         isTruncated = reducer.isTruncated
         bridgeConnected = reducer.bridgeConnected
         contextUsage = reducer.contextUsage
@@ -683,6 +719,11 @@ final class PiConversationStore {
             beginProjectionGeneration()
             generation = projectionGeneration
         }
+        if clearsCompactionCompletion(cause) {
+            // A confirmed session, lineage, or branch boundary discards live
+            // success evidence captured for the superseded context.
+            pendingCompactionCompletion = nil
+        }
 
         let snapshot: PiConversationSnapshot
         if let preparedSnapshot {
@@ -711,7 +752,11 @@ final class PiConversationStore {
         }
 
         var candidate = reducer
-        candidate.replace(with: snapshot)
+        candidate.replace(
+            with: snapshot,
+            pendingCompactionCompletion: pendingCompactionCompletion,
+            allowsCompactionCarryOver: !clearsCompactionCompletion(cause)
+        )
         guard snapshotSatisfies(cause, candidate: candidate) else {
             return .restart(cause)
         }
@@ -789,7 +834,15 @@ final class PiConversationStore {
                         guard case let .envelope(envelope) = streamEvent else { continue }
                         try self.validate(envelope, for: pane)
                         if let reason = replay.reducer.rehydrationReason(for: envelope) {
-                            throw PiCandidateReset(cause: self.recoveryCause(for: envelope, reason: reason, reducer: replay.reducer))
+                            self.recordPendingCompactionCompletion(
+                                in: envelope,
+                                sessionID: envelope.sessionID ?? replay.reducer.sessionID
+                            )
+                            throw PiCandidateReset(cause: self.recoveryCause(
+                                for: envelope,
+                                reason: reason,
+                                reducer: replay.reducer
+                            ))
                         }
                         let previousCursor = replay.reducer.cursor
                         _ = replay.reducer.apply(envelope)
@@ -842,6 +895,10 @@ final class PiConversationStore {
             guard case let .envelope(envelope) = streamEvent else { continue }
             try validate(envelope, for: pane)
             if let reason = reducer.rehydrationReason(for: envelope) {
+                recordPendingCompactionCompletion(
+                    in: envelope,
+                    sessionID: envelope.sessionID ?? reducer.sessionID
+                )
                 return .recover(recoveryCause(for: envelope, reason: reason, reducer: reducer))
             }
             let previousPhase = reducer.phase
@@ -898,7 +955,10 @@ final class PiConversationStore {
                 if snapshot.reportsContextUsage && snapshot.connected { return .live }
                 if snapshotContentChanged(from: previous, to: snapshot) {
                     var candidate = reducer
-                    candidate.replace(with: snapshot)
+                    candidate.replace(
+                        with: snapshot,
+                        pendingCompactionCompletion: pendingCompactionCompletion
+                    )
                     let sameSessionRegression = snapshotWouldRegressCommitted(candidate, cause: .initial)
                     if !sameSessionRegression {
                         beginProjectionGeneration()
@@ -957,6 +1017,28 @@ final class PiConversationStore {
             previousSessionID: reason == "session_changed" ? currentSessionID : nil,
             minimumSnapshotCursor: durableBoundary
         ))
+    }
+
+    /// A confirmed session, lineage, or branch boundary starts a new scope:
+    /// the previous cue must not leak into the replacement transcript even when
+    /// the snapshot omits compaction entries.
+    private func clearsCompactionCompletion(_ cause: PiRecoveryCause) -> Bool {
+        guard case let .reset(boundary) = cause else { return false }
+        return ["session_tree", "session_changed", "session_lineage_changed"]
+            .contains(boundary.reason)
+    }
+
+    /// Captures live `session_compact` success evidence before a recovery
+    /// boundary. The committed projection is untouched until the recovery
+    /// commits; `session_compact_end` outcomes never reach this path.
+    private func recordPendingCompactionCompletion(
+        in envelope: PiConversationEnvelope,
+        sessionID: String?
+    ) {
+        guard let completion = PiCompactionCompletion(event: envelope, sessionID: sessionID) else {
+            return
+        }
+        pendingCompactionCompletion = completion
     }
 
     private func snapshotSatisfies(
@@ -1057,6 +1139,7 @@ final class PiConversationStore {
         guard generation == projectionGeneration else { return }
         cancelPendingPublish()
         reducer = candidate
+        pendingCompactionCompletion = nil
         hasLoadedSnapshot = true
         publishReducerState()
         connection = snapshot.connected ? .connected : .bridgeOffline

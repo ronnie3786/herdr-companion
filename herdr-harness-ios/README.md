@@ -79,6 +79,31 @@ Unsent text drafts remain in memory per pane while the app runs;
 they are not persisted or synced. The legacy Pi bridge may still trim surrounding
 whitespace when a draft is submitted.
 
+## Pi compaction completion
+
+In an ordinary Pi pane chat, the composer status area keeps its existing
+**compacting** spinner while Pi summarizes context and no prompt controls are
+accepted. Once Pi confirms success, the spinner is replaced by a checkmark and
+**Context compacted** with a readiness line: **Ready for your next message.**
+when the session is connected and idle, the available **Steer** or **Follow-up**
+modes while Pi is still working, and an offline/reconnect message otherwise.
+The cue is text-labeled, wraps at large Dynamic Type sizes, uses the normal
+44-point row height, and carries a combined VoiceOver label; color is never the
+only signal.
+
+Manual, automatic-threshold, and overflow compactions all show the cue, even
+when no assistant reply follows. It stays while you type and after a failed
+send, and the next accepted message dismisses only the composer cue; the
+transcript's **Context compacted** notice remains. Starting another compaction,
+changing sessions, or switching branches removes it. Cancellation, failure,
+settlement, disconnection, or a timeout never shows it. Opening an
+already-compacted chat reconstructs the historical fact from its saved
+compaction entries. No server update is needed: the existing `session_compact`
+event and compaction entries are sufficient, and missing evidence is never
+guessed from token counts, elapsed time, or a disappearing spinner. The Mac
+update feed installs only the Mac app; the iOS build ships separately. See
+[cross-client behavior and verification](../docs/compaction-indicators.md).
+
 Use Xcode 26.2 or newer. Open `herdr-harness-ios.xcodeproj`, select the shared
 `herdr-harness-ios` scheme, and run on an iPhone simulator. Add `-HerdrDemoMode` as a
 launch argument to explore sample content without any server.

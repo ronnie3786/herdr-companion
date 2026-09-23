@@ -30,6 +30,16 @@ final class FirstMateStore {
         fileprivate let lifecycleIdentity: LifecycleIdentity
     }
 
+    private struct FeedbackKey: Hashable {
+        let featureID: String
+        let messageID: String
+
+        init(_ featureID: String, _ messageID: String) {
+            self.featureID = featureID
+            self.messageID = messageID
+        }
+    }
+
     /// Capture when the human acts, before scheduling an asynchronous UI task.
     var operationContext: OperationContext {
         .init(generation: generation, featureID: selectedFeatureID, lifecycleIdentity: lifecycleIdentity)
@@ -62,6 +72,22 @@ final class FirstMateStore {
     private(set) var contextSupported = false
     private(set) var safeModelSettingsSupported = false
     private(set) var controlAvailable = false
+    // Response feedback is companion data that deliberately stays outside
+    // FirstMateSnapshot and composer state. Caches are scoped to this client
+    // lifecycle and to the exact feature and response they came from.
+    private(set) var feedbackSupported = false
+    private(set) var feedbackCategories: [FirstMateFeedbackCategory] = []
+    private(set) var feedbackCategoriesLoaded = false
+    private(set) var isLoadingFeedbackCategories = false
+    private(set) var isAddingFeedbackCategory = false
+    private(set) var feedbackCategoriesError: String?
+    private var feedbackRecords: [String: [String: FirstMateFeedback]] = [:]
+    private var loadingFeedbackFeatures: Set<String> = []
+    private var feedbackErrors: [String: String] = [:]
+    private var savingFeedbackKeys: Set<FeedbackKey> = []
+    private var feedbackSaveErrors: [FeedbackKey: String] = [:]
+    private var feedbackDrafts: [FeedbackKey: FirstMateFeedbackDraft] = [:]
+    private var pendingFeedbackRequests: [FeedbackKey: FirstMateFeedbackSaveRequest] = [:]
     private(set) var lastUpdated: Date?
     var openedResource: FirstMateResource?
     var resourcePresentation: FirstMateResourcePresentation?
@@ -133,6 +159,21 @@ final class FirstMateStore {
         attachmentsSupported = demo
         contextSupported = demo
         safeModelSettingsSupported = demo
+        feedbackSupported = demo
+        feedbackCategories = demo ? FirstMateFeedbackDefaults.categories.map {
+            FirstMateFeedbackCategory(id: $0.id, label: $0.label, createdAt: FirstMateDemo.timestamp)
+        } : []
+        feedbackCategoriesLoaded = demo
+        isLoadingFeedbackCategories = false
+        isAddingFeedbackCategory = false
+        feedbackCategoriesError = nil
+        feedbackRecords = [:]
+        loadingFeedbackFeatures = []
+        feedbackErrors = [:]
+        savingFeedbackKeys = []
+        feedbackSaveErrors = [:]
+        feedbackDrafts = [:]
+        pendingFeedbackRequests = [:]
         activeControlLease = nil
         controlAvailable = demo
         isRefreshing = false
@@ -266,12 +307,14 @@ final class FirstMateStore {
                 attachmentsSupported = capabilities.ok && capabilities.supportsAttachments
                 contextSupported = capabilities.ok && capabilities.supportsContext
                 safeModelSettingsSupported = capabilities.ok && capabilities.supportsSafeModelSettings
+                feedbackSupported = capabilities.ok && capabilities.supportsFeedback
             } catch {
                 guard capturedGeneration == generation else { return }
                 archiveSupported = false
                 attachmentsSupported = false
                 contextSupported = false
                 safeModelSettingsSupported = false
+                feedbackSupported = false
             }
             let list = try await client.fetchFirstMateFeatures(scope: showArchived ? .all : .active)
             guard capturedGeneration == generation else { return }
@@ -542,6 +585,341 @@ final class FirstMateStore {
               value.ok,
               value.feature.id == id else { throw APIError.invalidResponse }
         receive(value)
+    }
+
+    // MARK: - Response feedback
+
+    /// A companion's low-quality reason catalog, loaded only from a server that
+    /// advertises `first-mate-feedback-v1`.
+    func loadFeedbackCategories(expectedContext: OperationContext) async {
+        guard isCurrentFeedbackContext(expectedContext), feedbackSupported, !isDemo,
+              !isLoadingFeedbackCategories, let client else { return }
+        isLoadingFeedbackCategories = true
+        feedbackCategoriesError = nil
+        defer { if isCurrentFeedbackContext(expectedContext) { isLoadingFeedbackCategories = false } }
+        do {
+            let response = try await client.fetchFirstMateFeedbackCategories()
+            guard isCurrentFeedbackContext(expectedContext) else { return }
+            guard response.ok, response.categories.allSatisfy({ !$0.id.isEmpty && !$0.label.isEmpty }) else {
+                throw APIError.invalidResponse
+            }
+            feedbackCategories = response.categories
+            feedbackCategoriesLoaded = true
+        } catch is CancellationError {
+            return
+        } catch {
+            guard isCurrentFeedbackContext(expectedContext) else { return }
+            feedbackCategoriesError = error.localizedDescription
+        }
+    }
+
+    /// Loads every retained rating for one exact feature. A delayed completion
+    /// updates only the feature it was captured for, and a lower revision can
+    /// never replace a newer local record.
+    func loadFeedback(expectedContext: OperationContext) async {
+        guard let featureID = expectedContext.featureID,
+              isCurrentFeedbackContext(expectedContext), feedbackSupported, !isDemo,
+              !loadingFeedbackFeatures.contains(featureID), let client else { return }
+        loadingFeedbackFeatures.insert(featureID)
+        feedbackErrors[featureID] = nil
+        defer { if isCurrentFeedbackContext(expectedContext) { loadingFeedbackFeatures.remove(featureID) } }
+        do {
+            let response = try await client.fetchFirstMateFeedback(featureID: featureID)
+            guard isCurrentFeedbackContext(expectedContext) else { return }
+            guard response.ok, response.featureID == featureID,
+                  response.records.allSatisfy({ $0.featureID == featureID && !$0.messageID.isEmpty }) else {
+                throw APIError.invalidResponse
+            }
+            for record in response.records { receiveFeedback(record, featureID: featureID) }
+        } catch is CancellationError {
+            return
+        } catch {
+            guard isCurrentFeedbackContext(expectedContext) else { return }
+            feedbackErrors[featureID] = error.localizedDescription
+        }
+    }
+
+    /// Saves the editor draft for one exact response. The loaded revision is
+    /// the only base used, safe retries reuse the failed request identity, and
+    /// a failure keeps both the known record and the editable draft intact.
+    @discardableResult
+    func saveFeedback(
+        _ draft: FirstMateFeedbackDraft,
+        messageID: String,
+        expectedContext: OperationContext
+    ) async -> Bool {
+        guard let featureID = expectedContext.featureID,
+              isCurrentFeedbackContext(expectedContext),
+              !messageID.isEmpty else { return false }
+        let key = FeedbackKey(featureID, messageID)
+        guard !savingFeedbackKeys.contains(key) else { return false }
+        // The typed draft is retained before any write attempt so a rejection or
+        // failure can restore the editable explanation with a visible retry.
+        feedbackDrafts[key] = draft
+        feedbackSaveErrors[key] = nil
+        let requestDraft = draft.forRequest
+        guard feedbackSupported else {
+            feedbackSaveErrors[key] = "Update this companion server to rate First Mate responses."
+            return false
+        }
+        // Writes revalidate the control grant; reads do not need it.
+        guard controlAvailable else {
+            feedbackSaveErrors[key] = "This workspace is read-only right now."
+            return false
+        }
+        if isDemo {
+            feedbackDrafts[key] = nil
+            feedbackSaveErrors[key] = nil
+            receiveFeedback(demoFeedback(from: requestDraft, featureID: featureID, messageID: messageID), featureID: featureID)
+            return true
+        }
+        guard let client else {
+            feedbackSaveErrors[key] = "Connect to this feature's host to save feedback."
+            return false
+        }
+        let expectedRevision = feedbackRecords[featureID]?[messageID]?.revision ?? 0
+        var request = FirstMateFeedbackSaveRequest(
+            rating: requestDraft.rating,
+            categoryIDs: requestDraft.categoryIDs,
+            comment: requestDraft.comment,
+            expectedRevision: expectedRevision,
+            requestID: ""
+        )
+        if let pending = pendingFeedbackRequests[key], pending.hasSamePayload(as: request) {
+            request = pending
+        } else {
+            request.requestID = UUID().uuidString
+            pendingFeedbackRequests[key] = request
+        }
+        let capturedGeneration = generation
+        let capturedLifecycle = lifecycleIdentity
+        savingFeedbackKeys.insert(key)
+        defer {
+            if capturedGeneration == generation, capturedLifecycle == lifecycleIdentity {
+                savingFeedbackKeys.remove(key)
+            }
+        }
+        do {
+            let response = try await client.saveFirstMateFeedback(
+                featureID: featureID,
+                messageID: messageID,
+                request: request
+            )
+            guard capturedGeneration == generation, capturedLifecycle == lifecycleIdentity else { return false }
+            guard response.ok, response.featureID == featureID,
+                  response.feedback.featureID == featureID,
+                  response.feedback.messageID == messageID else { throw APIError.invalidResponse }
+            receiveFeedback(response.feedback, featureID: featureID)
+            pendingFeedbackRequests[key] = nil
+            feedbackDrafts[key] = nil
+            feedbackSaveErrors[key] = nil
+            return true
+        } catch is CancellationError {
+            return false
+        } catch {
+            guard capturedGeneration == generation, capturedLifecycle == lifecycleIdentity else { return false }
+            // The known record and the typed draft stay available for an
+            // explicit retry; the saved rating is never optimistically changed.
+            feedbackSaveErrors[key] = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Immediate positive rating, used by the thumbs-up control.
+    @discardableResult
+    func rateFeedback(
+        _ rating: FirstMateFeedbackRating,
+        messageID: String,
+        expectedContext: OperationContext
+    ) async -> Bool {
+        await saveFeedback(
+            FirstMateFeedbackDraft(rating: rating),
+            messageID: messageID,
+            expectedContext: expectedContext
+        )
+    }
+
+    /// Adds a reusable reason and returns it, reusing an equivalent category.
+    @discardableResult
+    func addFeedbackCategory(
+        label rawLabel: String,
+        expectedContext: OperationContext
+    ) async -> FirstMateFeedbackCategory? {
+        guard isCurrentFeedbackContext(expectedContext) else { return nil }
+        guard feedbackSupported else {
+            feedbackCategoriesError = "Update this companion server to add feedback reasons."
+            return nil
+        }
+        guard controlAvailable else {
+            feedbackCategoriesError = "This workspace is read-only right now."
+            return nil
+        }
+        let label = rawLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty, !label.contains(where: { $0.isNewline }),
+              label.unicodeScalars.count <= 80 else {
+            feedbackCategoriesError = "Enter a single-line reason of 80 characters or fewer."
+            return nil
+        }
+        if isDemo { return demoCategory(named: label) }
+        guard !isAddingFeedbackCategory, let client else {
+            feedbackCategoriesError = "Connect to this feature's host to add a reason."
+            return nil
+        }
+        let capturedGeneration = generation
+        let capturedLifecycle = lifecycleIdentity
+        isAddingFeedbackCategory = true
+        defer {
+            if capturedGeneration == generation, capturedLifecycle == lifecycleIdentity {
+                isAddingFeedbackCategory = false
+            }
+        }
+        do {
+            let response = try await client.createFirstMateFeedbackCategory(
+                label: label,
+                requestID: UUID().uuidString
+            )
+            guard capturedGeneration == generation, capturedLifecycle == lifecycleIdentity else { return nil }
+            guard response.ok, !response.category.id.isEmpty, !response.category.label.isEmpty else {
+                throw APIError.invalidResponse
+            }
+            receiveCategory(response.category)
+            feedbackCategoriesLoaded = true
+            feedbackCategoriesError = nil
+            return response.category
+        } catch is CancellationError {
+            return nil
+        } catch {
+            guard capturedGeneration == generation, capturedLifecycle == lifecycleIdentity else { return nil }
+            feedbackCategoriesError = error.localizedDescription
+            return nil
+        }
+    }
+
+    func feedback(for featureID: String, messageID: String) -> FirstMateFeedback? {
+        feedbackRecords[featureID]?[messageID]
+    }
+
+    /// The editor's starting point: an unsaved draft if one exists, otherwise
+    /// the saved record, otherwise an unselected negative rating.
+    func feedbackDraft(for featureID: String, messageID: String) -> FirstMateFeedbackDraft {
+        let key = FeedbackKey(featureID, messageID)
+        if let draft = feedbackDrafts[key] { return draft }
+        if let record = feedbackRecords[featureID]?[messageID] {
+            return FirstMateFeedbackDraft(
+                rating: record.rating ?? .down,
+                categoryIDs: record.categoryIDs,
+                comment: record.comment
+            )
+        }
+        return FirstMateFeedbackDraft()
+    }
+
+    func setFeedbackDraft(
+        _ draft: FirstMateFeedbackDraft,
+        for featureID: String,
+        messageID: String,
+        expectedContext: OperationContext
+    ) {
+        guard let contextFeature = expectedContext.featureID,
+              contextFeature == featureID,
+              isCurrentFeedbackContext(expectedContext) else { return }
+        let key = FeedbackKey(featureID, messageID)
+        feedbackDrafts[key] = draft
+        feedbackSaveErrors[key] = nil
+    }
+
+    /// Cancelling an edit discards only that edit, never the saved rating.
+    func discardFeedbackDraft(for featureID: String, messageID: String) {
+        let key = FeedbackKey(featureID, messageID)
+        feedbackDrafts[key] = nil
+        feedbackSaveErrors[key] = nil
+    }
+
+    func canRate(messageID: String, featureID: String) -> Bool {
+        guard let message = snapshots[featureID]?.messages.first(where: { $0.id == messageID }) else { return false }
+        return FirstMateFeedbackEligibility.isEligible(message)
+    }
+
+    func isLoadingFeedback(for featureID: String) -> Bool { loadingFeedbackFeatures.contains(featureID) }
+    func feedbackError(for featureID: String) -> String? { feedbackErrors[featureID] }
+    func isSavingFeedback(featureID: String, messageID: String) -> Bool {
+        savingFeedbackKeys.contains(FeedbackKey(featureID, messageID))
+    }
+    func feedbackSaveError(featureID: String, messageID: String) -> String? {
+        feedbackSaveErrors[FeedbackKey(featureID, messageID)]
+    }
+
+    private func isCurrentFeedbackContext(_ context: OperationContext) -> Bool {
+        context.generation == generation && context.lifecycleIdentity == lifecycleIdentity
+    }
+
+    /// A lower revision is a delayed read or a delayed receipt; the newer
+    /// locally known record always wins.
+    private func receiveFeedback(_ record: FirstMateFeedback, featureID: String) {
+        guard record.featureID == featureID, !record.messageID.isEmpty, record.revision >= 0 else { return }
+        var records = feedbackRecords[featureID] ?? [:]
+        if let existing = records[record.messageID], existing.revision > record.revision { return }
+        records[record.messageID] = record
+        feedbackRecords[featureID] = records
+    }
+
+    private func receiveCategory(_ category: FirstMateFeedbackCategory) {
+        if let index = feedbackCategories.firstIndex(where: { $0.id == category.id }) {
+            feedbackCategories[index] = category
+        } else {
+            feedbackCategories.append(category)
+        }
+        feedbackCategoriesLoaded = true
+    }
+
+    private func demoFeedback(
+        from draft: FirstMateFeedbackDraft,
+        featureID: String,
+        messageID: String
+    ) -> FirstMateFeedback {
+        let existing = feedbackRecords[featureID]?[messageID]
+        let message = snapshots[featureID]?.messages.first { $0.id == messageID }
+        return FirstMateFeedback(
+            messageID: messageID,
+            featureID: featureID,
+            rating: draft.rating,
+            categoryIDs: draft.categoryIDs,
+            comment: draft.comment,
+            revision: (existing?.revision ?? 0) + 1,
+            createdAt: existing?.createdAt ?? FirstMateDemo.timestamp,
+            updatedAt: FirstMateDemo.timestamp,
+            provenance: FirstMateFeedbackProvenance(
+                responseText: message?.text ?? "",
+                responseCreatedAt: message?.createdAt,
+                sourceKind: "legacy",
+                inReplyTo: nil,
+                visitID: nil,
+                featureRevision: snapshots[featureID]?.feature.revision,
+                coordinatorSessionID: nil,
+                sessionProvenance: "unavailable"
+            )
+        )
+    }
+
+    private func demoCategory(named label: String) -> FirstMateFeedbackCategory {
+        let normalized = Self.normalizedCategoryLabel(label)
+        if let existing = feedbackCategories.first(where: { Self.normalizedCategoryLabel($0.label) == normalized }) {
+            return existing
+        }
+        let collapsed = label.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        let category = FirstMateFeedbackCategory(
+            id: "fmc-demo-\(feedbackCategories.count + 1)",
+            label: collapsed,
+            createdAt: FirstMateDemo.timestamp
+        )
+        feedbackCategories.append(category)
+        feedbackCategoriesLoaded = true
+        feedbackCategoriesError = nil
+        return category
+    }
+
+    private static func normalizedCategoryLabel(_ label: String) -> String {
+        label.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ").lowercased()
     }
 
     func open(_ resource: FirstMateResource) async {

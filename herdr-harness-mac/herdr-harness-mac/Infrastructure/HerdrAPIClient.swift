@@ -281,11 +281,45 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient {
         return try await request(path: firstMatePath("sessions", id: id), query: query)
     }
 
-    private func firstMatePath(_ collection: String, id: String) throws -> String {
+    func fetchFirstMateFeedbackCategories() async throws -> FirstMateFeedbackCategoriesResponse {
+        try await request(path: "/api/v1/first-mate/feedback-categories")
+    }
+
+    func createFirstMateFeedbackCategory(label: String, requestID: String) async throws -> FirstMateFeedbackCategoryResponse {
+        try await request(
+            path: "/api/v1/first-mate/feedback-categories",
+            method: "POST",
+            body: FirstMateFeedbackCategoryCreateRequest(label: label, requestID: requestID)
+        )
+    }
+
+    func fetchFirstMateFeedback(featureID: String) async throws -> FirstMateFeatureFeedbackResponse {
+        try await request(path: firstMatePath("features", id: featureID) + "/feedback")
+    }
+
+    func saveFirstMateFeedback(
+        featureID: String,
+        messageID: String,
+        request payload: FirstMateFeedbackSaveRequest
+    ) async throws -> FirstMateFeedbackMutationResponse {
+        let featurePath = try firstMatePath("features", id: featureID)
+        let validatedMessageID = try validatedFirstMateID(messageID)
+        return try await request(
+            path: featurePath + "/messages/\(validatedMessageID)/feedback",
+            method: "POST",
+            body: payload
+        )
+    }
+
+    private func validatedFirstMateID(_ id: String) throws -> String {
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_.:"))
         guard !id.isEmpty, id != ".", id != "..", id.count <= 256,
               id.unicodeScalars.allSatisfy(allowed.contains) else { throw APIError.invalidResponse }
-        return "/api/v1/first-mate/\(collection)/\(id)"
+        return id
+    }
+
+    private func firstMatePath(_ collection: String, id: String) throws -> String {
+        "/api/v1/first-mate/\(collection)/" + (try validatedFirstMateID(id))
     }
 
     // PR Review ids are server-issued opaque tokens. Validate them before they

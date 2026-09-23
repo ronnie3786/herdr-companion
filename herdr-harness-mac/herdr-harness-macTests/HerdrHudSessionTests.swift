@@ -319,7 +319,7 @@ struct HerdrHudSessionTests {
             contextWindow: nil,
             supportsImages: true
         )
-        session.seedModelsForTesting([selected], default: nil)
+        session.seedModelsForTesting([selected], default: nil, machineID: "demo1")
         session.setSelectedModel(selected)
         session.addAttachments([url])
         session.draft = "Describe this image"
@@ -345,7 +345,7 @@ struct HerdrHudSessionTests {
             reasoning: true,
             contextWindow: nil
         )
-        session.seedModelsForTesting([selected], default: nil)
+        session.seedModelsForTesting([selected], default: nil, machineID: "demo1")
         session.setSelectedModel(selected)
         session.addAttachments([url])
         session.draft = "Describe this image"
@@ -368,7 +368,7 @@ struct HerdrHudSessionTests {
             reasoning: true,
             contextWindow: nil
         )
-        session.seedModelsForTesting([selected], default: defaultModel)
+        session.seedModelsForTesting([selected], default: defaultModel, machineID: "demo1")
         session.draft = "Use the default"
         await session.submit(model: model)
         #expect(session.exchanges.last?.modelLabel == "Harness Default")

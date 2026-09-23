@@ -108,6 +108,7 @@ final class HerdrHudSession {
     @ObservationIgnored private var elapsedTask: Task<Void, Never>?
     @ObservationIgnored private var restoreTask: Task<Void, Never>?
     @ObservationIgnored private var historyObservationTask: Task<Void, Never>?
+    @ObservationIgnored private var terminalMetadataReconciliationTask: Task<Void, Never>?
     @ObservationIgnored private var hasStartedSessionActivity = false
     /// Fires after an accepted run or a history load establishes this session's
     /// durable conversation identity. The owning HUD collection uses it to
@@ -156,6 +157,16 @@ final class HerdrHudSession {
             // machine's path across the switch.
             selectedWorkingFolder = .home
             workingFolderOptionsRevision &+= 1
+            // The catalog and its declared default are machine-specific. Drop
+            // them on a real switch so a submission that outruns the new
+            // machine's catalog (or a failed load) cannot capture the old
+            // machine's model name as run metadata.
+            if let selectedMachineID, modelsMachineID != selectedMachineID {
+                availableModels = []
+                defaultModel = nil
+                modelsMachineID = nil
+                didLoadCatalog = false
+            }
         }
     }
 
@@ -210,6 +221,10 @@ final class HerdrHudSession {
     private(set) var promotingExchangeIDs: Set<String> = []
     private(set) var availableModels: [PiAvailableModel] = []
     private(set) var defaultModel: PiModelIdentity?
+    /// The machine whose catalog produced `availableModels` and `defaultModel`.
+    /// A declared default is only trustworthy for that machine; metadata must
+    /// keep the model unknown rather than borrow another machine's default.
+    private(set) var modelsMachineID: String?
     private(set) var isLoadingModels = false
     private(set) var modelsError: String?
     private(set) var didLoadCatalog = false
@@ -258,6 +273,7 @@ final class HerdrHudSession {
         elapsedTask?.cancel()
         restoreTask?.cancel()
         historyObservationTask?.cancel()
+        terminalMetadataReconciliationTask?.cancel()
     }
 
     func makeIndependentSession(id: String) -> HerdrHudSession {
@@ -505,9 +521,18 @@ final class HerdrHudSession {
         await restoreTask?.value
     }
 
-    func seedModelsForTesting(_ models: [PiAvailableModel], default defaultModel: PiModelIdentity?) {
+    /// The exact file this session debounces into, so a test can prove a
+    /// corrected metadata aggregate reached disk rather than only memory.
+    var persistenceURLForTesting: URL { storeURL }
+
+    func seedModelsForTesting(
+        _ models: [PiAvailableModel],
+        default defaultModel: PiModelIdentity?,
+        machineID: String? = nil
+    ) {
         availableModels = models
         self.defaultModel = defaultModel
+        modelsMachineID = machineID ?? selectedMachineID
     }
     #endif
 
@@ -604,14 +629,15 @@ final class HerdrHudSession {
         let attachmentFilenames = attachmentsToSend.map(\.filename)
         let hasAttachments = !attachmentsToSend.isEmpty
         let hasImageAttachments = attachmentsToSend.contains(where: \.isImage)
+        let catalogIsForMachine = modelsMachineID == machineID
         let resolution = AgentModelResolver.resolve(
             preference: selectedModel,
-            catalog: availableModels,
-            isCatalogAuthoritative: didLoadCatalog
+            catalog: catalogIsForMachine ? availableModels : [],
+            isCatalogAuthoritative: catalogIsForMachine && didLoadCatalog
         )
         let agentModel = HerdrHudModelRouting.model(
             selection: resolution.modelID,
-            selectionSupportsImages: selectedModelSupportsImages,
+            selectionSupportsImages: selectedModelSupportsImages(on: machineID),
             hasImageAttachments: hasImageAttachments,
             visionModel: agentSettings.effectiveVisionModel
         )
@@ -619,7 +645,8 @@ final class HerdrHudSession {
         if resolution.preferenceIsUnavailable {
             validationError = "\(selectedModel ?? "") isn't offered by this machine — using its default model."
         }
-        let label = modelLabel(for: agentModel)
+        let metadataModelName = modelLabel(for: agentModel, on: machineID)
+        let label = metadataModelName ?? "default"
         let pendingID = "hud-pending-\(UUID().uuidString)"
         let submittedAt = Date.now
         let continueFromRunId = thread?.machineID == machineID ? thread?.lastRunID : nil
@@ -698,7 +725,7 @@ final class HerdrHudSession {
             capabilitiesChecked: isNewRoot && !workingFolder.isHome,
             submissionOwnerID: ownerID,
             submissionID: pendingID,
-            submissionModelName: label,
+            submissionModelName: metadataModelName,
             model: model
         )
         guard let index = exchanges.firstIndex(where: { $0.id == pendingID }) else {
@@ -893,8 +920,12 @@ final class HerdrHudSession {
         defer { isLoadingModels = false }
         do {
             let response = try await model.fetchAgentModels(machineID: machineID)
+            // The selection can move while the catalog request is in flight.
+            // A stale response must not become the new machine's catalog.
+            guard resolvedMachineIDReadOnly(in: model) == machineID else { return }
             availableModels = response.models
             defaultModel = response.defaultModel
+            modelsMachineID = machineID
             didLoadCatalog = true
         } catch {
             modelsError = error.localizedDescription
@@ -1173,14 +1204,15 @@ final class HerdrHudSession {
         let hasImageAttachments = retryAttachments.contains {
             HerdrAttachmentTypes.isImage(URL(fileURLWithPath: $0.filename))
         }
+        let catalogIsForMachine = modelsMachineID == exchange.machineID
         let resolution = AgentModelResolver.resolve(
             preference: selectedModel,
-            catalog: availableModels,
-            isCatalogAuthoritative: didLoadCatalog
+            catalog: catalogIsForMachine ? availableModels : [],
+            isCatalogAuthoritative: catalogIsForMachine && didLoadCatalog
         )
         let agentModel = HerdrHudModelRouting.model(
             selection: resolution.modelID,
-            selectionSupportsImages: selectedModelSupportsImages,
+            selectionSupportsImages: selectedModelSupportsImages(on: exchange.machineID),
             hasImageAttachments: hasImageAttachments,
             visionModel: agentSettings.effectiveVisionModel
         )
@@ -1188,7 +1220,8 @@ final class HerdrHudSession {
         if resolution.preferenceIsUnavailable {
             validationError = "\(selectedModel ?? "") isn't offered by this machine — using its default model."
         }
-        let label = modelLabel(for: agentModel)
+        let metadataModelName = modelLabel(for: agentModel, on: exchange.machineID)
+        let label = metadataModelName ?? "default"
         guard let run = await submitAndWait(
             prompt: exchange.sentPrompt,
             machineID: exchange.machineID,
@@ -1201,7 +1234,7 @@ final class HerdrHudSession {
             capabilitiesChecked: startsNewRoot && !workingFolder.isHome,
             submissionOwnerID: ownerID,
             submissionID: isUnacceptedPlaceholder ? exchange.id : nil,
-            submissionModelName: label,
+            submissionModelName: metadataModelName,
             model: model
         ) else {
             if submissionWasCancelled(ownerID) {
@@ -1466,6 +1499,14 @@ final class HerdrHudSession {
                     }
                     if run.status.isTerminal {
                         self.hasUnseenAnswer = !self.hasEnded && self.isCollapsed
+                        if let identity = self.chatMetadata.identity {
+                            self.scheduleTerminalMetadataReconciliation(
+                                run: run,
+                                machineID: identity.machineID,
+                                rootRunID: identity.rootRunID,
+                                model: model
+                            )
+                        }
                         await self.schedulePersistenceSave()
                         if self.controller.run?.id == run.id { self.controller.reset() }
                         return
@@ -1473,6 +1514,16 @@ final class HerdrHudSession {
                     do { try await Task.sleep(for: .milliseconds(700)) } catch { return }
                 }
             }
+        } else if let latest = turns.last {
+            // A run that was already terminal when history loaded can still
+            // receive its drained cost later, so schedule the same bounded
+            // reconciliation without waiting for the card to reopen.
+            scheduleTerminalMetadataReconciliation(
+                run: latest,
+                machineID: machineID,
+                rootRunID: page.rootRunId,
+                model: model
+            )
         }
     }
 
@@ -1538,6 +1589,8 @@ final class HerdrHudSession {
             return
         }
         beginSessionActivity()
+        terminalMetadataReconciliationTask?.cancel()
+        terminalMetadataReconciliationTask = nil
         exchanges = []
         pendingQuotes = []
         markExchangesChanged()
@@ -1580,14 +1633,26 @@ final class HerdrHudSession {
         return model.machines.first?.id
     }
 
-    private var selectedModelSupportsImages: Bool {
-        guard let selectedModel else { return false }
+    private func selectedModelSupportsImages(on machineID: String) -> Bool {
+        guard let selectedModel, modelsMachineID == machineID else { return false }
         return availableModels.first(where: { $0.id == selectedModel })?.supportsImages ?? false
     }
 
-    private func modelLabel(for requestedModel: String?) -> String {
-        guard let requestedModel else { return defaultModel?.displayName ?? "default" }
-        return availableModels.first(where: { $0.id == requestedModel })?.displayName ?? PiModelDisplayName.short(fullID: requestedModel)
+    /// The display name captured for a submission, or nil while the model is
+    /// genuinely unknown. A declared catalog default is only usable for the
+    /// machine that returned it; an explicit selection resolves from its own
+    /// captured identifier even before that machine's catalog loads. A cached
+    /// default from another machine is never promoted into run metadata.
+    private func modelLabel(for requestedModel: String?, on machineID: String) -> String? {
+        guard let requestedModel else {
+            guard modelsMachineID == machineID else { return nil }
+            return defaultModel?.displayName
+        }
+        if modelsMachineID == machineID,
+           let available = availableModels.first(where: { $0.id == requestedModel }) {
+            return available.displayName
+        }
+        return PiModelDisplayName.short(fullID: requestedModel)
     }
 
     private func append(_ exchange: HerdrHudExchange) {
@@ -1893,6 +1958,14 @@ final class HerdrHudSession {
             recordObservedMetadataSample(run)
         }
         recordObservedMetadataSample(controller.run)
+        if let finishedRun = controller.run, finishedRun.status.isTerminal {
+            scheduleTerminalMetadataReconciliation(
+                run: finishedRun,
+                machineID: machineID,
+                rootRunID: finishedRun.threadRootRunId ?? finishedRun.id,
+                model: model
+            )
+        }
         return controller.run
     }
 
@@ -1916,6 +1989,94 @@ final class HerdrHudSession {
                 modelName: run.model.map(PiModelDisplayName.short(fullID:))
             )
         }
+    }
+
+    /// How many extra checks one terminal run gets, and how far apart. The
+    /// server marks a cancellation terminal before the run's stdout (and its
+    /// cost report) finishes draining, so the first terminal sample can be
+    /// incomplete or later revised. A handful of spaced reports closes that
+    /// gap and then stops; this is deliberately not a presentation poller.
+    private static let terminalMetadataReconciliationAttempts = 6
+    private static let terminalMetadataReconciliationInterval = Duration.milliseconds(700)
+
+    /// Re-checks one already-observed terminal run for a late or revised
+    /// report so a collapsed bubble does not wait for the next card refresh.
+    /// Every attempt revalidates the aggregate identity and the exact run, so
+    /// a replaced conversation or a newer accepted turn stops the task instead
+    /// of letting an old report leak into the new aggregate. Only a latest run
+    /// that can still gain a cost is scheduled: a cancellation is always
+    /// rechecked because its report may be revised, and any other terminal
+    /// run only while its cost is still unknown.
+    private func scheduleTerminalMetadataReconciliation(
+        run: HeadlessAgentRun,
+        machineID: String,
+        rootRunID: String,
+        model: HerdrAppModel
+    ) {
+        guard !model.isDemoMode, run.status.isTerminal else { return }
+        let identity = HerdrHudChatMetadataAccumulator.Identity(machineID: machineID, rootRunID: rootRunID)
+        guard chatMetadata.isScoped(to: identity), chatMetadata.latestRunID == run.id else { return }
+        guard run.status == .cancelled || chatMetadata.latestRunCostUSD == nil else { return }
+        terminalMetadataReconciliationTask?.cancel()
+        terminalMetadataReconciliationTask = Task { [weak self] in
+            guard let self else { return }
+            var settledCost: Double?
+            for attempt in 0..<Self.terminalMetadataReconciliationAttempts {
+                if attempt > 0 {
+                    do {
+                        try await Task.sleep(for: Self.terminalMetadataReconciliationInterval)
+                    } catch {
+                        return
+                    }
+                }
+                guard !Task.isCancelled,
+                      !self.hasEnded,
+                      self.chatMetadata.isScoped(to: identity),
+                      self.chatMetadata.latestRunID == run.id else { return }
+                guard let report = try? await model.fetchHeadlessAgent(
+                    runID: run.id,
+                    machineID: machineID
+                ), report.status.isTerminal else { continue }
+                if self.applyReconciledTerminalRun(report) {
+                    await self.schedulePersistenceSave()
+                }
+                // Two consecutive terminal reports that agree on the cost
+                // prove the drain has settled; stop before the full bound.
+                if let cost = report.costUSD, let settledCost, cost == settledCost { return }
+                settledCost = report.costUSD
+            }
+        }
+    }
+
+    /// Merges one authoritative terminal report into the aggregate and its
+    /// transcript row. The caller already scoped the report to this
+    /// conversation, so a late cost can only update its own accepted turn.
+    @discardableResult
+    private func applyReconciledTerminalRun(_ run: HeadlessAgentRun) -> Bool {
+        guard run.status.isTerminal, chatMetadata.latestRunID == run.id else { return false }
+        let modelName = run.model.map(PiModelDisplayName.short(fullID:))
+        var changed = false
+        mutateChatMetadata { metadata in
+            let updated = metadata.updateObservedRun(
+                id: run.id,
+                costUSD: run.costUSD,
+                modelName: modelName
+            )
+            changed = updated
+            return updated
+        }
+        if let index = exchanges.firstIndex(where: { $0.id == run.id }) {
+            if exchanges[index].costUSD != run.costUSD {
+                exchanges[index].costUSD = run.costUSD
+                changed = true
+            }
+            if exchanges[index].status != run.status {
+                exchanges[index].status = run.status
+                changed = true
+            }
+            if changed { markExchangesChanged() }
+        }
+        return changed
     }
 
     private func mutateChatMetadata(

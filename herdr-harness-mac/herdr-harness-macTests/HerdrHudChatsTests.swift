@@ -1539,7 +1539,7 @@ struct HerdrHudChatsTests {
             reasoning: true,
             contextWindow: nil
         )
-        session.seedModelsForTesting([selected], default: nil)
+        session.seedModelsForTesting([selected], default: nil, machineID: "synthetic")
         session.setSelectedModel(selected)
         session.draft = "Track metadata"
 
@@ -1563,6 +1563,43 @@ struct HerdrHudChatsTests {
         await task.value
         #expect(session.bubbleMetadata.cost == "$0.42")
         #expect(session.bubbleMetadata.modelName == "Claude Opus 4.5")
+    }
+
+    @Test("A machine switch never captures another machine's default model as run metadata")
+    func machineSwitchDoesNotCaptureAnotherMachinesDefaultModel() async throws {
+        let fixture = try Fixture(
+            machines: [
+                HerdrMachine(id: "machine-a", name: "Alpha", urlString: "https://alpha.example.invalid"),
+                HerdrMachine(id: "machine-b", name: "Beta", urlString: "https://beta.example.invalid"),
+            ],
+            catalogByHost: [
+                "alpha.example.invalid": #"{"ok":true,"models":[],"default":{"provider":"synthetic","id":"alpha-default","name":"Alpha Default"}}"#,
+                "beta.example.invalid": #"{"ok":true,"models":[],"default":{"provider":"synthetic","id":"beta-default","name":"Beta Default"}}"#,
+            ]
+        )
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.selectedMachineID = "machine-a"
+        await session.loadModels(model: fixture.model)
+        #expect(session.defaultModel?.displayName == "Alpha Default")
+
+        // Switch to Beta while its catalog is unresolved, then submit without
+        // an explicit model. The cached Alpha default must stay out of it.
+        session.selectedMachineID = "machine-b"
+        session.draft = "Run on Beta"
+        let task = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        let runID = try #require(session.thread?.lastRunID)
+        #expect(session.exchanges.last?.machineID == "machine-b")
+        #expect(session.exchanges.last?.modelLabel == "default")
+        #expect(session.bubbleMetadata.modelName == nil)
+
+        // Only the authoritative run report may resolve the Beta model.
+        HudChatsURLProtocol.finish(runID)
+        await task.value
+        HudChatsURLProtocol.setModel(runID, "synthetic/beta-model")
+        #expect(await session.refreshSavedHistoryPassivelyForTesting(model: fixture.model))
+        #expect(session.bubbleMetadata.modelName == "Beta Model")
     }
 
     @Test("HUD chat bubble metadata sums distinct accepted turns across a continuation")
@@ -1632,6 +1669,41 @@ struct HerdrHudChatsTests {
         await task.value
         #expect(session.exchanges.last?.status == .cancelled)
         #expect(session.bubbleMetadata.cost == "$0.05")
+    }
+
+    @Test("A collapsed HUD chat receives a cost reported after cancellation")
+    func cancelledCostAfterStopReachesCollapsedBubble() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        // The server marks cancellation terminal before stdout (and its cost)
+        // finishes draining, so the accepted and cancelled reports omit it.
+        HudChatsURLProtocol.setMissingCostForNewRuns(true)
+        session.draft = "Cancel while stdout drains"
+        let task = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        let runID = try #require(session.thread?.lastRunID)
+        await session.stop(model: fixture.model)
+        await task.value
+        #expect(session.exchanges.last?.status == .cancelled)
+        #expect(session.isCollapsed)
+        #expect(!session.isRunning)
+        #expect(session.bubbleMetadata.cost == nil)
+
+        // The late report arrives only after the card is already collapsed,
+        // and no caller refreshes history for it.
+        HudChatsURLProtocol.setMissingCostForNewRuns(false)
+        HudChatsURLProtocol.setMissingCost(runID, false)
+        HudChatsURLProtocol.setCost(runID, 0.04)
+        try await wait { session.bubbleMetadata.cost == "$0.04" }
+
+        // The drain can revise that first post-cancel number again.
+        HudChatsURLProtocol.setCost(runID, 0.11)
+        try await wait { session.bubbleMetadata.cost == "$0.11" }
+        try await wait {
+            HerdrHudPersistenceSnapshot.load(from: session.persistenceURLForTesting)?
+                .chatMetadata?.totalCostUSD == 0.11
+        }
     }
 
     @Test("Reopened HUD history rebuilds cumulative metadata across pages")
@@ -1844,6 +1916,9 @@ private final class HudChatsURLProtocol: URLProtocol, @unchecked Sendable {
         var statuses: [String: String] = [:]
         var runCosts: [String: Double] = [:]
         var missingCostIDs: Set<String> = []
+        /// Newly accepted runs report no cost at all, matching a cancelled run
+        /// whose stdout (and its cost) has not finished draining.
+        var missingCostForNewRuns = false
         var runModels: [String: String] = [:]
         var deleteCount = 0
         var cancellationCount = 0
@@ -1894,6 +1969,9 @@ private final class HudChatsURLProtocol: URLProtocol, @unchecked Sendable {
         state.withLock { state in
             if missing { state.missingCostIDs.insert(id) } else { state.missingCostIDs.remove(id) }
         }
+    }
+    static func setMissingCostForNewRuns(_ missing: Bool) {
+        state.withLock { $0.missingCostForNewRuns = missing }
     }
     static func setModel(_ id: String, _ model: String?) {
         state.withLock { state in
@@ -1997,6 +2075,7 @@ private final class HudChatsURLProtocol: URLProtocol, @unchecked Sendable {
                                   cwd: input["cwd"] as? String, profile: input["profile"] as? String ?? "")
                 state.starts.append(start)
                 state.statuses[id] = "running"
+                if state.missingCostForNewRuns { state.missingCostIDs.insert(id) }
                 response["run"] = Self.run(start, state: state)
             } else if path.contains("/hud-chats/"), request.httpMethod == "GET" {
                 let root = url.lastPathComponent

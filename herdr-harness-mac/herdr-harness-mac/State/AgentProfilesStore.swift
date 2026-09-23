@@ -230,6 +230,8 @@ final class AgentProfilesStore {
 
     func chooseAssignmentOwner(_ machineID: String?) async {
         if machineID == loadedOwnerMachineID { return }
+        let previousProfileID = assignmentProfileID
+        let previousOwnerServerID = ownerMachineServerID
         assignmentOwnerMachineID = machineID
         assignmentProfileID = nil
         ownerProfiles = []
@@ -242,6 +244,10 @@ final class AgentProfilesStore {
             ownerProfiles = overview.profiles
             ownerMachineServerID = overview.machineId
             loadedOwnerMachineID = machineID
+            if previousOwnerServerID == overview.machineId,
+               overview.profiles.contains(where: { $0.id == previousProfileID }) {
+                assignmentProfileID = previousProfileID
+            }
             return
         }
 
@@ -262,6 +268,10 @@ final class AgentProfilesStore {
             ownerProfiles = response.profiles
             ownerMachineServerID = response.machineId
             loadedOwnerMachineID = machineID
+            if previousOwnerServerID == response.machineId,
+               response.profiles.contains(where: { $0.id == previousProfileID }) {
+                assignmentProfileID = previousProfileID
+            }
         } catch {
             guard generation == ownerGeneration, assignmentOwnerMachineID == machineID else { return }
             present(error, rootRoute: true)
@@ -456,6 +466,7 @@ final class AgentProfilesStore {
         targetMachineID: String? = nil,
         isRetry: Bool = false
     ) async {
+        guard !isSaving else { return }
         if pendingMutation != nil && !isRetry {
             errorMessage = "Resolve the uncertain Agent Profile request before making another change."
             return
@@ -496,10 +507,12 @@ final class AgentProfilesStore {
             conflictMessage = message.isEmpty
                 ? "The profile changed on \(machineName). Your draft is preserved; reload to reconcile."
                 : "\(message) Your draft is preserved; reload to reconcile."
-        } catch let error as APIError {
+        } catch let APIError.server(status, message) where (400..<500).contains(status) && status != 408 {
             pendingMutation = nil
-            present(error)
+            present(APIError.server(status: status, message: message))
         } catch {
+            // 5xx, malformed responses and transport failures can occur after
+            // commit. Retain the exact UUID/payload, not just transport errors.
             pendingMutation = PendingMutation(
                 machineID: machineID,
                 mutation: mutation,

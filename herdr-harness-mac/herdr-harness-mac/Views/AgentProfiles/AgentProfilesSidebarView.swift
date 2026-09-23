@@ -63,5 +63,6 @@ struct AgentProfilesSidebarView: View {
         }
         .background(HerdrTheme.ink)
         .accessibilityIdentifier("agent-profiles-sidebar")
+        .disabled(store.isSaving || store.hasPendingMutation)
     }
 }

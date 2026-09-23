@@ -229,6 +229,46 @@ struct AgentProfileTests {
         #expect(!store.hasPendingMutation)
     }
 
+    @Test("Server failures and malformed responses retain the original mutation")
+    func ambiguousServerFailuresRemainPending() async {
+        let errors: [APIError] = [.server(status: 500, message: "Response failed"),
+                                  .server(status: 408, message: "Timed out"), .invalidResponse]
+        for error in errors {
+            let client = ConflictAgentProfilesClient(overview: Self.overview(machineID: "desktop"), mutationError: error)
+            let store = AgentProfilesStore(
+                machines: [HerdrMachine(id: "desktop", name: "Desktop", urlString: "https://desktop.example.invalid")],
+                clients: ["desktop": client]
+            )
+            await store.load()
+            store.draft.soul = "Edited"
+            store.draft.reason = "Explicit edit"
+            await store.createOrUpdateProfile()
+            #expect(store.hasPendingMutation)
+            await store.retryPendingMutation()
+            #expect(store.hasPendingMutation)
+        }
+    }
+
+    @Test("Loading a persisted remote owner does not clear its assigned profile")
+    func persistedRemoteAssignmentSurvivesOwnerLookup() async {
+        let local = Self.overview(machineID: "local")
+        let remote = Self.overview(machineID: "remote", profileName: "Shared Work", profileID: "00000000-0000-4000-8000-000000000077")
+        let bound = AgentProfilesOverview(ok: true, capability: "agent-profiles-v1", machineId: "local",
+                                         profiles: local.profiles, binding: remote.binding,
+                                         effective: remote.effective, proposals: [])
+        let store = AgentProfilesStore(
+            machines: [HerdrMachine(id: "local", name: "Local", urlString: "https://local.example.invalid"),
+                       HerdrMachine(id: "remote", name: "Remote", urlString: "https://remote.example.invalid")],
+            clients: ["local": ConflictAgentProfilesClient(overview: bound, mutationError: nil),
+                      "remote": ConflictAgentProfilesClient(overview: remote, mutationError: nil)],
+            initiallySelectedMachineID: "local"
+        )
+        await store.load()
+        await store.chooseAssignmentOwner("remote")
+        #expect(store.assignmentProfileID == remote.binding.profileId)
+        #expect(!store.assignmentHasUnsavedChanges)
+    }
+
     @Test("Successful creation selects the returned profile")
     func creationSelectsReturnedProfile() async {
         let initial = Self.overview(machineID: "server-a")

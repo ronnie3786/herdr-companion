@@ -10,7 +10,7 @@ struct AgentProfileEditorView: View {
             effectivePreview
         }
         .frame(maxWidth: 900, alignment: .leading)
-        .disabled(store.hasPendingMutation)
+        .disabled(store.isSaving || store.hasPendingMutation)
     }
 
     private var profileEditor: some View {

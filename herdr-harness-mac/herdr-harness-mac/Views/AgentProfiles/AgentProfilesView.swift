@@ -4,6 +4,7 @@ struct AgentProfilesView: View {
     @State private var store: AgentProfilesStore
     @State private var pendingMachineID: String?
     @State private var pendingProfileID: String?
+    @State private var confirmsReload = false
 
     init(model: HerdrAppModel) {
         _store = State(initialValue: AgentProfilesStore(model: model))
@@ -31,7 +32,7 @@ struct AgentProfilesView: View {
                     message: conflictMessage,
                     systemImage: "arrow.triangle.2.circlepath",
                     color: HerdrTheme.mauve,
-                    actionTitle: "Reload & reconcile",
+                    actionTitle: "Reload…",
                     action: reload
                 )
             } else if let errorMessage = store.errorMessage {
@@ -90,6 +91,12 @@ struct AgentProfilesView: View {
         .tint(HerdrTheme.accent)
         .accessibilityIdentifier("agent-profiles-view")
         .task { await store.load() }
+        .confirmationDialog("Discard drafts and reload?", isPresented: $confirmsReload, titleVisibility: .visible) {
+            Button("Discard and reload", role: .destructive, action: performReload)
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Copy any edits you want to keep before reloading the server version. Unsaved profile and override drafts will be discarded.")
+        }
         .confirmationDialog(
             "Discard unsaved changes?",
             isPresented: machineConfirmationIsPresented,
@@ -172,6 +179,12 @@ struct AgentProfilesView: View {
     }
 
     private func reload() {
+        guard !store.isSaving, !store.hasPendingMutation else { return }
+        if store.hasUnsavedChanges { confirmsReload = true }
+        else { performReload() }
+    }
+
+    private func performReload() {
         Task { await store.reloadDiscardingDraft() }
     }
 

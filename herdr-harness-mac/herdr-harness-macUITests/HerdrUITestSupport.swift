@@ -23,6 +23,25 @@ class HerdrUITestCase: XCTestCase {
         return app
     }
 
+    /// Launches the synthetic demo with an isolated on-disk comment store.
+    ///
+    /// `-HerdrPRReviewCommentStorePath` is a DEBUG-only, demo/UI-test-only
+    /// argument, so an acceptance run can terminate and relaunch the app to
+    /// prove comment persistence without touching the operator's real store.
+    /// The path may be either a file or an existing directory.
+    @MainActor
+    func launchDemoApp(commentStoreURL: URL) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-HerdrDemoMode",
+            "-HerdrResetSidebarState",
+            "-HerdrPRReviewCommentStorePath",
+            commentStoreURL.path,
+        ]
+        app.launch()
+        return app
+    }
+
     /// Polls a set of equivalent queries and returns whichever resolves first.
     ///
     /// Used where one SwiftUI control can legitimately surface under more than
@@ -55,6 +74,32 @@ class HerdrUITestCase: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+}
+
+extension XCUIElement {
+    /// Any descendant carrying `identifier`, whatever role the Mac gave it.
+    ///
+    /// Scoping the query to one window keeps two review windows, or a window
+    /// and its sheet, from retargeting each other's controls.
+    func descendant(identifier: String) -> XCUIElement {
+        descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    /// Any descendant whose label or value contains `fragment`. Views that
+    /// fold children with `accessibilityElement(children: .combine)` publish
+    /// one concatenated label, so exact matching would pin the concatenation.
+    func descendantText(containing fragment: String) -> XCUIElement {
+        descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@", fragment, fragment)
+        ).firstMatch
+    }
+
+    /// Any descendant button whose accessibility label or title is `title`.
+    func descendantButton(titled title: String) -> XCUIElement {
+        descendants(matching: .button).matching(
+            NSPredicate(format: "label == %@ OR title == %@", title, title)
+        ).firstMatch
     }
 }
 

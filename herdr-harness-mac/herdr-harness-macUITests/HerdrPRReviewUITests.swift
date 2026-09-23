@@ -284,23 +284,12 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
         )
 
         // Ask AI stays reachable through the popped-out diff's context menu.
-        let diff = firstWindow.descendants(matching: .textView).firstMatch
+        let diff = firstWindow.webViews.firstMatch
         XCTAssertTrue(diff.waitForExistence(timeout: 10))
         bringForward(diff, in: app)
         diff.click()
         app.typeKey("a", modifierFlags: .command)
         diff.rightClick()
-        guard let ask = waitForFirst(
-            of: [
-                app.menuItems["Ask AI about selection…"],
-                app.menuItems["Ask AI about selection..."],
-                app.control(labelContaining: "Ask AI about selection"),
-            ],
-            timeout: 5
-        ) else {
-            return XCTFail("Selecting diff text in a popped-out window should offer Ask AI")
-        }
-        ask.click()
         XCTAssertTrue(
             waitForFirst(
                 of: [
@@ -312,6 +301,19 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
             ) != nil,
             "Ask AI should present its question field in the popped-out window"
         )
+
+        let question = app.control(identifier: "pr-review-ask-field")
+        question.click()
+        question.typeText("Explain this synthetic selection briefly")
+        app.buttons["pr-review-send-question"].click()
+        let saved = firstWindow.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Explain this synthetic selection briefly")).firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 10), "Sending a question must leave a durable bubble in the diff")
+        bringForward(saved, in: app)
+        saved.click()
+        let answer = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", "Ask Herdr · PR #42")).firstMatch
+        XCTAssertTrue(answer.waitForExistence(timeout: 10), "The saved bubble must reopen its conversation")
+        answer.buttons[XCUIIdentifierCloseWindow].click()
+        XCTAssertTrue(saved.exists, "Closing the answer must not remove its saved bubble")
 
         saveWindowScreenshot("pr-review-pop-out-ask-ai", window: firstWindow, directory: screenshotDirectory)
         saveWindowScreenshot("pr-review-pop-out-second", window: secondWindow, directory: screenshotDirectory)
@@ -522,16 +524,22 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
             line: line
         )
 
-        let diff = window.descendants(matching: .textView).firstMatch
+        let diff = window.webViews.firstMatch
         XCTAssertTrue(
             diff.waitForExistence(timeout: 10),
-            "A review window should mount the native diff",
+            "A review window should mount the shared diff",
             file: file,
             line: line
         )
-        let rendered = diff.value as? String ?? ""
+        let expected = diffText.filter { !$0.isWhitespace }
+        var rendered = ""
+        for _ in 0..<100 {
+            rendered = diff.staticTexts.allElementsBoundByIndex.map(\.label).joined()
+            if rendered.filter({ !$0.isWhitespace }).contains(expected) { break }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
         XCTAssertTrue(
-            rendered.contains(diffText),
+            rendered.filter({ !$0.isWhitespace }).contains(expected),
             "A review window should render its own diff text, found: \(rendered.prefix(160))",
             file: file,
             line: line

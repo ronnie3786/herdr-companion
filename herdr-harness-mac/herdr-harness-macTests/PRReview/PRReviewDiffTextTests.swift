@@ -1,12 +1,13 @@
 import AppKit
 import SwiftUI
 import Testing
+import WebKit
 @testable import herdr_harness_mac
 
-@Suite("PR Review diff text", .serialized)
+@Suite("PR Review shared diff renderer", .serialized)
 struct PRReviewDiffTextTests {
-    @Test("Unchanged diff identity preserves the attributed text selection") @MainActor
-    func unchangedRenderIdentitySkipsTextReplacement() {
+    @Test("Unchanged diff identity preserves the web renderer") @MainActor
+    func unchangedRenderIdentitySkipsReplacement() {
         let coordinator = PRReviewDiffText.Coordinator()
         let identity = PRReviewDiffText.Coordinator.RenderIdentity(
             path: "Sources/Garden.swift",
@@ -26,93 +27,131 @@ struct PRReviewDiffTextTests {
             headSHA: identity.headSHA,
             fontScale: identity.fontScale
         )))
-        #expect(coordinator.shouldSetAttributedString(for: .init(
-            path: identity.path,
-            oldPath: identity.oldPath,
-            baseSHA: identity.baseSHA,
-            headSHA: "new-fictional-head",
-            fontScale: identity.fontScale
-        )))
     }
 
-    @Test("Selection text excludes the line-number gutter")
-    func selectionExcludesGutter() {
+    @Test("PR hunks become a one-file Git patch with side mapping")
+    func buildsPatch() {
         let file = PRReviewDemo.diff().files[0]
-        let rendered = PRReviewDiffRenderer.render(file: file)
-        let selection = rendered.index.selection(
-            path: file.path,
-            oldPath: file.oldPath ?? "",
-            text: rendered.text.string as NSString,
-            range: NSRange(location: 0, length: rendered.text.length)
+        let patch = PRReviewDiffRenderer.patch(for: file)
+
+        #expect(patch.contains("diff --git a/\(file.path) b/\(file.path)"))
+        #expect(patch.contains("@@"))
+        #expect(patch.contains("+struct SeedCatalog {}"))
+        #expect(PRReviewDiffRenderer.plainText(for: file).contains("struct SeedCatalog {}"))
+    }
+
+    @Test("Added and deleted files preserve Git metadata")
+    func fileStatusMetadata() {
+        var added = PRReviewDemo.diff().files[0]
+        added.status = "added"
+        #expect(PRReviewDiffRenderer.patch(for: added).contains("--- /dev/null"))
+
+        var deleted = added
+        deleted.status = "deleted"
+        #expect(PRReviewDiffRenderer.patch(for: deleted).contains("+++ /dev/null"))
+    }
+
+    @Test("Payload carries font scale and highlighted side")
+    func payloadCarriesPresentationInputs() throws {
+        let payload = PRReviewDiffRenderer.payload(
+            file: PRReviewDemo.diff().files[0],
+            identity: "synthetic-identity",
+            fontScale: .xxLarge,
+            highlight: (start: 2, end: 4, side: .before)
         )
+        let object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(payload)) as? [String: Any])
+        let highlight = try #require(object["highlight"] as? [String: Any])
 
-        #expect(selection?.text.contains("│") == false)
-        #expect(selection?.text.contains("struct SeedCatalog {}") == true)
+        #expect(object["fontScale"] as? Double == HerdrFontScale.xxLarge.rawValue)
+        #expect(highlight["side"] as? String == "old")
+        #expect(highlight["start"] as? Int == 2)
     }
 
-    @Test("A unified selection splits old and new spans")
-    func unifiedSelectionSplitsSides() {
-        let text = "old\nnew\n"
-        let index = PRReviewLineIndex(entries: [
-            .init(utf16Offset: 0, length: 4, side: .before, oldLine: 7, newLine: nil, kind: "del"),
-            .init(utf16Offset: 4, length: 4, side: .after, oldLine: nil, newLine: 8, kind: "add"),
-        ])
-        let selection = index.selection(path: "Sources/Seed.swift", oldPath: "", text: text as NSString,
-                                        range: NSRange(location: 0, length: 7))
-        #expect(selection?.spans == [.init(side: .before, start: 7, end: 7), .init(side: .after, start: 8, end: 8)])
+    @Test("Bundled renderer loads offline and syntax-highlights Swift") @MainActor
+    func bundledRendererLoads() async throws {
+        let mounted = mount(file: PRReviewDemo.diff().files[0])
+        defer { mounted.window.close() }
+
+        let ready = await waitUntil {
+            mounted.view.isRendererReady && mounted.view.renderedIdentity != nil
+        }
+        try #require(ready)
+        #expect(mounted.view.renderedPlainText.contains("struct SeedCatalog {}"))
+        var syntaxColors = 0
+        for _ in 0..<100 {
+            syntaxColors = (try? await mounted.view.evaluateJavaScript("new Set([...document.querySelector('diffs-container').shadowRoot.querySelectorAll('[data-line] span')].map(s => getComputedStyle(s).color)).size")) as? Int ?? 0
+            if syntaxColors > 1 { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(syntaxColors > 1, "The actual Swift code must contain multiple syntax colors, not just colored diff rows")
+
+        let result = try await mounted.view.evaluateJavaScript("""
+        (() => {
+          const host = document.querySelector('diffs-container');
+          const root = host?.shadowRoot;
+          return {
+            lines: root?.querySelectorAll('[data-line]').length ?? 0,
+            tokens: root?.querySelectorAll('[data-line] span').length ?? 0,
+            lineHeight: getComputedStyle(host).getPropertyValue('--diffs-line-height').trim(),
+            networkScripts: [...document.scripts].filter(script => /^https?:/.test(script.src)).length,
+            bodyMargin: getComputedStyle(document.body).margin,
+            rowHeight: root?.querySelector('[data-line]')?.getBoundingClientRect().height ?? 0,
+            addition: getComputedStyle(host).getPropertyValue('--diffs-bg-addition-override').trim(),
+            deletion: getComputedStyle(host).getPropertyValue('--diffs-bg-deletion-override').trim()
+          };
+        })()
+        """)
+        let values = try #require(result as? [String: Any])
+        #expect((values["lines"] as? Int ?? 0) > 0)
+        #expect((values["tokens"] as? Int ?? 0) > 0)
+        #expect(values["lineHeight"] as? String == "1.85")
+        #expect(values["networkScripts"] as? Int == 0)
+        #expect(values["bodyMargin"] as? String == "0px", "The bundled stylesheet must load under the document CSP")
+        #expect((values["rowHeight"] as? Double ?? 0) >= 20)
+        #expect(values["addition"] as? String == "rgba(46, 160, 67, 0.30)")
+        #expect(values["deletion"] as? String == "rgba(248, 81, 73, 0.30)")
     }
 
-    @Test("Hunk headers do not have a review side")
-    func hunkHeadersHaveNoSide() {
-        let rendered = PRReviewDiffRenderer.render(file: PRReviewDemo.diff().files[0])
-        let hunkEntries = rendered.index.entries.filter { $0.kind == "hunk" }
-
-        #expect(!hunkEntries.isEmpty)
-        #expect(hunkEntries.allSatisfy { $0.side == nil })
-    }
-
-    @Test("Deleted textual files retain removal code and old line mapping")
-    func deletedTextRendersRemovalHunks() {
+    @Test("Long lines retain horizontal overflow") @MainActor
+    func longLinesScrollHorizontally() async throws {
         var file = PRReviewDemo.diff().files[0]
-        file.status = "deleted"
-        file.hunks = [file.hunks[1]]
+        file.hunks[0].lines[0].text = String(repeating: "syntheticGardenValue", count: 80)
+        let mounted = mount(file: file, size: CGSize(width: 500, height: 260))
+        defer { mounted.window.close() }
+        _ = await waitUntil { mounted.view.renderedIdentity != nil }
 
-        let rendered = PRReviewDiffRenderer.render(file: file)
-
-        #expect(rendered.text.string.contains("-old"))
-        #expect(rendered.index.entries.contains {
-            $0.kind == "del" && $0.side == .before && $0.oldLine == 8 && $0.newLine == nil
-        })
+        let width = try await mounted.view.evaluateJavaScript("document.documentElement.scrollWidth") as? Double
+        #expect((width ?? 0) > 500)
     }
 
-    @Test("Word emphasis reaches the native text view without changing source text")
+    @Test("A scroll requested before page readiness reaches the requested hunk") @MainActor
+    func queuesInitialScroll() async throws {
+        var file = PRReviewDemo.diff().files[0]
+        file.hunks = [file.hunks[0]]
+        file.hunks[0].lines = (1...100).map {
+            PRReviewDiffLine(kind: "context", oldNumber: $0, newNumber: $0, text: "let seed\($0) = \($0)")
+        }
+        let mounted = mount(file: file, size: CGSize(width: 700, height: 220))
+        defer { mounted.view.tearDown(); mounted.window.close() }
+        mounted.view.scrollToLine(90, side: .after)
+        let ready = await waitUntil { mounted.view.renderedIdentity != nil }
+        try #require(ready)
+        var visible = false
+        for _ in 0..<100 {
+            visible = (try? await mounted.view.evaluateJavaScript("(() => { const r = document.querySelector('diffs-container').shadowRoot.querySelector('[data-line=\"90\"]').getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; })()")) as? Bool ?? false
+            if visible { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(visible)
+    }
+
     @MainActor
-    func wordEmphasisReachesNativeTextView() async throws {
-        let file = PRReviewDiffFile(
-            path: "Sources/Garden/Planting.swift",
-            oldPath: nil,
-            status: "modified",
-            additions: 1,
-            deletions: 1,
-            binary: false,
-            truncated: false,
-            hunks: [
-                PRReviewDiffHunk(
-                    oldStart: 1,
-                    oldLines: 2,
-                    newStart: 1,
-                    newLines: 2,
-                    header: "@@ -1,2 +1,2 @@",
-                    lines: [
-                        PRReviewDiffLine(kind: "del", oldNumber: 1, newNumber: nil, text: "let seed = oldValue"),
-                        PRReviewDiffLine(kind: "add", oldNumber: nil, newNumber: 1, text: "let seed = newValue"),
-                    ]
-                )
-            ]
-        )
-        let size = CGSize(width: 640, height: 240)
+    private func mount(
+        file: PRReviewDiffFile,
+        size: CGSize = CGSize(width: 760, height: 360)
+    ) -> (window: NSWindow, view: PRReviewDiffTextView) {
         let hosting = NSHostingView(rootView:
-            PRReviewDiffText(file: file)
+            PRReviewDiffText(file: file, baseSHA: "synthetic-base", headSHA: "synthetic-head")
                 .frame(width: size.width, height: size.height)
                 .environment(\.colorScheme, .dark)
         )
@@ -122,79 +161,18 @@ struct PRReviewDiffTextTests {
         window.contentView = hosting
         window.alphaValue = 0
         window.orderFrontRegardless()
-        defer { window.close() }
-
-        for _ in 0..<8 {
-            hosting.layoutSubtreeIfNeeded()
-            window.displayIfNeeded()
-            await Task.yield()
-            try await Task.sleep(for: .milliseconds(25))
-        }
-
-        let textView = try #require(descendants(hosting).compactMap { $0 as? PRReviewDiffTextView }.first)
-        let storage = try #require(textView.textStorage)
-        #expect(storage.string.contains("-let seed = oldValue\n"))
-        #expect(storage.string.contains("+let seed = newValue\n"))
-
-        var backgroundRanges: [NSRange] = []
-        storage.enumerateAttribute(
-            .backgroundColor,
-            in: NSRange(location: 0, length: storage.length)
-        ) { value, range, _ in
-            if value != nil { backgroundRanges.append(range) }
-        }
-        #expect(backgroundRanges.count == 2)
-
-        let entry = try #require(textView.lineIndex.entries.first { $0.kind == "add" })
-        #expect(entry.side == .after)
-        #expect(entry.newLine == 1)
-
-        let selection = try #require(textView.lineIndex.selection(
-            path: file.path,
-            oldPath: file.oldPath ?? "",
-            text: storage.string as NSString,
-            range: NSRange(location: 0, length: storage.length)
-        ))
-        #expect(selection.text.contains("oldValue"))
-        #expect(selection.text.contains("newValue"))
+        hosting.layoutSubtreeIfNeeded()
+        let view = descendants(hosting).compactMap { $0 as? PRReviewDiffTextView }.first!
+        return (window, view)
     }
 
-    @Test("Long code expands the native document in both scrolling directions") @MainActor
-    func longCodeSizesScrollableDocument() async throws {
-        var file = PRReviewDemo.diff().files[0]
-        var lines: [PRReviewDiffLine] = []
-        for number in 1...80 {
-            var line = file.hunks[0].lines[0]
-            line.oldNumber = number
-            line.newNumber = number
-            line.text = "let syntheticValue\(number) = \"" + String(repeating: "garden", count: 35) + "\""
-            lines.append(line)
+    @MainActor
+    private func waitUntil(_ condition: () -> Bool) async -> Bool {
+        for _ in 0..<400 {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(25))
         }
-        file.hunks[0].lines = lines
-        file.hunks = [file.hunks[0]]
-
-        let size = CGSize(width: 640, height: 320)
-        let hosting = NSHostingView(rootView: PRReviewDiffText(file: file).frame(width: size.width, height: size.height))
-        hosting.frame = CGRect(origin: .zero, size: size)
-        let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.contentView = hosting
-        window.alphaValue = 0
-        window.orderFrontRegardless()
-        defer { window.close() }
-
-        for _ in 0..<8 {
-            hosting.layoutSubtreeIfNeeded()
-            window.displayIfNeeded()
-            await Task.yield()
-            try await Task.sleep(for: .milliseconds(25))
-        }
-        let textView = try #require(descendants(hosting).compactMap { $0 as? PRReviewDiffTextView }.first)
-        let clip = try #require(textView.enclosingScrollView?.contentView)
-
-        #expect(textView.frame.width > clip.bounds.width)
-        #expect(textView.frame.height > clip.bounds.height)
-        #expect(textView.string.contains("syntheticValue80"))
+        return condition()
     }
 
     @MainActor

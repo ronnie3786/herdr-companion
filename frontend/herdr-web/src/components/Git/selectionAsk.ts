@@ -78,7 +78,8 @@ export function selectionAskContext(
   range: Range,
 ): SelectionAskContext {
   const elements = selectedLineElements(container, range);
-  const perLine = elements.map((el) => selectedTextWithinElement(el, range)).filter((s) => s.trim().length > 0);
+  const exactLines = elements.map((el) => selectedTextWithinElement(el, range));
+  const perLine = exactLines.filter((s) => s.trim().length > 0);
   const lines: SelectedDiffLine[] = elements.map((element) => ({
     lineNumber: lineNumberFor(element),
     lineType: element.getAttribute("data-line-type"),
@@ -89,7 +90,7 @@ export function selectionAskContext(
   const code = perLine.length > 0 ? normalizeSelectedCode(perLine.join("\n")) : normalizeSelectedCode(selectionText);
   return {
     code,
-    exactCode: perLine.length > 0 ? perLine.join("\n") : selectionText,
+    exactCode: exactLines.some((line) => line.length > 0) ? exactLines.join("\n") : selectionText,
     spans: lines.flatMap((line) => line.lineNumber === null ? [] : [{
       side: line.lineType === "change-deletion" || line.lineType === "deletion" ? "old" as const :
         line.lineType === "change-addition" || line.lineType === "addition" ? "new" as const : "unknown" as const,

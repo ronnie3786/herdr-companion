@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Testing
+import WebKit
 @testable import herdr_harness_mac
 
 @MainActor
@@ -100,9 +101,8 @@ struct PRReviewRenderTests {
         let split = try #require(descendants(hosting).compactMap { $0 as? NSSplitView }.first)
         let rail = try #require(split.subviews.first)
         let textView = try #require(descendants(hosting).compactMap { $0 as? PRReviewDiffTextView }.first)
-        let codeViewport = try #require(textView.enclosingScrollView?.contentView)
         let railRect = rail.convert(rail.bounds, to: hosting)
-        let codeViewportRect = codeViewport.convert(codeViewport.bounds, to: hosting)
+        let codeViewportRect = textView.convert(textView.bounds, to: hosting)
         let minimumRemainingWidth = size.width - PRReviewFilesLayout.maximumRailWidth - 20
 
         #expect(railRect.width >= PRReviewFilesLayout.minimumRailWidth - 1)
@@ -113,10 +113,7 @@ struct PRReviewRenderTests {
         #expect(codeViewportRect.maxX >= size.width - 20)
         #expect(codeViewportRect.height > size.height * 0.6)
         #expect(split.frame.height > size.height * 0.72)
-        #expect(textView.string.contains("struct SeedCatalog {}"))
-        #expect(textView.isLineVisible(2, side: .after))
-        #expect(textView.enclosingScrollView?.hasVerticalScroller == true)
-        #expect(textView.enclosingScrollView?.hasHorizontalScroller == true)
+        #expect(textView.renderedPlainText.contains("struct SeedCatalog {}"))
     }
 
     @Test("Deleted and partial file views keep available code visible")
@@ -160,11 +157,11 @@ struct PRReviewRenderTests {
                 try await Task.sleep(for: .milliseconds(25))
             }
             let textView = try #require(descendants(hosting).compactMap { $0 as? PRReviewDiffTextView }.first)
-            #expect(!textView.string.isEmpty, "\(mode) review should keep available code visible")
+            #expect(!textView.renderedPlainText.isEmpty, "\(mode) review should keep available code visible")
             if mode == "deleted" {
-                #expect(textView.string.contains("-old"))
+                #expect(textView.renderedPlainText.contains("-old"))
             } else {
-                #expect(textView.string.contains("struct SeedCatalog {}"))
+                #expect(textView.renderedPlainText.contains("struct SeedCatalog {}"))
             }
         }
     }
@@ -354,11 +351,9 @@ struct PRReviewRenderTests {
 
         let split = try #require(descendants(hosting).compactMap { $0 as? NSSplitView }.first)
         let rail = try #require(split.subviews.first)
-        let scrollView = try #require(textView.enclosingScrollView)
-        let codeViewport = try #require(scrollView.contentView)
         let railRect = rail.convert(rail.bounds, to: hosting)
-        let codeColumnRect = scrollView.convert(scrollView.bounds, to: hosting)
-        let codeViewportRect = codeViewport.convert(codeViewport.bounds, to: hosting)
+        let codeColumnRect = textView.convert(textView.bounds, to: hosting)
+        let codeViewportRect = codeColumnRect
 
         #expect(railRect.width >= PRReviewFilesLayout.minimumRailWidth - 1)
         #expect(railRect.width <= PRReviewFilesLayout.maximumRailWidth + 1)
@@ -368,10 +363,7 @@ struct PRReviewRenderTests {
         #expect(codeViewportRect.width > railRect.width * 0.5)
         #expect(codeViewportRect.height > size.height * 0.5)
         #expect(split.frame.height > size.height * 0.55)
-        #expect(textView.string.contains("struct SeedCatalog {}"))
-        #expect(textView.isLineVisible(2, side: .after))
-        #expect(textView.enclosingScrollView?.hasVerticalScroller == true)
-        #expect(textView.enclosingScrollView?.hasHorizontalScroller == true)
+        #expect(textView.renderedPlainText.contains("struct SeedCatalog {}"))
 
         let segmentedControls = descendants(hosting).compactMap { $0 as? NSSegmentedControl }
         #expect(
@@ -381,88 +373,44 @@ struct PRReviewRenderTests {
     }
 
     @Test(
-        "Change rows, gutters, and emphasis stay visible at default and enlarged scales",
+        "Shared renderer keeps syntax and spacious lines at default and enlarged scales",
         arguments: [HerdrFontScale.default, HerdrFontScale.xxLarge]
     )
     func changeTreatmentIsVisible(fontScale: HerdrFontScale) async throws {
-        let render = try await mountDiff(
-            PRReviewDiffFile(
-                path: "Sources/Garden/Planting.swift",
-                oldPath: nil,
-                status: "modified",
-                additions: 1,
-                deletions: 1,
-                binary: false,
-                truncated: false,
-                hunks: [
-                    PRReviewDiffHunk(
-                        oldStart: 1,
-                        oldLines: 3,
-                        newStart: 1,
-                        newLines: 3,
-                        header: "@@ -1,3 +1,3 @@",
-                        lines: [
-                            PRReviewDiffLine(kind: "context", oldNumber: 1, newNumber: 1, text: "import Foundation"),
-                            PRReviewDiffLine(kind: "del", oldNumber: 2, newNumber: nil, text: "let seed = oldValue"),
-                            PRReviewDiffLine(kind: "add", oldNumber: nil, newNumber: 2, text: "let seed = newValue"),
-                            PRReviewDiffLine(kind: "context", oldNumber: 3, newNumber: 3, text: "print(\"done\")"),
-                        ]
-                    )
-                ]
-            ),
-            fontScale: fontScale
+        let file = PRReviewDemo.diff().files[0]
+        let size = CGSize(width: 820, height: 300)
+        let hosting = NSHostingView(rootView:
+            PRReviewDiffText(file: file)
+                .frame(width: size.width, height: size.height)
+                .environment(\.herdrFontScale, fontScale)
         )
-        defer { render.window.close() }
+        hosting.frame = CGRect(origin: .zero, size: size)
+        let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = hosting
+        window.alphaValue = 0
+        window.orderFrontRegardless()
+        defer { window.close() }
 
-        let addEntry = try #require(render.textView.lineIndex.entries.first { $0.kind == "add" })
-        let delEntry = try #require(render.textView.lineIndex.entries.first { $0.kind == "del" })
-        let addLine = try components(HerdrDiffStyle.lineColor(for: "add"))
-        let delLine = try components(HerdrDiffStyle.lineColor(for: "del"))
-        let addGutter = try components(HerdrDiffStyle.gutterColor(for: "add"))
-        let delGutter = try components(HerdrDiffStyle.gutterColor(for: "del"))
-        let addEmphasis = composite(HerdrDiffStyle.addition, opacity: HerdrDiffStyle.emphasisOpacity, over: addLine)
-        let delEmphasis = composite(HerdrDiffStyle.deletion, opacity: HerdrDiffStyle.emphasisOpacity, over: delLine)
-
-        let rightEdge = render.textView.bounds.width - 3
-        expect(
-            try sample(CGPoint(x: rightEdge, y: fragmentRect(for: addEntry, in: render).midY), in: render),
-            matches: addLine,
-            tolerance: 0.05
-        )
-        expect(
-            try sample(CGPoint(x: rightEdge, y: fragmentRect(for: delEntry, in: render).midY), in: render),
-            matches: delLine,
-            tolerance: 0.05
-        )
-        expect(
-            try closestPixel(in: gutterRect(for: addEntry, in: render), to: addGutter, in: render).color,
-            matches: addGutter,
-            tolerance: 0.05
-        )
-        expect(
-            try closestPixel(in: gutterRect(for: delEntry, in: render), to: delGutter, in: render).color,
-            matches: delGutter,
-            tolerance: 0.05
-        )
-
-        let storage = try #require(render.textView.textStorage)
-        let emphasisRanges = backgroundRanges(in: storage)
-        let addEmphasisRange = try #require(emphasisRanges.first {
-            NSLocationInRange($0.location, entryRange(addEntry))
-        })
-        let delEmphasisRange = try #require(emphasisRanges.first {
-            NSLocationInRange($0.location, entryRange(delEntry))
-        })
-        expect(
-            try closestPixel(in: enclosingRect(for: addEmphasisRange, in: render), to: addEmphasis, in: render).color,
-            matches: addEmphasis,
-            tolerance: 0.05
-        )
-        expect(
-            try closestPixel(in: enclosingRect(for: delEmphasisRange, in: render), to: delEmphasis, in: render).color,
-            matches: delEmphasis,
-            tolerance: 0.05
-        )
+        let view = try #require(await waitForDiffTextView(in: hosting, window: window))
+        for _ in 0..<80 where view.renderedIdentity == nil {
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        let result = try await view.evaluateJavaScript("""
+        (() => {
+          const host = document.querySelector('diffs-container');
+          return {
+            scale: getComputedStyle(host).getPropertyValue('--herdr-diff-font-scale').trim(),
+            lineHeight: getComputedStyle(host).getPropertyValue('--diffs-line-height').trim(),
+            changed: host?.shadowRoot?.querySelectorAll('[data-line-type="change-addition"], [data-line-type="change-deletion"]').length ?? 0,
+            emphasis: host?.shadowRoot?.querySelectorAll('[data-diff-span]').length ?? 0
+          };
+        })()
+        """)
+        let values = try #require(result as? [String: Any])
+        #expect(values["scale"] as? String == String(fontScale.rawValue))
+        #expect(values["lineHeight"] as? String == "1.85")
+        #expect((values["changed"] as? Int ?? 0) > 0)
+        #expect((values["emphasis"] as? Int ?? 0) > 0)
     }
 
     private func demoStore() -> PRReviewStore {
@@ -498,261 +446,12 @@ struct PRReviewRenderTests {
             await Task.yield()
             try? await Task.sleep(for: .milliseconds(25))
             if let textView = descendants(hosting).compactMap({ $0 as? PRReviewDiffTextView }).first,
-               !textView.string.isEmpty {
-                if let layoutManager = textView.layoutManager, let textContainer = textView.textContainer {
-                    layoutManager.ensureLayout(for: textContainer)
-                }
+               !textView.renderedPlainText.isEmpty {
                 return textView
             }
         }
         return nil
     }
-}
-
-// MARK: - Rendered diff pixels
-
-/// Mounts the native diff offscreen and samples what it actually painted.
-/// `PRReviewDiffStyleTests` owns the exhaustive treatment matrix; these helpers
-/// exist so the render suite can also prove the treatment survives the default
-/// and enlarged text scales and the popped-out window's own store.
-private struct MountedDiffRender {
-    let window: NSWindow
-    let textView: PRReviewDiffTextView
-    let layoutManager: NSLayoutManager
-    let textContainer: NSTextContainer
-    let bitmap: NSBitmapImageRep
-    let scale: CGFloat
-}
-
-@MainActor
-extension PRReviewRenderTests {
-    fileprivate func mountDiff(
-        _ file: PRReviewDiffFile,
-        fontScale: HerdrFontScale,
-        size: CGSize = CGSize(width: 820, height: 300)
-    ) async throws -> MountedDiffRender {
-        let hosting = NSHostingView(rootView:
-            PRReviewDiffText(file: file)
-                .frame(width: size.width, height: size.height)
-                .environment(\.colorScheme, .dark)
-                .environment(\.herdrFontScale, fontScale)
-        )
-        hosting.frame = CGRect(origin: .zero, size: size)
-        hosting.appearance = NSAppearance(named: .darkAqua)
-        let window = NSWindow(
-            contentRect: hosting.frame,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = .black
-        window.contentView = hosting
-        window.alphaValue = 0
-        window.orderFrontRegardless()
-
-        for _ in 0..<8 {
-            hosting.layoutSubtreeIfNeeded()
-            window.displayIfNeeded()
-            await Task.yield()
-            try await Task.sleep(for: .milliseconds(25))
-        }
-
-        let textView = try #require(descendants(hosting).compactMap { $0 as? PRReviewDiffTextView }.first)
-        let layoutManager = try #require(textView.layoutManager)
-        let textContainer = try #require(textView.textContainer)
-        layoutManager.ensureLayout(for: textContainer)
-
-        let scale: CGFloat = 2
-        let bitmap = try #require(NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: max(1, Int(ceil(textView.bounds.width * scale))),
-            pixelsHigh: max(1, Int(ceil(textView.bounds.height * scale))),
-            bitsPerSample: 8,
-            samplesPerPixel: 4,
-            hasAlpha: true,
-            isPlanar: false,
-            colorSpaceName: .deviceRGB,
-            bytesPerRow: 0,
-            bitsPerPixel: 0
-        ))
-        bitmap.size = textView.bounds.size
-        textView.cacheDisplay(in: textView.bounds, to: bitmap)
-
-        return MountedDiffRender(
-            window: window,
-            textView: textView,
-            layoutManager: layoutManager,
-            textContainer: textContainer,
-            bitmap: bitmap,
-            scale: scale
-        )
-    }
-
-    fileprivate func entryRange(_ entry: PRReviewLineIndex.Entry) -> NSRange {
-        NSRange(location: entry.utf16Offset, length: entry.length)
-    }
-
-    fileprivate func fragmentRect(for entry: PRReviewLineIndex.Entry, in render: MountedDiffRender) -> NSRect {
-        let glyphs = render.layoutManager.glyphRange(forCharacterRange: entryRange(entry), actualCharacterRange: nil)
-        let used = render.layoutManager.lineFragmentUsedRect(forGlyphAt: glyphs.location, effectiveRange: nil)
-        return used.offsetBy(
-            dx: render.textView.textContainerOrigin.x,
-            dy: render.textView.textContainerOrigin.y
-        )
-    }
-
-    fileprivate func gutterRect(for entry: PRReviewLineIndex.Entry, in render: MountedDiffRender) -> NSRect {
-        enclosingRect(
-            for: NSRange(location: entry.utf16Offset, length: entry.gutterLength),
-            in: render
-        )
-    }
-
-    fileprivate func enclosingRect(for range: NSRange, in render: MountedDiffRender) -> NSRect {
-        let glyphs = render.layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
-        var union = NSRect.null
-        render.layoutManager.enumerateEnclosingRects(
-            forGlyphRange: glyphs,
-            withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
-            in: render.textContainer
-        ) { rect, _ in
-            union = union.union(rect)
-        }
-        return union.offsetBy(
-            dx: render.textView.textContainerOrigin.x,
-            dy: render.textView.textContainerOrigin.y
-        )
-    }
-
-    fileprivate func sample(
-        _ point: CGPoint,
-        in render: MountedDiffRender
-    ) throws -> (red: Double, green: Double, blue: Double) {
-        let bounds = render.textView.bounds
-        let viewY = render.textView.isFlipped ? point.y - bounds.minY : bounds.maxY - point.y
-        let pixelX = Int(((point.x - bounds.minX) * render.scale).rounded())
-        let pixelY = Int((viewY * render.scale).rounded())
-        return try resolve(pixelX: pixelX, pixelY: pixelY, in: render)
-    }
-
-    fileprivate func closestPixel(
-        in rect: NSRect,
-        to expected: (red: Double, green: Double, blue: Double),
-        in render: MountedDiffRender
-    ) throws -> (color: (red: Double, green: Double, blue: Double), distance: Double) {
-        let bounds = render.textView.bounds
-        let top = render.textView.isFlipped ? rect.minY - bounds.minY : bounds.maxY - rect.maxY
-        let bottom = render.textView.isFlipped ? rect.maxY - bounds.minY : bounds.maxY - rect.minY
-        let minX = max(0, Int(((rect.minX - bounds.minX) * render.scale).rounded(.down)))
-        let maxX = min(render.bitmap.pixelsWide - 1, Int(((rect.maxX - bounds.minX) * render.scale).rounded(.up)))
-        let minY = max(0, Int((top * render.scale).rounded(.down)))
-        let maxY = min(render.bitmap.pixelsHigh - 1, Int((bottom * render.scale).rounded(.up)))
-        guard minX <= maxX, minY <= maxY else { throw DiffSampleError.emptyRect }
-
-        var best: ((red: Double, green: Double, blue: Double), Double)?
-        for y in minY...maxY {
-            for x in minX...maxX {
-                guard let color = render.bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { continue }
-                let sample = (
-                    red: Double(color.redComponent),
-                    green: Double(color.greenComponent),
-                    blue: Double(color.blueComponent)
-                )
-                let distance = channelDistance(sample, expected)
-                if best == nil || distance < best!.1 {
-                    best = (sample, distance)
-                }
-            }
-        }
-        return try #require(best)
-    }
-
-    fileprivate func backgroundRanges(in text: NSAttributedString) -> [NSRange] {
-        var ranges: [NSRange] = []
-        text.enumerateAttribute(.backgroundColor, in: NSRange(location: 0, length: text.length)) { value, range, _ in
-            if value != nil { ranges.append(range) }
-        }
-        return ranges
-    }
-
-    fileprivate func expect(
-        _ sample: (red: Double, green: Double, blue: Double),
-        matches expected: (red: Double, green: Double, blue: Double),
-        tolerance: Double = 0.02,
-        sourceLocation: SourceLocation = #_sourceLocation
-    ) {
-        #expect(
-            abs(sample.red - expected.red) < tolerance,
-            "red \(sample.red) differs from \(expected.red)",
-            sourceLocation: sourceLocation
-        )
-        #expect(
-            abs(sample.green - expected.green) < tolerance,
-            "green \(sample.green) differs from \(expected.green)",
-            sourceLocation: sourceLocation
-        )
-        #expect(
-            abs(sample.blue - expected.blue) < tolerance,
-            "blue \(sample.blue) differs from \(expected.blue)",
-            sourceLocation: sourceLocation
-        )
-    }
-
-    fileprivate func composite(
-        _ color: HerdrDiffStyle.ChangeColor,
-        opacity: Double,
-        over base: (red: Double, green: Double, blue: Double)
-    ) -> (red: Double, green: Double, blue: Double) {
-        (
-            opacity * Double(color.red) / 255 + (1 - opacity) * base.red,
-            opacity * Double(color.green) / 255 + (1 - opacity) * base.green,
-            opacity * Double(color.blue) / 255 + (1 - opacity) * base.blue
-        )
-    }
-
-    fileprivate func components(
-        _ color: NSColor?,
-        sourceLocation: SourceLocation = #_sourceLocation
-    ) throws -> (red: Double, green: Double, blue: Double) {
-        let resolved = try #require(color?.usingColorSpace(.sRGB), sourceLocation: sourceLocation)
-        return (
-            red: Double(resolved.redComponent),
-            green: Double(resolved.greenComponent),
-            blue: Double(resolved.blueComponent)
-        )
-    }
-
-    private func resolve(
-        pixelX: Int,
-        pixelY: Int,
-        in render: MountedDiffRender
-    ) throws -> (red: Double, green: Double, blue: Double) {
-        let x = min(max(pixelX, 0), render.bitmap.pixelsWide - 1)
-        let y = min(max(pixelY, 0), render.bitmap.pixelsHigh - 1)
-        let color = try #require(render.bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB))
-        return (
-            red: Double(color.redComponent),
-            green: Double(color.greenComponent),
-            blue: Double(color.blueComponent)
-        )
-    }
-
-    private func channelDistance(
-        _ lhs: (red: Double, green: Double, blue: Double),
-        _ rhs: (red: Double, green: Double, blue: Double)
-    ) -> Double {
-        max(
-            abs(lhs.red - rhs.red),
-            abs(lhs.green - rhs.green),
-            abs(lhs.blue - rhs.blue)
-        )
-    }
-}
-
-private enum DiffSampleError: Error {
-    case emptyRect
 }
 
 private final class PRReviewMissingDiffURLProtocol: URLProtocol, @unchecked Sendable {

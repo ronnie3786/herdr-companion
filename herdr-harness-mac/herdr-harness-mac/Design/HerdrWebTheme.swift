@@ -127,20 +127,16 @@ enum HerdrWebTheme {
           content: "/"; position: absolute; right: 0; bottom: 0; direction: ltr;
         }
         .hz-diff-title { direction: rtl; text-align: left; }
-        /* These public host variables cross the diff renderer's shadow boundary. */
+        /* Host surfaces cross Pierre's shadow boundary; the shared renderer owns all styling. */
         diffs-container {
-          --diffs-bg: \(hex(HerdrTheme.graphite));
-          --diffs-bg-context: \(hex(HerdrTheme.graphite));
-          --diffs-bg-context-gutter: \(hex(HerdrTheme.ink));
-          --diffs-fg: \(hex(HerdrTheme.text));
-          --diffs-fg-number: \(hex(HerdrTheme.muted));
-          --diffs-bg-separator: \(hex(HerdrTheme.selection));
-          \(HerdrDiffStyle.cssVariables)
-          --diffs-bg-hover-override: \(hex(HerdrTheme.elevated));
-          --diffs-bg-selection-override: \(hex(HerdrTheme.selection));
-          --diffs-bg-selection-number-override: \(hex(HerdrTheme.selection));
-          --diffs-font-size: 12px;
-          --diffs-line-height: 1.65;
+          --herdr-diff-background: \(hex(HerdrTheme.graphite));
+          --herdr-diff-gutter-background: \(hex(HerdrTheme.ink));
+          --herdr-diff-foreground: \(hex(HerdrTheme.text));
+          --herdr-diff-muted: \(hex(HerdrTheme.muted));
+          --herdr-diff-separator: \(hex(HerdrTheme.selection));
+          --herdr-diff-hover: \(hex(HerdrTheme.elevated));
+          --herdr-diff-selection: \(hex(HerdrTheme.selection));
+          --herdr-diff-selection-number: \(hex(HerdrTheme.selection));
         }
         """
     }

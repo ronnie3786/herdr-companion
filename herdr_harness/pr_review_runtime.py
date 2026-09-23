@@ -420,7 +420,14 @@ class PRReviewRuntime:
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         stage = "metadata"
         try:
-            previous_files = {item["path"]: item for item in self.diff(review_id)["files"]} if refresh else {}
+            previous_files = {}
+            if refresh:
+                try:
+                    previous_files = {item["path"]: item for item in self.diff(review_id)["files"]}
+                except (OSError, json.JSONDecodeError):
+                    # Refresh must also repair interrupted legacy artifact
+                    # writes, not require the broken old patch to decode first.
+                    pass
             metadata = self._metadata(review, directory)
             stage = "checkout"
             worktree, merge_base = self._checkout(review, metadata)

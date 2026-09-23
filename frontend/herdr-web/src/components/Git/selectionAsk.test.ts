@@ -83,6 +83,21 @@ describe("selectionAskContext", () => {
     }
   });
 
+  it("preserves Unicode, whitespace and blank lines in exact mixed-side selections", () => {
+    const lines = [fakeLine(9, "deletion"), fakeLine(10, "change-addition"), fakeLine(11, "context")];
+    vi.stubGlobal("Range", { START_TO_START: 0, END_TO_END: 2 });
+    try {
+      const context = selectionAskContext(fakeContainer(lines), "fallback",
+        slicingRange(lines, new Map([[lines[0], "  let seed = '🌻'"], [lines[1], ""], [lines[2], "\treturn seed  "]])));
+      expect(context.exactCode).toBe("  let seed = '🌻'\n\n\treturn seed  ");
+      expect(context.spans).toEqual([
+        { side: "old", startLine: 9, endLine: 9 },
+        { side: "new", startLine: 10, endLine: 10 },
+        { side: "unknown", startLine: 11, endLine: 11 },
+      ]);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it("survives selections without line metadata (raw fallback)", () => {
     const context = selectionAskContext(fakeContainer([]), "+only text", fakeRange([]));
     expect(context.code).toBe("+only text");

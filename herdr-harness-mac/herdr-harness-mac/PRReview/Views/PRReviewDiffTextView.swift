@@ -1,139 +1,112 @@
 import AppKit
+import CryptoKit
 import SwiftUI
+import WebKit
 
-struct PRReviewLineIndex: Equatable, Sendable {
-    struct Entry: Equatable, Sendable {
-        var utf16Offset: Int
-        var length: Int
-        var gutterLength: Int = 0
-        var side: PRReviewSide?
-        var oldLine: Int?
-        var newLine: Int?
-        var kind: String
-    }
-
-    var entries: [Entry]
-
-    func selection(path: String, oldPath: String, text: NSString, range: NSRange) -> PRReviewSelection? {
-        guard range.length > 0, NSMaxRange(range) <= text.length else { return nil }
-        let selected = entries.filter { entry in
-            entry.side != nil && NSIntersectionRange(entry.range, range).length > 0
-        }
-        guard !selected.isEmpty else { return nil }
-
-        var spans: [PRReviewSelection.Span] = []
-        var selectedLines: [String] = []
-        for entry in selected {
-            guard let side = entry.side,
-                  let line = side == .before ? entry.oldLine : entry.newLine
-            else { continue }
-            if let last = spans.last, last.side == side, last.end + 1 == line {
-                spans[spans.count - 1].end = line
-            } else {
-                spans.append(.init(side: side, start: line, end: line))
-            }
-
-            let selectedRange = NSIntersectionRange(entry.range, range)
-            let codeRange = NSRange(
-                location: entry.utf16Offset + entry.gutterLength,
-                length: max(0, entry.length - entry.gutterLength - 1)
-            )
-            let selectedCode = NSIntersectionRange(selectedRange, codeRange)
-            selectedLines.append(selectedCode.length > 0 ? text.substring(with: selectedCode) : "")
-        }
-        guard !spans.isEmpty else { return nil }
-        return PRReviewSelection(
-            path: path,
-            oldPath: oldPath,
-            spans: spans,
-            text: selectedLines.joined(separator: "\n")
-        )
-    }
-}
-
-private extension PRReviewLineIndex.Entry {
-    var range: NSRange {
-        NSRange(location: utf16Offset, length: length)
-    }
-}
-
-final class PRReviewDiffTextView: NSTextView, NSPopoverDelegate {
-    var lineIndex = PRReviewLineIndex(entries: [])
-    var selectionPath = ""
-    var selectionOldPath = ""
-    var highlight: (start: Int, end: Int, side: PRReviewSide)?
+/// Local WebKit host for the same bundled Pierre renderer used by Chat Git and
+/// First Mate Git. The document and every syntax grammar ship in the app, so an
+/// already-loaded PR remains readable without the companion or network.
+final class PRReviewDiffTextView: WKWebView, WKScriptMessageHandler, WKNavigationDelegate, NSPopoverDelegate {
     var askAI: ((PRReviewSelection, NSView, CGRect) -> Void)?
     var questionDraftChanged: ((Bool) -> Void)?
-    var askPopover: NSPopover?
-    private var endpoint: CGPoint?
-    private var flashedRange: NSRange?
-    private var flashTimer: Timer?
+    var onVisibleLinesChange: ((String, Int, Int, PRReviewSide) -> Void)?
+    private(set) var renderedIdentity: String?
+    private(set) var renderedPlainText = ""
+    private(set) var isRendererReady = false
+    private(set) var visibleLines: (path: String, start: Int, end: Int, side: PRReviewSide)?
+    private var pendingPayload: PRReviewDiffRenderer.Payload?
+    private var pendingScroll: (line: Int, side: PRReviewSide)?
+    private var rendererURL: URL?
+    private var askPopover: NSPopover?
 
-    override func mouseDown(with event: NSEvent) {
-        askPopover?.close()
-        super.mouseDown(with: event)
-        if let window {
-            endpoint = convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
-        }
-        showAskAction()
+    init() {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        super.init(frame: .zero, configuration: configuration)
+        configuration.userContentController.add(self, name: Self.bridgeName)
+        navigationDelegate = self
+        setAccessibilityIdentifier("pr-review-diff-text")
+        allowsBackForwardNavigationGestures = false
+        allowsLinkPreview = false
+        underPageBackgroundColor = NSColor(HerdrTheme.graphite)
+        loadBundledRenderer()
     }
 
-    override func menu(for event: NSEvent) -> NSMenu? {
-        let menu = super.menu(for: event)
-        endpoint = convert(event.locationInWindow, from: nil)
-        if selectedSelection != nil {
-            let item = NSMenuItem(title: "Ask AI about selection…", action: #selector(showQuestionPopover), keyEquivalent: "")
-            item.target = self
-            menu?.insertItem(item, at: 0)
-        }
-        return menu
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("PRReviewDiffTextView must be created programmatically")
     }
 
-    override func drawBackground(in rect: NSRect) {
-        // The base surface must be painted first; the text view's own
-        // background drawing would otherwise cover every change highlight.
-        super.drawBackground(in: rect)
-        guard let layoutManager, let textContainer else { return }
-
-        for entry in lineIndex.entries {
-            drawRowBackground(for: entry, layoutManager: layoutManager, textContainer: textContainer)
+    func render(_ payload: PRReviewDiffRenderer.Payload) {
+        if pendingPayload?.identity != payload.identity {
+            closePopover()
+            visibleLines = nil
+            renderedIdentity = nil
+            pendingScroll = nil
         }
-        if let highlight {
-            let matching = lineIndex.entries.filter { entry in
-                guard entry.side == highlight.side else { return false }
-                let line = highlight.side == .before ? entry.oldLine : entry.newLine
-                return line.map { highlight.start...highlight.end ~= $0 } ?? false
-            }
-            drawHighlight(matching, layoutManager: layoutManager, textContainer: textContainer)
-        }
-        if let flashedRange {
-            drawFullWidthBackground(
-                color: NSColor(HerdrTheme.accent).withAlphaComponent(0.24),
-                glyphRange: layoutManager.glyphRange(forCharacterRange: flashedRange, actualCharacterRange: nil),
-                textContainer: textContainer
-            )
-        }
+        pendingPayload = payload
+        renderedPlainText = payload.plainText
+        guard isRendererReady else { return }
+        send(payload)
     }
 
     func scrollToLine(_ line: Int, side: PRReviewSide) {
-        guard let entry = lineIndex.entries.first(where: { entry in
-            entry.side == side && (side == .before ? entry.oldLine : entry.newLine) == line
-        }) else { return }
-        scrollRangeToVerticalCenter(entry.range)
-        flash(entry.range)
+        guard line > 0 else { return }
+        pendingScroll = (line, side)
+        sendPendingScroll()
+    }
+
+    private func sendPendingScroll() {
+        guard let pendingScroll, let payload = pendingPayload,
+              isRendererReady, renderedIdentity == payload.identity,
+              let data = try? JSONSerialization.data(withJSONObject: [
+                "line": pendingScroll.line, "side": pendingScroll.side == .before ? "old" : "new",
+                "identity": payload.identity,
+              ]), let json = String(data: data, encoding: .utf8)
+        else { return }
+        self.pendingScroll = nil
+        evaluateJavaScript("window.herdrNativeDiff?.scrollToLine(\(json))")
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
+        navigationAction.request.url == rendererURL ? .allow : .cancel
     }
 
     func isLineVisible(_ line: Int, side: PRReviewSide) -> Bool {
-        guard let entry = lineIndex.entries.first(where: { entry in
-            entry.side == side && (side == .before ? entry.oldLine : entry.newLine) == line
-        }), let layoutManager, textContainer != nil else { return false }
-        let glyphRange = layoutManager.glyphRange(forCharacterRange: entry.range, actualCharacterRange: nil)
-        var isVisible = false
-        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { _, usedRect, _, _, _ in
-            let rect = usedRect.offsetBy(dx: self.textContainerOrigin.x, dy: self.textContainerOrigin.y)
-            isVisible = isVisible || rect.intersects(self.visibleRect)
+        guard let visibleLines, visibleLines.side == side else { return false }
+        return visibleLines.start...visibleLines.end ~= line
+    }
+
+    func closePopover() {
+        askPopover?.close()
+        askPopover = nil
+    }
+
+    func tearDown() {
+        closePopover()
+        stopLoading()
+        configuration.userContentController.removeScriptMessageHandler(forName: Self.bridgeName)
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.frameInfo.isMainFrame, message.name == Self.bridgeName,
+              let body = message.body as? [String: Any], let kind = body["kind"] as? String else { return }
+        guard kind == "bridgeReady" || body["identity"] as? String == pendingPayload?.identity else { return }
+        switch kind {
+        case "bridgeReady":
+            isRendererReady = true
+            if let pendingPayload { send(pendingPayload) }
+        case "ready":
+            renderedIdentity = body["identity"] as? String
+            sendPendingScroll()
+        case "visibleLines":
+            receiveVisibleLines(body)
+        case "ask":
+            receiveAsk(body)
+        default:
+            break
         }
-        return isVisible
     }
 
     func popoverDidClose(_ notification: Notification) {
@@ -141,32 +114,57 @@ final class PRReviewDiffTextView: NSTextView, NSPopoverDelegate {
         askPopover = nil
     }
 
-    private var selectedSelection: PRReviewSelection? {
-        lineIndex.selection(path: selectionPath, oldPath: selectionOldPath, text: string as NSString, range: selectedRange())
+    private static let bridgeName = "herdrDiffBridge"
+
+    private func loadBundledRenderer() {
+        let bundles = [Bundle.main, Bundle(for: PRReviewDiffTextView.self)]
+        guard let url = bundles.lazy.compactMap({
+            $0.url(forResource: "PRReviewDiffRenderer", withExtension: "html")
+        }).first else {
+            loadHTMLString("<html><body style='background:#20212c;color:#e8eaed'>Diff renderer unavailable.</body></html>", baseURL: nil)
+            return
+        }
+        rendererURL = url
+        loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
     }
 
-    private func showAskAction() {
-        guard selectedSelection != nil, let anchor = selectionAnchor() else { return }
-        let popover = NSPopover()
-        popover.behavior = .transient
-        popover.contentViewController = NSHostingController(rootView:
-            Button("Ask AI…", systemImage: "sparkles") { [weak self] in
-                self?.showQuestionPopover()
-            }
-            .buttonStyle(.plain)
-            .herdrFont(.callout)
-            .padding(10)
-            .foregroundStyle(HerdrTheme.text)
-            .background(HerdrTheme.graphite)
-            .preferredColorScheme(.dark)
-        )
-        askPopover = popover
-        popover.show(relativeTo: anchor, of: self, preferredEdge: .maxY)
+    private func send(_ payload: PRReviewDiffRenderer.Payload) {
+        guard let data = try? JSONEncoder().encode(payload) else { return }
+        let encoded = data.base64EncodedString()
+        evaluateJavaScript("window.herdrNativeDiff?.renderJSON('\(encoded)')")
     }
 
-    @objc private func showQuestionPopover() {
-        guard let selection = selectedSelection, let anchor = selectionAnchor() else { return }
-        askPopover?.close()
+    private func receiveVisibleLines(_ body: [String: Any]) {
+        guard let path = body["path"] as? String,
+              let start = body["start"] as? Int,
+              let end = body["end"] as? Int,
+              let sideValue = body["side"] as? String,
+              ["old", "new"].contains(sideValue), start > 0, end >= start,
+              path == pendingPayload?.path
+        else { return }
+        let side: PRReviewSide = sideValue == "old" ? .before : .after
+        visibleLines = (path, start, end, side)
+        onVisibleLinesChange?(path, start, end, side)
+    }
+
+    private func receiveAsk(_ body: [String: Any]) {
+        guard let path = body["path"] as? String,
+              let oldPath = body["oldPath"] as? String,
+              let rawSpans = body["spans"] as? [[String: Any]],
+              let rect = Self.rect(from: body["rect"]),
+              path == pendingPayload?.path, oldPath == pendingPayload?.oldPath
+        else { return }
+        let spans = Self.coalescedSpans(rawSpans)
+        guard !spans.isEmpty else { return }
+        let selectedText = (body["exactCode"] as? String) ?? (body["code"] as? String) ?? ""
+        let selection = PRReviewSelection(path: path, oldPath: oldPath, spans: spans, text: selectedText)
+        let anchor = isFlipped ? rect : CGRect(x: rect.minX, y: bounds.height - rect.maxY, width: rect.width, height: rect.height)
+        let clipped = anchor.intersection(bounds)
+        showQuestionPopover(selection: selection, anchor: clipped.isNull ? CGRect(x: 8, y: 8, width: 1, height: 1) : clipped)
+    }
+
+    private func showQuestionPopover(selection: PRReviewSelection, anchor: CGRect) {
+        closePopover()
         let popover = NSPopover()
         popover.behavior = .semitransient
         popover.contentSize = NSSize(width: 380, height: 250)
@@ -188,110 +186,30 @@ final class PRReviewDiffTextView: NSTextView, NSPopoverDelegate {
         popover.show(relativeTo: anchor, of: self, preferredEdge: .maxY)
     }
 
-    private func selectionAnchor() -> CGRect? {
-        guard let layoutManager, let textContainer, selectedRange().length > 0 else { return nil }
-        let glyphs = layoutManager.glyphRange(forCharacterRange: selectedRange(), actualCharacterRange: nil)
-        var rectangles: [CGRect] = []
-        layoutManager.enumerateEnclosingRects(
-            forGlyphRange: glyphs,
-            withinSelectedGlyphRange: glyphs,
-            in: textContainer
-        ) { rect, _ in
-            rectangles.append(rect.offsetBy(dx: self.textContainerOrigin.x, dy: self.textContainerOrigin.y))
-        }
-        return ChatQuoteAnchor.rect(selectionRects: rectangles, visibleRect: visibleRect, preferredPoint: endpoint)
+    private static func rect(from value: Any?) -> CGRect? {
+        guard let value = value as? [String: Any],
+              let x = value["x"] as? Double,
+              let y = value["y"] as? Double,
+              let width = value["width"] as? Double,
+              let height = value["height"] as? Double,
+              [x, y, width, height].allSatisfy(\.isFinite), width > 0, height > 0
+        else { return nil }
+        return CGRect(x: x, y: y, width: width, height: height)
     }
 
-    private func rowColor(for kind: String) -> NSColor? {
-        switch kind {
-        case "add", "del":
-            return HerdrDiffStyle.lineColor(for: kind)
-        case "hunk":
-            return NSColor(HerdrTheme.diffHunk).withAlphaComponent(0.16)
-        default:
-            return nil
-        }
-    }
-
-    /// Draws a changed row across the document, then paints its line-number
-    /// gutter with the production renderer's separately resolved colour rather
-    /// than layering another translucent tint over the row.
-    private func drawRowBackground(
-        for entry: PRReviewLineIndex.Entry,
-        layoutManager: NSLayoutManager,
-        textContainer: NSTextContainer
-    ) {
-        guard let lineColor = rowColor(for: entry.kind) else { return }
-        let glyphRange = layoutManager.glyphRange(forCharacterRange: entry.range, actualCharacterRange: nil)
-        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { _, usedRect, _, _, _ in
-            let origin = self.textContainerOrigin
-            let fragment = usedRect.offsetBy(dx: origin.x, dy: origin.y)
-            lineColor.setFill()
-            NSRect(x: 0, y: fragment.minY, width: self.bounds.width, height: fragment.height).fill()
-        }
-
-        guard let gutterColor = HerdrDiffStyle.gutterColor(for: entry.kind), entry.gutterLength > 0 else { return }
-        let gutterGlyphs = layoutManager.glyphRange(
-            forCharacterRange: NSRange(location: entry.utf16Offset, length: entry.gutterLength),
-            actualCharacterRange: nil
-        )
-        layoutManager.enumerateEnclosingRects(
-            forGlyphRange: gutterGlyphs,
-            withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
-            in: textContainer
-        ) { rect, _ in
-            gutterColor.setFill()
-            rect.offsetBy(dx: self.textContainerOrigin.x, dy: self.textContainerOrigin.y).fill()
-        }
-    }
-
-    private func drawFullWidthBackground(color: NSColor, glyphRange: NSRange, textContainer: NSTextContainer) {
-        guard let layoutManager else { return }
-        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { _, usedRect, _, _, _ in
-            let origin = self.textContainerOrigin
-            let fragment = usedRect.offsetBy(dx: origin.x, dy: origin.y)
-            color.setFill()
-            NSRect(x: 0, y: fragment.minY, width: self.bounds.width, height: fragment.height).fill()
-        }
-    }
-
-    private func drawHighlight(_ entries: [PRReviewLineIndex.Entry], layoutManager: NSLayoutManager, textContainer: NSTextContainer) {
-        var union: NSRect?
-        for entry in entries {
-            let glyphRange = layoutManager.glyphRange(forCharacterRange: entry.range, actualCharacterRange: nil)
-            layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { _, usedRect, _, _, _ in
-                let rect = usedRect.offsetBy(dx: self.textContainerOrigin.x, dy: self.textContainerOrigin.y)
-                union = union.map { $0.union(rect) } ?? rect
+    private static func coalescedSpans(_ rawSpans: [[String: Any]]) -> [PRReviewSelection.Span] {
+        var result: [PRReviewSelection.Span] = []
+        for raw in rawSpans {
+            guard let line = raw["startLine"] as? Int, line > 0,
+                  let sideValue = raw["side"] as? String, ["old", "new", "unknown"].contains(sideValue) else { continue }
+            let side: PRReviewSide = (raw["side"] as? String) == "old" ? .before : .after
+            if let last = result.last, last.side == side, last.end + 1 == line {
+                result[result.count - 1].end = line
+            } else {
+                result.append(.init(side: side, start: line, end: line))
             }
         }
-        guard let union else { return }
-        let ring = union.insetBy(dx: 1.5, dy: 1.5)
-        let path = NSBezierPath(roundedRect: ring, xRadius: HerdrTheme.compactRadius, yRadius: HerdrTheme.compactRadius)
-        NSColor(HerdrTheme.accent).setStroke()
-        path.lineWidth = 1.5
-        path.stroke()
-    }
-
-    private func scrollRangeToVerticalCenter(_ range: NSRange) {
-        guard let layoutManager, textContainer != nil, let clipView = enclosingScrollView?.contentView else { return }
-        let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
-        let fragment = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
-        let targetY = fragment.midY + textContainerOrigin.y - clipView.bounds.height / 2
-        let maximumY = max(0, bounds.height - clipView.bounds.height)
-        clipView.scroll(to: NSPoint(x: clipView.bounds.minX, y: min(max(0, targetY), maximumY)))
-        enclosingScrollView?.reflectScrolledClipView(clipView)
-    }
-
-    private func flash(_ range: NSRange) {
-        flashedRange = range
-        needsDisplay = true
-        flashTimer?.invalidate()
-        flashTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                self?.flashedRange = nil
-                self?.needsDisplay = true
-            }
-        }
+        return result
     }
 }
 
@@ -306,48 +224,18 @@ struct PRReviewDiffText: NSViewRepresentable {
     var questionDraftChanged: ((Bool) -> Void)?
     var onVisibleLinesChange: ((String, Int, Int, PRReviewSide) -> Void)?
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> PRReviewDiffTextView {
+        let view = PRReviewDiffTextView()
+        context.coordinator.install(view)
+        return view
     }
 
-    func makeNSView(context: Context) -> NSScrollView {
-        let textView = PRReviewDiffTextView()
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.drawsBackground = true
-        textView.backgroundColor = NSColor(HerdrTheme.graphite)
-        textView.textContainerInset = NSSize(width: 12, height: 12)
-        textView.textContainer?.lineFragmentPadding = 8
-        textView.minSize = .zero
-        textView.maxSize = NSSize(
-            width: CGFloat.greatestFiniteMagnitude,
-            height: CGFloat.greatestFiniteMagnitude
-        )
-        textView.isHorizontallyResizable = true
-        textView.isVerticallyResizable = true
-        textView.autoresizingMask = []
-        textView.textContainer?.containerSize = NSSize(
-            width: CGFloat.greatestFiniteMagnitude,
-            height: CGFloat.greatestFiniteMagnitude
-        )
-        textView.textContainer?.widthTracksTextView = false
-        textView.textContainer?.heightTracksTextView = false
-        textView.selectedTextAttributes = [.backgroundColor: NSColor(HerdrTheme.accent).withAlphaComponent(0.3)]
-        let scroll = NSScrollView()
-        scroll.documentView = textView
-        scroll.hasVerticalScroller = true
-        scroll.hasHorizontalScroller = true
-        scroll.autohidesScrollers = true
-        scroll.drawsBackground = true
-        scroll.backgroundColor = NSColor(HerdrTheme.graphite)
-        scroll.contentView.postsBoundsChangedNotifications = true
-        scroll.contentView.postsFrameChangedNotifications = true
-        context.coordinator.install(on: scroll, textView: textView)
-        return scroll
-    }
-
-    func updateNSView(_ scroll: NSScrollView, context: Context) {
-        guard let textView = scroll.documentView as? PRReviewDiffTextView else { return }
+    func updateNSView(_ view: PRReviewDiffTextView, context: Context) {
+        view.askAI = askAI
+        view.questionDraftChanged = questionDraftChanged
+        view.onVisibleLinesChange = onVisibleLinesChange
         let identity = Coordinator.RenderIdentity(
             path: file.path,
             oldPath: file.oldPath,
@@ -355,33 +243,40 @@ struct PRReviewDiffText: NSViewRepresentable {
             headSHA: headSHA,
             fontScale: fontScale
         )
-        if context.coordinator.shouldSetAttributedString(for: identity) {
-            let rendered = PRReviewDiffRenderer.render(file: file, fontScale: fontScale)
-            textView.textStorage?.setAttributedString(rendered.text)
-            textView.lineIndex = rendered.index
+        if context.coordinator.shouldRender(identity: identity, file: file, highlight: highlight) {
+            view.render(PRReviewDiffRenderer.payload(
+                file: file,
+                identity: identity.value,
+                fontScale: fontScale,
+                highlight: highlight
+            ))
             context.coordinator.lastRenderedIdentity = identity
+            context.coordinator.lastFile = file
+            context.coordinator.lastHighlight = RenderHighlight(highlight)
         }
-        context.coordinator.sizeDocumentToFitContent()
-        textView.selectionPath = file.path
-        textView.selectionOldPath = file.oldPath ?? ""
-        textView.highlight = highlight
-        textView.askAI = askAI
-        textView.questionDraftChanged = questionDraftChanged
-        textView.needsDisplay = true
-        context.coordinator.configure(path: file.path, onVisibleLinesChange: onVisibleLinesChange)
-        if let scrollRequest, scrollRequest.path == file.path, context.coordinator.lastScrollToken != scrollRequest.token {
+        if let scrollRequest, scrollRequest.path == file.path,
+           context.coordinator.lastScrollToken != scrollRequest.token {
             context.coordinator.lastScrollToken = scrollRequest.token
-            DispatchQueue.main.async {
-                textView.scrollToLine(scrollRequest.line, side: scrollRequest.side)
-                context.coordinator.scheduleVisibleLinesUpdate()
-            }
+            view.scrollToLine(scrollRequest.line, side: scrollRequest.side)
         }
-        context.coordinator.scheduleVisibleLinesUpdate()
     }
 
-    static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
+    static func dismantleNSView(_ view: PRReviewDiffTextView, coordinator: Coordinator) {
+        view.tearDown()
         coordinator.invalidate()
-        (scroll.documentView as? PRReviewDiffTextView)?.askPopover?.close()
+    }
+
+    fileprivate struct RenderHighlight: Equatable {
+        let start: Int
+        let end: Int
+        let side: PRReviewSide
+
+        init?(_ value: (start: Int, end: Int, side: PRReviewSide)?) {
+            guard let value else { return nil }
+            start = value.start
+            end = value.end
+            side = value.side
+        }
     }
 
     @MainActor
@@ -392,214 +287,126 @@ struct PRReviewDiffText: NSViewRepresentable {
             let baseSHA: String
             let headSHA: String
             let fontScale: HerdrFontScale
+
+            var value: String {
+                [path, oldPath ?? "", baseSHA, headSHA, String(fontScale.rawValue)]
+                    .joined(separator: "\u{1f}")
+            }
         }
 
         var lastScrollToken: Int?
         var lastRenderedIdentity: RenderIdentity?
-        private weak var scrollView: NSScrollView?
-        private weak var textView: PRReviewDiffTextView?
-        private var boundsObserver: NSObjectProtocol?
-        private var frameObserver: NSObjectProtocol?
-        private var visibilityTask: Task<Void, Never>?
-        private var path = ""
-        private var onVisibleLinesChange: ((String, Int, Int, PRReviewSide) -> Void)?
+        var lastFile: PRReviewDiffFile?
+        fileprivate var lastHighlight: RenderHighlight?
+        private weak var view: PRReviewDiffTextView?
 
         func shouldSetAttributedString(for identity: RenderIdentity) -> Bool {
             lastRenderedIdentity != identity
         }
 
-        func install(on scrollView: NSScrollView, textView: PRReviewDiffTextView) {
-            self.scrollView = scrollView
-            self.textView = textView
-            boundsObserver = NotificationCenter.default.addObserver(
-                forName: NSView.boundsDidChangeNotification,
-                object: scrollView.contentView,
-                queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor in
-                    self?.scheduleVisibleLinesUpdate()
-                }
-            }
-            frameObserver = NotificationCenter.default.addObserver(
-                forName: NSView.frameDidChangeNotification,
-                object: scrollView.contentView,
-                queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor in
-                    self?.sizeDocumentToFitContent()
-                }
-            }
+        fileprivate func shouldRender(
+            identity: RenderIdentity,
+            file: PRReviewDiffFile,
+            highlight: (start: Int, end: Int, side: PRReviewSide)?
+        ) -> Bool {
+            shouldSetAttributedString(for: identity) || lastFile != file || lastHighlight != RenderHighlight(highlight)
         }
 
-        func configure(
-            path: String,
-            onVisibleLinesChange: ((String, Int, Int, PRReviewSide) -> Void)?
-        ) {
-            self.path = path
-            self.onVisibleLinesChange = onVisibleLinesChange
-        }
-
-        func scheduleVisibleLinesUpdate() {
-            visibilityTask?.cancel()
-            visibilityTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .milliseconds(100))
-                guard !Task.isCancelled else { return }
-                self?.reportVisibleLines()
-            }
-        }
-
-        func invalidate() {
-            if let boundsObserver {
-                NotificationCenter.default.removeObserver(boundsObserver)
-            }
-            if let frameObserver {
-                NotificationCenter.default.removeObserver(frameObserver)
-            }
-            visibilityTask?.cancel()
-        }
-
-        func sizeDocumentToFitContent() {
-            guard let scrollView,
-                  let textView,
-                  let layoutManager = textView.layoutManager,
-                  let textContainer = textView.textContainer
-            else { return }
-            layoutManager.ensureLayout(for: textContainer)
-            let used = layoutManager.usedRect(for: textContainer)
-            let horizontalInset = textView.textContainerInset.width * 2
-                + textContainer.lineFragmentPadding * 2
-            let verticalInset = textView.textContainerInset.height * 2
-            let viewport = scrollView.contentSize
-            textView.setFrameSize(NSSize(
-                width: max(viewport.width, ceil(used.width + horizontalInset)),
-                height: max(viewport.height, ceil(used.height + verticalInset))
-            ))
-        }
-
-        private func reportVisibleLines() {
-            guard let textView, let layoutManager = textView.layoutManager, textView.textContainer != nil else { return }
-            let visible = textView.visibleRect
-            let visibleEntries = textView.lineIndex.entries.filter { entry in
-                guard entry.kind != "hunk", entry.side != nil else { return false }
-                let glyphRange = layoutManager.glyphRange(forCharacterRange: entry.range, actualCharacterRange: nil)
-                let fragment = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
-                return fragment.offsetBy(dx: textView.textContainerOrigin.x, dy: textView.textContainerOrigin.y).intersects(visible)
-            }
-            guard let first = visibleEntries.first, let side = first.side else { return }
-            let lines = visibleEntries.compactMap { entry -> Int? in
-                guard entry.side == side else { return nil }
-                return side == .before ? entry.oldLine : entry.newLine
-            }
-            guard let start = lines.min(), let end = lines.max() else { return }
-            onVisibleLinesChange?(path, start, end, side)
-        }
+        func install(_ view: PRReviewDiffTextView) { self.view = view }
+        func invalidate() { view = nil }
     }
 }
 
 enum PRReviewDiffRenderer {
-    /// Emphasis is presentation polish; a pathological patch must not stall the
-    /// diff, so only the first replacement pairs keep word-level emphasis.
-    static let maximumEmphasisPairs = 256
-
-    static func render(
-        file: PRReviewDiffFile,
-        fontScale: HerdrFontScale = .medium
-    ) -> (text: NSAttributedString, index: PRReviewLineIndex) {
-        let result = NSMutableAttributedString()
-        var entries: [PRReviewLineIndex.Entry] = []
-        let font = NSFont.monospacedSystemFont(ofSize: 13 * fontScale.rawValue, weight: .regular)
-        let gutterColor = NSColor(HerdrTheme.muted)
-
-        func append(
-            gutter: String,
-            code: String,
-            side: PRReviewSide?,
-            old: Int?,
-            new: Int?,
-            kind: String,
-            codeColor: NSColor,
-            emphasis: [Range<Int>] = []
-        ) {
-            let offset = result.length
-            result.append(NSAttributedString(string: gutter, attributes: [.font: font, .foregroundColor: gutterColor]))
-            let codeStart = result.length
-            result.append(NSAttributedString(string: code + "\n", attributes: [.font: font, .foregroundColor: codeColor]))
-            if let emphasisColor = HerdrDiffStyle.emphasisColor(for: kind) {
-                for range in emphasis where range.count > 0 {
-                    let location = codeStart + 1 + range.lowerBound
-                    let nsRange = NSRange(location: location, length: range.count)
-                    guard NSMaxRange(nsRange) <= result.length else { continue }
-                    result.addAttribute(.backgroundColor, value: emphasisColor, range: nsRange)
-                }
-            }
-            entries.append(.init(
-                utf16Offset: offset,
-                length: ((gutter + code + "\n") as NSString).length,
-                gutterLength: (gutter as NSString).length,
-                side: side,
-                oldLine: old,
-                newLine: new,
-                kind: kind
-            ))
+    struct Payload: Encodable {
+        struct Highlight: Encodable {
+            let start: Int
+            let end: Int
+            let side: String
         }
 
-        var emphasisPairs = 0
-        for hunk in file.hunks {
-            append(gutter: "", code: hunk.header, side: nil, old: nil, new: nil, kind: "hunk", codeColor: NSColor(HerdrTheme.diffHunk))
-            let emphases = emphasisByLine(for: hunk.lines, pairs: &emphasisPairs)
-            for (index, line) in hunk.lines.enumerated() {
-                let side: PRReviewSide? = line.kind == "del" ? .before : .after
-                let old = line.oldNumber.map(String.init) ?? ""
-                let new = line.newNumber.map(String.init) ?? ""
-                let gutter = old.padding(toLength: 4, withPad: " ", startingAt: 0)
-                    + " │ " + new.padding(toLength: 4, withPad: " ", startingAt: 0) + "  "
-                let prefix = line.kind == "add" ? "+" : line.kind == "del" ? "-" : " "
-                let color: NSColor
-                switch line.kind {
-                case "add": color = NSColor(HerdrTheme.diffAdd)
-                case "del": color = NSColor(HerdrTheme.diffRemove)
-                default: color = NSColor(HerdrTheme.text)
-                }
-                append(gutter: gutter, code: prefix + line.text, side: side, old: line.oldNumber, new: line.newNumber,
-                       kind: line.kind, codeColor: color, emphasis: emphases[index] ?? [])
-            }
-        }
-        return (result, PRReviewLineIndex(entries: entries))
+        let identity: String
+        let path: String
+        let oldPath: String
+        let patch: String
+        let plainText: String
+        let fontScale: Double
+        let highlight: Highlight?
     }
 
-    /// Word-level emphasis for maximal removed runs immediately followed by
-    /// added runs. The pair budget is shared across the whole file so rendering
-    /// stays bounded, and earlier replacements always win.
-    private static func emphasisByLine(
-        for lines: [PRReviewDiffLine],
-        pairs: inout Int
-    ) -> [Int: [Range<Int>]] {
-        var result: [Int: [Range<Int>]] = [:]
-        var index = 0
-        while index < lines.count {
-            guard lines[index].kind == "del" else {
-                index += 1
-                continue
+    static func payload(
+        file: PRReviewDiffFile,
+        identity: String,
+        fontScale: HerdrFontScale = .medium,
+        highlight: (start: Int, end: Int, side: PRReviewSide)? = nil
+    ) -> Payload {
+        let patch = patch(for: file)
+        let digest = SHA256.hash(data: Data(patch.utf8)).map { String(format: "%02x", $0) }.joined()
+        return Payload(
+            identity: identity + ":" + digest,
+            path: file.path,
+            oldPath: file.oldPath ?? "",
+            patch: patch,
+            plainText: plainText(for: file),
+            fontScale: fontScale.rawValue,
+            highlight: highlight.map {
+                Payload.Highlight(start: $0.start, end: $0.end, side: $0.side == .before ? "old" : "new")
             }
-            let delStart = index
-            while index < lines.count, lines[index].kind == "del" { index += 1 }
-            let delEnd = index
-            let addStart = index
-            while index < lines.count, lines[index].kind == "add" { index += 1 }
-            let addEnd = index
-            guard addStart < addEnd else { continue }
+        )
+    }
 
-            for offset in 0..<min(delEnd - delStart, addEnd - addStart) {
-                guard pairs < maximumEmphasisPairs else { return result }
-                pairs += 1
-                guard let emphasis = PRReviewIntralineDiff.emphasis(
-                    old: lines[delStart + offset].text,
-                    new: lines[addStart + offset].text
-                ), !emphasis.isEmpty else { continue }
-                result[delStart + offset] = emphasis.old
-                result[addStart + offset] = emphasis.new
+    static func patch(for file: PRReviewDiffFile) -> String {
+        let oldPath = file.oldPath?.isEmpty == false ? (file.oldPath ?? file.path) : file.path
+        let before = quotedPath("a/" + oldPath)
+        let after = quotedPath("b/" + file.path)
+        var lines = ["diff --git \(before) \(after)"]
+        switch file.status {
+        case "added":
+            lines.append("new file mode 100644")
+            lines.append("--- /dev/null")
+            lines.append("+++ \(after)")
+        case "deleted":
+            lines.append("deleted file mode 100644")
+            lines.append("--- \(before)")
+            lines.append("+++ /dev/null")
+        default:
+            lines.append("--- \(before)")
+            lines.append("+++ \(after)")
+        }
+        for hunk in file.hunks {
+            // Use the structured coordinates, not a presentation-only header
+            // (legacy/demo snapshots may supply just @@). Partial hunks count
+            // only the lines actually available so the parser can show them.
+            let oldCount = hunk.lines.filter { $0.kind != "add" }.count
+            let newCount = hunk.lines.filter { $0.kind != "del" }.count
+            let suffix = hunk.header.components(separatedBy: "@@").dropFirst(2).joined(separator: "@@")
+            lines.append("@@ -\(hunk.oldStart),\(oldCount) +\(hunk.newStart),\(newCount) @@\(suffix)")
+            for line in hunk.lines {
+                let prefix = line.kind == "add" ? "+" : line.kind == "del" ? "-" : " "
+                lines.append(prefix + line.text)
             }
         }
-        return result
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    private static func quotedPath(_ path: String) -> String {
+        guard path.utf8.contains(where: { $0 <= 32 || $0 >= 127 || $0 == 34 || $0 == 92 }) else { return path }
+        return "\"" + path.utf8.map { byte -> String in
+            switch byte {
+            case 34: return "\\\""
+            case 92: return "\\\\"
+            case 0...31, 127...255: return String(format: "\\%03o", byte)
+            default: return String(UnicodeScalar(byte))
+            }
+        }.joined() + "\""
+    }
+
+    static func plainText(for file: PRReviewDiffFile) -> String {
+        file.hunks.flatMap { hunk in
+            [hunk.header] + hunk.lines.map { line in
+                let prefix = line.kind == "add" ? "+" : line.kind == "del" ? "-" : " "
+                return prefix + line.text
+            }
+        }.joined(separator: "\n")
     }
 }

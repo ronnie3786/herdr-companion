@@ -1,66 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { registerCustomCSSVariableTheme } from "@pierre/diffs";
-import { FileDiff as PierreFileDiff } from "@pierre/diffs/react";
+import { useEffect, useRef, useState } from "react";
 import { Columns2, FileCode2, Rows3, TriangleAlert, WrapText } from "lucide-react";
 import {
   EMPTY_GIT_ENTRY,
   useGitStore,
   type DiffSheetState,
 } from "../../store/gitStore";
-import { parseDiffPresentation } from "./diffPresentation";
+import {
+  SharedDiffRenderer,
+  type SharedDiffOverflow as DiffOverflow,
+  type SharedDiffStyle as DiffStyle,
+} from "./SharedDiffRenderer";
 import { SelectionAskLauncher } from "./SelectionAskLauncher";
 import "./git.css";
 
-type DiffStyle = "unified" | "split";
-type DiffOverflow = "scroll" | "wrap";
-
 const DIFF_STYLE_KEY = "herdr.git.diff-style";
 const DIFF_OVERFLOW_KEY = "herdr.git.diff-overflow";
-const HERDR_DIFF_THEME = "herdr-dark";
-
-registerCustomCSSVariableTheme(HERDR_DIFF_THEME, {
-  foreground: "#e8eaed",
-  background: "#0b0e13",
-  "token-comment": "#7d8590",
-  "token-string": "#a5d6ff",
-  "token-constant": "#79c0ff",
-  "token-keyword": "#ff7b72",
-  "token-parameter": "#e8eaed",
-  "token-function": "#d2a8ff",
-  "token-string-expression": "#7ee787",
-  "token-punctuation": "#8b949e",
-  "token-link": "#58a6ff",
-  "ansi-black": "#484f58",
-  "ansi-red": "#ff7b72",
-  "ansi-green": "#7ee787",
-  "ansi-yellow": "#e3b341",
-  "ansi-blue": "#79c0ff",
-  "ansi-magenta": "#d2a8ff",
-  "ansi-cyan": "#56d4dd",
-  "ansi-white": "#e8eaed",
-});
-
-const PIERRE_THEME_OVERRIDES = `
-  :host {
-    --diffs-font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    --diffs-header-font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
-    --diffs-font-size: 11.5px;
-    --diffs-line-height: 1.55;
-    --diffs-bg: #0b0e13;
-    --diffs-bg-context: #0b0e13;
-    --diffs-bg-context-gutter: #0d1117;
-    --diffs-bg-separator: rgba(56, 139, 253, 0.15);
-    --diffs-bg-addition-override: rgba(46, 160, 67, 0.30);
-    --diffs-bg-addition-number-override: rgba(46, 160, 67, 0.42);
-    --diffs-bg-addition-emphasis-override: rgba(46, 160, 67, 0.55);
-    --diffs-bg-deletion-override: rgba(248, 81, 73, 0.30);
-    --diffs-bg-deletion-number-override: rgba(248, 81, 73, 0.42);
-    --diffs-bg-deletion-emphasis-override: rgba(248, 81, 73, 0.55);
-    --diffs-bg-hover-override: rgba(47, 129, 247, 0.09);
-    --diffs-bg-selection-override: rgba(47, 129, 247, 0.18);
-    --diffs-bg-selection-number-override: rgba(47, 129, 247, 0.28);
-  }
-`;
 
 /**
  * The persistent diff half of the Git workbench.
@@ -81,11 +35,6 @@ export function DiffInspector({ paneId, allowsAsk = true }: { paneId: string; al
     state.diffSheet?.paneId === paneId ? state.diffSheet : null,
   );
   const entry = useGitStore((state) => state.byPane[paneId] ?? EMPTY_GIT_ENTRY);
-  const parsed = useMemo(
-    () => parseDiffPresentation(sheet?.file ?? "", sheet?.diff ?? ""),
-    [sheet?.diff, sheet?.file],
-  );
-
   useEffect(() => persistPreference(DIFF_STYLE_KEY, diffStyle), [diffStyle]);
   useEffect(() => persistPreference(DIFF_OVERFLOW_KEY, diffOverflow), [diffOverflow]);
 
@@ -169,32 +118,13 @@ export function DiffInspector({ paneId, allowsAsk = true }: { paneId: string; al
           </div>
         ) : sheet.diff === "" ? (
           <p className="hz-diff-state hz-diff-empty">(empty diff)</p>
-        ) : parsed.fileDiff !== null ? (
-          <PierreFileDiff
-            key={parsed.fileDiff.cacheKey}
-            fileDiff={parsed.fileDiff}
-            options={{
-              themeType: "dark",
-              theme: { dark: HERDR_DIFF_THEME, light: HERDR_DIFF_THEME },
-              unsafeCSS: PIERRE_THEME_OVERRIDES,
-              disableFileHeader: true,
-              diffStyle,
-              overflow: diffOverflow,
-              diffIndicators: "bars",
-              lineDiffType: "word-alt",
-              hunkSeparators: "line-info",
-              lineHoverHighlight: "both",
-            }}
-          />
         ) : (
-          <div className="hz-diff-plain-fallback">
-            <span>
-              {parsed.fallbackReason === "metadata-only"
-                ? "This change contains Git metadata rather than line-by-line text. Showing the raw patch."
-                : "Syntax rendering was unavailable for this patch. Showing the raw diff."}
-            </span>
-            <pre>{sheet.diff}</pre>
-          </div>
+          <SharedDiffRenderer
+            file={sheet.file}
+            patch={sheet.diff}
+            diffStyle={diffStyle}
+            overflow={diffOverflow}
+          />
         )}
       </div>
       {allowsAsk ? (

@@ -10,8 +10,10 @@ materials retain their own licenses and copyright notices.
   `frontend/herdr-web/public/third-party-licenses/pierre-diffs-LICENSE.md`.
 - JavaScript dependencies: exact resolved versions and package integrity are
   recorded in the frontend and Pi package lockfiles. Installed packages include
-  their upstream license files. Regenerate the dependency inventory when updating
-  these lockfiles.
+  their upstream license files. The Mac's offline shared diff bundle also includes
+  `Resources/PRReviewDiffRenderer-LICENSES.txt`, generated from the actual bundled
+  modules (including React, Pierre and Shiki). Regenerate it with
+  `npm --prefix frontend/herdr-web run build:mac-diff` when changing that bundle.
 
 The upstream Herdr terminal, Pi, Git, GitHub CLI, Atlassian CLI, Tailscale, and
 configured model/speech services are separately installed integrations. They are

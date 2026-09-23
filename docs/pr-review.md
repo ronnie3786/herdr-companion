@@ -214,15 +214,21 @@ diff or findings through `herdr-pr-review`, then calling `select-file`, `scroll-
 `highlight-lines` while it speaks. Navigation actions are refused while a sheet or an unsent
 Ask AI draft is open, so nothing the reviewer typed is lost.
 
+## Shared renderer maintenance
+
+The shared renderer lives in `frontend/herdr-web/src/components/Git/SharedDiffRenderer.tsx`.
+Chat and First Mate use it through `DiffInspector`; PR Review supplies a structured patch through
+its local WebKit adapter. After changing the renderer, theme, or native bridge page, run
+`npm --prefix frontend/herdr-web run build:mac-diff` and commit the regenerated Mac resources.
+The frontend tests rebuild into a temporary directory and compare the bundled renderer assets and license notices byte
+for byte, so an improvement cannot silently ship to only one surface.
+
 ## Verification
 
 - Python: `.venv/bin/python -m unittest tests.test_pr_review_store tests.test_pr_review_runtime tests.test_pr_review_http tests.test_pr_review_cli tests.test_pr_review_questions tests.test_pr_review_diff`.
 - Mac unit (required exact-SHA Verify): `xcodebuild … test -only-testing:herdr-harness-macTests/PRReview*`.
-  That suite covers the client contract, store and window scoping, routing identity, the render
-  suite (including popped-out window sizing and the rendered change palette at default and
-  enlarged text scales), the pinned @pierre/diffs dark-scheme formula resolved in WebKit against
-  the native rendering of the same synthetic patch (a formula-resolution probe of the shared
-  theme, not the live embedded Git page), and still renders the section without a server in demo mode.
+  That suite covers the client contract, store and window scoping, routing identity, saved
+  question persistence, refresh presentation, the local WebKit renderer and synthetic demo layouts.
 - Mac interactive (final gate): `xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test -only-testing:herdr-harness-macUITests/HerdrPRReviewUITests`.
   That suite exercises the row and header context menus, two concurrent review windows with
   independent tabs and files, chat navigation with an unsent draft, duplicate-window focus, and

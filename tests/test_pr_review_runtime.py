@@ -247,6 +247,16 @@ class PRReviewRuntimeTests(unittest.TestCase):
         self.assertEqual(self.store.files(review["id"]), files)
         self.assertEqual(retained["tab_id"], "tab")
 
+    def test_refresh_repairs_an_interrupted_old_patch_write(self):
+        review = self._review()
+        self.runtime.prepare(review["id"])
+        current = self.store.get_review(review["id"])
+        directory = self.runtime._revision_directory(review["id"], current["base_sha"], current["head_sha"], current["merge_base_sha"])
+        (directory / "diff.json").write_text('{"files":')
+        self.runtime.prepare(review["id"], refresh=True)
+        self.assertEqual(self.store.get_review(review["id"])["status"], "ready")
+        self.assertTrue(self.runtime.diff(review["id"])["files"])
+
     def test_optional_viewed_sync_failure_does_not_fail_preparation(self):
         review = self._review()
         self.runner.on_call = lambda argv, kwargs: _Result(returncode=1) if argv[:3] == ["gh", "api", "graphql"] else None

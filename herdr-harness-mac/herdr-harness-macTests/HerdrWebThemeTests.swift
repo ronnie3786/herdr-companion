@@ -5,29 +5,14 @@ import WebKit
 @Suite("Embedded Mac reading theme", .serialized)
 @MainActor
 struct HerdrWebThemeTests {
-    @Test("Native PR Review styling shares the embedded Git palette")
-    func nativePRReviewSharesGitPalette() {
-        #expect(HerdrDiffStyle.addition == HerdrDiffStyle.ChangeColor(red: 46, green: 160, blue: 67))
-        #expect(HerdrDiffStyle.deletion == HerdrDiffStyle.ChangeColor(red: 248, green: 81, blue: 73))
-        #expect(HerdrDiffStyle.lineOpacity == 0.30)
-        #expect(HerdrDiffStyle.gutterOpacity == 0.42)
-        #expect(HerdrDiffStyle.emphasisOpacity == 0.55)
-        // The dark-scheme surface weights @pierre/diffs 1.3.2 mixes into a
-        // data-background diff; the native resolved colors depend on them.
-        #expect(HerdrDiffStyle.lineSurfaceWeight == 0.80)
-        #expect(HerdrDiffStyle.gutterSurfaceWeight == 0.85)
-
+    @Test("The Mac provides surfaces while the shared renderer owns change styling")
+    func embeddedGitUsesSharedTheme() {
         let css = HerdrWebTheme.css
-        for variable in [
-            "--diffs-bg-addition-override: rgb(46 160 67 / 0.30);",
-            "--diffs-bg-addition-number-override: rgb(46 160 67 / 0.42);",
-            "--diffs-bg-addition-emphasis-override: rgb(46 160 67 / 0.55);",
-            "--diffs-bg-deletion-override: rgb(248 81 73 / 0.30);",
-            "--diffs-bg-deletion-number-override: rgb(248 81 73 / 0.42);",
-            "--diffs-bg-deletion-emphasis-override: rgb(248 81 73 / 0.55);",
-        ] {
-            #expect(css.contains(variable), "Embedded Git theme is missing \(variable)")
-        }
+        #expect(css.contains("--herdr-diff-background:"))
+        #expect(css.contains("--herdr-diff-selection:"))
+        #expect(!css.contains("--diffs-bg-addition-override:"))
+        // Actual syntax, row colours and line spacing are asserted against the
+        // bundled production renderer in PRReviewDiffTextTests.
     }
 
     @Test("Report styling is installed separately from the embedded web theme")
@@ -83,26 +68,13 @@ struct HerdrWebThemeTests {
               const diff = document.createElement('diffs-container');
               document.body.appendChild(diff);
               const shadow = diff.attachShadow({mode: 'open'});
-              shadow.innerHTML = '<style>:host { --diffs-bg: #0b0e13; } p { background: var(--diffs-bg); }</style><p>Synthetic diff</p>';
+              shadow.innerHTML = '<style>:host { --diffs-bg: var(--herdr-diff-background, #0b0e13); } p { background: var(--diffs-bg); }</style><p>Synthetic diff</p>';
               return [getComputedStyle(document.body).backgroundColor,
                       getComputedStyle(document.body).color,
                       getComputedStyle(shadow.querySelector('p')).backgroundColor];
             })();
             """) as? [String]
         #expect(values == ["rgb(32, 33, 44)", "rgb(228, 229, 237)", "rgb(32, 33, 44)"])
-
-        let highlights = try await view.evaluateJavaScript("""
-            (() => {
-              const style = getComputedStyle(document.querySelector('diffs-container'));
-              return ['addition', 'deletion'].flatMap(kind =>
-                ['', '-number', '-emphasis'].map(part =>
-                  style.getPropertyValue(`--diffs-bg-${kind}${part}-override`).trim()));
-            })();
-            """) as? [String]
-        #expect(highlights == [
-            "rgb(46 160 67 / 0.30)", "rgb(46 160 67 / 0.42)", "rgb(46 160 67 / 0.55)",
-            "rgb(248 81 73 / 0.30)", "rgb(248 81 73 / 0.42)", "rgb(248 81 73 / 0.55)"
-        ])
 
         let fileStyles = try await view.evaluateJavaScript("""
             (() => {

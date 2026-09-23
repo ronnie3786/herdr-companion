@@ -22,6 +22,7 @@ struct PRReviewAskPopover: View {
                 Spacer()
                 Button("Cancel", action: dismiss)
                 Button("Send") { send(question) }.keyboardShortcut(.defaultAction).disabled(question.isEmpty)
+                    .accessibilityIdentifier("pr-review-send-question")
             }
         }
         .padding(HerdrTheme.cardPadding)

@@ -31,6 +31,7 @@ from .alerts import utc_now
 from .child_environment import agent_environment
 from .resources import pi_extension_path
 from .first_mate_context import FirstMateContext
+from .first_mate_link_discovery import FirstMateLinkDiscovery
 from .first_mate_routing import (
     ArchitectConfigurationError,
     DELEGATION_PROFILES,
@@ -90,6 +91,11 @@ delegate that work to a tracked lead/reviewer, then use its structured summary.
 Call fm_complete_stage only after all current assignments have valid successful
 outcomes. That always pauses for the human's next direction.
 Report blockers accurately and never infer success from an agent exit.
+When a pull request or share link is already known, from the human, a worker
+outcome, a tool result, or a discovered URL, retain it with fm_save_link so the
+human can reach it from this feature. Saving a link never creates, opens, or
+fetches a destination and never advances work; never create a pull request or
+change a stage just to obtain a link.
 
 Preserve existing authorization. Do not create a redundant approval request for
 an action the human already authorized. Do not merge, publish, deploy or delete
@@ -132,6 +138,9 @@ handoff, call fm_handoff with a thorough checkpoint and end your turn. Never
 compact; a new saved session will continue the same assignment. If you are a
 successor, inspect the checkpoint and workspace then fm_acknowledge_handoff
 before changing anything. All observable execution is retained in the work log.
+Use fm_save_link to retain a pull request or share URL the human should be able
+to reach from this feature. Save the exact URL without opening, fetching, or
+creating it; a link never creates a pull request and never advances a stage.
 For a read_only workspace, Pi's normal configured tools remain available. Treat
 read_only as an instruction not to edit workspace files, commits or branches, and
 do not perform unrelated or unauthorized actions; it is not a security sandbox
@@ -206,9 +215,23 @@ def _coordinator_state(snapshot: dict, claim: dict | None = None) -> dict:
                                                      "media_type", "content_hash", "generation",
                                                      "input_revision", "native_session_id"))
                                 for document in documents],
+        "link_references": _link_references(list(snapshot.get("links", [])), 20),
         "counts": {name: len(snapshot.get(name, [])) for name in
-                   ("visits", "assignments", "documents", "handoffs")},
+                   ("visits", "assignments", "documents", "handoffs", "links")},
     }
+
+
+def _link_references(links: list[dict], maximum: int = 20) -> list[dict]:
+    """Bounded public link references for agent status and router turns.
+
+    Provenance, private paths and transcripts stay out of model context; the
+    exact URL and identity remain available so a coordinator or worker can
+    reference a retained link without re-registering it.
+    """
+    return [{"id": link.get("id"), "url": link.get("url"), "kind": link.get("kind"),
+             "title": link.get("title"), "hidden": bool(link.get("hidden")),
+             "source": link.get("source"), "created_at": link.get("created_at")}
+            for link in links[:maximum]]
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -426,6 +449,7 @@ class FirstMateRuntime:
         self.context = FirstMateContext(self.jobs_root, self.context_target)
         from .first_mate_reliability import FirstMateReliability
         self.reliability = FirstMateReliability(self)
+        self.links = FirstMateLinkDiscovery(self.store, root=self.root)
 
     def capabilities(self) -> dict:
         return {"available": bool(self.pi_bin and self.extension and self.extension.is_file()),
@@ -1251,6 +1275,7 @@ class FirstMateRuntime:
                 # counts or uncertain state from this pass.
                 return
             self._actions()
+            self._discover_links()
             self.reliability.tick(jobs)
             if time.monotonic() - self._last_watch >= 10:
                 self._watch(jobs)
@@ -1297,6 +1322,13 @@ class FirstMateRuntime:
                                 continue
                             self._launch(job)
                             worker_count += 1
+
+    def _discover_links(self) -> None:
+        """Bounded automatic PR capture; storage faults never replay or drop saved links."""
+        try:
+            self.links.scan_once()
+        except Exception as exc:
+            self._record_runtime_error(exc, self.root / "link-discovery-error.json")
 
     def _recover_claim_gaps(self) -> None:
         """Complete DB-claim-to-spool creation after a crash, using the same ID.
@@ -1439,6 +1471,48 @@ class FirstMateRuntime:
             except Exception as exc:
                 _write_json(response, {"ok": False, "error": str(exc)[:1000]})
 
+    def _save_link(self, job: dict, params: dict) -> dict:
+        """Agent-facing link registration fenced to the exact live execution.
+
+        Advisors, ordinary Pi sessions, stale coordinator owners, and workers
+        whose generation, session, revision, or recovery fence changed cannot
+        mutate links. Provenance is derived server-side from the validated
+        dispatch; a caller cannot supply or forge it. Replaying the same spool
+        request is safe because the store deduplicates canonical URLs and
+        never overwrites a user title or hidden state.
+        """
+        if set(params) - {"url", "title", "kind"}:
+            raise FirstMateError("Link contains an unsupported field", code="invalid_request", status=400)
+        feature_id = job["feature_id"]
+        feature = self.store.get_feature(feature_id)
+        claim = job.get("claim") or {}
+        provenance: dict[str, str] = {}
+        if job["kind"] == "coordinator":
+            if feature.get("coordinator_owner") != job.get("owner"):
+                raise FirstMateError("Coordinator ownership changed", code="stale_owner")
+            if isinstance(claim.get("id"), str) and claim["id"]:
+                provenance["message_id"] = claim["id"]
+        elif job["kind"] == "worker":
+            claim_id = claim.get("id")
+            if not isinstance(claim_id, str) or not claim_id:
+                raise FirstMateError("Link save is outside this execution's active assignment scope")
+            assignment = self.store.get_assignment(claim_id)
+            if (assignment["feature_id"] != feature_id
+                    or assignment.get("generation") != claim.get("generation")
+                    or assignment.get("native_session_id") != job.get("native_session_id")
+                    or assignment.get("status") != "running"
+                    or feature.get("status") != "running"
+                    or not self.store.assignment_is_in_current_visit(assignment["id"])):
+                raise FirstMateError("Link save is outside this execution's active assignment scope", code="stale_owner")
+            provenance["assignment_id"] = assignment["id"]
+            if job.get("native_session_id"):
+                provenance["native_session_id"] = job["native_session_id"]
+        else:
+            raise ValueError("Tool is outside this execution's role and assignment scope")
+        provenance["observed_at"] = utc_now()
+        return self.store.register_link(feature_id, url=params.get("url"), title=params.get("title"),
+                                        kind=params.get("kind"), source="agent", provenance=provenance)
+
     def _tool(self, job: dict, action: str, params: dict, request_id: str) -> Any:
         feature_id = job["feature_id"]
         feature = self.store.get_feature(feature_id)
@@ -1457,9 +1531,11 @@ class FirstMateRuntime:
             # evidence as the public runtime snapshot, not frozen queued metadata.
             # Build that usage/session projection once for this status request.
             snapshot = self.snapshot(feature_id)
+            links = snapshot.get("links", [])
             return {"feature": snapshot["feature"], "visits": snapshot["visits"],
                     "assignments": [{key: value for key, value in a.items() if key != "prompt"} for a in snapshot["assignments"]],
                     "documents": snapshot["documents"], "memberships": snapshot.get("memberships", []),
+                    "links": _link_references(links, 50), "links_truncated": len(links) > 50,
                     "last_updates": [{"sequence": e["sequence"], "type": e["type"], "summary": e["summary"][:500], "created_at": e["created_at"]}
                                      for e in snapshot["events"][-10:]]}
         if action == "fm_read_document":
@@ -1485,6 +1561,8 @@ class FirstMateRuntime:
                                     "next_text_offset": offset + length if len(message["text"]) > offset + length else None,
                                     "total_characters": len(message["text"])} for message in session["messages"]]
             return session
+        if action == "fm_save_link":
+            return self._save_link(job, params)
         if action == "fm_delegate" and job["kind"] == "worker":
             parent = self.store.get_assignment(claim["id"])
             if parent["generation"] != claim["generation"] or parent["native_session_id"] != job["native_session_id"] or parent["status"] != "running":

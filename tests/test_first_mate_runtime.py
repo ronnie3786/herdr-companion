@@ -400,6 +400,131 @@ class FirstMateRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(FirstMateError, 'another feature'):
             self.runtime._tool(job, 'fm_read_session', {'native_session_id':other_native}, 'cross-session')
 
+    def test_agent_link_save_is_fenced_by_role_owner_generation_and_session(self):
+        feature = self.feature()
+        stale = {'feature_id': feature['id'], 'kind': 'coordinator',
+                 'claim': {'id': 'message-stale', 'role': 'user'}, 'owner': 'runtime_other'}
+        with self.assertRaisesRegex(FirstMateError, 'ownership changed'):
+            self.runtime._tool(stale, 'fm_save_link', {
+                'url': 'https://github.com/synthetic-owner/synthetic-repo/pull/1'}, 'save-stale')
+        self.assertEqual(self.store.list_links(feature['id']), [])
+
+        human = self.store.claim_message(feature['id'], self.runtime.owner)
+        coordinator = {'feature_id': feature['id'], 'kind': 'coordinator',
+                       'claim': human, 'owner': self.runtime.owner}
+        saved = self.runtime._tool(coordinator, 'fm_save_link', {
+            'url': 'https://github.com/synthetic-owner/synthetic-repo/pull/1/files',
+            'title': 'Synthetic review'}, 'save-coordinator')
+        self.assertEqual(saved['url'], 'https://github.com/synthetic-owner/synthetic-repo/pull/1')
+        self.assertEqual(saved['kind'], 'pull_request')
+        self.assertEqual(saved['title'], 'Synthetic review')
+        self.assertEqual(saved['source'], 'agent')
+        self.assertEqual(saved['provenance']['message_id'], human['id'])
+
+        visit = self.store.start_visit(feature['id'], 'planning', 'Planning', 'stage-links', 1, human['id'])
+        assignment = self.store.create_assignment(visit['id'], {
+            'title': 'Link evidence', 'role': 'reviewer', 'prompt': 'Inspect',
+            'request_id': 'assignment-links', 'input_revision': 1})
+        claim = self.store.claim_assignment(assignment['id'], self.runtime.owner)
+        worker = self.runtime._new_job(feature, kind='worker', prompt='Inspect', claim=claim)
+        native = 'native-link-worker'
+        self.runtime._bind(worker, native, worker['session_file'])
+        worker_saved = self.runtime._tool(worker, 'fm_save_link', {
+            'url': 'http://share.example.test:8443/private/report?token=synthetic#summary'}, 'save-worker')
+        self.assertEqual(worker_saved['kind'], 'link')
+        self.assertEqual(worker_saved['provenance']['assignment_id'], assignment['id'])
+        self.assertEqual(worker_saved['provenance']['native_session_id'], native)
+
+        advisor = {'feature_id': feature['id'], 'kind': 'advisor', 'claim': {}}
+        with self.assertRaisesRegex(ValueError, 'role and assignment scope'):
+            self.runtime._tool(advisor, 'fm_save_link', {
+                'url': 'https://github.com/synthetic-owner/synthetic-repo/pull/2'}, 'save-advisor')
+        forged = {**worker, 'claim': {**claim, 'generation': claim['generation'] + 1}}
+        with self.assertRaisesRegex(FirstMateError, 'active assignment scope'):
+            self.runtime._tool(forged, 'fm_save_link', {
+                'url': 'https://github.com/synthetic-owner/synthetic-repo/pull/3'}, 'save-forged-generation')
+        with self.assertRaisesRegex(FirstMateError, 'unsupported field'):
+            self.runtime._tool(worker, 'fm_save_link', {
+                'url': 'https://github.com/synthetic-owner/synthetic-repo/pull/4',
+                'provenance': {'native_session_id': 'forged'}}, 'save-forged-provenance')
+        self.assertEqual(len(self.store.list_links(feature['id'])), 2)
+
+    def test_link_spool_requests_are_idempotent_and_fenced_to_the_exact_session(self):
+        feature = self.feature()
+        human = self.store.claim_message(feature['id'], self.runtime.owner)
+        job = self.runtime._new_job(feature, kind='coordinator', prompt='Save the link', claim=human)
+        native = 'native-link-spool'
+        self.runtime._bind(job, native, job['session_file'])
+        _write_json(self.runtime._job_dir(job) / 'started.json', {'pid': 123})
+        directory = self.runtime._job_dir(job) / 'requests'
+        _write_json(directory / 'spool-link-one.json', {
+            'request_id': 'spool-link-one', 'action': 'fm_save_link',
+            'params': {'url': 'https://github.com/synthetic-owner/synthetic-repo/pull/91'},
+            'native_session_id': native, 'session_file': job['session_file']})
+        self.runtime._requests(job)
+        first = _read_json(self.runtime._job_dir(job) / 'responses' / 'spool-link-one.json')
+        self.assertTrue(first['ok'])
+        self.runtime._requests(job)
+        self.assertEqual(len(self.store.list_links(feature['id'])), 1)
+
+        _write_json(directory / 'spool-link-two.json', {
+            'request_id': 'spool-link-two', 'action': 'fm_save_link',
+            'params': {'url': 'https://github.com/synthetic-owner/synthetic-repo/pull/92'},
+            'native_session_id': 'native-elsewhere', 'session_file': job['session_file']})
+        self.runtime._requests(job)
+        rejected = _read_json(self.runtime._job_dir(job) / 'responses' / 'spool-link-two.json')
+        self.assertFalse(rejected['ok'])
+        self.assertEqual([link['url'] for link in self.store.list_links(feature['id'])],
+                         ['https://github.com/synthetic-owner/synthetic-repo/pull/91'])
+
+    def test_status_and_coordinator_projection_expose_bounded_link_references(self):
+        feature = self.feature()
+        for index in range(25):
+            self.store.register_link(feature['id'],
+                                     url=f'https://github.com/synthetic-owner/synthetic-repo/pull/{index + 1}',
+                                     source='discovery')
+        state = _coordinator_state(self.store.snapshot(feature['id']))
+        self.assertEqual(len(state['link_references']), 20)
+        self.assertEqual(state['counts']['links'], 25)
+        self.assertEqual(state['link_references'][0]['url'],
+                         'https://github.com/synthetic-owner/synthetic-repo/pull/1')
+        self.assertNotIn('provenance', state['link_references'][0])
+
+        human = self.store.claim_message(feature['id'], self.runtime.owner)
+        coordinator = {'feature_id': feature['id'], 'kind': 'coordinator',
+                       'claim': human, 'owner': self.runtime.owner}
+        status = self.runtime._tool(coordinator, 'fm_status', {}, 'status-links')
+        self.assertEqual(len(status['link_references']), 20)
+        advisor = {'feature_id': feature['id'], 'kind': 'advisor', 'claim': {}}
+        worker_status = self.runtime._tool(advisor, 'fm_status', {}, 'advisor-status-links')
+        self.assertEqual(len(worker_status['links']), 25)
+        self.assertFalse(worker_status['links_truncated'])
+        self.assertNotIn('provenance', worker_status['links'][0])
+
+    def test_reconcile_runs_bounded_link_discovery_without_pi_or_a_model(self):
+        feature = self.feature()
+        directory = self.runtime.jobs_root / 'fmj_discovery_evidence'
+        directory.mkdir(parents=True)
+        session = self.runtime.root / 'sessions' / 'fmj_discovery_evidence' / 'session.jsonl'
+        session.parent.mkdir(parents=True)
+        session.write_text(''.join(json.dumps(row) + '\n' for row in [
+            {'type': 'session', 'id': 'native-discovery', 'version': 3},
+            {'type': 'message', 'message': {'role': 'toolResult', 'content': [
+                {'type': 'text', 'text': 'gh pr create\nhttps://github.com/synthetic-owner/synthetic-repo/pull/90'}]}},
+        ]))
+        (directory / 'job.json').write_text(json.dumps({
+            'id': 'fmj_discovery_evidence', 'kind': 'worker', 'feature_id': feature['id'],
+            'session_file': str(session), 'native_session_id': 'native-discovery',
+            'claim': {}, 'owner': 'synthetic-owner'}))
+        (directory / 'finalized.json').write_text('{"at": "2026-09-22T00:00:00Z"}')
+        with patch.object(self.runtime, 'capabilities', return_value={'available': False}), \
+             patch.object(self.runtime.links, 'minimum_interval', 0.0):
+            self.runtime.reconcile()
+        links = self.store.list_links(feature['id'])
+        self.assertEqual([link['url'] for link in links],
+                         ['https://github.com/synthetic-owner/synthetic-repo/pull/90'])
+        self.assertEqual(links[0]['source'], 'discovery')
+
     def test_rotation_retains_coordinator_question_with_terse_human_answer(self):
         feature = self.feature()
         first = self.store.claim_message(feature['id'], self.runtime.owner)

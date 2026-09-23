@@ -144,18 +144,21 @@ not inherit the companion control token.
 - Coordinator: read reference-oriented status, begin one human-authorized major
   stage, delegate, steer, retry, revise affected work, resolve explicit human
   gates, complete a stage and finish the feature. It can also read bounded
-  feature Documents and saved sessions. Pi's normal configured tools, extensions,
-  skills, prompt templates and project context remain available. Its charter
-  interprets requests such as `Give me an architect review` and selects
-  `architect` explicitly for architecture/design reviews, architect audits, and
-  second opinions on implementations. Names alone do not override host pins.
+  feature Documents and saved sessions, and retain a known pull request or share
+  link with `fm_save_link`. Pi's normal configured tools, extensions, skills,
+  prompt templates and project context remain available. Its charter interprets
+  requests such as `Give me an architect review` and selects `architect`
+  explicitly for architecture/design reviews, architect audits, and second
+  opinions on implementations. Names alone do not override host pins.
 - Worker: read feature evidence, delegate scoped children, yield until their
   outcomes, retry a direct child, record durable progress and bounded wait leases,
-  report a verdict with documents, request a human decision, produce a checkpoint
-  and acknowledge a predecessor's handoff or automatic recovery.
+  report a verdict with documents, retain a known pull request or share link with
+  `fm_save_link`, request a human decision, produce a checkpoint and acknowledge
+  a predecessor's handoff or automatic recovery.
 - Advisor: return a bounded intervention decision or assemble an independent
   recovery brief. Automatic stability/recovery assessments are restricted to
-  read-only tools; ordinary advisors retain normal configured tools.
+  read-only tools; ordinary advisors retain normal configured tools. Advisors
+  cannot save, hide, restore, or otherwise mutate feature links.
 
 The coordinator is a small conversational router. Simple direction,
 clarification and status replies stay in the feature conversation and default to
@@ -191,6 +194,60 @@ end.
 A clean Git checkout is required for successful implementation and revision-bound
 review; exploratory planning can inspect an existing dirty checkout. A plan is
 not silently treated as a code review.
+
+## Feature links and automatic discovery
+
+A feature can retain links independently of its workflow status and revision.
+Explicit saving uses the authenticated API or operator CLI; a managed
+coordinator or worker can also call `fm_save_link` with an exact absolute
+HTTP(S) URL. Link records are private to the companion and stay scoped to the
+exact feature and companion. They never change status, revision, authorization,
+queued messages, or model work, and the server never creates, opens, fetches,
+previews, or publishes a destination. The derived display title is
+lifecycle-neutral: a GitHub pull request is shown as `owner/repo #number`
+without claiming draft, ready, merged, or closed state.
+
+Automatic discovery recognizes exact `github.com/<owner>/<repo>/pull/<number>`
+URLs in evidence the companion already owns. Eligible sources are the managed
+session ledger (including retained predecessor sessions) and validated dispatch
+jobs (including finalized jobs), plus accepted assignment outcome summaries,
+completed stage summaries, and Documents attached to accepted outcomes. Only
+textual `user`, `assistant`, and `toolResult` message content is read, so plain
+URLs, Markdown link destinations, autolinks, and `gh`-style tool output all
+qualify. Thinking blocks, arbitrary Pi history, unrelated filesystem files, and
+source text are never inspected or executed. Recognition does not depend on
+words such as "draft" or on the assistant's final reply, and general non-PR
+URLs are saved explicitly rather than auto-collected.
+
+Every session source must resolve under the private runtime sessions root, its
+first complete record must be a `session` header, and the header native ID must
+match the recorded identity. A path that is claimed for more than one feature,
+a session file outside the sessions root, a mismatched header, or a job whose
+feature no longer exists is skipped entirely. Discovery runs as part of ordinary
+runtime reconciliation, not as a model turn or HTTP read. A pass is bounded by
+source count and bytes, and sources are scheduled round-robin so all eligible
+history is processed over successive passes, including more than a thousand
+retained sessions.
+
+Progress is recorded in a private cursor file. File sources carry device, inode,
+and byte offsets; text sources carry a content digest. Cursors are persisted
+only after every attempted upsert in the pass succeeds, so a crash or storage
+fault replays safely (the store deduplicates canonical URLs). A partial JSONL
+record is never interpreted and is retried after it completes. A replaced or
+truncated file restarts from the beginning, an unavailable source preserves
+already-saved links and its cursor, and hidden links stay hidden through
+re-discovery until the human explicitly restores them. Discovery makes no
+network request, invokes no model, and exposes no additional unauthenticated
+route.
+
+Coordinator and worker `fm_status` responses include a bounded set of link
+references (identity, exact URL, classification, title, hidden state, source,
+and creation time). The coordinator's projection exposes at most twenty as
+`link_references`; worker and advisor status exposes at most fifty as `links`
+with an explicit `links_truncated` flag. Provenance, private session paths, and
+document bodies are never added to model context. Saving a link is not a
+workflow action: no role may create a pull request, open a destination, or
+advance a stage merely to obtain a link.
 
 ## Human direction and background execution
 
@@ -332,7 +389,7 @@ the evidence back to First Mate. Interrupted executions are never labeled succes
 Run the focused suite from the repository with Python 3.11 or newer:
 
 ```sh
-python3 -m unittest tests.test_first_mate_store tests.test_first_mate_runtime tests.test_first_mate_acceptance tests.test_first_mate_usage tests.test_first_mate_recovery tests.test_first_mate_reliability
+python3 -m unittest tests.test_first_mate_store tests.test_first_mate_links tests.test_first_mate_link_discovery tests.test_first_mate_runtime tests.test_first_mate_cli tests.test_first_mate_acceptance tests.test_first_mate_usage tests.test_first_mate_recovery tests.test_first_mate_reliability
 node --test pi-semantic-bridge/test/first-mate.test.mjs
 ```
 

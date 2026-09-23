@@ -22,6 +22,24 @@ class Parser(BaseParser):
 class FirstMateClient(NotesClient):
     api_path = "/api/v1/first-mate"
 
+
+LINKS_CAPABILITY = "first-mate-links-v1"
+LINKS_UNSUPPORTED = ("This companion does not advertise first-mate-links-v1. "
+                     "Update the companion server to list, save, hide, or restore First Mate links.")
+
+
+def _require_links_capability(client, request):
+    """Fail with upgrade guidance before any link route is attempted."""
+    try:
+        result = request("GET", "/capabilities")
+    except CLIError as exc:
+        if exc.code == "not_found" or exc.status in {404, 405, 501}:
+            raise CLIError(LINKS_UNSUPPORTED, "first_mate_links_unsupported") from exc
+        raise
+    capabilities = result.get("capabilities")
+    if not isinstance(capabilities, list) or LINKS_CAPABILITY not in capabilities:
+        raise CLIError(LINKS_UNSUPPORTED, "first_mate_links_unsupported")
+
 def parser(environ):
     p = Parser(description=__doc__)
     p.add_argument("--base-url", default=environ.get("HERDR_HARNESS_URL") or "http://127.0.0.1:9092")
@@ -38,7 +56,7 @@ def parser(environ):
         create.add_argument("--" + field, required=True)
     create.add_argument("--work-item-id")
     create.add_argument("--request-id", default=None)
-    for name in ("get", "agents", "documents", "messages", "events", "send", "pause", "resume", "cancel", "archive", "unarchive", "open"):
+    for name in ("get", "agents", "documents", "messages", "events", "send", "pause", "resume", "cancel", "archive", "unarchive", "open", "links"):
         sub = commands.add_parser(name)
         sub.add_argument("feature_id")
         if name == "events":
@@ -58,6 +76,17 @@ def parser(environ):
             sub.add_argument("--graph", action="store_true")
             sub.add_argument("--app-server-url", help="Existing saved Mac app origin when the API uses a different loopback origin")
             sub.add_argument("--print-url", action="store_true", help="Return the native app link without launching it")
+    add_link = commands.add_parser("add-link")
+    add_link.add_argument("feature_id")
+    add_link.add_argument("--url", required=True, help="Exact absolute http(s) URL to retain")
+    add_link.add_argument("--title", help="Short human-readable label")
+    add_link.add_argument("--kind", choices=("pull_request", "link"), help="Explicit classification for a non-github.com PR")
+    add_link.add_argument("--request-id", default=None)
+    for name in ("hide-link", "restore-link"):
+        sub = commands.add_parser(name)
+        sub.add_argument("feature_id")
+        sub.add_argument("link_id")
+        sub.add_argument("--request-id", default=None)
     settings = commands.add_parser("set-model")
     settings.add_argument("feature_id")
     settings.add_argument("--model", required=True, help="provider/model, or an empty string for host default")
@@ -82,6 +111,24 @@ def parser(environ):
 def execute(args, client, *, stdin, launch):
     quote = lambda value: urllib.parse.quote(value, safe="")
     if args.command in ("capabilities", "models"): return client.request("GET", "/" + args.command)
+    if args.command == "links":
+        _require_links_capability(client, client.request)
+        result = client.request("GET", "/features/" + quote(args.feature_id))
+        links = result.get("links")
+        return {"ok": True, "links": links if isinstance(links, list) else []}
+    if args.command in ("add-link", "hide-link", "restore-link"):
+        _require_links_capability(client, client.request)
+        path = "/features/" + quote(args.feature_id) + "/links"
+        if args.command == "add-link":
+            body = {"url": args.url, "request_id": args.request_id or str(uuid.uuid4())}
+            if args.title is not None: body["title"] = args.title
+            if args.kind is not None: body["kind"] = args.kind
+        else:
+            body = {"hidden": args.command == "hide-link",
+                    "request_id": args.request_id or str(uuid.uuid4())}
+            path += "/" + quote(args.link_id) + "/visibility"
+        result = client.request("POST", path, body)
+        return {"ok": True, "link": result.get("link")}
     if args.command == "list":
         view = "all" if args.all else "archived" if args.archived else "active"
         query = "" if view == "active" else "?" + urllib.parse.urlencode({"view": view})

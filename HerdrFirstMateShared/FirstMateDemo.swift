@@ -103,6 +103,23 @@ enum FirstMateDemo {
         ])
     }
 
+    static func sessionMessages(for resource: FirstMateResource) -> [FirstMateSessionMessage]? {
+        switch resource {
+        case .document:
+            return nil
+        case .session(let agent):
+            return [
+                .init(role: "user", text: "Review \(agent.title) within revision \(agent.inputRevision). Report evidence and a verdict."),
+                .init(role: "assistant", text: "I am examining session ownership and recovery for \(agent.visitID). This is an independently saved Pi session.\n\n## Outcome\n\(agent.verdict ?? "Work is still in progress. No verdict has been reported.")\n\nSynthetic demo. No model or repository changes were executed.")
+            ]
+        case .history(let session):
+            return [
+                .init(role: "user", text: "Inspect \(session.title), generation \(session.generation)."),
+                .init(role: "assistant", text: "This \(session.ownershipStatus) conversation remains accessible even without a document.\n\nSynthetic demo. No model or repository changes were executed.")
+            ]
+        }
+    }
+
     static func content(for resource: FirstMateResource, snapshot: FirstMateSnapshot?) -> String {
         switch resource {
         case .document(let document): document.content ?? "Synthetic document preview."

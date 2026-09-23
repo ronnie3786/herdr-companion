@@ -53,6 +53,28 @@ struct FirstMateMarkdownContentTests {
         }
     }
 
+    @Test("Saved sessions host chat rows in both appearances at large text sizes")
+    func hostsReadOnlySessionChat() {
+        let messages = [
+            FirstMateSessionMessage(role: "user", text: "# Literal prompt"),
+            FirstMateSessionMessage(role: "assistant", text: "## Result\n\nA **formatted** answer with `code`."),
+            FirstMateSessionMessage(role: "toolResult", text: "Synthetic tool output")
+        ]
+        for scheme in [ColorScheme.light, .dark] {
+            let hosting = NSHostingView(
+                rootView: FirstMateSessionTranscriptView(
+                    messages: messages, fallbackText: "", sessionID: "synthetic-session"
+                )
+                .environment(\.colorScheme, scheme)
+                .environment(\.herdrFontScale, .xxxLarge)
+                .frame(width: 440)
+            )
+            hosting.layoutSubtreeIfNeeded()
+            #expect(hosting.fittingSize.width > 0)
+            #expect(hosting.fittingSize.height > 150)
+        }
+    }
+
     @Test("First Mate prose has readable contrast in both appearances")
     func paletteContrast() throws {
         for scheme in [ColorScheme.light, .dark] {

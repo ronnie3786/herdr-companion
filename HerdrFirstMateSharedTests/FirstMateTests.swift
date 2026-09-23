@@ -369,6 +369,8 @@ struct FirstMateTests {
         await store.open(.session(reviewer))
         #expect(await client.lastSessionID == reviewer.nativeSessionID)
         #expect(store.resourceText.contains("Saved review result"))
+        #expect(store.sessionMessages?.map(\.role) == ["assistant"])
+        #expect(store.sessionMessages?.first?.text == "Saved review result")
     }
 
     @Test("Retained sessions without documents and coordinator predecessors remain accessible")
@@ -420,6 +422,8 @@ struct FirstMateTests {
         #expect(store.sessionTotalMessages == 3)
         #expect(store.resourceText.hasPrefix("User\nOriginal direction"))
         #expect(store.resourceText.contains("Saved review result"))
+        #expect(store.sessionMessages?.map(\.role) == ["user", "assistant", "assistant"])
+        #expect(store.sessionMessages?.map(\.text) == ["Original direction", "Earlier result", "Saved review result"])
     }
 
     @Test("A delayed older page cannot replace a newly selected session")
@@ -437,6 +441,19 @@ struct FirstMateTests {
         #expect(store.openedResource?.nativeSessionID == agents[1].nativeSessionID)
         #expect(store.sessionLoadedMessages == 1)
         #expect(!store.resourceText.contains("Original direction"))
+        #expect(store.sessionMessages?.map(\.text) == ["Saved review result"])
+    }
+
+    @Test("Demo sessions expose a structured, synthetic conversation")
+    func demoTranscript() async throws {
+        let store = FirstMateStore()
+        store.configure(client: nil, demo: true)
+        let agent = try #require(store.snapshot?.assignments.first)
+        await store.open(.session(agent))
+        #expect(store.sessionMessages?.map(\.role) == ["user", "assistant"])
+        #expect(store.sessionMessages?.last?.text.contains("Synthetic demo") == true)
+        store.closeResource()
+        #expect(store.sessionMessages == nil)
     }
 
     @Test("A delayed host response cannot replace the newly configured host")

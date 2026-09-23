@@ -66,6 +66,7 @@ final class FirstMateStore {
     var openedResource: FirstMateResource?
     var resourcePresentation: FirstMateResourcePresentation?
     private(set) var resourceText = ""
+    private(set) var sessionMessages: [FirstMateSessionMessage]? = nil
     private(set) var resourceLoading = false
     private(set) var resourceError: String?
     private(set) var resourceUsage: FirstMateUsage?
@@ -120,6 +121,7 @@ final class FirstMateStore {
         openedResource = nil
         resourcePresentation = nil
         resourceText = ""
+        sessionMessages = nil
         resourceLoading = false
         resourceError = nil
         resourceUsage = nil
@@ -548,6 +550,7 @@ final class FirstMateStore {
         openedResource = resource
         if resourcePresentation == nil { resourcePresentation = FirstMateResourcePresentation() }
         resourceText = ""
+        sessionMessages = nil
         resourceError = nil
         resourceUsage = resource.usage(in: snapshot)
         resourceModelSelection = resource.modelSelection(in: snapshot)
@@ -555,6 +558,7 @@ final class FirstMateStore {
         resourceLoading = true
         defer { if token == resourceGeneration { resourceLoading = false } }
         if isDemo {
+            sessionMessages = FirstMateDemo.sessionMessages(for: resource)
             resourceText = FirstMateDemo.content(for: resource, snapshot: snapshot)
             return
         }
@@ -571,6 +575,7 @@ final class FirstMateStore {
                 let response = try await client.fetchFirstMateSession(sessionID, before: nil)
                 guard response.ok, response.nativeSessionID == sessionID else { throw APIError.invalidResponse }
                 guard token == resourceGeneration else { return }
+                sessionMessages = response.messages
                 sessionNextBefore = response.nextBefore
                 sessionTotalMessages = response.totalMessages
                 sessionLoadedMessages = response.messages?.count ?? 0
@@ -589,6 +594,7 @@ final class FirstMateStore {
         openedResource = nil
         resourcePresentation = nil
         resourceLoading = false
+        sessionMessages = nil
         resourceUsage = nil
         resourceModelSelection = nil
         resetSessionPagination()
@@ -607,6 +613,7 @@ final class FirstMateStore {
             guard response.ok, response.nativeSessionID == sessionID else { throw APIError.invalidResponse }
             if let next = response.nextBefore, next < 0 || next >= before { throw APIError.invalidResponse }
             let earlier = response.messages ?? []
+            if let sessionMessages { self.sessionMessages = earlier + sessionMessages }
             let text = earlier.map { "\($0.role.capitalized)\n\($0.text)" }.joined(separator: "\n\n")
             if !text.isEmpty { resourceText = text + (resourceText.isEmpty ? "" : "\n\n" + resourceText) }
             sessionLoadedMessages += earlier.count

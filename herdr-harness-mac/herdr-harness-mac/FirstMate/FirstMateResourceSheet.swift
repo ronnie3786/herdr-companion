@@ -8,7 +8,16 @@ struct FirstMateResourceSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(resource.title).herdrFont(.title2, weight: .semibold)
+                    if resource.nativeSessionID != nil {
+                        Label("Agent Session", systemImage: "bubble.left.and.bubble.right")
+                            .herdrFont(.caption, weight: .semibold)
+                            .foregroundStyle(FirstMatePalette(scheme: scheme).accent)
+                        Text(resource.title).herdrFont(.title2, weight: .semibold)
+                        Label("Read-only saved conversation", systemImage: "lock")
+                            .herdrFont(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Text(resource.title).herdrFont(.title2, weight: .semibold)
+                    }
                     switch resource {
                     case .session(let agent):
                         Text("Saved Pi session · \(agent.role) · generation \(agent.generation)")
@@ -39,13 +48,19 @@ struct FirstMateResourceSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     if resource.nativeSessionID != nil {
-                        if let selection = store.resourceModelSelection ?? resource.modelSelection(in: store.snapshot) {
-                            FirstMateModelSelectionSummaryView(selection: selection)
+                        DisclosureGroup("Session details") {
+                            VStack(alignment: .leading, spacing: 12) {
+                                if let selection = store.resourceModelSelection ?? resource.modelSelection(in: store.snapshot) {
+                                    FirstMateModelSelectionSummaryView(selection: selection)
+                                }
+                                FirstMateUsageSummaryView(
+                                    usage: store.resourceUsage ?? resource.usage(in: store.snapshot),
+                                    title: "Whole-session usage"
+                                )
+                            }.padding(.top, 10)
                         }
-                        FirstMateUsageSummaryView(
-                            usage: store.resourceUsage ?? resource.usage(in: store.snapshot),
-                            title: "Whole-session usage"
-                        )
+                        .herdrFont(.caption)
+                        .accessibilityIdentifier("first-mate-session-details")
                     }
                     if resource.nativeSessionID != nil, let total = store.sessionTotalMessages {
                         Divider()
@@ -74,6 +89,12 @@ struct FirstMateResourceSheet: View {
                     } else if rendersMarkdownDocument {
                         FirstMateMarkdownContentView(source: store.resourceText)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                    } else if resource.nativeSessionID != nil {
+                        FirstMateSessionTranscriptView(
+                            messages: store.sessionMessages,
+                            fallbackText: store.resourceText,
+                            sessionID: resource.nativeSessionID ?? ""
+                        )
                     } else {
                         Text(store.resourceText)
                             .herdrFont(.body)
@@ -84,6 +105,7 @@ struct FirstMateResourceSheet: View {
                 }
                 .padding(24)
             }
+            .defaultScrollAnchor(resource.nativeSessionID == nil ? .top : .bottom, for: .initialOffset)
             Divider()
             Text(store.isDemo ? "Synthetic recording fixture" : "Read-only saved history. Closing this view does not end the session.")
                 .herdrFont(.caption).foregroundStyle(.secondary).padding(16)

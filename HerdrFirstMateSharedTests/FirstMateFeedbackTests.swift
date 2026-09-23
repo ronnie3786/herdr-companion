@@ -260,6 +260,81 @@ struct FirstMateFeedbackTests {
         #expect(record.comment == "Newer saved revision")
     }
 
+    @Test("A transient capability outage preserves a failed save's draft and retry path")
+    func transientCapabilityOutagePreservesDraft() async throws {
+        let client = FirstMateFeedbackTestClient()
+        await client.failSaves(count: 1)
+        let store = FirstMateStore()
+        store.configure(client: client, demo: false)
+        await store.refresh()
+        _ = store.acquireControlLease(available: true)
+        let featureID = try #require(store.selectedFeatureID)
+        let context = store.operationContext
+        #expect(store.feedbackCapability == .supported)
+        #expect(await store.loadFeedback(expectedContext: context))
+
+        let draft = FirstMateFeedbackDraft(
+            rating: .down,
+            categoryIDs: [FirstMateFeedbackDefaults.tooLongID],
+            comment: "Synthetic outage draft"
+        )
+        #expect(!(await store.saveFeedback(draft, messageID: "demo-mate-0", expectedContext: context)))
+        #expect(store.feedbackSaveError(featureID: featureID, messageID: "demo-mate-0") != nil)
+        #expect(store.feedbackDraft(for: featureID, messageID: "demo-mate-0").comment == "Synthetic outage draft")
+
+        // The workspace's periodic refresh now fails at the capability route.
+        // That is temporary unavailability, never a confirmed old server, so
+        // the editor keeps the failed draft, the save error, and a retry path
+        // and does not swap in server-upgrade guidance.
+        await client.failCapabilities(count: 1)
+        await store.refresh()
+        #expect(store.feedbackCapability == .unknown)
+        #expect(!store.feedbackSupported)
+        #expect(store.feedbackSaveError(featureID: featureID, messageID: "demo-mate-0") != nil)
+        let preserved = store.feedbackDraft(for: featureID, messageID: "demo-mate-0")
+        #expect(preserved.comment == "Synthetic outage draft")
+        #expect(preserved.categoryIDs == [FirstMateFeedbackDefaults.tooLongID])
+        #expect(store.feedback(for: featureID, messageID: "demo-mate-0") == nil)
+        #expect(store.error == nil)
+
+#if os(macOS)
+        let target = FirstMateFeedbackEditorTarget(
+            featureID: featureID,
+            messageID: "demo-mate-0",
+            responseText: "Synthetic answer",
+            expectedContext: context
+        )
+        var state = FirstMateFeedbackEditorState.make(store: store, target: target)
+        #expect(state.isTargetAlive)
+        #expect(state.showsConnectionNotice)
+        #expect(!state.showsUpgradeNotice)
+        #expect(!state.canSave)
+        // Local refinement stays possible while the server write is unavailable.
+        #expect(state.isEditable)
+        #expect(state.saveErrorMessage != nil)
+        #expect(state.draft.comment == "Synthetic outage draft")
+#endif
+
+        // The connection recovers; the same draft retries under its original
+        // request identity and the editor becomes writable again.
+        await store.refresh()
+        #expect(store.feedbackCapability == .supported)
+        let recovered = store.feedbackDraft(for: featureID, messageID: "demo-mate-0")
+        #expect(recovered.comment == "Synthetic outage draft")
+#if os(macOS)
+        state = FirstMateFeedbackEditorState.make(store: store, target: target)
+        #expect(!state.showsConnectionNotice)
+        #expect(state.canSave)
+        #expect(state.draft.comment == "Synthetic outage draft")
+#endif
+        #expect(await store.saveFeedback(recovered, messageID: "demo-mate-0", expectedContext: context))
+        #expect(store.feedback(for: featureID, messageID: "demo-mate-0")?.comment == "Synthetic outage draft")
+        #expect(store.feedbackSaveError(featureID: featureID, messageID: "demo-mate-0") == nil)
+        let requests = await client.saveRequests
+        #expect(requests.count == 2)
+        #expect(requests[0].requestID == requests[1].requestID)
+    }
+
     @Test("A stale server revision keeps the known rating and typed draft")
     func staleRevisionKeepsKnownState() async throws {
         let client = FirstMateFeedbackTestClient()
@@ -1067,6 +1142,7 @@ private actor FirstMateFeedbackTestClient: FirstMateClient {
     private var feedbackRecords: [String: [String: FirstMateFeedback]] = [:]
     private var loadFailuresRemaining = 0
     private var saveFailuresRemaining = 0
+    private var capabilityFailuresRemaining = 0
     private var categoryFailuresRemaining = 0
     private var enforceRevisions = false
     private var holdLoads = false
@@ -1109,6 +1185,7 @@ private actor FirstMateFeedbackTestClient: FirstMateClient {
     func setMismatchedSaveIdentity(_ value: Bool) { mismatchedSaveIdentity = value }
     func failLoads(count: Int) { loadFailuresRemaining += count }
     func failSaves(count: Int) { saveFailuresRemaining += count }
+    func failCapabilities(count: Int) { capabilityFailuresRemaining += count }
     func failCategories(count: Int) { categoryFailuresRemaining += count }
     func holdNextLoad() { holdLoads = true }
     func releaseLoad() {
@@ -1135,7 +1212,11 @@ private actor FirstMateFeedbackTestClient: FirstMateClient {
     }
 
     func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities {
-        .init(ok: true, capabilities: supported
+        if capabilityFailuresRemaining > 0 {
+            capabilityFailuresRemaining -= 1
+            throw URLError(.networkConnectionLost)
+        }
+        return .init(ok: true, capabilities: supported
             ? ["first-mate-v1", "first-mate-archive-v1", "first-mate-feedback-v1"]
             : ["first-mate-v1", "first-mate-archive-v1"])
     }

@@ -34,33 +34,38 @@ struct FirstMateFeedbackEditorState: Equatable {
     var draft: FirstMateFeedbackDraft
     var isTargetAlive: Bool
     var isWritable: Bool
+    var hasControl: Bool
     var isFeedbackLoaded: Bool
     var isSaving: Bool
     var isAddingCategory: Bool
     var isCategoriesLoaded: Bool
     var isLoadingCategories: Bool
     var showsUpgradeNotice: Bool
+    var showsConnectionNotice: Bool
     var ratingErrorMessage: String?
     var categoryErrorMessage: String?
     var saveErrorMessage: String?
     var hasConflict: Bool
 
-    /// Input is frozen while a save is in flight and until the retained record
-    /// has loaded; the submitted draft stays exactly as typed.
+    /// Local editing stays available while a transient capability outage keeps
+    /// server writes off, so a retained explanation can keep being refined. It
+    /// is frozen while a save is in flight, before the retained record has
+    /// loaded, without a control grant, and for a confirmed old companion.
     var isEditable: Bool {
-        isTargetAlive && isWritable && isFeedbackLoaded && !isSaving
+        isTargetAlive && !showsUpgradeNotice && hasControl && isFeedbackLoaded && !isSaving
     }
 
     /// A stale-revision conflict must be explicitly resolved by reloading the
-    /// latest record before a retry can be submitted.
+    /// latest record before a retry can be submitted, and a server write only
+    /// follows a confirmed capability.
     var canSave: Bool {
-        isEditable && !isAddingCategory && !showsUpgradeNotice && !hasConflict
+        isEditable && isWritable && !isAddingCategory && !hasConflict
     }
 
     @MainActor
     static func make(store: FirstMateStore, target: FirstMateFeedbackEditorTarget) -> FirstMateFeedbackEditorState {
         let isTargetAlive = target.expectedContext == store.operationContext
-        let supported = store.feedbackSupported
+        let capability = store.feedbackCapability
         return FirstMateFeedbackEditorState(
             // The stored draft is the single source of truth: a failed save
             // keeps it, and discarding it restores the saved record prefill.
@@ -68,13 +73,19 @@ struct FirstMateFeedbackEditorState: Equatable {
             // the empty cache.
             draft: store.feedbackDraft(for: target.featureID, messageID: target.messageID),
             isTargetAlive: isTargetAlive,
-            isWritable: isTargetAlive && supported && store.controlAvailable,
+            isWritable: isTargetAlive && capability == .supported && store.controlAvailable,
+            hasControl: store.controlAvailable,
             isFeedbackLoaded: store.hasLoadedFeedback(for: target.featureID),
             isSaving: store.isSavingFeedback(featureID: target.featureID, messageID: target.messageID),
             isAddingCategory: store.isAddingFeedbackCategory,
             isCategoriesLoaded: store.feedbackCategoriesLoaded,
             isLoadingCategories: store.isLoadingFeedbackCategories,
-            showsUpgradeNotice: !supported,
+            // Upgrade guidance is reserved for a successful capability
+            // response without feedback support. A failed or unanswered check
+            // is temporary unavailability: the editor keeps the draft and the
+            // recovery controls and offers a connection retry instead.
+            showsUpgradeNotice: capability == .unsupported,
+            showsConnectionNotice: capability == .unknown,
             ratingErrorMessage: store.feedbackError(for: target.featureID),
             categoryErrorMessage: store.feedbackCategoriesError,
             saveErrorMessage: store.feedbackSaveError(featureID: target.featureID, messageID: target.messageID),
@@ -167,6 +178,9 @@ struct FirstMateFeedbackEditor: View {
                 upgradeNotice
                 closeOnly
             } else {
+                if state.showsConnectionNotice {
+                    connectionNotice
+                }
                 reasonsSection(state: state)
                 addCategorySection(state: state)
                 commentSection(state: state)
@@ -429,6 +443,27 @@ struct FirstMateFeedbackEditor: View {
         .accessibilityIdentifier("first-mate-feedback-editor-upgrade")
     }
 
+    /// Shown when the capability check has not succeeded (fresh connection or a
+    /// transient outage). It never replaces the draft, save error, or retry:
+    /// the retained explanation stays visible and writable again as soon as the
+    /// connection recovers.
+    private var connectionNotice: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Label(
+                "This feature's companion isn't reachable right now. Your draft stays here; retry when the connection returns.",
+                systemImage: "wifi.exclamationmark"
+            )
+            .herdrFont(.caption)
+            .foregroundStyle(.secondary)
+            Button("Retry connection") {
+                Task { await store.refresh() }
+            }
+            .buttonStyle(.link)
+            .accessibilityIdentifier("first-mate-feedback-retry-connection")
+        }
+        .accessibilityIdentifier("first-mate-feedback-connection")
+    }
+
     private func errorLabel(_ message: String, identifier: String) -> some View {
         Label(message, systemImage: "exclamationmark.triangle")
             .herdrFont(.caption)
@@ -461,12 +496,13 @@ struct FirstMateFeedbackEditor: View {
 
     private func canAddCategory(state: FirstMateFeedbackEditorState) -> Bool {
         state.isEditable
+            && state.isWritable
             && !state.isAddingCategory
             && !newCategoryLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func addCategory() {
-        guard editorState.isEditable else { return }
+        guard editorState.isEditable, editorState.isWritable else { return }
         let label = newCategoryLabel
         let capturedSession = session
         let token = capturedSession.currentToken

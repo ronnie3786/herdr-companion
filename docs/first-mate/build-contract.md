@@ -77,9 +77,13 @@ initial model without the optional fields.
 `GET /api/v1/first-mate/capabilities` and `GET /api/v1` additionally advertise
 `first-mate-feedback-v1`. Older servers return upgrade guidance instead of
 accepting unsupported writes; clients must not send feedback requests without
-the capability. Feedback is companion data collection only: no route injects
-prompts, changes preferences, trains or calls a model, publishes externally, or
-enqueues work.
+the capability. A failed, timed-out, or unanswered capability check is
+temporary unavailability rather than a confirmed old server: clients keep
+cached feedback readable and any open draft recoverable, and show server
+upgrade guidance only after a successful capability response that omits
+`first-mate-feedback-v1`. Feedback is companion data collection only: no route
+injects prompts, changes preferences, trains or calls a model, publishes
+externally, or enqueues work.
 
 Feedback is stored in the owning companion's private `first-mate.sqlite3`
 beside the work ledger, shared by clients authorized to that companion, and

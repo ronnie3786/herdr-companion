@@ -20,10 +20,17 @@ enum FirstMateFeedbackCommentLimit {
 
 /// Whether the chat should show the single companion-upgrade notice. A missing
 /// First Mate surface and a server that does not host First Mate at all have
-/// their own explanations, so this stays quiet for them.
+/// their own explanations, so this stays quiet for them. Only a confirmed
+/// capability response without feedback support qualifies; a failed or
+/// unanswered capability check is temporary unavailability and must not claim
+/// the companion is old.
 enum FirstMateFeedbackSurface {
-    static func showsUpgradeNotice(hasLoaded: Bool, unsupported: Bool, supported: Bool) -> Bool {
-        hasLoaded && !unsupported && !supported
+    static func showsUpgradeNotice(
+        hasLoaded: Bool,
+        capability: FirstMateFeedbackCapability,
+        surfaceUnsupported: Bool
+    ) -> Bool {
+        hasLoaded && !surfaceUnsupported && capability == .unsupported
     }
 }
 

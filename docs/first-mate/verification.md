@@ -51,11 +51,14 @@ Ratings, reusable reasons, and notes are stored only in the owning companion's
 private `first-mate.sqlite3`; the Mac keeps an in-memory cache. The final gate
 completes this table on the delivered revision, recording exact-source
 automated results separately from synthetic rendered-UI and connected-app
-evidence. A row is complete only when its **Tested revision** matches the
-delivered source revision and its **Evidence** cell names the captured log,
-artifact, or screenshot; a result from another revision is not evidence. The
-Verify workflow's Mac job runs `herdr-harness-macTests` only, so the rendered UI
-test and the connected-app checklist below are additional required gate items.
+evidence. A row is complete only when it records the delivered commit SHA, its
+**Tested revision** matches that revision, the exact command(s) appear in the
+protocol, and its **Evidence** cell names the captured log, artifact, or
+screenshot; a result from another revision is not evidence. Rendered-UI rows
+require synthetic screenshots or accessibility captures, and demo-memory
+results never substitute for the connected-app persistence row. The Verify
+workflow's Mac job runs `herdr-harness-macTests` only, so the rendered UI test
+and the connected-app checklist below are additional required gate items.
 
 | Gate item | Exact-source protocol | Tested revision | Result | Evidence |
 | --- | --- | --- | --- | --- |
@@ -64,6 +67,7 @@ test and the connected-app checklist below are additional required gate items.
 | Synthetic rendered interactions | `xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test -only-testing:herdr-harness-macUITests/HerdrFirstMateFeedbackUITests` in demo mode only. This exercises the rendered rating controls, editor, custom reasons, note, Save/Cancel, cancel-and-reopen catalog behavior, and Remove rating against in-memory synthetic data. Capture the rendered windows and accessibility states as artifacts. | Pending final gate | Pending final gate | Pending final gate |
 | Historical, closed, and archived responses | In the synthetic demo, rate an older response, a checkpoint summary, and a response inside a closed or archived feature. Confirm the controls and saved states render, the editor stays pinned to the rated message, and no feature status, revision, workflow event, or queued message changes. | Pending final gate | Pending final gate | Pending final gate |
 | Failure and retry behavior | Shared native tests force delayed loads, delayed and failed saves, revision conflicts for the editor, thumbs up, and Remove rating, and failed/slow category reads. Confirm the attempted payload and draft survive and that only the explicit reload actions recover conflicts. | Pending final gate | Pending final gate | Pending final gate |
+| Transient capability loss | Shared native test `FirstMateFeedbackTests/transientCapabilityOutagePreservesDraft` fails a save, then fails the capability refresh, and confirms the attempted draft, save error, and connection guidance survive with no upgrade notice; a recovered refresh restores writing and retries the exact request identity. Run it with the shared native unit command above (Mac and iOS). Confirm the connection notice, retained note, and **Retry connection** render in the synthetic presentation test `FirstMateFeedbackPresentationTests/transientCapabilityOutage`. | Pending final gate | Pending final gate | Pending final gate |
 | Alternate-host isolation | Against two disposable companions with duplicate synthetic feature and message labels, save distinct ratings, switch hosts, and reconnect. Confirm each connection restores only its own feedback, an open editor dismisses instead of retargeting, and no save reaches the other host. | Pending final gate | Pending final gate | Pending final gate |
 | Connected-app persistence and relaunch | With a disposable on-disk companion state and synthetic features, save ratings, reasons, a custom category, and a multiline note; restart the companion; relaunch the Mac app and reconnect; confirm the exact values return; then inspect `first-mate.sqlite3` read-only with the query in [response feedback](response-feedback.md). No production data, host, or installation is used. | Pending final gate | Pending final gate | Pending final gate |
 | Public source guard | `scripts/check-public-source.py` plus the staged whitespace check. | Pending final gate | Pending final gate | Pending final gate |

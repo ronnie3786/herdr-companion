@@ -247,21 +247,64 @@ struct FirstMateFeedbackPresentationTests {
         #expect(!state.isTargetAlive)
         #expect(!state.canSave)
 
-        // Reconfiguring to a lifecycle without the capability keeps one
-        // upgrade path and never offers a write.
+        // Reconfiguring to a lifecycle without a confirmed capability keeps
+        // the draft/read-only surface and never claims the server is old.
         store.configure(client: nil, demo: false)
         state = .make(store: store, target: target)
-        #expect(state.showsUpgradeNotice)
+        #expect(!state.showsUpgradeNotice)
+        #expect(state.showsConnectionNotice)
         #expect(!state.canSave)
     }
 
     @Test("The upgrade notice appears once for a reachable old companion only")
     func upgradeNotice() {
-        #expect(FirstMateFeedbackSurface.showsUpgradeNotice(hasLoaded: true, unsupported: false, supported: false))
-        #expect(!FirstMateFeedbackSurface.showsUpgradeNotice(hasLoaded: false, unsupported: false, supported: false))
-        #expect(!FirstMateFeedbackSurface.showsUpgradeNotice(hasLoaded: true, unsupported: true, supported: false))
-        #expect(!FirstMateFeedbackSurface.showsUpgradeNotice(hasLoaded: true, unsupported: false, supported: true))
-        #expect(!FirstMateFeedbackSurface.showsUpgradeNotice(hasLoaded: true, unsupported: true, supported: true))
+        #expect(FirstMateFeedbackSurface.showsUpgradeNotice(hasLoaded: true, capability: .unsupported, surfaceUnsupported: false))
+        #expect(!FirstMateFeedbackSurface.showsUpgradeNotice(hasLoaded: false, capability: .unsupported, surfaceUnsupported: false))
+        #expect(!FirstMateFeedbackSurface.showsUpgradeNotice(hasLoaded: true, capability: .unknown, surfaceUnsupported: false))
+        #expect(!FirstMateFeedbackSurface.showsUpgradeNotice(hasLoaded: true, capability: .supported, surfaceUnsupported: false))
+        // A whole-surface server-update notice owns the message by itself.
+        #expect(!FirstMateFeedbackSurface.showsUpgradeNotice(hasLoaded: true, capability: .unsupported, surfaceUnsupported: true))
+    }
+
+    @Test("A transient capability outage keeps the draft and connection recovery instead of upgrade guidance")
+    func transientCapabilityOutage() {
+        // A fresh or failed capability check is unknown, not unsupported, so
+        // the conversation shows no upgrade notice and the editor keeps the
+        // failed draft, save error, and retry while offering connection recovery.
+        let store = FirstMateStore()
+        store.configure(client: nil, demo: false)
+        store.selectedFeatureID = "synthetic-feature"
+        _ = store.acquireControlLease(available: true)
+        #expect(store.feedbackCapability == .unknown)
+        #expect(!FirstMateFeedbackSurface.showsUpgradeNotice(
+            hasLoaded: true,
+            capability: store.feedbackCapability,
+            surfaceUnsupported: store.unsupported
+        ))
+
+        let target = FirstMateFeedbackEditorTarget(
+            featureID: "synthetic-feature",
+            messageID: "outage",
+            responseText: "Answer",
+            expectedContext: store.operationContext
+        )
+        let state = FirstMateFeedbackEditorState.make(store: store, target: target)
+        #expect(state.isTargetAlive)
+        #expect(state.showsConnectionNotice)
+        #expect(!state.showsUpgradeNotice)
+        #expect(!state.isEditable)
+        #expect(!state.canSave)
+
+        for scheme in [ColorScheme.light, .dark] {
+            let editor = NSHostingView(
+                rootView: FirstMateFeedbackEditor(store: store, target: target)
+                    .environment(\.colorScheme, scheme)
+                    .environment(\.herdrFontScale, .xxxLarge)
+                    .frame(width: 480)
+            )
+            editor.layoutSubtreeIfNeeded()
+            #expect(editor.fittingSize.height > 200)
+        }
     }
 
     @Test("A failed rating save keeps the previous state and offers an explicit retry")
@@ -371,24 +414,27 @@ struct FirstMateFeedbackPresentationTests {
         }
     }
 
-    @Test("Editor state freezes saving while loading, saving, or conflicted")
+    @Test("Editor state freezes saving while loading, saving, unwritable, or conflicted")
     func editorStateGating() {
         func state(
             loaded: Bool = true,
             saving: Bool = false,
             conflict: Bool = false,
-            categorySaving: Bool = false
+            categorySaving: Bool = false,
+            writable: Bool = true
         ) -> FirstMateFeedbackEditorState {
             FirstMateFeedbackEditorState(
                 draft: FirstMateFeedbackDraft(),
                 isTargetAlive: true,
-                isWritable: true,
+                isWritable: writable,
+                hasControl: true,
                 isFeedbackLoaded: loaded,
                 isSaving: saving,
                 isAddingCategory: categorySaving,
                 isCategoriesLoaded: true,
                 isLoadingCategories: false,
                 showsUpgradeNotice: false,
+                showsConnectionNotice: !writable,
                 ratingErrorMessage: nil,
                 categoryErrorMessage: nil,
                 saveErrorMessage: nil,
@@ -406,6 +452,9 @@ struct FirstMateFeedbackPresentationTests {
         #expect(!state(categorySaving: true).canSave)
         #expect(!state().isLoadingCategories)
         #expect(state().isCategoriesLoaded)
+        // A transient outage keeps the draft editable locally but blocks Save.
+        #expect(state(writable: false).isEditable)
+        #expect(!state(writable: false).canSave)
     }
 
     @Test("The footer, message row, and pinned editor host in both appearances at the largest text size")

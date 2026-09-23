@@ -92,8 +92,8 @@ struct FirstMateChatView: View {
     private var showsFeedbackUpgradeNotice: Bool {
         FirstMateFeedbackSurface.showsUpgradeNotice(
             hasLoaded: store.hasLoaded,
-            unsupported: store.unsupported,
-            supported: store.feedbackSupported
+            capability: store.feedbackCapability,
+            surfaceUnsupported: store.unsupported
         )
     }
 

@@ -106,6 +106,18 @@ enum FirstMateFeedbackEligibility {
     }
 }
 
+/// Whether the owning companion has confirmed response-feedback support for
+/// the current connection. `.unknown` covers a fresh connection and every
+/// failed, timed-out, or unanswered capability check; it is temporary
+/// unavailability, never evidence that the companion is old. Only a capability
+/// response that succeeded without `first-mate-feedback-v1` is `.unsupported`,
+/// and only `.unsupported` shows server-upgrade guidance.
+enum FirstMateFeedbackCapability: Equatable, Sendable {
+    case unknown
+    case supported
+    case unsupported
+}
+
 /// Editable feedback for one response. `rating == .down` keeps reasons and a
 /// comment optional; a positive or cleared rating sends none. The draft itself
 /// is preserved exactly as typed so a failed save can restore it.

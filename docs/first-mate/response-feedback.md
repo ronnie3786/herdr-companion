@@ -66,6 +66,16 @@ in this feature changes prompts, preferences, models, or workflows.
   stale-revision rejection instead offers **Reload and retry**, which reloads
   the latest revision, rebases the preserved up/clear payload, and retries with
   a fresh request identity only after that explicit action.
+- If the periodic capability check fails — for example the companion is briefly
+  offline — the editor stays open with the draft, reasons, and note it already
+  has, keeps a failed save's error and retry visible, and adds connection
+  guidance with **Retry connection**. A failed, timed-out, or unanswered check
+  is temporary unavailability, never proof that the companion is old, so it
+  never swaps in the server-upgrade notice described below. The workspace's
+  periodic refresh (or **Retry connection**) restores writes as soon as a
+  capability response succeeds, and the retained draft can then be saved
+  without losing anything typed. A saved rating stays readable while the
+  connection is unavailable.
 - A response has one current rating. Selecting thumbs up on a negative response,
   or **Remove rating**, clears the reasons and note only after the save
   succeeds.
@@ -122,6 +132,11 @@ in this feature changes prompts, preferences, models, or workflows.
   shows one upgrade notice in the First Mate conversation, does not add
   per-response controls for unsupported hosts, and never substitutes another
   host.
+- Upgrade guidance is reserved for a successful capability response that omits
+  `first-mate-feedback-v1`. A failed, timed-out, or unanswered capability check
+  is temporary unavailability instead: cached ratings stay readable, writes are
+  disabled without discarding an open draft, and the upgrade notice appears (or
+  returns) only after a capability response succeeds without feedback support.
 - Installing or restarting the companion is a separate step from a Mac app
   update. The signed Mac feed updates only the app and does not install
   companion server packages. This release does not deploy, publish, or install
@@ -210,6 +225,12 @@ state. Do not capture operator configuration or real conversations.
       succeeds after reconnecting. Also confirm a failed thumbs-up or
       **Remove rating** keeps the previous label and shows the compact
       **Try again** retry under that response.
+- [ ] Keep the host unavailable through a periodic capability refresh and
+      confirm the editor keeps the draft and any failed save's error visible,
+      shows **Retry connection** rather than the server-upgrade notice, and can
+      save the retained draft after the connection returns. Confirm the
+      upgrade notice appears only for a companion that answers without
+      `first-mate-feedback-v1`.
 - [ ] Against a companion without `first-mate-feedback-v1`, confirm exactly one
       upgrade notice appears and no feedback request is sent. After separately
       installing and restarting the updated companion, confirm the controls

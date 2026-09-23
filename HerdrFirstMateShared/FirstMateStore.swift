@@ -75,7 +75,13 @@ final class FirstMateStore {
     // Response feedback is companion data that deliberately stays outside
     // FirstMateSnapshot and composer state. Caches are scoped to this client
     // lifecycle and to the exact feature and response they came from.
-    private(set) var feedbackSupported = false
+    //
+    // The capability is tri-state so a failed or unanswered check is never
+    // mistaken for a confirmed old server: only a successful capability
+    // response without `first-mate-feedback-v1` shows upgrade guidance, while
+    // `.unknown` keeps cached ratings readable and an open draft recoverable.
+    private(set) var feedbackCapability: FirstMateFeedbackCapability = .unknown
+    var feedbackSupported: Bool { feedbackCapability == .supported }
     private(set) var feedbackCategories: [FirstMateFeedbackCategory] = []
     private(set) var feedbackCategoriesLoaded = false
     private(set) var isLoadingFeedbackCategories = false
@@ -161,7 +167,7 @@ final class FirstMateStore {
         attachmentsSupported = demo
         contextSupported = demo
         safeModelSettingsSupported = demo
-        feedbackSupported = demo
+        feedbackCapability = demo ? .supported : .unknown
         feedbackCategories = demo ? FirstMateFeedbackDefaults.categories.map {
             FirstMateFeedbackCategory(id: $0.id, label: $0.label, createdAt: FirstMateDemo.timestamp)
         } : []
@@ -311,14 +317,16 @@ final class FirstMateStore {
                 attachmentsSupported = capabilities.ok && capabilities.supportsAttachments
                 contextSupported = capabilities.ok && capabilities.supportsContext
                 safeModelSettingsSupported = capabilities.ok && capabilities.supportsSafeModelSettings
-                feedbackSupported = capabilities.ok && capabilities.supportsFeedback
+                feedbackCapability = capabilities.ok
+                    ? (capabilities.supportsFeedback ? .supported : .unsupported)
+                    : .unknown
             } catch {
                 guard capturedGeneration == generation else { return }
                 archiveSupported = false
                 attachmentsSupported = false
                 contextSupported = false
                 safeModelSettingsSupported = false
-                feedbackSupported = false
+                feedbackCapability = .unknown
             }
             let list = try await client.fetchFirstMateFeatures(scope: showArchived ? .all : .active)
             guard capturedGeneration == generation else { return }
@@ -683,9 +691,18 @@ final class FirstMateStore {
         feedbackSaveErrors[key] = nil
         feedbackConflicts.remove(key)
         let requestDraft = retainedDraft.forRequest
-        guard feedbackSupported else {
+        switch feedbackCapability {
+        case .unsupported:
             feedbackSaveErrors[key] = "Update this companion server to rate First Mate responses."
             return false
+        case .unknown:
+            // A failed or unanswered capability check is a temporary
+            // connection problem: keep the draft and retry path, and never
+            // claim the server needs an update it may already have.
+            feedbackSaveErrors[key] = "Connect to this feature's host to save feedback."
+            return false
+        case .supported:
+            break
         }
         // Writes revalidate the control grant; reads do not need it.
         guard controlAvailable else {
@@ -798,9 +815,15 @@ final class FirstMateStore {
         expectedContext: OperationContext
     ) async -> FirstMateFeedbackCategory? {
         guard isCurrentFeedbackContext(expectedContext) else { return nil }
-        guard feedbackSupported else {
+        switch feedbackCapability {
+        case .unsupported:
             feedbackCategoriesError = "Update this companion server to add feedback reasons."
             return nil
+        case .unknown:
+            feedbackCategoriesError = "Connect to this feature's host to add a reason."
+            return nil
+        case .supported:
+            break
         }
         guard controlAvailable else {
             feedbackCategoriesError = "This workspace is read-only right now."

@@ -65,7 +65,7 @@ struct HerdrHudCardView: View {
         .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.cardRadius))
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
-                .strokeBorder(cardOutlineColor, lineWidth: 1)
+                .strokeBorder(HerdrTheme.separator, lineWidth: 1)
         }
         .overlay {
             if isDropTargeted {
@@ -77,7 +77,6 @@ struct HerdrHudCardView: View {
         // without the dense, wide halo of a single high-opacity shadow.
         .shadow(color: HerdrTheme.ink.opacity(0.16), radius: 18, y: 6)
         .shadow(color: HerdrTheme.ink.opacity(0.10), radius: 3, y: 2)
-        .shadow(color: cardWorkingShadowColor, radius: 4)
         .onDrop(of: [.fileURL, .image], isTargeted: $isDropTargeted) { providers in
             session.acceptAttachmentDrop(providers)
         }
@@ -116,16 +115,6 @@ struct HerdrHudCardView: View {
                 && (exchange.status == .completed || exchange.status == .promoted)
         }) != nil
         session.responseAudioPlayer.responseDidChange(hasResponse: hasResponse)
-    }
-
-    private var cardOutlineColor: Color {
-        session.isRunning
-            ? HerdrHudNotificationPresentation.outlineColor(for: AgentStatus.working).opacity(0.25)
-            : HerdrTheme.separator
-    }
-
-    private var cardWorkingShadowColor: Color {
-        session.isRunning ? AgentStatus.working.color.opacity(0.16) : .clear
     }
 
     private func openPaneInMainWindow(_ paneID: String) {

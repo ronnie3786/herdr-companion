@@ -65,14 +65,43 @@ and audio player. Reopen the orb to send another idea without waiting. Server
 concurrency limits still apply; rejected starts remain visible with their error and
 retryable draft instead of disappearing.
 
-HUD chat bubbles use a rounded rectangular card, speech-bubble icon, task title
-(from the first prompt), machine, and explicit running/ready/error status. Workspace
-agent bubbles keep their existing appearance and behavior. An unread completed
-reply gets a static green outline/glow and **Ready** label; opening it clears the
-unread signal. Completion never expands a card or steals focus. Titles respect
-**Show session titles** while collapsed. HUD chats remain individually available
-in the measured, scrollable stack; the existing **Visible agents** limit and +N
-continue to apply to workspace/voice agents.
+HUD chat bubbles copy the ordinary agent-session bubble's presentation. The
+rounded elevated card keeps the speech-bubble icon and the lavender **HUD chat**
+header as the collapsed bubble's indicator, plus the task title (from the first
+prompt) and the chevron or Smart Rename progress control. Below them, one status
+row carries the chat's lifecycle: while a healthy run is in flight it shows the
+filled yellow bolt-circle **Running** label and caption typography used by
+running workspace agents. An unread completed reply keeps its static green
+outline/glow and **Ready** label; opening it clears the unread signal. Running
+status itself never adds a yellow border or glow, so ordinary card separation
+matches an idle bubble. Completion never expands a card or steals focus. Titles
+respect **Show session titles** while collapsed, and the **HUD chat** header
+stays visible even when titles are hidden. HUD chats remain individually
+available in the measured, scrollable stack; the existing **Visible agents**
+limit and +N continue to apply to workspace/voice agents.
+
+### Bubble status and metadata
+
+The trailing slot of the status row shows the chat's own model and cumulative
+reported USD cost, using the same formatter and synchronized five-second
+alternation as agent-session bubbles: the visible value fades between the model
+name and the conversation total, new and recreated bubbles join the shared
+phase immediately, and reduced motion keeps the value without the fade. The cost
+is the conversation's cumulative reported USD, not an invoice or a single turn's
+estimate. It is aggregated from the runs the app already polls and from paginated
+saved history, counts each accepted turn once, includes a reported cost from
+failed or cancelled turns, and survives the local transcript caps.
+
+Metadata stays honest when it is incomplete. A missing model is never guessed,
+a missing or partial total is never presented as a complete one, and when both
+values are unavailable the bubble simply omits the trailing slot. Legacy caches
+that cannot prove coverage stay unknown until history establishes it. The
+machine that owns the chat is never shown in the collapsed bubble and is never
+used as a fallback label; machine selection and routing are unchanged. The full
+accessibility summary for the row still names both the model and the session
+cost even while only one of them is drawn. This is a Mac presentation change:
+no server update is needed beyond the existing `hud-chat-v1` run and history
+support, and the bubble keeps using the run endpoints already in use.
 
 Click a mini bubble to expand that conversation in the floating HUD's anchored
 chat card, including its title, transcript, reply composer, Stop, and **Continue in
@@ -163,6 +192,21 @@ summarize its active model context; it does not remove the retained JSONL file.
   is still searchable. Reject the confirmation to leave everything unchanged.
 - Disconnect the machine and attempt End Chat: it must retain the bubble rather
   than claim that an unconfirmed run stopped. Reconnect and retry.
+- Submit a chat and watch its bubble beside a running workspace agent bubble. The
+  bolt-circle **Running** row, caption typography, and neutral card outline must
+  match; no yellow running-only border or glow should appear. Confirm the
+  **HUD chat** header identifies the bubble and no machine name is shown.
+- Watch the trailing slot across a five-second boundary: exactly one of the model
+  name or cumulative reported cost is visible at a time on both the HUD chat and
+  agent bubbles, and a newly mounted bubble joins that same phase instead of
+  restarting the fade. Repeat with Reduce Motion enabled: the value stays
+  visible without the fade.
+- Hide session titles, enlarge text, and use a long title and long model name.
+  The **HUD chat** header and the status label must stay visible without the
+  metadata overlapping or pushing them out of the card.
+- Check a synthetic chat with no model or cost reported, then an unread Ready
+  answer: missing values leave the trailing slot empty rather than showing a
+  placeholder, machine name, or partial total, and Ready keeps its green signal.
 - Stop one run. Other chats must continue. A rejected start or failed attachment
   read must show an error in its own bubble/card and retain retryable input.
 - Relaunch during a run, including while its machine is offline. Reconnect and

@@ -424,6 +424,20 @@ final class PRReviewStore {
         return diffLoadError
     }
 
+    /// The loaded diff only while it belongs to the current review revision.
+    /// `receive()` retains the previous diff while its replacement loads, so
+    /// callers must validate review, base SHA, and head SHA before trusting
+    /// the retained content or its file statuses.
+    var currentDiff: PRReviewDiff? {
+        guard let diff,
+              let review = snapshot?.review ?? selectedReview,
+              diff.reviewID.isEmpty || diff.reviewID == review.id,
+              review.baseSHA.isEmpty || diff.baseSHA == review.baseSHA,
+              review.headSHA.isEmpty || diff.headSHA == review.headSHA
+        else { return nil }
+        return diff
+    }
+
     func loadDiff(for path: String?) async {
         guard let path,
               let selectedReviewID,
@@ -1042,12 +1056,12 @@ final class PRReviewStore {
         revealDeletedContent(path: path)
     }
 
-    /// True when the snapshot or the loaded diff explicitly reports `path` as
-    /// deleted. Removal counts and filenames never decide.
+    /// True when the snapshot or the current revision's diff explicitly
+    /// reports `path` as deleted. Removal counts and filenames never decide,
+    /// and a diff retained from an earlier revision is not consulted.
     func isDeletedFile(path: String) -> Bool {
         if snapshot?.files.first(where: { $0.path == path })?.isDeleted == true { return true }
-        guard let diff, diff.reviewID.isEmpty || diff.reviewID == selectedReviewID else { return false }
-        return diff.files.first(where: { $0.path == path })?.isDeleted == true
+        return currentDiff?.files.first(where: { $0.path == path })?.isDeleted == true
     }
 
     func isDeletedContentExpanded(path: String) -> Bool {
@@ -1073,6 +1087,16 @@ final class PRReviewStore {
     func revealDeletedContent(path: String) {
         guard isDeletedFile(path: path) else { return }
         expandedDeletedPaths.insert(path)
+    }
+
+    /// Records an explicit highlight request. The reveal happens here, once per
+    /// accepted request, instead of in a view `onChange`: repeating identical
+    /// coordinates is still a new request, and a request that arrives before
+    /// the Files view mounts is not lost. Ordinary rerenders never call this,
+    /// so they cannot reopen manually collapsed content.
+    func highlightLines(path: String, start: Int, end: Int, side: PRReviewSide) {
+        highlight = (path, start, end, side)
+        revealDeletedContent(path: path)
     }
 
     /// Reads and validates one upload attempt before it leaves the Mac.

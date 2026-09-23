@@ -257,6 +257,77 @@ enum PRReviewDeletedFileDisclosure {
     }
 }
 
+/// Places the selected-file actions. One group right-aligns by itself; two
+/// groups share a right-aligned row while both fit, and stack left-aligned
+/// when enlarged text or a minimum-size pop-out would make them crowd.
+///
+/// A custom layout is used instead of `ViewThatFits` because a losing
+/// `ViewThatFits` candidate can still mount duplicate controls in offscreen
+/// render snapshots, which would double the header's buttons there.
+struct PRReviewHeaderActionsLayout: Layout {
+    var spacing: CGFloat = 8
+
+    enum Arrangement: Equatable {
+        case inline
+        case stacked
+
+        /// The row decision for group widths measured at their ideal size.
+        static func resolve(groupWidths: [CGFloat], availableWidth: CGFloat, spacing: CGFloat) -> Arrangement {
+            let combined = groupWidths.reduce(0, +) + spacing * CGFloat(max(0, groupWidths.count - 1))
+            return combined <= availableWidth ? .inline : .stacked
+        }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let widths = sizes.map(\.width)
+        let arrangement = Arrangement.resolve(
+            groupWidths: widths,
+            availableWidth: proposal.width ?? .greatestFiniteMagnitude,
+            spacing: spacing
+        )
+        switch arrangement {
+        case .inline:
+            let combined = widths.reduce(0, +) + spacing * CGFloat(max(0, subviews.count - 1))
+            return CGSize(width: proposal.width ?? combined, height: sizes.map(\.height).max() ?? 0)
+        case .stacked:
+            let stacked = sizes.map(\.height).reduce(0, +) + spacing * CGFloat(max(0, subviews.count - 1))
+            return CGSize(width: proposal.width ?? (widths.max() ?? 0), height: stacked)
+        }
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let arrangement = Arrangement.resolve(
+            groupWidths: sizes.map(\.width),
+            availableWidth: bounds.width,
+            spacing: spacing
+        )
+        switch arrangement {
+        case .inline:
+            var x = bounds.minX
+            for (index, subview) in subviews.enumerated() {
+                if index == subviews.count - 1 {
+                    x = bounds.maxX - sizes[index].width
+                }
+                subview.place(at: CGPoint(x: x, y: bounds.minY), proposal: ProposedViewSize(sizes[index]))
+                x += sizes[index].width + spacing
+            }
+        case .stacked:
+            var y = bounds.minY
+            for (index, subview) in subviews.enumerated() {
+                let size = sizes[index]
+                let width = min(bounds.width, size.width)
+                subview.place(
+                    at: CGPoint(x: bounds.minX, y: y),
+                    proposal: ProposedViewSize(width: width, height: size.height)
+                )
+                y += size.height + spacing
+            }
+        }
+    }
+}
+
 /// A text badge, so the deleted state never depends on red coloring alone.
 struct PRReviewDeletedIndicator: View {
     var accessibilityIdentifier: String
@@ -337,15 +408,7 @@ struct PRReviewDiffView: View {
     @State private var hasQuestionDraft = false
 
     private var file: PRReviewFile? { store.snapshot?.files.first { $0.path == store.selectedPath } }
-    private var currentDiff: PRReviewDiff? {
-        guard let diff = store.diff,
-              let review = store.snapshot?.review ?? store.selectedReview,
-              diff.reviewID.isEmpty || diff.reviewID == review.id,
-              review.baseSHA.isEmpty || diff.baseSHA == review.baseSHA,
-              review.headSHA.isEmpty || diff.headSHA == review.headSHA
-        else { return nil }
-        return diff
-    }
+    private var currentDiff: PRReviewDiff? { store.currentDiff }
     private var diffFile: PRReviewDiffFile? { currentDiff?.files.first { $0.path == store.selectedPath } }
 
     var body: some View {
@@ -403,11 +466,6 @@ struct PRReviewDiffView: View {
         .onChange(of: store.scrollRequest?.token) { _, _ in
             guard let request = store.scrollRequest else { return }
             store.selectedPath = request.path
-            store.revealDeletedContent(path: request.path)
-        }
-        .onChange(of: highlightIdentity) { _, _ in
-            guard let path = store.highlight?.path else { return }
-            store.revealDeletedContent(path: path)
         }
         .onChange(of: store.selectedPath) { _, _ in
             hasQuestionDraft = false
@@ -465,20 +523,21 @@ struct PRReviewDiffView: View {
                     .foregroundStyle(HerdrTheme.muted)
                     .lineLimit(2)
             }
-            HStack(spacing: 8) {
+            PRReviewHeaderActionsLayout(spacing: 8) {
                 if showsDeletedContentDisclosure {
                     deletedContentDisclosureButton(file)
                 }
-                Spacer()
-                Button("Previous") { store.selectedPath = store.previousFile()?.path }
-                    .keyboardShortcut(.upArrow, modifiers: .option)
-                Button("Next") { store.selectedPath = store.nextFile()?.path }
-                    .keyboardShortcut(.downArrow, modifiers: .option)
-                Button(file.viewed ? "Mark unviewed" : "Mark viewed") {
-                    Task { await store.setViewed(paths: [file.path], viewed: !file.viewed) }
+                HStack(spacing: 8) {
+                    Button("Previous") { store.selectedPath = store.previousFile()?.path }
+                        .keyboardShortcut(.upArrow, modifiers: .option)
+                    Button("Next") { store.selectedPath = store.nextFile()?.path }
+                        .keyboardShortcut(.downArrow, modifiers: .option)
+                    Button(file.viewed ? "Mark unviewed" : "Mark viewed") {
+                        Task { await store.setViewed(paths: [file.path], viewed: !file.viewed) }
+                    }
+                    .keyboardShortcut("v", modifiers: .option)
+                    Button("GitHub", action: openFullDiff)
                 }
-                .keyboardShortcut("v", modifiers: .option)
-                Button("GitHub", action: openFullDiff)
             }
         }
         .buttonStyle(.bordered)
@@ -489,11 +548,6 @@ struct PRReviewDiffView: View {
     private var highlight: (start: Int, end: Int, side: PRReviewSide)? {
         guard let highlight = store.highlight, highlight.path == store.selectedPath else { return nil }
         return (highlight.start, highlight.end, highlight.side)
-    }
-
-    private var highlightIdentity: String? {
-        guard let highlight = store.highlight else { return nil }
-        return "\(highlight.path)\u{1f}\(highlight.side.rawValue)\u{1f}\(highlight.start)\u{1f}\(highlight.end)"
     }
 
     private var selectedFileIsDeleted: Bool {

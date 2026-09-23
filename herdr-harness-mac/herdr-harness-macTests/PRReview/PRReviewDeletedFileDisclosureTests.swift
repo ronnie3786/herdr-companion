@@ -153,6 +153,39 @@ struct PRReviewDeletedFileDisclosureTests {
         #expect(modified.isDeletedFile(path: path))
     }
 
+    @Test("A deleted-to-modified revision stops using the retained diff while the replacement loads")
+    func staleDeletedDiffIsNotUsedAcrossRevisions() async throws {
+        let store = makeStore()
+        let path = PRReviewDemo.snapshot().files[0].path
+        var staleDiff = PRReviewDemo.diff()
+        staleDiff.files[0].status = "deleted"
+        store.selectedPath = path
+        store.diff = staleDiff
+        #expect(store.isDeletedFile(path: path), "A matching revision's diff can report deletion")
+
+        // Polling replaces the snapshot before its diff arrives: the same path
+        // is now modified at a new head. The retained diff belongs to the
+        // previous revision and must not keep labeling the file deleted.
+        var updated = PRReviewDemo.snapshot()
+        updated.files[0].status = "modified"
+        updated.review.headSHA = "new-head"
+        updated.review.revision += 1
+        store.receive(updated)
+
+        #expect(store.diff != nil, "The previous diff is retained while the replacement is pending")
+        #expect(!store.isDeletedFile(path: path),
+                "A stale diff from the previous head must not keep the Deleted state")
+
+        // A replacement that fails leaves the same retained diff in place, so
+        // the lookup must stay truthful after the error, too.
+        let client = TestPRReviewClient(diffHandler: { _, _ in throw APIError.invalidResponse })
+        store.reconnect(client: client, machineID: "synthetic-host", demo: false)
+        store.selectedPath = path
+        await store.loadDiff(for: path)
+        #expect(store.currentDiffLoadError != nil)
+        #expect(!store.isDeletedFile(path: path))
+    }
+
     @Test("Hiding deleted content clears line visibility reported for it")
     func hidingDeletedContentClearsVisibleLineReporting() {
         let store = makeStore()
@@ -235,7 +268,7 @@ struct PRReviewDeletedFileDisclosureTests {
         await settle(mounted)
         #expect(!store.isDeletedContentExpanded(path: path))
 
-        store.highlight = (path, 8, 8, .before)
+        store.highlightLines(path: path, start: 8, end: 8, side: .before)
         for _ in 0..<80 {
             if store.isDeletedContentExpanded(path: path) { break }
             await settleOnce(mounted)
@@ -245,6 +278,73 @@ struct PRReviewDeletedFileDisclosureTests {
 
         let textView = try #require(await waitForDiffTextView(in: mounted))
         #expect(textView.renderedPlainText.contains("-old"))
+    }
+
+    @Test("Every explicit highlight request reveals deleted content, even when repeated")
+    func repeatedHighlightRequestsRevealDeletedContent() {
+        let store = makeStore()
+        let path = PRReviewDemo.snapshot().files[0].path
+        store.selectedPath = path
+
+        store.highlightLines(path: path, start: 8, end: 8, side: .before)
+        #expect(store.highlight?.path == path)
+        #expect(store.highlight?.start == 8)
+        #expect(store.highlight?.end == 8)
+        #expect(store.highlight?.side == .before)
+        #expect(store.isDeletedContentExpanded(path: path))
+
+        store.setDeletedContentExpanded(false, path: path)
+        #expect(!store.isDeletedContentExpanded(path: path))
+
+        store.highlightLines(path: path, start: 8, end: 8, side: .before)
+        #expect(store.isDeletedContentExpanded(path: path),
+                "Identical coordinates are still a new request and must reveal the content")
+    }
+
+    @Test("A highlight request received before its view mounts is not lost")
+    func highlightBeforeMountingRevealsContent() async throws {
+        let store = makeStore()
+        let path = PRReviewDemo.snapshot().files[0].path
+        store.selectedPath = path
+        store.diff = deletedDiff()
+
+        // The request lands while no Files view exists yet.
+        store.highlightLines(path: path, start: 8, end: 8, side: .before)
+        #expect(store.isDeletedContentExpanded(path: path))
+
+        let mounted = mountDiffView(store: store)
+        defer { mounted.window.close() }
+        let textView = try #require(await waitForDiffTextView(in: mounted))
+        #expect(textView.renderedPlainText.contains("-old"),
+                "A pre-mount request must still render the revealed removal hunk")
+    }
+
+    @Test("Ordinary rerenders never reopen manually collapsed deleted content")
+    func rerendersDoNotReopenCollapsedContent() async throws {
+        let store = makeStore()
+        let path = PRReviewDemo.snapshot().files[0].path
+        store.selectedPath = path
+        store.diff = deletedDiff()
+
+        let mounted = mountDiffView(store: store)
+        defer { mounted.window.close() }
+        await settle(mounted)
+        store.setDeletedContentExpanded(true, path: path)
+        _ = try #require(await waitForDiffTextView(in: mounted))
+        store.setDeletedContentExpanded(false, path: path)
+        #expect(await waitForRendererRemoval(in: mounted))
+
+        // A refresh inside the same revision scope republishes the deleted
+        // snapshot; that is an ordinary rerender, not a highlight request.
+        var polled = PRReviewDemo.snapshot()
+        polled.files[0].status = "deleted"
+        store.receive(polled)
+        await settle(mounted)
+        #expect(!store.isDeletedContentExpanded(path: path))
+        #expect(
+            descendants(mounted.hosting).compactMap { $0 as? PRReviewDiffTextView }.isEmpty,
+            "A rerender must not mount removed code after a manual collapse"
+        )
     }
 
     @Test("Binary and empty deleted diffs never mount the text renderer")

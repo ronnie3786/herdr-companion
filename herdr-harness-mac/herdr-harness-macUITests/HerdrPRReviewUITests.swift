@@ -362,23 +362,32 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
         XCTAssertEqual(disclosure.value as? String, "Collapsed")
         XCTAssertTrue(disclosure.isEnabled)
 
-        // R2: Show deleted content reveals the removal hunk.
+        // R2 pointer path: Show deleted content reveals the removal hunk and
+        // the same control hides it again.
         disclosure.click()
         XCTAssertTrue(waitForDiffText(SyntheticReview.deletedSourceRemovedLine, in: main),
                       "Expanding a deleted source file must reveal its removed code")
         XCTAssertEqual(disclosure.label, "Hide deleted content")
         XCTAssertEqual(disclosure.value as? String, "Expanded")
-
-        // Keyboard: the focusable control announces Expanded/Collapsed. Space
-        // collapses it when macOS keyboard navigation reaches the control; the
-        // click fallback is the same AXPress action VoiceOver uses.
-        app.typeKey(.space, modifierFlags: [])
-        if !control("pr-review-deleted-content-hidden", in: main).waitForExistence(timeout: 1.5) {
-            disclosure.click()
-        }
+        disclosure.click()
         XCTAssertTrue(control("pr-review-deleted-content-hidden", in: main).waitForExistence(timeout: 5))
         XCTAssertTrue(main.webViews.firstMatch.waitForNonExistence(timeout: 5),
                       "Hide deleted content must unmount the code renderer")
+        XCTAssertEqual(disclosure.value as? String, "Collapsed")
+
+        // R2 keyboard path: Tab establishes focus on the disclosure and Space
+        // expands and collapses it. No pointer press touches the disclosure
+        // below, so this only passes when keyboard activation really works.
+        setFileFilter(SyntheticReview.deletedSourceSearchTerm, in: main, app: app)
+        focusWithTab(disclosure, in: main, app: app)
+        app.typeKey(.space, modifierFlags: [])
+        XCTAssertTrue(waitForDiffText(SyntheticReview.deletedSourceRemovedLine, in: main),
+                      "Space on the keyboard-focused disclosure must expand deleted content")
+        XCTAssertEqual(disclosure.value as? String, "Expanded")
+        app.typeKey(.space, modifierFlags: [])
+        XCTAssertTrue(control("pr-review-deleted-content-hidden", in: main).waitForExistence(timeout: 5),
+                      "Space on the keyboard-focused disclosure must collapse deleted content")
+        XCTAssertEqual(disclosure.value as? String, "Collapsed")
 
         // Disclosure survives keyboard file navigation in both states.
         setFileFilter("Legacy", in: main, app: app)
@@ -705,6 +714,38 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
             Thread.sleep(forTimeInterval: 0.1)
         } while Date() < deadline
         return element.exists && !element.isEnabled
+    }
+
+    /// Whether `element` owns keyboard focus. macOS does not expose
+    /// `XCUIElement.hasFocus`, but XCUITest matches the AX
+    /// `hasKeyboardFocus` attribute through a predicate.
+    @MainActor
+    private func hasKeyboardFocus(_ element: XCUIElement, in window: XCUIElement) -> Bool {
+        guard element.exists, !element.identifier.isEmpty else { return false }
+        return window.descendants(matching: .any)
+            .matching(identifier: element.identifier)
+            .matching(NSPredicate(format: "hasKeyboardFocus == 1"))
+            .firstMatch
+            .exists
+    }
+
+    /// Moves keyboard focus onto `element` with Tab alone and fails rather
+    /// than clicking, so the assertions that follow are keyboard-only.
+    @MainActor
+    private func focusWithTab(
+        _ element: XCUIElement,
+        in window: XCUIElement,
+        app: XCUIApplication,
+        attempts: Int = 64,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard !hasKeyboardFocus(element, in: window) else { return }
+        for _ in 0..<attempts {
+            app.typeKey(.tab, modifierFlags: [])
+            if hasKeyboardFocus(element, in: window) { return }
+        }
+        XCTFail("Tab should move keyboard focus onto the deleted-content disclosure", file: file, line: line)
     }
 
     /// The header's additions/deletions summary is unique to the review detail,

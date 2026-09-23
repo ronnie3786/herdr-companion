@@ -203,6 +203,124 @@ struct PRReviewRenderTests {
         #expect(partialText.renderedPlainText.contains("struct SeedCatalog {}"), "A partial nondeleted file keeps its available code visible without disclosure")
     }
 
+    @Test("Header actions stay inline until crowded, then stack")
+    func headerActionsReflowWhenCrowded() {
+        struct Fixture: View {
+            var body: some View {
+                PRReviewHeaderActionsLayout(spacing: 8) {
+                    Color.red.frame(width: 100, height: 20)
+                    Color.blue.frame(width: 300, height: 20)
+                }
+            }
+        }
+
+        // 100 + 8 + 300 = 408 fits in 420, so both groups share one row.
+        #expect(hostingHeight(Fixture().frame(width: 420)) == 20)
+        // The same groups need more than 350 and stack into two left rows.
+        #expect(hostingHeight(Fixture().frame(width: 350)) == 48)
+        #expect(PRReviewHeaderActionsLayout.Arrangement.resolve(
+            groupWidths: [100, 300], availableWidth: 420, spacing: 8
+        ) == .inline)
+        #expect(PRReviewHeaderActionsLayout.Arrangement.resolve(
+            groupWidths: [100, 300], availableWidth: 350, spacing: 8
+        ) == .stacked)
+    }
+
+    @Test(
+        "Deleted long paths stay usable at the minimum pop-out size and largest text",
+        arguments: [false, true]
+    )
+    func deletedLongPathAtMinimumSizeAndLargestText(expanded: Bool) async throws {
+        let size = CGSize(width: 720, height: 520)
+        let longPath = "Sources/Legacy/Compatibility/SeedCatalogLegacyCompatibilityShimsAndMigrationHelpers.swift"
+        let removedLine = "enum SeedCatalogLegacyCompatibilityShims { static let enabled = false }"
+
+        let store = PRReviewStore()
+        store.configure(client: nil, machineID: "synthetic-host", demo: false)
+        store.select(PRReviewDemo.reviewID)
+        let snapshot = PRReviewDemo.snapshot()
+        let file = try #require(snapshot.files.first { $0.path == longPath })
+        #expect(file.isDeleted)
+        #expect(file.deletions == 2)
+        store.receive(snapshot)
+        store.selectedPath = longPath
+        store.diff = PRReviewDemo.diff()
+        if expanded {
+            store.setDeletedContentExpanded(true, path: longPath)
+        }
+
+        let hosting: NSView = NSHostingView(rootView:
+            PRReviewFilesView(store: store)
+                .frame(width: size.width, height: size.height)
+                .environment(\.herdrFontScale, .xxxLarge)
+                .environment(\.colorScheme, .dark)
+        )
+        hosting.frame = CGRect(origin: .zero, size: size)
+        let window = NSWindow(
+            contentRect: hosting.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        window.alphaValue = 0
+        window.orderFrontRegardless()
+        defer { window.close() }
+
+        for _ in 0..<10 {
+            hosting.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(25))
+        }
+
+        // Readable labels: the header copy comes from the shared deleted-file
+        // presentation; the complete long path is the value its text, hover,
+        // and accessibility label receive. The UI suite asserts that AX label
+        // end to end with `headerPath`.
+        #expect(store.selectedPath == longPath)
+        #expect(file.path == longPath,
+                "The header receives the complete long path for text, hover, and accessibility")
+        #expect(PRReviewDeletedFileDisclosure.badgeLabel == "Deleted")
+        #expect(PRReviewDeletedFileDisclosure.summary(deletions: file.deletions) == "Deleted · 2 lines removed")
+        #expect(PRReviewDeletedFileDisclosure.actionLabel(expanded: expanded)
+            == (expanded ? "Hide deleted content" : "Show deleted content"))
+        #expect(PRReviewDeletedFileDisclosure.stateDescription(expanded: expanded)
+            == (expanded ? "Expanded" : "Collapsed"))
+        #expect(PRReviewDeletedFileDisclosure.hiddenDetail(deletions: file.deletions)
+            == "2 removed lines are hidden. Choose Show deleted content to inspect them.")
+
+        if expanded {
+            let textView = try #require(await waitForDiffTextView(in: hosting, window: window))
+            #expect(textView.renderedPlainText.contains(removedLine),
+                    "Expanded deleted content renders the long-path removal hunk")
+        } else {
+            #expect(
+                descendants(hosting).compactMap { $0 as? PRReviewDiffTextView }.isEmpty,
+                "A collapsed deleted file mounts no removed code at the minimum size"
+            )
+        }
+
+        // Controls contained: every header action, including the disclosure,
+        // stays inside the diff pane; the layout test above covers reflow.
+        let split = try #require(descendants(hosting).compactMap { $0 as? NSSplitView }.first)
+        let detail = try #require(split.subviews.last)
+        let detailRect = detail.convert(detail.bounds, to: hosting)
+        let actionButtons = descendants(detail).filter {
+            String(describing: type(of: $0)).contains("FocusRingView")
+        }
+        #expect(actionButtons.count >= 4,
+                "The header should mount its disclosure and navigation buttons")
+        for button in actionButtons {
+            let frame = button.convert(button.bounds, to: hosting)
+            #expect(
+                detailRect.insetBy(dx: -1, dy: -1).contains(frame),
+                "Header action \(type(of: button)) must stay inside the diff pane"
+            )
+        }
+    }
+
     @Test("Preparing, failure, empty, filtered, and ready states stay distinct")
     func resolvesFilesPresentationStates() {
         #expect(PRReviewFilesPresentation.resolve(
@@ -454,6 +572,13 @@ struct PRReviewRenderTests {
 
     private func descendants(_ view: NSView) -> [NSView] {
         [view] + view.subviews.flatMap(descendants)
+    }
+
+    /// The height SwiftUI needs for `view` at its given width, measured off
+    /// screen so the header's wrap decision is directly testable.
+    @MainActor
+    private func hostingHeight(_ view: some View) -> CGFloat {
+        NSHostingView(rootView: view).fittingSize.height
     }
 
     // MARK: - Popped-out window helpers

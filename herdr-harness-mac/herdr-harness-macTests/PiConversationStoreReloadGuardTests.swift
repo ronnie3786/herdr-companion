@@ -798,6 +798,224 @@ struct PiConversationStoreReloadGuardTests {
         await task.value
     }
 
+    @Test("Explicit compaction success publishes only after the matching recovery commits")
+    func compactionCompletionPublishesAtCommit() async throws {
+        let store = PiConversationStore()
+        store.reconnectBackoffBase = .zero
+        let pane = testPane()
+        let gate = PiSnapshotGate()
+        var snapshots = 0
+        var streams = 0
+        let (recoveryFetchStarted, recoveryStartedContinuation) = AsyncStream<Void>.makeStream()
+        let (published, publishedContinuation) = AsyncStream<Void>.makeStream()
+        store.publishObserver = { _, _ in publishedContinuation.yield(()) }
+        store.snapshotProvider = { _ in
+            snapshots += 1
+            if snapshots == 1 {
+                return try self.compactionSnapshot(cursor: "1", latest: "1", compactionEntryID: nil, prompt: "Committed")
+            }
+            recoveryStartedContinuation.yield(())
+            await gate.wait()
+            return try self.compactionSnapshot(cursor: "2", latest: "2", compactionEntryID: "compact-1", prompt: "Compacted")
+        }
+        store.eventsProvider = { _, _ in
+            streams += 1
+            if streams == 1 {
+                return AsyncThrowingStream { stream in
+                    stream.yield(try! streamEvent(1, #"{"type":"session_before_compact","reason":"manual","willRetry":false}"#))
+                    stream.yield(try! streamEvent(
+                        2,
+                        #"{"type":"session_compact","reason":"manual","willRetry":false,"compactionEntry":{"type":"compaction","id":"compact-1","summary":"Synthetic summary"}}"#
+                    ))
+                    stream.finish()
+                }
+            }
+            return AsyncThrowingStream { _ in }
+        }
+
+        let task = Task { @MainActor in await store.follow(model: HerdrAppModel(arguments: []), pane: pane) }
+        defer {
+            task.cancel()
+            recoveryStartedContinuation.finish()
+            publishedContinuation.finish()
+        }
+        var publishIterator = published.makeAsyncIterator()
+        _ = await publishIterator.next()
+        var recoveryStartedIterator = recoveryFetchStarted.makeAsyncIterator()
+        _ = await recoveryStartedIterator.next()
+
+        // The explicit event was captured, but the committed projection must
+        // stay untouched until the authoritative snapshot commits.
+        #expect(store.compactionCompletion == nil)
+        #expect(store.turns.first?.user?.text == "Committed")
+
+        await gate.release()
+        var attempts = 0
+        while store.compactionCompletion == nil, attempts < 5 {
+            attempts += 1
+            _ = await publishIterator.next()
+        }
+        #expect(store.compactionCompletion?.evidence == .entry("compact-1"))
+        #expect(store.compactionActivity == nil)
+        #expect(store.connection == .connected)
+        #expect(store.turns.first?.user?.text == "Compacted")
+
+        task.cancel()
+        await task.value
+    }
+
+    @Test("A truncated snapshot uses the scoped event cursor for success evidence")
+    func truncatedSnapshotUsesEventCursorEvidence() async throws {
+        let store = PiConversationStore()
+        store.reconnectBackoffBase = .zero
+        let pane = testPane()
+        var snapshots = 0
+        var streams = 0
+        let (published, publishedContinuation) = AsyncStream<Void>.makeStream()
+        store.publishObserver = { _, _ in publishedContinuation.yield(()) }
+        store.snapshotProvider = { _ in
+            snapshots += 1
+            return snapshots == 1
+                ? try self.compactionSnapshot(cursor: "1", latest: "1", compactionEntryID: nil, prompt: "Committed")
+                : try self.compactionSnapshot(cursor: "2", latest: "2", compactionEntryID: nil, prompt: "", truncated: true)
+        }
+        store.eventsProvider = { _, _ in
+            streams += 1
+            if streams == 1 {
+                return AsyncThrowingStream { stream in
+                    stream.yield(try! streamEvent(1, #"{"type":"session_before_compact","reason":"overflow","willRetry":true}"#))
+                    stream.yield(try! streamEvent(2, #"{"type":"session_compact","reason":"overflow","willRetry":true}"#))
+                    stream.finish()
+                }
+            }
+            return AsyncThrowingStream { _ in }
+        }
+
+        let task = Task { @MainActor in await store.follow(model: HerdrAppModel(arguments: []), pane: pane) }
+        defer {
+            task.cancel()
+            publishedContinuation.finish()
+        }
+        var publishIterator = published.makeAsyncIterator()
+        _ = await publishIterator.next()
+        var attempts = 0
+        while store.compactionCompletion == nil, attempts < 8 {
+            attempts += 1
+            _ = await publishIterator.next()
+        }
+        #expect(store.compactionCompletion?.evidence == .eventCursor("2"))
+        #expect(store.compactionCompletion?.reason == .overflow)
+        #expect(store.compactionActivity == nil)
+
+        task.cancel()
+        await task.value
+    }
+
+    @Test("Recovery without a matching snapshot never publishes success")
+    func unmatchedRecoveryNeverPublishesCompletion() async throws {
+        let store = PiConversationStore()
+        store.reconnectBackoffBase = .zero
+        store.reconnectAttemptLimit = 1
+        let pane = testPane()
+        var snapshots = 0
+        var streams = 0
+        store.snapshotProvider = { _ in
+            snapshots += 1
+            // The snapshot can never reach the compacting event's watermark.
+            return try self.compactionSnapshot(cursor: "1", latest: "1", compactionEntryID: nil, prompt: "Committed")
+        }
+        store.eventsProvider = { _, _ in
+            streams += 1
+            if streams == 1 {
+                return AsyncThrowingStream { stream in
+                    stream.yield(try! streamEvent(2, #"{"type":"session_compact","reason":"manual"}"#))
+                    stream.finish()
+                }
+            }
+            return AsyncThrowingStream { _ in }
+        }
+
+        let task = Task { @MainActor in await store.follow(model: HerdrAppModel(arguments: []), pane: pane) }
+        await task.value
+        #expect(store.compactionCompletion == nil)
+        #expect(store.connection == .unavailable)
+        #expect(snapshots >= 2)
+    }
+
+    @Test("Candidate replay captures newer success without publishing before its commit")
+    func candidateReplayPreservesPendingEvidence() async throws {
+        let store = PiConversationStore()
+        store.reconnectBackoffBase = .zero
+        let pane = testPane()
+        let gate = PiSnapshotGate()
+        var snapshots = 0
+        var streams = 0
+        let (finalFetchStarted, finalStartedContinuation) = AsyncStream<Void>.makeStream()
+        let (published, publishedContinuation) = AsyncStream<Void>.makeStream()
+        store.publishObserver = { _, _ in publishedContinuation.yield(()) }
+        store.snapshotProvider = { _ in
+            snapshots += 1
+            switch snapshots {
+            case 1:
+                return try self.compactionSnapshot(cursor: "1", latest: "1", compactionEntryID: nil, prompt: "Committed")
+            case 2:
+                return try self.compactionSnapshot(cursor: "2", latest: "5", compactionEntryID: nil, prompt: "Replaying")
+            default:
+                finalStartedContinuation.yield(())
+                await gate.wait()
+                return try self.compactionSnapshot(cursor: "5", latest: "5", compactionEntryID: "compact-2", prompt: "Replayed")
+            }
+        }
+        store.eventsProvider = { _, _ in
+            streams += 1
+            switch streams {
+            case 1:
+                return AsyncThrowingStream { stream in
+                    stream.yield(try! streamEvent(
+                        2,
+                        #"{"type":"session_compact","reason":"manual","compactionEntry":{"type":"compaction","id":"compact-1"}}"#
+                    ))
+                    stream.finish()
+                }
+            case 2:
+                return AsyncThrowingStream { stream in
+                    stream.yield(try! streamEvent(
+                        4,
+                        #"{"type":"session_compact","reason":"threshold","compactionEntry":{"type":"compaction","id":"compact-2"}}"#
+                    ))
+                    stream.finish()
+                }
+            default:
+                return AsyncThrowingStream { _ in }
+            }
+        }
+
+        let task = Task { @MainActor in await store.follow(model: HerdrAppModel(arguments: []), pane: pane) }
+        defer {
+            task.cancel()
+            finalStartedContinuation.finish()
+            publishedContinuation.finish()
+        }
+        var publishIterator = published.makeAsyncIterator()
+        _ = await publishIterator.next()
+        var finalStartedIterator = finalFetchStarted.makeAsyncIterator()
+        _ = await finalStartedIterator.next()
+        #expect(store.compactionCompletion == nil)
+        #expect(store.turns.first?.user?.text == "Committed")
+
+        await gate.release()
+        var attempts = 0
+        while store.compactionCompletion == nil, attempts < 5 {
+            attempts += 1
+            _ = await publishIterator.next()
+        }
+        #expect(store.compactionCompletion?.evidence == .entry("compact-2"))
+        #expect(store.turns.first?.user?.text == "Replayed")
+
+        task.cancel()
+        await task.value
+    }
+
     @Test("Authentication failure is not retried as transport failure")
     func authenticationFailureStops() async {
         let store = PiConversationStore()
@@ -867,6 +1085,30 @@ struct PiConversationStoreReloadGuardTests {
             guard case let .tool(tool) = item else { return nil }
             return ToolState(id: tool.callID, status: tool.status)
         }
+    }
+
+    private func compactionSnapshot(
+        cursor: String,
+        latest: String?,
+        compactionEntryID: String?,
+        prompt: String = "Prompt",
+        truncated: Bool = false,
+        connected: Bool = true
+    ) throws -> PiConversationSnapshot {
+        var entries: [String] = []
+        if !prompt.isEmpty {
+            entries.append(#"{"type":"message","id":"u1","message":{"role":"user","content":"\#(prompt)"}}"#)
+        }
+        if let compactionEntryID {
+            entries.append(#"{"type":"compaction","id":"\#(compactionEntryID)","timestamp":"2030-01-01T12:00:00Z","summary":"Synthetic summary","firstKeptEntryId":"u1"}"#)
+        }
+        let latestField = latest.map { ",\"latest_cursor\":\"\($0)\"" } ?? ""
+        return try JSONDecoder().decode(
+            PiConversationSnapshot.self,
+            from: Data(
+                #"{"protocol":{"name":"herdr.pi.semantic","version":1},"pane_id":"w1:p1","available":true,"connected":\#(connected),"session":{"id":"s1"},"state":{"context":{"tokens":1}},"entries":[\#(entries.joined(separator: ","))],"pending_interactions":[],"cursor":"\#(cursor)"\#(latestField),"oldest_cursor":"0","truncated":\#(truncated)}"#.utf8
+            )
+        )
     }
 
     private func testPane(id: String = "w1:p1") -> HerdrPane {

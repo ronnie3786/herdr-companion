@@ -133,6 +133,41 @@ struct PiTimelineRowTests {
         #expect(group.items.map(\.id) == ["commentary", "thinking", "tool:command"])
     }
 
+    @Test("A compaction notice stays outside collapsed Clanking groups")
+    func compactionNoticeStaysOutsideWorkingGroup() {
+        let notice = PiConversationNotice(
+            id: "compact-1",
+            title: "Context compacted",
+            detail: "Synthetic summary",
+            tone: .neutral,
+            timestamp: nil
+        )
+        let rows = PiTimelineRow.rows(
+            for: [turn(id: "turn:1", items: [
+                .tool(tool(id: "command")),
+                .notice(notice),
+                .assistant(assistant(id: "answer", text: "Working from the compacted context.")),
+            ])],
+            groupAllActivity: true
+        )
+
+        #expect(rows.map(\.id) == [
+            "turn:1|user",
+            "turn:1|working:turn:turn:1",
+            "turn:1|output:compact-1",
+            "turn:1|output:answer",
+        ])
+        guard case let .working(group) = rows[1].content else {
+            Issue.record("Expected the collapsed activity group")
+            return
+        }
+        #expect(!group.items.contains { item in
+            if case .notice = item { return true }
+            return false
+        })
+        #expect(rows[2].content == .output(.notice(notice)))
+    }
+
     @Test("Grouped timeline does not expose a completed text block while its turn is active")
     func groupedTimelineHidesTextUntilTurnFinishes() {
         let rows = PiTimelineRow.rows(

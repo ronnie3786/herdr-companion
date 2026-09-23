@@ -79,6 +79,41 @@ struct PiPromptComposerConfigurationTests {
         }
     }
 
+    @Test("A confirmed completion adds readiness copy without changing controls")
+    func completionShowsReadiness() {
+        let completion = PiCompactionCompletion(
+            evidence: .entry("compact-1"),
+            reason: .manual,
+            sessionID: "s1",
+            timestamp: nil
+        )
+
+        let idle = makeConfiguration(phase: .idle, compactionCompletion: completion)
+        #expect(idle.availableDispositions == [.prompt])
+        #expect(idle.compactionPresentation?.kind == .completed)
+        #expect(idle.compactionPresentation?.title == "Context compacted")
+        #expect(idle.compactionPresentation?.detail == "Ready for your next message.")
+
+        let acknowledged = makeConfiguration(
+            phase: .idle,
+            compactionCompletion: completion.acknowledged(true)
+        )
+        #expect(acknowledged.compactionPresentation == nil)
+
+        let working = makeConfiguration(phase: .working, compactionCompletion: completion)
+        #expect(working.availableDispositions == [.steer, .followUp])
+        #expect(working.canAbort)
+        #expect(working.compactionPresentation?.detail == "Pi is still working. Steer this turn or queue a follow-up.")
+
+        let offline = makeConfiguration(
+            phase: .idle,
+            compactionCompletion: completion,
+            isConnected: false
+        )
+        #expect(offline.availableDispositions.isEmpty)
+        #expect(offline.compactionPresentation?.detail == "Pi is offline. Reconnect before sending a message.")
+    }
+
     @Test("Known models remain read-only when model capabilities are unavailable")
     func unavailableModelCapabilitiesDoNotSupportMenu() {
         let configuration = makeConfiguration(
@@ -176,6 +211,7 @@ struct PiPromptComposerConfigurationTests {
     private func makeConfiguration(
         phase: PiConversationPhase,
         compactionActivity: PiCompactionActivity? = nil,
+        compactionCompletion: PiCompactionCompletion? = nil,
         capabilities: PiSemanticCapabilities = PiSemanticCapabilities(
             prompt: true,
             steer: true,
@@ -197,6 +233,7 @@ struct PiPromptComposerConfigurationTests {
             capabilities: capabilities,
             phase: phase,
             compactionActivity: compactionActivity,
+            compactionCompletion: compactionCompletion,
             isConnected: isConnected,
             isSubmitting: false,
             isAborting: false,

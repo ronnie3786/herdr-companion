@@ -6,6 +6,7 @@ struct FirstMateOverviewView: View {
     @Environment(\.colorScheme) private var scheme
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
+            FirstMatePullRequestsSection(store: store, snapshot: snapshot, surface: .overview)
             Text("The feature at a glance").herdrFont(.title2, weight: .semibold)
             VStack(alignment: .leading, spacing: 12) {
                 Label("GOAL", systemImage: "scope").herdrFont(.caption, weight: .semibold).foregroundStyle(.secondary)

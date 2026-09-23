@@ -11,6 +11,16 @@ private struct PRReviewRequestID: Codable, Sendable {
     }
 }
 
+private struct FirstMateLinkVisibilityBody: Codable, Sendable {
+    let hidden: Bool
+    let requestID: String
+
+    enum CodingKeys: String, CodingKey {
+        case hidden
+        case requestID = "request_id"
+    }
+}
+
 private struct PRReviewCreateBody: Codable, Sendable {
     let url: String
     let skillIDs: [String]
@@ -271,6 +281,22 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, AgentPr
         return try await request(path: firstMatePath("features", id: featureID) + "/actions", method: "POST", body: body)
     }
 
+    func saveFirstMateLink(featureID: String, url: String, title: String?, kind: String?, requestID: String) async throws -> FirstMateLinkMutationResponse {
+        var body = ["url": url, "request_id": requestID]
+        if let title, !title.isEmpty { body["title"] = title }
+        if let kind, !kind.isEmpty { body["kind"] = kind }
+        return try await request(path: firstMatePath("features", id: featureID) + "/links", method: "POST", body: body)
+    }
+
+    func setFirstMateLinkVisibility(featureID: String, linkID: String, hidden: Bool, requestID: String) async throws -> FirstMateLinkMutationResponse {
+        let safeLinkID = try validatedFirstMateID(linkID)
+        return try await request(
+            path: firstMatePath("features", id: featureID) + "/links/\(safeLinkID)/visibility",
+            method: "POST",
+            body: FirstMateLinkVisibilityBody(hidden: hidden, requestID: requestID)
+        )
+    }
+
     func fetchFirstMateDocument(_ id: String) async throws -> FirstMateDocumentResponse {
         try await request(path: firstMatePath("documents", id: id))
     }
@@ -282,10 +308,14 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, AgentPr
     }
 
     private func firstMatePath(_ collection: String, id: String) throws -> String {
+        "/api/v1/first-mate/\(collection)/\(try validatedFirstMateID(id))"
+    }
+
+    private func validatedFirstMateID(_ id: String) throws -> String {
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_.:"))
         guard !id.isEmpty, id != ".", id != "..", id.count <= 256,
               id.unicodeScalars.allSatisfy(allowed.contains) else { throw APIError.invalidResponse }
-        return "/api/v1/first-mate/\(collection)/\(id)"
+        return id
     }
 
     // PR Review ids are server-issued opaque tokens. Validate them before they

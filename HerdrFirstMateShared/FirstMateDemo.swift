@@ -5,6 +5,51 @@ enum FirstMateDemo {
     static let stepTitles = ["Planning", "Implementation", "Seven reviewers", "Human checkpoint", "Direction change", "Successor handoff"]
     static let reviewRoles = ["Correctness", "Architecture", "Concurrency", "Security", "Test coverage", "Performance", "User experience"]
 
+    /// Synthetic links for the demo feature. The second demo feature keeps no
+    /// links so an empty state is always verifiable. Only invented org, host,
+    /// and path values are used, and nothing is fetched.
+    static let demoLinks: [FirstMateLink] = [
+        FirstMateLink(
+            id: "demo-link-pr-101",
+            featureID: "demo-session-continuity",
+            url: "https://github.com/example-org/sample-app/pull/101",
+            kind: "pull_request",
+            title: "example-org/sample-app #101",
+            titleSource: "",
+            source: "discovery",
+            provenance: .init(nativeSessionID: "demo-session-builder", assignmentID: "demo-builder", observedAt: timestamp),
+            hidden: false,
+            createdAt: "2026-01-15T14:30:00Z",
+            updatedAt: "2026-01-15T14:30:00Z"
+        ),
+        FirstMateLink(
+            id: "demo-link-pr-7",
+            featureID: "demo-session-continuity",
+            url: "https://github.com/example-org/herdr-tools/pull/7",
+            kind: "pull_request",
+            title: "example-org/herdr-tools #7",
+            titleSource: "user",
+            source: "user",
+            provenance: .init(),
+            hidden: false,
+            createdAt: "2026-01-15T14:31:00Z",
+            updatedAt: "2026-01-15T14:31:00Z"
+        ),
+        FirstMateLink(
+            id: "demo-link-share",
+            featureID: "demo-session-continuity",
+            url: "https://share.example.test:8443/review/session-continuity?tab=links#evidence",
+            kind: "link",
+            title: "Synthetic review share",
+            titleSource: "user",
+            source: "user",
+            provenance: .init(),
+            hidden: false,
+            createdAt: "2026-01-15T14:32:00Z",
+            updatedAt: "2026-01-15T14:32:00Z"
+        ),
+    ]
+
     static func features(step: Int) -> [FirstMateSnapshot] {
         let stageKeys = ["plan", "implement", "review", "revision", "proof"]
         let visitTitles = ["Planning", "Implementation", "Review", "Revised implementation", "Proof"]
@@ -87,7 +132,7 @@ enum FirstMateDemo {
                 }
             }
         }
-        return [FirstMateSnapshot(feature: feature, visits: visits, assignments: assignments, documents: documents, messages: messages, events: events, sessions: sessions), second]
+        return [FirstMateSnapshot(feature: feature, visits: visits, assignments: assignments, documents: documents, messages: messages, events: events, sessions: sessions, links: demoLinks), second]
     }
 
     static func newFeature(title: String, goal: String, cwd: String, id: String = UUID().uuidString) -> FirstMateSnapshot {

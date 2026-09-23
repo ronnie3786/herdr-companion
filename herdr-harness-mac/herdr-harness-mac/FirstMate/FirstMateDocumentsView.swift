@@ -1,9 +1,39 @@
 import SwiftUI
 
+enum FirstMateDocumentsMode: String, CaseIterable, Identifiable {
+    case documents = "Documents"
+    case links = "Links"
+
+    var id: Self { self }
+    var title: String { rawValue }
+}
+
 struct FirstMateDocumentsView: View {
     @Bindable var store: FirstMateStore
     let snapshot: FirstMateSnapshot
+    @State private var mode = FirstMateDocumentsMode.documents
+
     var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            FirstMatePullRequestsSection(store: store, snapshot: snapshot, surface: .documents)
+            Picker("Documents and links", selection: $mode) {
+                ForEach(FirstMateDocumentsMode.allCases) { value in
+                    Text(value.title).tag(value)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("first-mate-documents-picker")
+            switch mode {
+            case .documents:
+                documents
+            case .links:
+                FirstMateLinksView(store: store, snapshot: snapshot)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var documents: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Feature documents").herdrFont(.title2, weight: .semibold)
             Text("Evidence stays connected to the visit and agent that produced it.")

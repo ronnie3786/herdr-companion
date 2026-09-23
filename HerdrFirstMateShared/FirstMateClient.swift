@@ -15,6 +15,8 @@ protocol FirstMateClient: Sendable {
     func setFirstMateArchived(featureID: String, archived: Bool, reason: FirstMateArchiveReason?, requestID: String) async throws -> FirstMateSnapshot
     func fetchFirstMateDocument(_ id: String) async throws -> FirstMateDocumentResponse
     func fetchFirstMateSession(_ id: String, before: Int?) async throws -> FirstMateSessionResponse
+    func saveFirstMateLink(featureID: String, url: String, title: String?, kind: String?, requestID: String) async throws -> FirstMateLinkMutationResponse
+    func setFirstMateLinkVisibility(featureID: String, linkID: String, hidden: Bool, requestID: String) async throws -> FirstMateLinkMutationResponse
 }
 
 struct FirstMateFeatureList: Decodable, Sendable {
@@ -35,6 +37,32 @@ struct FirstMateCapabilities: Decodable, Sendable {
     var supportsAttachments: Bool { capabilities.contains("first-mate-attachments-v1") }
     var supportsContext: Bool { capabilities.contains("first-mate-context-v1") }
     var supportsSafeModelSettings: Bool { capabilities.contains("first-mate-safe-model-settings-v1") }
+    var supportsLinks: Bool { capabilities.contains("first-mate-links-v1") }
+}
+
+/// A link save or visibility response: the affected link plus the same full
+/// snapshot the feature detail route returns.
+struct FirstMateLinkMutationResponse: Decodable, Sendable {
+    var ok: Bool
+    var link: FirstMateLink?
+    var snapshot: FirstMateSnapshot
+
+    enum CodingKeys: String, CodingKey {
+        case ok, link
+    }
+
+    init(ok: Bool, link: FirstMateLink?, snapshot: FirstMateSnapshot) {
+        self.ok = ok
+        self.link = link
+        self.snapshot = snapshot
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try container.decode(Bool.self, forKey: .ok)
+        link = try container.decodeIfPresent(FirstMateLink.self, forKey: .link)
+        snapshot = try FirstMateSnapshot(from: decoder)
+    }
 }
 
 struct FirstMateDocumentResponse: Decodable, Sendable {
@@ -118,6 +146,12 @@ extension FirstMateClient {
         throw APIError.invalidResponse
     }
     func transcribeFirstMateVoice(fileURL: URL) async throws -> VoiceTranscriptionResponse {
+        throw APIError.invalidResponse
+    }
+    func saveFirstMateLink(featureID: String, url: String, title: String?, kind: String?, requestID: String) async throws -> FirstMateLinkMutationResponse {
+        throw APIError.invalidResponse
+    }
+    func setFirstMateLinkVisibility(featureID: String, linkID: String, hidden: Bool, requestID: String) async throws -> FirstMateLinkMutationResponse {
         throw APIError.invalidResponse
     }
 }

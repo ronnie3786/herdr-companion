@@ -75,4 +75,20 @@ struct PiSessionCostTests {
     func hundredDollarSummary() {
         #expect(PiSessionCost(from: .object(["totalUSD": .number(134.2)]))?.summary == "$134")
     }
+
+    @Test("The numeric initializer accepts valid reported totals")
+    func numericInitializerAcceptsValidTotals() {
+        #expect(PiSessionCost(reportedUSD: 0)?.summary == "$0.00")
+        #expect(PiSessionCost(reportedUSD: 0.004)?.summary == "<$0.01")
+        #expect(PiSessionCost(reportedUSD: 134.2)?.summary == "$134")
+        #expect(PiSessionCost(reportedUSD: 1.25, totalTokens: 4_200)?.totalTokens == 4_200)
+    }
+
+    @Test("The numeric initializer rejects negative and non-finite totals")
+    func numericInitializerRejectsInvalidTotals() {
+        #expect(PiSessionCost(reportedUSD: -1) == nil)
+        #expect(PiSessionCost(reportedUSD: .infinity) == nil)
+        #expect(PiSessionCost(reportedUSD: -Double.infinity) == nil)
+        #expect(PiSessionCost(reportedUSD: .nan) == nil)
+    }
 }

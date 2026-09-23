@@ -11,17 +11,23 @@ struct HerdrHudPersistenceSnapshot: Codable, Equatable, Sendable {
     let exchanges: [PersistedExchange]
     let hasUnseenAnswer: Bool?
     let historyRootRunID: String?
+    /// Optional cumulative model/cost aggregate. It keeps values beyond the
+    /// capped transcript and stays optional so version-1 caches written
+    /// before it still decode.
+    let chatMetadata: HerdrHudChatMetadataAccumulator?
 
     init(
         version: Int = HerdrHudPersistenceSnapshot.currentVersion,
         thread: HerdrHudSession.HerdrHudThread?,
         exchanges: [HerdrHudExchange],
         hasUnseenAnswer: Bool = false,
-        historyRootRunID: String? = nil
+        historyRootRunID: String? = nil,
+        chatMetadata: HerdrHudChatMetadataAccumulator? = nil
     ) {
         self.version = version
         self.hasUnseenAnswer = hasUnseenAnswer
         self.historyRootRunID = historyRootRunID
+        self.chatMetadata = chatMetadata
         self.thread = thread
         self.exchanges = exchanges.suffix(Self.maximumExchangeCount).map(PersistedExchange.init)
     }

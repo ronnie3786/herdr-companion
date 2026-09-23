@@ -122,6 +122,13 @@ final class HerdrHudSession {
     private(set) var latestPromotableExchangeID: String?
     private(set) var thread: HerdrHudThread?
     private var historyRootRunID: String?
+    /// Model and cumulative reported cost for this conversation's bubble. It is
+    /// fed from the runs the app already observes, survives the transcript
+    /// caps, and is scoped to the exact machine/root, so a different
+    /// conversation starts over instead of inheriting stale values.
+    private(set) var chatMetadata = HerdrHudChatMetadataAccumulator()
+
+    var bubbleMetadata: HerdrHudSessionMetadata { chatMetadata.metadata }
     /// The exact local submission placeholder whose accepted run established
     /// each durable history identity (`machineID:rootRunID`) this session has
     /// observed. Smart Rename's pending-title adoption consults this mapping so
@@ -691,6 +698,7 @@ final class HerdrHudSession {
             capabilitiesChecked: isNewRoot && !workingFolder.isHome,
             submissionOwnerID: ownerID,
             submissionID: pendingID,
+            submissionModelName: label,
             model: model
         )
         guard let index = exchanges.firstIndex(where: { $0.id == pendingID }) else {
@@ -1193,6 +1201,7 @@ final class HerdrHudSession {
             capabilitiesChecked: startsNewRoot && !workingFolder.isHome,
             submissionOwnerID: ownerID,
             submissionID: isUnacceptedPlaceholder ? exchange.id : nil,
+            submissionModelName: label,
             model: model
         ) else {
             if submissionWasCancelled(ownerID) {
@@ -1385,6 +1394,23 @@ final class HerdrHudSession {
                 stepsTruncated: run.stepsTruncated == true
             )
         } + localPlaceholders
+        mutateChatMetadata { metadata in
+            metadata.reconcile(
+                machineID: machineID,
+                rootRunID: page.rootRunId,
+                expectedTurnCount: turns.count,
+                samples: turns.map { run in
+                    let local = localByID[run.id]
+                        ?? (run.id == page.latestRunId ? acceptedPendingExchange : nil)
+                    return HerdrHudChatMetadataAccumulator.RunSample(
+                        id: run.id,
+                        costUSD: run.costUSD,
+                        modelName: run.model.map(PiModelDisplayName.short(fullID:))
+                            ?? local?.modelLabel
+                    )
+                }
+            )
+        }
         savedHistoryRunKeys.formUnion(turns.map { "\(machineID):\($0.id)" })
         historyRootRunID = page.rootRunId
         if let latest = turns.last, latest.status.isTerminal, isCollapsed, wasAwaitingAnswer {
@@ -1429,6 +1455,7 @@ final class HerdrHudSession {
                         || self.exchanges[index].status != run.status
                         || self.exchanges[index].costUSD != run.costUSD
                         || self.exchanges[index].steps != Self.hudSteps(from: run.steps ?? [])
+                    self.recordObservedMetadataSample(run)
                     if changed {
                         self.exchanges[index].response = run.response
                         self.exchanges[index].error = run.error
@@ -1456,6 +1483,8 @@ final class HerdrHudSession {
     ) -> Bool {
         guard historyIdentity == "\(machineID):\(rootRunID)",
               page.promotedPaneId == nil,
+              chatMetadata.hasEstablishedCoverage,
+              chatMetadata.latestRunID == page.latestRunId,
               let thread,
               thread.machineID == machineID,
               thread.rootRunID == page.rootRunId,
@@ -1463,10 +1492,20 @@ final class HerdrHudSession {
               let localLatest = exchanges.first(where: { $0.id == page.latestRunId }),
               localLatest.status.isTerminal else { return false }
         if let remoteLatest = page.turns.first(where: { $0.id == page.latestRunId }) {
-            return remoteLatest.status == localLatest.status
+            guard remoteLatest.status == localLatest.status
                 && remoteLatest.response == localLatest.response
                 && remoteLatest.error == localLatest.error
                 && remoteLatest.promotedPaneID == localLatest.promotedPaneID
+            else { return false }
+            if let remoteModel = remoteLatest.model {
+                // A model that finally resolved on the server must replace the
+                // submission-time fallback so the bubble never keeps a stale
+                // composer-derived name.
+                guard chatMetadata.latestRunModelName == PiModelDisplayName.short(fullID: remoteModel) else {
+                    return false
+                }
+            }
+            return remoteLatest.costUSD == chatMetadata.latestRunCostUSD
         }
         return page.nextOffset != nil
     }
@@ -1488,6 +1527,7 @@ final class HerdrHudSession {
         thread = nil
         historyRootRunID = nil
         acceptedSubmissionIDsByHistoryIdentity = [:]
+        chatMetadata = HerdrHudChatMetadataAccumulator()
         needsHistoryRefresh = false
         selectedWorkingFolder = .home
         await persistence.remove()
@@ -1585,6 +1625,7 @@ final class HerdrHudSession {
         historyRootRunID = snapshot.historyRootRunID ?? thread?.rootRunID
         let restoredMachineID = thread?.machineID ?? exchanges.first?.machineID
         selectedMachineID = restoredMachineID ?? selectedMachineID
+        restoreChatMetadata(snapshot, exchanges: restored.exchanges)
         let restoredFolderPath = restored.exchanges.last(where: { exchange in
             exchange.machineID == restoredMachineID
         })?.workingFolderPath ?? HerdrHudWorkingFolder.homePath
@@ -1594,6 +1635,58 @@ final class HerdrHudSession {
         }
         pruneStoredAttachments()
         markExchangesChanged()
+    }
+
+    /// A persisted aggregate is trusted only for the exact restored identity.
+    /// A version-1 cache without one is rebuilt from its transcript only when
+    /// that cache proves it still holds every accepted turn; otherwise the
+    /// cost stays unknown until full history establishes coverage.
+    private func restoreChatMetadata(
+        _ snapshot: HerdrHudPersistenceSnapshot,
+        exchanges: [HerdrHudExchange]
+    ) {
+        guard let identity = chatMetadataIdentity else {
+            chatMetadata = HerdrHudChatMetadataAccumulator()
+            return
+        }
+        if let persisted = snapshot.chatMetadata, persisted.isScoped(to: identity) {
+            chatMetadata = persisted
+            return
+        }
+        // A persisted run that was still in flight when the cache was written
+        // has a partial cost; its aggregate is unproven until history reloads.
+        let hasInterruptedExchange = snapshot.exchanges.contains { !$0.status.isTerminal }
+        chatMetadata = HerdrHudChatMetadataAccumulator()
+        chatMetadata.reconcile(
+            machineID: identity.machineID,
+            rootRunID: identity.rootRunID,
+            expectedTurnCount: hasInterruptedExchange ? nil : thread?.turnCount,
+            samples: exchanges
+                .filter { !$0.id.hasPrefix("hud-pending-") }
+                .map {
+                    HerdrHudChatMetadataAccumulator.RunSample(
+                        id: $0.id,
+                        costUSD: $0.costUSD,
+                        modelName: $0.modelLabel
+                    )
+                }
+        )
+    }
+
+    /// Mirrors `historyIdentity`, so persisted metadata is only trusted for the
+    /// same machine and root the rest of the session already agrees on.
+    private var chatMetadataIdentity: HerdrHudChatMetadataAccumulator.Identity? {
+        if let thread {
+            return HerdrHudChatMetadataAccumulator.Identity(
+                machineID: thread.machineID,
+                rootRunID: thread.rootRunID
+            )
+        }
+        guard let first = exchanges.first, !first.id.hasPrefix("hud-") else { return nil }
+        return HerdrHudChatMetadataAccumulator.Identity(
+            machineID: first.machineID,
+            rootRunID: historyRootRunID ?? first.id
+        )
     }
 
     /// Startup restoration is allowed only until the user initiates real HUD work.
@@ -1606,8 +1699,13 @@ final class HerdrHudSession {
         // Keep the accepted running snapshot until the server tells us its real
         // outcome; the legacy cache decoder marks interrupted rows as failed.
         guard !needsHistoryRefresh else { return }
-        let snapshot = HerdrHudPersistenceSnapshot(thread: thread, exchanges: exchanges,
-                                                   hasUnseenAnswer: hasUnseenAnswer, historyRootRunID: historyRootRunID)
+        let snapshot = HerdrHudPersistenceSnapshot(
+            thread: thread,
+            exchanges: exchanges,
+            hasUnseenAnswer: hasUnseenAnswer,
+            historyRootRunID: historyRootRunID,
+            chatMetadata: chatMetadata
+        )
         await persistence.scheduleSave(snapshot)
     }
 
@@ -1623,6 +1721,7 @@ final class HerdrHudSession {
         capabilitiesChecked: Bool = false,
         submissionOwnerID ownerID: UUID? = nil,
         submissionID: String? = nil,
+        submissionModelName: String? = nil,
         model: HerdrAppModel
     ) async -> HeadlessAgentRun? {
         elapsedSeconds = 0
@@ -1690,6 +1789,14 @@ final class HerdrHudSession {
             let count = isNewRoot ? 1 : (thread?.turnCount ?? 0) + 1
             thread = HerdrHudThread(machineID: machineID, rootRunID: root,
                                    lastRunID: run.id, turnCount: count)
+            mutateChatMetadata { metadata in
+                metadata.recordAcceptedRun(
+                    machineID: machineID,
+                    rootRunID: root,
+                    expectedTurnCount: count,
+                    sample: Self.metadataRunSample(for: run, fallbackModelName: submissionModelName)
+                )
+            }
             if isNewRoot, let submissionID {
                 // Bind the new root to the exact submission that established
                 // it so a pending title is adopted only by that submission.
@@ -1710,17 +1817,51 @@ final class HerdrHudSession {
                 try await Task.sleep(for: .milliseconds(100))
             } catch {
                 await controller.cancel(model: model)
+                recordObservedMetadataSample(controller.run)
                 return controller.run
             }
-            let count = controller.run?.steps?.count ?? 0
+            let run = controller.run
+            let count = run?.steps?.count ?? 0
             if count != liveStepCount {
                 liveStepCount = count
             }
-            let steps = Self.hudSteps(from: controller.run?.steps ?? [])
+            let steps = Self.hudSteps(from: run?.steps ?? [])
             if steps != liveSteps { liveSteps = steps }
-            if controller.run?.response != liveResponse { liveResponse = controller.run?.response }
+            if run?.response != liveResponse { liveResponse = run?.response }
+            recordObservedMetadataSample(run)
         }
+        recordObservedMetadataSample(controller.run)
         return controller.run
+    }
+
+    private static func metadataRunSample(
+        for run: HeadlessAgentRun,
+        fallbackModelName: String? = nil
+    ) -> HerdrHudChatMetadataAccumulator.RunSample {
+        HerdrHudChatMetadataAccumulator.RunSample(
+            id: run.id,
+            costUSD: run.costUSD,
+            modelName: run.model.map(PiModelDisplayName.short(fullID:)) ?? fallbackModelName
+        )
+    }
+
+    private func recordObservedMetadataSample(_ run: HeadlessAgentRun?) {
+        guard let run else { return }
+        mutateChatMetadata { metadata in
+            metadata.updateObservedRun(
+                id: run.id,
+                costUSD: run.costUSD,
+                modelName: run.model.map(PiModelDisplayName.short(fullID:))
+            )
+        }
+    }
+
+    private func mutateChatMetadata(
+        _ mutate: (inout HerdrHudChatMetadataAccumulator) -> Bool
+    ) {
+        var updated = chatMetadata
+        guard mutate(&updated) else { return }
+        chatMetadata = updated
     }
 
     private func beginElapsedTimer() {

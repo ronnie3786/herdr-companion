@@ -1527,6 +1527,176 @@ struct HerdrHudChatsTests {
         #expect(FileManager.default.fileExists(atPath: secondFile.url.path))
     }
 
+    @Test("HUD chat bubble metadata tracks live cost and the run's resolved model")
+    func bubbleMetadataTracksLiveCostAndModel() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        let selected = PiAvailableModel(
+            provider: "synthetic",
+            modelID: "sonnet-4-5",
+            name: nil,
+            reasoning: true,
+            contextWindow: nil
+        )
+        session.seedModelsForTesting([selected], default: nil)
+        session.setSelectedModel(selected)
+        session.draft = "Track metadata"
+
+        let task = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        let runID = try #require(session.thread?.lastRunID)
+        // The submission capture is the fallback until the server reports a run model.
+        #expect(session.bubbleMetadata.cost == "$0.00")
+        #expect(session.bubbleMetadata.modelName == "Sonnet 4.5")
+
+        // A composer change after submission never rewrites captured metadata.
+        session.setSelectedModel(nil)
+        #expect(session.bubbleMetadata.modelName == "Sonnet 4.5")
+
+        HudChatsURLProtocol.setCost(runID, 0.42)
+        HudChatsURLProtocol.setModel(runID, "synthetic/opus-4-5")
+        try await wait { session.bubbleMetadata.cost == "$0.42" }
+        #expect(session.bubbleMetadata.modelName == "Opus 4.5")
+
+        HudChatsURLProtocol.finish(runID)
+        await task.value
+        #expect(session.bubbleMetadata.cost == "$0.42")
+        #expect(session.bubbleMetadata.modelName == "Opus 4.5")
+    }
+
+    @Test("HUD chat bubble metadata sums distinct accepted turns across a continuation")
+    func bubbleMetadataSumsContinuations() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.draft = "First turn"
+        let first = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        let root = try #require(session.thread?.lastRunID)
+        HudChatsURLProtocol.setCost(root, 0.42)
+        HudChatsURLProtocol.finish(root)
+        await first.value
+        #expect(session.bubbleMetadata.cost == "$0.42")
+
+        session.draft = "Second turn"
+        let second = Task { await session.submit(model: fixture.model) }
+        try await wait { session.thread?.turnCount == 2 }
+        let continuation = try #require(session.thread?.lastRunID)
+        #expect(continuation != root)
+        HudChatsURLProtocol.setCost(continuation, 1.00)
+        HudChatsURLProtocol.finish(continuation)
+        await second.value
+        #expect(session.bubbleMetadata.cost == "$1.42")
+        #expect(session.chatMetadata.observedRunCount == 2)
+    }
+
+    @Test("HUD chat bubble metadata counts a retried accepted turn once per run")
+    func bubbleMetadataCountsRetryRunsDistinctly() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.draft = "Failing turn"
+        let first = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        let root = try #require(session.thread?.lastRunID)
+        HudChatsURLProtocol.setCost(root, 0.10)
+        HudChatsURLProtocol.fail(root)
+        await first.value
+        #expect(session.bubbleMetadata.cost == "$0.10")
+        let failed = try #require(session.exchanges.last)
+
+        let retry = Task { await session.retry(failed, model: fixture.model) }
+        try await wait { session.thread?.lastRunID != root }
+        let retried = try #require(session.thread?.lastRunID)
+        HudChatsURLProtocol.setCost(retried, 0.20)
+        HudChatsURLProtocol.finish(retried)
+        await retry.value
+        #expect(session.bubbleMetadata.cost == "$0.30")
+        #expect(session.chatMetadata.observedRunCount == 2)
+    }
+
+    @Test("HUD chat bubble metadata includes a cancelled turn's reported cost")
+    func bubbleMetadataIncludesCancelledCost() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.draft = "Cancel this"
+        let task = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        let runID = try #require(session.thread?.lastRunID)
+        HudChatsURLProtocol.setCost(runID, 0.05)
+        try await wait { session.bubbleMetadata.cost == "$0.05" }
+
+        await session.stop(model: fixture.model)
+        await task.value
+        #expect(session.exchanges.last?.status == .cancelled)
+        #expect(session.bubbleMetadata.cost == "$0.05")
+    }
+
+    @Test("Reopened HUD history rebuilds cumulative metadata across pages")
+    func historyReopenBuildsCumulativeMetadataAcrossPages() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let root = "agr_paginationroot"
+        for index in 0..<51 {
+            let id = HudChatsURLProtocol.appendExternal(root: root, prompt: "Turn \(index)")
+            HudChatsURLProtocol.setCost(id, 0.01)
+        }
+
+        let chatID = try await fixture.chats.openHistory(id: root, machineID: "synthetic", model: fixture.model)
+        let chat = try #require(fixture.chats.chats.first { $0.id == chatID })
+        #expect(chat.session.exchanges.count == 51)
+        #expect(chat.session.chatMetadata.observedRunCount == 51)
+        #expect(chat.session.bubbleMetadata.cost == "$0.51")
+    }
+
+    @Test("A passive history refresh notices changed cost and model metadata")
+    func passiveRefreshReconcilesMetadataChanges() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.draft = "Watch metadata"
+        let task = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        let root = try #require(session.thread?.lastRunID)
+        HudChatsURLProtocol.setCost(root, 0.42)
+        HudChatsURLProtocol.finish(root)
+        await task.value
+        #expect(session.bubbleMetadata.cost == "$0.42")
+        #expect(session.bubbleMetadata.modelName == nil)
+
+        HudChatsURLProtocol.setCost(root, 0.99)
+        #expect(await session.refreshSavedHistoryPassivelyForTesting(model: fixture.model))
+        #expect(session.bubbleMetadata.cost == "$0.99")
+
+        HudChatsURLProtocol.setModel(root, "synthetic/sonnet-4-5")
+        #expect(await session.refreshSavedHistoryPassivelyForTesting(model: fixture.model))
+        #expect(session.bubbleMetadata.modelName == "Sonnet 4.5")
+    }
+
+    @Test("Observing a restored running turn keeps the bubble metadata live")
+    func restoredRunningTurnKeepsMetadataLive() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let root = "agr_runningroot"
+        let finished = HudChatsURLProtocol.appendExternal(root: root, prompt: "Finished turn")
+        HudChatsURLProtocol.setCost(finished, 0.25)
+        let running = HudChatsURLProtocol.appendExternal(root: root, prompt: "Running turn")
+        HudChatsURLProtocol.state.withLock { $0.statuses[running] = "running" }
+        HudChatsURLProtocol.setCost(running, 0.10)
+
+        let chatID = try await fixture.chats.openHistory(id: root, machineID: "synthetic", model: fixture.model)
+        let chat = try #require(fixture.chats.chats.first { $0.id == chatID })
+        #expect(chat.session.bubbleMetadata.cost == "$0.35")
+
+        HudChatsURLProtocol.setCost(running, 0.30)
+        try await wait { chat.session.bubbleMetadata.cost == "$0.55" }
+        HudChatsURLProtocol.finish(running)
+        try await wait { chat.session.exchanges.last?.status == .completed }
+        #expect(chat.session.bubbleMetadata.cost == "$0.55")
+    }
+
     private func wait(_ condition: () -> Bool) async throws {
         for _ in 0..<300 {
             if condition() { return }
@@ -1599,6 +1769,8 @@ private final class HudChatsURLProtocol: URLProtocol, @unchecked Sendable {
     struct State: Sendable {
         var starts: [Start] = []
         var statuses: [String: String] = [:]
+        var runCosts: [String: Double] = [:]
+        var runModels: [String: String] = [:]
         var deleteCount = 0
         var cancellationCount = 0
         var rejectNextCancellation = false
@@ -1639,6 +1811,16 @@ private final class HudChatsURLProtocol: URLProtocol, @unchecked Sendable {
         }
     }
     static func catalogHosts() -> [String] { state.withLock { $0.catalogHosts } }
+    static func setCost(_ id: String, _ cost: Double?) {
+        state.withLock { state in
+            if let cost { state.runCosts[id] = cost } else { state.runCosts[id] = nil }
+        }
+    }
+    static func setModel(_ id: String, _ model: String?) {
+        state.withLock { state in
+            if let model { state.runModels[id] = model } else { state.runModels[id] = nil }
+        }
+    }
     @discardableResult
     static func appendExternal(root: String, prompt: String, cwd: String? = nil) -> String {
         state.withLock { state in
@@ -1740,9 +1922,12 @@ private final class HudChatsURLProtocol: URLProtocol, @unchecked Sendable {
             } else if path.contains("/hud-chats/"), request.httpMethod == "GET" {
                 let root = url.lastPathComponent
                 let turns = state.starts.filter { $0.root == root }
-                response["turns"] = turns.map { Self.run($0, state: state) }
+                let offset = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                    .queryItems?.first(where: { $0.name == "offset" })?.value.flatMap(Int.init) ?? 0
+                response["turns"] = turns.dropFirst(offset).prefix(50).map { Self.run($0, state: state) }
                 response["rootRunId"] = root
                 response["latestRunId"] = turns.last?.id ?? root
+                if offset + 50 < turns.count { response["nextOffset"] = offset + 50 }
             } else if path.contains("/agent-runs/") {
                 let id = path.hasSuffix("/cancel") ? url.deletingLastPathComponent().lastPathComponent : url.lastPathComponent
                 if path.hasSuffix("/cancel") { state.statuses[id] = "cancelled" }
@@ -1759,7 +1944,9 @@ private final class HudChatsURLProtocol: URLProtocol, @unchecked Sendable {
     private static func run(_ start: Start, state: State) -> [String: Any] {
         var run: [String: Any] = ["id": start.id, "status": state.statuses[start.id] ?? "running",
                                   "prompt": start.prompt, "createdAt": "2026-09-01T12:00:00Z",
-                                  "threadRootRunId": start.root, "sessionFile": "synthetic.jsonl"]
+                                  "threadRootRunId": start.root, "sessionFile": "synthetic.jsonl",
+                                  "costUSD": state.runCosts[start.id] ?? 0]
+        if let model = state.runModels[start.id] { run["model"] = model }
         if let cwd = start.cwd { run["cwd"] = cwd }
         if state.statuses[start.id] == "completed" { run["response"] = "Answer for \(start.prompt)" }
         return run

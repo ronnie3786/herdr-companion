@@ -53,6 +53,18 @@ Discovery is not authorization. Preserve the user’s current scope, human
 checkpoints, ASK/no-tool restrictions, project trust, and credential boundaries.
 Never place credentials in command arguments or output.
 
+## Editable personality and user preferences
+
+Matching companions support revisioned agent profiles (SOUL.md and USER.md),
+managed in Mac Settings or Fleet. `herdr-profiles --help` discovers the installed
+read/proposal CLI. Profiles follow the execution host and are pinned per
+conversation/assignment; changes affect new conversations, not running work.
+Personal and work scopes are explicitly assigned, never inferred from UI labels.
+Agent edits are proposals requiring Settings/Fleet approval. Editable preferences
+cannot override project rules, safety, ASK/no-tool limits, or First Mate gates.
+Never store credentials or submit changes outside the user's authority. An older
+companion may not support this feature; query its authenticated profile API.
+
 ## Version skew and reload
 
 A native app update does not install the companion server or Pi package. Upgrade

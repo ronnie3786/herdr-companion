@@ -228,6 +228,20 @@ class FirstMateRuntimeTests(unittest.TestCase):
                 self.assertNotIn('--model', argv)
                 self.assertNotIn('--thinking', argv)
 
+    def test_profiles_are_snapshotted_before_dispatch_and_do_not_replace_role_charter(self):
+        self.runtime._profile_snapshot = lambda: {'prompt': '<!-- herdr-agent-profile:v1 -->\nSynthetic tone', 'revision': 1}
+        feature = self.feature()
+        claim = self.store.claim_message(feature['id'], self.runtime.owner)
+        job = self.runtime._new_job(feature, kind='coordinator', prompt='Hello', claim=claim)
+        self.runtime._profile_snapshot = lambda: {'prompt': 'Changed tone', 'revision': 2}
+        command = _pi_command(job)
+        charter = Path(command[command.index('--system-prompt') + 1]).read_text()
+        self.assertNotIn('Synthetic tone', str(command))
+        self.assertTrue(charter.startswith(COORDINATOR_PROMPT))
+        self.assertIn('Synthetic tone', charter)
+        self.assertNotIn('Changed tone', charter)
+        self.assertEqual(self.runtime._jobs()[0]['agent_profile_snapshot']['revision'], 1)
+
     def test_coordinator_uses_replacement_charter_with_normal_pi_resources(self):
         feature = self.feature()
         claim = self.store.claim_message(feature['id'], self.runtime.owner)

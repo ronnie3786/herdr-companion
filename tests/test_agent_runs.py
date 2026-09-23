@@ -277,6 +277,31 @@ class AgentRunManagerTests(unittest.TestCase):
             clock=clock,
         )
 
+    def test_agent_profile_is_private_pinned_across_continuation_and_absent_from_restricted_helpers(self):
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            capture = directory / "capture.json"
+            manager = self.manager(directory, FAKE_AGENT_CAPTURE=str(capture))
+            self.addCleanup(manager.stop)
+            manager._profile_snapshot = lambda: {"prompt": "<!-- herdr-agent-profile:v1 -->\nSynthetic tone", "revision": 1}
+            first = manager.start(prompt="Hello", label="Synthetic", cwd=str(directory / "home"), topology={})
+            wait_for_status(manager, first["run"]["id"], {"completed"})
+            self.assertNotIn("agentProfileSnapshot", manager.get(first["run"]["id"])["run"])
+            command = json.loads(capture.read_text())["argv"]
+            prompt_file = Path(command[command.index("--append-system-prompt") + 1])
+            self.assertIn("Synthetic tone", prompt_file.read_text())
+            self.assertNotIn("Synthetic tone", str(command))
+            self.assertEqual(stat.S_IMODE(prompt_file.stat().st_mode), 0o600)
+            manager._profile_snapshot = lambda: {"prompt": "Changed tone", "revision": 2}
+            second = manager.start(prompt="Again", label="Synthetic", cwd=str(directory / "home"), topology={}, continue_from_run_id=first["run"]["id"])
+            wait_for_status(manager, second["run"]["id"], {"completed"})
+            self.assertEqual(manager._read(second["run"]["id"])["agentProfileSnapshot"]["revision"], 1)
+            third = manager.start(prompt="Name", label="Synthetic", cwd=str(directory / "home"), topology={}, mode="ask",
+                                  _assistant={"profile": SMART_RENAME_PROFILE})
+            wait_for_status(manager, third["run"]["id"], {"completed", "failed"})
+            self.assertNotIn("agentProfileSnapshot", manager._read(third["run"]["id"]))
+            self.assertNotIn("Changed tone", str(json.loads(capture.read_text())["argv"]))
+
     def test_long_run_timeout_default_and_overrides(self):
         for configured, expected in [(None, 3600), ("7200", 7200), ("600", 600), ("86400", 86400), ("999999", 3600)]:
             with self.subTest(configured=configured), tempfile.TemporaryDirectory() as directory:

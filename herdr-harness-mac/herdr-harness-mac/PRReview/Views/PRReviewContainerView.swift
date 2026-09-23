@@ -73,7 +73,9 @@ struct PRReviewContainerView: View {
                     .herdrFont(size: 20, weight: .semibold, relativeTo: .title2)
                     .lineLimit(1)
                 Spacer()
-                Button("Refresh") { Task { await store.refreshReview() } }.disabled(!canControl)
+                Button(store.isRefreshingReview ? "Refreshing…" : "Refresh") {
+                    Task { await store.refreshReview() }
+                }.disabled(!canControl || store.isRefreshingReview)
                 Button(review.archivedAt == nil ? "Archive" : "Unarchive") {
                     Task { await store.archive(review.archivedAt == nil) }
                 }.disabled(!canControl)
@@ -126,6 +128,8 @@ struct PRReviewContainerView: View {
             PRReviewFilesView(
                 store: store,
                 canControl: canControl,
+                questionHistory: documentHost?.prReviewQuestions,
+                openQuestion: { documentHost?.presentSavedPRReviewQuestion($0) },
                 openURL: openURL,
                 askAI: askAI,
                 questionDraftChanged: questionDraftChanged

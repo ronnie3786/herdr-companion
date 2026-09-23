@@ -4,6 +4,8 @@ import SwiftUI
 struct PRReviewFilesView: View {
     @Bindable var store: PRReviewStore
     var canControl = false
+    var questionHistory: PRReviewQuestionHistory?
+    var openQuestion: (PRReviewQuestionHistory.Question) -> Void = { _ in }
     var openURL: (URL) -> Void = { _ in }
     var askAI: (PRReviewSelection, NSView, CGRect) -> Void = { _, _, _ in }
     var questionDraftChanged: (Bool) -> Void = { _ in }
@@ -75,6 +77,7 @@ struct PRReviewFilesView: View {
                         Button("Clear filters", action: clearFilters)
                             .buttonStyle(.borderedProminent)
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .accessibilityIdentifier("pr-review-no-filter-matches")
                 } else {
                     ScrollView {
@@ -96,10 +99,13 @@ struct PRReviewFilesView: View {
                 minWidth: PRReviewFilesLayout.minimumRailWidth,
                 idealWidth: PRReviewFilesLayout.idealRailWidth,
                 maxWidth: PRReviewFilesLayout.maximumRailWidth,
-                maxHeight: .infinity
+                maxHeight: .infinity,
+                alignment: .top
             )
             PRReviewDiffView(
                 store: store,
+                questionHistory: questionHistory,
+                openQuestion: openQuestion,
                 openURL: openURL,
                 askAI: askAI,
                 questionDraftChanged: questionDraftChanged
@@ -201,8 +207,12 @@ enum PRReviewFilesPresentation: Equatable {
         fileCount: Int,
         visibleFileCount: Int
     ) -> Self {
-        if status == .preparing { return .preparing }
-        if status == .failed { return .failed(reviewError ?? "The companion could not prepare this review.") }
+        // A refresh failure must not hide a review that is already readable,
+        // including snapshots returned by older companion versions.
+        if fileCount == 0 {
+            if status == .preparing { return .preparing }
+            if status == .failed { return .failed(reviewError ?? "The companion could not prepare this review.") }
+        }
         if !hasSnapshot { return .loading }
         if fileCount == 0 { return .noFiles }
         if visibleFileCount == 0 { return .noFilterMatches }
@@ -259,6 +269,8 @@ struct PRReviewFileRow: View {
 
 struct PRReviewDiffView: View {
     @Bindable var store: PRReviewStore
+    var questionHistory: PRReviewQuestionHistory?
+    var openQuestion: (PRReviewQuestionHistory.Question) -> Void = { _ in }
     var openURL: (URL) -> Void = { _ in }
     var askAI: (PRReviewSelection, NSView, CGRect) -> Void = { _, _, _ in }
     var questionDraftChanged: (Bool) -> Void = { _ in }
@@ -320,6 +332,18 @@ struct PRReviewDiffView: View {
             } else {
                 ContentUnavailableView("Select a changed file", systemImage: "doc")
             }
+            if let machineID = store.currentMachineID, let reviewID = store.selectedReviewID,
+               let questionHistory {
+                let questions = questionHistory.questions(machineID: machineID, reviewID: reviewID)
+                if !questions.isEmpty {
+                    PRReviewQuestionRail(questions: questions,
+                                         baseSHA: store.snapshot?.review.baseSHA ?? "",
+                                         headSHA: store.snapshot?.review.headSHA ?? "", open: openQuestion)
+                }
+                if let error = questionHistory.loadError {
+                    Text(error).herdrFont(.caption).foregroundStyle(HerdrTheme.alert).padding(8)
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task(id: store.currentDiffRequestIdentity) { await loadDiff() }
@@ -353,6 +377,12 @@ struct PRReviewDiffView: View {
                 }
                 Spacer()
             }
+            Text(file.impactExplanation)
+                .herdrFont(.caption)
+                .foregroundStyle(HerdrTheme.mist)
+                .lineLimit(3)
+                .help(file.impactExplanation)
+                .accessibilityIdentifier("pr-review-impact-reason")
             if store.viewMode == .guided, let order = file.guidedOrder {
                 Text("Guided order #\(order) · \(file.guidedReason ?? "Review this file next")")
                     .herdrFont(.caption)

@@ -230,7 +230,100 @@ class PRReviewRuntimeTests(unittest.TestCase):
         self.assertTrue(self.store.files(review["id"])[0]["viewed"])
         self.assertIn("tab.create", [name for name, _ in self.service.calls])
         fetches = [argv for argv, _ in self.runner.calls if argv[:5] == ["git", "-C", str(self.runtime.checkout_root / "repos" / "example-owner__garden"), "fetch", "--quiet"]]
-        self.assertEqual(fetches[1], ["git", "-C", str(self.runtime.checkout_root / "repos" / "example-owner__garden"), "fetch", "--quiet", "origin", "pull/42/head:refs/herdr-pr/42"])
+        self.assertEqual(fetches[1], ["git", "-C", str(self.runtime.checkout_root / "repos" / "example-owner__garden"), "fetch", "--quiet", "origin", "+pull/42/head:refs/herdr-pr/42"])
+
+    def test_refresh_failure_keeps_previous_diff_and_review_readable(self):
+        review = self._review()
+        self.runtime.prepare(review["id"])
+        before = self.runtime.diff(review["id"])
+        files = self.store.files(review["id"])
+        self.runner.on_call = lambda argv, kwargs: _Result(returncode=1, stderr="private path") if "fetch" in argv else None
+        self.runtime.prepare(review["id"], refresh=True)
+        retained = self.store.get_review(review["id"])
+        self.assertEqual(retained["status"], "ready")
+        self.assertIn("previous review is still available", retained["error"])
+        self.assertNotIn("private path", retained["error"])
+        self.assertEqual(self.runtime.diff(review["id"]), before)
+        self.assertEqual(self.store.files(review["id"]), files)
+        self.assertEqual(retained["tab_id"], "tab")
+
+    def test_optional_viewed_sync_failure_does_not_fail_preparation(self):
+        review = self._review()
+        self.runner.on_call = lambda argv, kwargs: _Result(returncode=1) if argv[:3] == ["gh", "api", "graphql"] else None
+        self.runtime.prepare(review["id"])
+        self.assertEqual(self.store.get_review(review["id"])["status"], "ready")
+        self.assertTrue(self.runtime.diff(review["id"])["files"])
+        self.assertIn("github.viewed_pull_failed", self._event_types(review["id"]))
+
+    def test_refresh_publishes_new_revision_without_mixing_old_metadata_and_new_diff(self):
+        review = self._review()
+        self.runtime.prepare(review["id"])
+        previous = self.runtime.diff(review["id"])
+        original_metadata = self.runtime._metadata
+        original_diff = self.runtime._diff
+        def new_metadata(review, directory):
+            return original_metadata(review, directory) | {"headRefOid": "new-head"}
+        def new_diff(review, worktree, merge_base, head, directory):
+            files = original_diff(review, worktree, merge_base, head, directory)
+            self.assertEqual(self.runtime.diff(review["id"]), previous)
+            return files
+        self.runtime._metadata = new_metadata
+        self.runtime._diff = new_diff
+        self.runtime.prepare(review["id"], refresh=True)
+        self.assertEqual(self.runtime.diff(review["id"])["head_sha"], "new-head")
+        self.assertEqual(self.store.get_review(review["id"])["status"], "ready")
+        self.assertEqual(sum(name == "tab.create" for name, _ in self.service.calls), 1)
+
+    def test_failed_refresh_after_diff_write_does_not_publish_partial_revision(self):
+        review = self._review()
+        self.runtime.prepare(review["id"])
+        previous = self.runtime.diff(review["id"])
+        original_metadata = self.runtime._metadata
+        self.runtime._metadata = lambda review, directory: original_metadata(review, directory) | {"headRefOid": "new-head"}
+        def fail_commit(*args, **kwargs):
+            raise OSError("synthetic commit failure")
+        self.store.complete_preparation = fail_commit
+        self.runtime.prepare(review["id"], refresh=True)
+        self.assertEqual(self.runtime.diff(review["id"]), previous)
+        self.assertEqual(self.store.get_review(review["id"])["status"], "ready")
+
+    def test_concurrent_refresh_requests_share_one_worker(self):
+        review, _ = self._ready_review()
+        started = threading.Event()
+        release = threading.Event()
+        calls = []
+        def prepare(review_id, refresh=False):
+            calls.append((review_id, refresh))
+            started.set()
+            release.wait(2)
+        self.runtime.prepare = prepare
+        try:
+            self.runtime.refresh_review(review["id"], "first")
+            self.assertTrue(started.wait(1))
+            self.runtime.refresh_review(review["id"], "second")
+            self.runtime.refresh_review(review["id"], "first")
+            self.assertEqual(calls, [(review["id"], True)])
+        finally:
+            release.set()
+            self.join_runtime_workers()
+
+    def test_refresh_refuses_to_overwrite_tracked_checkout_edits(self):
+        review = self._review()
+        self.runtime.prepare(review["id"])
+        worktree = self.runtime._review_worktree(review["id"])
+        (worktree / ".git").mkdir(parents=True, exist_ok=True)
+        self.runner.calls.clear()
+        self.runner.on_call = lambda argv, kwargs: _Result(" M Sources/Garden.swift\n") if "--porcelain" in argv else None
+        self.runtime.prepare(review["id"], refresh=True)
+        self.assertEqual(self.store.get_review(review["id"])["status"], "ready")
+        self.assertIn("tracked edits", self.store.get_review(review["id"])["error"])
+        self.assertFalse(any("checkout" in argv for argv, _ in self.runner.calls))
+
+    def test_before_excerpt_reads_merge_base_not_current_target_tip(self):
+        review = self._review()
+        self.store.update_review(review["id"], checkout_path=self.temp.name, base_sha="target-tip", merge_base_sha="common-ancestor")
+        self.runtime.file_text(review["id"], "Sources/Garden.swift", "before", 1, 2)
+        self.assertIn("common-ancestor:Sources/Garden.swift", self.runner.calls[-1][0])
 
     def test_file_text_clamps_window(self):
         review = self._review()

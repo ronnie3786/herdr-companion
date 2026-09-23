@@ -10,6 +10,27 @@ import XCTest
 final class HerdrPRReviewUITests: HerdrUITestCase {
     private let screenshotDirectory = HerdrPRReviewUITests.resolvedScreenshotDirectory()
 
+    @MainActor
+    func testEmptyFileFilterKeepsControlsAtTheTop() throws {
+        let app = launchDemoApp()
+        defer { app.terminate() }
+        _ = openPRReview(app)
+        let main = mainWindow(in: app)
+        let impact = control("pr-review-impact-filter", in: main)
+        XCTAssertTrue(impact.waitForExistence(timeout: 10))
+        let initialY = impact.frame.minY
+        let search = main.textFields["Filter files"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.click()
+        search.typeText("no-synthetic-file-matches-this-filter")
+        XCTAssertTrue(control("pr-review-no-filter-matches", in: main).waitForExistence(timeout: 5))
+        XCTAssertEqual(impact.frame.minY, initialY, accuracy: 3,
+                       "The Impact control must not become vertically centered when its list is empty")
+        main.buttons["Clear filters"].click()
+        XCTAssertTrue(control("pr-review-file-0", in: main).waitForExistence(timeout: 5))
+        XCTAssertEqual(impact.frame.minY, initialY, accuracy: 3)
+    }
+
     // MARK: - Context menus and window identity
 
     @MainActor

@@ -212,23 +212,40 @@ class PRReviewStore:
             self.get_review(review_id)
             return [dict(row) | {"viewed": bool(row["viewed"])} for row in self._db.execute("SELECT * FROM prr_files WHERE review_id=? ORDER BY path", (review_id,))]
 
+    def complete_preparation(self, review_id: str, files: list[Mapping[str, Any]], *, changed_paths: list[str] | None = None, **values: Any) -> None:
+        """Publish revision metadata and its file list as one readable snapshot."""
+        with self._transaction():
+            previous = self.get_review(review_id)
+            self._upsert_files(review_id, files)
+            if (previous.get("base_sha"), previous.get("head_sha")) != (values.get("base_sha"), values.get("head_sha")):
+                self._db.execute("UPDATE prr_files SET impact=NULL,impact_reason=NULL,guided_order=NULL,guided_reason=NULL WHERE review_id=?", (review_id,))
+                values.update(ranking_state="idle", ranking_error=None)
+            for path in changed_paths or []:
+                self._db.execute("UPDATE prr_files SET viewed=0,viewed_at=NULL,viewed_source=NULL WHERE review_id=? AND path=?", (review_id, path))
+            assignments = ",".join(f"{key}=?" for key in values)
+            self._db.execute(f"UPDATE prr_reviews SET {assignments} WHERE id=?", (*values.values(), review_id))
+            self._touch(review_id)
+
     def upsert_files(self, review_id: str, files: list[Mapping[str, Any]]) -> None:
         with self._transaction():
-            self.get_review(review_id)
-            paths: list[str] = []
-            for file in files:
-                path = _text(file.get("path"), "path", 4096)
-                paths.append(path)
-                prior = self._db.execute("SELECT impact,impact_reason,guided_order,guided_reason,viewed,viewed_at,viewed_source FROM prr_files WHERE review_id=? AND path=?", (review_id, path)).fetchone()
-                preserved = tuple(prior) if prior else (None, None, None, None, 0, None, None)
-                values = (review_id, path, file.get("old_path"), file.get("status", "modified"), int(file.get("additions", 0)), int(file.get("deletions", 0)), *preserved)
-                self._db.execute("INSERT INTO prr_files VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(review_id,path) DO UPDATE SET old_path=excluded.old_path,status=excluded.status,additions=excluded.additions,deletions=excluded.deletions", values)
-            if paths:
-                placeholders = ",".join("?" for _ in paths)
-                self._db.execute(f"DELETE FROM prr_files WHERE review_id=? AND path NOT IN ({placeholders})", (review_id, *paths))
-            else:
-                self._db.execute("DELETE FROM prr_files WHERE review_id=?", (review_id,))
-            self._touch(review_id)
+            self._upsert_files(review_id, files)
+
+    def _upsert_files(self, review_id: str, files: list[Mapping[str, Any]]) -> None:
+        self.get_review(review_id)
+        paths: list[str] = []
+        for file in files:
+            path = _text(file.get("path"), "path", 4096)
+            paths.append(path)
+            prior = self._db.execute("SELECT impact,impact_reason,guided_order,guided_reason,viewed,viewed_at,viewed_source FROM prr_files WHERE review_id=? AND path=?", (review_id, path)).fetchone()
+            preserved = tuple(prior) if prior else (None, None, None, None, 0, None, None)
+            values = (review_id, path, file.get("old_path"), file.get("status", "modified"), int(file.get("additions", 0)), int(file.get("deletions", 0)), *preserved)
+            self._db.execute("INSERT INTO prr_files VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(review_id,path) DO UPDATE SET old_path=excluded.old_path,status=excluded.status,additions=excluded.additions,deletions=excluded.deletions", values)
+        if paths:
+            placeholders = ",".join("?" for _ in paths)
+            self._db.execute(f"DELETE FROM prr_files WHERE review_id=? AND path NOT IN ({placeholders})", (review_id, *paths))
+        else:
+            self._db.execute("DELETE FROM prr_files WHERE review_id=?", (review_id,))
+        self._touch(review_id)
 
     def _skill(self, item: dict[str, Any]) -> dict[str, Any]:
         item["outputs"] = json.loads(item.pop("outputs_json"))
@@ -263,7 +280,8 @@ class PRReviewStore:
             return states
 
     def snapshot(self, review_id: str) -> dict[str, Any]:
-        return {"review": self.get_review(review_id, True), "files": self.files(review_id), "skills": self.skill_states(review_id), "runs": self.runs_for_review(review_id), "documents": self.documents(review_id), "events": self.events(review_id)["events"][-100:]}
+        with self._lock:
+            return {"review": self.get_review(review_id, True), "files": self.files(review_id), "skills": self.skill_states(review_id), "runs": self.runs_for_review(review_id), "documents": self.documents(review_id), "events": self.events(review_id)["events"][-100:]}
 
     def events(self, review_id: str, after: int = 0) -> dict[str, Any]:
         with self._lock:
@@ -437,14 +455,22 @@ class PRReviewStore:
             result = next(item for item in self.skill_states(review_id) if item["id"] == skill_id)
             return self._save(f"mark:{review_id}", request_id, payload, result)
 
-    def set_ranking_state(self, review_id: str, state: str, error: str | None = None) -> dict[str, Any]:
+    def set_ranking_state(self, review_id: str, state: str, error: str | None = None, *, expected_shas: tuple[str, str] | None = None) -> dict[str, Any]:
         if state not in {"idle", "running", "done", "failed"}:
             raise PRReviewError("Invalid ranking state", code="invalid_request", status=400)
-        return self.update_review(review_id, ranking_state=state, ranking_error=error)
+        with self._lock:
+            current = self.get_review(review_id)
+            if expected_shas is not None and (current.get("base_sha"), current.get("head_sha")) != expected_shas:
+                return current
+            return self.update_review(review_id, ranking_state=state, ranking_error=error)
 
-    def set_rankings(self, review_id: str, files: list[Mapping[str, Any]], request_id: str) -> list[dict[str, Any]]:
+    def set_rankings(self, review_id: str, files: list[Mapping[str, Any]], request_id: str, *, expected_shas: tuple[str, str] | None = None) -> list[dict[str, Any]]:
         payload = {"files": files}
         with self._transaction():
+            if expected_shas is not None:
+                current = self.get_review(review_id)
+                if (current.get("base_sha"), current.get("head_sha")) != expected_shas:
+                    raise PRReviewError("The review changed during ranking", code="stale_ranking")
             cached = self._receipt(f"rankings:{review_id}", request_id, payload)
             if cached is not None:
                 return cached

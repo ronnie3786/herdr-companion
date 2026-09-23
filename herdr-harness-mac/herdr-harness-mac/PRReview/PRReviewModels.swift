@@ -141,6 +141,7 @@ struct PRReviewSummary: Codable, Equatable, Identifiable, Sendable {
     var headRef: String
     var baseSHA: String
     var headSHA: String
+    var mergeBaseSHA: String?
     var githubState: String
     var isDraft: Bool
     var status: PRReviewStatus
@@ -175,6 +176,7 @@ struct PRReviewSummary: Codable, Equatable, Identifiable, Sendable {
         case headRef = "head_ref"
         case baseSHA = "base_sha"
         case headSHA = "head_sha"
+        case mergeBaseSHA = "merge_base_sha"
         case githubState = "github_state"
         case isDraft = "is_draft"
         case status
@@ -211,6 +213,7 @@ struct PRReviewSummary: Codable, Equatable, Identifiable, Sendable {
         headRef = try container.decodeIfPresent(String.self, forKey: .headRef) ?? ""
         baseSHA = try container.decodeIfPresent(String.self, forKey: .baseSHA) ?? ""
         headSHA = try container.decodeIfPresent(String.self, forKey: .headSHA) ?? ""
+        mergeBaseSHA = try container.decodeIfPresent(String.self, forKey: .mergeBaseSHA)
         githubState = try container.decodeIfPresent(String.self, forKey: .githubState) ?? ""
         isDraft = try container.decodeIfPresent(Bool.self, forKey: .isDraft) ?? false
         status = try container.decodeIfPresent(PRReviewStatus.self, forKey: .status) ?? .unknown

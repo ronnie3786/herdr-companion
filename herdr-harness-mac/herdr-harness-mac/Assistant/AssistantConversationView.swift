@@ -12,8 +12,10 @@ struct AssistantConversationView: View {
             HStack {
                 Label("Ask Herdr", systemImage: "sparkles").herdrFont(.headline, weight: .semibold)
                 Spacer()
-                Button("New question", systemImage: "square.and.pencil", action: session.newQuestion)
-                    .disabled(session.isRunning || session.pending != nil || session.latest?.status.isTerminal == false)
+                if session.profile != "pr-review-question-v1" {
+                    Button("New question", systemImage: "square.and.pencil", action: session.newQuestion)
+                        .disabled(session.isRunning || session.pending != nil || session.latest?.status.isTerminal == false)
+                }
                 if let openInWindow {
                     Button("Open in window", systemImage: "macwindow", action: openInWindow)
                 }

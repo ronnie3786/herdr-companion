@@ -53,6 +53,7 @@ final class PRReviewStore {
     var pendingURL: String?
     var isAddingSkill = false
     var isRefreshing = false
+    var isRefreshingReview = false
     var hasLoaded = false
     var unsupported = false
     var error: String?
@@ -164,6 +165,7 @@ final class PRReviewStore {
     }
 
     func select(_ id: String?) {
+        isRefreshingReview = false
         selectedReviewID = id
         snapshot = nil
         diff = nil
@@ -336,7 +338,7 @@ final class PRReviewStore {
 
             if let selectedReviewID {
                 let value = try await client.prReview(id: selectedReviewID)
-                guard refreshGeneration == generation else {
+                guard refreshGeneration == generation, self.selectedReviewID == selectedReviewID else {
                     return
                 }
                 receive(value)
@@ -457,7 +459,7 @@ final class PRReviewStore {
         guard selectedReviewID == nil || selectedReviewID == value.review.id else {
             return
         }
-        guard selectedReview?.revision ?? 0 <= value.review.revision else {
+        guard max(selectedReview?.revision ?? 0, snapshot?.review.revision ?? 0) <= value.review.revision else {
             return
         }
 
@@ -552,12 +554,14 @@ final class PRReviewStore {
     func refreshReview() async {
         guard let selectedReviewID,
               let client,
-              !isDemo
+              !isDemo, !isRefreshingReview
         else {
             return
         }
 
         let scope = operationScope(reviewID: selectedReviewID)
+        isRefreshingReview = true
+        defer { if isCurrentSelection(scope) { isRefreshingReview = false } }
 
         do {
             let value = try await client.refreshPRReview(
@@ -565,7 +569,11 @@ final class PRReviewStore {
                 requestID: UUID().uuidString
             )
             guard isCurrentSelection(scope) else { return }
+            error = nil
             receive(value)
+            // Refresh also recovers a failed diff request when the PR's SHAs
+            // did not change (the task identity alone would not retrigger it).
+            if let selectedPath { await loadDiff(for: selectedPath) }
         } catch {
             guard isCurrentSelection(scope),
                   !HerdrCancellation.isCancellation(error)
@@ -1189,6 +1197,7 @@ final class PRReviewStore {
     /// operations themselves are never resent; the next refresh reconciles
     /// uploads that did reach the server before the transport changed.
     private func settleInterruptedProgress() {
+        isRefreshingReview = false
         let uploadMessage = "The connection changed before this upload finished. Retry to upload it again."
         let downloadMessage = "This download was interrupted. Open the document to try again."
         let interruptedUploads = documentUploads.filter { entry in

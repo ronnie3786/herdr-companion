@@ -57,6 +57,7 @@ class PRReviewQuestionTests(unittest.TestCase):
         self.assertIn("--no-approve", capture["argv"])
         self.assertEqual(capture["cwd"], str(self.checkout.resolve()))
         charter = capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
+        self.assertIn("Always give me the ‘short version’ unless I ask for the long version or for more details.", charter)
         self.assertIn("reference only", charter)
         self.assertNotIn("herdr-companion-awareness", charter)
         self.assertEqual(capture["herdrAgentRunProfile"], "pr-review-question-v1")

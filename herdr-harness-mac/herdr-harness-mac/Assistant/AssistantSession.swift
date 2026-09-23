@@ -189,7 +189,9 @@ final class AssistantSession {
     }
 
     func newQuestion() {
-        guard !isRunning, !isPromoting, pending == nil, latest?.status.isTerminal != false else { return }
+        // PR bubbles are durable threads; a new selection creates a separate
+        // session instead of clearing the transcript behind an existing bubble.
+        guard profile != "pr-review-question-v1", !isRunning, !isPromoting, pending == nil, latest?.status.isTerminal != false else { return }
         turns = []
         error = nil
         draft = ""

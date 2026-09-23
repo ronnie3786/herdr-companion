@@ -18,10 +18,12 @@ final class AssistantCoordinator {
         transport: AssistantTransport,
         profile: String = "contextual-question-v1",
         reviewId: String? = nil,
+        threadID: String? = nil,
         anchor: (view: NSView, rect: CGRect)? = nil
     ) -> AssistantSession {
         let identity = [machineID, paneID ?? "", rootPath ?? "", context.source.feature,
                         context.source.instanceId, profile, reviewId ?? ""].joined(separator: "\n")
+            + (threadID.map { "\nthread:\($0)" } ?? "")
         let key = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
         if let window = windows[key] {
             updateContext(for: key, context: context)
@@ -33,6 +35,10 @@ final class AssistantCoordinator {
             updateContext(for: key, context: context)
             if let anchor {
                 popover.show(relativeTo: anchor.rect, of: anchor.view, preferredEdge: .maxY)
+            } else if let session = sessions[key] {
+                popover.close()
+                popovers[key] = nil
+                showWindow(key: key, title: title, session: session)
             }
             return sessions[key]!
         }

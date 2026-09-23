@@ -76,6 +76,15 @@ struct AssistantSessionTests {
         #expect(requests.first?.profile == "pr-review-question-v1")
         #expect(requests.first?.scope.reviewId == "prr_1")
         #expect(requests.first?.paneId == nil)
+        session.newQuestion()
+        #expect(session.turns.count == 1, "An indexed PR thread cannot be erased by New question")
+        let reopened = AssistantSession(title: "PR", machineID: "machine", paneID: nil, rootPath: "/checkout",
+                                        context: context, transport: transport,
+                                        persistence: AssistantPersistence(url: folder.appendingPathComponent("question.json")),
+                                        profile: "pr-review-question-v1", scopeReviewId: "prr_1")
+        await reopened.prepare()
+        #expect(reopened.turns == session.turns)
+        #expect(requests.count == 1, "Reopening saved history must not resubmit its prompt")
     }
 
     @Test("Selection locators round trip with exact span keys")

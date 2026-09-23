@@ -70,6 +70,7 @@ final class HerdrAppModel {
     var selectedTab: AppTab = .workspaces
     var selectedWorkspaceID: String?
     @ObservationIgnored let assistantCoordinator = AssistantCoordinator()
+    let prReviewQuestions = PRReviewQuestionHistory()
     let responseBriefs: ResponseBriefCoordinator
     @ObservationIgnored private let responseBriefNetworkIsolated: Bool
     var selectedPaneID: String?
@@ -3142,7 +3143,7 @@ final class HerdrAppModel {
                     path: selection.path,
                     oldPath: selection.oldPath.isEmpty ? nil : selection.oldPath,
                     section: side == .before ? "pr-base" : "pr-head",
-                    revision: side == .before ? review.baseSHA : review.headSHA,
+                    revision: side == .before ? (review.mergeBaseSHA ?? review.baseSHA) : review.headSHA,
                     spans: selection.spans.map {
                         .init(side: $0.side.wireSide, startLine: $0.start, endLine: $0.end)
                     }
@@ -3196,26 +3197,51 @@ final class HerdrAppModel {
             selection: selection
         ) else { return }
 
+        guard isDemoMode || client(forMachine: plan.machineID) != nil else {
+            toastMessage = "Connect this review’s original machine before asking a question."
+            return
+        }
         let submittedQuestion = question ?? selection.question ?? ""
+        guard !submittedQuestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let saved = PRReviewQuestionHistory.Question(
+            id: UUID().uuidString, machineID: plan.machineID, reviewID: review.id, path: selection.path,
+            baseSHA: review.baseSHA, headSHA: review.headSHA, prompt: submittedQuestion,
+            title: "PR #\(review.number) · \(selection.path)", checkoutPath: plan.checkoutPath,
+            context: plan.context, createdAt: .now
+        )
+        do { try prReviewQuestions.append(saved) }
+        catch {
+            toastMessage = "Could not save this review question. No question was sent."
+            return
+        }
+        presentSavedPRReviewQuestion(saved, anchor: anchor, submit: submittedQuestion)
+    }
+
+    func presentSavedPRReviewQuestion(
+        _ question: PRReviewQuestionHistory.Question,
+        anchor: (view: NSView, rect: CGRect)? = nil,
+        submit: String? = nil
+    ) {
         #if DEBUG
         if isDemoMode {
             let session = assistantCoordinator.present(
-                title: "PR #\(review.number) · \(selection.path)",
-                machineID: "demo-\(plan.machineID)",
+                title: question.title,
+                machineID: "demo-\(question.machineID)",
                 paneID: nil,
-                rootPath: plan.checkoutPath,
-                context: plan.context,
+                rootPath: question.checkoutPath,
+                context: question.context,
                 transport: AssistantDemo().transport,
                 profile: "pr-review-question-v1",
-                reviewId: review.id,
+                reviewId: question.reviewID,
+                threadID: question.id,
                 anchor: anchor
             )
-            session.submitDraftWhenReady(submittedQuestion)
+            if let submit { session.submitDraftWhenReady(submit) }
             return
         }
         #endif
-        guard let client = client(forMachine: plan.machineID) else {
-            toastMessage = "Connect the development machine before asking about this review."
+        guard let client = client(forMachine: question.machineID) else {
+            toastMessage = "Connect this review’s original machine to reopen its question."
             return
         }
         let transport = AssistantTransport(
@@ -3225,20 +3251,21 @@ final class HerdrAppModel {
             stop: { try await client.cancelHeadlessAgent(id: $0).run },
             models: { try await client.fetchAgentModels() },
             promote: { try await client.promoteHeadlessAgent(id: $0, workspaceID: nil).run },
-            openAgent: { HerdrMacAppDelegate.openPaneURLWithFallback(MachineScopedID.compose(machineID: plan.machineID, rawID: $0)) }
+            openAgent: { HerdrMacAppDelegate.openPaneURLWithFallback(MachineScopedID.compose(machineID: question.machineID, rawID: $0)) }
         )
         let session = assistantCoordinator.present(
-            title: "PR #\(review.number) · \(selection.path)",
-            machineID: plan.machineID,
+            title: question.title,
+            machineID: question.machineID,
             paneID: nil,
-            rootPath: plan.checkoutPath,
-            context: plan.context,
+            rootPath: question.checkoutPath,
+            context: question.context,
             transport: transport,
             profile: "pr-review-question-v1",
-            reviewId: review.id,
+            reviewId: question.reviewID,
+            threadID: question.id,
             anchor: anchor
         )
-        session.submitDraftWhenReady(submittedQuestion)
+        if let submit { session.submitDraftWhenReady(submit) }
     }
 
     private static func byteLimited(_ text: String, maximum: Int) -> String {

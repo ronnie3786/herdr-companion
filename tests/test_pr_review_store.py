@@ -103,6 +103,33 @@ class PRReviewStoreTests(unittest.TestCase):
         self.assertLessEqual(len(snapshot_events), 100)
         self.assertEqual(snapshot_events[-1]["type"], "synthetic.later")
 
+    def test_new_revision_invalidates_rankings_and_only_changed_viewed_marks(self):
+        review = self.store.create_review(self.body())
+        files = [{"path": "changed.swift"}, {"path": "unchanged.swift"}]
+        self.store.complete_preparation(review["id"], files, base_sha="base", head_sha="old")
+        self.store.set_viewed(review["id"], [file["path"] for file in files], True, "viewed")
+        self.store.set_rankings(review["id"], [{"path": file["path"], "impact": "low", "reason": "Old reason"} for file in files], "rank")
+        self.store.complete_preparation(review["id"], files, changed_paths=["changed.swift"], base_sha="base", head_sha="new")
+        refreshed = {file["path"]: file for file in self.store.files(review["id"])}
+        self.assertFalse(refreshed["changed.swift"]["viewed"])
+        self.assertTrue(refreshed["unchanged.swift"]["viewed"])
+        self.assertTrue(all(file["impact"] is None for file in refreshed.values()))
+        self.assertEqual(self.store.get_review(review["id"])["ranking_state"], "idle")
+        with self.assertRaises(PRReviewError) as raised:
+            self.store.set_rankings(review["id"], [{"path": "changed.swift", "impact": "low"}], "late-rank", expected_shas=("base", "old"))
+        self.assertEqual(raised.exception.code, "stale_ranking")
+        self.assertIsNone(self.store.files(review["id"])[0]["impact"])
+        self.store.set_ranking_state(review["id"], "failed", "Old worker failed", expected_shas=("base", "old"))
+        self.assertEqual(self.store.get_review(review["id"])["ranking_state"], "idle")
+
+    def test_preparation_transaction_rolls_back_files_if_metadata_cannot_commit(self):
+        review = self.store.create_review(self.body())
+        self.store.complete_preparation(review["id"], [{"path": "old.swift"}], base_sha="base", head_sha="old")
+        with self.assertRaises(sqlite3.OperationalError):
+            self.store.complete_preparation(review["id"], [{"path": "new.swift"}], not_a_column="bad")
+        self.assertEqual(self.store.get_review(review["id"])["head_sha"], "old")
+        self.assertEqual([file["path"] for file in self.store.files(review["id"])], ["old.swift"])
+
     def test_close_waits_for_the_shared_connection_lock(self):
         store = PRReviewStore(Path(self.temp.name) / 'closing.sqlite3')
         entered, release = threading.Event(), threading.Event()

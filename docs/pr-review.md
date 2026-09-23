@@ -1,6 +1,6 @@
 # PR Review
 
-Status: macOS 0.27.1-beta.1 with companion 0.27.0b3 (2026-09-21).
+Status: macOS 0.37.0-beta.1 with companion 0.37.0b1 (2026-09-23).
 Product intent lives in [pr-review-assistant.md](pr-review-assistant.md).
 
 PR Review turns a GitHub pull request link into an AI-assisted review workspace inside the
@@ -79,17 +79,14 @@ resources without a project-trust prompt. An idle agent pane is not evidence tha
 the skill completed; automatic completion requires the terminal's explicit `done`
 status. You can still finish a run manually from Agents.
 
-**Files.** Files carry an AI impact (High, Medium, Low, or unranked) with a one-line reason.
+**Files.** Files carry an AI impact (High, Medium, Low, or unranked). A short **Why** explanation above the diff describes what deserves attention or why the change is routine, in both GitHub and Guided order. Missing explanations are called out rather than inventing a safety claim; use **Rank files** to generate them. The filter controls stay at the top even when no files match.
 Filter to one impact at a time, hide viewed files, search, and switch between GitHub order and
 the **Guided** order, which lists files in the order the AI suggests for building a mental model
 and explains each position above the diff. ⌥↑ and ⌥↓ move between files; ⌥V or the checkbox
 marks a file viewed (also on GitHub when syncing is enabled). **Rank files** re-runs the ranking;
 `herdr-pr-review set-rankings` lets an agent supply its own.
 
-**Diff and Ask AI.** The diff is native: old and new line numbers, and added and removed
-lines use the same change treatment as the Git segment's diff — a full-width green/red row
-tint, a stronger line-number gutter, and still stronger changed-word emphasis inside
-replacement blocks. Hunk headers keep their own tint and unchanged context stays plain.
+**Diff and Ask AI.** PR Review, Chat Git and First Mate Git use one shared code renderer and theme: syntax-highlighted code, roomier lines, old/new line numbers, full-width green/red row tints, stronger gutters and changed-word emphasis. The PR Review renderer is bundled in the Mac app; rendering a loaded patch does not fetch scripts, fonts or grammars from the network. Display options remain shared; review-specific selection and navigation are adapters around that renderer.
 Deleted text files show their removal hunks. Long files scroll vertically
 and horizontally. If the patch is truncated, Herdr shows every available hunk with a partial-diff
 notice and a link to the full diff. Select code and choose **Ask AI** (floating button or right-click).
@@ -99,7 +96,11 @@ that file as reference only. Answers come from the `pr-review-question-v1` profi
 started in the review's checkout with only `read`, `grep`, `find` and `ls`, and a charter that
 tells it to verify findings by reading the code rather than repeating them. Scoping is the
 working directory plus the charter; it is not a sandbox. Follow-ups continue the same
-conversation; **Continue in agent** hands off for actions.
+conversation; **Continue in agent** hands off for actions. The system prompt requests the **short version** unless you ask for a long answer or more details (requires companion 0.37.0b1).
+
+New questions stay as **Saved questions** bubbles below the diff. Click a bubble to reopen its saved conversation without sending the question again. Each new selection question starts a separate thread, and follow-ups stay in that thread. Bubbles survive file switches, review refreshes, pop-out closure and app relaunch. They are scoped to the original host/review, carry file and line context, and show **Earlier revision** after the PR changes. The index and transcripts are stored privately on this Mac; they do not sync to other clients. Questions created before this version are not retroactively indexed. A saved thread is not cleared by starting another question.
+
+**Refresh.** Companion 0.37.0b1 coalesces overlapping refreshes, fetches rebased PR heads, and publishes revision metadata and files together. Failed refreshes retain the last usable review with a retryable warning. Optional GitHub viewed-file sync cannot make a prepared review fail. Tracked edits in the managed checkout are preserved and block checkout replacement rather than being overwritten. New revisions invalidate old impact rankings and reset viewed state for changed patches; unchanged files keep their local marks. Old ranking jobs cannot overwrite ratings for a newer revision. The Mac keeps the file selection and filters when still applicable and keeps saved questions anchored to their original revision. Install the companion package separately on the review host; the Mac updater does not deploy it.
 
 **Context.** The review library holds per-agent markdown findings, the consolidated HTML
 report, audio summaries, explainer videos, links and anything you drop in (files, folders, web

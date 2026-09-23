@@ -1,6 +1,6 @@
 # PR Review
 
-Status: macOS 0.37.0-beta.1 with companion 0.37.0b1 (2026-09-23).
+Status: macOS 0.39.0-beta.1 with companion 0.39.0b1 (2026-09-23).
 Product intent lives in [pr-review-assistant.md](pr-review-assistant.md).
 
 PR Review turns a GitHub pull request link into an AI-assisted review workspace inside the
@@ -96,11 +96,11 @@ that file as reference only. Answers come from the `pr-review-question-v1` profi
 started in the review's checkout with only `read`, `grep`, `find` and `ls`, and a charter that
 tells it to verify findings by reading the code rather than repeating them. Scoping is the
 working directory plus the charter; it is not a sandbox. Follow-ups continue the same
-conversation; **Continue in agent** hands off for actions. The system prompt requests the **short version** unless you ask for a long answer or more details (requires companion 0.37.0b1).
+conversation; **Continue in agent** hands off for actions. The system prompt requests the **short version** unless you ask for a long answer or more details (requires companion 0.39.0b1).
 
 New questions stay as **Saved questions** bubbles below the diff. Click a bubble to reopen its saved conversation without sending the question again. Each new selection question starts a separate thread, and follow-ups stay in that thread. Bubbles survive file switches, review refreshes, pop-out closure and app relaunch. They are scoped to the original host/review, carry file and line context, and show **Earlier revision** after the PR changes. The index and transcripts are stored privately on this Mac; they do not sync to other clients. Questions created before this version are not retroactively indexed. A saved thread is not cleared by starting another question.
 
-**Refresh.** Companion 0.37.0b1 coalesces overlapping refreshes, fetches rebased PR heads, and publishes revision metadata and files together. Failed refreshes retain the last usable review with a retryable warning. Optional GitHub viewed-file sync cannot make a prepared review fail. Tracked edits in the managed checkout are preserved and block checkout replacement rather than being overwritten. New revisions invalidate old impact rankings and reset viewed state for changed patches; unchanged files keep their local marks. Old ranking jobs cannot overwrite ratings for a newer revision. The Mac keeps the file selection and filters when still applicable and keeps saved questions anchored to their original revision. Install the companion package separately on the review host; the Mac updater does not deploy it.
+**Refresh.** Companion 0.39.0b1 coalesces overlapping refreshes, fetches rebased PR heads, and publishes revision metadata and files together. Failed refreshes retain the last usable review with a retryable warning. Optional GitHub viewed-file sync cannot make a prepared review fail. Tracked edits in the managed checkout are preserved and block checkout replacement rather than being overwritten. New revisions invalidate old impact rankings and reset viewed state for changed patches; unchanged files keep their local marks. Old ranking jobs cannot overwrite ratings for a newer revision. The Mac keeps the file selection and filters when still applicable and keeps saved questions anchored to their original revision. Install the companion package separately on the review host; the Mac updater does not deploy it.
 
 **Context.** The review library holds per-agent markdown findings, the consolidated HTML
 report, audio summaries, explainer videos, links and anything you drop in (files, folders, web

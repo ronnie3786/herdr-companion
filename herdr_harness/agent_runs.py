@@ -425,6 +425,7 @@ class AgentRunManager:
         runs_root: Optional[Path] = None,
         now: Callable[[], str] = utc_now,
         clock: Callable[[], float] = time.monotonic,
+        profile_snapshot: Optional[Callable[[], dict]] = None,
     ) -> None:
         self.environ = dict(environ)
         self.herdr_socket_path = str(herdr_socket_path)
@@ -443,6 +444,7 @@ class AgentRunManager:
             self.runs_root.mkdir(parents=True, exist_ok=True, mode=0o700)
             os.chmod(self.runs_root, 0o700)
         self._now = now
+        self._profile_snapshot = profile_snapshot
         self._clock = clock
         self._lock = threading.RLock()
         self._models_lock = threading.Lock()
@@ -870,6 +872,12 @@ class AgentRunManager:
         }
         if _assistant is not None:
             run.update(_assistant)
+        from .agent_profiles import RESTRICTED_PROFILES
+        if run.get("profile") not in RESTRICTED_PROFILES:
+            if thread_root_run_id != run_id:
+                run["agentProfileSnapshot"] = root.get("agentProfileSnapshot")
+            elif self._profile_snapshot:
+                run["agentProfileSnapshot"] = self._profile_snapshot()
         try:
             self._write(run)
         except (OSError, TypeError, ValueError):
@@ -1102,6 +1110,10 @@ class AgentRunManager:
                     profile if isinstance(profile, str) else None,
                 ),
             )
+            snapshot = run.get("agentProfileSnapshot")
+            if isinstance(snapshot, dict) and snapshot.get("prompt"):
+                from .agent_profiles import write_prompt_snapshot
+                charter = write_prompt_snapshot(self._run_dir(run_id) / "profile-charter.md", charter + "\n\n" + snapshot["prompt"])
             command = [
                 pi_bin,
                 "-p",

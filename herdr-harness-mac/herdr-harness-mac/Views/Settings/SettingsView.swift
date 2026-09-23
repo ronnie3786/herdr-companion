@@ -125,13 +125,19 @@ struct SettingsView: View {
         .accessibilityIdentifier("settings-sidebar")
     }
 
+    @ViewBuilder
     private var settingsDetail: some View {
-        Form {
-            paneSections(for: selectedPane)
+        if selectedPane == .agentProfiles {
+            AgentProfilesView(model: model)
+                .background(HerdrBackground())
+        } else {
+            Form {
+                paneSections(for: selectedPane)
+            }
+            .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .background(HerdrBackground())
         }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
-        .background(HerdrBackground())
     }
 
     @ViewBuilder
@@ -150,6 +156,8 @@ struct SettingsView: View {
             smartRenameSection
             promptsSection
             cleanupSection
+        case .agentProfiles:
+            EmptyView()
         case .hud:
             hudSection
             appShotsSection

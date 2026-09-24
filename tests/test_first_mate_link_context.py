@@ -50,6 +50,18 @@ class PullRequestContextTests(unittest.TestCase):
         data = [{"url": OTHER, "title": "SYN-123 Image paste"}, {"url": PR, "title": "Other task"}]
         self.assertIsNone(context.qualify(PR, json.dumps(data)))
 
+    def test_large_search_result_is_parsed_once_and_cache_respects_evidence_changes(self):
+        rows = [{"url": f"https://github.com/{REPO}/pull/{i + 1}",
+                 "title": "SYN-123 Image paste" if i == 41 else "Other work"} for i in range(300)]
+        text = json.dumps(rows)
+        context = self.context()
+        with patch("herdr_harness.first_mate_link_context.json.loads", wraps=json.loads) as loads:
+            matches = [row["url"] for row in rows if context.qualify(row["url"], text, allow_prose=False) is not None]
+            self.assertEqual(matches, [PR])
+            self.assertEqual(loads.call_count, 1)
+            self.assertIsNone(context.qualify(PR, json.dumps({"url": PR, "title": "Other work"})))
+            self.assertEqual(loads.call_count, 2)
+
     def test_delivery_statement_must_be_unambiguous_and_about_current_ticket(self):
         context = self.context()
         self.assertEqual(context.qualify(PR, f"Opened PR {PR} for SYN-123."), {"matched_ticket": "SYN-123"})

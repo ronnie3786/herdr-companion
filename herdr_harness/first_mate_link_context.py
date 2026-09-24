@@ -50,6 +50,8 @@ def repository_names(cwd: str) -> frozenset[str]:
 class PullRequestContext:
     def __init__(self, title: str, goal: str, repositories: frozenset[str]):
         self.repositories = repositories
+        self._evidence_key: tuple[str, bool] | None = None
+        self._evidence_matches: dict[str, str] = {}
         # The title's ticket is primary; expanded goals often quote dependencies.
         self.tickets = {key.upper() for key in (_TICKET.findall(title) or _TICKET.findall(goal))}
         self.urls: set[str] = set()
@@ -79,6 +81,18 @@ class PullRequestContext:
             return None
         if matched_ticket and matched_ticket.upper() in self.tickets:
             return {"matched_ticket": matched_ticket.upper()}
+        if not self.tickets:
+            return None
+        ticket = self._matching_evidence(text, allow_prose).get(parsed["url"])
+        return {"matched_ticket": ticket} if ticket else None
+
+    def _matching_evidence(self, text: str, allow_prose: bool) -> dict[str, str]:
+        # A record can contain thousands of PRs. Parse it once, then look up each
+        # candidate instead of doing quadratic work in the scheduler's scan.
+        key = (text, allow_prose)
+        if self._evidence_key == key:
+            return self._evidence_matches
+        matches: dict[str, str] = {}
         # Structured gh output is assessed one PR at a time. A ticket elsewhere
         # in a search result, PR body, or dependency list cannot qualify this PR.
         try:
@@ -90,24 +104,25 @@ class PullRequestContext:
             if not isinstance(entry, dict):
                 continue
             identity = parse_github_pull_request(entry.get("url"))
-            if identity is None or identity["url"] != parsed["url"]:
+            if identity is None:
                 continue
-            fields = " ".join(str(entry.get(name) or "") for name in ("title", "headRefName"))
+            fields = " ".join(value for name in ("title", "headRefName")
+                              if isinstance(value := entry.get(name), str))
             matching = self.tickets.intersection(key.upper() for key in _TICKET.findall(fields))
             if matching:
-                return {"matched_ticket": sorted(matching)[0]}
-        if not allow_prose or data is not None:
-            return None
-        # A direct delivery statement can identify the ticket's PR. Ordinary
-        # mentions, tool logs and paragraphs containing several PRs are ambiguous.
-        for paragraph in re.split(r"\n\s*\n", text):
-            if not _CREATED.search(paragraph) or _REFERENCE.search(paragraph):
-                continue
-            urls = {p["url"] for candidate in _URL.findall(paragraph)
-                    if (p := parse_github_pull_request(candidate.rstrip(".,;:!?")))}
-            if urls != {parsed["url"]}:
-                continue
-            matching = self.tickets.intersection(key.upper() for key in _TICKET.findall(paragraph))
-            if matching:
-                return {"matched_ticket": sorted(matching)[0]}
-        return None
+                matches[identity["url"]] = sorted(matching)[0]
+        if allow_prose and data is None:
+            # Direct delivery statements can identify a ticket's PR. Ordinary
+            # mentions and paragraphs containing several PRs are ambiguous.
+            for paragraph in re.split(r"\n\s*\n", text):
+                if not _CREATED.search(paragraph) or _REFERENCE.search(paragraph):
+                    continue
+                urls = {p["url"] for candidate in _URL.findall(paragraph)
+                        if (p := parse_github_pull_request(candidate.rstrip(".,;:!?")))}
+                if len(urls) != 1:
+                    continue
+                matching = self.tickets.intersection(key.upper() for key in _TICKET.findall(paragraph))
+                if matching:
+                    matches[next(iter(urls))] = sorted(matching)[0]
+        self._evidence_key, self._evidence_matches = key, matches
+        return matches

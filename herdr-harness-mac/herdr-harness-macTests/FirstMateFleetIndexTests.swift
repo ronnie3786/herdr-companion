@@ -619,6 +619,24 @@ struct FirstMateFleetIndexTests {
         #expect(await script.fetchCount == 1)
     }
 
+    @Test("Telemetry-only changes (usage, context, updated_at) do not count as fleet changes")
+    func telemetryOnlyChanges() {
+        var old = feature(id: "busy", status: "running")
+        old.dashboardSummary = .init(currentStageTitle: "Build", currentStageIndex: 1, stageCount: 1, latestMessage: nil,
+                                     latestMessageAt: nil, needsUser: false, needsUserPrompt: nil, assignmentCount: 1,
+                                     runningAssignmentCount: 1, activityAt: "2026-01-01T00:00:00Z")
+        var new = old
+        new.updatedAt = "2026-01-01T00:05:00Z"
+        #expect(FirstMateFleetIndex.samePublishedFeatures([old], [new]))
+        new.status = "awaiting_direction"
+        #expect(!FirstMateFleetIndex.samePublishedFeatures([old], [new]))
+        var legacy = old
+        legacy.dashboardSummary = nil
+        var legacyNew = legacy
+        legacyNew.updatedAt = "2026-01-01T00:05:00Z"
+        #expect(!FirstMateFleetIndex.samePublishedFeatures([legacy], [legacyNew]))
+    }
+
     @Test("An unchanged poll publishes nothing, so the Dashboard is not re-rendered every interval")
     func unchangedPollIsQuiet() async {
         let index = FirstMateFleetIndex()

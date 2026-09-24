@@ -37,6 +37,17 @@ struct DashboardFirstMatesSection: View {
                 .padding(.horizontal, HerdrTheme.pagePadding)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Loading First Mates")
+            } else if entries.isEmpty, !shell.dashboard.focusMode, shell.dashboard.search.isEmpty {
+                HStack(spacing: 12) {
+                    Text(model.isDemoMode || !model.machines.isEmpty ? "No First Mates yet." : "Connect a companion in Settings → Machines to start a First Mate.")
+                        .herdrFont(.callout).foregroundStyle(HerdrTheme.muted)
+                    DashboardCreateFeatureMenu(model: model, shell: shell) {
+                        Label("New feature", systemImage: "plus")
+                            .herdrFont(.callout).foregroundStyle(HerdrTheme.accent)
+                            .contentShape(.rect)
+                    }
+                }
+                .padding(.horizontal, HerdrTheme.pagePadding)
             } else if visible.isEmpty, !entries.isEmpty || shell.dashboard.focusMode || !shell.dashboard.search.isEmpty {
                 Text(shell.dashboard.search.isEmpty ? "No First Mates are waiting for you." : "No First Mates match your search.")
                     .herdrFont(.callout).foregroundStyle(HerdrTheme.muted)
@@ -192,8 +203,8 @@ struct DashboardFeatureCard: View {
     private var footer: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             if entry.needsAttention {
-                // When the question is the latest reply, it is already above.
-                Text("→ \(entry.attentionPrompt == entry.preview ? "Reply in First Mate" : entry.attentionPrompt ?? "Waiting for your direction")")
+                // A parked turn's prompt is its latest reply, already shown above.
+                Text("→ \(footerPrompt)")
                     .herdrFont(.callout, weight: .semibold)
                     .foregroundStyle(HerdrTheme.attention)
                     .lineLimit(1)
@@ -219,6 +230,14 @@ struct DashboardFeatureCard: View {
                     .fixedSize()
             }
         }
+    }
+
+    private var footerPrompt: String {
+        let decisionPending = FirstMateAttention.needsHumanDecision(status: entry.feature.status)
+        if !decisionPending || entry.attentionPrompt == nil || entry.attentionPrompt == entry.preview {
+            return "Reply in First Mate"
+        }
+        return entry.attentionPrompt ?? "Reply in First Mate"
     }
 
     private var accessibilityText: String {

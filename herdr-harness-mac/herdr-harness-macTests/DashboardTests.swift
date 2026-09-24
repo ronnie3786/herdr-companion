@@ -38,6 +38,40 @@ struct DashboardTests {
         #expect(notes.allSatisfy { text in text.hasPrefix("Event ") && Int(text.dropFirst(6))!.isMultiple(of: 400) })
     }
 
+    @Test("Only repeats of the same note collapse, and messages break a run")
+    func noteCollapsing() {
+        var snapshot = FirstMateDemo.features(step: 2)[0]
+        let id = snapshot.feature.id
+        let base = Date(timeIntervalSince1970: 1_780_000_000)
+        func at(_ seconds: Double) -> String { HerdrTimestamp.string(from: base.addingTimeInterval(seconds)) }
+        snapshot.messages = [.init(id: "m1", featureID: id, role: "user", text: "Go ahead", status: "done", createdAt: at(30))]
+        snapshot.events = [
+            FirstMateEvent(sequence: 1, id: "e1", featureID: id, type: "visit.completed", summary: "Planning complete", createdAt: at(0)),
+            FirstMateEvent(sequence: 2, id: "e2", featureID: id, type: "visit.started", summary: "Implementation started", createdAt: at(40)),
+            FirstMateEvent(sequence: 3, id: "e3", featureID: id, type: "assignment.queued", summary: "Worker queued", createdAt: at(41)),
+            FirstMateEvent(sequence: 4, id: "e4", featureID: id, type: "assignment.queued", summary: "Worker queued", createdAt: at(42)),
+            FirstMateEvent(sequence: 5, id: "e5", featureID: id, type: "session.bound", summary: "Saved Pi session attached", createdAt: at(43)),
+        ]
+        let rows = AgentBoardContent.build(from: .adapting(snapshot)).timeline.map { row -> String in
+            switch row {
+            case .message(let message): "message:\(message.id)"
+            case .note(let note): note.count > 1 ? "\(note.text) ×\(note.count)" : note.text
+            }
+        }
+        #expect(rows == ["Planning complete", "message:m1", "Implementation started", "Worker queued ×2"])
+    }
+
+    @Test("Message rows compare by their source text, not their styled runs")
+    func messageRowEquality() {
+        let snapshot = FirstMateDemo.features(step: 2)[0]
+        let first = AgentBoardContent.build(from: .adapting(snapshot))
+        let second = AgentBoardContent.build(from: .adapting(snapshot))
+        #expect(first == second)
+        var changed = snapshot
+        changed.messages[changed.messages.count - 1].text += " More."
+        #expect(AgentBoardContent.build(from: .adapting(changed)) != first)
+    }
+
     @Test("Card text drops repeated ticket prefixes, markdown, and HTML entities")
     func cardText() {
         var feature = FirstMateFeature(id: "f", title: "APP-12 — Offline &amp; sync notes", goal: "Keep **notes** safe",

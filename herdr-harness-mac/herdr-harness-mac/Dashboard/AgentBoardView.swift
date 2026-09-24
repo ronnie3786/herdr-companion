@@ -47,8 +47,9 @@ struct AgentBoardView: View {
                             }
                         }
                         .scrollTargetLayout()
-                        .padding(16)
+                        .padding(.vertical, 16)
                     }
+                    .contentMargins(.horizontal, 16, for: .scrollContent)
                     .scrollTargetBehavior(.viewAligned)
                     .scrollIndicators(.automatic)
                     .accessibilityIdentifier("agent-board-columns")

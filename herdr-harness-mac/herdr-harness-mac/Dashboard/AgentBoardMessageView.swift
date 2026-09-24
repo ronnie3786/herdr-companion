@@ -49,7 +49,7 @@ struct AgentBoardMessageView: View {
     private var assistant: some View {
         let folds = !isExpanded && characterCount > Self.foldCharacterBudget
         return VStack(alignment: .leading, spacing: 6) {
-            AgentBoardProseView(blocks: folds ? foldedBlocks : message.blocks)
+            AgentBoardProseView(blocks: folds ? foldedBlocks : message.blocks, codeLineLimit: isExpanded ? nil : 14)
             if characterCount > Self.foldCharacterBudget {
                 Button(isExpanded ? "Show less" : "Show more") { isExpanded.toggle() }
                     .buttonStyle(.plain)
@@ -63,8 +63,14 @@ struct AgentBoardMessageView: View {
         .accessibilityLabel("First Mate: \(plainText)")
     }
 
+    /// Code counts by lines too, so a short but tall block still folds.
     private var characterCount: Int {
-        message.blocks.reduce(0) { $0 + $1.characterCount }
+        message.blocks.reduce(0) { total, block in
+            if case .code(_, let code) = block {
+                return total + max(block.characterCount, code.split(separator: "\n", omittingEmptySubsequences: false).count * 70)
+            }
+            return total + block.characterCount
+        }
     }
 
     /// Whole blocks up to the budget; always at least the first block.
@@ -87,6 +93,7 @@ struct AgentBoardMessageView: View {
 /// Compact rendering of a First Mate reply: column-sized type, no nested cards.
 struct AgentBoardProseView: View {
     let blocks: [AgentBoardProseBlock]
+    var codeLineLimit: Int? = 14
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -115,7 +122,7 @@ struct AgentBoardProseView: View {
                     Text(code)
                         .herdrFont(.callout, monospaced: true)
                         .foregroundStyle(HerdrTheme.code)
-                        .lineLimit(14)
+                        .lineLimit(codeLineLimit)
                         .padding(.horizontal, 10).padding(.vertical, 8)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(HerdrTheme.graphite, in: .rect(cornerRadius: 6))

@@ -85,7 +85,7 @@ struct AgentBoardColumnView: View {
                     .foregroundStyle(HerdrTheme.muted)
                     .lineLimit(1)
                 Spacer(minLength: 4)
-                if isOffline, let seen = state.lastContact ?? entry.lastUpdated {
+                if isOffline, let seen = [state.lastContact, entry.lastUpdated].compactMap({ $0 }).max() {
                     HStack(spacing: 3) {
                         Text("Last seen")
                         DashboardAgeText(date: seen)
@@ -100,7 +100,7 @@ struct AgentBoardColumnView: View {
             }
             Text(header.title)
                 .herdrFont(.title3, weight: .medium)
-                .lineLimit(2)
+                .lineLimit(2, reservesSpace: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .help(header.title)
                 .accessibilityAddTraits(.isHeader)
@@ -298,14 +298,18 @@ struct AgentBoardColumnView: View {
         let resource: FirstMateResource? = agent.assignment.nativeSessionID != nil
             ? .session(agent.assignment) : agent.latestSession.map(FirstMateResource.history)
         guard let resource else { return }
-        let store = state.resources()
-        Task { await store.open(resource) }
+        Task {
+            let store = state.resources(capabilities: await capabilities())
+            await store.open(resource)
+        }
     }
 
     private func openSession(_ session: FirstMateSession) {
         if openLiveSession(session.nativeSessionID) { return }
-        let store = state.resources()
-        Task { await store.open(.history(session)) }
+        Task {
+            let store = state.resources(capabilities: await capabilities())
+            await store.open(.history(session))
+        }
     }
 
     private func capabilities() async -> FirstMateCapabilities? {

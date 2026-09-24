@@ -186,7 +186,7 @@ final class FirstMateFleetIndex {
                 host.isLoading = false
                 if let features = result.features {
                     lastContact[result.machineID] = .now
-                    host.features = features
+                    if !Self.samePublishedFeatures(host.features, features) { host.features = features }
                     if host.lastUpdated == nil || host.error != nil || host.unsupported { host.lastUpdated = .now }
                     host.error = nil
                     host.unsupported = false
@@ -201,6 +201,22 @@ final class FirstMateFleetIndex {
                     contentRevision &+= 1
                 }
             }
+        }
+    }
+
+    /// Pi telemetry refreshes each feature's usage, context estimate, and
+    /// `updated_at` on nearly every poll while agents work. Nothing the fleet
+    /// shows depends on them (ordering uses `activity_at` when the companion
+    /// reports it), so they alone never count as a change.
+    static func samePublishedFeatures(_ lhs: [FirstMateFeature], _ rhs: [FirstMateFeature]) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        return zip(lhs, rhs).allSatisfy { left, right in
+            guard left != right else { return true }
+            var a = left, b = right
+            a.usage = nil; b.usage = nil
+            a.coordinatorContext = nil; b.coordinatorContext = nil
+            if a.dashboardSummary?.activityAt != nil, b.dashboardSummary?.activityAt != nil { a.updatedAt = b.updatedAt }
+            return a == b
         }
     }
 

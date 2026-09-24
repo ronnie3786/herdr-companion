@@ -17,7 +17,7 @@ struct AgentBoardOverviewView: View {
                         .lineSpacing(2)
                         .lineLimit(goalExpanded ? nil : 4)
                         .textSelection(.enabled)
-                    if content.goal.count > 260 {
+                    if content.goal.count > 220 {
                         Button(goalExpanded ? "Show less" : "Show more") { goalExpanded.toggle() }
                             .buttonStyle(.plain).herdrFont(.subheadline).foregroundStyle(HerdrTheme.accent)
                     }

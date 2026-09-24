@@ -117,12 +117,18 @@ struct DashboardChatRow: View {
                     .herdrFont(.subheadline).foregroundStyle(HerdrTheme.muted)
                     .lineLimit(1).truncationMode(.middle)
                     .frame(maxWidth: 220, alignment: .trailing)
-                if let date = pane.lastActivityAt ?? pane.firstSeenAt {
-                    DashboardAgeText(date: date)
-                        .herdrFont(.subheadline, monospacedDigit: true)
-                        .foregroundStyle(HerdrTheme.muted)
-                        .frame(width: 36, alignment: .trailing)
-                }
+                // A hidden template keeps the age column aligned and sized to the
+                // text scale, with or without a date.
+                Text("000d")
+                    .hidden()
+                    .overlay(alignment: .trailing) {
+                        if let date = pane.lastActivityAt ?? pane.firstSeenAt {
+                            DashboardAgeText(date: date)
+                        }
+                    }
+                    .herdrFont(.subheadline, monospacedDigit: true)
+                    .foregroundStyle(HerdrTheme.muted)
+                    .lineLimit(1)
             }
             .padding(.horizontal, 6)
             .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)

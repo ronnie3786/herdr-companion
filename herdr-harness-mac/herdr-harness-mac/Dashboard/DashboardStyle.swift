@@ -101,8 +101,10 @@ struct DashboardNowBlock: View {
             Text(stageTitle.map(AgentBoardProse.decodeEntities) ?? "No active stage")
                 .herdrFont(.body, weight: .medium)
                 .foregroundStyle(stageTitle == nil ? HerdrTheme.muted : HerdrTheme.text)
-                .lineLimit(2, reservesSpace: style == .card)
+                // Columns keep one line so their tab bars line up and never move.
+                .lineLimit(style == .card ? 2 : 1, reservesSpace: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .help(stageTitle ?? "")
         }
         .padding(.horizontal, style == .card ? 12 : 10)
         .padding(.vertical, 8)
@@ -229,9 +231,7 @@ struct DashboardCreateFeatureMenu<Label: View>: View {
                 }
                 if machines.isEmpty { Text("Connect a machine in Settings → Machines") }
             } label: { label() }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
+                .piChipMenu()
         }
     }
 

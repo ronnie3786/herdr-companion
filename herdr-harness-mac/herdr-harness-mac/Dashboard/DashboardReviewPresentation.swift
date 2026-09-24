@@ -8,13 +8,15 @@ enum DashboardReviewPresentation {
                 && (!focusMode || $0.viewerReview?.needsAttention == true)
                 && (search.isEmpty || [$0.title, $0.repo, $0.owner, $0.author, String($0.number)]
                     .contains { $0.localizedStandardContains(search) })
-        }.sorted {
-            let lhs = $0.viewerReview?.needsAttention == true
-            let rhs = $1.viewerReview?.needsAttention == true
-            if lhs != rhs { return lhs }
-            let left = $0.updatedAt.flatMap(HerdrTimestamp.date) ?? .distantPast
-            let right = $1.updatedAt.flatMap(HerdrTimestamp.date) ?? .distantPast
-            return left == right ? $0.id < $1.id : left > right
         }
+        // Parse each date once; never inside the comparator.
+        .map { ($0, $0.updatedAt.flatMap(HerdrTimestamp.date) ?? .distantPast) }
+        .sorted { lhs, rhs in
+            let left = lhs.0.viewerReview?.needsAttention == true
+            let right = rhs.0.viewerReview?.needsAttention == true
+            if left != right { return left }
+            return lhs.1 == rhs.1 ? lhs.0.id < rhs.0.id : lhs.1 > rhs.1
+        }
+        .map(\.0)
     }
 }

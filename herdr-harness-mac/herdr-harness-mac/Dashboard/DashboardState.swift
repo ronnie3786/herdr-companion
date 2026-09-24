@@ -40,7 +40,8 @@ final class DashboardState {
         let revision = shell.firstMateFleet.contentRevision
         if let cachedEntries, cachedEntries.revision == revision { return cachedEntries.value }
         let value = DashboardFeatureEntry.ordered(shell.firstMateFleet.hosts.flatMap { host in
-            host.features.map {
+            // Closed features are dropped before their card text is prepared.
+            host.features.filter { !$0.isArchived && !["completed", "cancelled", "archived"].contains($0.status) }.map {
                 .init(machineID: host.machineID, machineName: host.machineName, feature: $0,
                       lastUpdated: host.lastUpdated, hostError: host.error)
             }

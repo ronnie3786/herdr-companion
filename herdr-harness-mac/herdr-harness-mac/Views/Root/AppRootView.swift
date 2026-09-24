@@ -49,6 +49,15 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
     /// Dashboard and Agent view: overview screens that start without the sidebar.
     var isHome: Bool { self == .dashboard || self == .agentBoard }
 
+    enum SidebarContext: Hashable { case home, rail, chats }
+
+    /// Which remembered sidebar choice applies. First Mate and PR Review use
+    /// the sidebar as their navigation rail, so it is always shown there.
+    var sidebarContext: SidebarContext {
+        if isHome { return .home }
+        return self == .firstMate || self == .prReview ? .rail : .chats
+    }
+
     var label: String {
         switch self {
         case .dashboard: "Dashboard"

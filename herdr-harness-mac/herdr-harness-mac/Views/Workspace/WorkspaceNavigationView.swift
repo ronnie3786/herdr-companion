@@ -121,8 +121,9 @@ struct WorkspaceNavigationView: View {
         // Home screens start without the sidebar and other screens with it, but
         // a person's own toggle is remembered per context instead of being
         // overwritten on every navigation.
-        .onChange(of: shell.detailScope.isHome, initial: true) { _, isHome in
-            let preferred = shell.sidebarVisibility(home: isHome)
+        .onChange(of: shell.detailScope.sidebarContext, initial: true) { _, context in
+            // First Mate and PR Review keep their host and list rail on screen.
+            let preferred = context == .rail ? .all : shell.sidebarVisibility(home: context == .home)
             if columnVisibility != preferred {
                 appliedSidebarVisibility = preferred
                 columnVisibility = preferred
@@ -131,7 +132,8 @@ struct WorkspaceNavigationView: View {
         .onChange(of: columnVisibility) { _, visibility in
             guard visibility != appliedSidebarVisibility else { return }
             appliedSidebarVisibility = visibility
-            shell.rememberSidebarVisibility(visibility, home: shell.detailScope.isHome)
+            let context = shell.detailScope.sidebarContext
+            if context != .rail { shell.rememberSidebarVisibility(visibility, home: context == .home) }
         }
         .onAppear { shell.recordVisit(for: model) }
     }
@@ -224,6 +226,8 @@ struct WorkspaceNavigationView: View {
         // no-op, so ⇧⌘K brings the navigator back first.
         .onChange(of: model.sidebarRevealToken) { _, token in
             guard token > 0 else { return }
+            // A reveal is a one-off, not the person's saved choice.
+            appliedSidebarVisibility = .all
             withAnimation(.snappy) { columnVisibility = .all }
         }
         .task(id: model.connectionGeneration) {
@@ -636,10 +640,12 @@ struct WorkspaceNavigationView: View {
                 if shell.detailScope != .dashboard {
                     // A place, not a second Back button.
                     Button("Dashboard", systemImage: "square.grid.2x2") { shell.goHome(model: model) }
-                        .labelStyle(.iconOnly)
+                        .labelStyle(.titleAndIcon)
                         .buttonStyle(.plain)
-                        .foregroundStyle(HerdrTheme.mist)
-                        .herdrHitTarget()
+                        .foregroundStyle(shell.detailScope == .firstMate
+                            ? FirstMatePalette(scheme: shell.firstMate.colorScheme).secondaryText : HerdrTheme.mist)
+                        .frame(minHeight: HerdrTheme.minHitTarget)
+                        .contentShape(.rect)
                         .help("Dashboard (Shift-Command-D)")
                         .accessibilityIdentifier("back-to-dashboard")
                 }
@@ -666,7 +672,7 @@ struct WorkspaceNavigationView: View {
 
         ToolbarItem(placement: .principal) {
             if shell.detailScope == .dashboard || shell.detailScope == .agentBoard {
-                Text(shell.detailScope == .dashboard ? "Dashboard" : "First Mates")
+                Text(shell.detailScope.label)
                     .herdrFont(.headline)
                     .foregroundStyle(HerdrTheme.text)
             } else if shell.detailScope == .firstMate {

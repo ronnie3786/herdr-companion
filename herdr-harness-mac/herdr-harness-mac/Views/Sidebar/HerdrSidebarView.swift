@@ -229,8 +229,11 @@ struct HerdrSidebarView: View {
             header
             if let openDashboard {
                 Button("Dashboard", systemImage: "square.grid.2x2", action: openDashboard)
-                    .buttonStyle(.plain).font(.headline).foregroundStyle(HerdrTheme.accent)
-                    .padding(.horizontal, 16).padding(.vertical, 6)
+                    .buttonStyle(.plain)
+                    .herdrFont(.headline)
+                    .foregroundStyle(HerdrTheme.accent)
+                    .padding(.vertical, 10)
+                    .help("Dashboard (Shift-Command-D)")
                     .accessibilityIdentifier("sidebar-dashboard")
             }
             if let openFirstMate {

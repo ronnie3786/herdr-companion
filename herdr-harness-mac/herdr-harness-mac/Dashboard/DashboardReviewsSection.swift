@@ -43,12 +43,8 @@ struct DashboardReviewsSection: View {
             }
             Spacer(minLength: 4)
             if !shell.prReview.unconfigured {
-                if let lastUpdated, isStale(lastUpdated) || hasStaleStates || failure != nil {
-                    HStack(spacing: 3) {
-                        Text("Updated")
-                        DashboardAgeText(date: lastUpdated)
-                    }
-                    .herdrFont(.subheadline).foregroundStyle(HerdrTheme.muted).lineLimit(1).fixedSize()
+                if let lastUpdated {
+                    DashboardReviewsFreshness(lastUpdated: lastUpdated, forced: hasStaleStates || failure != nil)
                 }
                 DashboardIconButton(title: "Refresh review states", systemImage: "arrow.clockwise",
                                     help: "Ask GitHub for the latest review states") { refresh() }
@@ -117,8 +113,6 @@ struct DashboardReviewsSection: View {
         }
     }
 
-    private func isStale(_ date: Date) -> Bool { Date.now.timeIntervalSince(date) > 120 }
-
     private func refresh() {
         Task {
             shell.dashboard.isRefreshingReviews = true
@@ -139,6 +133,26 @@ struct DashboardReviewsSection: View {
     }
 }
 
+/// "Updated …" appears only when review states are old or failed. A clock
+/// drives it, because unchanged polls deliberately never re-render the section.
+private struct DashboardReviewsFreshness: View {
+    let lastUpdated: Date
+    let forced: Bool
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            if forced || context.date.timeIntervalSince(lastUpdated) > 120 {
+                HStack(spacing: 3) {
+                    Text("Updated")
+                    Text(HerdrTimestamp.compactAge(since: lastUpdated, now: context.date))
+                }
+                .herdrFont(.subheadline).foregroundStyle(HerdrTheme.muted).lineLimit(1).fixedSize()
+                .accessibilityLabel("Updated \(HerdrTimestamp.spokenAge(since: lastUpdated, now: context.date))")
+            }
+        }
+    }
+}
+
 struct DashboardReviewRow: View {
     let review: PRReviewSummary
     let open: () -> Void
@@ -156,6 +170,7 @@ struct DashboardReviewRow: View {
                             .herdrFont(.body, weight: state.needsAttention ? .semibold : .regular)
                             .foregroundStyle(HerdrTheme.text)
                             .lineLimit(1)
+                            .help(review.title)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         Label(state.label, systemImage: state.symbol)
                             .herdrFont(.subheadline, weight: state.needsAttention ? .semibold : .regular)

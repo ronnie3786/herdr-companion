@@ -321,11 +321,11 @@ final class PRReviewStore {
 
     /// Dashboard polling only reads active summaries and leaves full-view selection intact.
     func refreshDashboard(requestGitHubRefresh: Bool = false) async -> String? {
-        guard !isDemo, !unconfigured, let client, !isRefreshing else { return nil }
+        guard !isDemo, !unconfigured, let client else { return nil }
         let capturedGeneration = generation
-        isRefreshing = true
-        defer { if generation == capturedGeneration { isRefreshing = false } }
         var refreshError: String?
+        // The status request is a cheap, deduplicated POST; it is never skipped
+        // because another refresh happens to be reading the list.
         if requestGitHubRefresh {
             do { try await client.refreshPRReviewStatuses(requestID: UUID().uuidString) }
             catch is CancellationError { return nil }
@@ -336,6 +336,9 @@ final class PRReviewStore {
             }
         }
         guard capturedGeneration == generation, !Task.isCancelled else { return nil }
+        guard !isRefreshing else { return refreshError }
+        isRefreshing = true
+        defer { if generation == capturedGeneration { isRefreshing = false } }
         do {
             let values = try await client.prReviews(scope: "active")
             guard capturedGeneration == generation, !Task.isCancelled else { return nil }

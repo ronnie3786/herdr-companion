@@ -61,14 +61,22 @@ final class AgentBoardState {
         }
         if let request = capabilityRequests[key] { return await request.value }
         let request = Task<FirstMateCapabilities?, Never> {
-            try? await client.fetchFirstMateCapabilities()
+            do {
+                return try await client.fetchFirstMateCapabilities()
+            } catch APIError.server(let status, _) where status == 404 || status == 501 {
+                // A companion older than capabilities answers definitively.
+                return FirstMateCapabilities(ok: true, capabilities: [])
+            } catch {
+                return nil
+            }
         }
         capabilityRequests[key] = request
-        let value = await request.value
+        let fetched = await request.value
         capabilityRequests[key] = nil
-        // An unreachable host is asked again soon rather than pinned to the
-        // slow fallback for the whole lifetime.
-        capabilityCache[key] = (value, value == nil ? Date.now.addingTimeInterval(20 - capabilityLifetime) : .now)
+        // A failed check keeps the last answer (a restart does not make a
+        // companion forget boards) and is retried soon.
+        let value = fetched ?? capabilityCache[key]?.value
+        capabilityCache[key] = (value, fetched == nil ? Date.now.addingTimeInterval(20 - capabilityLifetime) : .now)
         return value
     }
 }

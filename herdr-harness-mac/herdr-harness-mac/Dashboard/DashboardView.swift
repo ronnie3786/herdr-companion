@@ -38,13 +38,15 @@ struct DashboardView: View {
     /// (at most once a minute), then reads the cache every 30 seconds.
     private func observeReviews() async {
         guard scenePhase == .active, !model.isDemoMode else { return }
-        var first = shell.dashboard.shouldRequestGitHubRefresh()
+        var requestGitHub = shell.dashboard.shouldRequestGitHubRefresh()
         while !Task.isCancelled {
-            let failure = await shell.prReview.refreshDashboard(requestGitHubRefresh: first)
+            let failure = await shell.prReview.refreshDashboard(requestGitHubRefresh: requestGitHub)
             guard !Task.isCancelled else { return }
-            if first, shell.dashboard.reviewRefreshError != failure { shell.dashboard.reviewRefreshError = failure }
-            first = false
+            if requestGitHub, shell.dashboard.reviewRefreshError != failure { shell.dashboard.reviewRefreshError = failure }
             do { try await Task.sleep(for: .seconds(30)) } catch { return }
+            // A failed GitHub refresh is retried (at most once a minute) until
+            // it succeeds, so a passing network blip does not linger.
+            requestGitHub = shell.dashboard.reviewRefreshError != nil && shell.dashboard.shouldRequestGitHubRefresh()
         }
     }
 }
@@ -117,8 +119,9 @@ private struct DashboardLowerRegion: View {
     }
 
     var body: some View {
+        let hasReviews = reviewsHaveContent
         Group {
-            if width >= 1100, reviewsHaveContent {
+            if width >= 1100, hasReviews {
                 HStack(alignment: .top, spacing: 40) {
                     DashboardReviewsSection(model: model, shell: shell, compact: false)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -127,7 +130,7 @@ private struct DashboardLowerRegion: View {
                 }
             } else {
                 VStack(alignment: .leading, spacing: 28) {
-                    DashboardReviewsSection(model: model, shell: shell, compact: !reviewsHaveContent)
+                    DashboardReviewsSection(model: model, shell: shell, compact: !hasReviews)
                     DashboardChatsSection(model: model, shell: shell)
                 }
             }

@@ -15,6 +15,15 @@ struct AgentBoardContent: Equatable, Sendable {
         let date: Date?
         let blocks: [AgentBoardProseBlock]
         let attachments: [AgentBoardMessageContent.Attachment]
+        /// The message text the blocks were built from.
+        let source: String
+
+        /// Blocks and attachments derive from `source`, so comparing it is
+        /// exact and costs a string compare instead of walking every styled run.
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.id == rhs.id && lhs.isQueued == rhs.isQueued && lhs.date == rhs.date
+                && lhs.isHuman == rhs.isHuman && lhs.source == rhs.source
+        }
     }
 
     struct NoteRow: Equatable, Sendable, Identifiable {
@@ -123,7 +132,7 @@ extension AgentBoardContent {
             workItemID: feature.workItemID,
             status: feature.status,
             awaitingTurn: summary?.awaitingTurn == true,
-            goal: feature.goal.trimmingCharacters(in: .whitespacesAndNewlines),
+            goal: AgentBoardProse.plainText(fromMarkdown: feature.goal),
             acceptsMessages: !feature.isArchived && !["completed", "cancelled"].contains(feature.status),
             stageTitle: summary?.currentStageTitle ?? currentVisit?.title,
             stageIndex: stageIndex,
@@ -160,14 +169,24 @@ extension AgentBoardContent {
             let row = messageRow(message)
             rows.append(Stamped(value: .message(row), date: row.date, order: offset))
         }
-        for (offset, note) in collapse(notes).enumerated() {
+        for (offset, note) in notes.enumerated() {
             rows.append(Stamped(value: .note(note), date: note.date, order: messages.count + offset))
         }
-        return rows.sorted { lhs, rhs in
+        let ordered = rows.sorted { lhs, rhs in
             let left = lhs.date ?? .distantPast
             let right = rhs.date ?? .distantPast
             return left == right ? lhs.order < rhs.order : left < right
         }.map(\.value)
+        // Only a repeat of the same note collapses, and a message breaks a run.
+        var result: [TimelineRow] = []
+        for row in ordered {
+            if case .note(let note) = row, case .note(let last)? = result.last, last.text == note.text {
+                result[result.count - 1] = .note(NoteRow(id: last.id, text: note.text, count: last.count + note.count, date: note.date))
+            } else {
+                result.append(row)
+            }
+        }
+        return result
     }
 
     private static func messageRow(_ message: FirstMateMessage) -> MessageRow {
@@ -179,7 +198,8 @@ extension AgentBoardContent {
             isQueued: message.status == "queued",
             date: HerdrTimestamp.date(from: message.createdAt),
             blocks: isHuman ? AgentBoardProse.plain(content.text) : AgentBoardProse.blocks(from: message.text),
-            attachments: isHuman ? content.attachments : []
+            attachments: isHuman ? content.attachments : [],
+            source: message.text
         )
     }
 
@@ -194,7 +214,8 @@ extension AgentBoardContent {
     }
 
     static func isMilestone(_ type: String) -> Bool {
-        type.hasPrefix("visit.") || milestoneEventTypes.contains(type)
+        // Demo mode's synthetic journal uses its own `demo.` types.
+        type.hasPrefix("visit.") || type.hasPrefix("demo.") || milestoneEventTypes.contains(type)
     }
 
     static let milestoneEventTypes: Set<String> = [
@@ -208,9 +229,8 @@ extension AgentBoardContent {
     private static func collapse(_ notes: [NoteRow]) -> [NoteRow] {
         var result: [NoteRow] = []
         for note in notes {
-            if let last = result.last, let lastDate = last.date, let date = note.date,
-               date.timeIntervalSince(lastDate) < 120 {
-                result[result.count - 1] = NoteRow(id: last.id, text: note.text, count: last.count + 1, date: date)
+            if let last = result.last, last.text == note.text {
+                result[result.count - 1] = NoteRow(id: last.id, text: note.text, count: last.count + note.count, date: note.date)
             } else {
                 result.append(note)
             }

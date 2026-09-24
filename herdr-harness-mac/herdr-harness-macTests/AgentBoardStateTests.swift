@@ -130,6 +130,48 @@ struct AgentBoardStateTests {
         #expect(messages.count == AgentBoardPayload.messageLimit)
     }
 
+    @Test("A reply sent during a running poll is fetched as soon as that poll ends")
+    func sendDuringPoll() async throws {
+        let client = AgentBoardTestClient(snapshot: snapshot(title: "Alpha"), board: true, delayFetch: true)
+        let state = AgentBoardColumnState(machineID: "alpha", featureID: "shared")
+        state.configure(configuration: configuration("alpha"), generation: 1, demo: false, client: client)
+        let poll = Task { await state.refresh(capabilities: boardCapabilities) }
+        try await waitUntil { await client.boardVersionsSent.count == 1 }
+        // A forced refresh (as after a send) arrives while the poll is running.
+        await state.refresh(capabilities: boardCapabilities, force: true)
+        await client.setTitle("After the reply")
+        await client.releaseFetch()
+        try await waitUntil { await client.boardVersionsSent.count == 2 }
+        await client.releaseFetch()
+        await poll.value
+        #expect(await client.boardVersionsSent == [nil, nil])
+        #expect(state.content?.title == "After the reply")
+    }
+
+    @Test("Unknown capabilities never fall back to the full history download")
+    func unknownCapabilities() async {
+        let client = AgentBoardTestClient(snapshot: snapshot(title: "Alpha"), board: true)
+        let state = AgentBoardColumnState(machineID: "alpha", featureID: "shared")
+        state.configure(configuration: configuration("alpha"), generation: 1, demo: false, client: client)
+        await state.refresh(capabilities: nil)
+        #expect(await client.snapshotCalls == 0)
+        #expect(await client.boardVersionsSent.isEmpty)
+        #expect(state.loadError != nil)
+    }
+
+    @Test("A failed capability check keeps the last answer for the host")
+    func capabilityStaleWhileError() async {
+        let board = AgentBoardState()
+        board.capabilityLifetime = 0
+        let client = AgentBoardTestClient(snapshot: snapshot(title: "Alpha"), board: true)
+        let config = configuration("alpha")
+        let first = await board.capabilities(machineID: "alpha", configuration: config, generation: 1, client: client)
+        #expect(first?.supportsBoard == true)
+        await client.setFailing(true)
+        let second = await board.capabilities(machineID: "alpha", configuration: config, generation: 1, client: client)
+        #expect(second?.supportsBoard == true)
+    }
+
     @Test("A failed poll keeps what is on screen and recovers")
     func failureKeepsContent() async {
         let client = AgentBoardTestClient(snapshot: snapshot(title: "Alpha"), board: true)
@@ -364,12 +406,14 @@ private actor AgentBoardTestClient: AgentBoardClient {
 
     func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities {
         capabilityCalls += 1
+        if failing { throw APIError.invalidResponse }
         return .init(ok: true, capabilities: board ? ["first-mate-board-v1"] : [])
     }
 
     func fetchFirstMateBoard(featureID: String, messageLimit: Int, journalLimit: Int, ifVersion: String?) async throws -> AgentBoardFetch {
         boardVersionsSent.append(ifVersion)
         if delayFetch { await withCheckedContinuation { fetchContinuation = $0 } }
+        // Each held request takes its own release.
         if failing { throw APIError.invalidResponse }
         if ifVersion == version { return .unchanged(version: version) }
         var payload = AgentBoardPayload.adapting(snapshot, messageLimit: messageLimit, journalLimit: journalLimit)

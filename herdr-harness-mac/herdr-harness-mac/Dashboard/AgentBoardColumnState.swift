@@ -29,6 +29,9 @@ final class AgentBoardColumnState {
     @ObservationIgnored private var isDemo = false
     @ObservationIgnored private var lifecycle = UUID()
     @ObservationIgnored private var isRefreshing = false
+    /// A forced refresh that arrived while a poll was running; the poll
+    /// repeats once so a just-sent reply appears without waiting a cycle.
+    @ObservationIgnored private var refreshAgain = false
     @ObservationIgnored private var pendingMessage: (text: String, requestID: String)?
 
     init(machineID: String, featureID: String) {
@@ -100,30 +103,52 @@ final class AgentBoardColumnState {
     }
 
     func refresh(capabilities: FirstMateCapabilities?, force: Bool = false) async {
-        guard !Task.isCancelled, !isRefreshing, let client else { return }
+        guard !Task.isCancelled, let client else { return }
+        if isRefreshing {
+            if force { refreshAgain = true }
+            return
+        }
         let expectedLifecycle = lifecycle
         isRefreshing = true
         defer { if lifecycle == expectedLifecycle { isRefreshing = false } }
+        var forced = force
+        repeat {
+            refreshAgain = false
+            await fetch(client: client, capabilities: capabilities, force: forced, expectedLifecycle: expectedLifecycle)
+            forced = true
+        } while refreshAgain && lifecycle == expectedLifecycle && !Task.isCancelled
+    }
+
+    private func fetch(client: any AgentBoardClient, capabilities: FirstMateCapabilities?, force: Bool, expectedLifecycle: UUID) async {
+        // Unknown capabilities mean the host did not answer. Never guess the old
+        // full-history download for a companion that may serve boards.
+        guard let capabilities else {
+            failures += 1
+            let message = "This companion isn't answering right now."
+            if loadError != message { loadError = message }
+            return
+        }
         do {
             var received: AgentBoardPayload?
             var built: AgentBoardContent?
-            if capabilities?.supportsBoard == true {
+            if capabilities.supportsBoard {
                 let fetch = try await client.fetchFirstMateBoard(
                     featureID: featureID, messageLimit: AgentBoardPayload.messageLimit,
                     journalLimit: AgentBoardPayload.journalLimit, ifVersion: force ? nil : version)
                 guard lifecycle == expectedLifecycle else { return }
                 if case .board(let value) = fetch {
                     received = value
-                    if value != payload { built = await AgentBoardContent.make(from: value) }
+                    // The version covers everything the board shows.
+                    if value.version != payload?.version { built = await AgentBoardContent.make(from: value) }
                 }
             } else {
                 let snapshot = try await client.fetchFirstMateFeature(
-                    featureID, journalEventsOnly: capabilities?.supportsJournalEvents == true)
+                    featureID, journalEventsOnly: capabilities.supportsJournalEvents)
                 guard lifecycle == expectedLifecycle else { return }
                 guard snapshot.ok, snapshot.feature.id == featureID else { throw APIError.invalidResponse }
                 let (value, content) = await AgentBoardContent.make(adapting: snapshot)
                 received = value
-                if value != payload { built = content }
+                if value.version != payload?.version { built = content }
             }
             guard !Task.isCancelled, lifecycle == expectedLifecycle else { return }
             lastContact = .now
@@ -207,16 +232,32 @@ final class AgentBoardColumnState {
     }
 
     /// The store that presents saved-session sheets for this column's host.
-    func resources() -> FirstMateStore {
-        if let resourceStore { return resourceStore }
-        let store = FirstMateStore()
-        store.configure(client: client as? any FirstMateClient, demo: isDemo)
-        store.select(featureID)
+    /// The board carries only each agent's newest session, so opening a sheet
+    /// also loads the feature's full session history once, in the background.
+    func resources(capabilities: FirstMateCapabilities? = nil) -> FirstMateStore {
+        let store: FirstMateStore
+        if let resourceStore {
+            store = resourceStore
+        } else {
+            store = FirstMateStore()
+            store.configure(client: client as? any FirstMateClient, demo: isDemo)
+            store.select(featureID)
+            resourceStore = store
+        }
         if let payload {
             store.receive(FirstMateSnapshot(feature: payload.feature, visits: payload.visits,
                                             assignments: payload.assignments, sessions: payload.sessions))
         }
-        resourceStore = store
+        if !isDemo, let client, capabilities?.supportsJournalEvents == true {
+            let expectedLifecycle = lifecycle
+            let featureID = featureID
+            Task { [weak self] in
+                guard let snapshot = try? await client.fetchFirstMateFeature(featureID, journalEventsOnly: true),
+                      let self, self.lifecycle == expectedLifecycle, self.resourceStore === store,
+                      snapshot.ok, snapshot.feature.id == featureID else { return }
+                store.receive(snapshot)
+            }
+        }
         return store
     }
 }

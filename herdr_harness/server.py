@@ -436,6 +436,7 @@ def api_description() -> dict:
             "firstMateCapabilities": "/api/v1/first-mate/capabilities",
             "firstMateAttachment": "/api/v1/first-mate/features/{featureId}/attachments",
             "firstMateGit": "/api/v1/first-mate/features/{featureId}/git",
+            "firstMateBoard": "/api/v1/first-mate/features/{featureId}/board",
             "prReviews": "/api/v1/pr-reviews",
             "prReview": "/api/v1/pr-reviews/{reviewId}",
             "prReviewCapabilities": "/api/v1/pr-reviews/capabilities",
@@ -1065,12 +1066,14 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             feature_view = runtime.feature if hasattr(runtime, "feature") else store.get_feature
             snapshot_view = runtime.snapshot if hasattr(runtime, "snapshot") else store.snapshot
             features_view = runtime.list_features if hasattr(runtime, "list_features") else store.list_features
+            board_view = runtime.board if hasattr(runtime, "board") else store.board
             if method == "GET" and tail == ["capabilities"]:
                 return {"ok": True, "capabilities": [
                     "first-mate-v1", "first-mate-model-settings-v1", "first-mate-usage-v1",
                     "first-mate-archive-v1", "first-mate-attachments-v1",
                     "first-mate-context-v1", "first-mate-safe-model-settings-v1",
                     "first-mate-git-v1", "first-mate-runtime-health-v1", "first-mate-reliability-v1",
+                    "first-mate-board-v1", "first-mate-journal-events-v1",
                 ], **runtime.capabilities()}
             if method == "GET" and tail == ["models"]:
                 return {"ok": True, **service.first_mate.model_catalog()}
@@ -1166,7 +1169,26 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         )
                     raise HTTPValidationError("First Mate Git endpoint not found", code="not_found", status=404)
                 if len(tail) == 2 and method == "GET":
+                    # Other query fields remain ignored, as before events existed.
+                    events = query.get("events")
+                    if events is not None and (len(events) != 1 or events[0] not in {"all", "journal"}):
+                        raise HTTPValidationError("events must occur once and be all or journal")
+                    if events == ["journal"]:
+                        return {"ok": True, **snapshot_view(feature_id, events="journal"), "runtime_health": runtime.health()}
                     return {"ok": True, **snapshot_view(feature_id), "runtime_health": runtime.health()}
+                if tail[2:] == ["board"] and method == "GET":
+                    if set(query) - {"messages", "journal", "if_version"}:
+                        raise HTTPValidationError("First Mate board request contains an unsupported query field")
+                    if any(len(values) != 1 for values in query.values()):
+                        raise HTTPValidationError("First Mate board query fields must occur exactly once")
+                    board = board_view(
+                        feature_id,
+                        messages=_query_int(query, "messages", default=60, minimum=1, maximum=200),
+                        journal=_query_int(query, "journal", default=40, minimum=0, maximum=200),
+                        if_version=_string(query["if_version"][0], "if_version", maximum=200, allow_empty=True) if "if_version" in query else None,
+                    )
+                    # An unchanged board is exactly {ok, version, unchanged}.
+                    return {"ok": True, **board} if board["unchanged"] else {"ok": True, **board, "runtime_health": runtime.health()}
                 if tail[2:] == ["model-settings"] and method == "POST":
                     store.set_model_settings(feature_id, body)
                     # Settings alone never enqueue a conversation turn or authorize work.

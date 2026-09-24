@@ -16,7 +16,7 @@ Root prefix `/api/v1/first-mate`, authenticated with normal companion read/contr
 
 - GET `/features`: `{ok:true,features:[feature]}`
 - POST `/features`: `{title,goal,cwd,request_id,work_item_id?}` -> `{ok:true,feature}`
-- GET `/features/{id}`: `{ok:true,feature,visits,assignments,documents,messages,events,handoffs,memberships,sessions,sessions_truncated}`
+- GET `/features/{id}`: `{ok:true,feature,visits,assignments,documents,messages,events,handoffs,memberships,sessions,sessions_truncated,event_cursor?}`. Optional `?events=journal` omits `pi.*` telemetry events; see “Agent view board extension”.
 - POST `/features/{id}/messages`: `{text,request_id}` -> `{ok:true,message,feature}` immediately after durable queueing. This acknowledgment is partial; clients fetch feature detail separately.
 - POST `/features/{id}/actions`: `{action,request_id,expected_revision?}` for pause/resume/cancel. No HTTP action bypasses a human gate; demo scenario advancement is local to the synthetic native fixture.
 - GET `/features/{id}/events?after=0`: `{ok:true,events,cursor}`
@@ -124,6 +124,21 @@ Assignments may expose `metadata.progress` with `summary`, `next_action`,
 success verdicts. `reliability.*` events retain interventions and their reasons.
 The existing status vocabulary, authentication, writer fencing, and human stage
 authorization rules are unchanged. See [stability behavior](reliability.md).
+
+## Agent view board extension
+
+Capability `first-mate-board-v1` adds GET `/features/{id}/board`, a bounded
+projection for the Mac Agent view built from SQLite alone. It returns an opaque
+`version`; a matching `if_version` returns only `{ok:true,version,unchanged:true}`.
+Pi telemetry (`pi.*` event types) never changes the version. Capability
+`first-mate-journal-events-v1` adds opt-in `?events=journal` to GET
+`/features/{id}`, which omits only `pi.*` events. Detail responses in both modes
+add `event_cursor`, the feature's highest event sequence including telemetry.
+Feature summaries add `activity_at`, which telemetry never moves, and
+`awaiting_turn` for a coordinator parked until a human replies. Field lists,
+bounds, and validation are in [Dashboard companion data](../dashboard-api.md#agent-view-board).
+Older clients ignore these additions; newer clients must accept their absence on
+older servers.
 
 ## Implementation layers
 

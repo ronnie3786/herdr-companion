@@ -45,6 +45,42 @@ def _text(value: Any, name: str, maximum: int = 200000, optional: bool = False) 
 
 ARCHIVE_REASONS = {"test/synthetic", "duplicate", "no longer relevant", "superseded", "other"}
 
+# Pi telemetry (pi.*) dominates the event ledger. Every other event is the
+# feature's journal. Native clients read no pi.* event types. The SQL form must
+# stay textually identical to the fm_events_journal partial index predicate.
+JOURNAL_EVENT_SQL = "substr(type,1,3)<>'pi.'"
+
+
+def _is_journal_event_type(kind: str) -> bool:
+    return not kind.startswith("pi.")
+
+
+# The Agent view board is bounded independently of the ledger's size.
+BOARD_MAX_MESSAGES, BOARD_MAX_JOURNAL, BOARD_MAX_SESSIONS = 200, 200, 200
+BOARD_MESSAGE_ROLES = ("user", "assistant", "human")
+# Exactly the fields native assignment rows decode. Never prompts, metadata,
+# session paths, owners, dispatch or run identities.
+BOARD_ASSIGNMENT_COLUMNS = ("id,feature_id,visit_id,title,role,status,verdict,native_session_id,attempt,"
+                            "generation,input_revision,created_at,updated_at,substr(summary,1,600) AS summary")
+_SESSION_COLUMNS = """s.native_session_id,s.feature_id,s.assignment_id,
+                COALESCE(a.title,'First Mate') AS title,COALESCE(a.role,'first_mate') AS role,
+                COALESCE(x.status,s.status) AS status,s.generation,x.attempt,x.input_revision,
+                s.created_at,s.updated_at,s.status AS ownership_status"""
+_SESSION_JOINS = """LEFT JOIN fm_assignments a ON a.id=s.assignment_id
+                LEFT JOIN fm_attempts x ON x.assignment_id=s.assignment_id AND x.generation=s.generation"""
+# Feature updated_at moves on every event, including pi.* telemetry, so the board
+# version hashes the rest of the feature row plus per-table change markers. Every
+# message, assignment, visit, and session UPDATE sets updated_at. Events are
+# append-only and attention events are journal events, so the journal maximum
+# also covers the latest attention sequence and activity_at.
+_BOARD_VERSION_SQL = f"""SELECT f.*,
+                (SELECT max(sequence) FROM fm_events WHERE feature_id=f.id AND {JOURNAL_EVENT_SQL}) AS board_journal,
+                (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_messages WHERE feature_id=f.id) AS board_messages,
+                (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_assignments WHERE feature_id=f.id) AS board_assignments,
+                (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_visits WHERE feature_id=f.id) AS board_visits,
+                (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_sessions WHERE feature_id=f.id) AS board_sessions
+                FROM fm_features f WHERE f.id=?"""
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS fm_schema(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
@@ -111,7 +147,9 @@ CREATE INDEX IF NOT EXISTS fm_assignments_status ON fm_assignments(status,featur
 CREATE INDEX IF NOT EXISTS fm_messages_pending ON fm_messages(status,feature_id,created_at);
 CREATE INDEX IF NOT EXISTS fm_visits_feature ON fm_visits(feature_id,created_at);
 CREATE INDEX IF NOT EXISTS fm_messages_dashboard ON fm_messages(feature_id,role,created_at DESC,id DESC);
-"""
+CREATE INDEX IF NOT EXISTS fm_assignments_feature ON fm_assignments(feature_id,updated_at);
+CREATE INDEX IF NOT EXISTS fm_sessions_feature ON fm_sessions(feature_id,updated_at);
+""" + f"CREATE INDEX IF NOT EXISTS fm_events_journal ON fm_events(feature_id,sequence,type) WHERE {JOURNAL_EVENT_SQL};\n"
 
 
 class FirstMateStore:
@@ -179,6 +217,8 @@ class FirstMateStore:
         elif "followup_stages_json" not in {row[1] for row in self._db.execute("PRAGMA table_info(fm_visits)")}:
             self._db.execute("ALTER TABLE fm_visits ADD COLUMN followup_stages_json TEXT NOT NULL DEFAULT '[]'")
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(5,?)", (_now(),))
+        # Version 6 adds only the idempotent board indexes in SCHEMA.
+        self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(6,?)", (_now(),))
 
     def close(self) -> None:
         with self._lock:
@@ -194,6 +234,18 @@ class FirstMateStore:
             except BaseException:
                 self._db.execute("ROLLBACK")
                 raise
+
+    @contextmanager
+    def _read(self):
+        """A consistent WAL read snapshot that never takes the writer lock."""
+        with self._lock:
+            self._db.execute("BEGIN")
+            try:
+                yield
+            finally:
+                # SQLite may already have ended the transaction after an I/O error.
+                if self._db.in_transaction:
+                    self._db.execute("COMMIT")
 
     @staticmethod
     def _decode(row) -> dict | None:
@@ -358,15 +410,26 @@ class FirstMateStore:
             "all": "",
         }[view]
         with self._lock:
-            # Project bounded card data in one SQL query, without loading every
-            # feature's full transcript, documents, or assignment metadata.
-            rows = self._db.execute(f"""SELECT f.*,
+            return self._feature_summaries(where + " ORDER BY f.updated_at DESC,f.id")
+
+    def _feature_summaries(self, clause: str, args: tuple = ()) -> list[dict]:
+        # Project bounded card data in one SQL query, without loading every
+        # feature's full transcript, documents, or assignment metadata.
+        rows = self._db.execute(f"""SELECT f.*,
                 v.title AS current_stage_title,
                 (SELECT count(*) FROM fm_visits x WHERE x.feature_id=f.id AND x.revision=f.revision) AS stage_count,
                 CASE WHEN v.id IS NOT NULL AND v.revision=f.revision THEN
                     (SELECT count(*) FROM fm_visits x WHERE x.feature_id=f.id AND x.revision=f.revision
                      AND (x.created_at<v.created_at OR (x.created_at=v.created_at AND x.id<=v.id))) END AS current_stage_index,
                 substr(m.text,1,1200) AS latest_message,m.created_at AS latest_message_at,
+                max(f.created_at,
+                    COALESCE((SELECT created_at FROM fm_events WHERE sequence=(SELECT max(sequence) FROM fm_events
+                        WHERE feature_id=f.id AND {JOURNAL_EVENT_SQL})),f.created_at),
+                    COALESCE((SELECT max(created_at) FROM fm_messages WHERE feature_id=f.id),f.created_at)) AS activity_at,
+                EXISTS(SELECT 1 FROM fm_messages WHERE feature_id=f.id AND role IN ('user','human')
+                    AND status IN ('queued','processing')) AS pending_human_message,
+                m.id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM fm_messages WHERE feature_id=f.id AND role IN ('user','human')
+                    AND (created_at>m.created_at OR (created_at=m.created_at AND id>m.id))) AS assistant_spoke_last,
                 substr(CASE WHEN e.created_at>=COALESCE(v.created_at,f.created_at) THEN
                     CASE WHEN e.type='visit.awaiting_direction' THEN COALESCE(NULLIF(v.recommendation,''),e.summary) ELSE e.summary END
                     ELSE v.recommendation END,1,600) AS needs_user_prompt,
@@ -379,23 +442,32 @@ class FirstMateStore:
                 LEFT JOIN fm_messages m ON m.id=(SELECT id FROM fm_messages WHERE feature_id=f.id
                     AND role='assistant' ORDER BY created_at DESC,id DESC LIMIT 1)
                 LEFT JOIN fm_events e ON e.sequence=(SELECT max(sequence) FROM fm_events WHERE feature_id=f.id
-                    AND type IN ('assignment.awaiting_human','reliability.blocked','visit.awaiting_direction'))
-                {where} ORDER BY f.updated_at DESC,f.id""").fetchall()
-            features = [self._decode(row) for row in rows]
-            for feature in features:
-                summary = {key: feature.pop(key) for key in (
-                    'current_stage_title', 'stage_count', 'current_stage_index', 'latest_message',
-                    'latest_message_at', 'needs_user_prompt', 'assignment_count', 'running_assignment_count')}
-                # The ledger records executed stages, not a promised future
-                # workflow. Clients must not label this a complete plan total.
-                summary['stage_count_is_estimate'] = True
-                summary['needs_user'] = feature['status'] in {'awaiting_direction', 'blocked'}
-                if not summary['needs_user']:
-                    summary['needs_user_prompt'] = None
-                elif not summary['needs_user_prompt']:
-                    summary['needs_user_prompt'] = 'Needs your direction' if feature['status'] == 'awaiting_direction' else 'Recovery needs your direction'
-                feature['dashboard_summary'] = summary
-            return features
+                    AND {JOURNAL_EVENT_SQL} AND type IN ('assignment.awaiting_human','reliability.blocked','visit.awaiting_direction'))
+                {clause}""", args).fetchall()
+        features = [self._decode(row) for row in rows]
+        for feature in features:
+            summary = {key: feature.pop(key) for key in (
+                'current_stage_title', 'stage_count', 'current_stage_index', 'latest_message',
+                'latest_message_at', 'needs_user_prompt', 'assignment_count', 'running_assignment_count',
+                'activity_at')}
+            pending_human, assistant_last = feature.pop('pending_human_message'), feature.pop('assistant_spoke_last')
+            # The ledger records executed stages, not a promised future
+            # workflow. Clients must not label this a complete plan total.
+            summary['stage_count_is_estimate'] = True
+            summary['needs_user'] = feature['status'] in {'awaiting_direction', 'blocked'}
+            # First Mate finished its turn with no running agent and is parked
+            # until a human replies. This is not a workflow gate; needs_user and
+            # status keep their meaning.
+            summary['awaiting_turn'] = (feature['status'] in {'coordinating', 'running'}
+                                        and not feature['coordinator_owner']
+                                        and summary['running_assignment_count'] == 0
+                                        and not pending_human and bool(assistant_last))
+            if not summary['needs_user']:
+                summary['needs_user_prompt'] = summary['latest_message'][:600] if summary['awaiting_turn'] else None
+            elif not summary['needs_user_prompt']:
+                summary['needs_user_prompt'] = 'Needs your direction' if feature['status'] == 'awaiting_direction' else 'Recovery needs your direction'
+            feature['dashboard_summary'] = summary
+        return features
 
     def set_archived(self, feature_id: str, archived: bool, payload: Mapping[str, Any]) -> dict:
         body = dict(payload)
@@ -437,34 +509,89 @@ class FirstMateStore:
         with self._lock:
             where = "WHERE s.feature_id=?" if feature_id is not None else ""
             args = (feature_id,) if feature_id is not None else ()
-            rows = self._db.execute(f"""SELECT s.native_session_id,s.feature_id,s.assignment_id,
-                COALESCE(a.title,'First Mate') AS title,COALESCE(a.role,'first_mate') AS role,
-                COALESCE(x.status,s.status) AS status,s.generation,x.attempt,x.input_revision,
-                s.created_at,s.updated_at,s.status AS ownership_status,s.session_file
-                FROM fm_sessions s LEFT JOIN fm_assignments a ON a.id=s.assignment_id
-                LEFT JOIN fm_attempts x ON x.assignment_id=s.assignment_id AND x.generation=s.generation
+            rows = self._db.execute(f"""SELECT {_SESSION_COLUMNS},s.session_file
+                FROM fm_sessions s {_SESSION_JOINS}
                 {where} ORDER BY s.created_at DESC,s.native_session_id""", args).fetchall()
             return [dict(row) for row in rows]
 
-    def snapshot(self, feature_id: str) -> dict:
-        with self._transaction():
+    def snapshot(self, feature_id: str, events: str = "all") -> dict:
+        """Full feature detail. events="journal" omits only pi.* telemetry."""
+        if events not in {"all", "journal"}:
+            raise FirstMateError("Invalid events view", code="invalid_request", status=400)
+        # The journal view is a pure read; the default keeps its original writer-locked read.
+        with self._read() if events == "journal" else self._transaction():
             result = {"feature": self._one("fm_features", feature_id)}
             for key in ("visits", "assignments", "documents", "messages", "events", "handoffs"):
                 ordering = "sequence" if key == "events" else "created_at,id"
                 projection = "*" if key != "documents" else "id,feature_id,visit_id,assignment_id,native_session_id,generation,input_revision,title,media_type,content_hash,created_at"
-                rows = [self._decode(r) for r in self._db.execute(f"SELECT {projection} FROM fm_{key} WHERE feature_id=? ORDER BY {ordering}", (feature_id,))]
+                # Force the partial index; row lookups over telemetry are the cost avoided.
+                where = f"INDEXED BY fm_events_journal WHERE feature_id=? AND {JOURNAL_EVENT_SQL}" if key == "events" and events == "journal" else "WHERE feature_id=?"
+                rows = [self._decode(r) for r in self._db.execute(f"SELECT {projection} FROM fm_{key} {where} ORDER BY {ordering}", (feature_id,))]
                 result[key] = [self._assignment_projection(row) for row in rows] if key == "assignments" else rows
             result["memberships"] = [dict(row) for row in self._db.execute("SELECT m.* FROM fm_assignment_memberships m JOIN fm_visits v ON v.id=m.visit_id WHERE v.feature_id=? ORDER BY m.revision,m.created_at,m.assignment_id", (feature_id,))]
-            session_rows = self._db.execute("""SELECT s.native_session_id,s.feature_id,s.assignment_id,
-                COALESCE(a.title,'First Mate') AS title,COALESCE(a.role,'first_mate') AS role,
-                COALESCE(x.status,s.status) AS status,s.generation,x.attempt,x.input_revision,
-                s.created_at,s.updated_at,s.status AS ownership_status
-                FROM fm_sessions s LEFT JOIN fm_assignments a ON a.id=s.assignment_id
-                LEFT JOIN fm_attempts x ON x.assignment_id=s.assignment_id AND x.generation=s.generation
+            session_rows = self._db.execute(f"""SELECT {_SESSION_COLUMNS}
+                FROM fm_sessions s {_SESSION_JOINS}
                 WHERE s.feature_id=? ORDER BY s.created_at DESC,s.native_session_id LIMIT 1001""", (feature_id,)).fetchall()
             result["sessions"] = [dict(row) for row in session_rows[:1000]]
             result["sessions_truncated"] = len(session_rows) > 1000
+            # The cursor covers every event, so clients that fence on sequence do
+            # not mistake a journal-only projection for an older snapshot.
+            result["event_cursor"] = self._event_cursor(feature_id)
             return result
+
+    def _event_cursor(self, feature_id: str) -> int:
+        return self._db.execute("SELECT COALESCE(max(sequence),0) FROM fm_events WHERE feature_id=?", (feature_id,)).fetchone()[0]
+
+    def _board_version(self, feature_id: str) -> str:
+        row = self._db.execute(_BOARD_VERSION_SQL, (feature_id,)).fetchone()
+        if row is None:
+            raise FirstMateError("First Mate record not found", code="not_found", status=404)
+        marker = dict(row)
+        marker.pop("updated_at")
+        return "b1-" + hashlib.sha256(_json(marker).encode()).hexdigest()[:20]
+
+    def board(self, feature_id: str, *, messages: int = 60, journal: int = 40, if_version: str | None = None) -> dict:
+        """Bounded Agent view projection built from SQLite alone.
+
+        A matching if_version costs one small query and builds no projection.
+        The version deliberately ignores pi.* telemetry, which the board omits.
+        """
+        for value, name, minimum, maximum in ((messages, "messages", 1, BOARD_MAX_MESSAGES), (journal, "journal", 0, BOARD_MAX_JOURNAL)):
+            if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+                raise FirstMateError(f"Invalid {name} limit", code="invalid_request", status=400)
+        if if_version is not None:
+            _text(if_version, "if_version", 200, optional=True)
+        # One deferred read snapshot without the writer lock; the version matches the rows.
+        with self._read():
+            version = self._board_version(feature_id)
+            if version == if_version:
+                return {"version": version, "unchanged": True}
+            roles = ",".join("?" for _ in BOARD_MESSAGE_ROLES)
+            visit_ids: dict[str, list[str]] = {}
+            for row in self._db.execute("SELECT m.assignment_id,m.visit_id FROM fm_assignment_memberships m JOIN fm_visits v ON v.id=m.visit_id WHERE v.feature_id=? ORDER BY m.revision,m.visit_id", (feature_id,)):
+                visit_ids.setdefault(row[0], []).append(row[1])
+            session_rows = self._db.execute(f"""SELECT {_SESSION_COLUMNS}
+                FROM (SELECT *,row_number() OVER (PARTITION BY assignment_id ORDER BY created_at DESC,native_session_id) AS board_rank
+                      FROM fm_sessions WHERE feature_id=?) s {_SESSION_JOINS}
+                WHERE s.assignment_id IS NULL OR s.board_rank=1
+                ORDER BY s.created_at DESC,s.native_session_id LIMIT ?""", (feature_id, BOARD_MAX_SESSIONS + 1)).fetchall()
+            return {
+                "version": version, "unchanged": False,
+                "feature": self._feature_summaries("WHERE f.id=?", (feature_id,))[0],
+                "visits": [self._decode(row) for row in self._db.execute("SELECT * FROM fm_visits WHERE feature_id=? ORDER BY created_at,id", (feature_id,))],
+                "assignments": [{**dict(row), "visit_ids": visit_ids.get(row["id"], [])} for row in self._db.execute(
+                    f"SELECT {BOARD_ASSIGNMENT_COLUMNS} FROM fm_assignments WHERE feature_id=? ORDER BY created_at,id", (feature_id,))],
+                "messages": [self._decode(row) for row in reversed(self._db.execute(
+                    f"SELECT * FROM fm_messages WHERE feature_id=? AND role IN ({roles}) ORDER BY created_at DESC,id DESC LIMIT ?",
+                    (feature_id, *BOARD_MESSAGE_ROLES, messages)).fetchall())],
+                "messages_total": self._db.execute(f"SELECT count(*) FROM fm_messages WHERE feature_id=? AND role IN ({roles})", (feature_id, *BOARD_MESSAGE_ROLES)).fetchone()[0],
+                "journal": [self._decode(row) for row in reversed(self._db.execute(
+                    f"SELECT * FROM fm_events INDEXED BY fm_events_journal WHERE feature_id=? AND {JOURNAL_EVENT_SQL} ORDER BY sequence DESC LIMIT ?", (feature_id, journal)).fetchall())],
+                "journal_total": self._db.execute(f"SELECT count(*) FROM fm_events WHERE feature_id=? AND {JOURNAL_EVENT_SQL}", (feature_id,)).fetchone()[0],
+                "sessions": [dict(row) for row in session_rows[:BOARD_MAX_SESSIONS]],
+                "sessions_truncated": len(session_rows) > BOARD_MAX_SESSIONS,
+                "event_cursor": self._event_cursor(feature_id),
+            }
 
     def get_events(self, feature_id: str, after: int = 0, limit: int = 1000) -> dict:
         if isinstance(after, bool) or not isinstance(after, int) or after < 0:

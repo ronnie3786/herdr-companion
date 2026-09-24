@@ -236,6 +236,8 @@ class FirstMateBoardStoreTests(BoardFixture, unittest.TestCase):
         self.assertGreaterEqual(activity(), message["created_at"])
         with self.store._transaction():
             self.store._db.execute("DELETE FROM fm_events WHERE feature_id=?", (self.id,))
+            self.store._db.execute("DELETE FROM fm_feedback WHERE feature_id=?", (self.id,))
+            self.store._db.execute("DELETE FROM fm_feedback_sources WHERE feature_id=?", (self.id,))
             self.store._db.execute("DELETE FROM fm_messages WHERE feature_id=?", (self.id,))
         self.assertEqual(activity(), self.feature["created_at"])
 

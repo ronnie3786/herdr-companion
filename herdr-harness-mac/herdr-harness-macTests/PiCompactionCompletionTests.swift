@@ -470,7 +470,7 @@ struct PiCompactionCompletionTests {
                 """
                 {
                   "protocol":{"name":"herdr.pi.semantic","version":1},
-                  "paneId":"p1","available":true,"connected":\(connected),
+                  "paneId":"w1:p1","available":true,"connected":\(connected),
                   "session":{"id":"\(sessionID)"},"state":\(state),"entries":\(entries),
                   "pendingInteractions":[],"cursor":"\(cursor)","latestCursor":"\(cursor)",
                   "oldestCursor":"0","truncated":false

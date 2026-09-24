@@ -88,9 +88,13 @@ enum PRReviewCommentLinks {
         filesURL(prURL: comment.prURL, currentPath: comment.anchor.path)
     }
 
-    /// The commit the original-revision blob links should read: the merge base
-    /// when the saved review captured one, otherwise the PR base SHA.
-    static func originalRevisionSHA(for anchor: PRReviewCommentAnchor) -> String? {
+    /// Read added code from the saved head, and original code from the saved
+    /// merge base (or base SHA when no merge base was captured).
+    static func originalRevisionSHA(for anchor: PRReviewCommentAnchor, side: PRReviewSide) -> String? {
+        if side == .after {
+            let head = anchor.headSHA.trimmingCharacters(in: .whitespacesAndNewlines)
+            return isCommitSHA(head) ? head : nil
+        }
         let mergeBase = anchor.mergeBaseSHA?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if isCommitSHA(mergeBase) { return mergeBase }
         let base = anchor.baseSHA.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -109,7 +113,7 @@ enum PRReviewCommentLinks {
         span: PRReviewCommentSpan? = nil
     ) -> URL? {
         guard let reference = reference(from: prURL),
-              let sha = originalRevisionSHA(for: anchor)
+              let sha = originalRevisionSHA(for: anchor, side: side)
         else { return nil }
         let path = side == .before ? anchor.beforePath : anchor.path
         guard let encodedPath = encodedPath(path) else { return nil }

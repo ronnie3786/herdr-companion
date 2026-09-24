@@ -236,8 +236,8 @@ struct PRReviewDiffTextTests {
 
         mounted.view.addComment = nil
         _ = try await selectDiff(mounted.view, from: contextSelector, to: contextSelector)
-        commentShown = await waitForSelector(mounted.view, ".native-comment", exists: false)
-        #expect(!commentShown, "Removing the callback must hide the comment action")
+        let commentHidden = await waitForSelector(mounted.view, ".native-comment", exists: false)
+        #expect(commentHidden, "Removing the callback must hide the comment action")
         askShown = await waitForSelector(mounted.view, ".native-ask")
         #expect(askShown, "Ask AI keeps working independently of commenting")
         #expect(received.isEmpty)

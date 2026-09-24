@@ -117,7 +117,7 @@ struct PRReviewCommentLinksTests {
             side: .after,
             span: renamed.spans[0]
         ))
-        #expect(after.absoluteString == "https://github.com/example-owner/example-repo/blob/9999888877776666555544443333222211110000/Sources/Catalog/Seed%20Catalog.swift#L4-L6")
+        #expect(after.absoluteString == "https://github.com/example-owner/example-repo/blob/1111222233334444555566667777888899990000/Sources/Catalog/Seed%20Catalog.swift#L4-L6")
     }
 
     @Test("Deleted files keep their removed path and fall back to the base revision")
@@ -128,7 +128,7 @@ struct PRReviewCommentLinksTests {
             mergeBaseSHA: nil,
             spans: [PRReviewCommentSpan(side: .before, start: 9, end: 9)]
         )
-        #expect(PRReviewCommentLinks.originalRevisionSHA(for: deleted) == deleted.baseSHA)
+        #expect(PRReviewCommentLinks.originalRevisionSHA(for: deleted, side: .before) == deleted.baseSHA)
 
         let blob = try #require(PRReviewCommentLinks.originalRevisionBlobURL(
             prURL: prURL,
@@ -171,7 +171,7 @@ struct PRReviewCommentLinksTests {
             mergeBaseSHA: "abcdef0123456789abcdef0123456789abcdef01",
             spans: [PRReviewCommentSpan(side: .after, start: 1, end: 1)]
         )
-        #expect(PRReviewCommentLinks.originalRevisionSHA(for: merged) == "abcdef0123456789abcdef0123456789abcdef01")
+        #expect(PRReviewCommentLinks.originalRevisionSHA(for: merged, side: .before) == "abcdef0123456789abcdef0123456789abcdef01")
 
         let blankMergeBase = anchor(
             path: "Sources/Catalog/Seed Catalog.swift",
@@ -179,7 +179,7 @@ struct PRReviewCommentLinksTests {
             mergeBaseSHA: "  ",
             spans: [PRReviewCommentSpan(side: .after, start: 1, end: 1)]
         )
-        #expect(PRReviewCommentLinks.originalRevisionSHA(for: blankMergeBase) == blankMergeBase.baseSHA)
+        #expect(PRReviewCommentLinks.originalRevisionSHA(for: blankMergeBase, side: .before) == blankMergeBase.baseSHA)
 
         let invalidMergeBase = anchor(
             path: "Sources/Catalog/Seed Catalog.swift",
@@ -187,15 +187,25 @@ struct PRReviewCommentLinksTests {
             mergeBaseSHA: "not-a-commit",
             spans: [PRReviewCommentSpan(side: .after, start: 1, end: 1)]
         )
-        #expect(PRReviewCommentLinks.originalRevisionSHA(for: invalidMergeBase) == invalidMergeBase.baseSHA)
+        #expect(PRReviewCommentLinks.originalRevisionSHA(for: invalidMergeBase, side: .before) == invalidMergeBase.baseSHA)
 
         var invalidBase = blankMergeBase
         invalidBase.baseSHA = "abc"
         invalidBase.mergeBaseSHA = nil
-        #expect(PRReviewCommentLinks.originalRevisionSHA(for: invalidBase) == nil)
+        #expect(PRReviewCommentLinks.originalRevisionSHA(for: invalidBase, side: .before) == nil)
         #expect(PRReviewCommentLinks.originalRevisionBlobURL(
             prURL: prURL,
             anchor: invalidBase,
+            side: .before
+        ) == nil)
+        // New files and added lines must still open the saved head even if the
+        // original side has no usable revision.
+        #expect(PRReviewCommentLinks.originalRevisionSHA(for: invalidBase, side: .after) == invalidBase.headSHA)
+        var invalidHead = merged
+        invalidHead.headSHA = "not-a-commit"
+        #expect(PRReviewCommentLinks.originalRevisionBlobURL(
+            prURL: prURL,
+            anchor: invalidHead,
             side: .after
         ) == nil)
     }

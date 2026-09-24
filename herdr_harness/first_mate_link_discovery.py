@@ -179,6 +179,10 @@ def _read_records(path: Path, offset: int, maximum_bytes: int, budget: _PassBudg
     """
     records: list[dict] = []
     bytes_read = 0
+    # One invocation reads at most its source allowance or one complete record
+    # cap. If a preceding short record consumes that allowance, leave the next
+    # record at its start so a fresh pass can read it whole.
+    read_limit = max(maximum_bytes, MAX_RECORD_BYTES + 1)
     after = offset
     if maximum_bytes <= 0 or budget.exhausted:
         return records, after, bytes_read, skipping
@@ -204,12 +208,12 @@ def _read_records(path: Path, offset: int, maximum_bytes: int, budget: _PassBudg
                     skipping = False
                     continue
                 line_start = handle.tell()
-                line = handle.readline(MAX_RECORD_BYTES + 1)
+                line = handle.readline(min(MAX_RECORD_BYTES + 1, read_limit - bytes_read))
                 if not line:
                     break
+                bytes_read += len(line)
+                budget.take(len(line))
                 if line.endswith(b"\n"):
-                    bytes_read += len(line)
-                    budget.take(len(line))
                     after = handle.tell()
                     if len(line) <= MAX_RECORD_BYTES:
                         try:
@@ -223,8 +227,6 @@ def _read_records(path: Path, offset: int, maximum_bytes: int, budget: _PassBudg
                 if len(line) > MAX_RECORD_BYTES:
                     # Consume one bounded piece of the oversized record; the
                     # next pass continues scanning for its newline.
-                    bytes_read += len(line)
-                    budget.take(len(line))
                     after = handle.tell()
                     skipping = True
                     continue

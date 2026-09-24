@@ -358,6 +358,17 @@ struct FirstMateFeedbackPresentationTests {
         #expect(state.draft.comment == "Line one\nLine two")
         #expect(state.draft.categoryIDs == [FirstMateFeedbackDefaults.tooLongID])
 
+        // Recovery restores server writes and leaves the typed draft intact.
+        await store.refresh()
+        #expect(store.feedbackCapability == .supported)
+        state = FirstMateFeedbackEditorState.make(store: store, target: target)
+        #expect(!state.showsConnectionNotice)
+        #expect(state.canSave)
+        #expect(state.draft.comment == "Line one\nLine two")
+
+        // Rendering and releasing a hosting view invokes onDisappear, which
+        // deliberately discards its editor draft. Exercise that lifecycle only
+        // after the connection-recovery assertions above.
         for scheme in [ColorScheme.light, .dark] {
             let editor = NSHostingView(
                 rootView: FirstMateFeedbackEditor(store: store, target: target)
@@ -368,14 +379,6 @@ struct FirstMateFeedbackPresentationTests {
             editor.layoutSubtreeIfNeeded()
             #expect(editor.fittingSize.height > 200)
         }
-
-        // Recovery restores server writes and leaves the typed draft intact.
-        await store.refresh()
-        #expect(store.feedbackCapability == .supported)
-        state = FirstMateFeedbackEditorState.make(store: store, target: target)
-        #expect(!state.showsConnectionNotice)
-        #expect(state.canSave)
-        #expect(state.draft.comment == "Line one\nLine two")
     }
 
     @Test("A failed rating save keeps the previous state and offers an explicit retry")

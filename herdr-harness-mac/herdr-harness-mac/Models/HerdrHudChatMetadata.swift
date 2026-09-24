@@ -226,6 +226,13 @@ struct HerdrHudChatMetadataAccumulator: Equatable, Sendable {
 }
 
 extension HerdrHudChatMetadataAccumulator: Codable {
+    /// Bumped when model-attribution semantics change. A cache written before
+    /// this version can hold a catalog default that was never proven to have
+    /// executed, so its model name is dropped on decode while its reported
+    /// cost is kept. New writes mark their provenance so a genuinely captured
+    /// explicit submission survives relaunch.
+    private static let currentModelAttributionVersion = 2
+
     private enum CodingKeys: String, CodingKey {
         case machineID
         case rootRunID
@@ -233,6 +240,7 @@ extension HerdrHudChatMetadataAccumulator: Codable {
         case latestRunID
         case latestRunCostUSD
         case latestRunModelName
+        case modelAttributionVersion
         case sealedCostUSD
         case sealedKnownRunCount
         case sealedUnknownRunCount
@@ -256,6 +264,15 @@ extension HerdrHudChatMetadataAccumulator: Codable {
         latestRunModelName = Self.normalizedModelName(
             try container.decodeIfPresent(String.self, forKey: .latestRunModelName)
         )
+        let modelAttributionVersion = try container.decodeIfPresent(
+            Int.self, forKey: .modelAttributionVersion
+        ) ?? 1
+        if modelAttributionVersion < Self.currentModelAttributionVersion {
+            // Older caches cannot prove their model label came from the
+            // executed run instead of a catalog default. Keep the cost, drop
+            // the guess; an authoritative history refresh can restore a model.
+            latestRunModelName = nil
+        }
         sealedCostUSD = Self.validCost(
             try container.decodeIfPresent(Double.self, forKey: .sealedCostUSD)
         ) ?? 0
@@ -271,6 +288,7 @@ extension HerdrHudChatMetadataAccumulator: Codable {
         try container.encodeIfPresent(latestRunID, forKey: .latestRunID)
         try container.encodeIfPresent(latestRunCostUSD, forKey: .latestRunCostUSD)
         try container.encodeIfPresent(latestRunModelName, forKey: .latestRunModelName)
+        try container.encode(Self.currentModelAttributionVersion, forKey: .modelAttributionVersion)
         try container.encode(sealedCostUSD, forKey: .sealedCostUSD)
         try container.encode(sealedKnownRunCount, forKey: .sealedKnownRunCount)
         try container.encode(sealedUnknownRunCount, forKey: .sealedUnknownRunCount)

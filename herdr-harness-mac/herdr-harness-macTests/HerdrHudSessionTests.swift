@@ -356,8 +356,8 @@ struct HerdrHudSessionTests {
         #expect(session.lastHeadlessRunForTesting?.model == HerdrHudModelRouting.visionModel)
     }
 
-    @Test("Exchanges display the harness default or selected model name")
-    func exchangeModelLabelsReflectDefaultAndSelection() async {
+    @Test("Exchange labels only name an explicitly submitted model")
+    func exchangeModelLabelsOnlyReflectAProvenIdentifier() async {
         let model = makeDemoModel()
         let session = makeSession()
         let defaultModel = PiModelIdentity(provider: "provider", id: "default", name: "Harness Default")
@@ -371,12 +371,16 @@ struct HerdrHudSessionTests {
         session.seedModelsForTesting([selected], default: defaultModel, machineID: "demo1")
         session.draft = "Use the default"
         await session.submit(model: model)
-        #expect(session.exchanges.last?.modelLabel == "Harness Default")
+        // A trusted project default can override the catalog's declared
+        // default, so an implicit submission must not claim either one.
+        #expect(session.exchanges.last?.modelLabel == "default")
+        #expect(session.exchanges.last?.modelLabelIsProven == false)
 
         session.setSelectedModel(selected)
         session.draft = "Use the selection"
         await session.submit(model: model)
         #expect(session.exchanges.last?.modelLabel == "Selected Choice")
+        #expect(session.exchanges.last?.modelLabelIsProven == true)
     }
 
     @Test("Attachments enforce count and file-size limits")

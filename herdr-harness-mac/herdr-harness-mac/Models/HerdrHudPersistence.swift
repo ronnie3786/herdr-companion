@@ -81,6 +81,10 @@ struct HerdrHudPersistenceSnapshot: Codable, Equatable, Sendable {
         let workingFolderPath: String?
         let localAttachments: [HerdrHudAttachment]?
         let modelLabel: String
+        /// Optional keeps caches written before model attribution was tracked
+        /// readable. An absent value means unproven, so a stored catalog guess
+        /// is never restored as the executed model.
+        let modelLabelIsProven: Bool?
         let steps: [HerdrHudStep]
         let stepsTruncated: Bool
 
@@ -100,12 +104,14 @@ struct HerdrHudPersistenceSnapshot: Codable, Equatable, Sendable {
                 ? nil : exchange.workingFolderPath
             localAttachments = exchange.localAttachments.isEmpty ? nil : exchange.localAttachments
             modelLabel = exchange.modelLabel
+            modelLabelIsProven = exchange.modelLabelIsProven
             steps = exchange.steps
             stepsTruncated = exchange.stepsTruncated
         }
 
         var exchange: HerdrHudExchange {
-            HerdrHudExchange(
+            let isProven = modelLabelIsProven ?? false
+            return HerdrHudExchange(
                 id: id,
                 machineID: machineID,
                 prompt: prompt,
@@ -121,7 +127,8 @@ struct HerdrHudPersistenceSnapshot: Codable, Equatable, Sendable {
                     ?? HerdrHudWorkingFolder.homePath,
                 attachments: [],
                 localAttachments: localAttachments ?? [],
-                modelLabel: modelLabel,
+                modelLabel: isProven ? modelLabel : "default",
+                modelLabelIsProven: isProven,
                 steps: steps,
                 stepsTruncated: stepsTruncated
             )

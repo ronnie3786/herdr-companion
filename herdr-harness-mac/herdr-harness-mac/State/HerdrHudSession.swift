@@ -38,6 +38,12 @@ struct HerdrHudExchange: Identifiable, Equatable, Sendable {
     var attachments: [HeadlessAgentAttachment] = []
     var localAttachments: [HerdrHudAttachment] = []
     var modelLabel: String = "default"
+    /// True only when `modelLabel` came from an explicit submitted identifier
+    /// or an authoritative run/history report. A catalog or composer fallback
+    /// may name a different model than the one a machine's trusted project
+    /// default executes, so an unproven label never contributes to bubble
+    /// metadata.
+    var modelLabelIsProven = false
     var steps: [HerdrHudStep] = []
     var stepsTruncated = false
 
@@ -57,6 +63,7 @@ struct HerdrHudExchange: Identifiable, Equatable, Sendable {
         attachments: [HeadlessAgentAttachment] = [],
         localAttachments: [HerdrHudAttachment] = [],
         modelLabel: String = "default",
+        modelLabelIsProven: Bool = false,
         steps: [HerdrHudStep] = [],
         stepsTruncated: Bool = false
     ) {
@@ -76,6 +83,7 @@ struct HerdrHudExchange: Identifiable, Equatable, Sendable {
         self.attachments = attachments
         self.localAttachments = localAttachments
         self.modelLabel = modelLabel
+        self.modelLabelIsProven = modelLabelIsProven
         self.steps = steps
         self.stepsTruncated = stepsTruncated
     }
@@ -665,7 +673,8 @@ final class HerdrHudSession {
                 attachmentFilenames: attachmentFilenames,
                 workingFolderPath: workingFolder.path,
                 localAttachments: attachmentsToSend,
-                modelLabel: label
+                modelLabel: label,
+                modelLabelIsProven: metadataModelName != nil
             )
         )
         consumeComposerSnapshot(
@@ -769,7 +778,8 @@ final class HerdrHudSession {
                     workingFolderPath: workingFolder.path,
                     attachments: wireAttachments,
                     localAttachments: attachmentsToSend,
-                    modelLabel: label
+                    modelLabel: label,
+                    modelLabelIsProven: metadataModelName != nil
                 )
                 markExchangesChanged()
                 await schedulePersistenceSave()
@@ -801,6 +811,7 @@ final class HerdrHudSession {
             attachments: retainedAttachments,
             localAttachments: attachmentsToSend,
             modelLabel: label,
+            modelLabelIsProven: metadataModelName != nil,
             steps: Self.hudSteps(from: run.steps ?? []),
             stepsTruncated: run.stepsTruncated == true
         )
@@ -1278,6 +1289,7 @@ final class HerdrHudSession {
                 attachments: retainedAttachments,
                 localAttachments: exchange.localAttachments,
                 modelLabel: label,
+                modelLabelIsProven: metadataModelName != nil,
                 steps: Self.hudSteps(from: run.steps ?? []),
                 stepsTruncated: run.stepsTruncated == true
             )
@@ -1407,6 +1419,8 @@ final class HerdrHudSession {
         exchanges = turns.map { run in
             let local = localByID[run.id]
                 ?? (run.id == page.latestRunId ? acceptedPendingExchange : nil)
+            let restoredModelName = run.model.map(PiModelDisplayName.short(fullID:))
+                ?? Self.provenLocalModelName(local)
             return HerdrHudExchange(
                 id: run.id,
                 machineID: machineID,
@@ -1422,7 +1436,8 @@ final class HerdrHudSession {
                 workingFolderPath: historyWorkingFolder,
                 attachments: local?.attachments ?? [],
                 localAttachments: local?.localAttachments ?? [],
-                modelLabel: run.model.map(PiModelDisplayName.short(fullID:)) ?? local?.modelLabel ?? "default",
+                modelLabel: restoredModelName ?? "default",
+                modelLabelIsProven: restoredModelName != nil,
                 steps: Self.hudSteps(from: run.steps ?? []),
                 stepsTruncated: run.stepsTruncated == true
             )
@@ -1439,7 +1454,7 @@ final class HerdrHudSession {
                         id: run.id,
                         costUSD: run.costUSD,
                         modelName: run.model.map(PiModelDisplayName.short(fullID:))
-                            ?? local?.modelLabel
+                            ?? Self.provenLocalModelName(local)
                     )
                 }
             )
@@ -1571,7 +1586,9 @@ final class HerdrHudSession {
             samples: page.turns.map { run in
                 Self.metadataRunSample(
                     for: run,
-                    fallbackModelName: exchanges.first(where: { $0.id == run.id })?.modelLabel
+                    fallbackModelName: Self.provenLocalModelName(
+                        exchanges.first(where: { $0.id == run.id })
+                    )
                 )
             }
         )
@@ -1638,21 +1655,30 @@ final class HerdrHudSession {
         return availableModels.first(where: { $0.id == selectedModel })?.supportsImages ?? false
     }
 
-    /// The display name captured for a submission, or nil while the model is
-    /// genuinely unknown. A declared catalog default is only usable for the
-    /// machine that returned it; an explicit selection resolves from its own
-    /// captured identifier even before that machine's catalog loads. A cached
-    /// default from another machine is never promoted into run metadata.
+    /// The display name captured for an explicitly submitted model, or nil
+    /// while the executed model is genuinely unknown. Only the identifier in
+    /// the request — or the catalog entry naming that exact identifier — proves
+    /// what may run. A declared catalog default is never attribution: a
+    /// trusted project default can override it, so an implicit submission
+    /// stays unknown until the server reports the run's model. A cached
+    /// default from another machine is likewise never promoted. Dispatch is
+    /// unaffected; only the label is withheld.
     private func modelLabel(for requestedModel: String?, on machineID: String) -> String? {
-        guard let requestedModel else {
-            guard modelsMachineID == machineID else { return nil }
-            return defaultModel?.displayName
-        }
+        guard let requestedModel else { return nil }
         if modelsMachineID == machineID,
            let available = availableModels.first(where: { $0.id == requestedModel }) {
             return available.displayName
         }
         return PiModelDisplayName.short(fullID: requestedModel)
+    }
+
+    /// A restored exchange's own label is usable only when it was captured from
+    /// an explicit submission or an authoritative run report. A transcript or
+    /// cache written before that distinction existed may hold a catalog guess,
+    /// so its provenance flag alone decides whether metadata may adopt it.
+    private static func provenLocalModelName(_ exchange: HerdrHudExchange?) -> String? {
+        guard let exchange, exchange.modelLabelIsProven else { return nil }
+        return exchange.modelLabel
     }
 
     private func append(_ exchange: HerdrHudExchange) {
@@ -1794,7 +1820,7 @@ final class HerdrHudSession {
             HerdrHudChatMetadataAccumulator.RunSample(
                 id: $0.id,
                 costUSD: $0.costUSD,
-                modelName: $0.modelLabel
+                modelName: $0.modelLabelIsProven ? $0.modelLabel : nil
             )
         }
         return (samples, coverageIsProvable)

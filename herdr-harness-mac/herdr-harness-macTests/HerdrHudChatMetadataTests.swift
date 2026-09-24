@@ -396,6 +396,30 @@ struct HerdrHudChatMetadataTests {
         #expect(decoded.metadata.modelName == "Opus 4.5")
     }
 
+    @Test("A cache predating model-attribution tracking drops its model but keeps its cost")
+    func legacyCacheDropsUnprovenModel() throws {
+        // Version-1 payload without `modelAttributionVersion`: the stored model
+        // may be a catalog default that was never proven to have executed.
+        let json = #"""
+        {
+          "machineID": "alpha",
+          "rootRunID": "root-1",
+          "knownTurnCount": 1,
+          "latestRunID": "run-1",
+          "latestRunCostUSD": 0.42,
+          "latestRunModelName": "Catalog Default",
+          "sealedCostUSD": 0,
+          "sealedKnownRunCount": 0,
+          "sealedUnknownRunCount": 0
+        }
+        """#
+        let decoded = try JSONDecoder().decode(Accumulator.self, from: Data(json.utf8))
+
+        #expect(decoded.totalCostUSD == 0.42)
+        #expect(decoded.metadata.cost == "$0.42")
+        #expect(decoded.metadata.modelName == nil)
+    }
+
     @Test("Legacy and malformed payloads decode without fabricating a total")
     func lenientDecoding() throws {
         let empty = try JSONDecoder().decode(Accumulator.self, from: Data("{}".utf8))

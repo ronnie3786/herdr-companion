@@ -92,8 +92,11 @@ estimate. It is aggregated from the runs the app already polls and from paginate
 saved history, counts each accepted turn once, includes a reported cost from
 failed or cancelled turns, and survives the local transcript caps.
 
-Metadata stays honest when it is incomplete. A missing model is never guessed,
-a missing or partial total is never presented as a complete one, and when both
+Metadata stays honest when it is incomplete. A missing model is never guessed;
+a model is attributed only when the submission named it explicitly or an
+accepted run or history report returned it, so a machine or catalog default is
+never shown as the model that executed an implicit submission. A missing or
+partial total is never presented as a complete one, and when both
 values are unavailable the bubble simply omits the trailing slot. Legacy caches
 that cannot prove coverage stay unknown until history establishes it. Because a
 cancellation can be reported terminal before its cost finishes draining, an

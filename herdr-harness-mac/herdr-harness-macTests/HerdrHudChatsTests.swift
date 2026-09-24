@@ -1613,39 +1613,59 @@ struct HerdrHudChatsTests {
         #expect(session.bubbleMetadata.modelName == "Beta Model")
     }
 
-    @Test("Loading the switched machine's own catalog restores a scoped default")
-    func switchedMachineCatalogResolvesItsOwnDefault() async throws {
-        let fixture = try Fixture(
-            machines: [
-                HerdrMachine(id: "machine-a", name: "Alpha", urlString: "https://alpha.example.invalid"),
-                HerdrMachine(id: "machine-b", name: "Beta", urlString: "https://beta.example.invalid"),
-            ],
-            catalogByHost: [
-                "alpha.example.invalid": #"{"ok":true,"models":[],"default":{"provider":"synthetic","id":"alpha-default","name":"Alpha Default"}}"#,
-                "beta.example.invalid": #"{"ok":true,"models":[],"default":{"provider":"synthetic","id":"beta-default","name":"Beta Default"}}"#,
-            ]
-        )
+    @Test("An implicit submission never presents the catalog default as the executed model")
+    func implicitSubmissionDoesNotAttributeCatalogDefault() async throws {
+        let fixture = try Fixture()
         defer { fixture.cleanUp() }
         let session = fixture.chats.composer
-        session.selectedMachineID = "machine-a"
+        session.selectedMachineID = "synthetic"
         await session.loadModels(model: fixture.model)
-        #expect(session.defaultModel?.displayName == "Alpha Default")
+        #expect(session.defaultModel?.displayName == "Synthetic Naming")
 
-        // The switch drops Alpha's catalog, so its default cannot leak; only
-        // Beta's own freshly loaded catalog may resolve a new scoped default.
-        session.selectedMachineID = "machine-b"
-        await session.loadModels(model: fixture.model)
-        #expect(session.defaultModel?.displayName == "Beta Default")
-        session.draft = "Run on Beta"
+        // The catalog's declared default is machine-global, but a trusted
+        // project default can override it. An implicit submission omits
+        // `model`, so the run report — not the catalog — is the only authority
+        // for what executed.
+        session.draft = "Use the project default"
         let task = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
         try await wait { session.thread != nil }
-        #expect(session.exchanges.last?.modelLabel == "Beta Default")
-        #expect(session.bubbleMetadata.modelName == "Beta Default")
-
         let runID = try #require(session.thread?.lastRunID)
+        let start = try #require(HudChatsURLProtocol.state.withLock { $0.starts.last })
+        #expect(start.model == nil)
+        #expect(session.exchanges.last?.modelLabel == "default")
+        #expect(session.exchanges.last?.modelLabelIsProven == false)
+        #expect(session.bubbleMetadata.modelName == nil)
+
+        // With no authoritative model, neither persistence nor a history
+        // refresh may promote the catalog default into bubble metadata.
         HudChatsURLProtocol.finish(runID)
         await task.value
-        #expect(session.bubbleMetadata.modelName == "Beta Default")
+        try await wait {
+            guard let snapshot = HerdrHudPersistenceSnapshot.load(from: session.persistenceURLForTesting),
+                  let metadata = snapshot.chatMetadata else {
+                return false
+            }
+            return metadata.latestRunID == runID && metadata.latestRunModelName == nil
+        }
+        #expect(await session.refreshSavedHistoryPassivelyForTesting(model: fixture.model))
+        #expect(session.bubbleMetadata.modelName == nil)
+
+        // A transcript row that somehow holds an unproven catalog label must
+        // not feed a history reconcile either.
+        var localGuess = try #require(session.exchanges.last)
+        localGuess.modelLabel = "Catalog Guess"
+        localGuess.modelLabelIsProven = false
+        session.seedExchangesForTesting([localGuess])
+        #expect(await session.refreshSavedHistory(model: fixture.model))
+        #expect(session.bubbleMetadata.modelName == nil)
+        #expect(session.exchanges.last?.modelLabel == "default")
+        #expect(session.exchanges.last?.modelLabelIsProven == false)
+
+        // A run report naming the project's actual model is authoritative.
+        HudChatsURLProtocol.setModel(runID, "synthetic/project-model")
+        #expect(await session.refreshSavedHistoryPassivelyForTesting(model: fixture.model))
+        #expect(session.bubbleMetadata.modelName == "Project Model")
+        #expect(session.bubbleMetadata.modelName != session.defaultModel?.displayName)
     }
 
     @Test("HUD chat bubble metadata sums distinct accepted turns across a continuation")
@@ -1956,6 +1976,9 @@ private final class HudChatsURLProtocol: URLProtocol, @unchecked Sendable {
         let prompt: String
         let cwd: String?
         let profile: String
+        /// The `model` field exactly as the client sent it, so a test can prove
+        /// an implicit submission omitted it.
+        let model: String?
     }
     struct State: Sendable {
         var starts: [Start] = []
@@ -2030,7 +2053,7 @@ private final class HudChatsURLProtocol: URLProtocol, @unchecked Sendable {
             let id = String(format: "agr_%012d", state.starts.count + 1)
             let parent = state.starts.last(where: { $0.root == root })?.id
             state.starts.append(Start(id: id, root: root, parent: parent, prompt: prompt,
-                                      cwd: cwd, profile: "hud-chat-v1"))
+                                      cwd: cwd, profile: "hud-chat-v1", model: nil))
             state.statuses[id] = "completed"
             return id
         }
@@ -2102,7 +2125,7 @@ private final class HudChatsURLProtocol: URLProtocol, @unchecked Sendable {
                 let id = String(format: "agr_%012d", state.starts.count + 1)
                 state.starts.append(Start(id: id, root: root, parent: parent,
                                           prompt: "Conflicting device reply", cwd: input["cwd"] as? String,
-                                          profile: "hud-chat-v1"))
+                                          profile: "hud-chat-v1", model: input["model"] as? String))
                 state.statuses[id] = "completed"
                 return (409, Data(#"{"ok":false,"error":{"message":"This chat has a newer reply."}}"#.utf8))
             }
@@ -2118,7 +2141,8 @@ private final class HudChatsURLProtocol: URLProtocol, @unchecked Sendable {
                 let root = state.starts.first { $0.id == prior }?.root ?? id
                 let start = Start(id: id, root: root, parent: prior,
                                   prompt: input["prompt"] as? String ?? "",
-                                  cwd: input["cwd"] as? String, profile: input["profile"] as? String ?? "")
+                                  cwd: input["cwd"] as? String, profile: input["profile"] as? String ?? "",
+                                  model: input["model"] as? String)
                 state.starts.append(start)
                 state.statuses[id] = "running"
                 if state.missingCostForNewRuns { state.missingCostIDs.insert(id) }

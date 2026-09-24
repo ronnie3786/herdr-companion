@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 const jiti = createJiti(import.meta.url);
-const { FIRST_MATE_EXTENSION_PATH, createFirstMateExtension, spoolRequestId } = await jiti.import("../extensions/first-mate.ts");
+const { FIRST_MATE_EXTENSION_PATH, createFirstMateExtension, spoolRequestId, observationalShellCommand } = await jiti.import("../extensions/first-mate.ts");
 const { COMPANION_AWARENESS_MARKER } = await jiti.import("../lib/companion-awareness.ts");
 
 function fixture(role = "worker", overrides = {}) {
@@ -251,6 +251,59 @@ test("effect ledger persists before mutations and distinguishes local from exter
   } finally { f.cleanup(); }
 });
 
+test("only a conservative complete shell probe is observational", () => {
+  for (const command of [
+    'cd /synthetic/worktree && echo "=== probe ===" && grep -n "expanded" Source.swift && grep -n "foo\\|bar\\b" Other.swift',
+    "test -f README.md || ls -al", "grep -n '$(literal-pattern)' README.md | head -n 5",
+    "rg --no-config --files", "git --no-pager --no-optional-locks -c core.fsmonitor=false status --porcelain",
+  ]) assert.equal(observationalShellCommand(command), true, command);
+  for (const command of [
+    "grep missing README.md; synthetic-publish artifact", "grep missing README.md > output.txt",
+    "echo $(synthetic-publish)", 'echo "`synthetic-publish`"', "ls <(synthetic-publish)",
+    "cat <<< input", "ls & synthetic-publish", "echo hello\nsynthetic-publish", "echo x &&", "echo x;",
+    "find . -exec synthetic-publish {} ;", "sed -i replacement README.md", "rg --pre=synthetic-publish pattern",
+    "rg --no-config --pre synthetic-publish pattern", "rg --no-config --hostname-bin=synthetic-publish pattern",
+    "rg --no-config -z pattern", "rg pattern", "git -c core.fsmonitor=synthetic-publish status", "git status",
+    "git diff --ext-diff", "bash -c 'ls'", "GIT_CONFIG=synthetic git status", 'echo "unfinished',
+  ]) assert.equal(observationalShellCommand(command), false, command);
+});
+
+test("failed observational shell probes retain their command and scope", () => {
+  const f = fixture("worker", {safety_ledger_version:1,workspace_mode:"read_only"});
+  try {
+    const command = "grep missing README.md";
+    assert.equal(f.handlers.get("tool_call")({toolName:"bash",toolCallId:"probe",input:{command}}), undefined);
+    f.handlers.get("tool_result")({toolName:"bash",toolCallId:"probe",isError:true});
+    const rows = readFileSync(join(f.root,"effects.jsonl"),"utf8").trim().split("\n").map(JSON.parse);
+    assert.equal(rows[1].scope, "observational");
+    assert.equal(rows[1].command, command);
+    assert.equal(rows[2].is_error, true);
+  } finally { f.cleanup(); }
+});
+
+test("shared checkout cleanup is refused while ordinary Git inspection remains available", () => {
+  const f = fixture("worker", {workspace_mode:"read_only"});
+  const isolated = fixture("worker", {workspace_mode:"isolated"});
+  try {
+    for (const command of ["git stash push", "git reset --hard", "git -C /synthetic checkout HEAD .", "/usr/bin/git restore .", "git clean -fd", "cd /synthetic && git stash"])
+      assert.equal(f.handlers.get("tool_call")({toolName:"bash",input:{command}}).block, true, command);
+    for (const command of ["git status --porcelain", "git diff -- stash", "git log --oneline"])
+      assert.equal(f.handlers.get("tool_call")({toolName:"bash",input:{command}}), undefined, command);
+    assert.equal(isolated.handlers.get("tool_call")({toolName:"bash",input:{command:"git checkout topic"}}), undefined);
+  } finally { f.cleanup(); isolated.cleanup(); }
+});
+
+test("recovery exposes explicit human stop and budget-reset controls", () => {
+  const f = fixture("coordinator");
+  try {
+    const properties = f.tools.get("fm_recover").parameters.properties;
+    assert.equal(properties.reset_budget.type, "boolean");
+    assert.equal(properties.stop_running.type, "boolean");
+    assert.match(properties.reset_budget.description, /explicit human direction/);
+    assert.match(properties.stop_running.description, /verify its stop/);
+  } finally { f.cleanup(); }
+});
+
 test("unwritable effect ledger fails before a mutating tool is allowed", () => {
   const f = fixture("worker", {safety_ledger_version:1,workspace_mode:"isolated"});
   try {
@@ -328,4 +381,25 @@ test("successor and recovery fences also gate link saving", () => {
   try {
     assert.equal(recovery.handlers.get("tool_call")({toolName:"fm_save_link"}).block, true);
   } finally { recovery.cleanup(); }
+});
+
+
+test("structured recovery refusal reaches the coordinator tool error", async () => {
+  const f = fixture("coordinator");
+  try {
+    const id = spoolRequestId("synthetic-job", "exhausted");
+    const actions = [{tool:"fm_recover",reset_budget:true,requires_human_direction:true}];
+    writeFileSync(join(f.root,"responses",id+".json"),JSON.stringify({ok:false,error:"Recovery budget exhausted",code:"recovery_exhausted",next_permitted_actions:actions}));
+    await assert.rejects(f.tools.get("fm_recover").execute("exhausted",{assignment_id:"synthetic-assignment",reason:"Inspect"},undefined,undefined,f.ctx), error => {
+      const value = JSON.parse(error.message);
+      assert.equal(value.code,"recovery_exhausted");
+      assert.deepEqual(value.next_permitted_actions,actions);
+      return true;
+    });
+  } finally { f.cleanup(); }
+});
+
+test("Bash test array evaluation is never classified as observational", () => {
+  for (const command of ["test -v 'items[0]'", "[ -v 'items[$(publish)]' ]", "test 'items[$(publish)]' -eq 1"])
+    assert.equal(observationalShellCommand(command),false,command);
 });

@@ -474,3 +474,34 @@ are inherited as needed; companion administration and cluster credentials are
 stripped. Process stop targets the supervisor-owned Pi process group. Arbitrary
 programs deliberately detached by a worker into another process group are outside
 the initial lifecycle contract and should not be used for managed assignments.
+
+### Recovery remedies and retained operations
+
+Coordinator `fm_status` exposes each current assignment's `recovery_count`,
+`recovery_limit`, `recovery_remaining`, `recovery_exhausted`, `has_outcome`, and
+`next_permitted_actions`. A recorded outcome may be a failed or blocked verdict;
+its existence alone does not mean success. Progress includes the requesting
+session, generation, evidence, and lease expiry. A wait lease applies only to its
+live requesting execution.
+
+Failure recovery remains limited to two continuations. Repeating an exhausted
+request does not spend more budget. A new human direction may explicitly call
+`fm_recover(reset_budget=true)` to reset recovery and handoff churn once for that
+turn. Its reason and authorization message are retained. `stop_running=true`
+requests a graceful abort and waits for verified stop before continuation, even
+while a progress lease is active. System updates cannot use either override;
+internal human gates, stage boundaries, and paused or closed features still win.
+Ordinary handoffs do not spend the failure recovery budget.
+
+Tool refusals retain their error text and add a typed `code` and
+`next_permitted_actions`. When a coordinator reaches its bounded deadline, its
+interruption event lists completed, refused, and unconfirmed durable tool
+requests. Unconfirmed requests are evidence to inspect, never permission to
+replay external effects. The coordinator default deadline is 600 seconds; the
+existing environment override remains bounded from 30 to 600 seconds.
+
+Shared human checkouts never need to be cleaned for selective carry-forward.
+Only isolated worktrees require clean code evidence; a review with an explicit
+pinned revision must still match that revision. After selective revision, dispatch
+replacement work before completing the revised stage. Never stash or reset human
+edits to satisfy a service guard.

@@ -27,9 +27,10 @@ from .first_mate_links import (
 
 
 class FirstMateError(RuntimeError):
-    def __init__(self, message: str, *, code: str = "first_mate_conflict", status: int = 409):
+    def __init__(self, message: str, *, code: str = "first_mate_conflict", status: int = 409, next_permitted_actions: list[dict] | None = None):
         super().__init__(message)
         self.code, self.status = code, status
+        self.next_permitted_actions = next_permitted_actions or []
 
 
 def _now() -> str:
@@ -375,6 +376,20 @@ class FirstMateStore:
         result["visit_ids"] = [row[0] for row in self._db.execute("SELECT visit_id FROM fm_assignment_memberships WHERE assignment_id=? ORDER BY revision,visit_id", (result["id"],))]
         attempt = self._db.execute("SELECT code_revision FROM fm_attempts WHERE assignment_id=? AND generation=?", (result["id"], result["generation"])).fetchone()
         result["code_revision"] = attempt["code_revision"] if attempt else None
+        result["has_outcome"] = self._db.execute(
+            "SELECT 1 FROM fm_receipts WHERE scope=? AND json_extract(result_json,'$.generation')=? LIMIT 1",
+            ("outcome:" + result["id"], result["generation"])).fetchone() is not None
+        result["recovery_limit"] = 2
+        result["recovery_remaining"] = max(0, 2 - result["recovery_count"])
+        result["recovery_exhausted"] = result["recovery_count"] >= 2
+        result["next_permitted_actions"] = []
+        if result["metadata"].get("human_gate", {}).get("status") == "pending":
+            result["next_permitted_actions"] = [{"tool": "fm_resolve_gate", "assignment_id": result["id"], "requires_human_direction": True}]
+        elif result["status"] in {"running", "dispatching", "recovering", "blocked", "failed", "handoff_pending", "awaiting_ack"}:
+            result["next_permitted_actions"] = [{"tool": "fm_recover", "assignment_id": result["id"],
+                "reset_budget": result["recovery_exhausted"], "requires_verified_stop": True,
+                "requires_human_direction": result["recovery_exhausted"] or result["status"] == "blocked"}]
+
         return result
 
     def assignment_is_in_current_visit(self, assignment_id: str) -> bool:
@@ -1281,7 +1296,8 @@ class FirstMateStore:
             # findings. Only its top-level outcome needs a First Mate turn.
             if not assignment["metadata"].get("parent_assignment_id"):
                 self._message(assignment["feature_id"], "system", f"{assignment['title']}: {summary}", metadata=event_payload)
-            return self._save_receipt(f"outcome:{assignment_id}", request_id, payload, self._one("fm_assignments", assignment_id))
+            result = {**self._one("fm_assignments", assignment_id), "has_outcome": True}
+            return self._save_receipt(f"outcome:{assignment_id}", request_id, payload, result)
 
     def complete_visit(self, visit_id: str, summary: str, recommendation: str, request_id: str,
                        *, native_session_id: str | None = None) -> dict:
@@ -1479,7 +1495,7 @@ class FirstMateStore:
                     raise FirstMateError("Stop affected writers before revising their scope", code="writer_not_stopped")
             elif assignment["status"] == "completed":
                 recorded_revision = assignment.get("code_revision") or assignment["metadata"].get("expected_code_revision")
-                if recorded_revision and carry_forward_evidence.get(assignment["id"]) != recorded_revision:
+                if (assignment["metadata"].get("workspace_mode") == "isolated" or assignment["metadata"].get("expected_code_revision")) and recorded_revision and carry_forward_evidence.get(assignment["id"]) != recorded_revision:
                     raise FirstMateError("Completed work needs fresh matching code evidence before carry-forward", code="stale_code_revision")
         revision, visit_id, now = expected_revision + 1, _id("fmv"), _now()
         self._db.execute("INSERT INTO fm_visits(id,feature_id,stage_key,title,status,revision,authorization_message_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)", (visit_id, feature["id"], previous_visit["stage_key"], previous_visit["title"], "running", revision, authorization_message_id, now, now))
@@ -1726,15 +1742,37 @@ class FirstMateStore:
                 self._one("fm_assignments", assignment_id),
             )
 
-    def recover_assignment(self, assignment_id: str, generation: int, reason: str, request_id: str, verified_stopped: bool = False, *, automatic: bool = False) -> dict:
+    def recovery_receipt(self, assignment_id: str, generation: int, reason: str, request_id: str, *,
+                         reset_budget: bool = False, authorization_message_id: str | None = None) -> dict | None:
+        """Read a committed human recovery before sending another stop control."""
+        payload = {"generation": generation, "reason": _text(reason, "reason"), "verified_stopped": True}
+        if reset_budget:
+            payload.update(reset_budget=True, authorization_message_id=authorization_message_id)
+        with self._lock:
+            return self._receipt(f"recover:{assignment_id}", request_id, payload)
+
+    def recover_assignment(self, assignment_id: str, generation: int, reason: str, request_id: str, verified_stopped: bool = False, *, automatic: bool = False, reset_budget: bool = False, authorization_message_id: str | None = None) -> dict:
         payload = {"generation": generation, "reason": _text(reason, "reason"), "verified_stopped": verified_stopped}
         if automatic:
             payload["automatic"] = True
+        if reset_budget:
+            payload.update(reset_budget=True, authorization_message_id=authorization_message_id)
         with self._transaction():
             cached = self._receipt(f"recover:{assignment_id}", request_id, payload)
             if cached is not None:
                 return cached
             assignment = self._execution(assignment_id, generation)
+            feature = self._one("fm_features", assignment["feature_id"])
+            self._assignment_revision(feature, assignment)
+            if feature["status"] in {"paused", "cancelled", "completed", "awaiting_direction"}:
+                raise FirstMateError("Recovery cannot bypass a paused feature or stage checkpoint", code="human_direction_required")
+            if reset_budget:
+                authorization = self._one("fm_messages", authorization_message_id) if authorization_message_id else {}
+                if (automatic or authorization.get("feature_id") != feature["id"] or authorization.get("role") != "user"
+                        or authorization.get("status") != "processing" or authorization.get("created_at", "") <= assignment["created_at"]):
+                    raise FirstMateError("Resetting recovery requires a current human direction turn", code="human_direction_required")
+                if assignment["metadata"].get("recovery_reset_authorization") == authorization_message_id:
+                    raise FirstMateError("This human turn already reset recovery; further resets need new direction", code="human_direction_required")
             if automatic:
                 feature = self._one("fm_features", assignment["feature_id"])
                 waiting_human = self._db.execute("SELECT 1 FROM fm_messages WHERE feature_id=? AND role='user' AND status IN ('queued','processing')", (feature["id"],)).fetchone()
@@ -1747,8 +1785,22 @@ class FirstMateStore:
                 raise FirstMateError("Execution is not recoverable")
             if assignment["metadata"].get("human_gate", {}).get("status") == "pending":
                 raise FirstMateError("Resolve the internal checkpoint with human direction before recovery", code="human_direction_required")
-            count = assignment["recovery_count"] + 1
-            status = "queued" if count <= 2 else "blocked"
+            exhausted = assignment["recovery_count"] >= 2 and not reset_budget
+            if exhausted and assignment["metadata"].get("recovery_limit_reported"):
+                raise FirstMateError("Recovery limit reached. Use fm_recover with reset_budget=true on a new human direction turn, or fm_revise to replace the assignment.",
+                    code="recovery_exhausted", next_permitted_actions=assignment["next_permitted_actions"])
+            count = 1 if reset_budget else assignment["recovery_count"] + (0 if exhausted else 1)
+            status = "blocked" if exhausted else "queued"
+            metadata = dict(assignment["metadata"])
+            if exhausted:
+                metadata["recovery_limit_reported"] = True
+            if reset_budget:
+                metadata.pop("recovery_limit_reported", None)
+                metadata.update(reliability_reset_generation=generation, recovery_reset_authorization=authorization_message_id, recovery_direction=reason)
+                self._event(feature["id"], "assignment.recovery_reset", "Human direction reset the bounded recovery and handoff budget",
+                    {"assignment_id": assignment_id, "generation": generation, "previous_recovery_count": assignment["recovery_count"],
+                     "authorization_message_id": authorization_message_id, "reason": reason})
+            self._db.execute("UPDATE fm_assignments SET metadata_json=? WHERE id=?", (_json(metadata), assignment_id))
             self._db.execute("UPDATE fm_attempts SET status='interrupted',summary=?,updated_at=? WHERE assignment_id=? AND generation=?", (reason, _now(), assignment_id, generation))
             self._db.execute("UPDATE fm_sessions SET status='retained',updated_at=? WHERE assignment_id=? AND generation=?", (_now(), assignment_id, generation))
             self._db.execute("UPDATE fm_assignments SET status=?,owner=NULL,recovery_count=?,summary=?,verdict=NULL,updated_at=? WHERE id=?", (status, count, reason, _now(), assignment_id))
@@ -1760,7 +1812,7 @@ class FirstMateStore:
                 self._db.execute(f"UPDATE fm_features SET status='running' WHERE id=? AND status IN {resumable} AND NOT EXISTS (SELECT 1 FROM fm_assignments WHERE feature_id=? AND status='recovering')", (assignment["feature_id"], assignment["feature_id"]))
             if status == "blocked":
                 self._db.execute("UPDATE fm_features SET status='blocked' WHERE id=?", (assignment["feature_id"],))
-                self._message(assignment["feature_id"], "system", "Recovery limit reached: " + reason, metadata={"assignment_id": assignment_id, "recovery_count": count})
+                self._message(assignment["feature_id"], "system", "Recovery limit reached. Do not repeat recover. A new human direction can reset the budget with fm_recover(reset_budget=true), or replace work with fm_revise. " + reason, metadata={"assignment_id": assignment_id, "recovery_count": count})
             self._event(assignment["feature_id"], "assignment.recovery_queued" if status == "queued" else "assignment.recovery_exhausted", reason, {"assignment_id": assignment_id, "generation": generation, "recovery_count": count})
             return self._save_receipt(f"recover:{assignment_id}", request_id, payload, self._one("fm_assignments", assignment_id))
 

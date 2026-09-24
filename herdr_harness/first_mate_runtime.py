@@ -111,6 +111,15 @@ For an uncertain dispatch, inspect retained recovery facts. Within the authorize
 stage use fm_recover to request service-verified continuation without a token
 human message; the service may refuse if effects, writer ownership, or a real
 human gate remain uncertain. Use fm_retry for reported failures, not interruptions.
+Read recovery_count, recovery_remaining and next_permitted_actions before advising
+recovery. Never prescribe an exhausted action. On an explicit human request to
+retry after inspecting effects, fm_recover(reset_budget=true) grants a fresh bounded
+budget and resets handoff churn. Use stop_running=true only when the human asks to
+stop the worker and continue; it waits for verified stop even during a wait lease.
+After selective fm_revise, delegate replacement work before completing the revised
+stage. Completed carried assignments alone do not establish that new direction is done.
+Never stash, reset, restore, clean or check out the human's shared working tree to
+satisfy a service guard. Preserve their edits and revise the affected scope.
 Never use Pause/Resume around an unresolved dispatch or an internal human gate.
 """
 WORKER_PROMPT = """You are an independent Pi worker managed by Herdr First Mate.
@@ -151,7 +160,9 @@ For a read_only workspace, Pi's normal configured tools remain available. Treat
 read_only as an instruction not to edit workspace files, commits or branches, and
 do not perform unrelated or unauthorized actions; it is not a security sandbox
 or tool capability boundary. An isolated assignment owns its designated worktree
-within the assignment scope.
+within the assignment scope. Never stash, reset, restore, clean or check out the
+human's shared working tree, even to satisfy a clean-tree precondition. Preserve
+unrelated edits and report the precise guard to the coordinator.
 Use fm_progress at meaningful milestones with completed work, concrete evidence,
 and the exact next step. Before a long build or external wait, record its evidence
 and a bounded wait_seconds lease; do not send empty heartbeats or polling turns.
@@ -213,10 +224,11 @@ def _coordinator_state(snapshot: dict, claim: dict | None = None) -> dict:
                                 for membership in memberships],
         "assignments": [{**_pick(assignment, ("id", "visit_id", "title", "role", "status", "verdict",
                                                    "generation", "input_revision", "summary", "code_revision",
-                                                   "native_session_id", "model_selection")),
+                                                   "native_session_id", "model_selection", "recovery_count", "recovery_limit",
+                                                   "recovery_remaining", "recovery_exhausted", "has_outcome", "next_permitted_actions", "progress_lease")),
                          "operational": _pick(assignment.get("metadata", {}),
                                               ("parent_assignment_id", "source_assignment_id",
-                                               "expected_code_revision", "human_gate", "model_profile"))}
+                                               "expected_code_revision", "human_gate", "model_profile", "progress"))}
                         for assignment in assignments],
         "document_references": [_pick(document, ("id", "visit_id", "assignment_id", "title",
                                                      "media_type", "content_hash", "generation",
@@ -736,6 +748,8 @@ class FirstMateRuntime:
                 "usage": account["assignment_usage"][assignment["id"]],
                 "subtree_usage": account["subtree_usage"][assignment["id"]],
                 "model_selection": selection,
+                "progress_lease": {"active": bool(latest_job and self.reliability.progress_lease_until(latest_job, assignment) > time.time()),
+                                   "request": assignment.get("metadata", {}).get("progress", {})},
             })
         result["sessions"] = account["sessions"][:1000]
         result["sessions_truncated"] = len(account["sessions"]) > 1000
@@ -1120,7 +1134,7 @@ class FirstMateRuntime:
                "session_file": str(session), "prompt": prompt, "claim": claim, "owner": claim.get("owner") or self.owner,
                "pi_bin": self.pi_bin, "extension": str(self.extension), "created_at": utc_now(),
                "context_target": self.context_target, "safety_ledger_version": 1,
-               "timeout_seconds": _bounded(self.environ, "HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS", 180, 30, 600) if kind in {"coordinator", "advisor"} else 86400, "handoff_id": handoff_id,
+               "timeout_seconds": _bounded(self.environ, "HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS", 600, 30, 600) if kind == "coordinator" else (180 if kind == "advisor" else 86400), "handoff_id": handoff_id,
                "parent_job_id": parent_job["id"] if parent_job else None,
                "parent_session_id": parent_session_id,
                "parent_session_source": parent_session_source,
@@ -1142,7 +1156,7 @@ class FirstMateRuntime:
                 predecessors = [j for j in self._jobs() if j["kind"] == "worker" and j["claim"]["id"] == claim["id"]]
                 if predecessors:
                     previous = max(predecessors, key=lambda j: (j["claim"]["generation"], j["created_at"]))
-                    if previous.get("automatic_recovery"):
+                    if previous.get("automatic_recovery") or previous.get("recovery_checkpoint_required"):
                         job["requires_recovery_ack"] = True
                         job["recovery_source_job_id"] = previous["id"]
                         if previous.get("recovery_inspection_required"):
@@ -1488,7 +1502,9 @@ class FirstMateRuntime:
             except DeferredOperation:
                 continue
             except Exception as exc:
-                _write_json(response, {"ok": False, "error": str(exc)[:1000]})
+                _write_json(response, {"ok": False, "error": str(exc)[:1000],
+                    "code": getattr(exc, "code", "tool_failed"),
+                    "next_permitted_actions": getattr(exc, "next_permitted_actions", [])})
 
     def _save_link(self, job: dict, params: dict) -> dict:
         """Agent-facing link registration fenced to the exact live execution.
@@ -1644,7 +1660,15 @@ class FirstMateRuntime:
                                               feature["revision"], authorization_id, followup_stages=followups)
             if action == "fm_delegate":
                 if not feature.get("current_visit_id") or feature["status"] != "running":
-                    raise ValueError("No active human-authorized stage is available")
+                    visits = self.store.snapshot(feature_id)["visits"]
+                    current = next((v for v in visits if v["id"] == feature.get("current_visit_id")), {})
+                    followups = current.get("followup_stages", []) if current.get("status") == "completed" else []
+                    actions = ([{"tool": "fm_begin_stage", "stage_key": followups[0], "requires_human_direction": False}]
+                               if followups else [{"tool": "fm_begin_stage", "requires_human_direction": True}])
+                    if feature["status"] in {"blocked", "recovering"}:
+                        actions = [{"tool": "fm_revise", "requires_human_direction": True}]
+                    raise FirstMateError("No active stage. Begin the recorded follow-up stage, or use human direction to begin/revise a stage before delegating.",
+                                         code="no_active_stage", next_permitted_actions=actions)
                 profile = delegation_profile(params.get("model_profile"), stage_key=self._stage_key(feature))
                 parameters = {**params, "model_profile": profile}
                 metadata = {**self._workspace(feature, parameters, request_id),
@@ -1658,23 +1682,68 @@ class FirstMateRuntime:
                 assignment = self.store.get_assignment(params["assignment_id"])
                 if assignment["feature_id"] != feature_id:
                     raise FirstMateError("Recovery target belongs to another feature")
+                reset_budget, stop_running = params.get("reset_budget", False), params.get("stop_running", False)
+                if not isinstance(reset_budget, bool) or not isinstance(stop_running, bool):
+                    raise FirstMateError("Recovery flags must be booleans", code="invalid_request", status=400)
+                if (reset_budget or stop_running) and claim["role"] != "user":
+                    raise FirstMateError("Stopping a worker or resetting its budget requires human direction", code="human_direction_required")
+                plan = {"generation": assignment["generation"]}
+                if claim["role"] == "user":
+                    plans = job.setdefault("recovery_requests", {})
+                    intent = {"assignment_id": assignment["id"], "reason": params["reason"],
+                              "reset_budget": reset_budget, "stop_running": stop_running}
+                    if request_id not in plans:
+                        plans[request_id] = {**intent, "generation": assignment["generation"]}
+                        self._save_job(job)
+                    plan = plans[request_id]
+                    if any(plan.get(key) != value for key, value in intent.items()):
+                        raise FirstMateError("Recovery request was already used with different content", code="idempotency_conflict")
+                    receipt = self.store.recovery_receipt(assignment["id"], plan["generation"], params["reason"], request_id,
+                        reset_budget=reset_budget, authorization_message_id=claim["id"])
+                    if receipt is not None:
+                        return receipt
+                if assignment["generation"] != plan["generation"]:
+                    raise FirstMateError("Recovery target generation changed; inspect the current execution", code="stale_generation")
+                if assignment["recovery_count"] >= 2 and not reset_budget:
+                    raise FirstMateError("Recovery budget is exhausted. Do not repeat recover. Use reset_budget=true with new human direction, or fm_revise to replace the work.",
+                        code="recovery_exhausted", next_permitted_actions=assignment["next_permitted_actions"])
+                if stop_running:
+                    if (feature["status"] in {"paused", "cancelled", "completed", "awaiting_direction"}
+                            or assignment["metadata"].get("human_gate", {}).get("status") == "pending"
+                            or not self.store.assignment_is_in_current_visit(assignment["id"])):
+                        raise FirstMateError("Stopping for recovery cannot bypass a human checkpoint", code="human_direction_required")
+                    if not self._quiesce(feature_id, "Human requested stop and checkpointed continuation: " + params["reason"], [assignment["id"]]):
+                        raise DeferredOperation()
                 if any(execution["kind"] == "worker" and execution["claim"]["id"] == assignment["id"]
                        and _locked(self._job_dir(execution) / "writer.lock") for execution in self._jobs()):
-                    raise FirstMateError("The prior worker is still alive; pause it before retrying an uncertain dispatch")
+                    raise FirstMateError("The prior worker is alive. Human direction can use fm_recover(stop_running=true) to stop it and continue after verification.",
+                        code="writer_not_stopped", next_permitted_actions=[{"tool": "fm_recover", "assignment_id": assignment["id"], "stop_running": True, "requires_human_direction": True}])
                 if claim["role"] == "system":
-                    # A background update must use the evidence-checked path,
-                    # never the human-directed override for uncertain effects.
                     previous = next((j for j in reversed(self._jobs()) if j["kind"] == "worker" and
                                      j["claim"]["id"] == assignment["id"] and
                                      j["claim"]["generation"] == assignment["generation"]), None)
                     if not previous or not self.reliability.enabled or not self.reliability._eligible(feature):
-                        raise FirstMateError("Verified same-stage recovery is unavailable; retained evidence needs direction", code="human_direction_required")
+                        raise FirstMateError("Verified same-stage recovery is unavailable. Inspect the retained effects; human direction can use fm_recover or fm_revise.",
+                            code="human_direction_required", next_permitted_actions=assignment["next_permitted_actions"])
                     if not self.reliability.recover(previous, {"error": params["reason"]}):
                         raise DeferredOperation()
                     return self.store.get_assignment(assignment["id"])
-                # Explicit human recovery may resolve an inspected uncertainty;
-                # neither path permits a second writer or bypasses a human gate.
-                return self.store.recover_assignment(assignment["id"], assignment["generation"], params["reason"], request_id, verified_stopped=True)
+                if stop_running:
+                    previous = max((j for j in self._jobs() if j["kind"] == "worker" and j["claim"]["id"] == assignment["id"]
+                                    and j["claim"]["generation"] == plan["generation"]), key=lambda j: j["created_at"], default=None)
+                    if previous is None:
+                        raise FirstMateError("Stopped execution evidence is missing; inspect before recovering", code="recovery_evidence_missing")
+                    from .first_mate_backup import capture_backup
+                    if not previous.get("recovery_backup"):
+                        previous["recovery_backup"] = capture_backup(self, previous)
+                    self._recovery_checkpoint(previous)
+                    previous["recovery_checkpoint_required"] = True
+                    previous["recovery_inspection_required"] = bool(previous.get("native_session_id"))
+                    previous["recovery_brief"] = ("Human requested a stop and continuation. Inspect post-stop evidence before any mutation; the stop does not verify external effects. "
+                        + params["reason"] + "\nEffect receipt inspection:\n" + json.dumps(self.reliability._effect_status(previous)["issues"][:20]))
+                    self._save_job(previous)
+                return self.store.recover_assignment(assignment["id"], assignment["generation"], params["reason"], request_id,
+                    verified_stopped=True, reset_budget=reset_budget, authorization_message_id=claim["id"])
             if action == "fm_resolve_gate":
                 assignment = self.store.get_assignment(params["assignment_id"])
                 if assignment["feature_id"] != feature_id:
@@ -1749,9 +1818,9 @@ class FirstMateRuntime:
                                 continue
                             metadata = assignment.get("metadata", {})
                             path = metadata.get("worktree_path")
-                            if path:
-                                if self._git(path, "status", "--porcelain"):
-                                    raise FirstMateError("Cannot carry completed code evidence from a dirty worktree")
+                            if path and (metadata.get("workspace_mode") == "isolated" or metadata.get("expected_code_revision")):
+                                if metadata.get("workspace_mode") == "isolated" and self._git(path, "status", "--porcelain"):
+                                    raise FirstMateError("Cannot carry completed code evidence from a dirty isolated worktree. Preserve all edits and revise that assignment instead; never stash or clean the human checkout.")
                                 carry[assignment["id"]] = self._git(path, "rev-parse", "HEAD")
                     _write_json(prepared_path, carry)
                 result = self.store.revise_feature(feature_id, params["goal"], revisions[request_id], request_id,
@@ -1844,7 +1913,20 @@ class FirstMateRuntime:
             else:
                 reply = state.get("response") or "First Mate could not complete this response. Your message and execution evidence are retained."
                 if state.get("error"):
-                    reply += "\n\nCoordinator needs attention: " + str(state["error"])[:700]
+                    operations = []
+                    for path in sorted((directory / "requests").glob("*.json")):
+                        request = _read_json(path, {})
+                        response = _read_json(directory / "responses" / path.name, {})
+                        operations.append({"tool": request.get("action"), "request_id": path.stem,
+                                           "status": "completed" if response.get("ok") else "refused" if response else "unconfirmed"})
+                    current = self.store.get_feature(job["feature_id"])
+                    self._event(job["feature_id"], "coordinator.interrupted", "Coordinator stopped before finishing its turn; inspect committed operations before continuation.",
+                        {"job_id": job["id"], "operations": operations[-30:], "feature_status": current["status"], "revision": current["revision"]},
+                        "coordinator-interrupted:" + job["id"])
+                    completed = [op["tool"] for op in operations if op["status"] == "completed"]
+                    unconfirmed = [op["tool"] for op in operations if op["status"] == "unconfirmed"]
+                    reply += "\n\nCoordinator stopped: " + str(state["error"])[:700]
+                    reply += " Completed tools: " + (", ".join(completed) or "none") + ". Unconfirmed tools: " + (", ".join(unconfirmed) or "none") + ". Current feature state: " + current["status"] + "."
                 self.store.finish_message(claim["id"], job["owner"], reply=reply,
                                           native_session_id=job.get("native_session_id"))
             self._rotate_coordinator_if_needed(job)
@@ -2062,8 +2144,7 @@ class FirstMateRuntime:
             assignment = self.store.get_assignment(job["claim"]["id"])
             if feature["status"] != "running" or assignment["generation"] != job["claim"]["generation"] or self.reliability.owns(job):
                 continue
-            progress = assignment.get("metadata", {}).get("progress", {})
-            if progress.get("wait_until_epoch", 0) and progress["wait_until_epoch"] > time.time():
+            if self.reliability.progress_lease_until(job, assignment) > time.time():
                 continue
             if job.get("handoff_deadline") and time.time() > job["handoff_deadline"] and not job.get("pending_handoff"):
                 self._control(job, "abort", "Worker did not produce a checkpoint after the advisor's handoff deadline")

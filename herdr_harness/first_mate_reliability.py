@@ -36,14 +36,17 @@ class FirstMateReliability:
         self.root = runtime.root / 'reliability'
         self.enabled = runtime.environ.get('HERDR_FIRST_MATE_AUTO_RECOVERY', 'true').lower() not in {'0', 'false', 'no'}
         self.interval = _bounded(runtime.environ, 'HERDR_FIRST_MATE_SWEEP_SECONDS', 3600, 300, 86400)
+        self.coordinator_interval = _bounded(runtime.environ, 'HERDR_FIRST_MATE_COORDINATOR_GAP_SECONDS', 60, 10, 300)
         self.grace = _bounded(runtime.environ, 'HERDR_FIRST_MATE_NUDGE_GRACE_SECONDS', 300, 60, 3600)
         saved = _read_json(self.root / 'sweep.json', {})
         self.next_sweep = min(epoch(saved.get('next_epoch'), 0), time.time() + self.interval)
         self.last_sweep_at = saved.get('last_sweep_at')
+        self.next_coordinator_check = min(epoch(saved.get('next_coordinator_epoch'), 0), time.time() + self.coordinator_interval)
         self._last_tick = 0.0
 
     def health(self) -> dict:
         return {'automatic_recovery': self.enabled, 'sweep_interval_seconds': self.interval,
+                'coordinator_gap_interval_seconds': self.coordinator_interval,
                 'last_sweep_at': self.last_sweep_at,
                 'next_sweep_at': iso(self.next_sweep) if self.next_sweep else None}
 
@@ -82,9 +85,32 @@ class FirstMateReliability:
         data['children'] = [(a['id'], a['status'], a['verdict']) for a in children]
         return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
+    def progress_lease_until(self, job: dict, assignment: dict) -> float:
+        """A wait belongs to its live requesting execution, never its successor."""
+        progress = assignment.get('metadata', {}).get('progress', {})
+        directory = self.runtime._job_dir(job)
+        if (assignment['generation'] != job['claim']['generation']
+                or progress.get('generation') != job['claim']['generation']
+                or progress.get('native_session_id') != job.get('native_session_id')
+                or epoch(progress.get('recorded_epoch'), 0) < epoch(job['created_at'], float('inf'))
+                or (directory / 'finalized.json').exists()
+                or _read_json(directory / 'status.json', {}).get('ended')
+                or not _locked(directory / 'writer.lock')):
+            return 0
+        return min(epoch(progress.get('wait_until_epoch'), 0), epoch(progress.get('recorded_epoch'), 0) + 3600)
+
     def owns(self, job: dict) -> bool:
+        directory = self.runtime._job_dir(job)
+        assignment = self.store.get_assignment(job['claim']['id'])
+        if (assignment['generation'] != job['claim']['generation']
+                or (directory / 'finalized.json').exists()
+                or _read_json(directory / 'status.json', {}).get('ended')
+                or not _locked(directory / 'writer.lock')):
+            return False
         record = _read_json(self._path(job['claim']['id']), {})
-        return record.get('job_id') == job['id'] and (record.get('phase') in {'assessing', 'nudge_pending', 'nudged', 'stopping'} or record.get('lease_until', 0) > time.time())
+        lease_until = (self.progress_lease_until(job, assignment) if record.get('lease_source') == 'progress'
+                       else epoch(record.get('lease_until'), 0))
+        return record.get('job_id') == job['id'] and (record.get('phase') in {'assessing', 'nudge_pending', 'nudged', 'stopping'} or lease_until > time.time())
 
     def tick(self, jobs: list[dict], *, now: float | None = None):
         if not self.enabled or not self.runtime.capabilities()['available']:
@@ -95,6 +121,7 @@ class FirstMateReliability:
             self._last_tick = time.monotonic()
             now = time.time()
         due = now >= self.next_sweep
+        coordinator_due = now >= self.next_coordinator_check
         for feature in self.store.list_features('all'):
             if not self._eligible(feature):
                 continue
@@ -117,12 +144,16 @@ class FirstMateReliability:
                 active = record.get('job_id') == job['id'] and record.get('phase') in {'assessing', 'nudge_pending', 'nudged', 'stopping'}
                 if due or active:
                     self._inspect(feature, assignment, job, record, now)
-            if due:
+            if coordinator_due:
                 self._coordinator_gap(feature, assignments, jobs, now)
         if due:
             self.last_sweep_at = iso(now)
             self.next_sweep = now + self.interval
-            _write_json(self.root / 'sweep.json', {'last_sweep_at': self.last_sweep_at, 'next_epoch': self.next_sweep})
+        if coordinator_due:
+            self.next_coordinator_check = now + self.coordinator_interval
+        if due or coordinator_due:
+            _write_json(self.root / 'sweep.json', {'last_sweep_at': self.last_sweep_at, 'next_epoch': self.next_sweep,
+                                                 'next_coordinator_epoch': self.next_coordinator_check})
 
     def _inspect(self, feature, assignment, job, record, now):
         directory = self.runtime._job_dir(job)
@@ -134,7 +165,10 @@ class FirstMateReliability:
             return
         fingerprint = self._position(assignment, job)
         progress = assignment.get('metadata', {}).get('progress', {})
-        wait_until = min(epoch(progress.get('wait_until_epoch'), 0), epoch(progress.get('recorded_epoch'), 0) + 3600)
+        wait_until = self.progress_lease_until(job, assignment)
+        if record.get('lease_source') == 'progress' and wait_until <= now:
+            record.pop('lease_until', None)
+            record.pop('lease_source', None)
         if record.get('job_id') != job['id']:
             record = {'job_id': job['id'], 'assignment_id': assignment['id'], 'phase': 'observing',
                       'fingerprint': fingerprint, 'progress_epoch': max(epoch(job['created_at'], now), epoch(progress.get('recorded_epoch'), 0)), 'round': 0}
@@ -151,7 +185,7 @@ class FirstMateReliability:
             _write_json(self._path(assignment['id']), record)
             return
         if wait_until > now:
-            record.update(phase='observing', lease_until=wait_until)
+            record.update(phase='observing', lease_until=wait_until, lease_source='progress')
         elif record.get('phase') == 'nudge_pending':
             self._nudge(job, record, now)
         elif record.get('phase') == 'assessing':
@@ -187,7 +221,8 @@ class FirstMateReliability:
             text = ('Service stability check, not new human authorization. Report concrete progress and the exact next step with fm_progress. '
                     'For a legitimate long build/wait, include evidence and a bounded wait_seconds lease. '
                     'If stuck in context rereads, use the latest checkpoint rather than rereading all history. '
-                    'If this executor cannot continue, save fm_handoff at a safe boundary and end. Preserve all work and human gates. ' + instruction)
+                    'Continue from the checkpoint when possible; do not rotate merely to answer this check. '
+                    'Only if this executor cannot continue, save fm_handoff at a safe boundary and end. Preserve all work and human gates. ' + instruction)
             # Freeze payload and deadline BEFORE creating a control. A crash may
             # lose the advisor response, but can never change the replay payload.
             record.update(phase='nudge_pending', deadline=now + self.grace, nudge_text=text)
@@ -208,7 +243,7 @@ class FirstMateReliability:
                 or assignment['generation'] != parent['claim']['generation'] or not self._eligible(feature)):
             return False
         if params['decision'] == 'continue':
-            record.update(phase='observing', lease_until=time.time() + self.interval)
+            record.update(phase='observing', lease_until=time.time() + self.interval, lease_source='advisor')
             _write_json(self._path(assignment['id']), record)
         elif params['decision'] in {'steer', 'handoff'}:
             instruction = params.get('instruction') or params['reason']
@@ -220,43 +255,62 @@ class FirstMateReliability:
             self.runtime._control(parent, 'abort', params['reason'], request_id='stability-pause:' + advisor['id'])
         return True
 
-    def _effects_safe(self, job):
+    def _effect_status(self, job):
+        def invalid(reason):
+            return {'safe': False, 'has_mutations': True, 'issues': [{'reason': reason}]}
+
         path = self.runtime._job_dir(job) / 'effects.jsonl'
         if job.get('safety_ledger_version') != 1 or not path.is_file() or path.stat().st_size > 8 * 1024 * 1024:
-            return False
+            return invalid('Effect ledger is missing, unsupported, or exceeds the inspection limit')
         try:
             rows = [json.loads(line) for line in path.read_text().splitlines()]
         except (OSError, ValueError):
-            return False
+            return invalid('Effect ledger could not be read as complete JSON records')
         if not rows or rows[0] != {'type': 'ledger_ready', 'version': 1, 'job_id': job['id']}:
-            return False
+            return invalid('Effect ledger does not identify this execution')
         pending = {}
+        started, ended = set(), set()
+        has_mutations = False
         for row in rows[1:]:
             if not isinstance(row, dict) or not isinstance(row.get('id'), str):
-                return False
+                return invalid('Effect ledger contains an invalid call identity')
             if row.get('type') == 'start':
-                if row.get('scope') not in {'workspace', 'external'}:
-                    return False
+                if row.get('scope') not in {'workspace', 'external', 'observational'} or row['id'] in started:
+                    return invalid('Effect ledger contains an invalid scope or duplicate start')
+                started.add(row['id'])
+                has_mutations |= row['scope'] != 'observational'
                 pending[row['id']] = row
             elif row.get('type') == 'end':
                 start = pending.get(row.get('id'))
-                if not start or not isinstance(row.get('is_error'), bool):
-                    return False
-                if not row['is_error'] or start.get('scope') == 'workspace':
+                if not start or not isinstance(row.get('is_error'), bool) or row['id'] in ended:
+                    return invalid('Effect ledger contains an unmatched or invalid completion')
+                ended.add(row['id'])
+                if not row['is_error'] or start.get('scope') in {'workspace', 'observational'}:
                     pending.pop(row['id'], None)
+                else:
+                    # A failed publisher may already have changed its remote.
+                    # An exit code is not proof that nothing happened.
+                    pending[row['id']] = {**start, 'is_error': True}
             else:
-                return False
-        return all(row.get('scope') == 'workspace' for row in pending.values())
+                return invalid('Effect ledger contains an unsupported record')
+        issues = [{'id': row['id'][:200], 'tool': str(row.get('tool', 'unknown'))[:200],
+                   'scope': 'external', 'command': str(row.get('command', ''))[:4000],
+                   'reason': 'External command failed; partial effects require inspection' if row.get('is_error') else 'External command has no completion receipt'}
+                  for row in pending.values() if row['scope'] == 'external']
+        return {'safe': not issues, 'has_mutations': has_mutations, 'issues': issues}
+
+    def _effects_safe(self, job):
+        return self._effect_status(job)['safe']
 
     def _preserve(self, job):
         if job.get('workspace_mode') == 'read_only':
             # read_only is an instruction, not a tool sandbox in current Pi.
             # No receipt or a capable tool in an unmanaged checkout requires
             # inspection; never assume this label proves the workspace unchanged.
-            if not self._effects_safe(job):
+            effects = self._effect_status(job)
+            if not effects['safe']:
                 raise BackupUnavailable('Read-only intent does not prove effect safety. Inspect the missing or uncertain tool receipts before continuation.')
-            rows = (self.runtime._job_dir(job) / 'effects.jsonl').read_text().splitlines()
-            if len(rows) != 1:
+            if effects['has_mutations']:
                 raise BackupUnavailable('An effect-capable tool ran outside a managed isolated worktree. Inspect its workspace and external effects before recovery.')
         if not job.get('recovery_backup'):
             job['recovery_backup'] = capture_backup(self.runtime, job)
@@ -277,6 +331,13 @@ class FirstMateReliability:
         if any(j['kind'] == 'worker' and j['claim']['id'] == assignment['id'] and _locked(self.runtime._job_dir(j) / 'writer.lock') for j in self.runtime._jobs()):
             return False
         self.runtime._require_storage(job['cwd'])
+        effects = self._effect_status(job)
+        if not effects['safe']:
+            self._event(job, 'effect_inspection_required', 'Inspect the retained uncertain calls before continuation; no external effect was replayed.',
+                        'effect-inspection:' + job['id'], {'effects': effects['issues'][:20],
+                            'effects_truncated': len(effects['issues']) > 20,
+                            'next_permitted_actions': [{'action': 'inspect_effects', 'job_id': job['id'],
+                                'ledger_path': str(self.runtime._job_dir(job) / 'effects.jsonl')} ]})
         try:
             self._preserve(job)
         except BackupUnavailable as error:
@@ -342,11 +403,13 @@ class FirstMateReliability:
         fingerprint = self._position(assignment, job)
         path = self.root / ('handoffs-' + assignment['id'] + '.json')
         now = time.time()
-        history = [r for r in _read_json(path, []) if r['at'] >= now - self.interval]
+        reset_generation = assignment.get('metadata', {}).get('reliability_reset_generation')
+        history = [r for r in _read_json(path, []) if r['at'] >= now - self.interval
+                   and (reset_generation is None or r.get('generation', -1) > reset_generation)]
         if not any(r['job_id'] == job['id'] for r in history):
-            history.append({'job_id': job['id'], 'at': now, 'fingerprint': fingerprint})
+            history.append({'job_id': job['id'], 'generation': job['claim']['generation'], 'at': now, 'fingerprint': fingerprint})
             _write_json(path, history[-20:])
         if len(history) >= 4 and len({r['fingerprint'] for r in history[-4:]}) == 1:
-            self._block(self.store.get_feature(job['feature_id']), 'Four handoffs repeated the same progress within one sweep interval. The latest checkpoint is retained; revise the approach instead of rotating again.', 'handoff-churn:' + job['id'])
+            self._block(self.store.get_feature(job['feature_id']), 'Four handoffs repeated the same progress within one sweep interval. The latest checkpoint is retained. Obtain revised human direction, then use fm_recover with reset_budget=true, or fm_revise to change the approach.', 'handoff-churn:' + job['id'])
             return False
         return True

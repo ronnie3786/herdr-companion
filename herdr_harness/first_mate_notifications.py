@@ -103,7 +103,7 @@ class FirstMateNotifications:
                 events = self.store.get_events(feature["id"], after=row[0] if row else 0)
                 with self._db:
                     for event in events["events"]:
-                        if event["type"] not in {"visit.awaiting_direction", "assignment.dispatch_unknown", "assignment.recovery_exhausted", "reliability.blocked"}:
+                        if event["type"] not in {"visit.awaiting_direction", "assignment.dispatch_unknown", "assignment.recovery_exhausted", "reliability.blocked", "coordinator.interrupted"}:
                             continue
                         payload = {"title": feature["title"], "sender": "Herdr · First Mate", "text": event["summary"],
                                    "notify": True, "urgency": "active", "metadata": {"feature_id": feature["id"], "event_id": event["id"]}}

@@ -30,6 +30,88 @@ export function atomicJSON(path: string, value: unknown): void {
   renameSync(temporary, path);
 }
 
+// Deliberately small shell grammar for receipt classification, not a shell
+// sandbox. Unknown syntax and programs remain external effects. In particular,
+// do not infer safety from a command's exit code or its first program alone.
+function probeCommands(command: string): string[][] | undefined {
+  const commands: string[][] = [], words: string[] = [];
+  let word = "", quoted = "", hasWord = false;
+  const finishWord = () => { if (hasWord) words.push(word); word = ""; hasWord = false; };
+  for (let index = 0; index < command.length; index++) {
+    const char = command[index];
+    if (char === "\n" || char === "\r" || char === "\0") return;
+    if (quoted) {
+      if (char === quoted) { quoted = ""; continue; }
+      if (quoted === '"' && (char === "$" || char === "`")) return;
+      if (quoted === '"' && char === "\\" && /[$`"\\]/u.test(command[index + 1] ?? "")) {
+        word += command[++index];
+        continue;
+      }
+      word += char;
+      continue;
+    }
+    if (char === "'" || char === '"') { quoted = char; hasWord = true; continue; }
+    if (/[$`\\<>(){}#]/u.test(char)) return;
+    if (/\s/u.test(char)) { finishWord(); continue; }
+    if (char === "|" || char === "&" || char === ";") {
+      finishWord();
+      if (!words.length) return;
+      commands.push(words.splice(0));
+      if (char === "&" && command[index + 1] !== "&") return;
+      if (char !== ";" && command[index + 1] === char) index++;
+      continue;
+    }
+    word += char;
+    hasWord = true;
+  }
+  if (quoted) return;
+  finishWord();
+  if (!words.length) return;
+  commands.push(words);
+  return commands;
+}
+
+export function observationalShellCommand(command: unknown): boolean {
+  if (typeof command !== "string" || command.length > 16000) return false;
+  const commands = probeCommands(command);
+  return Boolean(commands?.every(([program, ...args]) => {
+    // These programs have no execution/output-file options. Keep utilities
+    // such as find, sed, awk, xargs, curl and arbitrary scripts out of this list.
+    if (["cd", "pwd", "echo", "true", "false", "ls", "grep", "cat", "head", "tail", "wc"].includes(program)) return true;
+    // Modern Bash may evaluate array subscripts in test operands, even when
+    // shell parsing itself saw a literal quoted string.
+    if (program === "test" || program === "[") {
+      const operands = program === "[" ? args.slice(0, -1) : args;
+      return (program !== "[" || args.at(-1) === "]")
+        && !operands.some(arg => arg === "-v" || /[$`\[\]]/u.test(arg));
+    }
+    // rg may execute a preprocessor from configuration or command-line flags.
+    if (program === "rg") return args.includes("--no-config") && !args.some(arg => /^(?:--pre(?:=|$)|--hostname-bin(?:=|$)|--search-zip$|-[^-]*z)/u.test(arg));
+    // Git can run configured hooks, pagers and diff drivers. Only this explicit
+    // hook-free status form is recognized; other invocations stay external.
+    return program === "git" && args[0] === "--no-pager" && args[1] === "--no-optional-locks" && args[2] === "-c"
+      && args[3] === "core.fsmonitor=false" && args[4] === "status"
+      && args.slice(5).every(arg => !arg.startsWith("-") || /^(?:--short|--porcelain(?:=v?[12])?|--branch|-s|-b|--untracked-files(?:=(?:no|normal|all))?|--ignored|--)$/u.test(arg));
+  }));
+}
+
+function destructiveSharedGit(command: unknown): boolean {
+  if (typeof command !== "string") return false;
+  // A guardrail for the common cleanup trap, not a replacement for isolation.
+  // Scripts and arbitrary tool implementations are still effect-capable.
+  const commands = probeCommands(command);
+  if (commands) return commands.some(([program, ...args]) => {
+    if (program.split("/").at(-1) !== "git") return false;
+    for (let index = 0; index < args.length; index++) {
+      if (["-c", "-C", "--git-dir", "--work-tree", "--namespace"].includes(args[index])) { index++; continue; }
+      if (args[index].startsWith("-")) continue;
+      return ["stash", "reset", "checkout", "restore", "clean"].includes(args[index]);
+    }
+    return false;
+  });
+  return /(?:^|[\s;&|/])git\s+[^;\n|&]*?\b(?:stash|reset|checkout|restore|clean)\b/u.test(command);
+}
+
 export function createFirstMateExtension(environment: NodeJS.ProcessEnv = process.env) {
   return (pi: ExtensionAPI): void => {
     const directory = environment.HERDR_FIRST_MATE_JOB_DIR;
@@ -106,7 +188,11 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
         await new Promise((done) => setTimeout(done, 100));
       }
       const response = JSON.parse(readFileSync(output, "utf8"));
-      if (!response.ok) throw new Error(response.error || "First Mate rejected the operation");
+      if (!response.ok) throw new Error(JSON.stringify({
+        message: response.error || "First Mate rejected the operation",
+        code: response.code || "first_mate_conflict",
+        next_permitted_actions: response.next_permitted_actions || [],
+      }));
       return { content: [{ type: "text" as const, text: JSON.stringify(response.result) }], details: response.result };
     };
     const register = (name: string, description: string, parameters: any) => pi.registerTool({
@@ -144,7 +230,10 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
         title: text("Human-readable stage name"),
         followup_stages: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 100 }), { maxItems: 8, description: "Ordered stage keys explicitly authorized by this human message, not inferred from a suggestion" })),
       }));
-      register("fm_recover", "Request same-stage continuation of an interrupted assignment. System turns require verified backup, effects, stopped writer and recovery assessment. Never replay an uncertain external effect or bypass a real human gate.", Type.Object({ assignment_id: text("Interrupted assignment ID"), reason: text("Retained evidence and next action to inspect") }));
+      register("fm_recover", "Request same-stage continuation of an interrupted assignment. System turns require verified backup, effects, stopped writer and recovery assessment. Never replay an uncertain external effect or bypass a real human gate.", Type.Object({ assignment_id: text("Interrupted assignment ID"), reason: text("Retained evidence and next action to inspect"),
+        reset_budget: Type.Optional(Type.Boolean({ description: "Only on explicit human direction: reset exhausted recovery/handoff attempts with revised instructions and retained evidence" })),
+        stop_running: Type.Optional(Type.Boolean({ description: "Only on explicit human direction: end the live wait lease and gracefully stop this worker, verify its stop, then recover" })),
+      }));
       register("fm_resolve_gate", "Release an explicit internal human checkpoint only using the current human's direction. Background outcomes can never release a gate.", Type.Object({ assignment_id: text("Assignment with a pending human gate"), instruction: text("The human's decision and resulting instructions") }));
       register("fm_steer", "Send a bounded clarification or correction to an active worker in the current authorized stage. Returns immediately; delivery is logged.", Type.Object({ assignment_id: text("Target assignment ID"), text: text("Clarification within the authorized scope") }));
       register("fm_retry", "Repeat a blocked or failed assignment within this authorized stage after repairs or new instructions. Prior attempts and findings remain retained.", Type.Object({
@@ -220,6 +309,9 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
       if (restrictedAdvisor && !["read", "ls", "find", "grep", "fm_status", "fm_read_document", "fm_read_session", "fm_advice", "fm_recovery_brief"].includes(event.toolName)) {
         return { block: true, reason: "Automatic recovery assessment is read-only; return evidence through the advisor tools." };
       }
+      if (job.workspace_mode === "read_only" && event.toolName === "bash" && destructiveSharedGit(event.input?.command)) {
+        return { block: true, reason: "Do not stash, reset, checkout, restore or clean the human's shared checkout. Preserve existing edits and inspect them read-only; request an isolated implementation workspace when needed." };
+      }
       if (job.safety_ledger_version === 1 && !event.toolName.startsWith("fm_") && !["read", "grep", "find", "ls"].includes(event.toolName)) {
         // Explicitly block on failure: extension-handler exceptions alone are
         // not an authorization boundary. Persist before permitting the effect.
@@ -227,8 +319,10 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
           if (!existsSync(join(root, "effects.jsonl"))) {
             retainEffect({ type: "ledger_ready", version: 1, job_id: job.id });
           }
+          const observational = event.toolName === "bash" && observationalShellCommand(event.input?.command);
           retainEffect({ type: "start", id: event.toolCallId, tool: event.toolName,
-            scope: ["edit", "write"].includes(event.toolName) && workspaceEffect(event.input) ? "workspace" : "external" });
+            scope: observational ? "observational" : ["edit", "write"].includes(event.toolName) && workspaceEffect(event.input) ? "workspace" : "external",
+            ...(event.toolName === "bash" && typeof event.input?.command === "string" ? { command: event.input.command.slice(0, 4000) } : {}) });
           effects.add(event.toolCallId);
         } catch {
           return { block: true, reason: "The durable effect ledger is unavailable. Preserve work and wait for storage recovery; this action was not started." };

@@ -194,3 +194,10 @@ use the existing `POST /api/v1/first-mate/features/:id/actions` route with
 idempotent and do not wake, pause, cancel, resume, or otherwise steer agents.
 The archive fields are additive, so older clients ignore them safely. New native
 clients keep archive controls unavailable when the capability is absent.
+
+First Mate records are scoped to the selected companion host. A list from one
+Mac does not include another Mac's features. Select that host's connection using
+`--base-url` and `--token-file`, or the appropriate private configuration profile.
+`events --after` takes the integer event sequence cursor, not a timestamp. A
+finished terminal pane is not an assignment verdict; inspect the recorded outcome
+and documents before retrying work.

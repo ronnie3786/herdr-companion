@@ -625,7 +625,7 @@ class FirstMateRuntimeTests(unittest.TestCase):
         assignment = self.store.snapshot(feature['id'])['assignments'][0]
         self.assertEqual(assignment['status'], 'blocked')
         self.assertEqual(assignment['generation'], 3)
-        self.assertEqual(assignment['recovery_count'], 3)
+        self.assertEqual(assignment['recovery_count'], 2)
         self.assertEqual(len(self.store.snapshot(feature['id'])['documents']), 0)
 
     def test_completion_between_status_read_and_lock_check_is_not_unknown(self):

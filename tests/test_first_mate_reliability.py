@@ -134,6 +134,45 @@ class FirstMateReliabilityTests(unittest.TestCase):
         launch.assert_not_called()
         self.assertFalse((self.runtime._job_dir(job) / 'controls').exists())
 
+    def test_wait_lease_expires_with_requester_and_cannot_transfer_to_a_new_job(self):
+        feature, assignment, job, lock, now = self.stalled()
+        self.runtime._tool(job, 'fm_progress', {'summary':'Building', 'next_action':'Inspect result', 'evidence':'Compilation phase 3 of 5', 'wait_seconds':3600}, 'lease')
+        assignment = self.store.get_assignment(assignment['id'])
+        controller = self.runtime.reliability
+        self.assertGreater(controller.progress_lease_until(job, assignment), now)
+        self.assertEqual(controller.progress_lease_until({**job, 'created_at':now+100}, assignment), 0)
+        self.assertEqual(controller.progress_lease_until({**job, 'native_session_id':'new-native'}, assignment), 0)
+        changed = {**assignment, 'generation':assignment['generation']+1}
+        self.assertEqual(controller.progress_lease_until(job, changed), 0)
+        record = _read_json(controller._path(assignment['id']))
+        _write_json(controller._path(assignment['id']), {**record, 'lease_until':now+3600})
+        self.assertTrue(controller.owns(job))
+        _write_json(self.runtime._job_dir(job)/'status.json', {'ended':True})
+        self.assertEqual(controller.progress_lease_until(job, assignment), 0)
+        self.assertFalse(controller.owns(job))
+        _write_json(self.runtime._job_dir(job)/'status.json', {'ended':False})
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        self.assertEqual(controller.progress_lease_until(job, assignment), 0)
+        self.assertFalse(controller.owns(job))
+
+    def test_clearing_progress_lease_releases_watchdog_without_clearing_advisor_grants(self):
+        feature, assignment, job, lock, now = self.stalled()
+        controller = self.runtime.reliability
+        params = {'summary':'Building', 'next_action':'Inspect result', 'evidence':'Phase 3 of 5', 'wait_seconds':3600}
+        self.runtime._tool(job, 'fm_progress', params, 'start-wait')
+        with patch.object(self.runtime, '_launch'):
+            controller.tick(self.runtime._jobs(), now=now+1)
+        self.assertEqual(_read_json(controller._path(assignment['id']))['lease_source'], 'progress')
+        self.runtime._tool(job, 'fm_progress', {**params, 'wait_seconds':0}, 'clear-wait')
+        self.assertFalse(controller.owns(job), 'The cached progress lease must not override its current receipt')
+        assignment = self.store.get_assignment(assignment['id'])
+        record = _read_json(controller._path(assignment['id']))
+        with patch.object(self.runtime, '_launch'):
+            controller._inspect(feature, assignment, job, record, now+2)
+        self.assertNotIn('lease_until', _read_json(controller._path(assignment['id'])))
+        _write_json(controller._path(assignment['id']), {**record, 'phase':'observing', 'lease_until':now+3600, 'lease_source':'advisor'})
+        self.assertTrue(controller.owns(job), 'An independent advisor lease is not a worker progress lease')
+
     def test_changed_progress_clears_nudge_but_identical_heartbeats_do_not(self):
         feature, assignment, job, lock, now = self.stalled()
         controller = self.runtime.reliability
@@ -293,6 +332,47 @@ class FirstMateReliabilityTests(unittest.TestCase):
         (self.runtime._job_dir(job) / 'effects.jsonl').write_text('{"partial":')
         self.assertFalse(self.runtime.reliability._effects_safe(job))
 
+    def test_observational_nonzero_or_interrupted_probe_does_not_poison_read_only_recovery(self):
+        feature, assignment, job = self.worker()
+        start = {'type':'start', 'id':'probe', 'tool':'bash', 'scope':'observational', 'command':'grep absent README.md'}
+        for rows in ([start], [start, {'type':'end','id':'probe','is_error':True}]):
+            self.ledger(job, rows)
+            self.assertTrue(self.runtime.reliability._effects_safe(job))
+            self.runtime.reliability._preserve(job)
+        self.assertFalse(self.runtime.reliability._effect_status(job)['has_mutations'])
+
+    def test_external_failure_inspection_evidence_names_exact_call_and_command(self):
+        feature, assignment, job = self.isolated()
+        self.ledger(job, [{'type':'start','id':'publish','tool':'bash','scope':'external', 'command':'synthetic-publish artifact'},
+                          {'type':'end','id':'publish','is_error':True}])
+        with patch.object(self.runtime, '_launch') as launch:
+            self.assertFalse(self.runtime.reliability.recover(job, {}))
+        launch.assert_not_called()
+        event = next(e for e in self.store.get_events(feature['id'])['events'] if e['type'] == 'reliability.effect_inspection_required')
+        self.assertEqual(event['payload']['effects'][0]['id'], 'publish')
+        self.assertEqual(event['payload']['effects'][0]['command'], 'synthetic-publish artifact')
+        self.assertEqual(event['payload']['next_permitted_actions'][0]['action'], 'inspect_effects')
+
+    def test_effect_inspection_projection_bounds_fields_and_drops_arbitrary_ledger_payload(self):
+        feature, assignment, job = self.isolated()
+        self.ledger(job, [{'type':'start','id':'call-'+'i'*2000,'tool':'t'*2000,'scope':'external',
+                           'command':'x'*50000, 'unrelated_payload':'y'*50000}])
+        effects = self.runtime.reliability._effect_status(job)
+        self.assertFalse(effects['safe'])
+        issue = effects['issues'][0]
+        self.assertEqual(len(issue['id']), 200)
+        self.assertEqual(len(issue['tool']), 200)
+        self.assertEqual(len(issue['command']), 4000)
+        self.assertNotIn('unrelated_payload', issue)
+        self.assertLess(len(json.dumps(issue)), 5000)
+
+    def test_duplicate_effect_completions_cannot_clear_a_failed_mutation(self):
+        feature, assignment, job = self.isolated()
+        self.ledger(job, [{'type':'start','id':'publish','tool':'bash','scope':'external'},
+                          {'type':'end','id':'publish','is_error':True},
+                          {'type':'end','id':'publish','is_error':False}])
+        self.assertFalse(self.runtime.reliability._effects_safe(job))
+
     def test_pending_human_gate_prevents_automatic_recovery_even_after_verified_stop(self):
         feature, assignment, job = self.worker()
         self.store.request_human_gate(assignment['id'], 1, assignment['native_session_id'], 'Explicit approval required', 'human-gate')
@@ -356,6 +436,20 @@ class FirstMateReliabilityTests(unittest.TestCase):
         self.assertEqual(self.store.get_feature(feature['id'])['status'], 'blocked')
         self.assertEqual(self.store.get_assignment(assignment['id'])['generation'], 1)
 
+    def test_explicit_handoff_reset_starts_a_new_bounded_history(self):
+        feature, assignment, job = self.worker()
+        path = self.runtime.reliability.root / ('handoffs-' + assignment['id'] + '.json')
+        fingerprint = self.runtime.reliability._position(assignment, job)
+        _write_json(path, [{'job_id':f'old-{i}', 'at':time.time(), 'fingerprint':fingerprint} for i in range(4)])
+        reset = {**assignment, 'generation':2,
+                 'metadata':{**assignment['metadata'], 'reliability_reset_generation':1}}
+        successor = {**job, 'id':'new-generation', 'claim':{**job['claim'], 'generation':2}}
+        with patch.object(self.store, 'get_assignment', return_value=reset):
+            self.assertTrue(self.runtime.reliability.allow_handoff(successor))
+        history = _read_json(path)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]['generation'], 2)
+
     def test_orphaned_stage_coordinator_is_kickstarted_without_authorizing_next_stage(self):
         feature, assignment, job = self.worker()
         self.store.record_outcome(assignment['id'], 1, assignment['native_session_id'], 1, 'success', 'Plan complete', 'outcome')
@@ -364,6 +458,7 @@ class FirstMateReliabilityTests(unittest.TestCase):
             self.store.finish_message(claim['id'], 'drain-owner')
         _write_json(self.runtime._job_dir(job)/'finalized.json', {'at':'test'})
         controller = self.runtime.reliability
+        controller.next_sweep = time.time() + 3600
         with patch.object(self.runtime, '_launch'):
             controller.tick(self.runtime._jobs(), now=time.time())
             controller.tick(self.runtime._jobs(), now=time.time()+1)
@@ -372,6 +467,8 @@ class FirstMateReliabilityTests(unittest.TestCase):
         self.assertEqual(pending[0]['role'], 'system')
         self.assertIn('Do not begin another stage', pending[0]['text'])
         self.assertEqual(len(self.store.snapshot(feature['id'])['visits']), 1)
+        self.assertEqual(controller.coordinator_interval, 60)
+        self.assertGreater(controller.next_sweep, time.time()+3500)
 
     def test_backup_reuse_and_symlink_capture_do_not_read_outside_worktree(self):
         feature, assignment, job = self.isolated()

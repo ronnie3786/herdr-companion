@@ -928,7 +928,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             except ActiveWorkError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except FirstMateError as exc:
-                self._error(exc.status, exc.code, str(exc))
+                self._json_response({"ok": False, "error": {"code": exc.code, "message": str(exc),
+                                     "next_permitted_actions": exc.next_permitted_actions}}, exc.status)
             except PRReviewError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except IssueReportError as exc:

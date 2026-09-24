@@ -529,6 +529,12 @@ final class HerdrHudSession {
         await restoreTask?.value
     }
 
+    /// Awaits the bounded terminal reconciliation window, so a test can prove
+    /// the window ended instead of inferring its bound from elapsed time.
+    func awaitTerminalMetadataReconciliationForTesting() async {
+        await terminalMetadataReconciliationTask?.value
+    }
+
     /// The exact file this session debounces into, so a test can prove a
     /// corrected metadata aggregate reached disk rather than only memory.
     var persistenceURLForTesting: URL { storeURL }
@@ -2031,8 +2037,9 @@ final class HerdrHudSession {
     /// a replaced conversation or a newer accepted turn stops the task instead
     /// of letting an old report leak into the new aggregate. Only a latest run
     /// that can still gain a cost is scheduled: a cancellation is always
-    /// rechecked because its report may be revised, and any other terminal
-    /// run only while its cost is still unknown.
+    /// rechecked for the whole bounded window because its report may be
+    /// revised after two matching samples, and any other terminal run only
+    /// while its cost is still unknown.
     private func scheduleTerminalMetadataReconciliation(
         run: HeadlessAgentRun,
         machineID: String,
@@ -2066,9 +2073,19 @@ final class HerdrHudSession {
                 if self.applyReconciledTerminalRun(report, identity: identity) {
                     await self.schedulePersistenceSave()
                 }
-                // Two consecutive terminal reports that agree on the cost
-                // prove the drain has settled; stop before the full bound.
-                if let cost = report.costUSD, let settledCost, cost == settledCost { return }
+                // For any non-cancelled terminal run, two consecutive reports
+                // that agree on the cost prove the record has settled, so the
+                // full bound is unnecessary. A cancellation never leaves on
+                // agreement: the server marks it terminal before stdout (and
+                // its cost report) finishes draining, so two equal early
+                // samples can still be revised (for example $0.05, $0.05,
+                // then $0.11). It always uses the bounded window instead.
+                if run.status != .cancelled,
+                   let cost = report.costUSD,
+                   let settledCost,
+                   cost == settledCost {
+                    return
+                }
                 settledCost = report.costUSD
             }
         }

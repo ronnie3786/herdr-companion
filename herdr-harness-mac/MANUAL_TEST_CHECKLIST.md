@@ -126,6 +126,16 @@ Once Apple push is configured and the updated iOS app is installed with notifica
 - [ ] With the iOS app connected, verify its local fallback also waits a minute and that reading the session clears matching notifications when read state syncs.
 
 
+## Pi compaction completion
+
+Use a disposable synthetic Pi chat served by a companion that provides Pi snapshots. These checks cover the cue beside the prompt, not the transcript's summary entry. A reviewed source tree and generated render artifacts are layout evidence, not installed-app verification.
+
+- [ ] **Manual success:** Ask Pi to compact (the More → Compact chat action). While it runs, the composer keeps its compacting spinner and Send stays unavailable. When Pi confirms success, a checkmark and **Context compacted** replace the spinner beside the prompt, even when no assistant reply follows. Type a draft and confirm the cue and its readiness line stay; send the draft and confirm only the cue disappears while the transcript's **Context compacted** entry remains.
+- [ ] **Automatic and overflow:** Let a long synthetic session cross the automatic threshold, and separately force an overflow compaction. Both end in the same completed cue. Its readiness line must say **Ready for your next message.** only when the session is connected and idle; while Pi is still working it must describe the available steer/follow-up modes instead of claiming idle.
+- [ ] **Failure, cancellation, and ambiguous endings:** Cancel a manual compaction and force a compaction failure. The spinner clears and no completed cue appears. If a cue existed before the new attempt, it must not come back after the failed or ambiguous attempt.
+- [ ] **Reconnect and session scoping:** With a completed cue, disconnect the companion or refresh the chat. The cue may remain, but the readiness line must read **Pi is offline. Reconnect before sending a message.** After reconnecting to the same session it returns to **Ready for your next message.** Switch to another chat or session and back, and navigate to another branch: no unrelated cue may appear.
+- [ ] **Draft preservation and explicit send:** With a completed cue and a staged attachment, confirm Send is enabled only for a valid non-empty draft, the draft and attachment survive compaction, and nothing is sent until you explicitly press Send or Return. A failed send must leave the cue and the draft in place.
+
 ## Chat activity, HUD controls, and navigation
 
 Use synthetic demo data or a disposable test conversation for these checks.

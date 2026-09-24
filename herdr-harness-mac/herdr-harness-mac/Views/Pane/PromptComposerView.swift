@@ -197,8 +197,8 @@ struct PromptComposerView: View {
                 )
             }
 
-            if let activity = piConfiguration?.compactionActivity {
-                PiCompactionStatusBar(activity: activity)
+            if let compaction = piConfiguration?.compactionPresentation {
+                PiCompactionStatusBar(presentation: compaction)
                     .transition(semanticControlTransition)
             }
 
@@ -224,7 +224,7 @@ struct PromptComposerView: View {
         )
         .animation(
             reduceMotion ? nil : .snappy(duration: 0.24),
-            value: piConfiguration?.compactionActivity
+            value: piConfiguration?.compactionPresentation
         )
         .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: quickVoiceCapture.phase)
         .animation(reduceMotion ? nil : .snappy(duration: 0.16), value: skillsPalette.isVisible)

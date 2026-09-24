@@ -180,6 +180,7 @@ struct PiChatView: View {
             capabilities: composerPane.piSemantic?.capabilities ?? .unavailable,
             phase: store.phase,
             compactionActivity: store.compactionActivity,
+            compactionCompletion: store.compactionCompletion,
             isConnected: store.canSendCommands,
             isSubmitting: store.isSubmitting,
             isAborting: store.isAborting,

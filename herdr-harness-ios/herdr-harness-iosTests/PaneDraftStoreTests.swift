@@ -38,6 +38,21 @@ struct PaneDraftStoreTests {
     }
 
     @MainActor
+    @Test("Completing a compaction never clears an unsent draft")
+    func compactionCompletionDoesNotTouchDrafts() {
+        let store = PaneDraftStore()
+        let pane = "desktop|w1:p1"
+        // The composer clears a draft only through this explicit
+        // compare-and-clear after an accepted submission. Nothing related to
+        // compaction completion calls it, so the draft stays staged.
+        store.setText("survives compaction", for: pane)
+        #expect(!store.clearText(for: pane, ifUnchanged: "a different draft"))
+        #expect(store.text(for: pane) == "survives compaction")
+        #expect(store.clearText(for: pane, ifUnchanged: "survives compaction"))
+        #expect(store.text(for: pane).isEmpty)
+    }
+
+    @MainActor
     @Test("Empty refreshes preserve drafts and real snapshots prune only their machine")
     func reconciliationIsMachineScopedAndEmptySafe() {
         let store = PaneDraftStore()

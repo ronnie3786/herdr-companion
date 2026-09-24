@@ -22,13 +22,43 @@ struct PiConversationReducer: Sendable {
     private(set) var currentModel: PiModelIdentity?
     private(set) var thinkingLevel: String?
     private(set) var compactionActivity: PiCompactionActivity?
+    /// Confirmed success evidence for the current session, separate from the
+    /// in-progress activity above. Only an explicit `session_compact` event or
+    /// a persisted `compaction` entry creates it.
+    private(set) var compactionCompletion: PiCompactionCompletion?
+    /// Evidence of a completion that a newer compaction attempt superseded. A
+    /// later snapshot that still projects only this evidence must not revive
+    /// the old cue as the newer attempt's success.
+    private(set) var suppressedCompactionEvidence: PiCompactionCompletion.Evidence?
+    /// In-memory, session-scoped acknowledgement. A successful local
+    /// submission sets it so repeated snapshots cannot restore the composer
+    /// cue the user already dismissed.
+    private(set) var acknowledgedCompactionEvidence: PiCompactionCompletion.Evidence?
+    private(set) var acknowledgedCompactionSessionID: String?
 
     private var activeTurnID: String?
     private var activeMessageID: String?
     private var seenCursors: Set<String> = []
     private var cursorOrder: [String] = []
 
-    mutating func replace(with snapshot: PiConversationSnapshot) {
+    /// Replaces the projection with an authoritative snapshot.
+    ///
+    /// - Parameters:
+    ///   - pendingCompactionCompletion: Live `session_compact` evidence captured
+    ///     before this recovery. It only applies to this private candidate when
+    ///     the snapshot itself has no persisted evidence (for example a
+    ///     truncated snapshot that omitted the entry). Publication is still the
+    ///     store's commit decision; nothing here advances the committed cursor.
+    ///   - allowsCompactionCarryOver: `false` at a confirmed session, lineage,
+    ///     or branch boundary, where a previous cue must not leak into the new
+    ///     context.
+    mutating func replace(
+        with snapshot: PiConversationSnapshot,
+        pendingCompactionCompletion: PiCompactionCompletion? = nil,
+        allowsCompactionCarryOver: Bool = true
+    ) {
+        let previousSessionID = sessionID
+        let previousCompactionCompletion = compactionCompletion
         turns.removeAll(keepingCapacity: true)
         pendingInteractions.removeAll(keepingCapacity: true)
         seenCursors.removeAll(keepingCapacity: true)
@@ -47,9 +77,24 @@ struct PiConversationReducer: Sendable {
             ? PiCompactionActivity(snapshotState: snapshot.state)
             : nil
 
+        var snapshotCompactionCompletion: PiCompactionCompletion?
         for entry in snapshot.entries {
+            if let completion = PiCompactionCompletion(entry: entry, sessionID: sessionID) {
+                // Entries are chronological, so the newest compaction wins.
+                snapshotCompactionCompletion = completion
+            }
             projectSessionEntry(entry)
         }
+        reconcileCompactionCompletion(
+            snapshot: snapshotCompactionCompletion,
+            previous: previousCompactionCompletion,
+            previousSessionID: previousSessionID,
+            allowsCarryOver: allowsCompactionCarryOver
+        )
+        applyPendingCompactionCompletion(
+            allowsCompactionCarryOver ? pendingCompactionCompletion : nil,
+            snapshotProvidesEvidence: snapshotCompactionCompletion != nil
+        )
         pendingInteractions = snapshot.pendingInteractions.compactMap(Self.interaction(from:))
         phase = Self.isWorking(snapshot.state) ? .working : .idle
         if phase == .idle {
@@ -120,10 +165,14 @@ struct PiConversationReducer: Sendable {
             return .none
         case "session_before_compact":
             let activity = PiCompactionActivity(event: event)
+            suppressCompactionCompletion()
             guard activity != compactionActivity else { return .none }
             compactionActivity = activity
             return .compactionChanged
         case "session_compact_end":
+            // Terminal outcomes (completed, failed, aborted, settled) are never
+            // success proof. Only an explicit session_compact event or a
+            // persisted entry may publish a completion.
             guard compactionActivity != nil else { return .none }
             compactionActivity = nil
             return .compactionChanged
@@ -135,7 +184,10 @@ struct PiConversationReducer: Sendable {
         case "session_start", "session_switch":
             let hadCompaction = compactionActivity != nil
             compactionActivity = nil
-            if sessionChanged(by: event) { return .needsSnapshot }
+            if sessionChanged(by: event) {
+                clearCompactionCompletion()
+                return .needsSnapshot
+            }
             return hadCompaction ? .compactionChanged : .none
         case "session_shutdown":
             guard compactionActivity != nil else { return .none }
@@ -219,6 +271,107 @@ struct PiConversationReducer: Sendable {
         guard !connected, compactionActivity != nil else { return .none }
         compactionActivity = nil
         return .compactionChanged
+    }
+
+    /// Records the in-memory acknowledgement that dismisses the composer cue.
+    /// Only an accepted local submission calls this; typing, failed sends,
+    /// refreshes, and elapsed time do not.
+    mutating func acknowledgeCompactionCompletion() {
+        guard let completion = compactionCompletion else { return }
+        acknowledgedCompactionEvidence = completion.evidence
+        acknowledgedCompactionSessionID = sessionID
+        compactionCompletion = completion.acknowledged(true)
+    }
+
+    /// Adopts live `session_compact` evidence on a private recovery candidate.
+    /// A persisted snapshot entry is the newest known success; when the
+    /// snapshot has none (truncated, or an oversized entry was omitted), the
+    /// scoped live event is the fallback. Nothing here publishes by itself.
+    mutating func applyPendingCompactionCompletion(
+        _ completion: PiCompactionCompletion?,
+        snapshotProvidesEvidence: Bool = false
+    ) {
+        guard let completion,
+              completion.evidence != suppressedCompactionEvidence,
+              completion.belongsTo(sessionID: sessionID)
+        else { return }
+        if compactionActivity != nil {
+            // A newer attempt is already running: the older success is
+            // superseded and must not appear as this attempt's completion.
+            suppressedCompactionEvidence = completion.evidence
+            return
+        }
+        if snapshotProvidesEvidence {
+            guard let projected = compactionCompletion else { return }
+            // A persisted entry is authoritative. Only adopt the live reason
+            // for the exact same compaction; a different entry is either the
+            // one the cursor fallback already described or a newer success,
+            // and there is no durable evidence that could prove which.
+            if projected.evidence == completion.evidence {
+                compactionCompletion = projected.merging(reason: completion.reason)
+            }
+            return
+        }
+        // No persisted evidence in this snapshot: the live event is the newest
+        // confirmed success and replaces a cue carried over from an earlier
+        // compaction. A matching acknowledgement still hides it.
+        let acknowledged = completion.evidence == acknowledgedCompactionEvidence
+            && acknowledgedCompactionSessionID == sessionID
+        compactionCompletion = completion.acknowledged(acknowledged)
+    }
+
+    /// A confirmed success replaces any older cue; a snapshot that still
+    /// projects exactly the superseded evidence stays hidden.
+    private mutating func reconcileCompactionCompletion(
+        snapshot completion: PiCompactionCompletion?,
+        previous: PiCompactionCompletion?,
+        previousSessionID: String?,
+        allowsCarryOver: Bool
+    ) {
+        if previousSessionID != sessionID {
+            clearCompactionCompletion()
+        }
+
+        if let completion {
+            // During an active compaction every projected entry is older than
+            // the attempt in progress, so it is superseded rather than shown.
+            guard compactionActivity == nil,
+                  completion.evidence != suppressedCompactionEvidence
+            else {
+                suppressedCompactionEvidence = completion.evidence
+                compactionCompletion = nil
+                return
+            }
+            let acknowledged = completion.evidence == acknowledgedCompactionEvidence
+                && acknowledgedCompactionSessionID == sessionID
+            compactionCompletion = completion.acknowledged(acknowledged)
+            suppressedCompactionEvidence = nil
+            return
+        }
+
+        guard allowsCarryOver, previousSessionID == sessionID, let previous else {
+            compactionCompletion = nil
+            return
+        }
+        if compactionActivity != nil || previous.evidence == suppressedCompactionEvidence {
+            suppressedCompactionEvidence = previous.evidence
+            compactionCompletion = nil
+            return
+        }
+        compactionCompletion = previous
+    }
+
+    private mutating func suppressCompactionCompletion() {
+        guard let completion = compactionCompletion else { return }
+        suppressedCompactionEvidence = completion.evidence
+        compactionCompletion = nil
+    }
+
+    private mutating func clearCompactionCompletion() {
+        compactionCompletion = nil
+        suppressedCompactionEvidence = nil
+        acknowledgedCompactionEvidence = nil
+        acknowledgedCompactionSessionID = nil
     }
 
     mutating func removeInteraction(id: String) {

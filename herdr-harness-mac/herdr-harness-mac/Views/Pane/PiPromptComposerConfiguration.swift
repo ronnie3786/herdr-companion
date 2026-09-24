@@ -6,6 +6,9 @@ struct PiPromptComposerConfiguration {
     let capabilities: PiSemanticCapabilities
     let phase: PiConversationPhase
     let compactionActivity: PiCompactionActivity?
+    /// Confirmed compaction-completion evidence. Defaulted so existing composer
+    /// fixtures and other destinations keep building unchanged.
+    var compactionCompletion: PiCompactionCompletion? = nil
     let isConnected: Bool
     let isSubmitting: Bool
     let isAborting: Bool
@@ -25,6 +28,20 @@ struct PiPromptComposerConfiguration {
 
     var isCompacting: Bool {
         compactionActivity != nil
+    }
+
+    /// The composer's compaction status area: progress or the confirmed
+    /// completion cue. `nil` when neither applies.
+    var compactionPresentation: PiCompactionStatusPresentation? {
+        PiCompactionStatusPresentation.resolve(
+            activity: compactionActivity,
+            completion: compactionCompletion,
+            readiness: PiCompactionReadiness(
+                isConnected: isConnected,
+                phase: phase,
+                availableDispositions: availableDispositions
+            )
+        )
     }
 
     var availableDispositions: [PiPromptDisposition] {
@@ -86,6 +103,7 @@ extension PiPromptComposerConfiguration: Equatable {
         lhs.capabilities == rhs.capabilities
             && lhs.phase == rhs.phase
             && lhs.compactionActivity == rhs.compactionActivity
+            && lhs.compactionCompletion == rhs.compactionCompletion
             && lhs.isConnected == rhs.isConnected
             && lhs.isSubmitting == rhs.isSubmitting
             && lhs.isAborting == rhs.isAborting

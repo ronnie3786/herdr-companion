@@ -57,28 +57,62 @@ struct PiPromptComposerStatusBar: View {
     }
 }
 
-/// Compaction remains visible even while Pi reports an otherwise idle session.
-/// There are intentionally no prompt controls here because accepting a model,
-/// thinking, or message command during summary generation is unsafe.
+/// Compaction stays visible in the composer status area even while Pi reports
+/// an otherwise idle session. Progress keeps the existing spinner; confirmed
+/// success shows a checkmark plus readiness copy. There are intentionally no
+/// prompt controls here because accepting a model, thinking, or message command
+/// during summary generation is unsafe.
 struct PiCompactionStatusBar: View {
-    let activity: PiCompactionActivity
+    let presentation: PiCompactionStatusPresentation
+
+    init(presentation: PiCompactionStatusPresentation) {
+        self.presentation = presentation
+    }
 
     var body: some View {
-        HStack(spacing: 8) {
-            ProgressView()
-                .controlSize(.small)
-                .tint(HerdrTheme.working)
-                .accessibilityHidden(true)
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            statusIcon
 
-            Text(activity.statusMessage)
-                .herdrFont(.caption, weight: .medium)
-                .foregroundStyle(HerdrTheme.working)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(presentation.title)
+                    .herdrFont(.caption, weight: .semibold)
+                    .foregroundStyle(titleColor)
+                if let detail = presentation.detail {
+                    Text(detail)
+                        .herdrFont(.caption2)
+                        .foregroundStyle(HerdrTheme.mist)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
 
             Spacer(minLength: 4)
         }
         .padding(.horizontal, 4)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(activity.statusMessage)
-        .accessibilityIdentifier("pi-chat-compacting")
+        .accessibilityLabel(presentation.accessibilityLabel)
+        .accessibilityIdentifier(presentation.accessibilityIdentifier)
+    }
+
+    @ViewBuilder
+    private var statusIcon: some View {
+        switch presentation.kind {
+        case .progress:
+            ProgressView()
+                .controlSize(.small)
+                .tint(HerdrTheme.working)
+                .accessibilityHidden(true)
+        case .completed:
+            Image(systemName: presentation.systemImage)
+                .foregroundStyle(HerdrTheme.success)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private var titleColor: Color {
+        switch presentation.kind {
+        case .progress: HerdrTheme.working
+        case .completed: HerdrTheme.success
+        }
     }
 }

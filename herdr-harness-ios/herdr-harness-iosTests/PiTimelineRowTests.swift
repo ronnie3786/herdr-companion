@@ -120,6 +120,38 @@ struct PiTimelineRowTests {
         #expect(small.rows == rows)
     }
 
+    @Test("A compaction notice stays outside collapsed working groups")
+    func compactionNoticeStaysOutsideWorkingGroup() {
+        let notice = PiConversationNotice(
+            id: "compact-1",
+            title: "Context compacted",
+            detail: "Synthetic summary",
+            tone: .neutral,
+            timestamp: nil
+        )
+        let rows = PiTimelineRow.rows(for: [turn(id: "turn:1", items: [
+            .tool(tool(id: "command")),
+            .notice(notice),
+            .assistant(assistant(id: "answer", text: "Working from the compacted context.")),
+        ])])
+
+        #expect(rows.map(\.id) == [
+            "turn:1|user",
+            "turn:1|working:tool:command",
+            "turn:1|output:compact-1",
+            "turn:1|output:answer",
+        ])
+        guard case let .working(group) = rows[1].content else {
+            Issue.record("Expected the collapsed activity group")
+            return
+        }
+        #expect(!group.items.contains { item in
+            if case .notice = item { return true }
+            return false
+        })
+        #expect(rows[2].content == .output(.notice(notice)))
+    }
+
     private func turn(id: String, items: [PiConversationItem], isActive: Bool = false) -> PiConversationTurn {
         PiConversationTurn(
             id: id,

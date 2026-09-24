@@ -61,8 +61,8 @@ struct PromptComposerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let activity = piConfiguration?.compactionActivity {
-                PiCompactionStatusBar(activity: activity)
+            if let compaction = piConfiguration?.compactionPresentation {
+                PiCompactionStatusBar(presentation: compaction)
                     .transition(semanticControlTransition)
             } else if let piConfiguration, piConfiguration.phase == .working {
                 PiPromptComposerStatusBar(
@@ -118,7 +118,7 @@ struct PromptComposerView: View {
         )
         .animation(
             reduceMotion ? nil : .snappy(duration: 0.24),
-            value: piConfiguration?.compactionActivity
+            value: piConfiguration?.compactionPresentation
         )
         .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: quickVoiceCapture.phase)
         .herdrHaptic(trigger: hapticPulse)
@@ -242,7 +242,7 @@ struct PromptComposerView: View {
     }
 
     private var showsPiStatusBar: Bool {
-        piConfiguration?.compactionActivity != nil || piConfiguration?.phase == .working
+        piConfiguration?.compactionPresentation != nil || piConfiguration?.phase == .working
     }
 
     private var showsPiOptionsBar: Bool {

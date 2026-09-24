@@ -14,9 +14,10 @@ Swift 6 · SwiftUI + Observation · strict concurrency · zero third-party depen
 
 ## Dashboard home
 
-The app now opens on the purple Dashboard. Use **Focus mode** to hide work that
-is not waiting for you. **Agent view** opens First Mate columns with independent
-Chat, Overview, Agents, and Workflow tabs and a reply box in each column.
+The app opens on the Dashboard. **Focus mode** hides work that is not waiting
+for you. **Agent view** (Shift-Command-A) opens First Mate columns with
+independent Chat, Overview, Agents, and Workflow tabs and a reply box in each
+column; columns poll a bounded board and never re-download full histories.
 **Navigate → Dashboard** (Shift-Command-D) returns home from any screen.
 See [Dashboard behavior and companion compatibility](../docs/macos-dashboard.md).
 

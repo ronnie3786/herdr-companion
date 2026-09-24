@@ -392,28 +392,37 @@ struct PRReviewDiffTextTests {
         try await Task.sleep(for: .milliseconds(200))
 
         _ = try await selectDiff(mounted.view, from: contextSelector, to: contextSelector)
-        let commentShown = await waitForSelector(mounted.view, ".native-comment")
-        try #require(commentShown)
-        let geometry = try await mounted.view.evaluateJavaScript("""
-        (() => {
-          const container = document.querySelector('.native-selection-actions');
-          if (!container) return null;
-          const containerRect = container.getBoundingClientRect();
-          const buttons = [...container.querySelectorAll('.native-ask, .native-comment')];
-          const rows = buttons.map(button => button.getBoundingClientRect());
-          return {
-            viewportWidth: window.innerWidth,
-            viewportHeight: window.innerHeight,
-            left: containerRect.left,
-            right: containerRect.right,
-            top: containerRect.top,
-            bottom: containerRect.bottom,
-            minLeft: Math.min(...rows.map(rect => rect.left)),
-            maxRight: Math.max(...rows.map(rect => rect.right))
-          };
-        })()
-        """) as? [String: Any]
+        // Read presence and geometry in one WebKit evaluation. A zoom resize
+        // intentionally dismisses the controls, so checking presence in a
+        // separate evaluation races that event on loaded CI hosts.
+        var geometry: [String: Any]?
+        for _ in 0..<100 {
+            geometry = try await mounted.view.evaluateJavaScript("""
+            (() => {
+              const container = document.querySelector('.native-selection-actions');
+              if (!container) return null;
+              const containerRect = container.getBoundingClientRect();
+              const buttons = [...container.querySelectorAll('.native-ask, .native-comment')];
+              const rows = buttons.map(button => button.getBoundingClientRect());
+              return {
+                buttonCount: buttons.length,
+                viewportWidth: window.innerWidth,
+                viewportHeight: window.innerHeight,
+                left: containerRect.left,
+                right: containerRect.right,
+                top: containerRect.top,
+                bottom: containerRect.bottom,
+                minLeft: Math.min(...rows.map(rect => rect.left)),
+                maxRight: Math.max(...rows.map(rect => rect.right))
+              };
+            })()
+            """) as? [String: Any]
+            if geometry != nil { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
         let values = try #require(geometry)
+        #expect(values["buttonCount"] as? Int == 2)
+        #expect(values["viewportWidth"] as? Double == 200)
         let viewportWidth = values["viewportWidth"] as? Double ?? 0
         let viewportHeight = values["viewportHeight"] as? Double ?? 0
         #expect((values["left"] as? Double ?? -1) >= 0)

@@ -76,6 +76,25 @@ class FirstMateHTTPTests(unittest.TestCase):
     def create(self):
         return self.request("/api/v1/first-mate/features", {"title": "Garden timer", "goal": "Plan a reliable watering timer", "cwd": self.temp.name, "request_id": "create-garden"})
 
+    def completed_reply(self, feature_id, *, session=None, text="Synthetic completed response."):
+        message = self.store.claim_message(feature_id, "coordinator")
+        if session:
+            self.store.bind_coordinator_session(
+                feature_id, "coordinator", session, f"/tmp/synthetic-pi/{session}.jsonl")
+        self.store.finish_message(message["id"], "coordinator", reply=text, native_session_id=session)
+        return next(
+            item for item in self.store.snapshot(feature_id)["messages"]
+            if item["role"] == "assistant"
+        )
+
+    def feedback_body(self, **overrides):
+        body = {
+            "rating": "down", "category_ids": [], "comment": "",
+            "expected_revision": 0, "request_id": "feedback-one",
+        }
+        body.update(overrides)
+        return body
+
     def _git_call(self, action, feature_id, workspace, **values):
         self.git_calls.append((action, feature_id, workspace, values))
         return {"ok": True, "feature_id": feature_id, "workspace": workspace, "root_path": self.temp.name, "staged": [], "unstaged": [], "untracked": [], "commits": [], **values}
@@ -337,6 +356,212 @@ class FirstMateHTTPTests(unittest.TestCase):
             connection.close()
         self.assertEqual(code, 413)
         self.assertEqual(body["error"]["code"], "body_too_large")
+
+    def test_feedback_capability_is_advertised_at_both_levels(self):
+        self.assertEqual(self.request("/api/v1/first-mate/capabilities")[0], 200)
+        self.assertIn("first-mate-feedback-v1", self.request("/api/v1")[1]["capabilities"])
+        self.assertIn(
+            "first-mate-feedback-v1", self.request("/api/v1/first-mate/capabilities")[1]["capabilities"])
+
+    def test_feedback_routes_require_the_main_token(self):
+        _, created = self.create()
+        feature_id = created["feature"]["id"]
+        reply = self.completed_reply(feature_id)
+        operations = [
+            ("GET", "/api/v1/first-mate/feedback-categories", None),
+            ("POST", "/api/v1/first-mate/feedback-categories", {"label": "Synthetic reason", "request_id": "category-auth"}),
+            ("GET", f"/api/v1/first-mate/features/{feature_id}/feedback", None),
+            ("POST", f"/api/v1/first-mate/features/{feature_id}/messages/{reply['id']}/feedback", self.feedback_body()),
+        ]
+        for token in (None, "synthetic-ingest-token"):
+            for method, path, body in operations:
+                with self.subTest(token=token, path=path):
+                    self.assertEqual(self.request(path, body, token=token)[0], 401)
+
+    def test_feedback_categories_reuse_equivalent_labels_without_waking_agents(self):
+        code, defaults = self.request("/api/v1/first-mate/feedback-categories")
+        self.assertEqual(code, 200)
+        self.assertEqual(
+            [item["id"] for item in defaults["categories"]],
+            ["too_long", "unnecessary_message", "incorrect_assumption"])
+        self.assertEqual(
+            [item["label"] for item in defaults["categories"]],
+            ["Longer than it needed to be", "Unnecessary message", "Incorrect assumption"])
+        wakes = list(self.wakes)
+        body = {"label": "  Needs   more evidence ", "request_id": "category-one"}
+        code, created = self.request("/api/v1/first-mate/feedback-categories", body)
+        self.assertEqual(code, 200)
+        self.assertEqual(created["category"]["label"], "Needs more evidence")
+        self.assertEqual(
+            self.request("/api/v1/first-mate/feedback-categories", body)[1], created)
+        code, reused = self.request(
+            "/api/v1/first-mate/feedback-categories", {"label": "NEEDS MORE EVIDENCE", "request_id": "category-two"})
+        self.assertEqual(code, 200)
+        self.assertEqual(reused["category"]["id"], created["category"]["id"])
+        self.assertEqual(self.wakes, wakes)
+        for invalid in (
+            {"label": "line\nbreak", "request_id": "category-bad"},
+            {"label": "", "request_id": "category-bad"},
+            {"label": "Synthetic", "request_id": "category-bad", "extra": 1},
+            {"label": "Synthetic"},
+        ):
+            with self.subTest(body=invalid):
+                self.assertEqual(self.request("/api/v1/first-mate/feedback-categories", invalid)[0], 400)
+        self.assertEqual(
+            self.request("/api/v1/first-mate/feedback-categories", body)[0], 200)
+
+    def test_feedback_rating_round_trips_and_never_touches_workflow_state(self):
+        _, created = self.create()
+        feature_id = created["feature"]["id"]
+        self.completed_reply(feature_id, session="synthetic-http-coordinator")
+        category = self.request(
+            "/api/v1/first-mate/feedback-categories",
+            {"label": "Needs more evidence", "request_id": "category-http"})[1]["category"]
+        base = f"/api/v1/first-mate/features/{feature_id}"
+        code, empty = self.request(base + "/feedback")
+        self.assertEqual(code, 200)
+        self.assertEqual(empty, {"ok": True, "feature_id": feature_id, "records": []})
+        reply = next(
+            item for item in self.store.snapshot(feature_id)["messages"] if item["role"] == "assistant")
+        before = self.store.snapshot(feature_id)
+        wakes, pending = list(self.wakes), self.store.pending_messages(feature_id)
+        body = self.feedback_body(
+            category_ids=["too_long", category["id"]],
+            comment="Too long.\nKeep it shorter — synthetic ✨")
+        code, result = self.request(base + f"/messages/{reply['id']}/feedback", body)
+        self.assertEqual(code, 200)
+        self.assertEqual(result["feature_id"], feature_id)
+        record = result["feedback"]
+        self.assertEqual(record["message_id"], reply["id"])
+        self.assertEqual(record["rating"], "down")
+        self.assertEqual(record["category_ids"], ["too_long", category["id"]])
+        self.assertEqual(record["comment"], body["comment"])
+        self.assertEqual(record["revision"], 1)
+        self.assertEqual(record["provenance"]["coordinator_session_id"], "synthetic-http-coordinator")
+        self.assertEqual(record["provenance"]["session_provenance"], "verified")
+        self.assertEqual(record["provenance"]["source_kind"], "reply")
+        self.assertEqual(record["provenance"]["response_text"], reply["text"])
+        self.assertEqual(self.request(base + f"/messages/{reply['id']}/feedback", body)[1], result)
+        self.assertEqual(self.request(base + "/feedback")[1]["records"], [record])
+        stale = self.request(base + f"/messages/{reply['id']}/feedback", self.feedback_body(
+            category_ids=["too_long"], expected_revision=0, request_id="feedback-stale"))
+        self.assertEqual(stale[0], 409)
+        self.assertEqual(stale[1]["error"]["code"], "stale_feedback_revision")
+        edited = self.request(base + f"/messages/{reply['id']}/feedback", self.feedback_body(
+            rating="up", expected_revision=1, request_id="feedback-up"))
+        self.assertEqual(edited[0], 200)
+        self.assertEqual(edited[1]["feedback"]["rating"], "up")
+        cleared = self.request(base + f"/messages/{reply['id']}/feedback", self.feedback_body(
+            rating=None, expected_revision=2, request_id="feedback-clear"))
+        self.assertEqual(cleared[0], 200)
+        self.assertIsNone(cleared[1]["feedback"]["rating"])
+        records = self.request(base + "/feedback")[1]["records"]
+        self.assertEqual(len(records), 1)
+        self.assertIsNone(records[0]["rating"])
+        self.assertEqual(records[0]["provenance"]["coordinator_session_id"], "synthetic-http-coordinator")
+        after = self.store.snapshot(feature_id)
+        for collection in ("feature", "messages", "events", "visits", "assignments"):
+            self.assertEqual(after[collection], before[collection])
+        self.assertEqual(self.wakes, wakes)
+        self.assertEqual(self.store.pending_messages(feature_id), pending)
+        conflict = self.request(base + f"/messages/{reply['id']}/feedback", self.feedback_body(
+            rating="down", expected_revision=3, request_id="feedback-clear"))
+        self.assertEqual(conflict[0], 409)
+        self.assertEqual(conflict[1]["error"]["code"], "idempotency_conflict")
+
+    def test_feedback_rejects_malformed_ineligible_and_cross_feature_requests(self):
+        _, created = self.create()
+        feature_id = created["feature"]["id"]
+        code, other = self.request("/api/v1/first-mate/features", {
+            "title": "Garden lights", "goal": "Plan synthetic garden lighting",
+            "cwd": self.temp.name, "request_id": "create-lights"})
+        self.assertEqual(code, 201)
+        other_id = other["feature"]["id"]
+        reply = self.completed_reply(feature_id)
+        other_reply = self.completed_reply(other_id, session=None)
+        user = self.store.append_human_message(feature_id, "Human direction", "human-feedback")
+        base = f"/api/v1/first-mate/features/{feature_id}"
+        ineligible = self.request(
+            base + f"/messages/{user['id']}/feedback", self.feedback_body(request_id="feedback-user"))
+        self.assertEqual(ineligible[0], 409)
+        self.assertEqual(ineligible[1]["error"]["code"], "feedback_ineligible")
+        cross = self.request(base + f"/messages/{other_reply['id']}/feedback", self.feedback_body(
+            request_id="feedback-cross"))
+        self.assertEqual(cross[0], 409)
+        self.assertEqual(cross[1]["error"]["code"], "feedback_scope_mismatch")
+        missing = self.request(base + "/messages/fmm_missing/feedback", self.feedback_body(
+            request_id="feedback-missing"))
+        self.assertEqual(missing[0], 404)
+        malformed = [
+            self.feedback_body(rating="yes", request_id="feedback-bad-rating"),
+            self.feedback_body(category_ids=["missing"], request_id="feedback-bad-category"),
+            self.feedback_body(comment="x" * 4001, request_id="feedback-bad-comment"),
+            self.feedback_body(expected_revision=-1, request_id="feedback-bad-revision"),
+            {**self.feedback_body(), "extra": True},
+            {"rating": "down", "category_ids": [], "comment": "", "expected_revision": 0},
+        ]
+        for payload in malformed:
+            with self.subTest(payload=payload):
+                code, body = self.request(base + f"/messages/{reply['id']}/feedback", payload)
+                self.assertEqual(code, 400)
+                self.assertEqual(body["error"]["code"], "invalid_request")
+        self.assertEqual(self.request("/api/v1/first-mate/features/missing/feedback")[0], 404)
+        self.assertEqual(
+            self.request(f"/api/v1/first-mate/features/{feature_id}/messages/{reply['id']}/feedback", {})[0], 400)
+
+    def test_archived_feature_feedback_remains_readable(self):
+        _, created = self.create()
+        feature_id = created["feature"]["id"]
+        reply = self.completed_reply(feature_id)
+        base = f"/api/v1/first-mate/features/{feature_id}"
+        self.request(base + f"/messages/{reply['id']}/feedback", self.feedback_body(
+            rating="down", category_ids=["incorrect_assumption"], request_id="feedback-archive"))
+        self.request(base + "/actions", {
+            "action": "archive", "reason": "no longer relevant", "request_id": "archive-feedback"})
+        code, records = self.request(base + "/feedback")
+        self.assertEqual(code, 200)
+        self.assertEqual(records["records"][0]["rating"], "down")
+
+    def test_feedback_survives_a_companion_restart_and_reconnect(self):
+        _, created = self.create()
+        feature_id = created["feature"]["id"]
+        reply = self.completed_reply(feature_id, session="synthetic-restart-coordinator")
+        custom = self.request(
+            "/api/v1/first-mate/feedback-categories",
+            {"label": "Shorter next time", "request_id": "category-restart"})[1]["category"]
+        base = f"/api/v1/first-mate/features/{feature_id}"
+        code, saved = self.request(base + f"/messages/{reply['id']}/feedback", self.feedback_body(
+            category_ids=["too_long", custom["id"]],
+            comment="Kept across a synthetic restart.\nSecond line — naïve ✓",
+            request_id="feedback-restart"))
+        self.assertEqual(code, 200)
+        record = saved["feedback"]
+
+        # A disposable companion restart: stop the handler, close the store,
+        # then reopen the same on-disk database and serve it again. This is the
+        # HTTP-level companion half of the connected-app persistence check; the
+        # Mac relaunch half stays an explicit final-gate step.
+        self._restart_companion()
+
+        code, records = self.request(base + "/feedback")
+        self.assertEqual(code, 200)
+        self.assertEqual(records, {"ok": True, "feature_id": feature_id, "records": [record]})
+        code, categories = self.request("/api/v1/first-mate/feedback-categories")
+        self.assertEqual(code, 200)
+        self.assertIn(custom["id"], [item["id"] for item in categories["categories"]])
+        self.assertEqual(saved["feedback"]["provenance"]["coordinator_session_id"], "synthetic-restart-coordinator")
+
+    def _restart_companion(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+        self.store.close()
+        self.store = FirstMateStore(Path(self.temp.name) / "work.sqlite3")
+        self.service.first_mate_store = self.store
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.service))
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.origin = f"http://127.0.0.1:{self.server.server_port}"
 
     def test_events_and_validation(self):
         _, data = self.create()

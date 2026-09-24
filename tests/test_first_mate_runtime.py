@@ -1445,4 +1445,44 @@ class FirstMateRuntimeTests(unittest.TestCase):
         fcntl.flock(lock, fcntl.LOCK_UN)
         lock.close()
 
+    def test_runtime_captures_verified_coordinator_session_for_reply_and_checkpoint(self):
+        feature = self.feature()
+        claim = self.store.claim_message(feature['id'], self.runtime.owner)
+        job = self.runtime._new_job(feature, kind='coordinator', prompt='Hello', claim=claim)
+        self.runtime._bind(job, 'synthetic-coordinator-native', job['session_file'])
+        visit = self.store.start_visit(feature['id'], 'planning', 'Planning',
+                                       'stage-provenance', 1, claim['id'])
+        assignment = self.store.create_assignment(visit['id'], {
+            'title': 'Synthetic planner', 'role': 'planner', 'prompt': 'Plan the synthetic work',
+            'request_id': 'assignment-provenance'})
+        worker = self.store.claim_assignment(assignment['id'], 'synthetic-worker-owner')
+        self.store.bind_session(assignment['id'], worker['generation'], 'synthetic-worker-owner',
+                                'synthetic-worker-session', '/tmp/synthetic-pi/worker-provenance.jsonl',
+                                'run-provenance')
+        self.store.record_outcome(assignment['id'], worker['generation'], 'synthetic-worker-session',
+                                  worker['input_revision'], 'success', 'Synthetic work verified',
+                                  'outcome-provenance')
+        self.runtime._finish(job, {'ended': True, 'response': 'Synthetic reply from the coordinator.'})
+        reply = next(item for item in self.store.snapshot(feature['id'])['messages']
+                     if item['role'] == 'assistant')
+        self.runtime._tool(job, 'fm_complete_stage', {
+            'summary': 'Synthetic stage complete', 'recommendation': 'Choose the next stage'}, 'complete-provenance')
+        checkpoint = next(item for item in self.store.snapshot(feature['id'])['messages']
+                          if item['role'] == 'assistant' and item['metadata'].get('checkpoint'))
+        records = {}
+        for message, source_kind in ((reply, 'reply'), (checkpoint, 'checkpoint')):
+            records[source_kind] = self.store.rate_feedback(feature['id'], message['id'], {
+                'rating': 'down', 'category_ids': ['too_long'],
+                'comment': 'Synthetic provenance check', 'expected_revision': 0,
+                'request_id': 'rate-' + source_kind})
+            provenance = records[source_kind]['provenance']
+            self.assertEqual(provenance['source_kind'], source_kind)
+            self.assertEqual(provenance['coordinator_session_id'], 'synthetic-coordinator-native')
+            self.assertEqual(provenance['session_provenance'], 'verified')
+            self.assertEqual(provenance['response_text'], message['text'])
+        self.assertEqual(records['reply']['provenance']['in_reply_to'], claim['id'])
+        self.assertEqual(checkpoint['metadata']['visit_id'], visit['id'])
+        self.assertEqual(records['checkpoint']['provenance']['visit_id'], visit['id'])
+        self.assertEqual(records['checkpoint']['provenance']['feature_revision'], visit['revision'])
+
 if __name__ == '__main__': unittest.main()

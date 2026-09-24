@@ -63,6 +63,18 @@ class HerdrUITestCase: XCTestCase {
         attachment.lifetime = .keepAlways
         add(attachment)
     }
+
+    /// Captures the accessibility tree as the machine-readable companion to a
+    /// screenshot. A rendered-UI gate can inspect labels, identifiers, values,
+    /// roles, and selected traits from the `.xcresult` without rerunning the
+    /// suite, and VoiceOver-facing wording stays part of the evidence.
+    @MainActor
+    func saveAccessibilitySnapshot(_ name: String, app: XCUIApplication) {
+        let attachment = XCTAttachment(string: app.debugDescription)
+        attachment.name = "\(name)-accessibility"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
 }
 
 extension XCUIApplication {

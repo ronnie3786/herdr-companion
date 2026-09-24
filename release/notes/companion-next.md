@@ -1,5 +1,13 @@
 # Next companion update, unreleased
 
+## First Mate response feedback
+
+- Adds `first-mate-feedback-v1` as an additive authenticated API capability.
+- Completed First Mate assistant responses can be rated thumbs up or thumbs down. Thumbs down opens a feedback editor with the starting reasons Longer than it needed to be, Unnecessary message, and Incorrect assumption, reusable custom categories, and optional verbatim multiline notes. Ratings can be edited or removed later.
+- Feedback and custom categories are stored only in the owning companion's private `first-mate.sqlite3` database, survive companion restarts and Mac reconnects, and are never uploaded, used to train a model, or applied to conversation preferences. Recording feedback does not enqueue messages, wake agents, change feature state, or call a model.
+- Each record answers the feature, exact durable response, saved rating, reasons, comment, and provenance such as the producing coordinator session, visit, and plan revision. Legacy responses remain rateable with explicitly unavailable session provenance, and coordinator rotation cannot reattribute an earlier response.
+- Existing databases migrate additively. Older servers expose no feedback capability and receive no feedback writes; the Mac app shows upgrade guidance instead of substituting another host.
+
 ## First Mate archive
 
 - Adds `first-mate-archive-v1` as an additive authenticated API capability.

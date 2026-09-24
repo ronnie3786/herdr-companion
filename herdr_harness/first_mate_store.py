@@ -80,6 +80,17 @@ _BOARD_VERSION_SQL = f"""SELECT f.*,
                 (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_visits WHERE feature_id=f.id) AS board_visits,
                 (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_sessions WHERE feature_id=f.id) AS board_sessions
                 FROM fm_features f WHERE f.id=?"""
+# The three requested starting reasons. Stable IDs keep saved selections valid
+# if a later release adjusts a label's wording.
+DEFAULT_FEEDBACK_CATEGORIES = (
+    ("too_long", "Longer than it needed to be"),
+    ("unnecessary_message", "Unnecessary message"),
+    ("incorrect_assumption", "Incorrect assumption"),
+)
+FEEDBACK_CATEGORY_LIMIT = 100
+FEEDBACK_SELECTION_LIMIT = 20
+FEEDBACK_COMMENT_LIMIT = 4000
+FEEDBACK_CATEGORY_LABEL_LIMIT = 80
 
 
 SCHEMA = """
@@ -141,6 +152,22 @@ CREATE TABLE IF NOT EXISTS fm_handoffs(
  predecessor_session_id TEXT NOT NULL, successor_session_id TEXT,
  successor_session_file TEXT, successor_owner TEXT, summary TEXT NOT NULL,
  document_id TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS fm_feedback_categories(
+ id TEXT PRIMARY KEY, label TEXT NOT NULL, normalized_label TEXT NOT NULL UNIQUE,
+ created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS fm_feedback_sources(
+ message_id TEXT PRIMARY KEY REFERENCES fm_messages(id),
+ feature_id TEXT NOT NULL REFERENCES fm_features(id),
+ response_text TEXT NOT NULL, response_created_at TEXT NOT NULL, source_kind TEXT NOT NULL,
+ in_reply_to TEXT, visit_id TEXT, feature_revision INTEGER,
+ coordinator_session_id TEXT, session_provenance TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS fm_feedback(
+ message_id TEXT PRIMARY KEY REFERENCES fm_messages(id),
+ feature_id TEXT NOT NULL REFERENCES fm_features(id),
+ rating TEXT, category_ids_json TEXT NOT NULL DEFAULT '[]',
+ comment TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL,
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS fm_feedback_feature ON fm_feedback(feature_id,created_at,message_id);
 CREATE UNIQUE INDEX IF NOT EXISTS fm_sessions_file ON fm_sessions(session_file);
 CREATE INDEX IF NOT EXISTS fm_events_feature ON fm_events(feature_id,sequence);
 CREATE INDEX IF NOT EXISTS fm_assignments_status ON fm_assignments(status,feature_id);
@@ -219,6 +246,63 @@ class FirstMateStore:
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(5,?)", (_now(),))
         # Version 6 adds only the idempotent board indexes in SCHEMA.
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(6,?)", (_now(),))
+        self._seed_feedback_categories()
+        self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(7,?)", (_now(),))
+
+    def _seed_feedback_categories(self) -> None:
+        """Install the stable starting reasons once; custom categories append."""
+        now = _now()
+        for identity, label in DEFAULT_FEEDBACK_CATEGORIES:
+            self._db.execute(
+                "INSERT OR IGNORE INTO fm_feedback_categories(id,label,normalized_label,created_at) VALUES(?,?,?,?)",
+                (identity, label, self._normalize_category_label(label), now),
+            )
+
+    @staticmethod
+    def _normalize_category_label(label: str) -> str:
+        return " ".join(label.split()).casefold()
+
+    @staticmethod
+    def _feedback_category_ids(value: Any) -> list[str]:
+        if not isinstance(value, list) or len(value) > FEEDBACK_SELECTION_LIMIT:
+            raise FirstMateError("Invalid feedback categories", code="invalid_request", status=400)
+        selected: list[str] = []
+        for item in value:
+            if (not isinstance(item, str) or not item.strip() or len(item) > 200
+                    or "\x00" in item or item in selected):
+                raise FirstMateError("Invalid feedback categories", code="invalid_request", status=400)
+            selected.append(item)
+        return selected
+
+    @staticmethod
+    def _feedback_comment(value: Any) -> str:
+        if not isinstance(value, str) or len(value) > FEEDBACK_COMMENT_LIMIT or "\x00" in value:
+            raise FirstMateError("Invalid feedback comment", code="invalid_request", status=400)
+        return value
+
+    def _feedback_source(self, message: dict, *, source_kind: str, in_reply_to: str | None,
+                         visit_id: str | None, feature_revision: int | None,
+                         native_session_id: str | None) -> None:
+        """Freeze the producing context beside the message; legacy rows stay null."""
+        if source_kind not in {"reply", "checkpoint", "unknown"}:
+            raise FirstMateError("Invalid feedback source kind", code="invalid_request", status=400)
+        coordinator_session_id, session_provenance = None, "unavailable"
+        if native_session_id is not None:
+            _text(native_session_id, "native_session_id", 500)
+            session = self._db.execute(
+                "SELECT * FROM fm_sessions WHERE native_session_id=?", (native_session_id,)
+            ).fetchone()
+            if (session is None or session["feature_id"] != message["feature_id"]
+                    or session["assignment_id"] is not None):
+                raise FirstMateError("Coordinator session is not owned by this feature", code="session_mismatch")
+            coordinator_session_id, session_provenance = native_session_id, "verified"
+        self._db.execute(
+            "INSERT INTO fm_feedback_sources(message_id,feature_id,response_text,response_created_at,"
+            "source_kind,in_reply_to,visit_id,feature_revision,coordinator_session_id,session_provenance,"
+            "created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (message["id"], message["feature_id"], message["text"], message["created_at"], source_kind,
+             in_reply_to, visit_id, feature_revision, coordinator_session_id, session_provenance, _now()),
+        )
 
     def close(self) -> None:
         with self._lock:
@@ -300,11 +384,25 @@ class FirstMateStore:
         if isinstance(expected_revision, bool) or expected_revision != feature["revision"]:
             raise FirstMateError("Feature plan revision changed", code="stale_revision")
 
-    def _message(self, feature_id: str, role: str, text: str, *, status: str = "queued", metadata: dict | None = None) -> dict:
+    def _message(self, feature_id: str, role: str, text: str, *, status: str = "queued",
+                 metadata: dict | None = None, source: dict | None = None) -> dict:
         message_id, now = _id("fmm"), _now()
         self._db.execute("INSERT INTO fm_messages(id,feature_id,role,text,status,metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
                          (message_id, feature_id, role, _text(text, "text"), status, _json(metadata or {}), now, now))
-        return self._one("fm_messages", message_id)
+        message = self._one("fm_messages", message_id)
+        if role == "assistant" and status == "done":
+            # Provenance is written once, with the response, and never inferred later.
+            source = dict(source or {})
+            metadata = metadata or {}
+            self._feedback_source(
+                message,
+                source_kind=source.get("source_kind", "unknown"),
+                in_reply_to=source.get("in_reply_to", metadata.get("in_reply_to")),
+                visit_id=source.get("visit_id", metadata.get("visit_id")),
+                feature_revision=source.get("feature_revision"),
+                native_session_id=source.get("native_session_id"),
+            )
+        return message
 
     def create_feature(self, payload: Mapping[str, Any]) -> dict:
         body = dict(payload)
@@ -632,7 +730,8 @@ class FirstMateStore:
             self._event(feature_id, "message.claimed", "First Mate is processing an update", {"message_id": row["id"], "owner": owner})
             return self._one("fm_messages", row["id"])
 
-    def finish_message(self, message_id: str, owner: str, reply: str | None = None) -> dict:
+    def finish_message(self, message_id: str, owner: str, reply: str | None = None,
+                       *, native_session_id: str | None = None) -> dict:
         with self._transaction():
             message = self._one("fm_messages", message_id)
             if message["status"] == "done" and message["owner"] == owner:
@@ -641,7 +740,14 @@ class FirstMateStore:
             if message["status"] != "processing" or message["owner"] != owner or feature["coordinator_owner"] != owner:
                 raise FirstMateError("Coordinator ownership changed", code="stale_owner")
             if reply:
-                self._message(message["feature_id"], "assistant", reply, status="done", metadata={"in_reply_to": message_id})
+                self._message(
+                    message["feature_id"], "assistant", reply, status="done",
+                    metadata={"in_reply_to": message_id},
+                    source={"source_kind": "reply", "in_reply_to": message_id,
+                            "visit_id": feature["current_visit_id"],
+                            "feature_revision": feature["revision"],
+                            "native_session_id": native_session_id},
+                )
             self._db.execute("UPDATE fm_messages SET status='done',updated_at=? WHERE id=?", (_now(), message_id))
             self._db.execute("UPDATE fm_features SET coordinator_owner=NULL WHERE id=?", (message["feature_id"],))
             self._event(message["feature_id"], "message.processed", "First Mate processed an update", {"message_id": message_id})
@@ -887,7 +993,8 @@ class FirstMateStore:
                 self._message(assignment["feature_id"], "system", f"{assignment['title']}: {summary}", metadata=event_payload)
             return self._save_receipt(f"outcome:{assignment_id}", request_id, payload, self._one("fm_assignments", assignment_id))
 
-    def complete_visit(self, visit_id: str, summary: str, recommendation: str, request_id: str) -> dict:
+    def complete_visit(self, visit_id: str, summary: str, recommendation: str, request_id: str,
+                       *, native_session_id: str | None = None) -> dict:
         payload = {"summary": _text(summary, "summary"), "recommendation": _text(recommendation, "recommendation", optional=True)}
         with self._transaction():
             cached = self._receipt(f"complete:{visit_id}", request_id, payload)
@@ -902,7 +1009,10 @@ class FirstMateStore:
             self._db.execute("UPDATE fm_visits SET status='completed',summary=?,recommendation=?,updated_at=? WHERE id=?", (summary, recommendation, _now(), visit_id))
             continuing = bool(visit["followup_stages"])
             self._db.execute("UPDATE fm_features SET status=? WHERE id=?", ("coordinating" if continuing else "awaiting_direction", feature["id"]))
-            self._message(feature["id"], "assistant", summary + (f"\n\nSuggested next step: {recommendation}" if recommendation else "") + (f"\n\nContinuing with the previously authorized {visit['followup_stages'][0]} stage." if continuing else "\n\nAwaiting your direction."), status="done", metadata={"visit_id": visit_id, "checkpoint": True})
+            self._message(feature["id"], "assistant", summary + (f"\n\nSuggested next step: {recommendation}" if recommendation else "") + (f"\n\nContinuing with the previously authorized {visit['followup_stages'][0]} stage." if continuing else "\n\nAwaiting your direction."), status="done", metadata={"visit_id": visit_id, "checkpoint": True},
+                          source={"source_kind": "checkpoint", "in_reply_to": None,
+                                  "visit_id": visit_id, "feature_revision": visit["revision"],
+                                  "native_session_id": native_session_id})
             self._event(feature["id"], "visit.completed" if continuing else "visit.awaiting_direction", f"{visit['title']} complete. Continuing within the original direction." if continuing else f"{visit['title']} complete. Awaiting human direction.", {"visit_id": visit_id, "revision": visit["revision"], "recommendation": recommendation})
             if continuing:
                 self._message(feature["id"], "system", f"The {visit['title']} stage finished with evidence. The original human direction authorized {visit['followup_stages'][0]} next. Inspect the completed visit and queued human updates; begin only that authorized stage if still appropriate. Do not treat this system update as new permission.")
@@ -1472,6 +1582,156 @@ class FirstMateStore:
                 sql += " AND feature_id=?"
                 args = (feature_id,)
             return [self._decode(row) for row in self._db.execute(sql + " ORDER BY created_at,id", args)]
+
+    def list_feedback_categories(self) -> list[dict]:
+        with self._lock:
+            return [
+                {"id": row["id"], "label": row["label"], "created_at": row["created_at"]}
+                for row in self._db.execute(
+                    "SELECT id,label,created_at FROM fm_feedback_categories ORDER BY created_at,rowid"
+                )
+            ]
+
+    def create_feedback_category(self, label: str, request_id: str) -> dict:
+        """Add a reusable companion-wide reason; equivalent labels reuse a row."""
+        if (not isinstance(label, str) or not label.strip() or "\x00" in label
+                or "\n" in label or "\r" in label
+                or len(label.strip()) > FEEDBACK_CATEGORY_LABEL_LIMIT):
+            raise FirstMateError("Invalid feedback category label", code="invalid_request", status=400)
+        label = " ".join(label.split())
+        normalized = self._normalize_category_label(label)
+        payload = {"label": label}
+        with self._transaction():
+            cached = self._receipt("feedback_category", request_id, payload)
+            if cached is not None:
+                return cached
+            row = self._db.execute(
+                "SELECT id,label,created_at FROM fm_feedback_categories WHERE normalized_label=?", (normalized,)
+            ).fetchone()
+            if row is None:
+                count = self._db.execute("SELECT COUNT(*) FROM fm_feedback_categories").fetchone()[0]
+                if count >= FEEDBACK_CATEGORY_LIMIT:
+                    raise FirstMateError("Feedback category limit reached", code="feedback_category_limit", status=409)
+                category_id = _id("fmc")
+                self._db.execute(
+                    "INSERT INTO fm_feedback_categories VALUES(?,?,?,?)",
+                    (category_id, label, normalized, _now()),
+                )
+                row = self._db.execute(
+                    "SELECT id,label,created_at FROM fm_feedback_categories WHERE id=?", (category_id,)
+                ).fetchone()
+            category = {"id": row["id"], "label": row["label"], "created_at": row["created_at"]}
+            return self._save_receipt("feedback_category", request_id, payload, category)
+
+    def _feedback_provenance(self, message_id: str) -> dict:
+        source = self._db.execute(
+            "SELECT * FROM fm_feedback_sources WHERE message_id=?", (message_id,)
+        ).fetchone()
+        if source is not None:
+            return {
+                "response_text": source["response_text"],
+                "response_created_at": source["response_created_at"],
+                "source_kind": source["source_kind"],
+                "in_reply_to": source["in_reply_to"],
+                "visit_id": source["visit_id"],
+                "feature_revision": source["feature_revision"],
+                "coordinator_session_id": source["coordinator_session_id"],
+                "session_provenance": source["session_provenance"],
+            }
+        message = self._db.execute("SELECT * FROM fm_messages WHERE id=?", (message_id,)).fetchone()
+        metadata = json.loads(message["metadata_json"]) if message is not None else {}
+        return {
+            "response_text": message["text"] if message is not None else "",
+            "response_created_at": message["created_at"] if message is not None else None,
+            "source_kind": "legacy",
+            "in_reply_to": metadata.get("in_reply_to"),
+            "visit_id": metadata.get("visit_id"),
+            "feature_revision": None,
+            "coordinator_session_id": None,
+            "session_provenance": "unavailable",
+        }
+
+    def _feedback_record(self, row) -> dict:
+        return {
+            "message_id": row["message_id"],
+            "feature_id": row["feature_id"],
+            "rating": row["rating"],
+            "category_ids": json.loads(row["category_ids_json"]),
+            "comment": row["comment"],
+            "revision": row["revision"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "provenance": self._feedback_provenance(row["message_id"]),
+        }
+
+    def list_feedback(self, feature_id: str) -> list[dict]:
+        with self._lock:
+            self._one("fm_features", feature_id)
+            rows = self._db.execute(
+                "SELECT * FROM fm_feedback WHERE feature_id=? ORDER BY created_at,message_id",
+                (feature_id,),
+            ).fetchall()
+            return [self._feedback_record(row) for row in rows]
+
+    def rate_feedback(self, feature_id: str, message_id: str, payload: Mapping[str, Any]) -> dict:
+        """Record one current rating per completed assistant response."""
+        body = dict(payload)
+        if set(body) != {"rating", "category_ids", "comment", "expected_revision", "request_id"}:
+            raise FirstMateError("Invalid feedback fields", code="invalid_request", status=400)
+        rating = body["rating"]
+        if not (rating is None or (isinstance(rating, str) and rating in {"up", "down"})):
+            raise FirstMateError("Invalid feedback rating", code="invalid_request", status=400)
+        category_ids = self._feedback_category_ids(body["category_ids"])
+        comment = self._feedback_comment(body["comment"])
+        expected_revision = body["expected_revision"]
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise FirstMateError("Invalid feedback revision", code="invalid_request", status=400)
+        if (rating is None or rating == "up") and (category_ids or comment):
+            raise FirstMateError(
+                "Positive and cleared ratings cannot include reasons", code="invalid_request", status=400
+            )
+        _text(body["request_id"], "request_id", 200)
+        scope = f"feedback:{feature_id}:{message_id}"
+        with self._transaction():
+            cached = self._receipt(scope, body["request_id"], body)
+            if cached is not None:
+                return cached
+            self._one("fm_features", feature_id)
+            message = self._one("fm_messages", message_id)
+            if message["feature_id"] != feature_id:
+                raise FirstMateError("Feedback message belongs to another feature", code="feedback_scope_mismatch")
+            if message["role"] != "assistant" or message["status"] != "done" or not message["text"].strip():
+                raise FirstMateError(
+                    "Only completed First Mate responses can be rated", code="feedback_ineligible", status=409
+                )
+            for category_id in category_ids:
+                if self._db.execute(
+                    "SELECT 1 FROM fm_feedback_categories WHERE id=?", (category_id,)
+                ).fetchone() is None:
+                    raise FirstMateError("Unknown feedback category", code="invalid_request", status=400)
+            existing = self._db.execute(
+                "SELECT * FROM fm_feedback WHERE message_id=?", (message_id,)
+            ).fetchone()
+            current_revision = existing["revision"] if existing is not None else 0
+            if expected_revision != current_revision:
+                raise FirstMateError(
+                    "Feedback changed. Reload it before saving.", code="stale_feedback_revision", status=409
+                )
+            now = _now()
+            if existing is None:
+                self._db.execute(
+                    "INSERT INTO fm_feedback(message_id,feature_id,rating,category_ids_json,comment,"
+                    "revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                    (message_id, feature_id, rating, _json(category_ids), comment, 1, now, now),
+                )
+            else:
+                self._db.execute(
+                    "UPDATE fm_feedback SET rating=?,category_ids_json=?,comment=?,revision=revision+1,"
+                    "updated_at=? WHERE message_id=?",
+                    (rating, _json(category_ids), comment, now, message_id),
+                )
+            row = self._db.execute("SELECT * FROM fm_feedback WHERE message_id=?", (message_id,)).fetchone()
+            return self._save_receipt(scope, body["request_id"], body, self._feedback_record(row))
 
 
 # Repository alias keeps service code consistent with other durable stores.

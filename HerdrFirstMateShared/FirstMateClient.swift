@@ -18,6 +18,14 @@ protocol FirstMateClient: Sendable {
     func setFirstMateArchived(featureID: String, archived: Bool, reason: FirstMateArchiveReason?, requestID: String) async throws -> FirstMateSnapshot
     func fetchFirstMateDocument(_ id: String) async throws -> FirstMateDocumentResponse
     func fetchFirstMateSession(_ id: String, before: Int?) async throws -> FirstMateSessionResponse
+    func fetchFirstMateFeedbackCategories() async throws -> FirstMateFeedbackCategoriesResponse
+    func createFirstMateFeedbackCategory(label: String, requestID: String) async throws -> FirstMateFeedbackCategoryResponse
+    func fetchFirstMateFeedback(featureID: String) async throws -> FirstMateFeatureFeedbackResponse
+    func saveFirstMateFeedback(
+        featureID: String,
+        messageID: String,
+        request: FirstMateFeedbackSaveRequest
+    ) async throws -> FirstMateFeedbackMutationResponse
 }
 
 struct FirstMateFeatureList: Decodable, Sendable {
@@ -39,6 +47,7 @@ struct FirstMateCapabilities: Decodable, Sendable {
     var supportsContext: Bool { capabilities.contains("first-mate-context-v1") }
     var supportsSafeModelSettings: Bool { capabilities.contains("first-mate-safe-model-settings-v1") }
     var supportsJournalEventSnapshots: Bool { capabilities.contains("first-mate-journal-events-v1") }
+    var supportsFeedback: Bool { capabilities.contains("first-mate-feedback-v1") }
 }
 
 struct FirstMateDocumentResponse: Decodable, Sendable {
@@ -125,6 +134,22 @@ extension FirstMateClient {
         throw APIError.invalidResponse
     }
     func transcribeFirstMateVoice(fileURL: URL) async throws -> VoiceTranscriptionResponse {
+        throw APIError.invalidResponse
+    }
+    func fetchFirstMateFeedbackCategories() async throws -> FirstMateFeedbackCategoriesResponse {
+        throw APIError.invalidResponse
+    }
+    func createFirstMateFeedbackCategory(label: String, requestID: String) async throws -> FirstMateFeedbackCategoryResponse {
+        throw APIError.invalidResponse
+    }
+    func fetchFirstMateFeedback(featureID: String) async throws -> FirstMateFeatureFeedbackResponse {
+        throw APIError.invalidResponse
+    }
+    func saveFirstMateFeedback(
+        featureID: String,
+        messageID: String,
+        request: FirstMateFeedbackSaveRequest
+    ) async throws -> FirstMateFeedbackMutationResponse {
         throw APIError.invalidResponse
     }
 }

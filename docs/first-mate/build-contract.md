@@ -72,6 +72,92 @@ settings revision, emit a change event, enqueue work, reset a session, or dispat
 an agent. Before the first session is claimed, older clients may still select the
 initial model without the optional fields.
 
+## First Mate response feedback API
+
+`GET /api/v1/first-mate/capabilities` and `GET /api/v1` additionally advertise
+`first-mate-feedback-v1`. Older servers return upgrade guidance instead of
+accepting unsupported writes; clients must not send feedback requests without
+the capability. A failed, timed-out, or unanswered capability check is
+temporary unavailability rather than a confirmed old server: clients keep
+cached feedback readable and any open draft recoverable, and show server
+upgrade guidance only after a successful capability response that omits
+`first-mate-feedback-v1`. Feedback is companion data collection only: no route
+injects prompts, changes preferences, trains or calls a model, publishes
+externally, or enqueues work.
+
+Feedback is stored in the owning companion's private `first-mate.sqlite3`
+beside the work ledger, shared by clients authorized to that companion, and
+survives process and application restarts. Migration is additive; existing
+messages, visits, assignments, and receipts are never rewritten. Demo servers
+keep synthetic feedback in memory only.
+
+Routes, all under the existing authenticated First Mate prefix and normal body
+limit (the feedback bodies are small JSON, not the attachment upload limit):
+
+- `GET /feedback-categories` -> `{ok:true,categories:[{id,label,created_at}]}`.
+  Defaults are `too_long` (Longer than it needed to be),
+  `unnecessary_message` (Unnecessary message), and `incorrect_assumption`
+  (Incorrect assumption).
+- `POST /feedback-categories` accepts exactly `label` and `request_id`. Labels
+  are trimmed, single-line, at most 80 Unicode scalars, and deduplicated
+  case-insensitively with collapsed internal whitespace; an equivalent label
+  returns the existing category rather than creating a duplicate. ->
+  `{ok:true,category:{id,label,created_at}}`. At most 100 categories exist per
+  companion; a genuinely new label beyond the limit returns
+  `feedback_category_limit` (409). Category rename/delete is not part of this
+  issue.
+- `GET /features/{feature_id}/feedback` -> `{ok:true,feature_id,records}`.
+  Records include cleared revisions (rating `null`) and are ordered by feedback
+  creation. A missing feature is `not_found` (404).
+- `POST /features/{feature_id}/messages/{message_id}/feedback` accepts exactly
+  `rating`, `category_ids`, `comment`, `expected_revision`, and `request_id`,
+  and returns `{ok:true,feature_id,feedback}`.
+
+A feedback record is:
+
+```json
+{"message_id":"fmm_…","feature_id":"fmf_…","rating":"down","category_ids":["too_long"],"comment":"verbatim text","revision":2,"created_at":"…","updated_at":"…","provenance":{"response_text":"…","response_created_at":"…","source_kind":"reply","in_reply_to":"fmm_…","visit_id":null,"feature_revision":1,"coordinator_session_id":"…","session_provenance":"verified"}}
+```
+
+Validation and ownership:
+
+- `rating` is `up`, `down`, or `null`. Clearing is `null`; a cleared record is
+  retained as a new revision and never deleted. `up` and `null` require empty
+  `category_ids` and empty `comment`.
+- `category_ids` contains at most 20 unique IDs that must already exist;
+  reasons and comments are optional for `down`.
+- `comment` is optional, multiline, preserved verbatim within 4000 Unicode
+  scalars, and accepts arbitrary Unicode text.
+- The message must belong to the addressed feature, be an `assistant` message
+  with persisted status `done` and non-empty text. User and system messages are
+  rejected with `feedback_ineligible` (409). An existing message owned by
+  another feature is `feedback_scope_mismatch` (409). Archived and closed
+  features remain rateable; feedback never changes feature status or revision.
+- New records use `expected_revision` 0. Each accepted save stores the next
+  feedback revision. A stale `expected_revision`, including a delayed edit or
+  clear after a newer save, returns `stale_feedback_revision` (409).
+- Exact `request_id` replay returns the persisted record. Reusing a
+  `request_id` with different content returns `idempotency_conflict` (409), and
+  receipt replay happens before current-revision checks so safe retries always
+  win.
+
+Provenance is captured once, when a new assistant response is created, from the
+runtime job's exact verified session. It records the source feature and message,
+verbatim response text and time, `in_reply_to`, the producing visit and plan
+revision, source kind (`reply` or `checkpoint`), and the coordinator session ID.
+Rating never substitutes the feature's current session for an older response,
+so coordinator rotation cannot reattribute history. Messages created before this
+release retain `session_provenance: "unavailable"`, null session, and
+`source_kind: "legacy"` derived from their existing metadata. This surface
+exposes authenticated readback only; automatic conversation refinement is not
+implemented, and the private database is reviewed directly.
+
+These routes must not call `first_mate_changed`, append conversation or workflow
+events, change feature state, or invoke models. Feedback text is private and is
+not written to public logs or reports. Installing the updated companion is a
+separate step from any Mac app update; the Mac updater does not install
+companion server packages.
+
 ## Model routing and runtime evidence
 
 Feature, assignment, delegation, and session projections may contain additive

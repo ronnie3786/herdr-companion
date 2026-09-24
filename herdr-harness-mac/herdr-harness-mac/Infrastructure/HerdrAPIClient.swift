@@ -11,6 +11,16 @@ private struct PRReviewRequestID: Codable, Sendable {
     }
 }
 
+private struct FirstMateLinkVisibilityBody: Codable, Sendable {
+    let hidden: Bool
+    let requestID: String
+
+    enum CodingKeys: String, CodingKey {
+        case hidden
+        case requestID = "request_id"
+    }
+}
+
 private struct PRReviewCreateBody: Codable, Sendable {
     let url: String
     let skillIDs: [String]
@@ -293,6 +303,22 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, AgentPr
         if archived, let reason { body["reason"] = reason.rawValue }
         body["action"] = archived ? "archive" : "unarchive"
         return try await request(path: firstMatePath("features", id: featureID) + "/actions", method: "POST", body: body)
+    }
+
+    func saveFirstMateLink(featureID: String, url: String, title: String?, kind: String?, requestID: String) async throws -> FirstMateLinkMutationResponse {
+        var body = ["url": url, "request_id": requestID]
+        if let title, !title.isEmpty { body["title"] = title }
+        if let kind, !kind.isEmpty { body["kind"] = kind }
+        return try await request(path: firstMatePath("features", id: featureID) + "/links", method: "POST", body: body)
+    }
+
+    func setFirstMateLinkVisibility(featureID: String, linkID: String, hidden: Bool, requestID: String) async throws -> FirstMateLinkMutationResponse {
+        let safeLinkID = try validatedFirstMateID(linkID)
+        return try await request(
+            path: firstMatePath("features", id: featureID) + "/links/\(safeLinkID)/visibility",
+            method: "POST",
+            body: FirstMateLinkVisibilityBody(hidden: hidden, requestID: requestID)
+        )
     }
 
     func fetchFirstMateDocument(_ id: String) async throws -> FirstMateDocumentResponse {

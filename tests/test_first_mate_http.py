@@ -584,6 +584,145 @@ class FirstMateHTTPTests(unittest.TestCase):
         code, _ = self.request("/api/v1/first-mate/features", {"title": "Bad directory", "goal": "Plan", "cwd": "/nonexistent-first-mate-synthetic-dir", "request_id": "invalid-directory"})
         self.assertEqual(code, 400)
 
+    def test_links_capability_and_endpoint_are_advertised(self):
+        code, top = self.request("/api/v1")
+        self.assertEqual(code, 200)
+        self.assertIn("first-mate-links-v1", top["capabilities"])
+        self.assertEqual(top["endpoints"]["firstMateLinks"], "/api/v1/first-mate/features/{featureId}/links")
+        self.assertIn("POST /api/v1/first-mate/features/{featureId}/links", top["mutations"])
+        self.assertIn("POST /api/v1/first-mate/features/{featureId}/links/{linkId}/visibility", top["mutations"])
+        code, first_mate = self.request("/api/v1/first-mate/capabilities")
+        self.assertEqual(code, 200)
+        self.assertIn("first-mate-links-v1", first_mate["capabilities"])
+
+    def test_link_save_hide_restore_is_authenticated_idempotent_and_does_not_wake_agents(self):
+        _, data = self.create()
+        identity = data["feature"]["id"]
+        path = f"/api/v1/first-mate/features/{identity}/links"
+        body = {
+            "url": "https://github.com/synthetic-owner/synthetic-repo/pull/12/files#diff-1",
+            "title": "Synthetic review",
+            "request_id": "link-one",
+        }
+        for token in (None, "synthetic-ingest-token"):
+            self.assertEqual(self.request(path, body, token=token)[0], 401)
+        before = self.store.snapshot(identity)
+        wakes = list(self.wakes)
+        code, result = self.request(path, body)
+        self.assertEqual(code, 200)
+        self.assertEqual(result["link"]["url"], "https://github.com/synthetic-owner/synthetic-repo/pull/12")
+        self.assertEqual(result["link"]["kind"], "pull_request")
+        self.assertEqual(result["link"]["title"], "Synthetic review")
+        self.assertFalse(result["link"]["hidden"])
+        self.assertEqual(result["links"], [result["link"]])
+        self.assertEqual(self.wakes, wakes)
+        self.assertEqual(self.request(path, body)[1]["link"], result["link"])
+        duplicate = {**body, "url": "https://github.com/synthetic-owner/synthetic-repo/pull/12", "request_id": "link-two"}
+        code, repeated = self.request(path, duplicate)
+        self.assertEqual(code, 200)
+        self.assertEqual(repeated["link"]["id"], result["link"]["id"])
+        self.assertEqual(len(repeated["links"]), 1)
+        code, conflict = self.request(path, {**body, "title": "Different title"})
+        self.assertEqual(code, 409)
+        self.assertEqual(conflict["error"]["code"], "idempotency_conflict")
+        visibility = f"{path}/{result['link']['id']}/visibility"
+        code, hidden = self.request(visibility, {"hidden": True, "request_id": "hide-one"})
+        self.assertEqual(code, 200)
+        self.assertTrue(hidden["link"]["hidden"])
+        self.assertTrue(hidden["links"][0]["hidden"])
+        self.assertEqual(self.request(visibility, {"hidden": True, "request_id": "hide-one"})[1], hidden)
+        code, restored = self.request(visibility, {"hidden": False, "request_id": "restore-one"})
+        self.assertEqual(code, 200)
+        self.assertFalse(restored["link"]["hidden"])
+        after = self.store.snapshot(identity)
+        for field in ("status", "revision", "native_session_id", "coordinator_owner"):
+            self.assertEqual(after["feature"][field], before["feature"][field])
+        for key in ("visits", "assignments", "documents", "messages", "handoffs"):
+            self.assertEqual(after[key], before[key])
+        self.assertEqual(self.wakes, wakes)
+
+    def test_link_save_round_trips_ipv6_and_folds_github_casing(self):
+        _, data = self.create()
+        identity = data["feature"]["id"]
+        path = f"/api/v1/first-mate/features/{identity}/links"
+        ipv6 = "https://[2001:db8::42]:8443/review?tab=links#evidence"
+        code, saved = self.request(path, {"url": ipv6, "request_id": "link-ipv6"})
+        self.assertEqual(code, 200)
+        self.assertEqual(saved["link"]["url"], ipv6)
+        self.assertEqual(saved["link"]["kind"], "link")
+        self.assertEqual(saved["link"]["title"], "[2001:db8::42]")
+        code, invalid = self.request(path, {"url": "https://user:secret@[2001:db8::42]/review", "request_id": "link-ipv6-credentials"})
+        self.assertEqual(code, 400)
+        self.assertEqual(len(self.store.list_links(identity)), 1)
+
+        code, upper = self.request(path, {
+            "url": "https://github.com/Synthetic-Owner/Synthetic-Repo/pull/42/files#diff-1",
+            "request_id": "link-casing-upper",
+        })
+        self.assertEqual(code, 200)
+        self.assertEqual(upper["link"]["url"], "https://github.com/synthetic-owner/synthetic-repo/pull/42")
+        code, lower = self.request(path, {
+            "url": "https://github.com/synthetic-owner/synthetic-repo/pull/42",
+            "request_id": "link-casing-lower",
+        })
+        self.assertEqual(code, 200)
+        self.assertEqual(lower["link"]["id"], upper["link"]["id"])
+        self.assertEqual(len(lower["links"]), 2)
+        visibility = f"{path}/{upper['link']['id']}/visibility"
+        code, hidden = self.request(visibility, {"hidden": True, "request_id": "hide-casing"})
+        self.assertEqual(code, 200)
+        self.assertTrue(hidden["link"]["hidden"])
+        code, replay = self.request(path, {
+            "url": "https://github.com/SYNTHETIC-OWNER/SYNTHETIC-REPO/pull/42",
+            "request_id": "link-casing-replay",
+        })
+        self.assertEqual(code, 200)
+        self.assertEqual(replay["link"]["id"], upper["link"]["id"])
+        self.assertTrue(replay["link"]["hidden"])
+        self.assertEqual(len(self.store.list_links(identity)), 2)
+
+    def test_link_mutations_reject_forged_provenance_cross_feature_ids_and_invalid_inputs(self):
+        _, data = self.create()
+        identity = data["feature"]["id"]
+        _, other = self.request("/api/v1/first-mate/features", {
+            "title": "Other synthetic timer", "goal": "Plan a separate synthetic outcome",
+            "cwd": self.temp.name, "request_id": "create-other",
+        })
+        other_id = other["feature"]["id"]
+        path = f"/api/v1/first-mate/features/{identity}/links"
+        code, saved = self.request(path, {
+            "url": "https://share.example.test:8443/private/report?token=synthetic#summary",
+            "request_id": "share-one",
+        })
+        self.assertEqual(code, 200)
+        self.assertEqual(saved["link"]["url"], "https://share.example.test:8443/private/report?token=synthetic#summary")
+        self.assertEqual(saved["link"]["kind"], "link")
+        code, foreign = self.request(f"/api/v1/first-mate/features/{other_id}/links", {
+            "url": "https://share.example.test/private/other", "request_id": "share-other",
+        })
+        self.assertEqual(code, 200)
+        invalid = [
+            (path, {"url": "javascript:alert(1)", "request_id": "scheme"}, 400),
+            (path, {"url": "https://user@example.test/report", "request_id": "credentials"}, 400),
+            (path, {"url": "https://example.test:99999/report", "request_id": "port"}, 400),
+            (path, {"url": "https://share.example.test/report", "kind": "issue", "request_id": "kind"}, 400),
+            (path, {"url": "https://share.example.test/report", "provenance": {"native_session_id": "forged"},
+             "request_id": "provenance"}, 400),
+            (f"{path}/{saved['link']['id']}/visibility", {"hidden": "yes", "request_id": "hidden"}, 400),
+            (f"{path}/{saved['link']['id']}/visibility", {"hidden": True, "request_id": "extra", "provenance": {}}, 400),
+            (f"{path}/{foreign['link']['id']}/visibility", {"hidden": True, "request_id": "cross-feature"}, 404),
+            (path + "?url=duplicate", {"url": "https://share.example.test/report", "request_id": "query"}, 400),
+            ("/api/v1/first-mate/features/fmf_synthetic_missing/links",
+             {"url": "https://share.example.test/report", "request_id": "missing"}, 404),
+        ]
+        for target, body, expected in invalid:
+            with self.subTest(target=target, body=body):
+                code, result = self.request(target, body)
+                self.assertEqual(code, expected)
+                self.assertFalse(result["ok"])
+        self.assertEqual(len(self.store.snapshot(identity)["links"]), 1)
+        self.assertEqual(self.store.snapshot(other_id)["links"][0]["id"], foreign["link"]["id"])
+
 
 if __name__ == "__main__":
     unittest.main()

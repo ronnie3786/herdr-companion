@@ -57,11 +57,11 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
     const roleTools = new Set(role === "coordinator" ? [
       "fm_status", "fm_delegate", "fm_begin_stage", "fm_recover",
       "fm_resolve_gate", "fm_steer", "fm_retry", "fm_complete_stage",
-      "fm_revise", "fm_finish_feature", "fm_read_document", "fm_read_session",
+      "fm_revise", "fm_finish_feature", "fm_read_document", "fm_read_session", "fm_save_link",
     ] : role === "worker" ? [
       "fm_status", "fm_read_document", "fm_read_session", "fm_outcome",
       "fm_handoff", "fm_acknowledge_handoff", "fm_acknowledge_recovery", "fm_progress", "fm_request_human",
-      "fm_delegate", "fm_retry", "fm_wait_for_children",
+      "fm_delegate", "fm_retry", "fm_wait_for_children", "fm_save_link",
     ] : [
       "fm_status", "fm_read_document", "fm_read_session", "fm_advice",
       "fm_recovery_brief",
@@ -124,6 +124,11 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
     register("fm_read_document", "Read a retained source document belonging to this feature before evaluating or synthesizing its evidence.", Type.Object({ document_id: text("Exact document ID"), offset: Type.Optional(Type.Integer({ minimum: 0 })), length: Type.Optional(Type.Integer({ minimum: 1000, maximum: 80000 })) }));
     register("fm_read_session", "Inspect a retained native Pi conversation belonging to this feature when the actual execution evidence is needed.", Type.Object({ native_session_id: text("Exact native session ID"), before: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })), message_index: Type.Optional(Type.Integer({ minimum: 0 })), text_offset: Type.Optional(Type.Integer({ minimum: 0 })), text_length: Type.Optional(Type.Integer({ minimum: 1000, maximum: 80000 })) }));
     if (role === "coordinator" || role === "worker") {
+      register("fm_save_link", "Retain a pull request or share link so the human can reach it from this feature. Provide the exact absolute http(s) URL; never open, fetch, preview, or create the destination, and never create a pull request or advance a stage to obtain a link.", Type.Object({
+        url: text("Exact absolute http(s) URL to retain"),
+        title: Type.Optional(text("Short human-readable label; omit to derive one from the URL")),
+        kind: Type.Optional(Type.Union([Type.Literal("pull_request"), Type.Literal("link")], { description: "Explicit classification for a pull request outside github.com; recognizable github.com PR URLs are classified automatically" })),
+      }));
       register("fm_delegate", "Queue an independent saved Pi worker in the current authorized stage. This returns immediately. Delegate long work; never wait or poll.", Type.Object({
         title: text("Assignment title"), role: text("Specialist role"),
         prompt: text("Complete assignment including scope, required deliverables, acceptance criteria and explicit human gates"),

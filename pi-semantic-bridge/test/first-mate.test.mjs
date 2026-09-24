@@ -280,3 +280,52 @@ test("completed outcome prevents further worker mutations", async () => {
     assert.equal(f.handlers.get("tool_call")({toolName:"bash"}).terminate,true);
   } finally { f.cleanup(); }
 });
+
+test("coordinator and worker retain links while advisors cannot mutate links", () => {
+  for (const role of ["coordinator", "worker"]) {
+    const f = fixture(role);
+    try {
+      assert.ok(f.tools.has("fm_save_link"));
+      const description = f.tools.get("fm_save_link").description;
+      assert.match(description, /never open, fetch, preview, or create/);
+      assert.match(description, /never create a pull request or advance a stage/);
+      assert.equal(f.handlers.get("tool_call")({toolName:"fm_save_link"}), undefined);
+    } finally { f.cleanup(); }
+  }
+  const advisor = fixture("advisor");
+  try {
+    assert.ok(!advisor.tools.has("fm_save_link"));
+    assert.equal(advisor.handlers.get("tool_call")({toolName:"fm_save_link"}).block, true);
+  } finally { advisor.cleanup(); }
+});
+
+test("link saving spools exact scoped identity and parameters", async () => {
+  const f = fixture("worker", {workspace_mode:"read_only"});
+  try {
+    const id = spoolRequestId("synthetic-job", "save-link");
+    writeFileSync(join(f.root,"responses",id+".json"),JSON.stringify({ok:true,result:{id:"fml_one",url:"https://github.com/synthetic-owner/synthetic-repo/pull/1"}}));
+    const result = await f.tools.get("fm_save_link").execute("save-link", {
+      url:"https://github.com/synthetic-owner/synthetic-repo/pull/1",
+      title:"Synthetic review", kind:"pull_request",
+    }, undefined, undefined, f.ctx);
+    assert.equal(result.details.id, "fml_one");
+    const request = JSON.parse(readFileSync(join(f.root,"requests",id+".json"),"utf8"));
+    assert.equal(request.action, "fm_save_link");
+    assert.equal(request.native_session_id, "native-synthetic");
+    assert.deepEqual(request.params, {
+      url:"https://github.com/synthetic-owner/synthetic-repo/pull/1",
+      title:"Synthetic review", kind:"pull_request",
+    });
+  } finally { f.cleanup(); }
+});
+
+test("successor and recovery fences also gate link saving", () => {
+  const handoff = fixture("worker", {handoff_id:"handoff-synthetic", workspace_mode:"isolated"});
+  try {
+    assert.equal(handoff.handlers.get("tool_call")({toolName:"fm_save_link"}).block, true);
+  } finally { handoff.cleanup(); }
+  const recovery = fixture("worker", {requires_recovery_ack:true, workspace_mode:"isolated"});
+  try {
+    assert.equal(recovery.handlers.get("tool_call")({toolName:"fm_save_link"}).block, true);
+  } finally { recovery.cleanup(); }
+});

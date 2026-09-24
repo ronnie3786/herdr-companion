@@ -26,6 +26,8 @@ protocol FirstMateClient: Sendable {
         messageID: String,
         request: FirstMateFeedbackSaveRequest
     ) async throws -> FirstMateFeedbackMutationResponse
+    func saveFirstMateLink(featureID: String, url: String, title: String?, kind: String?, requestID: String) async throws -> FirstMateLinkMutationResponse
+    func setFirstMateLinkVisibility(featureID: String, linkID: String, hidden: Bool, requestID: String) async throws -> FirstMateLinkMutationResponse
 }
 
 struct FirstMateFeatureList: Decodable, Sendable {
@@ -48,6 +50,32 @@ struct FirstMateCapabilities: Decodable, Sendable {
     var supportsSafeModelSettings: Bool { capabilities.contains("first-mate-safe-model-settings-v1") }
     var supportsJournalEventSnapshots: Bool { capabilities.contains("first-mate-journal-events-v1") }
     var supportsFeedback: Bool { capabilities.contains("first-mate-feedback-v1") }
+    var supportsLinks: Bool { capabilities.contains("first-mate-links-v1") }
+}
+
+/// A link save or visibility response: the affected link plus the same full
+/// snapshot the feature detail route returns.
+struct FirstMateLinkMutationResponse: Decodable, Sendable {
+    var ok: Bool
+    var link: FirstMateLink?
+    var snapshot: FirstMateSnapshot
+
+    enum CodingKeys: String, CodingKey {
+        case ok, link
+    }
+
+    init(ok: Bool, link: FirstMateLink?, snapshot: FirstMateSnapshot) {
+        self.ok = ok
+        self.link = link
+        self.snapshot = snapshot
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try container.decode(Bool.self, forKey: .ok)
+        link = try container.decodeIfPresent(FirstMateLink.self, forKey: .link)
+        snapshot = try FirstMateSnapshot(from: decoder)
+    }
 }
 
 struct FirstMateDocumentResponse: Decodable, Sendable {
@@ -150,6 +178,12 @@ extension FirstMateClient {
         messageID: String,
         request: FirstMateFeedbackSaveRequest
     ) async throws -> FirstMateFeedbackMutationResponse {
+        throw APIError.invalidResponse
+    }
+    func saveFirstMateLink(featureID: String, url: String, title: String?, kind: String?, requestID: String) async throws -> FirstMateLinkMutationResponse {
+        throw APIError.invalidResponse
+    }
+    func setFirstMateLinkVisibility(featureID: String, linkID: String, hidden: Bool, requestID: String) async throws -> FirstMateLinkMutationResponse {
         throw APIError.invalidResponse
     }
 }

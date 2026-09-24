@@ -141,8 +141,59 @@ struct FirstMateHTTPTests {
         await #expect(throws: APIError.self) { _ = try await client.fetchFirstMateDocument(id) }
         await #expect(throws: APIError.self) { _ = try await client.fetchFirstMateSession(id) }
         await #expect(throws: APIError.self) { _ = try await client.fetchFirstMateFeature(id) }
+        await #expect(throws: APIError.self) { _ = try await client.setFirstMateLinkVisibility(featureID: "feature:123", linkID: id, hidden: true, requestID: "link-invalid") }
         #expect(FirstMateURLProtocol.recorder.requests().isEmpty)
     }
+
+    #if os(macOS)
+    @Test("Feature links post to the authenticated feature route with stable request identity")
+    func featureLinks() async throws {
+        let (client, session) = try makeClient()
+        defer { session.invalidateAndCancel() }
+        let capabilities = try await client.fetchFirstMateCapabilities()
+        #expect(capabilities.supportsLinks)
+        let saved = try await client.saveFirstMateLink(
+            featureID: "feature:123",
+            url: "https://github.com/example-org/sample-app/pull/101/files",
+            title: "Review the draft",
+            kind: nil,
+            requestID: "link-save-1"
+        )
+        #expect(saved.ok)
+        #expect(saved.link?.id == "demo-link-pr-101")
+        #expect(saved.snapshot.links.count == 3)
+        let hidden = try await client.setFirstMateLinkVisibility(
+            featureID: "feature:123",
+            linkID: "demo-link-pr-101",
+            hidden: true,
+            requestID: "link-hide-1"
+        )
+        #expect(hidden.ok)
+
+        let requests = FirstMateURLProtocol.recorder.requests()
+        #expect(requests.map(\.httpMethod) == ["GET", "POST", "POST"])
+        #expect(requests.compactMap { $0.url?.path } == [
+            "/api/v1/first-mate/capabilities",
+            "/api/v1/first-mate/features/feature:123/links",
+            "/api/v1/first-mate/features/feature:123/links/demo-link-pr-101/visibility",
+        ])
+        for request in requests {
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer first-mate-test-token")
+        }
+        let saveBody = try #require(requests[1].httpBody)
+        let saveObject = try #require(JSONSerialization.jsonObject(with: saveBody) as? [String: Any])
+        #expect(saveObject["url"] as? String == "https://github.com/example-org/sample-app/pull/101/files")
+        #expect(saveObject["title"] as? String == "Review the draft")
+        #expect(saveObject["request_id"] as? String == "link-save-1")
+        #expect(saveObject["kind"] == nil)
+        #expect(saveObject["provenance"] == nil)
+        let visibilityBody = try #require(requests[2].httpBody)
+        let visibilityObject = try #require(JSONSerialization.jsonObject(with: visibilityBody) as? [String: Any])
+        #expect(visibilityObject["hidden"] as? Bool == true)
+        #expect(visibilityObject["request_id"] as? String == "link-hide-1")
+        #expect(visibilityObject["provenance"] == nil)
+    }
+    #endif
 
     @Test("Authentication failures remain visible instead of appearing as an unsupported server")
     @MainActor
@@ -197,7 +248,14 @@ private final class FirstMateURLProtocol: URLProtocol {
             if status != 200 {
                 data = Data(#"{"ok":false,"error":{"code":"unauthorized","message":"Authentication required"}}"#.utf8)
             } else if url.path == "/api/v1/first-mate/capabilities" {
-                data = Data(#"{"ok":true,"capabilities":["first-mate-v1","first-mate-archive-v1"]}"#.utf8)
+                data = Data(#"{"ok":true,"capabilities":["first-mate-v1","first-mate-archive-v1","first-mate-links-v1"]}"#.utf8)
+            } else if url.path.contains("/links") {
+                let snapshot = FirstMateDemo.features(step: 0)[0]
+                var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any] ?? [:]
+                if let link = snapshot.links.first {
+                    object["link"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(link))
+                }
+                data = try JSONSerialization.data(withJSONObject: object)
             } else if url.path == "/api/v1/first-mate/models" {
                 data = Data(#"{"ok":true,"models":[{"id":"synthetic/reasoner","name":"Reasoner","provider":"synthetic","reasoning":true}],"default_model":"synthetic/default","thinking_levels":["off","high"]}"#.utf8)
             } else if url.path.hasSuffix("/attachments") {

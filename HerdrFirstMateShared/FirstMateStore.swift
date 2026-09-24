@@ -50,6 +50,9 @@ final class FirstMateStore {
     private(set) var snapshots: [String: FirstMateSnapshot] = [:]
     var selectedFeatureID: String?
     var inspector = FirstMateInspector.overview
+    /// The Documents inspector's Documents/Links sub-tab. Shared so the
+    /// prominent PR section can open the Links collection directly.
+    var documentsMode = FirstMateDocumentsMode.documents
     var graphMode = false
     var selectedVisitID: String?
     var draft = ""
@@ -71,6 +74,7 @@ final class FirstMateStore {
     private(set) var attachmentsSupported = false
     private(set) var contextSupported = false
     private(set) var safeModelSettingsSupported = false
+    private(set) var linksSupported = false
     private(set) var controlAvailable = false
     // Response feedback is companion data that deliberately stays outside
     // FirstMateSnapshot and composer state. Caches are scoped to this client
@@ -96,6 +100,8 @@ final class FirstMateStore {
     private var feedbackConflicts: Set<FeedbackKey> = []
     private var feedbackDrafts: [FeedbackKey: FirstMateFeedbackDraft] = [:]
     private var pendingFeedbackRequests: [FeedbackKey: FirstMateFeedbackSaveRequest] = [:]
+    private(set) var isSavingLink = false
+    private(set) var linkMutationError: String?
     private(set) var lastUpdated: Date?
     private(set) var runtimeHealth: FirstMateRuntimeHealth?
     var openedResource: FirstMateResource?
@@ -117,6 +123,8 @@ final class FirstMateStore {
     private var resourceGeneration = 0
     private var drafts: [String: String] = [:]
     private var pendingMessages: [String: (text: String, requestID: String)] = [:]
+    private var pendingLinkSaves: [String: (draft: FirstMateLinkDraft, requestID: String)] = [:]
+    private var pendingLinkVisibility: [String: String] = [:]
     private var demoStep = 0
     @ObservationIgnored private var client: (any FirstMateClient)?
     @ObservationIgnored private var journalEventSnapshotsSupported = false
@@ -125,6 +133,8 @@ final class FirstMateStore {
     #endif
 
     var colorScheme: ColorScheme { isDark ? .dark : .light }
+    var canManageLinks: Bool { isDemo || linksSupported }
+    var canMutateLinks: Bool { isDemo || controlAvailable }
     var snapshot: FirstMateSnapshot? { selectedFeatureID.flatMap { snapshots[$0] } }
     var hasUnsentDrafts: Bool {
         let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -195,12 +205,18 @@ final class FirstMateStore {
         feedbackConflicts = []
         feedbackDrafts = [:]
         pendingFeedbackRequests = [:]
+        linksSupported = demo
+        isSavingLink = false
+        linkMutationError = nil
+        pendingLinkSaves = [:]
+        pendingLinkVisibility = [:]
         activeControlLease = nil
         controlAvailable = demo
         isRefreshing = false
         isSending = false
         isCreating = false
         showArchived = false
+        documentsMode = .documents
         hasLoaded = false
         lastUpdated = nil
         #if os(macOS)
@@ -239,7 +255,14 @@ final class FirstMateStore {
         draft = drafts[id] ?? ""
         selectedVisitID = snapshots[id]?.feature.currentVisitID
         error = nil
+        linkMutationError = nil
         closeResource()
+    }
+
+    /// Navigates from Overview to the Documents inspector's Links collection.
+    func showLinksCollection() {
+        inspector = .documents
+        documentsMode = .links
     }
 
     func composerDraft(for context: OperationContext) -> String {
@@ -304,8 +327,17 @@ final class FirstMateStore {
                 if feature.modelSelection == nil { feature.modelSelection = existing.feature.modelSelection }
             }
             existing.feature = feature
+            if value.includesLinks { existing.links = value.links }
             snapshots[value.feature.id] = existing
-        } else { snapshots[value.feature.id] = value }
+        } else {
+            var incoming = value
+            if !incoming.includesLinks, let existing = snapshots[incoming.feature.id] {
+                // A server without the additive links field is not evidence
+                // that previously cached links were removed.
+                incoming.links = existing.links
+            }
+            snapshots[incoming.feature.id] = incoming
+        }
         let acceptedFeature = snapshots[value.feature.id]?.feature ?? value.feature
         if let index = features.firstIndex(where: { $0.id == value.feature.id }) {
             features[index] = acceptedFeature
@@ -339,6 +371,7 @@ final class FirstMateStore {
                 feedbackCapability = capabilities.ok
                     ? (capabilities.supportsFeedback ? .supported : .unsupported)
                     : .unknown
+                linksSupported = capabilities.ok && capabilities.supportsLinks
             } catch {
                 guard capturedGeneration == generation else { return }
                 archiveSupported = false
@@ -347,6 +380,9 @@ final class FirstMateStore {
                 safeModelSettingsSupported = false
                 journalEventSnapshotsSupported = false
                 feedbackCapability = .unknown
+                // A transient capability failure is not proof that this
+                // companion lacks first-mate-links-v1, so keep the last known
+                // answer instead of showing upgrade guidance mid-outage.
             }
             let list = try await client.fetchFirstMateFeatures(scope: showArchived ? .all : .active)
             guard capturedGeneration == generation else { return }
@@ -583,6 +619,163 @@ final class FirstMateStore {
             if capturedGeneration == generation { record(error) }
             return false
         }
+    }
+
+    /// Explicitly saves one PR or general HTTP(S) link to this feature.
+    ///
+    /// The caller's captured context fences the whole operation: a delayed
+    /// response can only update the feature it was requested for, never a
+    /// newly selected feature or a replacement host. A failed attempt keeps
+    /// its request identity so an explicit retry is idempotent.
+    @discardableResult
+    func saveLink(_ draft: FirstMateLinkDraft, expectedContext: OperationContext? = nil) async -> Bool {
+        if let expectedContext, expectedContext != operationContext { return false }
+        let context = expectedContext ?? operationContext
+        guard let featureID = context.featureID, !isSavingLink else { return false }
+        guard let normalized = FirstMateLinkClassifier.normalize(url: draft.url, title: draft.title, kind: draft.kind) else {
+            if context == operationContext {
+                linkMutationError = "Enter an absolute http or https URL without credentials."
+            }
+            return false
+        }
+        if isDemo {
+            applyDemoLink(normalized, featureID: featureID)
+            if context == operationContext { linkMutationError = nil }
+            return true
+        }
+        guard controlAvailable else {
+            if context == operationContext { linkMutationError = "This First Mate view does not currently control this feature." }
+            return false
+        }
+        guard linksSupported else {
+            if context == operationContext { linkMutationError = Self.linksUpgradeMessage }
+            return false
+        }
+        guard let client else {
+            if context == operationContext { linkMutationError = "Connect to this companion to save links." }
+            return false
+        }
+        let pending = pendingLinkSaves[featureID].flatMap { $0.draft == draft ? $0 : nil }
+            ?? (draft: draft, requestID: UUID().uuidString)
+        pendingLinkSaves[featureID] = pending
+        let capturedGeneration = generation
+        isSavingLink = true
+        defer { if capturedGeneration == generation { isSavingLink = false } }
+        do {
+            let response = try await client.saveFirstMateLink(
+                featureID: featureID,
+                url: normalized.url,
+                title: normalized.titleSupplied ? normalized.title : nil,
+                kind: draft.kind,
+                requestID: pending.requestID
+            )
+            guard capturedGeneration == generation,
+                  response.ok,
+                  response.snapshot.feature.id == featureID else { throw APIError.invalidResponse }
+            receive(response.snapshot)
+            pendingLinkSaves[featureID] = nil
+            if context == operationContext { linkMutationError = nil }
+            return capturedGeneration == generation
+        } catch {
+            guard capturedGeneration == generation else { return false }
+            if context == operationContext { linkMutationError = Self.linkFailureMessage(error) }
+            return false
+        }
+    }
+
+    /// Reversibly hides or restores one feature-owned link.
+    @discardableResult
+    func setLinkHidden(_ linkID: String, hidden: Bool, expectedContext: OperationContext? = nil) async -> Bool {
+        if let expectedContext, expectedContext != operationContext { return false }
+        let context = expectedContext ?? operationContext
+        guard let featureID = context.featureID, !isSavingLink,
+              let link = snapshots[featureID]?.link(linkID),
+              link.featureID == featureID else { return false }
+        if isDemo {
+            applyDemoVisibility(linkID, hidden: hidden, featureID: featureID)
+            if context == operationContext { linkMutationError = nil }
+            return true
+        }
+        guard controlAvailable else {
+            if context == operationContext { linkMutationError = "This First Mate view does not currently control this feature." }
+            return false
+        }
+        guard linksSupported else {
+            if context == operationContext { linkMutationError = Self.linksUpgradeMessage }
+            return false
+        }
+        guard let client else {
+            if context == operationContext { linkMutationError = "Connect to this companion to change links." }
+            return false
+        }
+        let pendingKey = "\(featureID)|\(linkID)|\(hidden)"
+        let requestID = pendingLinkVisibility[pendingKey] ?? UUID().uuidString
+        pendingLinkVisibility[pendingKey] = requestID
+        let capturedGeneration = generation
+        isSavingLink = true
+        defer { if capturedGeneration == generation { isSavingLink = false } }
+        do {
+            let response = try await client.setFirstMateLinkVisibility(
+                featureID: featureID,
+                linkID: linkID,
+                hidden: hidden,
+                requestID: requestID
+            )
+            guard capturedGeneration == generation,
+                  response.ok,
+                  response.snapshot.feature.id == featureID else { throw APIError.invalidResponse }
+            receive(response.snapshot)
+            pendingLinkVisibility[pendingKey] = nil
+            if context == operationContext { linkMutationError = nil }
+            return capturedGeneration == generation
+        } catch {
+            guard capturedGeneration == generation else { return false }
+            if context == operationContext { linkMutationError = Self.linkFailureMessage(error) }
+            return false
+        }
+    }
+
+    static let linksUpgradeMessage = "Saving links needs a companion server advertising first-mate-links-v1. Update and restart the companion, then Refresh."
+
+    private static func linkFailureMessage(_ error: Error) -> String {
+        if case let APIError.server(status, _) = error, status == 404 || status == 501 {
+            return linksUpgradeMessage
+        }
+        return error.localizedDescription
+    }
+
+    private func applyDemoLink(_ normalized: FirstMateNormalizedLink, featureID: String) {
+        guard var value = snapshots[featureID] else { return }
+        if let index = value.links.firstIndex(where: { $0.url == normalized.url }) {
+            if normalized.titleSupplied, value.links[index].titleSource != "user" {
+                value.links[index].title = normalized.title
+                value.links[index].titleSource = "user"
+                receive(value)
+            }
+            return
+        }
+        value.links.append(FirstMateLink(
+            id: "demo-link-\(UUID().uuidString.lowercased())",
+            featureID: featureID,
+            url: normalized.url,
+            kind: normalized.kind,
+            title: normalized.title,
+            titleSource: normalized.titleSupplied ? "user" : "",
+            source: "user",
+            provenance: .init(),
+            hidden: false,
+            createdAt: FirstMateDemo.timestamp,
+            updatedAt: FirstMateDemo.timestamp
+        ))
+        receive(value)
+    }
+
+    private func applyDemoVisibility(_ linkID: String, hidden: Bool, featureID: String) {
+        guard var value = snapshots[featureID],
+              let index = value.links.firstIndex(where: { $0.id == linkID }) else { return }
+        value.links[index].hidden = hidden
+        value.links[index].updatedAt = FirstMateDemo.timestamp
+        receive(value)
     }
 
     func fetchModelCatalog(expectedContext: OperationContext) async throws -> FirstMateModelCatalog {

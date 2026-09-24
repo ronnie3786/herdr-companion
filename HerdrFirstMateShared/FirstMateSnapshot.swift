@@ -11,6 +11,10 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
     var hasDetails: Bool
     var sessions: [FirstMateSession]
     var sessionsTruncated: Bool
+    var links: [FirstMateLink]
+    /// Distinguishes a server that omits `links` from one that explicitly
+    /// reports an empty collection. The key is never encoded.
+    var includesLinks = true
     var runtimeHealth: FirstMateRuntimeHealth? = nil
     /// The feature's newest event sequence across every event type. Companions
     /// that can omit telemetry from `events` report it so ordering checks never
@@ -21,7 +25,7 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
     var latestEventSequence: Int { eventCursor ?? events.map(\.sequence).max() ?? 0 }
 
     init(feature: FirstMateFeature, visits: [FirstMateVisit] = [], assignments: [FirstMateAssignment] = [],
-         documents: [FirstMateDocument] = [], messages: [FirstMateMessage] = [], events: [FirstMateEvent] = [], sessions: [FirstMateSession] = [], sessionsTruncated: Bool = false) {
+         documents: [FirstMateDocument] = [], messages: [FirstMateMessage] = [], events: [FirstMateEvent] = [], sessions: [FirstMateSession] = [], sessionsTruncated: Bool = false, links: [FirstMateLink] = []) {
         ok = true
         self.feature = feature
         self.visits = visits
@@ -32,10 +36,11 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
         hasDetails = true
         self.sessions = sessions
         self.sessionsTruncated = sessionsTruncated
+        self.links = links
     }
 
     enum CodingKeys: String, CodingKey {
-        case ok, feature, visits, assignments, documents, messages, events, sessions
+        case ok, feature, visits, assignments, documents, messages, events, sessions, links
         case sessionsTruncated = "sessions_truncated"
         case runtimeHealth = "runtime_health"
         case eventCursor = "event_cursor"
@@ -53,6 +58,8 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
         hasDetails = c.contains(.visits) && c.contains(.messages) && c.contains(.events)
         sessions = try c.decodeIfPresent([FirstMateSession].self, forKey: .sessions) ?? []
         sessionsTruncated = try c.decodeIfPresent(Bool.self, forKey: .sessionsTruncated) ?? false
+        links = try c.decodeIfPresent([FirstMateLink].self, forKey: .links) ?? []
+        includesLinks = c.contains(.links)
         runtimeHealth = try c.decodeIfPresent(FirstMateRuntimeHealth.self, forKey: .runtimeHealth)
         eventCursor = try c.decodeIfPresent(Int.self, forKey: .eventCursor)
     }
@@ -62,6 +69,11 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
     }
 
     var currentVisit: FirstMateVisit? { visits.first { $0.id == feature.currentVisitID } }
+    var visibleLinks: [FirstMateLink] { FirstMateLinkOrdering.sorted(links.filter { !$0.hidden }) }
+    var pullRequestLinks: [FirstMateLink] { FirstMateLinkOrdering.visiblePullRequests(links) }
+    var otherLinks: [FirstMateLink] { FirstMateLinkOrdering.visibleOtherLinks(links) }
+    var hiddenLinks: [FirstMateLink] { FirstMateLinkOrdering.hidden(links) }
+    func link(_ id: String) -> FirstMateLink? { links.first { $0.id == id } }
     func agents(for visitID: String) -> [FirstMateAssignment] {
         assignments.filter { $0.featureID == feature.id && ($0.visitID == visitID || $0.visitIDs?.contains(visitID) == true) }
     }

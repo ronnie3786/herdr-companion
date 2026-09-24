@@ -134,6 +134,57 @@ New apps retain chat on older servers and explain that model controls require a
 companion update. The Mac updater does not install the companion package; update
 that component separately.
 
+## Feature links
+
+A feature can retain pull requests and general HTTP(S) links. Recognizable
+exact `github.com/<owner>/<repo>/pull/<number>` URLs found in managed First Mate
+evidence are captured automatically; everything else is saved explicitly. Link
+records never change workflow status, revision, authorization, or queued model
+work, and the CLI never fetches, opens, or publishes a destination.
+
+```sh
+herdr-first-mate links FEATURE_ID
+herdr-first-mate add-link FEATURE_ID \
+  --url https://github.com/synthetic-owner/synthetic-repo/pull/12 \
+  --title 'Synthetic review' --request-id feature-link-1
+herdr-first-mate add-link FEATURE_ID \
+  --url 'https://github.example.test/synthetic-team/synthetic-repo/pull/5/files' \
+  --kind pull_request --request-id feature-link-2
+herdr-first-mate add-link FEATURE_ID \
+  --url 'http://share.example.test:8443/private/report?token=synthetic#summary' \
+  --request-id feature-link-3
+herdr-first-mate hide-link FEATURE_ID LINK_ID --request-id feature-hide-1
+herdr-first-mate restore-link FEATURE_ID LINK_ID --request-id feature-restore-1
+```
+
+`links` returns the feature's complete retained link list, including hidden
+rows, so a native client can offer Restore. `add-link` accepts the exact URL and
+an optional title and classification (`pull_request` or `link`). Recognizable
+github.com pull-request paths canonicalize to the pull-request root with owner
+and repository casing folded, so a link to its files page, a link to the
+conversation, and a casing variant deduplicate; a draft PR and a
+ready-for-review PR are the same record. General links preserve their path,
+query, and fragment, and bracketed IPv6 destinations are accepted with their
+brackets intact. Credentials in a URL, non-HTTP(S) schemes, control characters,
+and malformed hosts or ports are rejected with no side effect.
+
+`hide-link` and `restore-link` address the exact feature and link IDs; a link ID
+from another feature returns 404 and is never changed. Hiding is reversible and
+survives automatic re-discovery or a repeated agent registration. Mutations use
+stable request IDs: reuse the same ID and body after an uncertain response, and
+reload on a conflict rather than overwriting another client's state. The CLI
+checks `first-mate-links-v1` on `GET /capabilities` first. An older companion
+returns `first_mate_links_unsupported` with upgrade guidance instead of
+attempting an unknown route. Saving a link is not authorization to create a pull
+request, open a share, or advance a stage.
+
+The authenticated API routes are
+`POST /api/v1/first-mate/features/:id/links` and
+`POST /api/v1/first-mate/features/:id/links/:linkId/visibility`; the existing
+feature snapshot carries the additive `links` array so older clients ignore it
+safely. Companion and Mac updates remain independent; the Mac updater does not
+install the companion package.
+
 ## Archive contract
 
 Companions advertising `first-mate-archive-v1` accept `active`, `archived`, or

@@ -18,6 +18,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from .first_mate_links import (
+    LinkValidationError,
+    normalize_link,
+    validate_internal_link_source,
+    validate_link_provenance,
+)
+
 
 class FirstMateError(RuntimeError):
     def __init__(self, message: str, *, code: str = "first_mate_conflict", status: int = 409):
@@ -168,6 +175,13 @@ CREATE TABLE IF NOT EXISTS fm_feedback(
  comment TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL,
  created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS fm_feedback_feature ON fm_feedback(feature_id,created_at,message_id);
+CREATE TABLE IF NOT EXISTS fm_links(
+ id TEXT PRIMARY KEY, feature_id TEXT NOT NULL REFERENCES fm_features(id),
+ url TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL DEFAULT '',
+ title_source TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
+ provenance_json TEXT NOT NULL DEFAULT '{}', hidden INTEGER NOT NULL DEFAULT 0,
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(feature_id,url));
+CREATE INDEX IF NOT EXISTS fm_links_feature ON fm_links(feature_id,created_at,id);
 CREATE UNIQUE INDEX IF NOT EXISTS fm_sessions_file ON fm_sessions(session_file);
 CREATE INDEX IF NOT EXISTS fm_events_feature ON fm_events(feature_id,sequence);
 CREATE INDEX IF NOT EXISTS fm_assignments_status ON fm_assignments(status,feature_id);
@@ -246,6 +260,7 @@ class FirstMateStore:
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(5,?)", (_now(),))
         # Version 6 adds only the idempotent board indexes in SCHEMA.
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(6,?)", (_now(),))
+        self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(8,?)", (_now(),))
         self._seed_feedback_categories()
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(7,?)", (_now(),))
 
@@ -336,7 +351,7 @@ class FirstMateStore:
         if row is None:
             return None
         result = dict(row)
-        for name in ("metadata_json", "payload_json", "followup_stages_json"):
+        for name in ("metadata_json", "payload_json", "followup_stages_json", "provenance_json"):
             if name in result:
                 result[name[:-5]] = json.loads(result.pop(name))
         return result
@@ -346,7 +361,15 @@ class FirstMateStore:
         if row is None:
             raise FirstMateError("First Mate record not found", code="not_found", status=404)
         result = self._decode(row)
-        return self._assignment_projection(result) if table == "fm_assignments" else result
+        if table == "fm_assignments":
+            return self._assignment_projection(result)
+        return self._link_projection(result) if table == "fm_links" else result
+
+    @staticmethod
+    def _link_projection(result: dict) -> dict:
+        if "hidden" in result:
+            result["hidden"] = bool(result["hidden"])
+        return result
 
     def _assignment_projection(self, result: dict) -> dict:
         result["visit_ids"] = [row[0] for row in self._db.execute("SELECT visit_id FROM fm_assignment_memberships WHERE assignment_id=? ORDER BY revision,visit_id", (result["id"],))]
@@ -598,6 +621,268 @@ class FirstMateStore:
                 self._event(feature_id, "feature.unarchived", "Feature unarchived", {"previous_reason": previous_reason})
             return self._save_receipt(scope, request_id, body, self._one("fm_features", feature_id))
 
+    def list_links(self, feature_id: str | None = None) -> list[dict]:
+        """Return every retained link, including hidden rows, for its feature."""
+        with self._lock:
+            where = "WHERE feature_id=?" if feature_id is not None else ""
+            args = (feature_id,) if feature_id is not None else ()
+            return [self._link_projection(self._decode(row)) for row in self._db.execute(
+                "SELECT * FROM fm_links " + where + " ORDER BY created_at,id", args
+            )]
+
+    # -- bounded link-discovery inventory -----------------------------------
+    #
+    # Link discovery must never read a public snapshot, an event stream, or a
+    # message table just to learn which evidence exists. These queries return
+    # only the small ownership/identity columns needed to page through managed
+    # evidence, and every caller supplies an explicit page limit. Content is
+    # read later through the matching ``*_slice`` methods, one bounded chunk per
+    # source, so a pass can stop between records or characters.
+
+    @staticmethod
+    def _discovery_limit(limit: Any) -> int:
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise FirstMateError("Invalid discovery limit", code="invalid_request", status=400)
+        return max(1, min(limit, 1000))
+
+    def link_discovery_sessions(self, *, after: Any = None, limit: int = 64) -> list[dict]:
+        """One lightweight page of the managed session ledger, ordered by ID."""
+        size = self._discovery_limit(limit)
+        cursor = after if isinstance(after, str) and after else None
+        with self._lock:
+            if cursor is None:
+                rows = self._db.execute(
+                    "SELECT native_session_id,feature_id,assignment_id,session_file FROM fm_sessions "
+                    "ORDER BY native_session_id LIMIT ?", (size,)).fetchall()
+            else:
+                rows = self._db.execute(
+                    "SELECT native_session_id,feature_id,assignment_id,session_file FROM fm_sessions "
+                    "WHERE native_session_id>? ORDER BY native_session_id LIMIT ?", (cursor, size)).fetchall()
+            return [dict(row) for row in rows]
+
+    def link_discovery_session_owner(self, native_session_id: str) -> dict | None:
+        """The single ledger owner of a native session ID, if any."""
+        _text(native_session_id, "native_session_id", 500)
+        with self._lock:
+            row = self._db.execute(
+                "SELECT native_session_id,feature_id,assignment_id,session_file FROM fm_sessions "
+                "WHERE native_session_id=?", (native_session_id,)).fetchone()
+            return dict(row) if row is not None else None
+
+    def link_discovery_session_by_file(self, session_file: str) -> dict | None:
+        """The single ledger owner of a session path, if any."""
+        _text(session_file, "session_file", 4000)
+        with self._lock:
+            row = self._db.execute(
+                "SELECT native_session_id,feature_id,assignment_id,session_file FROM fm_sessions "
+                "WHERE session_file=?", (session_file,)).fetchone()
+            return dict(row) if row is not None else None
+
+    def link_discovery_outcomes(self, verdicts: tuple[str, ...], *, after: Any = None,
+                                limit: int = 64) -> list[dict]:
+        """One page of accepted outcome summaries, without loading any events."""
+        size = self._discovery_limit(limit)
+        cursor = after if isinstance(after, str) and after else None
+        placeholders = ",".join("?" for _ in verdicts)
+        base = ("SELECT id,feature_id,native_session_id,updated_at,length(summary) AS text_length "
+                f"FROM fm_assignments WHERE verdict IN ({placeholders}) AND length(summary)>0")
+        with self._lock:
+            if cursor is None:
+                rows = self._db.execute(base + " ORDER BY id LIMIT ?", (*verdicts, size)).fetchall()
+            else:
+                rows = self._db.execute(base + " AND id>? ORDER BY id LIMIT ?",
+                                        (*verdicts, cursor, size)).fetchall()
+            return [dict(row) for row in rows]
+
+    def link_discovery_outcome_slice(self, assignment_id: str, verdicts: tuple[str, ...], *,
+                                     offset: int = 0, limit: int = 64) -> dict | None:
+        """One bounded character slice of one accepted outcome summary."""
+        _text(assignment_id, "assignment_id", 200)
+        start = max(0, int(offset))
+        size = self._discovery_limit(limit)
+        placeholders = ",".join("?" for _ in verdicts)
+        with self._lock:
+            row = self._db.execute(
+                "SELECT feature_id,native_session_id,updated_at,length(summary) AS text_length,"
+                f"substr(summary,?,?) AS text FROM fm_assignments WHERE id=? AND verdict IN ({placeholders})",
+                (start + 1, size, assignment_id, *verdicts)).fetchone()
+            return self._decode(row) if row is not None else None
+
+    def link_discovery_visits(self, *, after: Any = None, limit: int = 64) -> list[dict]:
+        """One page of completed visit summaries, without loading documents."""
+        size = self._discovery_limit(limit)
+        cursor = after if isinstance(after, str) and after else None
+        base = ("SELECT id,feature_id,authorization_message_id,updated_at,"
+                "length(summary) AS text_length FROM fm_visits "
+                "WHERE status='completed' AND length(summary)>0")
+        with self._lock:
+            if cursor is None:
+                rows = self._db.execute(base + " ORDER BY id LIMIT ?", (size,)).fetchall()
+            else:
+                rows = self._db.execute(base + " AND id>? ORDER BY id LIMIT ?", (cursor, size)).fetchall()
+            return [dict(row) for row in rows]
+
+    def link_discovery_visit_slice(self, visit_id: str, *, offset: int = 0,
+                                   limit: int = 64) -> dict | None:
+        """One bounded character slice of one completed visit summary."""
+        _text(visit_id, "visit_id", 200)
+        start = max(0, int(offset))
+        size = self._discovery_limit(limit)
+        with self._lock:
+            row = self._db.execute(
+                "SELECT feature_id,authorization_message_id,updated_at,length(summary) AS text_length,"
+                "substr(summary,?,?) AS text FROM fm_visits WHERE id=? AND status='completed'",
+                (start + 1, size, visit_id)).fetchone()
+            return self._decode(row) if row is not None else None
+
+    def link_discovery_documents(self, verdicts: tuple[str, ...], *, after: Any = None,
+                                 limit: int = 64) -> list[dict]:
+        """One page of documents owned by accepted outcomes, without their content."""
+        size = self._discovery_limit(limit)
+        cursor = after if isinstance(after, str) and after else None
+        placeholders = ",".join("?" for _ in verdicts)
+        base = ("SELECT d.id,d.feature_id,d.assignment_id,d.native_session_id,"
+                "length(d.content) AS text_length FROM fm_documents d "
+                "JOIN fm_assignments a ON a.id=d.assignment_id "
+                f"WHERE a.verdict IN ({placeholders}) AND length(d.content)>0")
+        with self._lock:
+            if cursor is None:
+                rows = self._db.execute(base + " ORDER BY d.id LIMIT ?", (*verdicts, size)).fetchall()
+            else:
+                rows = self._db.execute(base + " AND d.id>? ORDER BY d.id LIMIT ?",
+                                        (*verdicts, cursor, size)).fetchall()
+            return [dict(row) for row in rows]
+
+    def link_discovery_document_slice(self, document_id: str, verdicts: tuple[str, ...], *,
+                                      offset: int = 0, limit: int = 64) -> dict | None:
+        """One bounded character slice of one accepted-outcome document."""
+        _text(document_id, "document_id", 200)
+        start = max(0, int(offset))
+        size = self._discovery_limit(limit)
+        placeholders = ",".join("?" for _ in verdicts)
+        with self._lock:
+            row = self._db.execute(
+                "SELECT d.feature_id,d.assignment_id,d.native_session_id,"
+                "length(d.content) AS text_length, substr(d.content,?,?) AS text "
+                "FROM fm_documents d JOIN fm_assignments a ON a.id=d.assignment_id "
+                f"WHERE d.id=? AND a.verdict IN ({placeholders})",
+                (start + 1, size, document_id, *verdicts)).fetchone()
+            return self._decode(row) if row is not None else None
+
+    def _upsert_link(self, feature_id: str, normalized: Mapping[str, Any], *, source: str,
+                     provenance: Mapping[str, str], title_source: str) -> dict:
+        """Create one feature-scoped link or apply only the allowed duplicate update.
+
+        The caller holds the write transaction. Duplicate saves are quiet:
+        provenance, kind, and hidden state are retained, and a title only
+        changes when an explicit user title or a trusted upsert that fills a
+        derived or empty title is involved.
+        """
+        url = normalized["url"]
+        row = self._db.execute("SELECT * FROM fm_links WHERE feature_id=? AND url=?", (feature_id, url)).fetchone()
+        if row is None:
+            link_id, now = _id("fml"), _now()
+            self._db.execute(
+                "INSERT OR IGNORE INTO fm_links(id,feature_id,url,kind,title,title_source,source,provenance_json,hidden,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,0,?,?)",
+                (link_id, feature_id, url, normalized["kind"], normalized["title"], title_source,
+                 source, _json(dict(provenance)), now, now),
+            )
+            row = self._db.execute("SELECT * FROM fm_links WHERE feature_id=? AND url=?", (feature_id, url)).fetchone()
+            if row is None:
+                raise FirstMateError("Could not retain link", code="first_mate_conflict")
+            self._event(
+                feature_id,
+                "link.discovered" if source != "user" else "link.saved",
+                "Pull request link added" if normalized["kind"] == "pull_request" else "Link added",
+                {"link_id": row["id"], "kind": normalized["kind"], "source": source},
+            )
+            return self._link_projection(self._decode(row))
+        link = self._link_projection(self._decode(row))
+        wanted = normalized["title"] if normalized.get("title_supplied") else ""
+        # An explicit user title always wins. A trusted upsert may fill an empty
+        # or derived title, but never replaces a title a user or an earlier
+        # automatic upsert already supplied.
+        replace_allowed = title_source == "user" or link["title_source"] not in {"user", "automatic"}
+        if wanted and replace_allowed and (link["title"] != wanted or link["title_source"] != title_source):
+            self._db.execute(
+                "UPDATE fm_links SET title=?,title_source=?,updated_at=? WHERE id=?",
+                (wanted, title_source, _now(), link["id"]),
+            )
+            link = self._link_projection(self._decode(self._db.execute("SELECT * FROM fm_links WHERE id=?", (link["id"],)).fetchone()))
+        return link
+
+    def save_link(self, feature_id: str, payload: Mapping[str, Any]) -> dict:
+        """Explicit authenticated save. Client-supplied provenance is rejected."""
+        body = dict(payload)
+        if set(body) - {"url", "title", "kind", "request_id"}:
+            raise FirstMateError("Link contains an unsupported field", code="invalid_request", status=400)
+        request_id = _text(body.get("request_id"), "request_id", 200)
+        try:
+            normalized = normalize_link(body.get("url"), title=body.get("title"), kind=body.get("kind"))
+        except LinkValidationError as exc:
+            raise FirstMateError(str(exc), code="invalid_request", status=400) from exc
+        with self._transaction():
+            scope = "link:" + feature_id
+            cached = self._receipt(scope, request_id, body)
+            if cached is not None:
+                return cached
+            self._one("fm_features", feature_id)
+            link = self._upsert_link(
+                feature_id, normalized, source="user", provenance={},
+                title_source="user" if normalized["title_supplied"] else "",
+            )
+            return self._save_receipt(scope, request_id, body, link)
+
+    def register_link(self, feature_id: str, *, url: Any, title: Any = None, kind: Any = None,
+                      source: str = "discovery", provenance: Mapping[str, Any] | None = None) -> dict:
+        """Trusted discovery or agent upsert.
+
+        A user title and hidden state are never overwritten, and an existing
+        record keeps its original provenance. Repeating an upsert is quiet.
+        """
+        try:
+            link_source = validate_internal_link_source(source)
+            provenance = validate_link_provenance(provenance)
+            normalized = normalize_link(url, title=title, kind=kind)
+        except LinkValidationError as exc:
+            raise FirstMateError(str(exc), code="invalid_request", status=400) from exc
+        with self._transaction():
+            self._one("fm_features", feature_id)
+            return self._upsert_link(
+                feature_id, normalized, source=link_source, provenance=provenance,
+                title_source="automatic" if normalized["title_supplied"] else "",
+            )
+
+    def set_link_visibility(self, feature_id: str, link_id: str, payload: Mapping[str, Any]) -> dict:
+        """Reversible hide or restore for one feature-owned link."""
+        body = dict(payload)
+        if set(body) != {"hidden", "request_id"}:
+            raise FirstMateError("Invalid visibility fields", code="invalid_request", status=400)
+        if type(body.get("hidden")) is not bool:
+            raise FirstMateError("hidden must be a boolean", code="invalid_request", status=400)
+        hidden = bool(body["hidden"])
+        request_id = _text(body.get("request_id"), "request_id", 200)
+        link_id = _text(link_id, "link_id", 200)
+        with self._transaction():
+            scope = f"link_visibility:{feature_id}:{link_id}"
+            cached = self._receipt(scope, request_id, body)
+            if cached is not None:
+                return cached
+            self._one("fm_features", feature_id)
+            link = self._one("fm_links", link_id)
+            if link["feature_id"] != feature_id:
+                raise FirstMateError("First Mate record not found", code="not_found", status=404)
+            if link["hidden"] != hidden:
+                self._db.execute(
+                    "UPDATE fm_links SET hidden=?,updated_at=? WHERE id=?",
+                    (1 if hidden else 0, _now(), link_id),
+                )
+                self._event(feature_id, "link.hidden" if hidden else "link.restored",
+                            "Link hidden" if hidden else "Link restored",
+                            {"link_id": link_id, "hidden": hidden})
+                link = self._one("fm_links", link_id)
+            return self._save_receipt(scope, request_id, body, link)
+
     def list_session_records(self, feature_id: str | None = None) -> list[dict]:
         """Return the complete managed session ledger for internal accounting.
 
@@ -619,13 +904,18 @@ class FirstMateStore:
         # The journal view is a pure read; the default keeps its original writer-locked read.
         with self._read() if events == "journal" else self._transaction():
             result = {"feature": self._one("fm_features", feature_id)}
-            for key in ("visits", "assignments", "documents", "messages", "events", "handoffs"):
+            for key in ("visits", "assignments", "documents", "messages", "events", "handoffs", "links"):
                 ordering = "sequence" if key == "events" else "created_at,id"
                 projection = "*" if key != "documents" else "id,feature_id,visit_id,assignment_id,native_session_id,generation,input_revision,title,media_type,content_hash,created_at"
                 # Force the partial index; row lookups over telemetry are the cost avoided.
                 where = f"INDEXED BY fm_events_journal WHERE feature_id=? AND {JOURNAL_EVENT_SQL}" if key == "events" and events == "journal" else "WHERE feature_id=?"
                 rows = [self._decode(r) for r in self._db.execute(f"SELECT {projection} FROM fm_{key} {where} ORDER BY {ordering}", (feature_id,))]
-                result[key] = [self._assignment_projection(row) for row in rows] if key == "assignments" else rows
+                if key == "assignments":
+                    result[key] = [self._assignment_projection(row) for row in rows]
+                elif key == "links":
+                    result[key] = [self._link_projection(row) for row in rows]
+                else:
+                    result[key] = rows
             result["memberships"] = [dict(row) for row in self._db.execute("SELECT m.* FROM fm_assignment_memberships m JOIN fm_visits v ON v.id=m.visit_id WHERE v.feature_id=? ORDER BY m.revision,m.created_at,m.assignment_id", (feature_id,))]
             session_rows = self._db.execute(f"""SELECT {_SESSION_COLUMNS}
                 FROM fm_sessions s {_SESSION_JOINS}

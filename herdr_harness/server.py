@@ -418,6 +418,7 @@ def api_description() -> dict:
             "first-mate-safe-model-settings-v1",
             "first-mate-feedback-v1",
             "first-mate-git-v1",
+            "first-mate-links-v1",
             "pr-review-v1",
             "pi-session-context-v1",
             "agent-control-v1",
@@ -440,6 +441,7 @@ def api_description() -> dict:
             "firstMateFeedback": "/api/v1/first-mate/features/{featureId}/feedback",
             "firstMateGit": "/api/v1/first-mate/features/{featureId}/git",
             "firstMateBoard": "/api/v1/first-mate/features/{featureId}/board",
+            "firstMateLinks": "/api/v1/first-mate/features/{featureId}/links",
             "prReviews": "/api/v1/pr-reviews",
             "prReview": "/api/v1/pr-reviews/{reviewId}",
             "prReviewCapabilities": "/api/v1/pr-reviews/capabilities",
@@ -515,6 +517,8 @@ def api_description() -> dict:
             "POST /api/v1/first-mate/features/{featureId}/attachments",
             "POST /api/v1/first-mate/feedback-categories",
             "POST /api/v1/first-mate/features/{featureId}/messages/{messageId}/feedback",
+            "POST /api/v1/first-mate/features/{featureId}/links",
+            "POST /api/v1/first-mate/features/{featureId}/links/{linkId}/visibility",
             "PATCH|DELETE /api/v1/notes/{noteId}",
             "POST /api/v1/workspaces",
             "PATCH|DELETE /api/v1/workspaces/{workspaceId}",
@@ -1080,6 +1084,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     "first-mate-git-v1", "first-mate-runtime-health-v1", "first-mate-reliability-v1",
                     "first-mate-board-v1", "first-mate-journal-events-v1",
                     "first-mate-feedback-v1",
+                    "first-mate-links-v1",
                 ], **runtime.capabilities()}
             if method == "GET" and tail == ["models"]:
                 return {"ok": True, **service.first_mate.model_catalog()}
@@ -1230,6 +1235,35 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         content_type=content_type,
                         data_base64=data_base64,
                     )
+                if tail[2:] == ["links"] and method == "POST":
+                    if query:
+                        raise HTTPValidationError("Link request does not accept query fields")
+                    if set(body) - {"url", "title", "kind", "request_id"}:
+                        raise HTTPValidationError("Link contains an unsupported field")
+                    payload = {
+                        "url": _string(body.get("url"), "url", maximum=4096),
+                        "request_id": _string(body.get("request_id"), "request_id", maximum=200),
+                    }
+                    if "title" in body:
+                        payload["title"] = _string(body.get("title"), "title", maximum=300, allow_empty=True)
+                    if "kind" in body:
+                        payload["kind"] = _string(body.get("kind"), "kind", maximum=32)
+                    link = store.save_link(feature_id, payload)
+                    # Links are presentation facts: never wake or enqueue a coordinator turn.
+                    return {"ok": True, "link": link, **snapshot_view(feature_id), "runtime_health": runtime.health()}
+                if len(tail) == 5 and tail[2] == "links" and tail[4] == "visibility" and method == "POST":
+                    if query:
+                        raise HTTPValidationError("Link visibility request does not accept query fields")
+                    if set(body) != {"hidden", "request_id"}:
+                        raise HTTPValidationError("Link visibility contains an unsupported field")
+                    if type(body.get("hidden")) is not bool:
+                        raise HTTPValidationError("hidden must be a boolean")
+                    link_id = _string(tail[3], "link_id", maximum=200)
+                    link = store.set_link_visibility(feature_id, link_id, {
+                        "hidden": body["hidden"],
+                        "request_id": _string(body.get("request_id"), "request_id", maximum=200),
+                    })
+                    return {"ok": True, "link": link, **snapshot_view(feature_id), "runtime_health": runtime.health()}
                 if tail[2:] == ["messages"] and method == "POST":
                     if set(body) - {"text", "request_id"}:
                         raise HTTPValidationError("Message contains an unsupported field")

@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import tempfile
 import threading
+import contextlib
+import sqlite3
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from herdr_harness.first_mate_store import FirstMateError, FirstMateStore
 
@@ -480,6 +483,250 @@ class FirstMateStoreTests(unittest.TestCase):
         cursor = self.store.get_events(self.feature["id"], limit=2)["cursor"]
         later = self.store.get_events(self.feature["id"], after=cursor)
         self.assertTrue(all(e["sequence"] > cursor for e in later["events"]))
+
+    def test_link_storage_migrates_additively_and_persists(self):
+        before = self.store.snapshot(self.feature["id"])
+        self.assertEqual(before["links"], [])
+        self.store.close()
+        with contextlib.closing(sqlite3.connect(str(self.path))) as raw:
+            raw.execute("DROP TABLE fm_links")
+            raw.execute("DELETE FROM fm_schema WHERE version=5")
+            raw.commit()
+        self.store = FirstMateStore(self.path)
+        self.assertEqual(self.store.snapshot(self.feature["id"])["links"], [])
+        self.assertEqual(self.store.snapshot(self.feature["id"])["feature"], before["feature"])
+        saved = self.store.save_link(self.feature["id"], {
+            "url": "https://github.com/synthetic-owner/synthetic-repo/pull/42/files#diff-1",
+            "request_id": "link-migration",
+        })
+        self.assertEqual(saved["url"], "https://github.com/synthetic-owner/synthetic-repo/pull/42")
+        self.assertEqual(saved["kind"], "pull_request")
+        self.assertEqual(saved["source"], "user")
+        self.assertFalse(saved["hidden"])
+        with contextlib.closing(sqlite3.connect(str(self.path))) as raw:
+            self.assertIn(5, {row[0] for row in raw.execute("SELECT version FROM fm_schema")})
+        self.store.close()
+        self.store = FirstMateStore(self.path)
+        self.assertEqual(self.store.snapshot(self.feature["id"])["links"], [saved])
+
+    def test_link_duplicates_are_quiet_and_concurrent_saves_create_one_record(self):
+        feature_id = self.feature["id"]
+        first = self.store.save_link(feature_id, {
+            "url": "https://github.com/synthetic-owner/synthetic-repo/pull/11/files",
+            "request_id": "link-save",
+        })
+        replay = self.store.save_link(feature_id, {
+            "url": "https://github.com/synthetic-owner/synthetic-repo/pull/11/files",
+            "request_id": "link-save",
+        })
+        self.assertEqual(replay, first)
+        duplicate = self.store.save_link(feature_id, {
+            "url": "https://github.com/synthetic-owner/synthetic-repo/pull/11",
+            "request_id": "link-save-other",
+        })
+        self.assertEqual(duplicate["id"], first["id"])
+        self.assertEqual(duplicate["url"], first["url"])
+        self.assertEqual(len(self.store.list_links(feature_id)), 1)
+        self.assert_code("idempotency_conflict", lambda: self.store.save_link(feature_id, {
+            "url": "https://github.com/synthetic-owner/synthetic-repo/pull/11",
+            "title": "Changed request",
+            "request_id": "link-save",
+        }))
+        link_events = [event["type"] for event in self.store.get_events(feature_id)["events"] if event["type"].startswith("link.")]
+        self.assertEqual(link_events, ["link.saved"])
+        other_repo = self.store.save_link(feature_id, {
+            "url": "https://github.com/synthetic-other-owner/synthetic-second-repo/pull/11",
+            "request_id": "link-other-repository",
+        })
+        self.assertNotEqual(other_repo["id"], first["id"])
+        self.assertEqual(len([link for link in self.store.list_links(feature_id) if link["kind"] == "pull_request"]), 2)
+        second = FirstMateStore(self.path)
+        self.addCleanup(second.close)
+        barrier, results = threading.Barrier(2), []
+
+        def save(store, request_id):
+            barrier.wait()
+            try:
+                results.append(store.save_link(feature_id, {
+                    "url": "https://github.com/synthetic-owner/synthetic-repo/pull/12",
+                    "request_id": request_id,
+                }))
+            except FirstMateError as error:
+                results.append(error.code)
+
+        threads = [threading.Thread(target=save, args=(store, request_id)) for store, request_id in
+                   ((self.store, "concurrent-a"), (second, "concurrent-b"))]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        successes = [result for result in results if isinstance(result, dict)]
+        self.assertEqual(len(successes), 2)
+        self.assertEqual(len({result["id"] for result in successes}), 1)
+        self.assertEqual(len([link for link in self.store.list_links(feature_id) if link["url"].endswith("/pull/12")]), 1)
+
+    def test_case_variant_pull_request_references_share_one_hidden_row(self):
+        feature_id = self.feature["id"]
+        first = self.store.save_link(feature_id, {
+            "url": "https://github.com/Synthetic-Owner/Synthetic-Repo/pull/42/files#diff-1",
+            "request_id": "link-casing-upper",
+        })
+        self.assertEqual(first["url"], "https://github.com/synthetic-owner/synthetic-repo/pull/42")
+        self.store.set_link_visibility(feature_id, first["id"], {"hidden": True, "request_id": "hide-casing"})
+        variant = self.store.register_link(
+            feature_id, url="https://github.com/synthetic-owner/synthetic-repo/pull/42", source="discovery",
+            provenance={"native_session_id": "synthetic-session-casing"})
+        self.assertEqual(variant["id"], first["id"])
+        self.assertTrue(variant["hidden"])
+        self.assertEqual(variant["title"], "synthetic-owner/synthetic-repo #42")
+        self.assertEqual(len(self.store.list_links(feature_id)), 1)
+        with contextlib.closing(sqlite3.connect(str(self.path))) as raw:
+            self.assertEqual(raw.execute("SELECT COUNT(*) FROM fm_links").fetchone()[0], 1)
+
+    def test_discovery_and_agent_upserts_preserve_user_titles_provenance_and_hidden_state(self):
+        feature_id = self.feature["id"]
+        hidden = self.store.save_link(feature_id, {
+            "url": "https://github.com/synthetic-owner/synthetic-repo/pull/21",
+            "title": "User label",
+            "request_id": "save-hidden",
+        })
+        self.store.set_link_visibility(feature_id, hidden["id"], {"hidden": True, "request_id": "hide-one"})
+        discovered = self.store.register_link(
+            feature_id,
+            url="https://github.com/synthetic-owner/synthetic-repo/pull/21/files#discussion",
+            title="Automatic label",
+            source="discovery",
+            provenance={"native_session_id": "synthetic-session-9", "document_id": "fma_doc_synthetic"},
+        )
+        self.assertEqual(discovered["id"], hidden["id"])
+        self.assertEqual(discovered["title"], "User label")
+        self.assertEqual(discovered["title_source"], "user")
+        self.assertEqual(discovered["source"], "user")
+        self.assertEqual(discovered["provenance"], {})
+        self.assertTrue(discovered["hidden"])
+        self.assertEqual(discovered["kind"], "pull_request")
+
+        share_url = "http://share.example.test:8443/private/report?token=synthetic#summary"
+        detected = self.store.register_link(feature_id, url=share_url, source="discovery",
+                                            provenance={"native_session_id": "synthetic-session-9"})
+        self.assertEqual(detected["kind"], "link")
+        self.assertEqual(detected["source"], "discovery")
+        self.assertEqual(detected["provenance"], {"native_session_id": "synthetic-session-9"})
+        self.assertEqual(detected["title"], "share.example.test")
+        labeled = self.store.register_link(feature_id, url=share_url, title="Automatic agent label",
+                                           source="agent", provenance={"assignment_id": "fma_synthetic"})
+        self.assertEqual(labeled["title"], "Automatic agent label")
+        self.assertEqual(labeled["title_source"], "automatic")
+        self.assertEqual(labeled["source"], "discovery")
+        self.assertEqual(labeled["provenance"], {"native_session_id": "synthetic-session-9"})
+        user = self.store.save_link(feature_id, {"url": share_url, "title": "Human label", "request_id": "user-label"})
+        self.assertEqual(user["title"], "Human label")
+        self.assertEqual(user["title_source"], "user")
+        again = self.store.register_link(feature_id, url=share_url, title="Another automatic label",
+                                         source="discovery", provenance={"native_session_id": "synthetic-session-10"})
+        self.assertEqual(again["title"], "Human label")
+        self.assertEqual(again["source"], "discovery")
+        self.assertEqual(again["provenance"], {"native_session_id": "synthetic-session-9"})
+        self.assert_code("invalid_request", lambda: self.store.register_link(feature_id, url=share_url, source="user"))
+        self.assert_code("invalid_request", lambda: self.store.register_link(
+            feature_id, url=share_url, source="discovery", provenance={"forged": "value"}
+        ))
+
+    def test_link_visibility_is_reversible_idempotent_and_feature_scoped(self):
+        feature_id = self.feature["id"]
+        other = self.store.create_feature({"title": "Other synthetic feature", "goal": "Track a separate synthetic outcome",
+                                           "cwd": "/tmp/synthetic-other", "request_id": "feature-create-other"})
+        link = self.store.save_link(feature_id, {"url": "https://share.example.test/private/plan?step=2#evidence",
+                                                 "request_id": "save-plan"})
+        foreign = self.store.save_link(other["id"], {"url": "https://share.example.test/private/other",
+                                                     "request_id": "save-other"})
+        self.assert_code("not_found", lambda: self.store.set_link_visibility(
+            feature_id, foreign["id"], {"hidden": True, "request_id": "cross-feature"}
+        ))
+        hidden = self.store.set_link_visibility(feature_id, link["id"], {"hidden": True, "request_id": "hide-one"})
+        self.assertTrue(hidden["hidden"])
+        self.assertEqual(self.store.set_link_visibility(
+            feature_id, link["id"], {"hidden": True, "request_id": "hide-one"}
+        ), hidden)
+        snapshot = self.store.snapshot(feature_id)
+        self.assertEqual(len(snapshot["links"]), 1)
+        self.assertTrue(snapshot["links"][0]["hidden"])
+        self.assertNotIn(link["id"], [item["id"] for item in self.store.snapshot(other["id"])["links"]])
+        restored = self.store.set_link_visibility(feature_id, link["id"], {"hidden": False, "request_id": "restore-one"})
+        self.assertFalse(restored["hidden"])
+        self.assertEqual(self.store.list_links(other["id"])[0]["id"], foreign["id"])
+        link_events = [event["type"] for event in self.store.get_events(feature_id)["events"] if event["type"].startswith("link.")]
+        self.assertEqual(link_events, ["link.saved", "link.hidden", "link.restored"])
+
+    def test_link_validation_rejects_forged_input_without_side_effects(self):
+        feature_id = self.feature["id"]
+        before = self.store.snapshot(feature_id)
+        pending = self.store.pending_messages(feature_id)
+        invalid_saves = (
+            {"url": "https://share.example.test/report"},
+            {"url": "javascript:alert(1)", "request_id": "bad-scheme"},
+            {"url": "https://user@example.test/report", "request_id": "bad-credentials"},
+            {"url": "https://example.test:99999/report", "request_id": "bad-port"},
+            {"url": "https://share.example.test/report", "kind": "issue", "request_id": "bad-kind"},
+            {"url": "https://share.example.test/report", "provenance": {"native_session_id": "forged"},
+             "request_id": "forged-provenance"},
+            {"url": "https://share.example.test/report", "title": "bad\x01title", "request_id": "bad-title"},
+        )
+        for body in invalid_saves:
+            with self.subTest(body=body):
+                self.assert_code("invalid_request", lambda body=body: self.store.save_link(feature_id, body))
+        link = self.store.save_link(feature_id, {"url": "https://share.example.test/report", "request_id": "valid-one"})
+        enterprise = self.store.save_link(feature_id, {
+            "url": "https://github.example.test/synthetic-team/synthetic-repo/pull/5/files",
+            "kind": "pull_request",
+            "request_id": "valid-enterprise-pr",
+        })
+        self.assertEqual(enterprise["kind"], "pull_request")
+        self.assertEqual(enterprise["url"], "https://github.example.test/synthetic-team/synthetic-repo/pull/5/files")
+        for body in (
+            {"hidden": "yes", "request_id": "bad-hidden"},
+            {"hidden": True},
+            {"hidden": True, "request_id": "extra", "link_id": link["id"]},
+            {"hidden": True, "provenance": {}, "request_id": "forged-visibility"},
+        ):
+            with self.subTest(body=body):
+                self.assert_code("invalid_request", lambda body=body: self.store.set_link_visibility(feature_id, link["id"], body))
+        self.assert_code("not_found", lambda: self.store.set_link_visibility(
+            feature_id, "fml_synthetic_missing", {"hidden": True, "request_id": "missing-link"}
+        ))
+        after = self.store.snapshot(feature_id)
+        self.assertEqual({item["id"] for item in after["links"]}, {link["id"], enterprise["id"]})
+        self.assertEqual(self.store.pending_messages(feature_id), pending)
+        for field in ("status", "revision", "current_visit_id", "coordinator_owner", "native_session_id"):
+            self.assertEqual(after["feature"][field], before["feature"][field])
+        for key in ("visits", "assignments", "documents", "messages", "handoffs", "sessions"):
+            self.assertEqual(after[key], before[key])
+
+    def test_link_mutations_leave_workflow_and_queued_work_unchanged(self):
+        feature_id = self.feature["id"]
+        message = self.store.claim_message(feature_id, "coordinator")
+        visit = self.store.start_visit(feature_id, "plan", "Planning", "visit-links", 1, message["id"])
+        self.store.finish_message(message["id"], "coordinator", "Planning is running.")
+        assignment = self.store.create_assignment(visit["id"], {"title": "Reviewer", "role": "reviewer",
+                                                              "prompt": "Review the synthetic plan.",
+                                                              "request_id": "assignment-links"})
+        before = self.store.snapshot(feature_id)
+        pending = self.store.pending_messages(feature_id)
+        with patch("socket.create_connection", side_effect=AssertionError("network use is not allowed")):
+            saved = self.store.save_link(feature_id, {
+                "url": "https://share.example.test/private/plan?step=3#evidence",
+                "request_id": "save-no-network",
+            })
+            self.store.set_link_visibility(feature_id, saved["id"], {"hidden": True, "request_id": "hide-no-network"})
+        after = self.store.snapshot(feature_id)
+        self.assertEqual(after["links"][0]["url"], "https://share.example.test/private/plan?step=3#evidence")
+        self.assertTrue(after["links"][0]["hidden"])
+        for field in ("status", "revision", "current_visit_id", "coordinator_owner", "native_session_id", "goal", "title"):
+            self.assertEqual(after["feature"][field], before["feature"][field])
+        for key in ("visits", "assignments", "documents", "messages", "handoffs", "sessions"):
+            self.assertEqual(after[key], before[key])
+        self.assertEqual(self.store.pending_messages(feature_id), pending)
+        self.assertEqual(self.store.get_assignment(assignment["id"])["status"], "queued")
 
 
 if __name__ == "__main__":

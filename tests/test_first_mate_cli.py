@@ -11,10 +11,14 @@ class Reply:
     def read(self, maximum): return json.dumps(self.value).encode()
 
 class FirstMateCLITests(unittest.TestCase):
-    def run_cli(self, argv, value=None, stdin=''):
+    def run_cli(self, argv, value=None, stdin='', responses=None):
         self.requests=[];self.launches=[]
         def opener(request, **kwargs):
             self.requests.append(request)
+            if responses:
+                for suffix, payload in responses.items():
+                    if request.full_url.endswith(suffix):
+                        return Reply(request, payload)
             return Reply(request, value or {'ok': True, 'feature': {'id': 'fmf_sample'}})
         out, err=io.StringIO(),io.StringIO()
         code=cli.main(argv,environ={'HERDR_HARNESS_API_TOKEN':'synthetic-token','HERDR_HARNESS_URL':'https://host.example.test'},stdin=io.StringIO(stdin),stdout=out,stderr=err,opener=opener,launch=lambda *a,**k:self.launches.append(a))
@@ -99,5 +103,71 @@ class FirstMateCLITests(unittest.TestCase):
     def test_request_path_cannot_escape_feature(self):
         self.run_cli(['get','../notes?x=1'])
         self.assertIn('/features/..%2Fnotes%3Fx%3D1',self.requests[0].full_url)
+
+    LINKS_CAPABILITIES = {'ok': True, 'capabilities': ['first-mate-v1', 'first-mate-links-v1']}
+
+    def test_links_reads_feature_links_after_capability_check(self):
+        responses = {'/capabilities': self.LINKS_CAPABILITIES,
+                     '/features/fmf_sample': {'ok': True, 'feature': {'id': 'fmf_sample'},
+                                              'links': [{'id': 'fml_one'}]}}
+        code, data = self.run_cli(['links', 'fmf_sample'], responses=responses)
+        self.assertEqual(code, 0)
+        self.assertEqual(data, {'ok': True, 'links': [{'id': 'fml_one'}]})
+        self.assertEqual([request.method for request in self.requests], ['GET', 'GET'])
+        self.assertTrue(self.requests[0].full_url.endswith('/capabilities'))
+        self.assertTrue(self.requests[1].full_url.endswith('/features/fmf_sample'))
+
+    def test_add_link_uses_link_route_and_stable_request_id(self):
+        code, data = self.run_cli([
+            'add-link', 'fmf_sample',
+            '--url', 'https://github.com/synthetic-owner/synthetic-repo/pull/12/files',
+            '--title', 'Synthetic review', '--kind', 'pull_request',
+            '--request-id', 'link-stable',
+        ], responses={'/capabilities': self.LINKS_CAPABILITIES},
+           value={'ok': True, 'link': {'id': 'fml_one'}})
+        self.assertEqual(code, 0)
+        self.assertEqual(data, {'ok': True, 'link': {'id': 'fml_one'}})
+        self.assertEqual(self.requests[1].full_url,
+                         'https://host.example.test/api/v1/first-mate/features/fmf_sample/links')
+        self.assertEqual(json.loads(self.requests[1].data), {
+            'url': 'https://github.com/synthetic-owner/synthetic-repo/pull/12/files',
+            'title': 'Synthetic review', 'kind': 'pull_request', 'request_id': 'link-stable',
+        })
+
+    def test_hide_and_restore_use_exact_link_visibility_route(self):
+        responses = {'/capabilities': self.LINKS_CAPABILITIES}
+        self.run_cli(['hide-link', 'fmf_sample', 'fml_one', '--request-id', 'hide-one'],
+                     responses=responses, value={'ok': True, 'link': {'id': 'fml_one'}})
+        self.assertEqual(self.requests[1].full_url,
+                         'https://host.example.test/api/v1/first-mate/features/fmf_sample/links/fml_one/visibility')
+        self.assertEqual(json.loads(self.requests[1].data), {'hidden': True, 'request_id': 'hide-one'})
+        self.run_cli(['restore-link', 'fmf_sample', 'fml_one', '--request-id', 'restore-one'],
+                     responses=responses, value={'ok': True, 'link': {'id': 'fml_one'}})
+        self.assertEqual(self.requests[1].full_url,
+                         'https://host.example.test/api/v1/first-mate/features/fmf_sample/links/fml_one/visibility')
+        self.assertEqual(json.loads(self.requests[1].data), {'hidden': False, 'request_id': 'restore-one'})
+
+    def test_link_commands_require_the_capability_before_any_mutation(self):
+        code, result = self.run_cli(['add-link', 'fmf_sample', '--url', 'https://share.example.test/report'],
+                                    responses={'/capabilities': {'ok': True, 'capabilities': ['first-mate-v1']}})
+        self.assertEqual(code, 2)
+        self.assertEqual(result['error']['code'], 'first_mate_links_unsupported')
+        self.assertEqual([request.method for request in self.requests], ['GET'])
+
+        code, result = self.run_cli(['links', 'fmf_sample'],
+                                    responses={'/capabilities': {'ok': True, 'capabilities': []}})
+        self.assertEqual(code, 2)
+        self.assertEqual(result['error']['code'], 'first_mate_links_unsupported')
+        self.assertEqual([request.method for request in self.requests], ['GET'])
+
+    def test_link_ids_are_quoted_and_invalid_kinds_are_rejected(self):
+        self.run_cli(['hide-link', 'fmf_sample', '../fml x', '--request-id', 'hide-quoted'],
+                     responses={'/capabilities': self.LINKS_CAPABILITIES},
+                     value={'ok': True, 'link': {'id': 'fml_x'}})
+        self.assertTrue(self.requests[1].full_url.endswith('/links/..%2Ffml%20x/visibility'))
+        code, result = self.run_cli(['add-link', 'fmf_sample', '--url', 'https://share.example.test/report',
+                                     '--kind', 'issue'], responses={'/capabilities': self.LINKS_CAPABILITIES})
+        self.assertEqual(code, 2)
+        self.assertEqual(result['error']['code'], 'invalid_arguments')
 
 if __name__=='__main__':unittest.main()

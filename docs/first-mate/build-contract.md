@@ -157,6 +157,53 @@ events, change feature state, or invoke models. Feedback text is private and is
 not written to public logs or reports. Installing the updated companion is a
 separate step from any Mac app update; the Mac updater does not install
 companion server packages.
+## Feature links
+
+Capability `first-mate-links-v1` adds private, feature-scoped links. It is
+additive: older clients ignore `links`, and newer clients accept a server that
+omits it.
+
+`GET /features/{id}` detail snapshots add `links` with every retained link for
+that feature, including hidden rows so a client can offer explicit restoration.
+Each link has `id`, `feature_id`, `url`, `title`, `kind` (`pull_request` or
+`link`), `source` (`user`, `agent`, or `discovery`), `provenance`, `hidden`
+(boolean), `created_at`, and `updated_at`. `provenance` holds only bounded,
+server-derived evidence from trusted runtime upserts: `native_session_id`,
+`assignment_id`, `document_id`, `message_id`, and `observed_at`. Clients can
+never supply provenance.
+
+`POST /features/{id}/links` requires `url` and `request_id` and accepts optional
+`title` and `kind`. `POST /features/{id}/links/{link_id}/visibility` requires
+exactly boolean `hidden` and `request_id`. Both mutate one store transaction and
+return the same full snapshot as `GET /features/{id}` plus the affected `link`.
+Both reuse the existing First Mate receipt ledger: replaying a request ID with
+identical content returns the original result, while reusing it with different
+content is an `idempotency_conflict`. Unknown fields, including a
+client-supplied `provenance`, are rejected with `invalid_request`. A link ID
+owned by another feature is `not_found`. Saving and hiding never queue a
+coordinator message, dispatch an agent, or change workflow status, revision,
+authorization, or writer ownership.
+
+Storage accepts only bounded absolute HTTP(S) URLs without embedded
+credentials, control characters, malformed hosts, or malformed ports; other
+schemes are rejected. Bracketed IPv6 literals, with or without a custom port,
+path, query, and fragment, are valid destinations and keep their brackets. A
+recognized exact `https://github.com/<owner>/<repo>/pull/<number>` path
+canonicalizes to its pull request root with owner and repository casing folded,
+so `/files` subpaths, query strings, fragments, and casing variants deduplicate
+into one record, and recognized URLs are classified as `pull_request`. General
+URLs preserve their path, query, and fragment. Other HTTP(S) hosts, including
+enterprise installations, can be explicitly saved with `kind: "pull_request"`.
+The kind never claims draft, ready, merged, or closed state, and the companion
+never calls GitHub, `gh`, or the destination. Duplicate saves are quiet: the
+first record keeps its kind, provenance, and hidden state. An explicit user
+title replaces a derived or agent title, while discovery and agent upserts never
+overwrite a user title and never unhide a hidden link; hiding is reversible
+through the same visibility endpoint.
+
+Links are stored privately on the owning companion and follow the existing
+authenticated First Mate boundary. The companion package is installed and
+restarted separately from any Mac app release.
 
 ## Model routing and runtime evidence
 

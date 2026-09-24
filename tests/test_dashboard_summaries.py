@@ -69,7 +69,10 @@ class FirstMateDashboardTests(unittest.TestCase):
         self.assertEqual(summary["running_assignment_count"], 0)
         self.store.set_archived(self.feature["id"], True, {"request_id": "archive"})
         self.assertEqual(self.store.list_features(), [])
-        self.assertEqual(self.store.list_features("archived")[0]["dashboard_summary"], summary)
+        archived = self.store.list_features("archived")[0]["dashboard_summary"]
+        # Archiving is journaled activity; every other summary field is unchanged.
+        self.assertGreater(archived.pop("activity_at"), summary.pop("activity_at"))
+        self.assertEqual(archived, summary)
 
 
 class ViewerReviewProjectionTests(unittest.TestCase):

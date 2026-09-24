@@ -634,8 +634,17 @@ class FirstMateRuntime:
                 "model_selection": selection,
                 "coordinator_context": self.context.project(feature, jobs)}
 
-    def snapshot(self, feature_id: str) -> dict:
-        snapshot = self.store.snapshot(feature_id)
+    def board(self, feature_id: str, **bounds) -> dict:
+        """Bounded Agent view projection. It adds only the pure coordinator
+        routing selection: no job scan, usage accounting, or context projection."""
+        board = self.store.board(feature_id, **bounds)
+        if not board["unchanged"]:
+            selection = self._policy(board["feature"], kind="coordinator", claim={}).selection()
+            board["feature"] = {**board["feature"], "model_selection": selection}
+        return board
+
+    def snapshot(self, feature_id: str, events: str = "all") -> dict:
+        snapshot = self.store.snapshot(feature_id, events=events)
         jobs = self._jobs()
         account = self._usage_account(snapshot["feature"], assignments=snapshot["assignments"], jobs=jobs)
         result = dict(snapshot)

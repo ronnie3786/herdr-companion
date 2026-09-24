@@ -71,20 +71,27 @@ enum HerdrDropTestSupport {
         return Mounted(window: window, hosting: hosting)
     }
 
-    /// The window's own drag-destination search, i.e. the exact view AppKit
-    /// would dispatch a real drag to. Falls back to the mounted hierarchy when
-    /// the private selector is unavailable. The method encoding is verified as
-    /// "object in, object out" before the call, so an OS change cannot turn
-    /// this diagnostic helper into a mismatched call.
-    static func destinationView(window: NSWindow, info: NSDraggingInfo) -> NSView? {
+    /// The destination AppKit's own drag-destination search would choose for a
+    /// drag. `.unsupported` means the private selector or its method encoding
+    /// is unavailable on this OS, so dispatch evidence cannot be inspected
+    /// here; `.resolved(nil)` means the search did run and found no view. The
+    /// method encoding is verified as "object in, object out" before the call,
+    /// so an OS change cannot turn this diagnostic helper into a mismatched
+    /// call.
+    enum DestinationSearch {
+        case unsupported
+        case resolved(NSView?)
+    }
+
+    static func destinationView(window: NSWindow, info: NSDraggingInfo) -> DestinationSearch {
         let selector = NSSelectorFromString("_findDragTargetFrom:")
         guard window.responds(to: selector),
               let method = class_getInstanceMethod(type(of: window), selector),
               isObjectToObject(method)
-        else { return nil }
+        else { return .unsupported }
         typealias Function = @convention(c) (AnyObject, Selector, AnyObject) -> AnyObject?
         let function = unsafeBitCast(window.method(for: selector), to: Function.self)
-        return function(window, selector, info) as? NSView
+        return .resolved(function(window, selector, info) as? NSView)
     }
 
     private static func isObjectToObject(_ method: Method) -> Bool {
@@ -172,14 +179,18 @@ struct HerdrHudDropTargetTests {
 
         // The window's real search must choose the AppKit target, not a text
         // view or a SwiftUI provider destination that would shadow it.
-        let resolved = HerdrDropTestSupport.destinationView(window: mounted.window, info: info)
-        if let resolved {
-            #expect(resolved === dropView)
+        switch HerdrDropTestSupport.destinationView(window: mounted.window, info: info) {
+        case .unsupported:
+            // AppKit's private destination search is unavailable on this OS;
+            // only the direct callback coverage below can be inspected.
+            break
+        case let .resolved(resolved):
+            let resolvedView = try #require(resolved, "AppKit's destination search found no view")
+            #expect(resolvedView === dropView)
         }
-        let target = resolved ?? dropView
-        #expect(target.draggingEntered(info) == .copy)
-        #expect(target.prepareForDragOperation(info))
-        #expect(target.performDragOperation(info))
+        #expect(dropView.draggingEntered(info) == .copy)
+        #expect(dropView.prepareForDragOperation(info))
+        #expect(dropView.performDragOperation(info))
 
         try await HerdrDropTestSupport.waitForAttachments(session, count: 1)
         try await HerdrDropTestSupport.settleDrop()
@@ -209,14 +220,16 @@ struct HerdrHudDropTargetTests {
         let info = HerdrFakeDraggingInfo(pasteboard: pasteboard, window: mounted.window, location: editorCenter)
 
         let dropView = try #require(HerdrDropTestSupport.findView(ofType: HerdrHudDropView.self, in: mounted.hosting))
-        let resolved = HerdrDropTestSupport.destinationView(window: mounted.window, info: info)
-        if let resolved {
+        switch HerdrDropTestSupport.destinationView(window: mounted.window, info: info) {
+        case .unsupported:
+            break
+        case let .resolved(resolved):
             // The editor's own text view must not shadow the HUD destination.
-            #expect(resolved === dropView)
+            let resolvedView = try #require(resolved, "AppKit's destination search found no view")
+            #expect(resolvedView === dropView)
         }
-        let target: NSView = resolved ?? dropView
-        #expect(target.draggingEntered(info) == .copy)
-        #expect(target.performDragOperation(info))
+        #expect(dropView.draggingEntered(info) == .copy)
+        #expect(dropView.performDragOperation(info))
 
         try await HerdrDropTestSupport.waitForAttachments(session, count: 1)
         #expect(session.pendingAttachments.first?.filename == source.lastPathComponent)
@@ -276,13 +289,15 @@ struct HerdrHudDropTargetTests {
         }
         let info = HerdrFakeDraggingInfo(pasteboard: pasteboard, window: mounted.window)
         let dropView = try #require(HerdrDropTestSupport.findView(ofType: HerdrHudDropView.self, in: mounted.hosting))
-        let resolved = HerdrDropTestSupport.destinationView(window: mounted.window, info: info)
-        if let resolved {
-            #expect(resolved === dropView)
+        switch HerdrDropTestSupport.destinationView(window: mounted.window, info: info) {
+        case .unsupported:
+            break
+        case let .resolved(resolved):
+            let resolvedView = try #require(resolved, "AppKit's destination search found no view")
+            #expect(resolvedView === dropView)
         }
-        let target: NSView = resolved ?? dropView
-        #expect(target.draggingEntered(info) == .copy)
-        #expect(target.draggingUpdated(info) == .copy)
+        #expect(dropView.draggingEntered(info) == .copy)
+        #expect(dropView.draggingUpdated(info) == .copy)
     }
 
     @Test("Text drags never target the HUD")
@@ -296,9 +311,16 @@ struct HerdrHudDropTargetTests {
 
         let pasteboard = HerdrDropTestSupport.makePasteboard { $0.setString("just text", forType: .string) }
         let info = HerdrFakeDraggingInfo(pasteboard: pasteboard, window: mounted.window)
-        let resolved = HerdrDropTestSupport.destinationView(window: mounted.window, info: info)
-        if let resolved {
-            #expect(!(resolved is HerdrHudDropView))
+        switch HerdrDropTestSupport.destinationView(window: mounted.window, info: info) {
+        case .unsupported:
+            break
+        case let .resolved(resolved):
+            // A text drag can legitimately resolve to no destination because
+            // no view registers for it; when AppKit does find one, it must not
+            // be the HUD target.
+            if let resolved {
+                #expect(!(resolved is HerdrHudDropView))
+            }
         }
         let dropView = try #require(HerdrDropTestSupport.findView(ofType: HerdrHudDropView.self, in: mounted.hosting))
         #expect(dropView.draggingEntered(info) == [])

@@ -5,7 +5,14 @@ import UniformTypeIdentifiers
 /// cannot be constructed outside a live drag, so tests drive this protocol with
 /// a synthetic receiver and the production adapter forwards to AppKit.
 @MainActor
-protocol HerdrPromisedFileReceiver {
+protocol HerdrPromisedFileReceiver: AnyObject {
+    /// The number of files this receiver will deliver. `NSFilePromiseReceiver`
+    /// fills `fileNames` in once the promise is armed and reports one promised
+    /// file per pasteboard item for an ordinary drag; a legacy item can deliver
+    /// several files through one receiver. A receiver that cannot say keeps the
+    /// single-completion default.
+    var promisedFileCount: Int { get }
+
     /// Materializes this receiver's promised files into `directory`. The
     /// completion is called once per promised file on `operationQueue`; the
     /// delivered URL is only guaranteed to exist until the completion returns.
@@ -17,6 +24,8 @@ protocol HerdrPromisedFileReceiver {
 }
 
 extension NSFilePromiseReceiver: HerdrPromisedFileReceiver {
+    var promisedFileCount: Int { fileNames.count }
+
     func loadPromisedFiles(
         atDestination directory: URL,
         operationQueue: OperationQueue,
@@ -243,79 +252,168 @@ extension HerdrHudSession {
 
         // A browser image drag carries a web URL beside the pixels; only real
         // files may take the file branch, otherwise the URL would shadow the
-        // image data and the drop would fail as an unreadable file.
-        let fileURLs = HerdrAttachmentDropPolicy.localFileURLs(in: pasteboard)
-        let imagePayload = HerdrAttachmentDropPolicy.imagePayload(in: pasteboard)
-        guard !fileURLs.isEmpty || imagePayload != nil else { return false }
+        // image data and the drop would fail as an unreadable file. Resolve
+        // one representation per pasteboard item so two image items import two
+        // attachments and a file item never hides an inline image item.
+        let payloads = HerdrAttachmentDropPolicy.itemPayloads(in: pasteboard)
+        guard !payloads.isEmpty else { return false }
 
         Task { @MainActor in
-            if !fileURLs.isEmpty {
-                self.addAttachments(fileURLs)
-                return
-            }
-            guard let imagePayload else { return }
-            guard !imagePayload.data.isEmpty,
-                  Int64(imagePayload.data.count) <= AttachmentPolicy.maximumFileBytes
-            else {
-                self.reportAttachmentError(HerdrAttachmentDropError.imageSize.localizedDescription)
-                return
-            }
-            do {
-                let extensionName = imagePayload.type.preferredFilenameExtension ?? "png"
-                let staged = try HerdrAttachmentStaging.write(
-                    imagePayload.data,
-                    filename: "Dropped image \(UUID().uuidString).\(extensionName)"
-                )
-                defer { HerdrAttachmentStaging.remove(staged) }
-                self.addAttachments([staged])
-            } catch {
-                self.reportAttachmentError("Couldn't attach the dropped image: \(error.localizedDescription)")
-            }
+            self.importPasteboardPayloads(payloads)
         }
         return true
     }
 
-    /// Arms every promised file while the drag is live. Each delivered file is
-    /// imported on the main actor and its staging copy is removed only after
-    /// `addAttachments` made the durable copy.
+    /// Imports every resolved pasteboard item on a later main-actor turn. Image
+    /// data is staged per item first and all URLs then take the same validated
+    /// `addAttachments` import path, so item order is preserved, the 4-file,
+    /// 20 MB, and 21 MB limits still apply, and an item that fails leaves the
+    /// rest of the drop and the draft intact.
+    private func importPasteboardPayloads(_ payloads: [HerdrAttachmentDropPolicy.ItemPayload]) {
+        var urls: [URL] = []
+        var staged: [URL] = []
+        var firstImageError: String?
+        for payload in payloads {
+            switch payload {
+            case let .file(url):
+                urls.append(url)
+            case let .image(data, type):
+                guard !data.isEmpty,
+                      Int64(data.count) <= AttachmentPolicy.maximumFileBytes
+                else {
+                    firstImageError = firstImageError ?? HerdrAttachmentDropError.imageSize.localizedDescription
+                    continue
+                }
+                do {
+                    let extensionName = type.preferredFilenameExtension ?? "png"
+                    let file = try HerdrAttachmentStaging.write(
+                        data,
+                        filename: "Dropped image \(UUID().uuidString).\(extensionName)"
+                    )
+                    staged.append(file)
+                    urls.append(file)
+                } catch {
+                    firstImageError = firstImageError
+                        ?? "Couldn't attach the dropped image: \(error.localizedDescription)"
+                }
+            }
+        }
+        let hadImport = !urls.isEmpty
+        if hadImport {
+            addAttachments(urls)
+        }
+        for file in staged {
+            HerdrAttachmentStaging.remove(file)
+        }
+        // `addAttachments` clears any earlier error while validating the batch,
+        // so an item that failed before the import reports itself unless the
+        // import path had its own, more relevant error to show.
+        if let firstImageError, !hadImport || validationError == nil {
+            reportAttachmentError(firstImageError)
+        }
+    }
+
+    /// Arms every promised file while the drag is live. All receivers of one
+    /// drop share a staging directory, which AppKit requires, and the directory
+    /// is removed only after the whole batch has reported each promised file.
+    /// A receiver that finishes first therefore cannot delete files a sibling
+    /// still has to write, and an individual failure reports a recoverable
+    /// error without removing sibling deliveries.
     func acceptPromisedFiles(_ receivers: [any HerdrPromisedFileReceiver]) {
+        let batch = Array(receivers.prefix(Self.maxAttachments))
         let root = HerdrAttachmentDropPolicy.promiseDirectory()
-        guard let directory = try? HerdrAttachmentStaging.directory(inside: root) else {
+        guard !batch.isEmpty,
+              let directory = try? HerdrAttachmentStaging.directory(inside: root)
+        else {
             reportAttachmentError(HerdrAttachmentDropError.unreadableDroppedItem.localizedDescription)
             return
         }
-        for receiver in receivers.prefix(Self.maxAttachments) {
-            receiver.loadPromisedFiles(atDestination: directory, operationQueue: .main) { [weak self] url, error in
+        let tracker = HerdrPromiseBatch(directory: directory, session: self)
+        activePromiseBatches.append(tracker)
+        for receiver in batch {
+            let receiverID = tracker.register(receiver)
+            receiver.loadPromisedFiles(atDestination: directory, operationQueue: .main) { [weak tracker] url, error in
                 // The promise reader can arrive on AppKit's queue; hop to the
                 // main actor instead of assuming the executor.
                 let message = error?.localizedDescription
                 Task { @MainActor in
-                    guard let self else { return }
-                    self.finishPromisedFile(url: url, errorMessage: message, stagingDirectory: directory)
+                    tracker?.finish(receiverID: receiverID, url: url, errorMessage: message)
                 }
             }
         }
     }
 
-    private func finishPromisedFile(url: URL?, errorMessage: String?, stagingDirectory: URL) {
-        if let errorMessage {
-            reportAttachmentError("Couldn't attach the dropped item: \(errorMessage)")
-            // A cancelled or failed promise can leave a partial file behind.
-            try? FileManager.default.removeItem(at: stagingDirectory)
-            return
+    /// Releases a settled promise batch. Called on the main actor from
+    /// `HerdrPromiseBatch` once the shared staging directory is removed.
+    func endPromiseBatch(_ batch: HerdrPromiseBatch) {
+        activePromiseBatches.removeAll { $0 === batch }
+    }
+}
+
+/// One drop's promised-file batch. The shared destination must outlive every
+/// sibling receiver: a receiver only settles once it has reported its promised
+/// files, and the directory is removed when the whole batch has settled. An
+/// error settles that receiver without touching files other receivers wrote.
+@MainActor
+final class HerdrPromiseBatch {
+    private struct ReceiverSlot {
+        var delivered = 0
+        var settled = false
+    }
+
+    private let directory: URL
+    private weak var session: HerdrHudSession?
+    private var receivers: [ObjectIdentifier: any HerdrPromisedFileReceiver] = [:]
+    private var slots: [ObjectIdentifier: ReceiverSlot] = [:]
+    private var unsettledReceivers = 0
+
+    init(directory: URL, session: HerdrHudSession) {
+        self.directory = directory
+        self.session = session
+    }
+
+    /// Adds a receiver to the batch and returns its identifier. Registration
+    /// happens while the drop is still synchronous, before any completion can
+    /// run, so every receiver shares the same lifetime.
+    func register(_ receiver: any HerdrPromisedFileReceiver) -> ObjectIdentifier {
+        let receiverID = ObjectIdentifier(receiver)
+        receivers[receiverID] = receiver
+        slots[receiverID] = ReceiverSlot()
+        unsettledReceivers += 1
+        return receiverID
+    }
+
+    func finish(receiverID: ObjectIdentifier, url: URL?, errorMessage: String?) {
+        guard var slot = slots[receiverID] else { return }
+        slot.delivered += 1
+        // `fileNames` is the only pre-completion signal for a legacy item that
+        // delivers several files through one receiver. A failure settles the
+        // receiver immediately; a file settles it once every promised file was
+        // delivered. A receiver whose count is not yet readable keeps the
+        // previous one-completion behavior.
+        let promisedCount = max(receivers[receiverID]?.promisedFileCount ?? 1, 1)
+        if !slot.settled, errorMessage != nil || slot.delivered >= promisedCount {
+            slot.settled = true
+            unsettledReceivers -= 1
         }
-        if let url {
-            addAttachments([url])
+        slots[receiverID] = slot
+
+        if let errorMessage {
+            session?.reportAttachmentError("Couldn't attach the dropped item: \(errorMessage)")
+        } else if let url {
+            session?.addAttachments([url])
             // The durable copy exists now (or validation already reported why
-            // it does not); remove this file, and the per-drop directory once
-            // the last promised file of a multi-file promise has arrived.
+            // it does not); remove only this file, never the whole batch.
             try? FileManager.default.removeItem(at: url)
         } else {
-            reportAttachmentError("Couldn't attach the dropped item.")
+            session?.reportAttachmentError("Couldn't attach the dropped item.")
         }
-        let remaining = (try? FileManager.default.contentsOfDirectory(atPath: stagingDirectory.path)) ?? []
-        if remaining.isEmpty {
-            try? FileManager.default.removeItem(at: stagingDirectory)
+
+        if unsettledReceivers <= 0 {
+            // Any partial file from a failed promise goes with the directory
+            // only after every sibling has been delivered and imported.
+            try? FileManager.default.removeItem(at: directory)
+            session?.endPromiseBatch(self)
         }
     }
 }

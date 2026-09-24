@@ -98,6 +98,57 @@ struct HerdrAttachmentDropPolicyTests {
         #expect(!jpegPayload.data.isEmpty)
     }
 
+    @Test("Payloads resolve one preferred representation per pasteboard item")
+    func itemPayloadsResolvePerItem() throws {
+        let pngBytes = HerdrDropImageFixtures.makePNG()
+        let jpegBytes = HerdrDropImageFixtures.makeJPEG()
+
+        // One item advertising TIFF and PNG still yields a single PNG payload;
+        // a second item keeps its own bytes instead of collapsing into the
+        // first matching pasteboard representation.
+        let imageItems = makePasteboard {
+            let first = NSPasteboardItem()
+            first.setData(HerdrDropImageFixtures.makeTIFF(), forType: .tiff)
+            first.setData(pngBytes, forType: .png)
+            let second = NSPasteboardItem()
+            second.setData(jpegBytes, forType: NSPasteboard.PasteboardType(UTType.jpeg.identifier))
+            $0.writeObjects([first, second])
+        }
+        #expect(HerdrAttachmentDropPolicy.itemPayloads(in: imageItems) == [
+            .image(data: pngBytes, type: .png),
+            .image(data: jpegBytes, type: .jpeg),
+        ])
+
+        // A browser drag's web URL shares the item with the pixels; the web
+        // URL is not a file and must not shadow the image data.
+        let browser = makePasteboard {
+            $0.setData(Data("https://example.invalid/photo.png".utf8), forType: NSPasteboard.PasteboardType("public.url"))
+            $0.setData(pngBytes, forType: .png)
+        }
+        #expect(HerdrAttachmentDropPolicy.itemPayloads(in: browser) == [
+            .image(data: pngBytes, type: .png),
+        ])
+
+        // A real file URL inside one item wins over that item's image pixels,
+        // while a separate image item is still resolved.
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-mixed.png")
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let mixed = makePasteboard {
+            let fileItem = NSPasteboardItem()
+            fileItem.setData(Data(source.absoluteString.utf8), forType: .fileURL)
+            fileItem.setData(pngBytes, forType: .png)
+            let imageItem = NSPasteboardItem()
+            imageItem.setData(jpegBytes, forType: NSPasteboard.PasteboardType(UTType.jpeg.identifier))
+            $0.writeObjects([fileItem, imageItem])
+        }
+        #expect(HerdrAttachmentDropPolicy.itemPayloads(in: mixed) == [
+            .file(source),
+            .image(data: jpegBytes, type: .jpeg),
+        ])
+    }
+
     @Test("Providers advertise their attachment capability and image candidates in order")
     func providerClassification() async throws {
         let fileProvider = NSItemProvider(object: URL(fileURLWithPath: "/tmp/example.pdf") as NSURL)

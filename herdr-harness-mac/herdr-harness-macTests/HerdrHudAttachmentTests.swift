@@ -42,7 +42,9 @@ enum HerdrDropImageFixtures {
 }
 
 /// A promise receiver that fulfills or fails without a live drag, so the whole
-/// promised-file path is deterministic in tests.
+/// promised-file path is deterministic in tests. A delivery can be delayed and
+/// can write its file during arming, which holds a promised file in the shared
+/// staging directory while a sibling receiver settles.
 @MainActor
 final class SyntheticPromiseReceiver: HerdrPromisedFileReceiver {
     enum Outcome {
@@ -51,12 +53,29 @@ final class SyntheticPromiseReceiver: HerdrPromisedFileReceiver {
         case noFile
     }
 
-    let outcome: Outcome
+    struct Delivery {
+        var outcome: Outcome
+        /// Writes a `.file` payload during arming, before any delay; the
+        /// completion still reports after `delay`. Models AppKit's destination
+        /// write landing while a sibling receiver is still settling.
+        var writeDuringArming = false
+        /// Wait before writing (unless written during arming) and reporting.
+        var delay: Duration = .zero
+    }
+
+    let deliveries: [Delivery]
+    let promisedFileCount: Int
     private(set) var stagingDirectories: [URL] = []
     private(set) var deliveredFiles: [URL] = []
 
-    init(_ outcome: Outcome) {
-        self.outcome = outcome
+    init(_ outcome: Outcome, delay: Duration = .zero) {
+        self.deliveries = [Delivery(outcome: outcome, writeDuringArming: true, delay: delay)]
+        self.promisedFileCount = 1
+    }
+
+    init(deliveries: [Delivery], promisedFileCount: Int? = nil) {
+        self.deliveries = deliveries
+        self.promisedFileCount = promisedFileCount ?? max(deliveries.count, 1)
     }
 
     func loadPromisedFiles(
@@ -65,20 +84,41 @@ final class SyntheticPromiseReceiver: HerdrPromisedFileReceiver {
         completion: @escaping (URL?, (any Error)?) -> Void
     ) {
         stagingDirectories.append(directory)
-        switch outcome {
-        case let .file(name, data):
-            do {
+        for delivery in deliveries {
+            var prewrittenURL: URL?
+            if delivery.writeDuringArming, case let .file(name, data) = delivery.outcome {
                 let url = directory.appendingPathComponent(name)
-                try data.write(to: url)
+                try? data.write(to: url)
                 deliveredFiles.append(url)
-                completion(url, nil)
-            } catch {
-                completion(nil, error)
+                prewrittenURL = url
             }
-        case let .failure(error):
-            completion(nil, error)
-        case .noFile:
-            completion(nil, nil)
+            Task { @MainActor in
+                if delivery.delay > .zero {
+                    try? await Task.sleep(for: delivery.delay)
+                }
+                switch delivery.outcome {
+                case let .file(name, data):
+                    if let prewrittenURL {
+                        completion(prewrittenURL, nil)
+                        return
+                    }
+                    // The file is only guaranteed to exist until the completion
+                    // returns, so write it into the shared destination first.
+                    let url = directory.appendingPathComponent(name)
+                    do {
+                        try data.write(to: url)
+                    } catch {
+                        completion(nil, error)
+                        return
+                    }
+                    self.deliveredFiles.append(url)
+                    completion(url, nil)
+                case let .failure(error):
+                    completion(nil, error)
+                case .noFile:
+                    completion(nil, nil)
+                }
+            }
         }
     }
 }
@@ -265,6 +305,75 @@ struct HerdrHudAttachmentTests {
         #expect(session.validationError == nil)
     }
 
+    @Test("Two image items on one pasteboard each import exactly once")
+    func twoImageItemsImportOnce() async throws {
+        let firstBytes = HerdrDropImageFixtures.makePNG()
+        let secondBytes = HerdrDropImageFixtures.makeJPEG()
+        let session = makeSession()
+        let pasteboard = makePasteboard { pasteboard in
+            let first = NSPasteboardItem()
+            first.setData(firstBytes, forType: .png)
+            let second = NSPasteboardItem()
+            second.setData(secondBytes, forType: NSPasteboard.PasteboardType(UTType.jpeg.identifier))
+            pasteboard.writeObjects([first, second])
+        }
+        #expect(session.acceptPasteboardDrop(pasteboard))
+        try await waitForAttachments(session, count: 2)
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(session.pendingAttachments.count == 2)
+        #expect(session.validationError == nil)
+        let contents = Set(session.pendingAttachments.compactMap { try? Data(contentsOf: $0.url) })
+        #expect(contents == [firstBytes, secondBytes])
+    }
+
+    @Test("A mixed file and image drop keeps both pasteboard items")
+    func mixedFileAndImageItemsImportBoth() async throws {
+        let fileBytes = Data("Keep this attachment".utf8)
+        let source = temporaryURL(named: "mixed-notes.txt")
+        try fileBytes.write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let imageBytes = HerdrDropImageFixtures.makePNG()
+
+        let session = makeSession()
+        let pasteboard = makePasteboard { pasteboard in
+            let image = NSPasteboardItem()
+            image.setData(imageBytes, forType: .png)
+            pasteboard.writeObjects([source as NSURL, image])
+        }
+        #expect(session.acceptPasteboardDrop(pasteboard))
+        try await waitForAttachments(session, count: 2)
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(session.pendingAttachments.count == 2)
+        #expect(session.pendingAttachments.map(\.filename).contains(source.lastPathComponent))
+        #expect(session.pendingAttachments.filter(\.isImage).count == 1)
+        let imageAttachment = try #require(session.pendingAttachments.filter(\.isImage).first)
+        #expect(try Data(contentsOf: imageAttachment.url) == imageBytes)
+    }
+
+    @Test("Two file URL items on one pasteboard each keep their own file")
+    func twoFileItemsImportOnce() async throws {
+        let firstBytes = Data("first".utf8)
+        let secondBytes = Data("second".utf8)
+        let firstURL = temporaryURL(named: "first.txt")
+        let secondURL = temporaryURL(named: "second.txt")
+        try firstBytes.write(to: firstURL)
+        try secondBytes.write(to: secondURL)
+        defer {
+            try? FileManager.default.removeItem(at: firstURL)
+            try? FileManager.default.removeItem(at: secondURL)
+        }
+
+        let session = makeSession()
+        let pasteboard = makePasteboard { $0.writeObjects([firstURL as NSURL, secondURL as NSURL]) }
+        #expect(session.acceptPasteboardDrop(pasteboard))
+        try await waitForAttachments(session, count: 2)
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(session.pendingAttachments.count == 2)
+        #expect(session.pendingAttachments.map(\.filename).sorted() == [
+            firstURL.lastPathComponent, secondURL.lastPathComponent,
+        ].sorted())
+    }
+
     @Test("A web-URL-only drag is rejected instead of trying to read a URL as a file")
     func webURLOnlyPasteboardRejected() {
         let session = makeSession()
@@ -297,9 +406,10 @@ struct HerdrHudAttachmentTests {
         #expect(oversized.draft == "Keep this draft")
 
         let empty = makeSession()
+        empty.reportAttachmentError("A stale error from an earlier drop")
         let emptyPasteboard = makePasteboard { $0.setData(Data(), forType: .png) }
         #expect(empty.acceptPasteboardDrop(emptyPasteboard))
-        try await waitForAttachmentError(empty)
+        try await waitForValidationError(empty, containing: "1 byte")
         #expect(empty.pendingAttachments.isEmpty)
     }
 
@@ -341,6 +451,86 @@ struct HerdrHudAttachmentTests {
         session.acceptPromisedFiles([SyntheticPromiseReceiver(.noFile)])
         try await waitForAttachmentError(session)
         #expect(session.pendingAttachments.isEmpty)
+    }
+
+    @Test("A delayed promise sibling survives a fast sibling's successful completion")
+    func delayedPromiseSiblingKeepsStagingAlive() async throws {
+        let fastBytes = HerdrDropImageFixtures.makePNG()
+        let slowBytes = HerdrDropImageFixtures.makeJPEG()
+        let fast = SyntheticPromiseReceiver(.file(name: "fast.png", data: fastBytes))
+        let slow = SyntheticPromiseReceiver(deliveries: [
+            SyntheticPromiseReceiver.Delivery(
+                outcome: .file(name: "slow.jpg", data: slowBytes),
+                delay: .milliseconds(150)
+            ),
+        ])
+        let session = makeSession()
+        session.acceptPromisedFiles([fast, slow])
+
+        // The first promise settles while the sibling has not written yet; the
+        // shared destination must stay for the sibling to arrive.
+        try await waitForAttachments(session, count: 1)
+        let sharedDirectory = try #require(fast.stagingDirectories.first)
+        #expect(sharedDirectory == slow.stagingDirectories.first)
+        #expect(FileManager.default.fileExists(atPath: sharedDirectory.path))
+
+        try await waitForAttachments(session, count: 2)
+        let contents = Set(session.pendingAttachments.compactMap { try? Data(contentsOf: $0.url) })
+        #expect(contents == [fastBytes, slowBytes])
+        #expect(!FileManager.default.fileExists(atPath: sharedDirectory.path))
+    }
+
+    @Test("A failed promise does not delete a sibling's awaiting delivery")
+    func failedPromisePreservesSiblingDelivery() async throws {
+        let bytes = HerdrDropImageFixtures.makePNG()
+        let sibling = SyntheticPromiseReceiver(deliveries: [
+            SyntheticPromiseReceiver.Delivery(
+                outcome: .file(name: "sibling.png", data: bytes),
+                writeDuringArming: true,
+                delay: .milliseconds(150)
+            ),
+        ])
+        let failing = SyntheticPromiseReceiver(.failure(SyntheticPromiseError()))
+        let session = makeSession()
+        session.acceptPromisedFiles([sibling, failing])
+
+        // The failure settles first; the sibling's file is already staged and
+        // must survive until its own completion imports it.
+        try await waitForAttachments(session, count: 1)
+        let attachment = try #require(session.pendingAttachments.first)
+        #expect(attachment.filename == "sibling.png")
+        #expect(try Data(contentsOf: attachment.url) == bytes)
+        let sharedDirectory = try #require(sibling.stagingDirectories.first)
+        #expect(!FileManager.default.fileExists(atPath: sharedDirectory.path))
+    }
+
+    @Test("A multi-file promise keeps its staging directory until every file arrives")
+    func multiFilePromiseKeepsStagingUntilComplete() async throws {
+        let firstBytes = HerdrDropImageFixtures.makePNG()
+        let secondBytes = HerdrDropImageFixtures.makeJPEG()
+        let receiver = SyntheticPromiseReceiver(
+            deliveries: [
+                SyntheticPromiseReceiver.Delivery(
+                    outcome: .file(name: "legacy-1.png", data: firstBytes)
+                ),
+                SyntheticPromiseReceiver.Delivery(
+                    outcome: .file(name: "legacy-2.jpg", data: secondBytes),
+                    delay: .milliseconds(150)
+                ),
+            ],
+            promisedFileCount: 2
+        )
+        let session = makeSession()
+        session.acceptPromisedFiles([receiver])
+
+        try await waitForAttachments(session, count: 1)
+        let sharedDirectory = try #require(receiver.stagingDirectories.first)
+        #expect(FileManager.default.fileExists(atPath: sharedDirectory.path))
+
+        try await waitForAttachments(session, count: 2)
+        let contents = Set(session.pendingAttachments.compactMap { try? Data(contentsOf: $0.url) })
+        #expect(contents == [firstBytes, secondBytes])
+        #expect(!FileManager.default.fileExists(atPath: sharedDirectory.path))
     }
 
     // MARK: - Repeatability, durability, and explicit submission
@@ -531,6 +721,14 @@ struct HerdrHudAttachmentTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(session.validationError != nil)
+    }
+
+    private func waitForValidationError(_ session: HerdrHudSession, containing text: String) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while session.validationError?.contains(text) != true, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(session.validationError?.contains(text) == true)
     }
 
     private func waitForRemoval(_ session: HerdrHudSession) async throws {

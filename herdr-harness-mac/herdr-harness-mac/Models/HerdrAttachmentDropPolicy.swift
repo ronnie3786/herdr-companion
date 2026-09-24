@@ -71,35 +71,77 @@ enum HerdrAttachmentDropPolicy {
             as? [NSFilePromiseReceiver] ?? []
     }
 
+    /// Exactly one preferred representation for a single dropped pasteboard
+    /// item. One item is one dropped thing: resolving per item keeps two image
+    /// items from collapsing into one attachment and keeps an inline image
+    /// beside a file item from being ignored.
+    enum ItemPayload: Equatable {
+        case file(URL)
+        case image(data: Data, type: UTType)
+    }
+
+    /// One payload per pasteboard item, in item order. Within an item a real
+    /// file URL wins over image pixels, and the image branch picks a single
+    /// representation, so a dropped item never attaches twice.
+    static func itemPayloads(in pasteboard: NSPasteboard) -> [ItemPayload] {
+        (pasteboard.pasteboardItems ?? []).compactMap { item in
+            if let url = localFileURL(in: item) { return .file(url) }
+            if let image = imagePayload(in: item) {
+                return .image(data: image.data, type: image.type)
+            }
+            return nil
+        }
+    }
+
     /// Real files on the dragging pasteboard. `NSURL` readers can also decode a
     /// plain web URL — a browser image drag carries the image's source URL next
     /// to its pixels — so only file URLs are returned and the caller can fall
     /// through to the image data instead of trying to read a URL as a file.
     static func localFileURLs(in pasteboard: NSPasteboard) -> [URL] {
-        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
-        return (pasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL]) ?? []
+        (pasteboard.pasteboardItems ?? []).compactMap { localFileURL(in: $0) }
     }
 
-    /// The first inline image payload on a dragging pasteboard. A declared PNG
-    /// representation wins because it is lossless; otherwise the pasteboard's
-    /// own declared image types are used in order, so an original JPEG is not
-    /// replaced by one of AppKit's synthesized conversions. The TIFF conversion
-    /// is the last resort.
+    /// A real file URL on one pasteboard item. A browser drag carries a plain
+    /// web URL beside its pixels; only `file://` URLs count, so the web URL
+    /// cannot shadow the image data.
+    static func localFileURL(in item: NSPasteboardItem) -> URL? {
+        for type in [NSPasteboard.PasteboardType.fileURL, .URL] {
+            guard let data = item.data(forType: type),
+                  let url = URL(dataRepresentation: data, relativeTo: nil),
+                  url.isFileURL
+            else { continue }
+            return url
+        }
+        return nil
+    }
+
+    /// The first inline image payload on a dragging pasteboard, per item.
     static func imagePayload(in pasteboard: NSPasteboard) -> (data: Data, type: UTType)? {
-        let declared = (pasteboard.types ?? []).compactMap { type -> (pasteboardType: NSPasteboard.PasteboardType, utType: UTType)? in
+        for item in pasteboard.pasteboardItems ?? [] {
+            if let payload = imagePayload(in: item) { return payload }
+        }
+        return nil
+    }
+
+    /// One item's preferred image representation. A declared PNG representation
+    /// wins because it is lossless; otherwise the item's own declared image
+    /// types are used in order, so an original JPEG is not replaced by one of
+    /// AppKit's synthesized conversions. The TIFF conversion is the last resort.
+    static func imagePayload(in item: NSPasteboardItem) -> (data: Data, type: UTType)? {
+        let declared = item.types.compactMap { type -> (pasteboardType: NSPasteboard.PasteboardType, utType: UTType)? in
             guard let utType = UTType(type.rawValue), utType.conforms(to: .image) else { return nil }
             return (type, utType)
         }
         if let png = declared.first(where: { $0.utType.conforms(to: .png) }),
-           let data = pasteboard.data(forType: png.pasteboardType) {
+           let data = item.data(forType: png.pasteboardType) {
             return (data, .png)
         }
         for candidate in declared {
-            if let data = pasteboard.data(forType: candidate.pasteboardType) {
+            if let data = item.data(forType: candidate.pasteboardType) {
                 return (data, candidate.utType)
             }
         }
-        if let data = pasteboard.data(forType: .tiff) {
+        if let data = item.data(forType: .tiff) {
             return (data, .tiff)
         }
         return nil

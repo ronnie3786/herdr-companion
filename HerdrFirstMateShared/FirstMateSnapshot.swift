@@ -12,6 +12,13 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
     var sessions: [FirstMateSession]
     var sessionsTruncated: Bool
     var runtimeHealth: FirstMateRuntimeHealth? = nil
+    /// The feature's newest event sequence across every event type. Companions
+    /// that can omit telemetry from `events` report it so ordering checks never
+    /// mistake a journal-only snapshot for an older one.
+    var eventCursor: Int? = nil
+
+    /// The newest event sequence this snapshot reflects.
+    var latestEventSequence: Int { eventCursor ?? events.map(\.sequence).max() ?? 0 }
 
     init(feature: FirstMateFeature, visits: [FirstMateVisit] = [], assignments: [FirstMateAssignment] = [],
          documents: [FirstMateDocument] = [], messages: [FirstMateMessage] = [], events: [FirstMateEvent] = [], sessions: [FirstMateSession] = [], sessionsTruncated: Bool = false) {
@@ -31,6 +38,7 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
         case ok, feature, visits, assignments, documents, messages, events, sessions
         case sessionsTruncated = "sessions_truncated"
         case runtimeHealth = "runtime_health"
+        case eventCursor = "event_cursor"
     }
 
     init(from decoder: Decoder) throws {
@@ -46,6 +54,7 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
         sessions = try c.decodeIfPresent([FirstMateSession].self, forKey: .sessions) ?? []
         sessionsTruncated = try c.decodeIfPresent(Bool.self, forKey: .sessionsTruncated) ?? false
         runtimeHealth = try c.decodeIfPresent(FirstMateRuntimeHealth.self, forKey: .runtimeHealth)
+        eventCursor = try c.decodeIfPresent(Int.self, forKey: .eventCursor)
     }
 
     var recoveryNeedsDirection: Bool {

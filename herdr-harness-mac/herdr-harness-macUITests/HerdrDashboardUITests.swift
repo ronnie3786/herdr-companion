@@ -2,7 +2,7 @@ import XCTest
 
 final class HerdrDashboardUITests: HerdrUITestCase {
     @MainActor
-    func testDashboardDestinationsAndSharedFocusMode() {
+    func testDashboardDestinationsAndFocusMode() {
         let app = launchDemoApp(startOnDashboard: true)
         defer { app.terminate() }
         XCTAssertTrue(app.control(identifier: "dashboard").waitForExistence(timeout: 10))
@@ -15,7 +15,9 @@ final class HerdrDashboardUITests: HerdrUITestCase {
         XCTAssertTrue(app.buttons["dashboard-review-prr_demo42"].exists)
         app.buttons["dashboard-open-agent-view"].click()
         XCTAssertTrue(app.control(identifier: "agent-board").waitForExistence(timeout: 5))
-        XCTAssertEqual(app.control(identifier: "dashboard-focus-mode").value as? String, "1")
+        // Agent view filters with its own control; Focus mode belongs to the Dashboard.
+        XCTAssertTrue(app.control(identifier: "agent-board-filter").exists)
+        XCTAssertFalse(app.control(identifier: "dashboard-focus-mode").exists)
         app.buttons["back-to-dashboard"].click()
         XCTAssertTrue(app.control(identifier: "dashboard").waitForExistence(timeout: 5))
         app.buttons["dashboard-review-prr_demo42"].click()

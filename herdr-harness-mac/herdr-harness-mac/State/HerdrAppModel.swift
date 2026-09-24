@@ -5471,7 +5471,10 @@ final class HerdrAppModel {
             runtime.lastUpdated = .now
         }
         runtimes[machineID] = runtime
-        machineStates[machineID] = state
+        // Every live refresh lands here, several times a second while agents
+        // stream. A subscript write notifies observers even when unchanged, and
+        // every Agent view column reads this through canControl(machineID:).
+        if machineStates[machineID] != state { machineStates[machineID] = state }
         updateAggregateConnectionState()
         mirrorPrimaryConnection()
         if state == .live {

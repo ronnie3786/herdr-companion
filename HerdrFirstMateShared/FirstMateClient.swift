@@ -7,6 +7,9 @@ protocol FirstMateClient: Sendable {
     func fetchFirstMateFeatures() async throws -> FirstMateFeatureList
     func fetchFirstMateFeatures(scope: FirstMateFeatureScope) async throws -> FirstMateFeatureList
     func fetchFirstMateFeature(_ id: String) async throws -> FirstMateSnapshot
+    /// Omits Pi telemetry events when `journalEventsOnly` and the companion
+    /// advertises `first-mate-journal-events-v1`.
+    func fetchFirstMateFeature(_ id: String, journalEventsOnly: Bool) async throws -> FirstMateSnapshot
     func createFirstMateFeature(title: String, goal: String, cwd: String, requestID: String) async throws -> FirstMateSnapshot
     func sendFirstMateMessage(featureID: String, text: String, requestID: String) async throws -> FirstMateSnapshot
     func uploadFirstMateAttachment(featureID: String, fileURL: URL, contentType: String) async throws -> AttachmentUploadResponse
@@ -35,6 +38,7 @@ struct FirstMateCapabilities: Decodable, Sendable {
     var supportsAttachments: Bool { capabilities.contains("first-mate-attachments-v1") }
     var supportsContext: Bool { capabilities.contains("first-mate-context-v1") }
     var supportsSafeModelSettings: Bool { capabilities.contains("first-mate-safe-model-settings-v1") }
+    var supportsJournalEventSnapshots: Bool { capabilities.contains("first-mate-journal-events-v1") }
 }
 
 struct FirstMateDocumentResponse: Decodable, Sendable {
@@ -106,6 +110,9 @@ extension FirstMateClient {
     }
     func fetchFirstMateFeatures(scope: FirstMateFeatureScope) async throws -> FirstMateFeatureList {
         try await fetchFirstMateFeatures()
+    }
+    func fetchFirstMateFeature(_ id: String, journalEventsOnly: Bool) async throws -> FirstMateSnapshot {
+        try await fetchFirstMateFeature(id)
     }
     func setFirstMateArchived(featureID: String, archived: Bool, reason: FirstMateArchiveReason?, requestID: String) async throws -> FirstMateSnapshot {
         throw APIError.invalidResponse

@@ -339,10 +339,13 @@ final class PRReviewStore {
         do {
             let values = try await client.prReviews(scope: "active")
             guard capturedGeneration == generation, !Task.isCancelled else { return nil }
-            reviews = retainingViewerStates(in: values, previous: reviews)
-            unsupported = false
-            hasLoaded = true
-            error = nil
+            // Observers are invalidated by every write, so an unchanged poll
+            // writes nothing.
+            let next = retainingViewerStates(in: values, previous: reviews)
+            if next != reviews { reviews = next }
+            if unsupported { unsupported = false }
+            if !hasLoaded { hasLoaded = true }
+            if error != nil { error = nil }
         } catch is CancellationError { return nil }
         catch {
             guard capturedGeneration == generation else { return nil }

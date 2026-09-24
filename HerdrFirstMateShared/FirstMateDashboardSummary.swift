@@ -12,6 +12,12 @@ struct FirstMateDashboardSummary: Codable, Equatable, Sendable {
     var needsUserPrompt: String?
     var assignmentCount: Int
     var runningAssignmentCount: Int
+    /// Newest conversation or journal activity. Unlike the feature's
+    /// `updated_at`, Pi telemetry does not move it (companion ≥ 0.45).
+    var activityAt: String? = nil
+    /// First Mate finished its turn and is parked until a person replies,
+    /// while the feature status still reads as working (companion ≥ 0.45).
+    var awaitingTurn: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case currentStageTitle = "current_stage_title", currentStageIndex = "current_stage_index"
@@ -19,6 +25,8 @@ struct FirstMateDashboardSummary: Codable, Equatable, Sendable {
         case latestMessage = "latest_message", latestMessageAt = "latest_message_at"
         case needsUser = "needs_user", needsUserPrompt = "needs_user_prompt"
         case assignmentCount = "assignment_count", runningAssignmentCount = "running_assignment_count"
+        case activityAt = "activity_at"
+        case awaitingTurn = "awaiting_turn"
     }
 
     static func from(_ snapshot: FirstMateSnapshot) -> Self {

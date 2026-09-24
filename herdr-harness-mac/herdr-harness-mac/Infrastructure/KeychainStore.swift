@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Security
 
 enum MacKeychainBackend: String, Sendable {
@@ -97,9 +98,24 @@ struct MacCredentialPersistence {
 
 /// Credentials use the configured secure Keychain backend, never plaintext writes.
 enum KeychainStore {
-    static func value(for account: String) -> String { persistence.value(for: account) }
+    /// Successful reads, keyed by account. Views and task identities resolve
+    /// machine connections on every render; each uncached read is a synchronous
+    /// Security framework round trip. Every write through this type invalidates
+    /// its account, and failed or empty reads are never cached.
+    private static let readCache = OSAllocatedUnfairLock<[String: String]>(initialState: [:])
+
+    static func value(for account: String) -> String {
+        if let cached = readCache.withLock({ $0[account] }) { return cached }
+        let value = persistence.value(for: account)
+        if !value.isEmpty { readCache.withLock { $0[account] = value } }
+        return value
+    }
     @discardableResult
-    static func set(_ value: String, for account: String) -> OSStatus { persistence.set(value, for: account) }
+    static func set(_ value: String, for account: String) -> OSStatus {
+        readCache.withLock { $0[account] = nil }
+        defer { readCache.withLock { $0[account] = nil } }
+        return persistence.set(value, for: account)
+    }
     static func removeValue(for account: String) { set("", for: account) }
 
     private static var persistence: MacCredentialPersistence {

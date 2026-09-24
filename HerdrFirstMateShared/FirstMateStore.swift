@@ -85,6 +85,7 @@ final class FirstMateStore {
     private var pendingMessages: [String: (text: String, requestID: String)] = [:]
     private var demoStep = 0
     @ObservationIgnored private var client: (any FirstMateClient)?
+    @ObservationIgnored private var journalEventSnapshotsSupported = false
     #if os(macOS)
     @ObservationIgnored let composerDrafts = FirstMateComposerDraftStore()
     #endif
@@ -214,8 +215,12 @@ final class FirstMateStore {
            existing.feature.revision > value.feature.revision ||
            (existing.feature.modelSettingsRevision ?? 0) > (value.feature.modelSettingsRevision ?? 0) { return }
         if value.hasDetails, let existing = snapshots[value.feature.id], existing.feature.revision == value.feature.revision,
-           (existing.events.map(\.sequence).max() ?? 0) > (value.events.map(\.sequence).max() ?? 0) { return }
-        if let health = value.runtimeHealth { runtimeHealth = health }
+           existing.latestEventSequence > value.latestEventSequence { return }
+        if let health = value.runtimeHealth, health != runtimeHealth { runtimeHealth = health }
+        // An identical poll changes nothing on screen. Dictionary and array
+        // element writes notify observers even when the value is unchanged.
+        if value.hasDetails, snapshots[value.feature.id] == value,
+           features.contains(where: { $0.id == value.feature.id && $0 == value.feature }) { return }
         if !value.hasDetails, var existing = snapshots[value.feature.id] {
             // Mutations acknowledge the feature; their omitted arrays and usage are not deletions.
             // A delayed mutation may have the same feature/settings revisions as a
@@ -278,12 +283,15 @@ final class FirstMateStore {
                 attachmentsSupported = capabilities.ok && capabilities.supportsAttachments
                 contextSupported = capabilities.ok && capabilities.supportsContext
                 safeModelSettingsSupported = capabilities.ok && capabilities.supportsSafeModelSettings
+                let journalOnly = capabilities.ok && capabilities.supportsJournalEventSnapshots
+                if journalEventSnapshotsSupported != journalOnly { journalEventSnapshotsSupported = journalOnly }
             } catch {
                 guard capturedGeneration == generation else { return }
                 archiveSupported = false
                 attachmentsSupported = false
                 contextSupported = false
                 safeModelSettingsSupported = false
+                journalEventSnapshotsSupported = false
             }
             let list = try await client.fetchFirstMateFeatures(scope: showArchived ? .all : .active)
             guard capturedGeneration == generation else { return }
@@ -302,7 +310,9 @@ final class FirstMateStore {
             }
             reconcileSelection()
             if let id = selectedFeatureID {
-                let value = try await client.fetchFirstMateFeature(id)
+                // Pi telemetry is most of a long-running feature's events and no
+                // First Mate screen shows it.
+                let value = try await client.fetchFirstMateFeature(id, journalEventsOnly: journalEventSnapshotsSupported)
                 guard capturedGeneration == generation else { return }
                 guard value.ok, value.feature.id == id else { throw APIError.invalidResponse }
                 receive(value)

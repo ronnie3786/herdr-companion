@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import Testing
 @testable import herdr_harness_mac
 
@@ -618,6 +619,33 @@ struct FirstMateFleetIndexTests {
         #expect(await script.fetchCount == 1)
     }
 
+    @Test("An unchanged poll publishes nothing, so the Dashboard is not re-rendered every interval")
+    func unchangedPollIsQuiet() async {
+        let index = FirstMateFleetIndex()
+        let features = [feature(id: "waiting", status: "awaiting_direction")]
+        let machine = machine(id: "alpha", name: "Alpha Mac")
+        let source = FirstMateFleetSource(
+            machine: machine,
+            configuration: configuration(for: machine, token: "alpha-token"),
+            client: SyntheticFleetClient { .init(ok: true, features: features) }
+        )
+        let lifecycle = index.activate(sources: [source], connectionGeneration: 5)
+        await index.refresh(lifecycle: lifecycle)
+        let revision = index.contentRevision
+        #expect(index.hosts.first?.lastUpdated != nil)
+
+        let changed = FleetChangeFlag()
+        withObservationTracking {
+            _ = index.hosts
+            _ = index.contentRevision
+        } onChange: { changed.set() }
+        await index.refresh(lifecycle: lifecycle)
+        await index.refresh(lifecycle: lifecycle)
+        #expect(!changed.value)
+        #expect(index.contentRevision == revision)
+        #expect(index.hosts.first?.isLoading == false)
+    }
+
     private func machine(id: String, name: String) -> HerdrMachine {
         HerdrMachine(id: id, name: name, urlString: "https://\(id).example.invalid")
     }
@@ -861,4 +889,12 @@ private final class SyntheticScriptedFleetClient: FirstMateClient, @unchecked Se
     func performFirstMateAction(featureID: String, action: String, requestID: String) async throws -> FirstMateSnapshot { throw APIError.invalidResponse }
     func fetchFirstMateDocument(_ id: String) async throws -> FirstMateDocumentResponse { throw APIError.invalidResponse }
     func fetchFirstMateSession(_ id: String, before: Int?) async throws -> FirstMateSessionResponse { throw APIError.invalidResponse }
+}
+
+/// Observation's change callback is not main-actor isolated.
+private final class FleetChangeFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+    var value: Bool { lock.withLock { flag } }
+    func set() { lock.withLock { flag = true } }
 }

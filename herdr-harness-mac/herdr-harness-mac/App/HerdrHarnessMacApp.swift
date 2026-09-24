@@ -363,7 +363,7 @@ struct HerdrMacCommands: Commands {
 
         CommandMenu("Navigate") {
             Button("Dashboard") {
-                shell.show(.dashboard, model: model)
+                shell.goHome(model: model)
                 openWindow(id: HerdrWindowID.main)
             }
             .keyboardShortcut("d", modifiers: [.command, .shift])
@@ -371,6 +371,7 @@ struct HerdrMacCommands: Commands {
                 shell.show(.agentBoard, model: model)
                 openWindow(id: HerdrWindowID.main)
             }
+            .keyboardShortcut("a", modifiers: [.command, .shift])
             Divider()
             Button("Open Chat…") {
                 shell.presentCommandPalette()

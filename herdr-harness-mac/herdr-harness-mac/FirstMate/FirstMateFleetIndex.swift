@@ -30,6 +30,12 @@ final class FirstMateFleetIndex {
 
     var search = ""
     private(set) var hosts: [FirstMateFleetHost] = []
+    /// Increments only when a host's published state actually changes, or the
+    /// roster does. Derived views cache against it.
+    private(set) var contentRevision = 0
+    /// Last successful contact per host. Not observed: it changes every poll and
+    /// is only published (as `lastUpdated`) when a host goes offline.
+    @ObservationIgnored private var lastContact: [String: Date] = [:]
     @ObservationIgnored var pollingInterval: Duration = .seconds(10)
     @ObservationIgnored private var clients: [String: any FirstMateClient] = [:]
     /// The authenticated connection each cached host was last reconciled with,
@@ -86,6 +92,11 @@ final class FirstMateFleetIndex {
         refreshGeneration &+= 1
         let cachedHosts = Dictionary(uniqueKeysWithValues: hosts.map { ($0.machineID, $0) })
         let cachedConnections = hostConnections
+        let previousHosts = hosts
+        defer {
+            if hosts != previousHosts { contentRevision &+= 1 }
+            lastContact = lastContact.filter { id, _ in hosts.contains { $0.machineID == id && $0.lastUpdated != nil } }
+        }
         hosts = sources.map { source in
             let machine = source.machine
             if let cached = cachedHosts[machine.id],
@@ -117,7 +128,7 @@ final class FirstMateFleetIndex {
         lifecycle &+= 1
         refreshGeneration &+= 1
         clients = [:]
-        for index in hosts.indices { hosts[index].isLoading = false }
+        for index in hosts.indices where hosts[index].isLoading { hosts[index].isLoading = false }
     }
 
     func refresh(lifecycle expectedLifecycle: Int) async {
@@ -128,10 +139,14 @@ final class FirstMateFleetIndex {
             guard let client = clients[host.machineID] else { return nil }
             return (host.machineID, client)
         }
-        for index in hosts.indices {
-            hosts[index].isLoading = clients[hosts[index].machineID] != nil
-            // A retry is not a successful contact. Keep last-seen/error evidence
-            // until this host actually returns a new list.
+        // Only a host that has never answered shows as loading. Background polls
+        // of a loaded host change nothing observable until its data changes, so
+        // the Dashboard and sidebar are not invalidated every interval. A retry is
+        // not a successful contact: last-seen/error evidence is kept until this
+        // host actually returns a new list.
+        for index in hosts.indices where hosts[index].lastUpdated == nil && hosts[index].error == nil {
+            let loading = clients[hosts[index].machineID] != nil
+            if hosts[index].isLoading != loading { hosts[index].isLoading = loading }
         }
 
         await withTaskGroup(of: FetchResult.self) { group in
@@ -165,15 +180,25 @@ final class FirstMateFleetIndex {
                       let index = hosts.firstIndex(where: { $0.machineID == result.machineID }),
                       clients[result.machineID] != nil
                 else { continue }
-                hosts[index].isLoading = false
+                // Build the next value and assign once, only when it differs:
+                // every write to `hosts` invalidates all of its observers.
+                var host = hosts[index]
+                host.isLoading = false
                 if let features = result.features {
-                    hosts[index].features = features
-                    hosts[index].lastUpdated = .now
-                    hosts[index].error = nil
-                    hosts[index].unsupported = false
+                    lastContact[result.machineID] = .now
+                    host.features = features
+                    if host.lastUpdated == nil || host.error != nil || host.unsupported { host.lastUpdated = .now }
+                    host.error = nil
+                    host.unsupported = false
                 } else if result.error != nil {
-                    hosts[index].error = result.error
-                    hosts[index].unsupported = result.unsupported
+                    // "Last seen" is the last successful contact before this failure.
+                    if host.error == nil, let contact = lastContact[result.machineID] { host.lastUpdated = contact }
+                    host.error = result.error
+                    host.unsupported = result.unsupported
+                }
+                if host != hosts[index] {
+                    hosts[index] = host
+                    contentRevision &+= 1
                 }
             }
         }

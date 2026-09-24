@@ -5,34 +5,47 @@ import Observation
 final class AgentBoardColumnState {
     let machineID: String
     let featureID: String
-    let resources = FirstMateStore()
     var tab = AgentBoardTab.chat
     var draft = ""
-    var followsLatest = true
-    private(set) var isLoading = false
+    private(set) var content: AgentBoardContent?
+    private(set) var loadError: String?
     private(set) var isSending = false
-    private(set) var error: String?
     private(set) var sendError: String?
-    private(set) var lastUpdated: Date?
-    @ObservationIgnored var pollingInterval: Duration = .seconds(3)
-    @ObservationIgnored private var client: (any FirstMateClient)?
+    /// When this feature last changed on screen, not when it was last polled.
+    private(set) var lastChanged: Date?
+    /// Created on first use: only a column whose saved session is opened needs
+    /// a resource store.
+    private(set) var resourceStore: FirstMateStore?
+
+    @ObservationIgnored var boardInterval: Duration = .seconds(4)
+    @ObservationIgnored var fallbackInterval: Duration = .seconds(15)
+    @ObservationIgnored private(set) var lastContact: Date?
+    @ObservationIgnored private(set) var payload: AgentBoardPayload?
+    @ObservationIgnored private var version: String?
+    @ObservationIgnored private var failures = 0
+    @ObservationIgnored private var client: (any AgentBoardClient)?
     @ObservationIgnored private var configuration: ServerConfiguration?
     @ObservationIgnored private var connectionGeneration: Int?
     @ObservationIgnored private var isDemo = false
     @ObservationIgnored private var lifecycle = UUID()
+    @ObservationIgnored private var isRefreshing = false
     @ObservationIgnored private var pendingMessage: (text: String, requestID: String)?
-
-    var snapshot: FirstMateSnapshot? { resources.snapshot }
 
     init(machineID: String, featureID: String) {
         self.machineID = machineID
         self.featureID = featureID
     }
 
+    /// A column with text or a send in flight survives being filtered out or
+    /// its feature leaving the list.
+    var hasUnsentWork: Bool {
+        isSending || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     /// Authentication identity belongs to this column's owning host. Replacing
     /// that identity clears both cached content and staged text, never silently
     /// carrying a reply over to a different companion at the same machine ID.
-    func configure(configuration: ServerConfiguration?, generation: Int, demo: Bool, client: (any FirstMateClient)?, demoSnapshot: FirstMateSnapshot? = nil) {
+    func configure(configuration: ServerConfiguration?, generation: Int, demo: Bool, client: (any AgentBoardClient)?, demoSnapshot: FirstMateSnapshot? = nil) {
         guard connectionGeneration != generation || self.configuration != configuration || isDemo != demo else { return }
         let identityChanged = connectionGeneration == nil || self.configuration != configuration || isDemo != demo
         lifecycle = UUID()
@@ -40,89 +53,122 @@ final class AgentBoardColumnState {
         self.configuration = configuration
         isDemo = demo
         self.client = client
-        isLoading = false
+        isRefreshing = false
         isSending = false
+        version = nil
+        failures = 0
+        resourceStore = nil
         if identityChanged {
-            resources.configure(client: client, demo: demo)
-            resources.select(featureID)
-            if demo, let demoSnapshot { receiveDemoSnapshot(demoSnapshot) }
+            content = nil
+            payload = nil
             draft = ""
             pendingMessage = nil
-            error = nil
+            loadError = nil
             sendError = nil
-            lastUpdated = demo ? .now : nil
-            followsLatest = true
+            lastChanged = nil
+            lastContact = nil
+            if demo, let demoSnapshot { receiveDemoSnapshot(demoSnapshot) }
         }
     }
 
+    /// Demo content is small and has no server, so it is built in place.
     func receiveDemoSnapshot(_ snapshot: FirstMateSnapshot) {
         guard isDemo, snapshot.feature.id == featureID else { return }
-        resources.receive(snapshot)
-        lastUpdated = .now
+        let payload = AgentBoardPayload.adapting(snapshot)
+        guard payload != self.payload else { return }
+        self.payload = payload
+        publish(AgentBoardContent.build(from: payload))
     }
 
-    func observe() async {
+    /// Polls while the owning view's task is alive. An unchanged board costs one
+    /// small request and publishes nothing.
+    func observe(capabilities: @MainActor () async -> FirstMateCapabilities?) async {
         let expectedLifecycle = lifecycle
-        guard isDemo || client != nil else {
-            error = "This feature's companion is unavailable."
+        guard !isDemo else { return }
+        guard client != nil else {
+            if loadError == nil { loadError = "This feature's companion is unavailable." }
             return
         }
-        guard !isDemo else { return }
-        repeat {
-            await refresh()
-            do { try await Task.sleep(for: pollingInterval) } catch { return }
-        } while !Task.isCancelled && lifecycle == expectedLifecycle
+        while !Task.isCancelled, lifecycle == expectedLifecycle {
+            let supported = await capabilities()
+            guard !Task.isCancelled, lifecycle == expectedLifecycle else { return }
+            await refresh(capabilities: supported)
+            let base = supported?.supportsBoard == true ? boardInterval : fallbackInterval
+            let delay = failures == 0 ? base : min(base * (1 << min(failures, 3)), .seconds(30))
+            do { try await Task.sleep(for: delay) } catch { return }
+        }
     }
 
-    /// Deliberately fetches only one feature snapshot. Fleet metadata is owned by
-    /// the dashboard and must not be refetched once for every visible column.
-    func refresh() async {
-        guard !Task.isCancelled, !isLoading, let client else { return }
+    func refresh(capabilities: FirstMateCapabilities?, force: Bool = false) async {
+        guard !Task.isCancelled, !isRefreshing, let client else { return }
         let expectedLifecycle = lifecycle
-        isLoading = true
-        defer { if lifecycle == expectedLifecycle { isLoading = false } }
+        isRefreshing = true
+        defer { if lifecycle == expectedLifecycle { isRefreshing = false } }
         do {
-            let value = try await client.fetchFirstMateFeature(featureID)
+            var received: AgentBoardPayload?
+            var built: AgentBoardContent?
+            if capabilities?.supportsBoard == true {
+                let fetch = try await client.fetchFirstMateBoard(
+                    featureID: featureID, messageLimit: AgentBoardPayload.messageLimit,
+                    journalLimit: AgentBoardPayload.journalLimit, ifVersion: force ? nil : version)
+                guard lifecycle == expectedLifecycle else { return }
+                if case .board(let value) = fetch {
+                    received = value
+                    if value != payload { built = await AgentBoardContent.make(from: value) }
+                }
+            } else {
+                let snapshot = try await client.fetchFirstMateFeature(
+                    featureID, journalEventsOnly: capabilities?.supportsJournalEvents == true)
+                guard lifecycle == expectedLifecycle else { return }
+                guard snapshot.ok, snapshot.feature.id == featureID else { throw APIError.invalidResponse }
+                let (value, content) = await AgentBoardContent.make(adapting: snapshot)
+                received = value
+                if value != payload { built = content }
+            }
             guard !Task.isCancelled, lifecycle == expectedLifecycle else { return }
-            guard value.ok, value.feature.id == featureID else { throw APIError.invalidResponse }
-            resources.receive(value)
-            lastUpdated = .now
-            error = nil
+            lastContact = .now
+            failures = 0
+            if loadError != nil { loadError = nil }
+            if let received {
+                version = received.version
+                payload = received
+            }
+            if let built { publish(built) }
         } catch is CancellationError {
             return
         } catch {
             guard !Task.isCancelled, lifecycle == expectedLifecycle else { return }
+            failures += 1
+            let message: String
             if case APIError.server(let status, _) = error, status == 404 || status == 501 {
-                self.error = "This companion needs First Mate support. Open the full view after updating it."
+                message = "This companion needs First Mate support. Open the full view after updating it."
             } else {
-                self.error = error.localizedDescription
+                message = error.localizedDescription
             }
+            if loadError != message { loadError = message }
         }
+    }
+
+    private func publish(_ value: AgentBoardContent) {
+        guard value != content else { return }
+        content = value
+        lastChanged = .now
     }
 
     /// Called with the generation and authenticated identity captured at the
     /// actual button press. A delayed task cannot send a draft to a new host.
-    func send(configuration: ServerConfiguration?, generation: Int, canControl: Bool,
-              isCurrent: @MainActor () -> Bool) async {
-        guard canControl, isCurrent(), self.configuration == configuration,
-              connectionGeneration == generation, !isSending,
-              let snapshot, !snapshot.feature.isArchived,
-              !["completed", "cancelled"].contains(snapshot.feature.status) else { return }
+    /// `acceptsMessages` comes from the freshest known feature state, so a reply
+    /// never waits for this column's first load.
+    func send(configuration: ServerConfiguration?, generation: Int, canControl: Bool, acceptsMessages: Bool,
+              capabilities: FirstMateCapabilities?, isCurrent: @MainActor () -> Bool) async {
+        guard canControl, acceptsMessages, isCurrent(), self.configuration == configuration,
+              connectionGeneration == generation, !isSending else { return }
         let originalDraft = draft
         let text = originalDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         let expectedLifecycle = lifecycle
         if isDemo {
-            var value = snapshot
-            let timestamp = ISO8601DateFormatter().string(from: .now)
-            value.messages.append(.init(id: UUID().uuidString, featureID: featureID, role: "user", text: text,
-                                        status: "delivered", createdAt: timestamp))
-            value.messages.append(.init(id: UUID().uuidString, featureID: featureID, role: "assistant",
-                                        text: "Your direction is recorded in this demo.", status: "delivered", createdAt: timestamp))
-            value.feature.revision += 1
-            resources.receive(value)
-            draft = ""
-            lastUpdated = .now
+            demoSend(text)
             return
         }
         guard let client else { return }
@@ -136,14 +182,41 @@ final class AgentBoardColumnState {
             let value = try await client.sendFirstMateMessage(featureID: featureID, text: text, requestID: pending.requestID)
             guard lifecycle == expectedLifecycle, isCurrent() else { return }
             guard value.ok, value.feature.id == featureID else { throw APIError.invalidResponse }
-            resources.receive(value)
             pendingMessage = nil
             if draft == originalDraft { draft = "" }
-            lastUpdated = .now
-            await refresh()
+            isSending = false
+            await refresh(capabilities: capabilities, force: true)
         } catch {
             guard lifecycle == expectedLifecycle, isCurrent() else { return }
             sendError = error.localizedDescription
         }
+    }
+
+    private func demoSend(_ text: String) {
+        guard var payload else { return }
+        let timestamp = HerdrTimestamp.string(from: .now)
+        payload.messages.append(.init(id: UUID().uuidString, featureID: featureID, role: "user", text: text,
+                                      status: "delivered", createdAt: timestamp))
+        payload.messages.append(.init(id: UUID().uuidString, featureID: featureID, role: "assistant",
+                                      text: "Your direction is recorded in this demo.", status: "delivered", createdAt: timestamp))
+        payload.messagesTotal += 2
+        payload.feature.revision += 1
+        self.payload = payload
+        draft = ""
+        publish(AgentBoardContent.build(from: payload))
+    }
+
+    /// The store that presents saved-session sheets for this column's host.
+    func resources() -> FirstMateStore {
+        if let resourceStore { return resourceStore }
+        let store = FirstMateStore()
+        store.configure(client: client as? any FirstMateClient, demo: isDemo)
+        store.select(featureID)
+        if let payload {
+            store.receive(FirstMateSnapshot(feature: payload.feature, visits: payload.visits,
+                                            assignments: payload.assignments, sessions: payload.sessions))
+        }
+        resourceStore = store
+        return store
     }
 }

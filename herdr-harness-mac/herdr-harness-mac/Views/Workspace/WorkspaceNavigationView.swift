@@ -49,6 +49,7 @@ struct WorkspaceNavigationView: View {
     let modelFavorites: ModelFavoritesStore
     let updates: HerdrUpdateController
     @State private var columnVisibility = NavigationSplitViewVisibility.detailOnly
+    @State private var appliedSidebarVisibility = NavigationSplitViewVisibility.detailOnly
     @Environment(\.openWindow) private var openWindow
 
     private var navigationContent: some View {
@@ -101,7 +102,7 @@ struct WorkspaceNavigationView: View {
                         model: model,
                         openPane: openSession,
                         openWorkspace: { shell.showWorkspace(id: $0.id, model: model) },
-                        openDashboard: { shell.show(.dashboard, model: model) },
+                        openDashboard: { shell.goHome(model: model) },
                         openFirstMate: { shell.show(.firstMate, model: model) },
                         openPRReview: { shell.show(.prReview, model: model) },
                         firstMateAttentionCount: firstMateAttentionCount
@@ -117,8 +118,20 @@ struct WorkspaceNavigationView: View {
                 .toolbar { detailToolbar }
         }
         .navigationSplitViewStyle(.balanced)
-        .onChange(of: shell.detailScope, initial: true) { _, scope in
-            columnVisibility = scope == .dashboard || scope == .agentBoard ? .detailOnly : .all
+        // Home screens start without the sidebar and other screens with it, but
+        // a person's own toggle is remembered per context instead of being
+        // overwritten on every navigation.
+        .onChange(of: shell.detailScope.isHome, initial: true) { _, isHome in
+            let preferred = shell.sidebarVisibility(home: isHome)
+            if columnVisibility != preferred {
+                appliedSidebarVisibility = preferred
+                columnVisibility = preferred
+            }
+        }
+        .onChange(of: columnVisibility) { _, visibility in
+            guard visibility != appliedSidebarVisibility else { return }
+            appliedSidebarVisibility = visibility
+            shell.rememberSidebarVisibility(visibility, home: shell.detailScope.isHome)
         }
         .onAppear { shell.recordVisit(for: model) }
     }
@@ -404,6 +417,16 @@ struct WorkspaceNavigationView: View {
                 }
             }
         }
+        // Dashboard cards and Agent view open features the fleet list knows
+        // about, which can be newer than this store's list. Refresh once before
+        // deciding the target is absent, so the click never lands elsewhere.
+        if !Task.isCancelled, let target = shell.pendingFirstMateControlTarget,
+           target.machineID == firstMateDetailMachineID, firstMateConnectionIsReady,
+           !shell.firstMate.features.contains(where: { $0.id == target.featureID }) {
+            let store = shell.firstMate
+            await store.refresh()
+            guard !Task.isCancelled, shell.firstMate === store else { return }
+        }
         if !Task.isCancelled, let target = shell.pendingFirstMateControlTarget,
            target.machineID == firstMateDetailMachineID,
            firstMateConnectionIsReady,
@@ -425,10 +448,12 @@ struct WorkspaceNavigationView: View {
     @ViewBuilder
     private var detail: some View {
         switch shell.resolvedScope(for: model) {
+        // Each screen reads its own data, so fleet polls never re-evaluate this
+        // root view.
         case .dashboard:
-            DashboardView(model: model, shell: shell, entries: shell.dashboard.entries(shell: shell, isDemo: model.isDemoMode))
+            DashboardView(model: model, shell: shell)
         case .agentBoard:
-            AgentBoardView(model: model, shell: shell, entries: shell.dashboard.entries(shell: shell, isDemo: model.isDemoMode))
+            AgentBoardView(model: model, shell: shell)
         // `.git` never survives `resolvedScope` — it is a pane sub-mode the
         // picker translates — but the switch still has to name it.
         case .session, .git:
@@ -609,10 +634,13 @@ struct WorkspaceNavigationView: View {
         ToolbarItem(placement: .navigation) {
             HStack(spacing: 8) {
                 if shell.detailScope != .dashboard {
-                    Button("Dashboard", systemImage: "chevron.left") { shell.show(.dashboard, model: model) }
-                        .labelStyle(.titleAndIcon)
-                        .buttonStyle(.plain).foregroundStyle(HerdrTheme.accent)
-                        .help("Return to Dashboard (Shift-Command-D)")
+                    // A place, not a second Back button.
+                    Button("Dashboard", systemImage: "square.grid.2x2") { shell.goHome(model: model) }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(HerdrTheme.mist)
+                        .herdrHitTarget()
+                        .help("Dashboard (Shift-Command-D)")
                         .accessibilityIdentifier("back-to-dashboard")
                 }
                 historyButton(
@@ -638,8 +666,9 @@ struct WorkspaceNavigationView: View {
 
         ToolbarItem(placement: .principal) {
             if shell.detailScope == .dashboard || shell.detailScope == .agentBoard {
-                Label(shell.detailScope.label, systemImage: shell.detailScope.symbol)
-                    .foregroundStyle(HerdrTheme.mist)
+                Text(shell.detailScope == .dashboard ? "Dashboard" : "First Mates")
+                    .herdrFont(.headline)
+                    .foregroundStyle(HerdrTheme.text)
             } else if shell.detailScope == .firstMate {
                 Label("First Mate", systemImage: "sailboat")
                     .foregroundStyle(.primary)

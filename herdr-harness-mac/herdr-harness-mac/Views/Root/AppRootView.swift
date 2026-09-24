@@ -46,6 +46,9 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
         pickerCases.contains(scope) ? scope : nil
     }
 
+    /// Dashboard and Agent view: overview screens that start without the sidebar.
+    var isHome: Bool { self == .dashboard || self == .agentBoard }
+
     var label: String {
         switch self {
         case .dashboard: "Dashboard"
@@ -148,8 +151,10 @@ final class HerdrShellState {
     /// feature exists to restore.
     private(set) var history: NavigationHistory
     @ObservationIgnored private let historyStore: NavigationHistoryPersistenceStore
+    @ObservationIgnored private let preferences: UserDefaults
 
     init(userDefaults: UserDefaults = .standard) {
+        self.preferences = userDefaults
         let historyStore = NavigationHistoryPersistenceStore(userDefaults: userDefaults)
         self.dashboard = DashboardState(defaults: userDefaults)
         self.historyStore = historyStore
@@ -409,6 +414,27 @@ final class HerdrShellState {
         firstMateMachineID = machineID
         pendingFirstMateControlTarget = (machineID, featureID, inspector)
         show(.firstMate, model: model)
+    }
+
+    /// Home is a place, not another stop: returning to it from a screen opened
+    /// there steps back, so Back/Forward never fills with Dashboard ⇄ feature
+    /// pairs.
+    func goHome(model: HerdrAppModel) {
+        guard detailScope != .dashboard else { return }
+        if history.backward.last == .dashboard, goBack(model: model) { return }
+        show(.dashboard, model: model)
+    }
+
+    /// Home screens open without the sidebar and other screens with it, until
+    /// the person chooses otherwise; each context remembers its own choice.
+    func sidebarVisibility(home: Bool) -> NavigationSplitViewVisibility {
+        let key = home ? "herdr.shell.sidebar.home" : "herdr.shell.sidebar.screens"
+        guard preferences.object(forKey: key) != nil else { return home ? .detailOnly : .all }
+        return preferences.bool(forKey: key) ? .all : .detailOnly
+    }
+
+    func rememberSidebarVisibility(_ visibility: NavigationSplitViewVisibility, home: Bool) {
+        preferences.set(visibility != .detailOnly, forKey: home ? "herdr.shell.sidebar.home" : "herdr.shell.sidebar.screens")
     }
 
     /// Scope-only destinations (Active Work, Fleet, Attention, and Activity).

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AgentBoardColumnView: View {
     @Bindable var model: HerdrAppModel
+    let board: AgentBoardState
     @Bindable var state: AgentBoardColumnState
     let entry: DashboardFeatureEntry
     let demoSnapshot: FirstMateSnapshot?
@@ -11,228 +12,326 @@ struct AgentBoardColumnView: View {
     @State private var isVisible = false
     @FocusState private var composerFocused: Bool
 
-    private var feature: FirstMateFeature { state.snapshot?.feature ?? entry.feature }
-    private var needsAttention: Bool { FirstMateAttention.needsHumanDecision(status: feature.status) }
-    private var summary: FirstMateDashboardSummary? {
-        if let snapshot = state.snapshot {
-            return snapshot.feature.dashboardSummary ?? .from(snapshot)
+    /// Header facts come from whichever source is newer: the column's own board
+    /// or the fleet list, so the column never contradicts its Dashboard card.
+    private var header: Header {
+        if let content = state.content, content.revision >= entry.feature.revision {
+            return Header(status: content.status, awaitingTurn: content.awaitingTurn, title: content.title, stageTitle: content.stageTitle,
+                          stageIndex: content.stageIndex, attention: content.attention,
+                          acceptsMessages: content.acceptsMessages)
         }
-        return entry.summary
+        let summary = entry.summary
+        return Header(status: entry.feature.status, awaitingTurn: entry.awaitingTurn, title: entry.title, stageTitle: summary?.currentStageTitle,
+                      stageIndex: summary?.currentStageIndex,
+                      attention: entry.needsAttention ? (entry.attentionPrompt ?? "Waiting for your direction.") : nil,
+                      acceptsMessages: entry.isActive)
     }
-    private var canSend: Bool {
-        model.canControl(machineID: entry.machineID) && state.snapshot != nil
-            && !feature.isArchived && !["completed", "cancelled"].contains(feature.status)
+
+    private struct Header {
+        let status: String
+        let awaitingTurn: Bool
+        let title: String
+        let stageTitle: String?
+        let stageIndex: Int?
+        let attention: String?
+        let acceptsMessages: Bool
     }
+
+    private var canSend: Bool { model.canControl(machineID: entry.machineID) && header.acceptsMessages }
+    private var isOffline: Bool { entry.hostError != nil || (state.loadError != nil && state.content != nil) }
     private var observationID: String {
         "\(model.connectionGeneration)|\(model.isDemoMode)|\(scenePhase == .active)|\(isVisible)"
     }
 
     var body: some View {
-        @Bindable var resources = state.resources
+        let header = header
         VStack(spacing: 0) {
-            header
-            DashboardNowView(summary: summary, needsAttention: needsAttention)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 14)
+            headerView(header)
             tabs
-            if needsAttention { attention }
-            if let error = state.error ?? entry.hostError {
-                connectionNotice(error)
+            if let attention = header.attention {
+                banner(attention, status: header.status)
             }
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             composer
-            footer
         }
-        .background(HerdrTheme.elevated, in: .rect(cornerRadius: 12))
-        .clipShape(.rect(cornerRadius: 12))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(needsAttention ? HerdrTheme.working.opacity(0.55) : HerdrTheme.separator, lineWidth: 1)
-        }
+        .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.cardRadius))
+        .clipShape(.rect(cornerRadius: HerdrTheme.cardRadius))
+        .overlay { RoundedRectangle(cornerRadius: HerdrTheme.cardRadius).stroke(HerdrTheme.separator) }
         .onScrollVisibilityChange(threshold: 0.01) { isVisible = $0 }
-        .task(id: observationID) {
-            guard isVisible, scenePhase == .active else { return }
-            let configuration = model.firstMateConfiguration(machineID: entry.machineID)
-            state.configure(configuration: configuration, generation: model.connectionGeneration, demo: model.isDemoMode,
-                            client: configuration.map { HerdrAPIClient(configuration: $0) }, demoSnapshot: demoSnapshot)
-            await state.observe()
-        }
+        .task(id: observationID) { await observe() }
         .onChange(of: demoSnapshot) { _, snapshot in
             if let snapshot { state.receiveDemoSnapshot(snapshot) }
         }
-        .sheet(item: $resources.resourcePresentation, onDismiss: state.resources.closeResource) { _ in
-            if let resource = state.resources.openedResource {
-                FirstMateResourceSheet(store: state.resources, resource: resource)
+        .sheet(item: resourcePresentation, onDismiss: { state.resourceStore?.closeResource() }) { _ in
+            if let store = state.resourceStore, let resource = store.openedResource {
+                FirstMateResourceSheet(store: store, resource: resource)
                     .id(resource.id)
             }
         }
         .accessibilityElement(children: .contain)
+        .accessibilityLabel(header.title)
         .accessibilityIdentifier("agent-board-column-\(entry.id)")
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    // MARK: - Header
+
+    private func headerView(_ header: Header) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                DashboardStatusView(status: feature.status)
-                Spacer(minLength: 6)
-                Text(entry.machineName).lineLimit(1).foregroundStyle(HerdrTheme.muted)
-                    .herdrFont(.caption)
-                Button("Open full view", systemImage: "arrow.up.left.and.arrow.down.right", action: openFullView)
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.plain)
-                    .frame(width: 28, height: 28)
-                    .foregroundStyle(HerdrTheme.accent)
-                    .help("Open \(feature.title) in First Mate")
+                DashboardStatusPill(status: header.status, awaitingTurn: header.awaitingTurn)
+                Text([entry.machineName, entry.feature.workItemID].compactMap { $0 }.joined(separator: " · "))
+                    .herdrFont(.subheadline)
+                    .foregroundStyle(HerdrTheme.muted)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if isOffline, let seen = state.lastContact ?? entry.lastUpdated {
+                    HStack(spacing: 3) {
+                        Text("Last seen")
+                        DashboardAgeText(date: seen)
+                    }
+                    .herdrFont(.subheadline)
+                    .foregroundStyle(HerdrTheme.attention)
+                    .fixedSize()
+                    .help(state.loadError ?? entry.hostError ?? "")
+                }
+                DashboardIconButton(title: "Open in First Mate", systemImage: "arrow.up.left.and.arrow.down.right",
+                                    help: "Open \(header.title) in First Mate", action: openFullView)
             }
-            Text(feature.title)
-                .herdrFont(.headline, weight: needsAttention ? .semibold : .medium)
+            Text(header.title)
+                .herdrFont(.title3, weight: .medium)
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .help(header.title)
                 .accessibilityAddTraits(.isHeader)
-            Text(feature.workItemID ?? "Idea")
-                .herdrFont(.caption)
-                .foregroundStyle(HerdrTheme.muted)
+            DashboardNowBlock(stageTitle: header.stageTitle, stageIndex: header.stageIndex, style: .column)
         }
-        .padding(16)
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
     }
 
     private var tabs: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 2) {
             ForEach(AgentBoardTab.allCases) { tab in
+                let selected = state.tab == tab
                 Button {
                     state.tab = tab
                 } label: {
-                    Text(tab.rawValue)
-                        .herdrFont(.subheadline, weight: state.tab == tab ? .medium : .regular)
-                        .foregroundStyle(state.tab == tab ? HerdrTheme.accent : HerdrTheme.muted)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .contentShape(.rect)
-                        .overlay(alignment: .bottom) {
-                            Rectangle().fill(state.tab == tab ? HerdrTheme.accent : .clear).frame(height: 2)
+                    HStack(spacing: 4) {
+                        Text(tab.rawValue)
+                        if tab == .agents, let count = state.content?.agents.count, count > 0 {
+                            Text("\(count)").monospacedDigit().foregroundStyle(HerdrTheme.muted)
                         }
+                    }
+                    .herdrFont(.callout, weight: selected ? .semibold : .regular)
+                    .foregroundStyle(selected ? HerdrTheme.text : HerdrTheme.muted)
+                    .padding(.horizontal, 10)
+                    .frame(height: 30)
+                    .overlay(alignment: .bottom) {
+                        Rectangle().fill(selected ? HerdrTheme.accent : .clear).frame(height: 2)
+                    }
+                    .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("\(tab.rawValue), \(feature.title)")
-                .accessibilityAddTraits(state.tab == tab ? .isSelected : [])
+                .accessibilityLabel(tab.rawValue)
+                .accessibilityAddTraits(selected ? .isSelected : [])
             }
+            Spacer(minLength: 0)
         }
-        .overlay(alignment: .bottom) { Divider() }
+        .padding(.horizontal, 4)
+        .overlay(alignment: .bottom) { Rectangle().fill(HerdrTheme.separator).frame(height: 1) }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Views for \(header.title)")
     }
 
-    private var attention: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "arrow.turn.down.right")
+    private func banner(_ prompt: String, status: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: status == "blocked" ? "exclamationmark.triangle.fill" : "diamond.fill")
+                .imageScale(.small)
+                .foregroundStyle(HerdrTheme.attention)
+                .padding(.top, 2)
                 .accessibilityHidden(true)
-            Text(summary?.needsUserPrompt ?? "Waiting for your direction.")
-                .lineLimit(3)
+            Text(prompt)
+                .herdrFont(.callout, weight: .semibold)
+                .foregroundStyle(HerdrTheme.text)
+                .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Reply") { composerFocused = true }
+                .help(prompt)
+            Button("Reply") {
+                state.tab = .chat
+                composerFocused = true
+            }
                 .buttonStyle(.plain)
-                .frame(minWidth: 38, minHeight: 28)
+                .herdrFont(.callout, weight: .semibold)
+                .foregroundStyle(HerdrTheme.accent)
                 .disabled(!canSend)
-                .accessibilityLabel("Reply to \(feature.title)")
+                .accessibilityLabel("Reply to \(header.title)")
         }
-        .herdrFont(.caption, weight: .medium)
-        .foregroundStyle(HerdrTheme.working)
-        .padding(12)
-        .background(HerdrTheme.working.opacity(0.07))
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(HerdrTheme.attentionSurface, in: .rect(cornerRadius: HerdrTheme.nowRadius))
+        .overlay { RoundedRectangle(cornerRadius: HerdrTheme.nowRadius).stroke(HerdrTheme.attentionEdge) }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
     }
 
-    private func connectionNotice(_ error: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Label(state.snapshot == nil ? "Connection unavailable" : "Showing last saved state", systemImage: "wifi.slash")
-                .herdrFont(.caption, weight: .medium)
-            if let lastUpdated = state.lastUpdated ?? entry.lastUpdated {
-                Text("Last seen \(lastUpdated, style: .relative) ago").herdrFont(.caption2)
-            }
-            Text(error).herdrFont(.caption2).lineLimit(2)
-        }
-        .foregroundStyle(HerdrTheme.warning)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-    }
+    // MARK: - Content
 
     @ViewBuilder
     private var content: some View {
-        if let snapshot = state.snapshot {
+        if let content = state.content {
             switch state.tab {
-            case .chat: AgentBoardChatView(state: state, snapshot: snapshot, openFullView: openFullView)
-            case .overview: AgentBoardOverviewView(state: state, snapshot: snapshot, openLiveSession: openLiveSession)
-            case .agents: AgentBoardAgentsView(state: state, snapshot: snapshot, openLiveSession: openLiveSession)
-            case .workflow: AgentBoardWorkflowView(snapshot: snapshot)
+            case .chat:
+                AgentBoardChatView(content: content, openFullView: openFullView)
+            case .overview:
+                AgentBoardOverviewView(content: content, showAgents: { state.tab = .agents }, openAgent: openAgent)
+            case .agents:
+                AgentBoardAgentsView(content: content, openAgent: openAgent, openSession: openSession)
+            case .workflow:
+                AgentBoardWorkflowView(content: content)
             }
-        } else if state.error != nil || entry.hostError != nil {
-            ContentUnavailableView("Conversation unavailable", systemImage: "bubble.left", description: Text("Your draft stays here while this companion reconnects."))
+        } else if let error = state.loadError ?? entry.hostError {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Couldn't load this conversation.", systemImage: "wifi.slash")
+                    .herdrFont(.callout, weight: .medium)
+                    .foregroundStyle(HerdrTheme.mist)
+                Text(error).herdrFont(.subheadline).foregroundStyle(HerdrTheme.muted).lineLimit(3)
+                Button("Try again") {
+                    Task {
+                        let capabilities = await capabilities()
+                        await state.refresh(capabilities: capabilities, force: true)
+                    }
+                }
+                .buttonStyle(.plain).foregroundStyle(HerdrTheme.accent)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
-            ProgressView("Loading conversation…")
-                .controlSize(.small)
-                .foregroundStyle(HerdrTheme.muted)
+            VStack(alignment: .leading, spacing: 10) {
+                DashboardSkeletonBar(width: 240)
+                DashboardSkeletonBar(width: 180)
+                DashboardSkeletonBar(width: 210)
+                Text("Loading conversation…").herdrFont(.subheadline).foregroundStyle(HerdrTheme.muted)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Loading conversation")
         }
     }
 
+    // MARK: - Composer
+
     private var composer: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             if let error = state.sendError {
-                Label(error, systemImage: "exclamationmark.circle")
-                    .herdrFont(.caption)
-                    .foregroundStyle(HerdrTheme.warning)
-                    .textSelection(.enabled)
+                HStack(spacing: 6) {
+                    Label(error, systemImage: "exclamationmark.circle")
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                    Button("Retry", action: send).buttonStyle(.plain).foregroundStyle(HerdrTheme.accent)
+                }
+                .herdrFont(.subheadline)
+                .foregroundStyle(HerdrTheme.attention)
             }
             HStack(alignment: .bottom, spacing: 8) {
-                TextField("Give direction or ask a question…", text: $state.draft, axis: .vertical)
+                TextField(placeholder, text: $state.draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .herdrFont(.body)
-                    .lineLimit(2...5)
+                    .lineLimit(1...5)
                     .focused($composerFocused)
-                    .disabled(!canSend)
                     .onSubmit(send)
-                    .accessibilityLabel("Message to \(feature.title)")
+                    .onExitCommand { composerFocused = false }
+                    .padding(.vertical, 4)
+                    .accessibilityLabel("Message to \(header.title)")
                     .accessibilityIdentifier("agent-board-composer-\(entry.id)")
                 Button(action: send) {
                     Image(systemName: state.isSending ? "ellipsis" : "arrow.up")
-                        .herdrFont(.body, weight: .semibold)
-                        .frame(width: 30, height: 30)
-                        .foregroundStyle(.white)
-                        .background(HerdrTheme.controlAccent, in: .rect(cornerRadius: 7))
+                        .herdrFont(.callout, weight: .bold)
+                        .foregroundStyle(sendEnabled ? .white : HerdrTheme.muted)
+                        .frame(width: 26, height: 26)
+                        .background(sendEnabled ? HerdrTheme.controlAccent : HerdrTheme.surface, in: .circle)
                 }
                 .buttonStyle(.plain)
-                .disabled(!canSend || state.isSending || state.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .accessibilityLabel(state.isSending ? "Sending to \(feature.title)" : "Send to \(feature.title)")
-                .help("Send direction to this First Mate")
+                .disabled(!sendEnabled)
+                .accessibilityLabel(state.isSending ? "Sending to \(header.title)" : "Send to \(header.title)")
+                .help(canSend ? "Send direction to this First Mate" : sendUnavailableReason)
             }
-            .padding(12)
-            .background(HerdrTheme.input, in: .rect(cornerRadius: 9))
-            .overlay { RoundedRectangle(cornerRadius: 9).stroke(composerFocused ? HerdrTheme.accent : HerdrTheme.separator) }
+            .padding(.leading, 12).padding(.trailing, 7).padding(.vertical, 7)
+            .background(HerdrTheme.input, in: .rect(cornerRadius: HerdrTheme.composerRadius))
+            .overlay {
+                RoundedRectangle(cornerRadius: HerdrTheme.composerRadius)
+                    .stroke(composerFocused ? HerdrTheme.accent : HerdrTheme.separator)
+            }
         }
-        .padding(12)
-        .overlay(alignment: .top) { Divider() }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .padding(.bottom, 12)
     }
 
-    private var footer: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("\(summary?.assignmentCount ?? 0) agents · \(summary?.runningAssignmentCount ?? 0) running")
-                Spacer(minLength: 4)
-                Button("Open full view", action: openFullView).buttonStyle(.plain).foregroundStyle(HerdrTheme.accent)
-            }
-            if let lastUpdated = state.lastUpdated ?? entry.lastUpdated {
-                Text("Updated \(lastUpdated, style: .relative) ago")
-            }
-        }
-        .herdrFont(.caption2)
-        .foregroundStyle(HerdrTheme.muted)
-        .padding(.horizontal, 14)
-        .padding(.bottom, 12)
+    private var sendEnabled: Bool {
+        canSend && !state.isSending && !state.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var placeholder: String {
+        if entry.hostError != nil { return "\(entry.machineName) is offline. Your draft is kept." }
+        if !header.acceptsMessages { return "This feature is closed." }
+        return "Give direction or ask a question…"
+    }
+
+    private var sendUnavailableReason: String {
+        if !header.acceptsMessages { return "This feature is closed" }
+        return "\(entry.machineName) is not connected"
+    }
+
+    // MARK: - Actions
+
+    private var resourcePresentation: Binding<FirstMateResourcePresentation?> {
+        Binding(
+            get: { state.resourceStore?.resourcePresentation },
+            set: { state.resourceStore?.resourcePresentation = $0 }
+        )
+    }
+
+    private func openAgent(_ agent: AgentBoardContent.AgentRow) {
+        if let sessionID = agent.assignment.nativeSessionID, openLiveSession(sessionID) { return }
+        let resource: FirstMateResource? = agent.assignment.nativeSessionID != nil
+            ? .session(agent.assignment) : agent.latestSession.map(FirstMateResource.history)
+        guard let resource else { return }
+        let store = state.resources()
+        Task { await store.open(resource) }
+    }
+
+    private func openSession(_ session: FirstMateSession) {
+        if openLiveSession(session.nativeSessionID) { return }
+        let store = state.resources()
+        Task { await store.open(.history(session)) }
+    }
+
+    private func capabilities() async -> FirstMateCapabilities? {
+        let configuration = model.firstMateConfiguration(machineID: entry.machineID)
+        return await board.capabilities(machineID: entry.machineID, configuration: configuration,
+                                        generation: model.connectionGeneration,
+                                        client: configuration.map { HerdrAPIClient(configuration: $0) })
+    }
+
+    private func observe() async {
+        guard isVisible, scenePhase == .active else { return }
+        let configuration = model.firstMateConfiguration(machineID: entry.machineID)
+        state.configure(configuration: configuration, generation: model.connectionGeneration, demo: model.isDemoMode,
+                        client: configuration.map { HerdrAPIClient(configuration: $0) }, demoSnapshot: demoSnapshot)
+        await state.observe { await capabilities() }
     }
 
     private func send() {
         let generation = model.connectionGeneration
         let configuration = model.firstMateConfiguration(machineID: entry.machineID)
-        let allowed = canSend
+        let allowed = model.canControl(machineID: entry.machineID)
+        let accepts = header.acceptsMessages
         Task {
-            await state.send(configuration: configuration, generation: generation, canControl: allowed) {
+            let capabilities = await capabilities()
+            await state.send(configuration: configuration, generation: generation, canControl: allowed,
+                             acceptsMessages: accepts, capabilities: capabilities) {
                 model.connectionGeneration == generation
                     && model.firstMateConfiguration(machineID: entry.machineID) == configuration
                     && model.canControl(machineID: entry.machineID)

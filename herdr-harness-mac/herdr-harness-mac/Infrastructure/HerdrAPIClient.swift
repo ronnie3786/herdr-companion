@@ -217,6 +217,30 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, AgentPr
         try await request(path: firstMatePath("features", id: id))
     }
 
+    /// Requires `first-mate-journal-events-v1`: the same snapshot without Pi
+    /// telemetry events, which are over 90% of a long-running feature's bytes.
+    func fetchFirstMateFeature(_ id: String, journalEventsOnly: Bool) async throws -> FirstMateSnapshot {
+        guard journalEventsOnly else { return try await fetchFirstMateFeature(id) }
+        return try await request(path: firstMatePath("features", id: id), query: [URLQueryItem(name: "events", value: "journal")])
+    }
+
+    /// Requires `first-mate-board-v1`. A matching `ifVersion` returns
+    /// `.unchanged` without the server building (or this actor decoding) a body.
+    func fetchFirstMateBoard(featureID: String, messageLimit: Int, journalLimit: Int, ifVersion: String?) async throws -> AgentBoardFetch {
+        var query = [
+            URLQueryItem(name: "messages", value: String(messageLimit)),
+            URLQueryItem(name: "journal", value: String(journalLimit)),
+        ]
+        if let ifVersion { query.append(URLQueryItem(name: "if_version", value: ifVersion)) }
+        let response: AgentBoardResponse = try await request(path: firstMatePath("features", id: featureID) + "/board", query: query)
+        guard response.ok else { throw APIError.invalidResponse }
+        if let board = response.board {
+            guard board.feature.id == featureID else { throw APIError.invalidResponse }
+            return .board(board)
+        }
+        return .unchanged(version: response.version)
+    }
+
     func fetchFirstMateGitWorkspaces(featureID: String) async throws -> FirstMateGitWorkspaceResponse {
         try await request(path: firstMatePath("features", id: featureID) + "/git/workspaces")
     }

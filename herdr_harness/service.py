@@ -2536,6 +2536,8 @@ class HerdrService:
                 raise HerdrClientError("model requires provider and id", code="invalid_agent_model")
             if thinking_level is not None and (not isinstance(thinking_level, str) or thinking_level not in THINKING_LEVELS):
                 raise HerdrClientError("thinkingLevel is invalid", code="invalid_agent_thinking_level")
+            if not isinstance(focus, bool):
+                raise HerdrClientError("focus must be a boolean", code="invalid_focus")
             if parent_session_id is not None:
                 if not valid_pi_session_id(parent_session_id):
                     raise HerdrClientError("parentSessionId is invalid", code="invalid_parent_session_id")
@@ -2585,13 +2587,18 @@ class HerdrService:
                     code="session_file_required",
                 )
 
+            if cwd == "~":
+                # The HUD home-folder alias resolves against the service
+                # account, not the request process that runs the server.
+                requested_cwd = self._server_home()
+            else:
+                requested_cwd = self._canonical_directory(cwd) if cwd is not None else None
+                if cwd is not None and requested_cwd is None:
+                    raise HerdrClientError(
+                        "cwd must be an existing directory",
+                        code="invalid_cwd",
+                    )
             snapshot = self.refresh_snapshot(force=True)
-            requested_cwd = self._canonical_directory(cwd) if cwd is not None else None
-            if cwd is not None and requested_cwd is None:
-                raise HerdrClientError(
-                    "cwd must be an existing directory",
-                    code="invalid_cwd",
-                )
             extension_args = self.pi_extension_args()
             pi_extension_attached = bool(extension_args)
             if parent_session_id is not None and not pi_extension_attached:

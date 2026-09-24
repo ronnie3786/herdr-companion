@@ -12,6 +12,14 @@ those three affordances are dropped rather than reproduced.
 
 Swift 6 · SwiftUI + Observation · strict concurrency · zero third-party dependencies · macOS 26.
 
+## Dashboard home
+
+The app now opens on the purple Dashboard. Use **Focus mode** to hide work that
+is not waiting for you. **Agent view** opens First Mate columns with independent
+Chat, Overview, Agents, and Workflow tabs and a reply box in each column.
+**Navigate → Dashboard** (Shift-Command-D) returns home from any screen.
+See [Dashboard behavior and companion compatibility](../docs/macos-dashboard.md).
+
 ## September Mac improvements
 
 - **PR Review:** A navigator entry under First Mate turns a pasted GitHub pull request link into a review workspace prepared on the development-role companion: ranked files, a native diff with Ask AI, a context library, and Agents/Skills tabs. Requires a companion advertising `pr-review-v1`. See [PR Review](../docs/pr-review.md).

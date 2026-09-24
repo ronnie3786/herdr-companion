@@ -319,6 +319,38 @@ final class PRReviewStore {
         return orderedFiles[index - 1]
     }
 
+    /// Dashboard polling only reads active summaries and leaves full-view selection intact.
+    func refreshDashboard(requestGitHubRefresh: Bool = false) async -> String? {
+        guard !isDemo, !unconfigured, let client, !isRefreshing else { return nil }
+        let capturedGeneration = generation
+        isRefreshing = true
+        defer { if generation == capturedGeneration { isRefreshing = false } }
+        var refreshError: String?
+        if requestGitHubRefresh {
+            do { try await client.refreshPRReviewStatuses(requestID: UUID().uuidString) }
+            catch is CancellationError { return nil }
+            catch {
+                if case APIError.server(let status, _) = error, status == 404 || status == 501 {
+                    refreshError = "Update the review companion for live GitHub review states."
+                } else { refreshError = error.localizedDescription }
+            }
+        }
+        guard capturedGeneration == generation, !Task.isCancelled else { return nil }
+        do {
+            let values = try await client.prReviews(scope: "active")
+            guard capturedGeneration == generation, !Task.isCancelled else { return nil }
+            reviews = retainingViewerStates(in: values, previous: reviews)
+            unsupported = false
+            hasLoaded = true
+            error = nil
+        } catch is CancellationError { return nil }
+        catch {
+            guard capturedGeneration == generation else { return nil }
+            self.error = error.localizedDescription
+        }
+        return refreshError
+    }
+
     func refresh() async {
         let refreshGeneration = generation
         guard !unconfigured else {
@@ -356,8 +388,8 @@ final class PRReviewStore {
             }
 
             capabilities = serverCapabilities
-            reviews = activeReviews
-            archivedReviews = archived
+            reviews = retainingViewerStates(in: activeReviews, previous: reviews)
+            archivedReviews = retainingViewerStates(in: archived, previous: archivedReviews)
             hasLoaded = true
             error = nil
 
@@ -502,6 +534,10 @@ final class PRReviewStore {
             return
         }
 
+        var value = value
+        value.review = value.review.retainingNewerViewerState(from: reviews.first { $0.id == value.review.id }
+            ?? archivedReviews.first { $0.id == value.review.id })
+            .retainingNewerViewerState(from: snapshot?.review)
         snapshot = value
         selectedReviewID = value.review.id
         syncDeletedDisclosureScope(for: value.review)
@@ -1262,12 +1298,17 @@ final class PRReviewStore {
             && (search.isEmpty || file.path.localizedCaseInsensitiveContains(search))
     }
 
+    private func retainingViewerStates(in values: [PRReviewSummary], previous: [PRReviewSummary]) -> [PRReviewSummary] {
+        let existing = Dictionary(previous.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return values.map { $0.retainingNewerViewerState(from: existing[$0.id]) }
+    }
+
     private func replaceReview(_ review: PRReviewSummary) {
         if let index = reviews.firstIndex(where: { $0.id == review.id }) {
-            reviews[index] = review
+            reviews[index] = review.retainingNewerViewerState(from: reviews[index])
         }
         if let index = archivedReviews.firstIndex(where: { $0.id == review.id }) {
-            archivedReviews[index] = review
+            archivedReviews[index] = review.retainingNewerViewerState(from: archivedReviews[index])
         }
     }
 

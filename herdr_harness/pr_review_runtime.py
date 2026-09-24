@@ -30,6 +30,7 @@ from .child_environment import agent_environment
 from .normalization import pane_index
 from .pr_review_diff import line_window, parse_unified_diff
 from .pr_review_store import PRReviewError
+from .pr_review_status import REVIEW_QUERY, VIEWER_QUERY, viewer_review_summary
 
 
 MAX_DIFF_BYTES = 8 * 1024 * 1024
@@ -154,6 +155,8 @@ class PRReviewRuntime:
         self._preparing_reviews: set[str] = set()
         self._checkout_locks: dict[str, threading.Lock] = {}
         self._last_heavy_scan = 0.0
+        self._review_status_thread: threading.Thread | None = None
+        self._last_review_status_refresh = 0.0
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -191,10 +194,76 @@ class PRReviewRuntime:
         while not self._stop.is_set():
             try:
                 self.reconcile()
+                self.schedule_review_status_refresh()
             except Exception:
                 pass
             self._wake.wait(2)
             self._wake.clear()
+
+    def schedule_review_status_refresh(self, *, force: bool = False) -> bool:
+        """One background reader, independent of expensive checkout refreshes."""
+        with self._lock:
+            if self._stop.is_set():
+                return False
+            if self._review_status_thread is not None and self._review_status_thread.is_alive():
+                return True
+            if not force and time.monotonic() - self._last_review_status_refresh < 60:
+                return False
+            reviews = self.store.list_reviews("active")
+            self._last_review_status_refresh = time.monotonic()
+            if not reviews:
+                return False
+            self._review_status_thread = threading.Thread(target=self._refresh_review_statuses,
+                args=(reviews,), name="pr-review-github-status", daemon=True)
+            self._review_status_thread.start()
+            return True
+
+    def _review_status_json(self, query: str, review: Mapping[str, Any] | None = None, *, login: str = "") -> dict[str, Any]:
+        command = ["gh", "api", "graphql", "-f", f"query={query}"]
+        if review is not None:
+            command.extend(["-f", f"owner={review['owner']}", "-f", f"repo={review['repo']}",
+                            "-F", f"number={review['number']}", "-f", f"viewer={login}"])
+        # A hung GitHub request must not leave Dashboard freshness ambiguous
+        # for the long checkout timeout. Auth still uses the existing gh setup.
+        result = self._run(command, kind="gh", timeout=min(15, self.gh_timeout_seconds))
+        value = json.loads(result.stdout)
+        if not isinstance(value, dict) or value.get("errors") or not isinstance(value.get("data"), dict):
+            raise ValueError("Invalid GitHub review response")
+        return value["data"]
+
+    def _refresh_review_statuses(self, reviews: list[dict[str, Any]]) -> None:
+        error = "GitHub review status could not be refreshed. Last known state is retained. Retry refresh."
+        try:
+            login = self._review_status_json(VIEWER_QUERY)["viewer"]["login"]
+            if not isinstance(login, str) or not login:
+                raise ValueError("Missing authenticated GitHub viewer")
+        except Exception:
+            for review in reviews:
+                if self._stop.is_set():
+                    return
+                self.store.save_viewer_review(review["id"], error=error)
+                self._changed(review["id"])
+            return
+        for review in reviews:
+            if self._stop.is_set():
+                return
+            # Archival can race the queued batch; never start more network work
+            # for a review that is no longer part of the active workspace.
+            if self.store.get_review(review["id"]).get("archived_at") is not None:
+                continue
+            try:
+                data = self._review_status_json(REVIEW_QUERY, review, login=login)
+                summary = viewer_review_summary(data["repository"]["pullRequest"], login)
+                if self._stop.is_set():
+                    return
+                self.store.save_viewer_review(review["id"], summary)
+            except Exception:
+                if self._stop.is_set():
+                    return
+                # Never forward raw gh output, which can include private paths
+                # or auth diagnostics, and never advance the success timestamp.
+                self.store.save_viewer_review(review["id"], error=error)
+            self._changed(review["id"])
 
     def _child_environment(self, *, pi_bin: str | None = None) -> dict[str, str]:
         environment = agent_environment(self.environ, integration=False)
@@ -483,6 +552,7 @@ class PRReviewRuntime:
             review = self.store.get_review(review_id)
             if review.get("archived_at") is not None:
                 raise PRReviewError("Review is archived", code="review_archived")
+            self.schedule_review_status_refresh(force=True)
             if review_id not in self._preparing_reviews:
                 if review.get("prepared_at") is None and review["status"] in {"preparing", "failed"}:
                     self.store.update_review(review_id, status="preparing", error=None)

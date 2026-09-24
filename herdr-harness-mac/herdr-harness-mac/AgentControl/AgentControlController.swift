@@ -1126,7 +1126,7 @@ final class AgentControlController {
                 throw AgentControlCommandError.notFound("The history pane is no longer available.")
             }
             return .pane(id: id, mode: .git)
-        case .workspace, .firstMate, .activeWork, .prReview, .fleet, .attention, .activity:
+        case .dashboard, .agentBoard, .workspace, .firstMate, .activeWork, .prReview, .fleet, .attention, .activity:
             return nil
         }
     }

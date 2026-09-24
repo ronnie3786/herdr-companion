@@ -39,6 +39,7 @@ struct FirstMateFeature: Codable, Equatable, Identifiable, Sendable {
     var coordinatorContext: FirstMateCoordinatorContext? = nil
     var usage: FirstMateUsage? = nil
     var modelSelection: FirstMateModelSelection? = nil
+    var dashboardSummary: FirstMateDashboardSummary? = nil
 
     var modelDisplayName: String {
         guard let model = coordinatorModel, !model.isEmpty else { return "Host default" }
@@ -55,6 +56,7 @@ struct FirstMateFeature: Codable, Equatable, Identifiable, Sendable {
         case nativeSessionID = "native_session_id", coordinatorOwner = "coordinator_owner"
         case coordinatorContext = "coordinator_context"
         case usage, modelSelection = "model_selection"
+        case dashboardSummary = "dashboard_summary"
     }
     var isArchived: Bool { archivedAt != nil }
 
@@ -79,6 +81,7 @@ struct FirstMateFeature: Codable, Equatable, Identifiable, Sendable {
             && lhs.coordinatorContext == rhs.coordinatorContext
             && lhs.usage == rhs.usage
             && lhs.modelSelection == rhs.modelSelection
+            && lhs.dashboardSummary == rhs.dashboardSummary
     }
 }
 
@@ -106,5 +109,6 @@ extension FirstMateFeature {
         coordinatorContext = try container.decodeIfPresent(FirstMateCoordinatorContext.self, forKey: .coordinatorContext)
         usage = try container.decodeIfPresent(FirstMateUsage.self, forKey: .usage)
         modelSelection = try container.decodeIfPresent(FirstMateModelSelection.self, forKey: .modelSelection)
+        dashboardSummary = try container.decodeIfPresent(FirstMateDashboardSummary.self, forKey: .dashboardSummary)
     }
 }

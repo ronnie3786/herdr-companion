@@ -48,10 +48,10 @@ struct WorkspaceNavigationView: View {
     @Bindable var activeWorkStore: ActiveWorkStore
     let modelFavorites: ModelFavoritesStore
     let updates: HerdrUpdateController
-    @State private var columnVisibility = NavigationSplitViewVisibility.all
+    @State private var columnVisibility = NavigationSplitViewVisibility.detailOnly
     @Environment(\.openWindow) private var openWindow
 
-    var body: some View {
+    private var navigationContent: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             Group {
                 if shell.detailScope == .firstMate {
@@ -101,6 +101,7 @@ struct WorkspaceNavigationView: View {
                         model: model,
                         openPane: openSession,
                         openWorkspace: { shell.showWorkspace(id: $0.id, model: model) },
+                        openDashboard: { shell.show(.dashboard, model: model) },
                         openFirstMate: { shell.show(.firstMate, model: model) },
                         openPRReview: { shell.show(.prReview, model: model) },
                         firstMateAttentionCount: firstMateAttentionCount
@@ -116,6 +117,14 @@ struct WorkspaceNavigationView: View {
                 .toolbar { detailToolbar }
         }
         .navigationSplitViewStyle(.balanced)
+        .onChange(of: shell.detailScope, initial: true) { _, scope in
+            columnVisibility = scope == .dashboard || scope == .agentBoard ? .detailOnly : .all
+        }
+        .onAppear { shell.recordVisit(for: model) }
+    }
+
+    var body: some View {
+        navigationContent
         .task(id: firstMateDetailConnectionIdentity) {
             // Connection changes own store configuration. The process-owned
             // guard also makes this safe when closing and recreating the main
@@ -155,13 +164,23 @@ struct WorkspaceNavigationView: View {
             await shell.prReview.refresh()
             await applyPRReviewNavigationRequest()
         }
+        .onChange(of: model.prReviewMachineRevision) { _, _ in
+            // A deliberate Settings change supersedes the previous host override.
+            shell.prReviewMachineID = nil
+            shell.prReviewOpenRequest = nil
+            shell.dashboard.reviewRefreshError = nil
+        }
         .task(id: shell.prReviewOpenRequest?.id) {
             await applyPRReviewNavigationRequest()
         }
         .task(id: model.prReviewRefreshTick) {
             guard shell.prReview.hasLoaded else { return }
-            await shell.prReview.refresh()
-            await shell.prReview.refreshSelected()
+            if shell.detailScope == .dashboard {
+                _ = await shell.prReview.refreshDashboard()
+            } else {
+                await shell.prReview.refresh()
+                await shell.prReview.refreshSelected()
+            }
         }
         .task(id: PRReviewPollingIdentity(
             machineID: shell.prReviewMachineID ?? model.prReviewMachine?.id,
@@ -406,6 +425,10 @@ struct WorkspaceNavigationView: View {
     @ViewBuilder
     private var detail: some View {
         switch shell.resolvedScope(for: model) {
+        case .dashboard:
+            DashboardView(model: model, shell: shell, entries: shell.dashboard.entries(shell: shell, isDemo: model.isDemoMode))
+        case .agentBoard:
+            AgentBoardView(model: model, shell: shell, entries: shell.dashboard.entries(shell: shell, isDemo: model.isDemoMode))
         // `.git` never survives `resolvedScope` — it is a pane sub-mode the
         // picker translates — but the switch still has to name it.
         case .session, .git:
@@ -584,7 +607,14 @@ struct WorkspaceNavigationView: View {
     @ToolbarContentBuilder
     private var detailToolbar: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
-            HStack(spacing: 2) {
+            HStack(spacing: 8) {
+                if shell.detailScope != .dashboard {
+                    Button("Dashboard", systemImage: "chevron.left") { shell.show(.dashboard, model: model) }
+                        .labelStyle(.titleAndIcon)
+                        .buttonStyle(.plain).foregroundStyle(HerdrTheme.accent)
+                        .help("Return to Dashboard (Shift-Command-D)")
+                        .accessibilityIdentifier("back-to-dashboard")
+                }
                 historyButton(
                     symbol: "chevron.left",
                     label: "Back",
@@ -601,12 +631,16 @@ struct WorkspaceNavigationView: View {
                     isEnabled: shell.canGoForward
                 ) { shell.goForward(model: model) }
             }
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("nav-history-controls")
         }
         .sharedBackgroundVisibility(.hidden)
 
         ToolbarItem(placement: .principal) {
-            if shell.detailScope == .firstMate {
+            if shell.detailScope == .dashboard || shell.detailScope == .agentBoard {
+                Label(shell.detailScope.label, systemImage: shell.detailScope.symbol)
+                    .foregroundStyle(HerdrTheme.mist)
+            } else if shell.detailScope == .firstMate {
                 Label("First Mate", systemImage: "sailboat")
                     .foregroundStyle(.primary)
             } else if shell.detailScope == .prReview {

@@ -127,7 +127,7 @@ struct ShellNavigationHistoryTests {
         #expect(HerdrDetailScope.pickerSelection(for: .attention) == .attention)
         #expect(
             HerdrDetailScope.pickerCases == HerdrDetailScope.allCases.filter {
-                $0 != .firstMate && $0 != .prReview
+                $0 != .firstMate && $0 != .prReview && $0 != .dashboard && $0 != .agentBoard
             }
         )
 

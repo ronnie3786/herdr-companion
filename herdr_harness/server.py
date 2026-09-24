@@ -1253,7 +1253,12 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             store = service.pr_review_store
             runtime = service.pr_review
             if method == "GET" and tail == ["capabilities"]:
-                return {"ok": True, "capabilities": ["pr-review-v1"], **runtime.capabilities(), "skills": store.skills()}
+                return {"ok": True, "capabilities": ["pr-review-v1", "pr-review-dashboard-v1"], **runtime.capabilities(), "skills": store.skills()}
+            if method == "POST" and tail == ["review-status", "refresh"]:
+                if set(body) != {"request_id"}:
+                    raise HTTPValidationError("Review status refresh contains an unsupported field")
+                _string(body.get("request_id"), "request_id", maximum=200)
+                return {"ok": True, "refreshing": runtime.schedule_review_status_refresh(force=True)}, 202
             if tail == ["skills"]:
                 if method == "GET":
                     return {"ok": True, "skills": store.skills()}

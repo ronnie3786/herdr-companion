@@ -62,6 +62,8 @@ CREATE TABLE IF NOT EXISTS prr_skill_marks(review_id TEXT,skill_id TEXT,state TE
 CREATE TABLE IF NOT EXISTS prr_documents(id TEXT PRIMARY KEY,review_id TEXT,run_id TEXT,kind TEXT,title TEXT,media_type TEXT,filename TEXT,stored_path TEXT,url TEXT,byte_size INTEGER,content_hash TEXT,origin TEXT,origin_path TEXT,created_at TEXT);
 CREATE TABLE IF NOT EXISTS prr_events(sequence INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE,review_id TEXT,type TEXT,summary TEXT,payload_json TEXT,created_at TEXT);
 CREATE TABLE IF NOT EXISTS prr_receipts(scope TEXT,request_id TEXT,payload_hash TEXT,result_json TEXT,created_at TEXT,PRIMARY KEY(scope,request_id));
+CREATE TABLE IF NOT EXISTS prr_viewer_reviews(review_id TEXT PRIMARY KEY REFERENCES prr_reviews(id),summary_json TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS prr_skill_runs_summary ON prr_skill_runs(review_id,skill_id,created_at DESC);
 """
 
 
@@ -145,9 +147,39 @@ class PRReviewStore:
         result["is_draft"] = bool(result["is_draft"])
         result["running_runs"] = self._db.execute("SELECT count(*) FROM prr_skill_runs WHERE review_id=? AND state IN ('queued','running')", (result["id"],)).fetchone()[0]
         result["document_count"] = self._db.execute("SELECT count(*) FROM prr_documents WHERE review_id=?", (result["id"],)).fetchone()[0]
+        result["skill_runs"] = [dict(item) for item in self._db.execute("""SELECT skill_id,skill_title AS title,state,
+            COALESCE(finished_at,started_at,created_at) AS updated_at FROM (
+                SELECT *,row_number() OVER (PARTITION BY skill_id ORDER BY created_at DESC,rowid DESC) AS position
+                FROM prr_skill_runs WHERE review_id=?) WHERE position=1 ORDER BY title,skill_id""", (result["id"],))]
+        result["viewer_review"] = self.viewer_review(result["id"])
         if not full:
             result.pop("body", None)
         return result
+
+    def viewer_review(self, review_id: str) -> dict[str, Any]:
+        """Cached GitHub viewer state. Listing never performs network requests."""
+        with self._lock:
+            row = self._db.execute("SELECT summary_json FROM prr_viewer_reviews WHERE review_id=?", (review_id,)).fetchone()
+            return json.loads(row[0]) if row else {
+                "state": "unknown", "pending_comment_count": 0, "needs_user": False,
+                "is_own_pr": None, "reviewed_at": None, "reviewed_commit": None,
+                "head_commit": None, "review_requested": False,
+                "updated_at": None, "checked_at": None, "error": None,
+            }
+
+    def save_viewer_review(self, review_id: str, summary: Mapping[str, Any] | None = None, *, error: str | None = None) -> None:
+        with self._transaction():
+            if self._db.execute("SELECT id FROM prr_reviews WHERE id=?", (review_id,)).fetchone() is None:
+                raise PRReviewError("PR review was not found", code="not_found", status=404)
+            value = self.viewer_review(review_id)
+            now = _now()
+            if summary is not None:
+                value.update(summary)
+                value["updated_at"] = now
+            value.update(checked_at=now, error=error)
+            self._db.execute("INSERT INTO prr_viewer_reviews VALUES(?,?) ON CONFLICT(review_id) DO UPDATE SET summary_json=excluded.summary_json", (review_id, _json(value)))
+            # Refreshing freshness must not reorder reviews or invalidate an
+            # unchanged checkout's revision every minute.
 
     def get_review(self, review_id: str, full: bool = True) -> dict[str, Any]:
         with self._lock:

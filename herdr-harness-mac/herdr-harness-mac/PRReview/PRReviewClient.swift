@@ -5,6 +5,7 @@ protocol PRReviewClient: Sendable {
     func prReviewSkills() async throws -> [PRReviewSkill]
     func addPRReviewSkill(_ body: PRReviewSkillCreateRequest) async throws -> PRReviewSkill
     func removePRReviewSkill(id: String, requestID: String) async throws -> [PRReviewSkill]
+    func refreshPRReviewStatuses(requestID: String) async throws
     func prReviews(scope: String) async throws -> [PRReviewSummary]
     func createPRReview(url: String, skillIDs: [String], requestID: String) async throws -> PRReviewSnapshot
     func prReview(id: String) async throws -> PRReviewSnapshot
@@ -91,4 +92,11 @@ enum PRReviewDocumentPayload: Sendable {
     case upload(filename: String, contentType: String, dataBase64: String, title: String?)
     case link(url: String, title: String)
     case path(String, title: String?)
+}
+
+// Older clients can still load reviews without the optional dashboard endpoint.
+extension PRReviewClient {
+    func refreshPRReviewStatuses(requestID: String) async throws {
+        throw APIError.server(status: 404, message: "Update the companion to refresh GitHub review states.")
+    }
 }

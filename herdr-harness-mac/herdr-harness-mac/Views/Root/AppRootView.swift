@@ -5,6 +5,8 @@ import SwiftUI
 /// this is what replaced `AppTab` for the two non-settings destinations plus
 /// the workspace overview that only iPad ever showed as a middle column.
 enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
+    case dashboard
+    case agentBoard
     case session
     /// Git shares the mounted pane with Chat, but is a distinct history stop.
     case git
@@ -46,6 +48,8 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
 
     var label: String {
         switch self {
+        case .dashboard: "Dashboard"
+        case .agentBoard: "Agent view"
         case .session: "Session"
         case .git: "Git"
         case .workspace: "Workspace"
@@ -60,6 +64,8 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
 
     var symbol: String {
         switch self {
+        case .dashboard: "square.grid.2x2"
+        case .agentBoard: "rectangle.split.3x1"
         case .session: "bubble.left"
         case .git: "arrow.triangle.branch"
         case .workspace: "rectangle.3.group"
@@ -79,7 +85,9 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
 @MainActor
 @Observable
 final class HerdrShellState {
-    var detailScope: HerdrDetailScope = .session
+    var detailScope: HerdrDetailScope = .dashboard
+    let dashboard: DashboardState
+    let agentBoard = AgentBoardState()
     private(set) var firstMate = FirstMateStore()
     let firstMateFleet = FirstMateFleetIndex()
     /// One cache coordinator per app process: the main rail and every popped
@@ -143,6 +151,7 @@ final class HerdrShellState {
 
     init(userDefaults: UserDefaults = .standard) {
         let historyStore = NavigationHistoryPersistenceStore(userDefaults: userDefaults)
+        self.dashboard = DashboardState(defaults: userDefaults)
         self.historyStore = historyStore
         self.history = NavigationHistory(snapshot: historyStore.load())
         let documentResources = PRReviewDocumentResources()
@@ -422,6 +431,8 @@ final class HerdrShellState {
     /// nothing is selected at all.
     func resolvedScope(for model: HerdrAppModel) -> HerdrDetailScope {
         switch detailScope {
+        case .dashboard: return .dashboard
+        case .agentBoard: return .agentBoard
         case .session, .git:
             if model.pane(id: model.selectedPaneID) != nil { return .session }
             if model.workspace(id: model.selectedWorkspaceID) != nil { return .workspace }
@@ -452,6 +463,8 @@ final class HerdrShellState {
         switch resolvedScope(for: model) {
         case .session, .git:
             model.selectedPaneID.map { detailScope == .git ? .git($0) : .pane($0) }
+        case .dashboard: .dashboard
+        case .agentBoard: .agentBoard
         case .workspace: model.selectedWorkspaceID.map(HerdrDestination.workspace)
         case .firstMate: .firstMate
         case .activeWork: .activeWork
@@ -559,6 +572,8 @@ final class HerdrShellState {
             model.selectedWorkspaceID = id
             model.selectedPaneID = nil      // mirrors showWorkspace(id:model:)
             detailScope = .workspace
+        case .dashboard: detailScope = .dashboard
+        case .agentBoard: detailScope = .agentBoard
         case .firstMate: detailScope = .firstMate
         case .activeWork: detailScope = .activeWork
         case .prReview: detailScope = .prReview
@@ -573,7 +588,7 @@ final class HerdrShellState {
         switch destination {
         case let .pane(id), let .git(id): model.pane(id: id) != nil
         case let .workspace(id): model.workspace(id: id) != nil
-        case .firstMate, .activeWork, .prReview, .fleet, .attention, .activity: true
+        case .dashboard, .agentBoard, .firstMate, .activeWork, .prReview, .fleet, .attention, .activity: true
         }
     }
 
@@ -619,6 +634,8 @@ final class HerdrShellState {
             return model.currentPaneDetailMode?.rawValue ?? "session"
         case .workspace: return "workspace"
         case .activeWork: return "active-work"
+        case .dashboard: return "dashboard"
+        case .agentBoard: return "agent-board"
         case .prReview: return "pr-review"
         case .firstMate: return "first-mate"
         case .fleet: return "fleet"

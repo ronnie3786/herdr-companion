@@ -16,10 +16,17 @@ class HerdrUITestCase: XCTestCase {
     /// Every Mac suite launches the same way: the canned fleet, zero network,
     /// and a sidebar whose collapse state cannot leak in from a previous run.
     @MainActor
-    func launchDemoApp() -> XCUIApplication {
+    func launchDemoApp(startOnDashboard: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-HerdrDemoMode", "-HerdrResetSidebarState"]
         app.launch()
+        // Existing suites exercise the secondary Chat shell. Enter it through
+        // the same Dashboard link a person uses, rather than changing launch behavior.
+        if !startOnDashboard {
+            let chats = app.buttons["dashboard-recent-chats"]
+            XCTAssertTrue(chats.waitForExistence(timeout: 10))
+            chats.click()
+        }
         return app
     }
 

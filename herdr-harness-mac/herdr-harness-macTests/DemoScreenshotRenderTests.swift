@@ -37,6 +37,7 @@ struct DemoScreenshotRenderTests {
         let modelFavorites = ModelFavoritesStore()
         model.openPane(id: "demo1|w1:p2")
         let shell = HerdrShellState()
+        shell.showSession()
         let pane = try #require(model.pane(id: model.selectedPaneID))
         #expect(shell.resolvedScope(for: model) == .session)
 

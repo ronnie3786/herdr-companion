@@ -36,6 +36,10 @@ class FakeRuntime:
         self.refreshes.append((review_id, request_id))
         return self.store.get_review(review_id, True)
 
+    def schedule_review_status_refresh(self, *, force=False):
+        self.refreshes.append(("viewer-review-status", force))
+        return True
+
     def diff(self, review_id, path):
         return {"review_id": review_id, "base_sha": "base", "head_sha": "head", "truncated": False, "files": [item for item in self.store.files(review_id) if path in (None, item["path"])]}
 
@@ -157,6 +161,21 @@ class PRReviewHTTPTests(unittest.TestCase):
         self.assertEqual(invalid["error"]["code"], "invalid_pr_url")
         _, snapshot, _ = self.request("/api/v1/pr-reviews/" + review_id)
         self.assertTrue({"review", "files", "skills", "runs", "documents", "events"}.issubset(snapshot))
+
+    def test_dashboard_status_refresh_preserves_auth_and_validates_body(self):
+        path = "/api/v1/pr-reviews/review-status/refresh"
+        for token in (None, "synthetic-ingest-token"):
+            self.assertEqual(self.request(path, {"request_id": "refresh"}, token=token, method="POST")[0], 401)
+        for body in ({}, {"request_id": ""}, {"request_id": "refresh", "extra": True}):
+            self.assertEqual(self.request(path, body, method="POST")[0], 400)
+        status, body, _ = self.request(path, {"request_id": "refresh"}, method="POST")
+        self.assertEqual(status, 202)
+        self.assertTrue(body["refreshing"])
+        self.assertEqual(self.service.pr_review.refreshes, [("viewer-review-status", True)])
+        self.create()
+        _, listed, _ = self.request("/api/v1/pr-reviews")
+        self.assertEqual(listed["reviews"][0]["viewer_review"]["state"], "unknown")
+        self.assertEqual(listed["reviews"][0]["skill_runs"], [])
 
     def test_mutations_documents_events_and_path_validation(self):
         review_id = self.create()

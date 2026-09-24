@@ -304,6 +304,14 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, AgentPr
     func prReviewSkills() async throws -> [PRReviewSkill] { let r: PRReviewSkillsResponse = try await request(path: try prReviewPath("skills")); return r.skills }
     func addPRReviewSkill(_ body: PRReviewSkillCreateRequest) async throws -> PRReviewSkill { let r: PRReviewSkillResponse = try await request(path: try prReviewPath("skills"), method: "POST", body: body); return r.skill }
     func removePRReviewSkill(id: String, requestID: String) async throws -> [PRReviewSkill] { let r: PRReviewSkillsResponse = try await request(path: try prReviewPath("skills", id: id), method: "DELETE", body: PRReviewRequestID(requestID: requestID)); return r.skills }
+    func refreshPRReviewStatuses(requestID: String) async throws {
+        let response: PRReviewStatusRefreshResponse = try await request(
+            path: "/api/v1/pr-reviews/review-status/refresh", method: "POST",
+            body: PRReviewRequestID(requestID: requestID)
+        )
+        guard response.ok else { throw APIError.invalidResponse }
+    }
+
     func prReviews(scope: String = "active") async throws -> [PRReviewSummary] { let r: PRReviewListResponse = try await request(path: try prReviewPath(), query: [.init(name: "scope", value: scope)]); return r.reviews }
     func createPRReview(url: String, skillIDs: [String], requestID: String) async throws -> PRReviewSnapshot { try await request(path: try prReviewPath(), method: "POST", body: PRReviewCreateBody(url: url, skillIDs: skillIDs, requestID: requestID)) }
     func prReview(id: String) async throws -> PRReviewSnapshot { try await request(path: try prReviewPath(id: id)) }
@@ -1948,3 +1956,5 @@ private struct ResponseAudioPrepareBody: Encodable, Sendable {
 private struct ResponseAudioSpeechBody: Encodable, Sendable {
     let text: String
 }
+
+private struct PRReviewStatusRefreshResponse: Decodable, Sendable { let ok: Bool }

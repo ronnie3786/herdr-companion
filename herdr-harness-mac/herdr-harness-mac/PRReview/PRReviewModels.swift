@@ -181,6 +181,8 @@ struct PRReviewSummary: Codable, Equatable, Identifiable, Sendable {
     var runningRuns: Int
     var documentCount: Int
     var body: String?
+    var viewerReview: DashboardReviewState? = nil
+    var skillRuns: [DashboardSkillRun]? = nil
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -216,6 +218,7 @@ struct PRReviewSummary: Codable, Equatable, Identifiable, Sendable {
         case runningRuns = "running_runs"
         case documentCount = "document_count"
         case body
+        case viewerReview = "viewer_review", skillRuns = "skill_runs"
     }
 
     init(from decoder: Decoder) throws {
@@ -253,6 +256,8 @@ struct PRReviewSummary: Codable, Equatable, Identifiable, Sendable {
         runningRuns = try container.decodeIfPresent(Int.self, forKey: .runningRuns) ?? 0
         documentCount = try container.decodeIfPresent(Int.self, forKey: .documentCount) ?? 0
         body = try container.decodeIfPresent(String.self, forKey: .body)
+        viewerReview = try container.decodeIfPresent(DashboardReviewState.self, forKey: .viewerReview)
+        skillRuns = try container.decodeIfPresent([DashboardSkillRun].self, forKey: .skillRuns)
     }
 }
 

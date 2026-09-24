@@ -12,13 +12,19 @@ enum PRReviewDemo {
         value.review.changedFiles = value.files.count
         value.review.additions = value.files.reduce(0) { $0 + $1.additions }
         value.review.deletions = value.files.reduce(0) { $0 + $1.deletions }
+        value.review.viewerReview = .init(state: "pending", pendingCommentCount: 3, needsUser: true, isOwnPR: false, updatedAt: HerdrTimestamp.string(from: .now))
+        value.review.skillRuns = value.runs.map { .init(skillID: $0.skillID, title: $0.skillTitle, state: $0.state.rawValue, updatedAt: $0.finishedAt ?? $0.startedAt) }
         return value
     }
 
     /// Review-aware lookup used by the demo store and popped-out windows:
     /// each active synthetic review keeps its own files, runs, and documents.
     static func snapshot(for reviewID: String) -> PRReviewSnapshot {
-        reviewID == secondReviewID ? decode(secondSnapshot) : snapshot()
+        guard reviewID == secondReviewID else { return snapshot() }
+        var value: PRReviewSnapshot = decode(secondSnapshot)
+        value.review.viewerReview = .init(state: "approved", isOwnPR: false, updatedAt: HerdrTimestamp.string(from: .now))
+        value.review.skillRuns = []
+        return value
     }
 
     static func reviews() -> [PRReviewSummary] {

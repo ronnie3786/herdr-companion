@@ -130,8 +130,8 @@ final class FirstMateFleetIndex {
         }
         for index in hosts.indices {
             hosts[index].isLoading = clients[hosts[index].machineID] != nil
-            hosts[index].error = nil
-            hosts[index].unsupported = false
+            // A retry is not a successful contact. Keep last-seen/error evidence
+            // until this host actually returns a new list.
         }
 
         await withTaskGroup(of: FetchResult.self) { group in

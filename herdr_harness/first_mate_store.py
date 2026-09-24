@@ -109,6 +109,7 @@ CREATE INDEX IF NOT EXISTS fm_events_feature ON fm_events(feature_id,sequence);
 CREATE INDEX IF NOT EXISTS fm_assignments_status ON fm_assignments(status,feature_id);
 CREATE INDEX IF NOT EXISTS fm_messages_pending ON fm_messages(status,feature_id,created_at);
 CREATE INDEX IF NOT EXISTS fm_visits_feature ON fm_visits(feature_id,created_at);
+CREATE INDEX IF NOT EXISTS fm_messages_dashboard ON fm_messages(feature_id,role,created_at DESC,id DESC);
 """
 
 
@@ -325,9 +326,44 @@ class FirstMateStore:
             "all": "",
         }[view]
         with self._lock:
-            return [self._decode(r) for r in self._db.execute(
-                f"SELECT * FROM fm_features {where} ORDER BY updated_at DESC,id"
-            )]
+            # Project bounded card data in one SQL query, without loading every
+            # feature's full transcript, documents, or assignment metadata.
+            rows = self._db.execute(f"""SELECT f.*,
+                v.title AS current_stage_title,
+                (SELECT count(*) FROM fm_visits x WHERE x.feature_id=f.id AND x.revision=f.revision) AS stage_count,
+                CASE WHEN v.id IS NOT NULL AND v.revision=f.revision THEN
+                    (SELECT count(*) FROM fm_visits x WHERE x.feature_id=f.id AND x.revision=f.revision
+                     AND (x.created_at<v.created_at OR (x.created_at=v.created_at AND x.id<=v.id))) END AS current_stage_index,
+                substr(m.text,1,1200) AS latest_message,m.created_at AS latest_message_at,
+                substr(CASE WHEN e.created_at>=COALESCE(v.created_at,f.created_at) THEN
+                    CASE WHEN e.type='visit.awaiting_direction' THEN COALESCE(NULLIF(v.recommendation,''),e.summary) ELSE e.summary END
+                    ELSE v.recommendation END,1,600) AS needs_user_prompt,
+                (SELECT count(*) FROM fm_assignment_memberships x JOIN fm_assignments a ON a.id=x.assignment_id
+                    WHERE x.visit_id=f.current_visit_id AND x.revision=f.revision) AS assignment_count,
+                (SELECT count(*) FROM fm_assignment_memberships x JOIN fm_assignments a ON a.id=x.assignment_id
+                    WHERE x.visit_id=f.current_visit_id AND x.revision=f.revision
+                    AND a.status IN ('dispatching','running','waiting_children','handoff_pending','awaiting_ack','recovering')) AS running_assignment_count
+                FROM fm_features f LEFT JOIN fm_visits v ON v.id=f.current_visit_id
+                LEFT JOIN fm_messages m ON m.id=(SELECT id FROM fm_messages WHERE feature_id=f.id
+                    AND role='assistant' ORDER BY created_at DESC,id DESC LIMIT 1)
+                LEFT JOIN fm_events e ON e.sequence=(SELECT max(sequence) FROM fm_events WHERE feature_id=f.id
+                    AND type IN ('assignment.awaiting_human','reliability.blocked','visit.awaiting_direction'))
+                {where} ORDER BY f.updated_at DESC,f.id""").fetchall()
+            features = [self._decode(row) for row in rows]
+            for feature in features:
+                summary = {key: feature.pop(key) for key in (
+                    'current_stage_title', 'stage_count', 'current_stage_index', 'latest_message',
+                    'latest_message_at', 'needs_user_prompt', 'assignment_count', 'running_assignment_count')}
+                # The ledger records executed stages, not a promised future
+                # workflow. Clients must not label this a complete plan total.
+                summary['stage_count_is_estimate'] = True
+                summary['needs_user'] = feature['status'] in {'awaiting_direction', 'blocked'}
+                if not summary['needs_user']:
+                    summary['needs_user_prompt'] = None
+                elif not summary['needs_user_prompt']:
+                    summary['needs_user_prompt'] = 'Needs your direction' if feature['status'] == 'awaiting_direction' else 'Recovery needs your direction'
+                feature['dashboard_summary'] = summary
+            return features
 
     def set_archived(self, feature_id: str, archived: bool, payload: Mapping[str, Any]) -> dict:
         body = dict(payload)

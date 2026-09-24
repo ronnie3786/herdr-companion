@@ -8,6 +8,7 @@ struct HerdrSidebarView: View {
     /// to work too).
     let openPane: (HerdrPane) -> Void
     let openWorkspace: (HerdrWorkspace) -> Void
+    var openDashboard: (() -> Void)? = nil
     var openFirstMate: (() -> Void)? = nil
     var openPRReview: (() -> Void)? = nil
     /// Features waiting on a human across every configured host. The Chat
@@ -226,6 +227,12 @@ struct HerdrSidebarView: View {
         let snapshot = resolvedSnapshot(fingerprint: fingerprint)
         VStack(alignment: .leading, spacing: 8) {
             header
+            if let openDashboard {
+                Button("Dashboard", systemImage: "square.grid.2x2", action: openDashboard)
+                    .buttonStyle(.plain).font(.headline).foregroundStyle(HerdrTheme.accent)
+                    .padding(.horizontal, 16).padding(.vertical, 6)
+                    .accessibilityIdentifier("sidebar-dashboard")
+            }
             if let openFirstMate {
                 FirstMateNavigationButton(
                     attentionCount: firstMateAttentionCount,

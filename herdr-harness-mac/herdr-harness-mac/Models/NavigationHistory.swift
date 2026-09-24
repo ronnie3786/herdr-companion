@@ -12,6 +12,8 @@ enum HerdrDestination: Hashable, Sendable {
     case pane(String)        // scoped pane id — MachineScopedID.compose
     case git(String)
     case workspace(String)   // scoped workspace id
+    case dashboard
+    case agentBoard
     case activeWork
     case prReview
     case firstMate
@@ -122,6 +124,12 @@ extension HerdrDestinationRecord {
             guard !id.isEmpty else { return nil }
             kind = "workspace"
             self.id = id
+        case .dashboard:
+            kind = "dashboard"
+            id = nil
+        case .agentBoard:
+            kind = "agentBoard"
+            id = nil
         case .firstMate:
             kind = "firstMate"
             id = nil
@@ -154,6 +162,8 @@ extension HerdrDestinationRecord {
         case "workspace":
             guard let id, !id.isEmpty else { return nil }
             return .workspace(id)
+        case "dashboard": return .dashboard
+        case "agentBoard": return .agentBoard
         case "firstMate": return .firstMate
         case "activeWork": return .activeWork
         case "prReview": return .prReview

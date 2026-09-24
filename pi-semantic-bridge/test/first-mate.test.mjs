@@ -227,6 +227,7 @@ test("automatic recovery successor can inspect evidence but is fenced until ackn
   try {
     for (const toolName of ["write", "bash", "fm_delegate", "fm_progress"]) assert.equal(f.handlers.get("tool_call")({toolName}).block, true);
     assert.equal(f.handlers.get("tool_call")({toolName:"fm_read_document"}), undefined);
+    assert.equal(f.handlers.get("tool_call")({toolName:"fm_request_human"}), undefined, "a fenced successor can report a real human decision");
     const id = spoolRequestId("synthetic-job", "recovery-ack");
     writeFileSync(join(f.root,"responses",id+".json"),JSON.stringify({ok:true,result:{acknowledged:true}}));
     await f.tools.get("fm_acknowledge_recovery").execute("recovery-ack",{summary:"Verified safe next step"},undefined,undefined,f.ctx);

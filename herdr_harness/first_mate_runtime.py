@@ -62,9 +62,13 @@ substantive work rather than performing it in this conversation. When a skill
 would spawn agents, adapt it to fm_delegate; never launch unmanaged Pi subprocesses.
 
 Answer simple direction, clarification and status questions yourself from the
-reference-oriented authoritative state. Human messages alone can authorize major
-workflow stages. Interpret ordinary English thoughtfully and ask one focused question only
-when a necessary choice is genuinely ambiguous. Within an authorized stage,
+reference-oriented authoritative state. Human messages authorize major stages.
+If a human explicitly requests a sequence, record its ordered stage keys with
+fm_begin_stage followup_stages on that human turn. A system turn may begin only
+the next stage already recorded on the completed visit; never infer additional
+stages from a vague goal or recommendation. Queued human direction takes priority.
+Interpret ordinary English thoughtfully and ask one focused question only when
+a necessary choice is genuinely ambiguous. Within an authorized stage,
 delegate substantive work through fm_delegate. Give each worker complete scope,
 acceptance criteria, required Documents, the exact revision to inspect when
 applicable, and any internal human gates. Interpret the human's natural-language intent and set model_profile to architect
@@ -88,17 +92,19 @@ outcome summaries and bounded document/session readers for a short stage
 checkpoint. If completion requires substantial reading or reconciliation,
 delegate that work to a tracked lead/reviewer, then use its structured summary.
 Call fm_complete_stage only after all current assignments have valid successful
-outcomes. That always pauses for the human's next direction.
+outcomes. It continues only to a previously authorized next stage; otherwise it
+pauses for direction.
 Report blockers accurately and never infer success from an agent exit.
 
 Preserve existing authorization. Do not create a redundant approval request for
 an action the human already authorized. Do not merge, publish, deploy or delete
-worktrees unless that exact action is authorized in the current stage. Record a
+worktrees unless that exact action is authorized in the human grant covering this stage. Record a
 direction change with fm_revise before replacement work. There is one continuing
 conversation per feature, but every dispatch receives this charter again.
-For an uncertain dispatch that automatic recovery cannot safely continue,
-explain the interruption and retained facts, then await human recovery direction.
-Use fm_recover for that stopped execution, not fm_retry (for reported failures).
+For an uncertain dispatch, inspect retained recovery facts. Within the authorized
+stage use fm_recover to request service-verified continuation without a token
+human message; the service may refuse if effects, writer ownership, or a real
+human gate remain uncertain. Use fm_retry for reported failures, not interruptions.
 Never use Pause/Resume around an unresolved dispatch or an internal human gate.
 """
 WORKER_PROMPT = """You are an independent Pi worker managed by Herdr First Mate.
@@ -190,7 +196,8 @@ def _coordinator_state(snapshot: dict, claim: dict | None = None) -> dict:
         "feature": _pick(feature, ("id", "title", "goal", "status", "revision",
                                      "current_visit_id", "work_item_id")),
         "current_visit": _pick(current_visit, ("id", "stage_key", "title", "status",
-                                                  "revision", "summary", "recommendation")),
+                                                  "revision", "summary", "recommendation",
+                                                  "authorization_message_id", "followup_stages")),
         "previous_visit": _pick(previous_visit, ("id", "stage_key", "title", "status", "revision")),
         "current_memberships": [_pick(membership, ("visit_id", "assignment_id", "revision",
                                                        "authorization_message_id", "carried_from_visit_id"))
@@ -1105,6 +1112,9 @@ class FirstMateRuntime:
                     if previous.get("automatic_recovery"):
                         job["requires_recovery_ack"] = True
                         job["recovery_source_job_id"] = previous["id"]
+                        if previous.get("recovery_inspection_required"):
+                            job["requires_recovery_inspection"] = True
+                            job["prompt"] += "\n\nThe advisor could not establish a safe next action. While fenced, read the exact predecessor session with fm_read_session and inspect its workspace and effects. Acknowledge only a verified safe next step, or use fm_request_human for a genuine unresolved decision. Never repeat an uncertain external effect."
                     job["prompt"] += "\n\nPrior execution recovery checkpoint:\n" + previous.get("recovery_brief", "Inspect the retained predecessor session before repeating any side effects: " + str(previous.get("native_session_id")))
                     checkpoint = _read_json(self._job_dir(previous) / "recovery-checkpoint.json")
                     if checkpoint:
@@ -1443,7 +1453,7 @@ class FirstMateRuntime:
         feature_id = job["feature_id"]
         feature = self.store.get_feature(feature_id)
         claim = job["claim"]
-        if job.get("requires_recovery_ack") and not job.get("recovery_acknowledged") and action not in {"fm_status", "fm_read_document", "fm_read_session", "fm_acknowledge_recovery"}:
+        if job.get("requires_recovery_ack") and not job.get("recovery_acknowledged") and action not in {"fm_status", "fm_read_document", "fm_read_session", "fm_acknowledge_recovery", "fm_request_human"}:
             raise FirstMateError("Inspect the retained checkpoint and acknowledge recovery before continuing")
         if action == "fm_status":
             if job["kind"] == "coordinator":
@@ -1478,6 +1488,11 @@ class FirstMateRuntime:
                                    limit=1 if requested_index is not None else params.get("limit", 20))
             if session["session"]["feature_id"] != feature_id:
                 raise FirstMateError("Session belongs to another feature")
+            if job.get("requires_recovery_inspection") and not job.get("recovery_acknowledged"):
+                predecessor = _read_json(self.jobs_root / job["recovery_source_job_id"] / "job.json", {})
+                if params["native_session_id"] == predecessor.get("native_session_id"):
+                    job["recovery_inspected"] = True
+                    self._save_job(job)
             offset = max(0, int(params.get("text_offset", 0))) if requested_index is not None else 0
             length = max(1000, min(80000, int(params.get("text_length", 12000)))) if requested_index is not None else 12000
             session["messages"] = [{**message, "text": message["text"][offset:offset + length],
@@ -1528,11 +1543,18 @@ class FirstMateRuntime:
                 _write_json(prepared_path, metadata)
             return self.store.retry_assignment(child["id"], params["prompt"], request_id, metadata=metadata, verified_stopped=True)
         if job["kind"] == "coordinator":
-            if action in {"fm_begin_stage", "fm_revise", "fm_finish_feature", "fm_resolve_gate", "fm_recover"} and claim["role"] != "user":
-                raise ValueError("Only a human message can authorize a stage or change feature scope")
+            if action in {"fm_revise", "fm_finish_feature", "fm_resolve_gate"} and claim["role"] != "user":
+                raise ValueError("Only a human message can change scope or resolve a human gate")
             if action == "fm_begin_stage":
+                if claim["role"] == "user":
+                    authorization_id, followups = claim["id"], params.get("followup_stages", [])
+                else:
+                    if params.get("followup_stages") or not feature.get("current_visit_id"):
+                        raise FirstMateError("System updates cannot authorize more stages", code="human_direction_required")
+                    prior = next(v for v in self.store.snapshot(feature_id)["visits"] if v["id"] == feature["current_visit_id"])
+                    authorization_id, followups = prior["authorization_message_id"], []
                 return self.store.start_visit(feature_id, params["stage_key"], params["title"], request_id,
-                                              feature["revision"], claim["id"])
+                                              feature["revision"], authorization_id, followup_stages=followups)
             if action == "fm_delegate":
                 if not feature.get("current_visit_id") or feature["status"] != "running":
                     raise ValueError("No active human-authorized stage is available")
@@ -1552,9 +1574,19 @@ class FirstMateRuntime:
                 if any(execution["kind"] == "worker" and execution["claim"]["id"] == assignment["id"]
                        and _locked(self._job_dir(execution) / "writer.lock") for execution in self._jobs()):
                     raise FirstMateError("The prior worker is still alive; pause it before retrying an uncertain dispatch")
-                # The store transitions recovering -> running atomically, only
-                # after all uncertain assignments settle. A second resume both
-                # fails on success and could bypass another unresolved writer.
+                if claim["role"] == "system":
+                    # A background update must use the evidence-checked path,
+                    # never the human-directed override for uncertain effects.
+                    previous = next((j for j in reversed(self._jobs()) if j["kind"] == "worker" and
+                                     j["claim"]["id"] == assignment["id"] and
+                                     j["claim"]["generation"] == assignment["generation"]), None)
+                    if not previous or not self.reliability.enabled or not self.reliability._eligible(feature):
+                        raise FirstMateError("Verified same-stage recovery is unavailable; retained evidence needs direction", code="human_direction_required")
+                    if not self.reliability.recover(previous, {"error": params["reason"]}):
+                        raise DeferredOperation()
+                    return self.store.get_assignment(assignment["id"])
+                # Explicit human recovery may resolve an inspected uncertainty;
+                # neither path permits a second writer or bypasses a human gate.
                 return self.store.recover_assignment(assignment["id"], assignment["generation"], params["reason"], request_id, verified_stopped=True)
             if action == "fm_resolve_gate":
                 assignment = self.store.get_assignment(params["assignment_id"])
@@ -1650,6 +1682,8 @@ class FirstMateRuntime:
                 if not job.get("requires_recovery_ack") or assignment["status"] != "running" or assignment["generation"] != claim["generation"] or assignment["native_session_id"] != job["native_session_id"] or feature["status"] != "running":
                     raise FirstMateError("This executor cannot acknowledge recovery")
                 summary = params.get("summary")
+                if job.get("requires_recovery_inspection") and not job.get("recovery_inspected"):
+                    raise FirstMateError("Inspect the exact predecessor session or request a human decision before acknowledging an uncertain recovery")
                 if not isinstance(summary, str) or not summary.strip() or len(summary) > 8000:
                     raise FirstMateError("Provide a bounded evidence-based recovery acknowledgement")
                 self._event(feature_id, "reliability.recovery_acknowledged", summary,

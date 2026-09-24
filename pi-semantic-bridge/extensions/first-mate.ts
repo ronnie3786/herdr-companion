@@ -134,17 +134,18 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
       }));
     }
     if (role === "coordinator") {
-      register("fm_begin_stage", "Begin exactly one major stage authorized by the current HUMAN message. Never continue a stage in response to a system outcome. Return to the human immediately after delegating.", Type.Object({
+      register("fm_begin_stage", "Begin a human-authorized stage. On a human turn list only the ordered follow-ups explicitly requested in that direction. A system turn may consume only the next recorded stage; never add one. Return after delegating.", Type.Object({
         stage_key: text("Stable stage key, for example planning or implementation"),
         title: text("Human-readable stage name"),
+        followup_stages: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 100 }), { maxItems: 8, description: "Ordered stage keys explicitly authorized by this human message, not inferred from a suggestion" })),
       }));
-      register("fm_recover", "Recover an uncertain or interrupted assignment only after the human requests it and the service verifies no prior Pi writer remains. This uses the bounded recovery budget and retains prior evidence.", Type.Object({ assignment_id: text("Uncertain or interrupted assignment ID"), reason: text("Human-authorized recovery decision and evidence to verify before continuing") }));
+      register("fm_recover", "Request same-stage continuation of an interrupted assignment. System turns require verified backup, effects, stopped writer and recovery assessment. Never replay an uncertain external effect or bypass a real human gate.", Type.Object({ assignment_id: text("Interrupted assignment ID"), reason: text("Retained evidence and next action to inspect") }));
       register("fm_resolve_gate", "Release an explicit internal human checkpoint only using the current human's direction. Background outcomes can never release a gate.", Type.Object({ assignment_id: text("Assignment with a pending human gate"), instruction: text("The human's decision and resulting instructions") }));
       register("fm_steer", "Send a bounded clarification or correction to an active worker in the current authorized stage. Returns immediately; delivery is logged.", Type.Object({ assignment_id: text("Target assignment ID"), text: text("Clarification within the authorized scope") }));
       register("fm_retry", "Repeat a blocked or failed assignment within this authorized stage after repairs or new instructions. Prior attempts and findings remain retained.", Type.Object({
         assignment_id: text("Exact assignment to repeat"), prompt: text("Complete revised assignment and evidence required"),
       }));
-      register("fm_complete_stage", "Present completed stage evidence and a recommendation, then park the feature awaiting human direction. All assignments must have valid successful outcomes. Never start the next stage yourself.", Type.Object({
+      register("fm_complete_stage", "Present evidence and a recommendation after all assignments succeed. The service may continue only to the next stage recorded in the original human direction; otherwise it parks for direction.", Type.Object({
         summary: text("Concise evidence-backed synthesis"), recommendation: text("Suggested next action for the human to choose"),
       }));
       register("fm_revise", "Record a human-requested direction change and pause affected assignments. This versions the plan and fences stale outcomes. Only available on human turns.", Type.Object({
@@ -157,7 +158,7 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
         summary: Type.String({ maxLength: 4000 }), next_action: Type.String({ maxLength: 2000 }),
         evidence: Type.String({ maxLength: 4000 }), wait_seconds: Type.Optional(Type.Integer({ minimum: 0, maximum: 3600 })),
       }));
-      register("fm_acknowledge_recovery", "Before mutation in an automatic recovery successor, inspect retained progress, workspace facts and the recovery brief. Confirm the next safe action and how uncertain effects were checked. Do not repeat an unverified external action or bypass a human gate.", Type.Object({ summary: Type.String({ maxLength: 8000 }) }));
+      register("fm_acknowledge_recovery", "Before mutation in a recovery successor inspect retained progress, predecessor session, workspace facts and recovery brief. If the advisor was uncertain, read the exact predecessor with fm_read_session; request a human decision if the next step remains unresolved. Never repeat an unverified external effect.", Type.Object({ summary: Type.String({ maxLength: 8000 }) }));
       register("fm_retry", "Retry only a directly delegated child within this authorized stage after its stopped execution reported failure or requested changes. Prior evidence remains retained.", Type.Object({ assignment_id: text("Direct child assignment ID"), prompt: text("Complete corrected assignment and evidence required") }));
       register("fm_wait_for_children", "Yield this worker conversation while its delegated children run. Save a checkpoint and end your turn. The service resumes this exact native conversation when they settle, without model polling.", Type.Object({ summary: text("Current assignment state, delegated work, acceptance criteria and what to do when children report") }));
       register("fm_outcome", "Report the assignment's structured verdict and durable deliverables. An ordinary final answer or clean exit does not count as completion. End your turn after this tool succeeds.", Type.Object({
@@ -205,7 +206,7 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
     });
     pi.on("tool_call", (event) => {
       if (retired) return { block: true, reason: "This execution has reported its outcome or checkpoint. End the turn now.", terminate: true };
-      if (!successorAcknowledged && !["fm_acknowledge_handoff", "fm_acknowledge_recovery", "fm_status", "fm_read_document", "fm_read_session", "read", "ls", "find", "grep"].includes(event.toolName)) {
+      if (!successorAcknowledged && !["fm_acknowledge_handoff", "fm_acknowledge_recovery", "fm_request_human", "fm_status", "fm_read_document", "fm_read_session", "read", "ls", "find", "grep"].includes(event.toolName)) {
         return { block: true, reason: "Inspect the retained checkpoint and workspace, then acknowledge the handoff or recovery before executing work." };
       }
       if (event.toolName.startsWith("fm_") && !roleTools.has(event.toolName)) {

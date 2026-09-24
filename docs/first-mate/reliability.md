@@ -54,10 +54,14 @@ checking; shell commands and unfamiliar tools are conservatively external.
 
 Automatic writable recovery requires the versioned ledger. Missing, malformed,
 incomplete, or failed external receipts stop it. A successful tool receipt still
-does not prove a remote business operation completed: the read-only recovery
-advisor must establish a safe next action, and the replacement must acknowledge
-that checkpoint before mutation. The system does not simply replay the original
-prompt or retry a deployment because its process died.
+does not prove a remote business operation completed. The read-only advisor
+supplies a recovery checkpoint. If it cannot establish the next action, but the
+writer has stopped, the backup is intact and all external effect receipts are
+complete and nonfailed, a fenced inspection successor may read the exact
+predecessor session and acknowledge a verified next step or request a real human
+decision. Every successor acknowledges before mutation. Missing or failed
+external receipts remain blocked. The system does not replay the original prompt
+or retry a deployment because its process died.
 
 Older executions without the ledger require explicit recovery direction.
 A `read_only` workspace is an instruction, not a tool sandbox in current Pi.

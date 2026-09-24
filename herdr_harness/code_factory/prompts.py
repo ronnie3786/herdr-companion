@@ -17,6 +17,7 @@ import shlex
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+from .ci_logs import MAX_LOG_CHARS
 from .errors import CodeFactoryError
 
 # -- charters (verbatim from the specification) -----------------------------------
@@ -53,13 +54,15 @@ _IMPLEMENTER_REST = (
     "Implement ONLY the task you "
     "are given, following AGENTS.md, README.md verification commands and the repository's "
     "privacy rules (never write personal paths, hostnames, tokens or captured data). Write "
-    "or update deterministic tests next to the code. Do not run tests or builds during "
-    "implementation; the complete candidate is tested once at the final verification gate. "
+    "or update deterministic tests next to the code. Run cheap, focused tests for the changed "
+    "behavior and targeted builds when needed to diagnose compilation failures. Fix failures "
+    "within your scope before committing. Do not run the full matrix locally; the final "
+    "Verify gate must still pass on the exact candidate. "
     "When done, stage and commit your work with `git add -A && git "
     "commit -m \"<message>\"` using a descriptive message without AI attribution. Never push, "
     "never change branches, never edit files outside this worktree, never touch "
     "release/macos.json, and never run gh. Finish with a short summary: files changed, "
-    "tests added (mark any test you did not run as NOT RUN), and anything left undone."
+    "tests added and actual checks run (mark any test you did not run as NOT RUN), and anything left undone."
 )
 IMPLEMENTER_CHARTER = _IMPLEMENTER_FIRST_SENTENCE + " " + _IMPLEMENTER_REST
 REVISER_CHARTER = _REVISER_FIRST_SENTENCE + " " + _IMPLEMENTER_REST
@@ -163,7 +166,6 @@ MAX_ISSUE_REPLY_CHARS = 20_000
 MAX_ISSUE_REPLIES = 20
 MAX_INLINE_DOCUMENT_BYTES = 32 * 1024
 MAX_DIFF_CHARS = 400_000
-MAX_LOG_CHARS = 4000
 MAX_SUMMARY_CHARS = 4000
 MAX_TEXT_CHARS = 20_000
 MAX_CRITERIA = 20
@@ -617,7 +619,7 @@ def implementer_prompt(
         f"## Your task: {task_id} — {_line(task.get('title'))}\n"
         + _clip(str(task.get("description") or ""), MAX_TEXT_CHARS)
         + "\n\nOwned paths (only change these):\n" + _bullets(task.get("owned_paths") or [])
-        + "\n\nTests to write or update (DO NOT RUN; final verification owns execution):\n" + _bullets(task.get("tests") or [])
+        + "\n\nTests to write or update (run focused checks; final Verify owns the full matrix):\n" + _bullets(task.get("tests") or [])
         + "\n\nDocumentation to update:\n" + _bullets(task.get("docs") or []),
         "## Work already done by earlier sessions on this branch\n" + ("\n\n".join(previous) if previous else "(none)"),
         "## Reminders\n"
@@ -719,7 +721,7 @@ def reviser_prompt(
     if isinstance(ci_log_excerpt, str) and ci_log_excerpt.strip():
         sections.append("## Failed CI run (Verify workflow) log excerpt\n" + _delimited("CI_LOG", _clip(ci_log_excerpt, MAX_LOG_CHARS)))
     if not sections:
-        sections.append("## Feedback\n(no review or CI log was recorded; inspect the plan's tests and fix any evident failure without running them)")
+        sections.append("## Feedback\n(no review or CI log was recorded; inspect the plan's tests and run focused checks to diagnose the failure)")
     parts = [
         f"# Revise the pull request branch for GitHub issue #{number}: {_line(_issue_field(issue, 'title'))}",
         _issue_body_section(issue),
@@ -729,8 +731,9 @@ def reviser_prompt(
         "- Address every blocking item and every inline comment; fix the CI failure when a log is given.\n"
         "- Preserve the original request exactly; the plan is not authority to narrow or soften it. Never guess "
         "an unresolved behavior decision or turn screenshot labels, IDs, names, or ordering into canonical identities.\n"
-        "- Keep the plan's acceptance criteria and tests green; add tests for what you change, but do not run "
-        "tests or builds during revision; final verification owns execution.\n"
+        "- Keep the plan's acceptance criteria and tests green; add tests for what you change and run "
+        "focused checks that reproduce the failure. Use a targeted build for compiler errors. "
+        "Fix the cause before committing; final Verify still owns the full matrix.\n"
         f"- Commit with `git add -A && git commit -m \"Issue #{number}: address review feedback\"`; do not push. "
         "Reference issues in commit messages only as `Refs #n`, never with `Closes`/`Fixes`/`Resolves`.\n"
         "- Finish with the summary described in your charter.",

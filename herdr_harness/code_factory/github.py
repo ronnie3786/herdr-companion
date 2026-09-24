@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from ..child_environment import agent_environment
+from .ci_logs import failed_log_excerpt
 from .errors import CodeFactoryError
 
 REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -33,12 +34,11 @@ SHA_PATTERN = re.compile(r"^[0-9a-f]{7,64}$")
 COLOR_PATTERN = re.compile(r"^[0-9A-Fa-f]{6}$")
 ISSUE_FIELDS = "number,title,body,author,labels,url,createdAt,updatedAt"
 ISSUE_VIEW_FIELDS = ISSUE_FIELDS + ",comments,state,closedByPullRequestsReferences"
-PR_VIEW_FIELDS = "number,url,state,headRefOid,mergedAt,mergeCommit,baseRefName,headRefName,title"
+PR_VIEW_FIELDS = "number,url,state,headRefOid,mergedAt,mergeCommit,baseRefName,headRefName,title,mergeable,mergeStateStatus"
 RUN_FIELDS = "status,conclusion,databaseId,url"
 VERIFY_WORKFLOW = "Verify"
 MAX_STDERR_CHARS = 300
 MAX_DIFF_BYTES = 400 * 1024
-MAX_LOG_CHARS = 4000
 MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
 MAX_BODY_CHARS = 65_000
 DOWNLOAD_CHUNK = 64 * 1024
@@ -398,7 +398,7 @@ class GitHubClient:
         return self.classify_runs(self.list_runs(sha))
 
     def failed_run_log(self, sha: str) -> str:
-        """The failing steps' log tail (≤ 4000 chars) of the first failed Verify run, or ``""``."""
+        """Bounded failure diagnostics from the first failed Verify run, or ``""``."""
         failed = [
             run for run in self.list_runs(sha)
             if run.get("status") == "completed" and run.get("conclusion") != "success"
@@ -412,7 +412,7 @@ class GitHubClient:
         text = result.stdout if isinstance(result.stdout, str) else ""
         if result.returncode != 0 and not text.strip():
             text = result.stderr if isinstance(result.stderr, str) else ""
-        return text[-MAX_LOG_CHARS:]
+        return failed_log_excerpt(text)
 
     def rerun_failed(self, run_id: int) -> None:
         """Ask GitHub to re-run only the failed jobs in one workflow run."""

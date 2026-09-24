@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from herdr_harness.code_factory.ci_logs import MAX_LOG_CHARS
 from herdr_harness.code_factory.errors import CodeFactoryError
 from herdr_harness.code_factory.github import GitHubClient
 
@@ -182,13 +183,25 @@ class ArgvTests(GitHubClientTestCase):
         self.assertEqual(self.client.pull_request(34)["mergeCommit"]["oid"], "deadbeef")
         self.assertEqual(self.runner.argv[0], [
             "gh", "pr", "view", "34", "--repo", REPO,
-            "--json", "number,url,state,headRefOid,mergedAt,mergeCommit,baseRefName,headRefName,title",
+            "--json", "number,url,state,headRefOid,mergedAt,mergeCommit,baseRefName,headRefName,title,mergeable,mergeStateStatus",
         ])
         self.runner.reply("x" * (400 * 1024 + 10))
         diff = self.client.pull_request_diff(34)
         self.assertEqual(self.runner.argv[1], ["gh", "pr", "diff", "34", "--repo", REPO])
         self.assertTrue(diff.endswith("[diff truncated at 400 KiB]\n"))
         self.assertLessEqual(len(diff), 400 * 1024 + 40)
+
+    def test_conflict_fields_are_requested_from_github(self):
+        # Model gh's field projection, rather than returning extra fields a real
+        # request would never supply. Missing fields previously disabled recovery.
+        remote = {"number": 34, "mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"}
+        def project(argv, kwargs):
+            fields = argv[argv.index("--json") + 1].split(",")
+            self.runner.reply_json({key: value for key, value in remote.items() if key in fields})
+        self.runner.on_call = project
+        pull = self.client.pull_request(34)
+        self.assertEqual(pull.get("mergeable"), "CONFLICTING")
+        self.assertEqual(pull.get("mergeStateStatus"), "DIRTY")
 
     def test_merge_pull_request(self):
         self.runner.reply_json({"number": 34, "title": "Fix crash in HUD", "state": "OPEN"})
@@ -224,7 +237,7 @@ class ArgvTests(GitHubClientTestCase):
         self.assertEqual(merged["mergeSha"], "deadbeef")
         self.assertEqual(self.runner.argv, [[
             "gh", "pr", "view", "34", "--repo", REPO, "--json",
-            "number,url,state,headRefOid,mergedAt,mergeCommit,baseRefName,headRefName,title",
+            "number,url,state,headRefOid,mergedAt,mergeCommit,baseRefName,headRefName,title,mergeable,mergeStateStatus",
         ]], "a pull request that already landed is never merged again")
 
     def test_merge_pull_request_raises_when_the_pull_request_stays_unmerged(self):
@@ -294,15 +307,25 @@ class VerifyStatusTests(GitHubClientTestCase):
                 self.client.rerun_failed(value)
             self.assertEqual(caught.exception.code, "invalid_request")
 
+    def test_failed_run_log_keeps_diagnostics_before_long_cleanup(self):
+        self.runner.reply_json([{"status": "completed", "conclusion": "failure", "databaseId": 2}])
+        self.runner.reply("portable\tTests\t2026-01-01T00:00:00Z FAIL: test_budget (test_reader.ReaderTests)\n"
+                          "portable\tTests\t2026-01-01T00:00:00Z AssertionError: 65 != 64\n"
+                          + "cleanup\n" * 6000)
+        excerpt = self.client.failed_run_log("abcdef1234")
+        self.assertIn("test_budget", excerpt)
+        self.assertIn("AssertionError: 65 != 64", excerpt)
+        self.assertLessEqual(len(excerpt), MAX_LOG_CHARS)
+
     def test_failed_run_log(self):
         self.runner.reply_json([
             {"status": "completed", "conclusion": "success", "databaseId": 1},
             {"status": "completed", "conclusion": "failure", "databaseId": 2},
         ])
-        self.runner.reply("line\n" * 2000)
+        self.runner.reply("line\n" * 20_000)
         log = self.client.failed_run_log("abcdef1234")
         self.assertEqual(self.runner.argv[1], ["gh", "run", "view", "2", "--repo", REPO, "--log-failed"])
-        self.assertEqual(len(log), 4000)
+        self.assertEqual(len(log), MAX_LOG_CHARS)
         self.runner.reply_json([{"status": "completed", "conclusion": "success", "databaseId": 3}])
         self.assertEqual(self.client.failed_run_log("abcdef1234"), "")
 

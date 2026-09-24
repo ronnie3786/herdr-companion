@@ -52,8 +52,9 @@ This is an experimental personal automation. Read the safety section before enab
    Code Factory's own comments, so an answer becomes part of the next plan.
 6. **DeepSeek implements.** For each task a fresh Pi session on
    `ollama-cloud/deepseek-v4.1-flash:cloud` with thinking `max` implements the task in the
-   worktree, writes tests without running incremental suites, and commits. The complete
-   candidate is exercised by the final Verify gate. The daemon also runs the public-source
+   worktree, writes tests, runs cheap focused checks for changed behavior, and commits.
+   Targeted builds may diagnose compiler failures; the complete candidate is still
+   exercised by the final Verify gate. The daemon also runs the public-source
    privacy check and gives DeepSeek one chance to fix findings.
 7. **Pull request and CI.** The daemon pushes the branch, opens a PR that references the
    issue (`Refs #n`, never `Closes`, so the issue stays open until released), and waits
@@ -110,8 +111,13 @@ This is an experimental personal automation. Read the safety section before enab
    (HTTP 5xx, connection reset, timeout, rate limit) is re-queued automatically at most
    `max_transient_retries` times with a cooldown; a genuine coding failure stays failed
    for a human.
+   Failed CI excerpts retain compiler errors and test assertion context across jobs,
+   plus a bounded log tail (up to 16,000 characters total). Implementers and revisers
+   run cheap focused checks and targeted builds for compiler failures before committing;
+   the authoritative full Verify matrix still runs on the exact candidate.
 10. **Merge and cleanup.** Immediately before merge the daemon asks GitHub whether the
-    branch conflicts with the base. A conflicted branch goes to a fresh DeepSeek
+    branch conflicts with the base, requesting both `mergeable` and `mergeStateStatus`
+    in the PR response. A conflicted branch goes to a fresh DeepSeek
     conflict-resolution session (`ollama-cloud/deepseek-v4.1-flash:cloud`, thinking `max`)
     that fetches the base, rebases, resolves every conflict preserving both sides' intent,
     and leaves the rebase committed; the daemon then force-pushes with a lease pinned to

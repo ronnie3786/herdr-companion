@@ -111,6 +111,19 @@ class CharterTests(unittest.TestCase):
         self.assertEqual(prompts.REVISER_CHARTER.partition(". ")[2], rest, "only the first sentence differs")
         self.assertNotIn("dedicated git worktree", prompts.REVISER_CHARTER)
 
+    def test_fixing_sessions_can_verify_without_duplicating_the_full_matrix(self):
+        for charter in (prompts.IMPLEMENTER_CHARTER, prompts.REVISER_CHARTER):
+            self.assertIn("Run cheap, focused tests", charter)
+            self.assertIn("targeted builds", charter)
+            self.assertIn("Verify gate must still pass on the exact candidate", charter)
+        plan = plan_dict()
+        implementation = prompts.implementer_prompt(plan, plan["tasks"][0], ISSUE)
+        revision = prompts.reviser_prompt(plan, None, "compiler failed", ISSUE)
+        self.assertNotIn("DO NOT RUN", implementation)
+        self.assertIn("run focused checks", implementation)
+        self.assertIn("focused checks that reproduce the failure", revision)
+        self.assertIn("final Verify still owns the full matrix", revision)
+
     def test_reviewer_and_release_charters(self):
         self.assertTrue(prompts.REVIEWER_CHARTER.startswith("You are Astra performing a code review for the Herdr Code Factory."))
         self.assertIn("Approve only with positive evidence for every original requirement", prompts.REVIEWER_CHARTER)

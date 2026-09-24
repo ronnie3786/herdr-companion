@@ -2037,7 +2037,7 @@ final class HerdrHudSession {
                     runID: run.id,
                     machineID: machineID
                 ), report.status.isTerminal else { continue }
-                if self.applyReconciledTerminalRun(report) {
+                if self.applyReconciledTerminalRun(report, identity: identity) {
                     await self.schedulePersistenceSave()
                 }
                 // Two consecutive terminal reports that agree on the cost
@@ -2049,11 +2049,18 @@ final class HerdrHudSession {
     }
 
     /// Merges one authoritative terminal report into the aggregate and its
-    /// transcript row. The caller already scoped the report to this
-    /// conversation, so a late cost can only update its own accepted turn.
+    /// transcript row. The caller scoped the fetch to this conversation, but
+    /// the aggregate can still be replaced while the report is in flight, so
+    /// the exact identity and run are revalidated here as well before a late
+    /// cost can touch its accepted turn.
     @discardableResult
-    private func applyReconciledTerminalRun(_ run: HeadlessAgentRun) -> Bool {
-        guard run.status.isTerminal, chatMetadata.latestRunID == run.id else { return false }
+    private func applyReconciledTerminalRun(
+        _ run: HeadlessAgentRun,
+        identity: HerdrHudChatMetadataAccumulator.Identity
+    ) -> Bool {
+        guard run.status.isTerminal,
+              chatMetadata.isScoped(to: identity),
+              chatMetadata.latestRunID == run.id else { return false }
         let modelName = run.model.map(PiModelDisplayName.short(fullID:))
         var changed = false
         mutateChatMetadata { metadata in

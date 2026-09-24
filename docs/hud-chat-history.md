@@ -95,9 +95,13 @@ failed or cancelled turns, and survives the local transcript caps.
 Metadata stays honest when it is incomplete. A missing model is never guessed,
 a missing or partial total is never presented as a complete one, and when both
 values are unavailable the bubble simply omits the trailing slot. Legacy caches
-that cannot prove coverage stay unknown until history establishes it. The
-machine that owns the chat is never shown in the collapsed bubble and is never
-used as a fallback label; machine selection and routing are unchanged. The full
+that cannot prove coverage stay unknown until history establishes it. Because a
+cancellation can be reported terminal before its cost finishes draining, an
+observed terminal turn is rechecked a bounded number of times and a corrected
+total is persisted, even while its bubble is collapsed; this stops on its own
+instead of adding a background poller. The machine that owns the chat is never
+shown in the collapsed bubble and is never used as a fallback label; machine
+selection and routing are unchanged. The full
 accessibility summary for the row still names both the model and the session
 cost even while only one of them is drawn. This is a Mac presentation change:
 no server update is needed beyond the existing `hud-chat-v1` run and history

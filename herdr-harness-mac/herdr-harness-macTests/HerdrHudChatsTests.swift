@@ -1594,12 +1594,58 @@ struct HerdrHudChatsTests {
         #expect(session.exchanges.last?.modelLabel == "default")
         #expect(session.bubbleMetadata.modelName == nil)
 
-        // Only the authoritative run report may resolve the Beta model.
+        // A history refresh that still sees no authoritative run model must
+        // keep the model unknown instead of promoting the local placeholder or
+        // a previous machine's default. Marking the reported cost missing
+        // forces the full paginated reconcile path rather than the unchanged
+        // shortcut.
         HudChatsURLProtocol.finish(runID)
         await task.value
+        HudChatsURLProtocol.setMissingCost(runID, true)
+        #expect(await session.refreshSavedHistoryPassivelyForTesting(model: fixture.model))
+        #expect(session.bubbleMetadata.modelName == nil)
+        #expect(session.exchanges.last?.modelLabel == "default")
+
+        // Only the authoritative run report may resolve the Beta model.
+        HudChatsURLProtocol.setMissingCost(runID, false)
         HudChatsURLProtocol.setModel(runID, "synthetic/beta-model")
         #expect(await session.refreshSavedHistoryPassivelyForTesting(model: fixture.model))
         #expect(session.bubbleMetadata.modelName == "Beta Model")
+    }
+
+    @Test("Loading the switched machine's own catalog restores a scoped default")
+    func switchedMachineCatalogResolvesItsOwnDefault() async throws {
+        let fixture = try Fixture(
+            machines: [
+                HerdrMachine(id: "machine-a", name: "Alpha", urlString: "https://alpha.example.invalid"),
+                HerdrMachine(id: "machine-b", name: "Beta", urlString: "https://beta.example.invalid"),
+            ],
+            catalogByHost: [
+                "alpha.example.invalid": #"{"ok":true,"models":[],"default":{"provider":"synthetic","id":"alpha-default","name":"Alpha Default"}}"#,
+                "beta.example.invalid": #"{"ok":true,"models":[],"default":{"provider":"synthetic","id":"beta-default","name":"Beta Default"}}"#,
+            ]
+        )
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.selectedMachineID = "machine-a"
+        await session.loadModels(model: fixture.model)
+        #expect(session.defaultModel?.displayName == "Alpha Default")
+
+        // The switch drops Alpha's catalog, so its default cannot leak; only
+        // Beta's own freshly loaded catalog may resolve a new scoped default.
+        session.selectedMachineID = "machine-b"
+        await session.loadModels(model: fixture.model)
+        #expect(session.defaultModel?.displayName == "Beta Default")
+        session.draft = "Run on Beta"
+        let task = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
+        try await wait { session.thread != nil }
+        #expect(session.exchanges.last?.modelLabel == "Beta Default")
+        #expect(session.bubbleMetadata.modelName == "Beta Default")
+
+        let runID = try #require(session.thread?.lastRunID)
+        HudChatsURLProtocol.finish(runID)
+        await task.value
+        #expect(session.bubbleMetadata.modelName == "Beta Default")
     }
 
     @Test("HUD chat bubble metadata sums distinct accepted turns across a continuation")

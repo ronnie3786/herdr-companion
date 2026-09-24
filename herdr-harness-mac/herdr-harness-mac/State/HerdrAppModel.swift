@@ -247,6 +247,12 @@ final class HerdrAppModel {
     /// session no longer exists, so the server starts a fresh thread).
     var demoForcesFreshThreadForTesting = false
 
+    /// Demo continuations resolve the run that started their thread instead of
+    /// treating the immediately previous run as a new root, matching what a
+    /// live companion server reports from its durable run catalog. Keyed by
+    /// run id and kept only while this demo model lives.
+    @ObservationIgnored private var demoThreadRoots: [String: String] = [:]
+
     /// Test-only: record the same topology provenance a successful fleet
     /// refresh records after a capabilities probe, without reaching the
     /// network.
@@ -3300,6 +3306,23 @@ final class HerdrAppModel {
             let now = HerdrTimestamp.string(from: .now)
             let id = "demo-agent-\(UUID().uuidString)"
             let demoFolder = cwd ?? HerdrHudWorkingFolder.homePath
+            #if DEBUG
+            // A live server resolves a continuation's thread root from its
+            // durable run catalog. Without that mapping every third demo turn
+            // would look like a new conversation and reset derived state such
+            // as the HUD bubble's cumulative metadata.
+            let threadRootRunID: String
+            if demoForcesFreshThreadForTesting {
+                threadRootRunID = id
+            } else if let continueFromRunId {
+                threadRootRunID = demoThreadRoots[continueFromRunId] ?? continueFromRunId
+            } else {
+                threadRootRunID = id
+            }
+            demoThreadRoots[id] = threadRootRunID
+            #else
+            let threadRootRunID = continueFromRunId ?? id
+            #endif
             return HeadlessAgentRun(
                 id: id,
                 status: .completed,
@@ -3321,12 +3344,7 @@ final class HerdrAppModel {
                 attachments: attachments?.map(\.filename),
                 steps: nil,
                 stepsTruncated: nil,
-                threadRootRunId: {
-#if DEBUG
-                    if demoForcesFreshThreadForTesting { return id }
-#endif
-                    return continueFromRunId ?? id
-                }()
+                threadRootRunId: threadRootRunID
             )
         }
         guard canControl(machineID: machineID), let client = client(forMachine: machineID) else {

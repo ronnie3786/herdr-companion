@@ -46,6 +46,11 @@ private extension Duration {
 extension EnvironmentValues {
     @Entry var herdrHudShowsModel = true
     @Entry var herdrHudMetadataTimeSource = HerdrHudMetadataTimeSource.live
+    /// Render tests have no host accessibility setting to influence, and the
+    /// system `accessibilityReduceMotion` value is read-only to app code. This
+    /// optional override lets a fixture exercise the reduced-motion branch
+    /// while production stays on the system value (nil).
+    @Entry var herdrHudReduceMotionOverride: Bool? = nil
 }
 
 /// One shared time source supplies the phase to the entire stack, including overflow rows. Uses a

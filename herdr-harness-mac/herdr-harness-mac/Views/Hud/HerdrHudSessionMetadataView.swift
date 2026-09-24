@@ -2,8 +2,20 @@ import SwiftUI
 
 struct HerdrHudSessionMetadataView: View {
     let metadata: HerdrHudSessionMetadata
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.herdrHudReduceMotionOverride) private var reduceMotionOverride
     @Environment(\.herdrHudShowsModel) private var showsModel
+
+    private var reduceMotion: Bool {
+        Self.usesReducedMotion(systemValue: systemReduceMotion, override: reduceMotionOverride)
+    }
+
+    /// Resolves the fade's reduced-motion state. Production passes the system
+    /// value and no override; render tests pass an explicit override so the
+    /// offscreen fade branch is deterministic.
+    static func usesReducedMotion(systemValue: Bool, override: Bool?) -> Bool {
+        override ?? systemValue
+    }
 
     var body: some View {
         ZStack(alignment: .trailing) {

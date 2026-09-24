@@ -262,6 +262,19 @@ class FirstMateStore:
         # Version 6 adds only the idempotent board indexes in SCHEMA.
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(6,?)", (_now(),))
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(8,?)", (_now(),))
+        with self._transaction():
+            if "discovery_state" not in {row[1] for row in self._db.execute("PRAGMA table_info(fm_links)")}:
+                self._db.execute("ALTER TABLE fm_links ADD COLUMN discovery_state TEXT NOT NULL DEFAULT 'unverified'")
+                # Explicit saves/restores made before this migration remain choices,
+                # even when a duplicate kept its original discovery provenance.
+                self._db.execute("""UPDATE fm_links SET discovery_state='confirmed'
+                    WHERE source!='discovery' OR title_source='user' OR EXISTS(
+                        SELECT 1 FROM fm_receipts r WHERE
+                        (r.scope='link:'||fm_links.feature_id
+                         OR (r.scope='link_visibility:'||fm_links.feature_id||':'||fm_links.id
+                             AND json_extract(r.result_json,'$.hidden')=0))
+                        AND json_extract(r.result_json,'$.id')=fm_links.id)""")
+            self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(9,?)", (_now(),))
         self._seed_feedback_categories()
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(7,?)", (_now(),))
 
@@ -369,7 +382,10 @@ class FirstMateStore:
     @staticmethod
     def _link_projection(result: dict) -> dict:
         if "hidden" in result:
-            result["hidden"] = bool(result["hidden"])
+            result["hidden"] = bool(result["hidden"]) or (
+                result.get("source") == "discovery"
+                and result.get("discovery_state", "relevant") == "unverified"
+            )
         return result
 
     def _assignment_projection(self, result: dict) -> dict:
@@ -660,6 +676,30 @@ class FirstMateStore:
             raise FirstMateError("Invalid discovery limit", code="invalid_request", status=400)
         return max(1, min(limit, 1000))
 
+    def link_discovery_context(self, feature_id: str) -> dict | None:
+        with self._lock:
+            row = self._db.execute("SELECT id,title,goal,cwd FROM fm_features WHERE id=?", (feature_id,)).fetchone()
+            return dict(row) if row else None
+
+    def link_discovery_links(self, *, after: Any = None, limit: int = 64) -> list[dict]:
+        with self._lock:
+            return [self._decode(row) for row in self._db.execute(
+                "SELECT id,feature_id,url,provenance_json FROM fm_links WHERE source='discovery' "
+                "AND discovery_state!='confirmed' AND id>? ORDER BY id LIMIT ?",
+                (after or "", self._discovery_limit(limit)),
+            )]
+
+    def reconcile_discovered_link(self, link_id: str, *, relevant: bool) -> None:
+        """Reversible automatic filtering, separate from the user's hide choice."""
+        state = "relevant" if relevant else "unverified"
+        with self._transaction():
+            row = self._db.execute("SELECT * FROM fm_links WHERE id=?", (link_id,)).fetchone()
+            if row is None or row["source"] != "discovery" or row["discovery_state"] == "confirmed":
+                return
+            if row["discovery_state"] != state:
+                self._db.execute("UPDATE fm_links SET discovery_state=?,updated_at=? WHERE id=?", (state, _now(), link_id))
+                self._event(row["feature_id"], "link.context_updated", "Pull request context checked", {"link_id": link_id})
+
     def link_discovery_sessions(self, *, after: Any = None, limit: int = 64) -> list[dict]:
         """One lightweight page of the managed session ledger, ordered by ID."""
         size = self._discovery_limit(limit)
@@ -798,9 +838,9 @@ class FirstMateStore:
         if row is None:
             link_id, now = _id("fml"), _now()
             self._db.execute(
-                "INSERT OR IGNORE INTO fm_links(id,feature_id,url,kind,title,title_source,source,provenance_json,hidden,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,0,?,?)",
+                "INSERT OR IGNORE INTO fm_links(id,feature_id,url,kind,title,title_source,source,provenance_json,hidden,created_at,updated_at,discovery_state) VALUES(?,?,?,?,?,?,?,?,0,?,?,?)",
                 (link_id, feature_id, url, normalized["kind"], normalized["title"], title_source,
-                 source, _json(dict(provenance)), now, now),
+                 source, _json(dict(provenance)), now, now, "relevant" if source == "discovery" else "confirmed"),
             )
             row = self._db.execute("SELECT * FROM fm_links WHERE feature_id=? AND url=?", (feature_id, url)).fetchone()
             if row is None:
@@ -812,6 +852,16 @@ class FirstMateStore:
                 {"link_id": row["id"], "kind": normalized["kind"], "source": source},
             )
             return self._link_projection(self._decode(row))
+        state = "confirmed" if source != "discovery" else "relevant"
+        if row["discovery_state"] != "confirmed":
+            previous = json.loads(row["provenance_json"])
+            if provenance.get("matched_ticket"):
+                previous["matched_ticket"] = provenance["matched_ticket"]
+            if row["discovery_state"] != state or previous != json.loads(row["provenance_json"]):
+                self._db.execute("UPDATE fm_links SET discovery_state=?,provenance_json=?,updated_at=? WHERE id=?",
+                                 (state, _json(previous), _now(), row["id"]))
+                self._event(feature_id, "link.context_updated", "Pull request context checked", {"link_id": row["id"]})
+                row = self._db.execute("SELECT * FROM fm_links WHERE id=?", (row["id"],)).fetchone()
         link = self._link_projection(self._decode(row))
         wanted = normalized["title"] if normalized.get("title_supplied") else ""
         # An explicit user title always wins. A trusted upsert may fill an empty
@@ -887,10 +937,11 @@ class FirstMateStore:
             link = self._one("fm_links", link_id)
             if link["feature_id"] != feature_id:
                 raise FirstMateError("First Mate record not found", code="not_found", status=404)
-            if link["hidden"] != hidden:
+            raw = self._db.execute("SELECT hidden,discovery_state FROM fm_links WHERE id=?", (link_id,)).fetchone()
+            if bool(raw["hidden"]) != hidden or (not hidden and raw["discovery_state"] != "confirmed"):
                 self._db.execute(
-                    "UPDATE fm_links SET hidden=?,updated_at=? WHERE id=?",
-                    (1 if hidden else 0, _now(), link_id),
+                    "UPDATE fm_links SET hidden=?,discovery_state=?,updated_at=? WHERE id=?",
+                    (1 if hidden else 0, raw["discovery_state"] if hidden else "confirmed", _now(), link_id),
                 )
                 self._event(feature_id, "link.hidden" if hidden else "link.restored",
                             "Link hidden" if hidden else "Link restored",

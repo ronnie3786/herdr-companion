@@ -64,10 +64,18 @@ explicit user title replaces a derived or agent title.
 When the companion advertises `first-mate-links-v1`, its runtime scans only
 validated feature-owned evidence: current and retained managed sessions,
 finalized dispatch jobs, accepted assignment outcomes, completed visit
-summaries, and their documents. Recognizable exact
-`github.com/<owner>/<repo>/pull/<number>` URLs are retained automatically, so a
-draft PR and a later ready-for-review reference to the same PR deduplicate into
-one record. `/files` subpaths, query strings, and fragments canonicalize to the
+summaries, and their documents. Exact
+`github.com/<owner>/<repo>/pull/<number>` URLs are retained only when they match
+the feature context. An explicit PR URL in the feature request is authoritative;
+a bare PR number also requires a matching local Git remote. Otherwise the PR
+must belong to that repository and match the feature ticket in structured PR
+metadata (title or branch), or an unambiguous delivery statement in saved
+evidence. A named target takes precedence over looser ticket matches.
+
+A ticket mentioned elsewhere in a search result or PR body does not associate
+the PR with this feature. Ordinary tool-output prose and background references
+are ignored. When context is insufficient, use an explicit save. Draft and
+ready-for-review references to the same qualifying PR deduplicate into one record. `/files` subpaths, query strings, and fragments canonicalize to the
 pull request root.
 
 Discovery boundaries:
@@ -83,8 +91,12 @@ Discovery boundaries:
 - Text is treated as data. The companion never calls GitHub, `gh`, or the
   destination, and it never infers draft, ready, merged, or closed state. The UI
   says **Pull request** without claiming a lifecycle status.
-- Hiding a detected link suppresses it during later discovery and repeated agent
-  registration; restoring it is explicit.
+- Existing automatic links are rechecked against the current feature context.
+  Unrelated or unverified links are hidden, not deleted. **Show hidden → Restore**
+  explicitly retains one if needed. User saves, custom titles, and restores are
+  preserved, and a user-hidden link stays hidden even when it matches.
+- Repository identity comes from bounded reads of local Git remote configuration.
+  Discovery never runs a remote Git command or fetches ticket metadata.
 
 ## General links and share URLs
 
@@ -106,8 +118,10 @@ client remain compatible with no new link-management interface of their own.
 
 Full Mac link management requires the matching companion/Pi package, installed
 and restarted separately. The signed Mac feed installs only the app; no server
-cutover, restart, or release-version change is performed by this work. See the
-companion release notes for the route, storage, and discovery details.
+cutover is performed by the app updater. The contextual discovery fix requires
+companion 0.46.2b1 and its bundled Pi extension, with an additive, lossless saved-link
+migration. Back up the database before the server update. See the companion
+release notes for installation and verification details.
 
 ## Verification checklist
 

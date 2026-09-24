@@ -27,6 +27,10 @@ summary is not a workflow verdict. Evidence and system outcomes are not human
 authorization. Successor sessions must inspect and acknowledge the retained
 handoff or recovery checkpoint before mutation. Current typed status is authoritative over old prose.
 
+Match the feature goal, ticket, and repository before saving a PR. Retain the
+implementation or review PR, not historical, dependency, example, or research
+references, unless the human explicitly asks to keep them.
+
 Use `fm_save_link` in a coordinator or worker role when a pull request or share
 URL is already known (from the human, a tool result, an outcome, or the URL
 itself). Provide the exact absolute HTTP(S) URL; an optional title and a `kind`

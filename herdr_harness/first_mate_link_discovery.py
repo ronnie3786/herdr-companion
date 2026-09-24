@@ -3,8 +3,8 @@
 First Mate features can retain links explicitly, and managed agents can register
 them through ``fm_save_link``. This module adds the automatic side: recognizable
 GitHub pull-request URLs found in evidence that the companion already owns are
-retained for the feature without any model turn, provider request, or network
-fetch.
+retained only when associated with the feature request. This needs no model turn,
+provider request, or network fetch.
 
 Eligible evidence is deliberately narrow:
 
@@ -20,8 +20,8 @@ are never interpreted or executed. Session reads require containment under the
 private sessions root, a matching session header, and unambiguous feature
 ownership. Discovery stores only exact ``github.com/<owner>/<repo>/pull/<number>``
 links (owner and repository casing is folded); general URLs are saved explicitly.
-Draft, ready, merged, and closed wording is irrelevant: recognition is the URL
-alone.
+URLs must also match the feature request: an explicit target PR in its repository,
+or evidence associating the PR with its ticket. Background mentions are ignored.
 
 The pass is bounded from end to end. Inventory is built one lightweight page per
 category with durable per-category cursors, so a pass never reads a public
@@ -45,6 +45,7 @@ from typing import Any, Callable, Mapping
 
 from .alerts import utc_now
 from .first_mate_links import parse_github_pull_request
+from .first_mate_link_context import PullRequestContext, repository_names
 
 MAX_RECORD_BYTES = 4 * 1024 * 1024
 MAX_JOB_BYTES = 4 * 1024 * 1024
@@ -57,7 +58,7 @@ URL_OVERLAP_CHARS = 4096 + 64
 ACCEPTED_VERDICTS = ("success", "passed")
 MESSAGE_ROLES = {"user", "assistant", "toolResult"}
 JOB_KINDS = {"coordinator", "worker", "advisor"}
-INVENTORY_CATEGORIES = ("session", "job", "outcome", "visit", "document")
+INVENTORY_CATEGORIES = ("link", "session", "job", "outcome", "visit", "document")
 
 _URL_PATTERN = re.compile(r"https?://[^\s<>\"'`)\]}\x00-\x1f]+")
 _TRAILING_PUNCTUATION = ".,;:!?…\"'"
@@ -284,12 +285,14 @@ class FirstMateLinkDiscovery:
         self.max_bytes_per_source = max(1024, int(max_bytes_per_source))
         self._clock = clock or time.monotonic
         self._last_scan: float | None = None
+        self._contexts: dict[str, PullRequestContext | None] = {}
+        self._repositories: dict[str, tuple[float, frozenset[str]]] = {}
 
     # -- cursor persistence -------------------------------------------------
 
     def _load_cursor(self) -> dict:
         value = _read_bounded_json(self.cursor_path, MAX_CURSOR_BYTES)
-        if not isinstance(value, Mapping):
+        if not isinstance(value, Mapping) or value.get("version") != 3:
             return self._empty_cursor()
         sources = value.get("sources")
         inventory = value.get("inventory")
@@ -311,7 +314,7 @@ class FirstMateLinkDiscovery:
 
     @staticmethod
     def _empty_cursor() -> dict:
-        return {"version": 2, "inventory": {"category": 0, "after": {}, "job_paths": {}}, "sources": {}}
+        return {"version": 3, "inventory": {"category": 0, "after": {}, "job_paths": {}}, "sources": {}}
 
     def _write_cursor(self, value: Mapping[str, Any]) -> None:
         self.cursor_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -449,6 +452,10 @@ class FirstMateLinkDiscovery:
 
     def _inventory_page(self, category: str, after: Any, limit: int, budget: _PassBudget,
                         job_paths: dict[str, str]) -> tuple[list[dict], Any, bool]:
+        if category == "link":
+            rows = self.store.link_discovery_links(after=after, limit=limit)
+            entries = [{"key": "link:" + row["id"], "kind": "link", **row} for row in rows]
+            return entries, rows[-1]["id"] if rows else after, len(rows) < limit
         if category == "session":
             return self._session_page(after, limit)
         if category == "job":
@@ -497,6 +504,7 @@ class FirstMateLinkDiscovery:
             return {"ok": True, "skipped": "interval", "attempted": 0, "saved": 0}
         self._last_scan = now
 
+        self._contexts = {}
         state = self._load_cursor()
         budget = _PassBudget(self.max_bytes_per_pass)
         sources, inventory = self._inventory(state, budget)
@@ -512,12 +520,16 @@ class FirstMateLinkDiscovery:
 
         if len(updated) > MAX_SOURCE_STATES:
             updated = dict(list(updated.items())[-MAX_SOURCE_STATES:])
-        self._write_cursor({"version": 2, "inventory": inventory, "sources": updated})
+        self._write_cursor({"version": 3, "inventory": inventory, "sources": updated})
         return {"ok": True, "attempted": attempted, "saved": saved, "sources": len(sources),
                 "bytes": self.max_bytes_per_pass - budget.remaining}
 
     def _scan_source(self, source: Mapping[str, Any], cursor: Mapping[str, Any],
                      budget: _PassBudget) -> dict:
+        if source["kind"] == "link":
+            match = self._qualify(source, source["url"], matched_ticket=source.get("provenance", {}).get("matched_ticket", ""))
+            self.store.reconcile_discovered_link(source["id"], relevant=match is not None)
+            return {"saved": 0, "cursor": {}}
         if source["kind"] == "session":
             return self._scan_session(source, cursor, budget)
         return self._scan_text(source, cursor, budget)
@@ -571,7 +583,11 @@ class FirstMateLinkDiscovery:
         for record in records:
             for text in message_texts(record):
                 for url in github_pull_requests(text):
-                    self._upsert(source, url, native_session_id=native_id,
+                    match = self._qualify(source, url, text,
+                                          allow_prose=record.get("message", {}).get("role") != "toolResult")
+                    if match is None:
+                        continue
+                    self._upsert({**source, "provenance": match}, url, native_session_id=native_id,
                                  assignment_id=source.get("assignment_id"))
                     saved += 1
         new_cursor: dict[str, Any] = {"offset": after, "inode": stat.st_ino, "device": stat.st_dev}
@@ -611,6 +627,10 @@ class FirstMateLinkDiscovery:
         text = tail + chunk
         saved = 0
         for url in github_pull_requests(text):
+            match = self._qualify(source, url, text)
+            if match is None:
+                continue
+            source = {**source, "provenance": match}
             if source["kind"] == "document":
                 self._upsert(source, url, native_session_id=source.get("native_session_id"),
                              assignment_id=source.get("assignment_id"),
@@ -626,6 +646,29 @@ class FirstMateLinkDiscovery:
         new_tail = (tail + chunk)[-URL_OVERLAP_CHARS:] if new_offset < total else ""
         return {"saved": saved,
                 "cursor": {"offset": new_offset, "length": total, "identity": identity, "tail": new_tail}}
+
+    def _qualify(self, source: Mapping[str, Any], url: str, text: str = "", *,
+                 allow_prose: bool = True, matched_ticket: str = "") -> dict[str, str] | None:
+        feature_id = source["feature_id"]
+        if feature_id not in self._contexts:
+            feature = self.store.link_discovery_context(feature_id)
+            if feature is None:
+                self._contexts[feature_id] = None
+            else:
+                cwd = feature["cwd"]
+                cached = self._repositories.get(cwd)
+                if cached is None or self._clock() - cached[0] > 60:
+                    if len(self._repositories) >= 256:
+                        self._repositories.clear()
+                    cached = (self._clock(), repository_names(cwd))
+                    self._repositories[cwd] = cached
+                self._contexts[feature_id] = PullRequestContext(feature["title"], feature["goal"], cached[1])
+        context = self._contexts[feature_id]
+        if context is None:
+            return None
+        # Raw tool prose can contain a different ticket's delivery statement.
+        # Only structured PR metadata can establish a ticket match in tool output.
+        return context.qualify(url, text, matched_ticket=matched_ticket, allow_prose=allow_prose)
 
     def _upsert(self, source: Mapping[str, Any], url: str, *, native_session_id: Any = None,
                 assignment_id: Any = None, document_id: Any = None, message_id: Any = None) -> None:

@@ -502,7 +502,7 @@ class FirstMateRuntimeTests(unittest.TestCase):
         self.assertNotIn('provenance', worker_status['links'][0])
 
     def test_reconcile_runs_bounded_link_discovery_without_pi_or_a_model(self):
-        feature = self.feature()
+        feature = self.feature(goal='Review https://github.com/synthetic-owner/synthetic-repo/pull/90')
         directory = self.runtime.jobs_root / 'fmj_discovery_evidence'
         directory.mkdir(parents=True)
         session = self.runtime.root / 'sessions' / 'fmj_discovery_evidence' / 'session.jsonl'
@@ -510,7 +510,7 @@ class FirstMateRuntimeTests(unittest.TestCase):
         session.write_text(''.join(json.dumps(row) + '\n' for row in [
             {'type': 'session', 'id': 'native-discovery', 'version': 3},
             {'type': 'message', 'message': {'role': 'toolResult', 'content': [
-                {'type': 'text', 'text': 'gh pr create\nhttps://github.com/synthetic-owner/synthetic-repo/pull/90'}]}},
+                {'type': 'text', 'text': 'gh output\nhttps://github.com/synthetic-owner/synthetic-repo/pull/90\nhttps://github.com/synthetic-owner/research/pull/99'}]}},
         ]))
         (directory / 'job.json').write_text(json.dumps({
             'id': 'fmj_discovery_evidence', 'kind': 'worker', 'feature_id': feature['id'],

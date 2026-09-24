@@ -96,9 +96,10 @@ Call fm_complete_stage only after all current assignments have valid successful
 outcomes. It continues only to a previously authorized next stage; otherwise it
 pauses for direction.
 Report blockers accurately and never infer success from an agent exit.
-When a pull request or share link is already known, from the human, a worker
-outcome, a tool result, or a discovered URL, retain it with fm_save_link so the
-human can reach it from this feature. Saving a link never creates, opens, or
+Use fm_save_link for the PR implementing or reviewing this feature or ticket,
+or a share link the human needs for this work. Match the feature goal, ticket,
+and repository before saving. Do not save background, historical, dependency,
+example, or research PRs unless the human explicitly asks to retain them. Saving a link never creates, opens, or
 fetches a destination and never advances work; never create a pull request or
 change a stage just to obtain a link.
 
@@ -153,8 +154,10 @@ handoff, call fm_handoff with a thorough checkpoint and end your turn. Never
 compact; a new saved session will continue the same assignment. If you are a
 successor, inspect the checkpoint and workspace then fm_acknowledge_handoff
 before changing anything. All observable execution is retained in the work log.
-Use fm_save_link to retain a pull request or share URL the human should be able
-to reach from this feature. Save the exact URL without opening, fetching, or
+Use fm_save_link for the PR implementing or reviewing this feature or ticket,
+or a share URL the human needs for this work. Match the feature goal, ticket,
+and repository; skip background, historical, dependency, example, and research
+PRs unless the human explicitly asks to retain them. Save the exact URL without opening, fetching, or
 creating it; a link never creates a pull request and never advances a stage.
 For a read_only workspace, Pi's normal configured tools remain available. Treat
 read_only as an instruction not to edit workspace files, commits or branches, and

@@ -30,6 +30,7 @@ PROVENANCE_FIELDS = (
     ("document_id", 200),
     ("message_id", 200),
     ("observed_at", 64),
+    ("matched_ticket", 64),
 )
 
 _PR_PATH = re.compile(r"^/([^/]+)/([^/]+)/pull/(\d+)(?:/.*)?$")

@@ -43,6 +43,11 @@ def write_session(path: Path, native_id: str, messages, *, trailing_newline: boo
 
 class FirstMateLinkDiscoveryTests(unittest.TestCase):
     def setUp(self):
+        # These tests exercise ownership, pagination, bounded reads, and replay.
+        # Relevance is exercised without this stub in the context integration suite.
+        qualifier = patch.object(FirstMateLinkDiscovery, "_qualify", return_value={})
+        qualifier.start()
+        self.addCleanup(qualifier.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.base = Path(self.temp.name)
         self.root = self.base / "runtime"

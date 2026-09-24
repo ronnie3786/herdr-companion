@@ -9,7 +9,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from herdr_harness.agent_runs import SMART_RENAME_PROFILE
+from herdr_harness.agent_runs import ISSUE_REPORT_DRAFT_PROFILE, SMART_RENAME_PROFILE
 from herdr_harness.events import EventBroker
 from herdr_harness.pi_semantic import PiSemanticError
 from herdr_harness.server import make_server
@@ -1376,6 +1376,138 @@ class HerdrHTTPTests(unittest.TestCase):
                 # Neither rejected call created a run or changed the naming run.
                 self.assertEqual(len(list((directory / "runs").glob("agr_*"))), 1)
                 unchanged = manager.get(naming["id"])["run"]
+                self.assertEqual(unchanged["status"], "completed")
+                self.assertIsNone(unchanged.get("promotedPaneId"))
+            finally:
+                service.stop()
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=1)
+
+    def test_issue_report_draft_profile_is_advertised_and_dispatches_tool_free(self):
+        status, _, capabilities = self.request("/api/v1/agent-runs/capabilities")
+        self.assertEqual(status, 200)
+        self.assertIn(ISSUE_REPORT_DRAFT_PROFILE, capabilities["profiles"])
+        drafts = capabilities["issueReportDrafts"]
+        self.assertEqual(drafts["tools"], "none")
+        self.assertTrue(drafts["oneShot"])
+        self.assertEqual(drafts["kinds"], ["bug", "feature"])
+        self.assertEqual(drafts["requestFields"], ["kind", "text"])
+        self.assertEqual(drafts["outputFields"], ["title", "body"])
+        self.assertEqual(drafts["responseFormat"], "json")
+        self.assertEqual(drafts["maxSourceCharacters"], 20_000)
+        self.assertEqual(drafts["maxTitleCharacters"], 200)
+        self.assertEqual(drafts["maxBodyCharacters"], 20_000)
+        self.assertEqual(drafts["maxSeconds"], 60)
+
+        self.service.start_issue_report_draft = Mock(return_value={"ok": True, "run": {"id": "agr_0123456789ab"}})
+        self.service.start_contextual_question = Mock()
+        request = {"profile": ISSUE_REPORT_DRAFT_PROFILE, "kind": "bug", "text": "Synthetic plain-English request"}
+        status, _, _ = self.request("/api/v1/agent-runs", method="POST", payload=request)
+        self.assertEqual(status, 202)
+        self.service.start_issue_report_draft.assert_called_once_with(request)
+        self.service.start_contextual_question.assert_not_called()
+
+        offered = {**request, "kind": "feature", "text": "Another synthetic request"}
+        self.assertEqual(self.request("/api/v1/agent-runs", method="POST", payload=offered)[0], 202)
+        self.assertEqual(self.service.start_issue_report_draft.call_count, 2)
+
+        oversized = {**request, "text": "x" * 20_001}
+        status, _, body = self.request("/api/v1/agent-runs", method="POST", payload=oversized)
+        self.assertEqual(status, 413)
+        self.assertEqual(body["error"]["code"], "issue_report_draft_too_large")
+
+        for invalid in (
+            {**request, "kind": "task"},
+            {**request, "text": ""},
+            {**request, "text": "  \n\t "},
+            {**request, "text": "bad\x00text"},
+            {**request, "prompt": "extra"},
+            {**request, "model": "synthetic/model"},
+            {**request, "thinkingLevel": "high"},
+            {**request, "mode": "ask"},
+            {**request, "attachments": []},
+            {**request, "systemPrompt": "override"},
+            {**request, "continueFromRunId": "agr_0123456789ab"},
+            {**request, "cwd": "~"},
+            {**request, "paneId": "w1:p1"},
+            {**request, "context": {"version": 1}},
+            {**request, "clientRequestId": "draft-request-0001"},
+            {**request, "label": "Issue draft"},
+        ):
+            with self.subTest(invalid=str(invalid)[:80]):
+                self.assertEqual(self.request("/api/v1/agent-runs", method="POST", payload=invalid)[0], 400)
+        self.assertEqual(self.service.start_issue_report_draft.call_count, 2)
+
+        status, _, _ = self.request("/api/v1/agent-runs", method="POST", payload=request, token="wrong")
+        self.assertEqual(status, 401)
+        self.assertEqual(self.service.start_issue_report_draft.call_count, 2)
+
+    def test_issue_report_draft_executes_over_http_and_cannot_continue_or_promote(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            home = directory / "home"
+            (home / ".pi" / "agent").mkdir(parents=True)
+            (home / ".pi" / "agent" / "settings.json").write_text(
+                json.dumps({"defaultProvider": "openai-codex", "defaultModel": "gpt-5.6-luna"}),
+                encoding="utf-8",
+            )
+            fake_pi = write_fake_pi(directory)
+            draft = json.dumps({"title": "Synthetic title", "body": "Synthetic body"})
+            service = HerdrService(
+                FakeClient([snapshot_with_status("done")]),
+                environ={
+                    "HOME": str(home),
+                    "HERDR_HARNESS_AGENT_RUNS_ROOT": str(directory / "runs"),
+                    "HERDR_HARNESS_AGENT_PI_BIN": str(fake_pi),
+                    "FAKE_AGENT_RESPONSE": draft,
+                },
+            )
+            manager = service.agent_runs
+            server = make_server(service, host="127.0.0.1", port=0, api_token="test-secret")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            base = f"http://127.0.0.1:{server.server_address[1]}"
+
+            def call(path, method="GET", payload=None):
+                request = urllib.request.Request(
+                    base + path,
+                    method=method,
+                    data=None if payload is None else json.dumps(payload).encode(),
+                    headers={"Authorization": "Bearer test-secret", "Content-Type": "application/json"},
+                )
+                try:
+                    with urllib.request.urlopen(request, timeout=5) as response:
+                        return response.status, json.loads(response.read())
+                except urllib.error.HTTPError as exc:
+                    return exc.code, json.loads(exc.read())
+
+            try:
+                status, body = call(
+                    "/api/v1/agent-runs",
+                    method="POST",
+                    payload={"profile": ISSUE_REPORT_DRAFT_PROFILE, "kind": "feature", "text": "Synthetic request"},
+                )
+                self.assertEqual(status, 202)
+                run_id = body["run"]["id"]
+                finished = wait_for_status(manager, run_id, {"completed"})
+                self.assertEqual(finished["run"]["response"], draft)
+                self.assertEqual(finished["run"]["thinkingLevel"], "off")
+
+                status, body = call(
+                    "/api/v1/agent-runs",
+                    method="POST",
+                    payload={"prompt": "Continue generically", "continueFromRunId": run_id},
+                )
+                self.assertEqual(status, 409)
+                self.assertEqual(body["error"]["code"], "issue_report_draft_continuation_forbidden")
+
+                status, body = call(f"/api/v1/agent-runs/{run_id}/promote", method="POST", payload={})
+                self.assertEqual(status, 409)
+                self.assertEqual(body["error"]["code"], "issue_report_draft_promotion_forbidden")
+
+                self.assertEqual(len(list((directory / "runs").glob("agr_*"))), 1)
+                unchanged = manager.get(run_id)["run"]
                 self.assertEqual(unchanged["status"], "completed")
                 self.assertIsNone(unchanged.get("promotedPaneId"))
             finally:

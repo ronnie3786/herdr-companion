@@ -822,6 +822,132 @@ struct IssueReportComposerTests {
         #expect(IssueReportComposer.strippingImageMetadata(jpeg, filename: "photo.gif") == nil)
     }
 
+    @Test("Generated drafts apply atomically and restore in one guarded step")
+    func generatedDraftRoundTrip() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let composer = IssueReportComposer(temporaryDirectory: directory.appending(path: "tmp"))
+        composer.machineID = "machine-1"
+        composer.kind = .feature
+        composer.title = "Original title"
+        composer.body = "Original body"
+        #expect(!composer.canRestoreGeneratedDraft)
+
+        let token = composer.draftToken
+        let output = IssueReportDraftOutput(title: "Generated title", body: "Generated body")
+        #expect(composer.applyGeneratedDraft(output, token: token))
+        #expect(composer.title == "Generated title")
+        #expect(composer.body == "Generated body")
+        #expect(composer.generatedDraftRestorePoint?.title == "Original title")
+        #expect(composer.generatedDraftRestorePoint?.body == "Original body")
+        #expect(composer.generatedDraftRestorePoint?.kind == .feature)
+        #expect(composer.generatedDraftRestorePoint?.machineID == "machine-1")
+        #expect(composer.canRestoreGeneratedDraft)
+
+        #expect(composer.restoreGeneratedDraft())
+        #expect(composer.title == "Original title")
+        #expect(composer.body == "Original body")
+        #expect(!composer.canRestoreGeneratedDraft)
+        #expect(!composer.restoreGeneratedDraft())
+    }
+
+    @Test("A generated draft is refused when the title, body, kind, target, or phase changed")
+    func generatedDraftGuards() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let composer = IssueReportComposer(temporaryDirectory: directory.appending(path: "tmp"))
+        composer.machineID = "machine-1"
+        composer.title = "Original title"
+        composer.body = "Original body"
+        let output = IssueReportDraftOutput(title: "Generated", body: "Generated body")
+
+        // A newer field edit wins over a result captured before it.
+        let titleToken = composer.draftToken
+        composer.title = "My edit"
+        #expect(!composer.applyGeneratedDraft(output, token: titleToken))
+        #expect(composer.title == "My edit")
+        #expect(composer.body == "Original body")
+
+        let kindToken = composer.draftToken
+        composer.kind = .feature
+        #expect(!composer.applyGeneratedDraft(output, token: kindToken))
+
+        let targetToken = composer.draftToken
+        composer.machineID = "machine-2"
+        #expect(!composer.applyGeneratedDraft(output, token: targetToken))
+        #expect(composer.title == "My edit")
+
+        composer.machineID = "machine-1"
+        let submittingToken = composer.draftToken
+        composer.phase = .submitting
+        #expect(!composer.applyGeneratedDraft(output, token: submittingToken))
+
+        composer.phase = .editing
+        composer.discardTemporaryFiles()
+        #expect(!composer.applyGeneratedDraft(output, token: composer.draftToken))
+        #expect(composer.title == "My edit")
+    }
+
+    @Test("Restoring generated fields never overwrites a newer edit")
+    func restoreRefusesNewerEdits() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let composer = IssueReportComposer(temporaryDirectory: directory.appending(path: "tmp"))
+        composer.machineID = "machine-1"
+        composer.title = "Original title"
+        composer.body = "Original body"
+
+        #expect(composer.applyGeneratedDraft(
+            IssueReportDraftOutput(title: "Generated title", body: "Generated body"),
+            token: composer.draftToken
+        ))
+        composer.body = "My newer body"
+
+        #expect(!composer.canRestoreGeneratedDraft)
+        #expect(!composer.restoreGeneratedDraft())
+        #expect(composer.title == "Generated title")
+        #expect(composer.body == "My newer body")
+    }
+
+    @Test("An unchanged assignment keeps the captured draft token valid")
+    func noOpAssignmentKeepsToken() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let composer = IssueReportComposer(temporaryDirectory: directory.appending(path: "tmp"))
+        composer.machineID = "machine-1"
+        composer.title = "Same"
+        composer.body = "Same body"
+        let token = composer.draftToken
+
+        composer.title = "Same"
+        composer.body = "Same body"
+        composer.kind = .bug
+        composer.machineID = "machine-1"
+
+        #expect(composer.draftToken == token)
+        #expect(composer.applyGeneratedDraft(
+            IssueReportDraftOutput(title: "Generated", body: "Generated body"),
+            token: token
+        ))
+    }
+
+    @Test("Active smart-input preparation blocks submission")
+    func preparationBlocksSubmission() throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let composer = IssueReportComposer(temporaryDirectory: directory.appending(path: "tmp"))
+        composer.machineID = "machine-1"
+        composer.title = "Title"
+        composer.body = "Body"
+        #expect(composer.canSubmit)
+
+        composer.isPreparing = true
+        #expect(!composer.canSubmit)
+
+        composer.isPreparing = false
+        #expect(composer.canSubmit)
+    }
+
     // MARK: - Helpers
 
     private static let record = IssueReportRecord(

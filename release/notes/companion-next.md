@@ -78,4 +78,54 @@ update companion server packages or CLIs. See `docs/chat-tab-colors.md` and
 `docs/chat-tab-color-api.md` for setup, commands, freshness, and error
 semantics. This note does not perform any deployment.
 
+## Issue report drafting
+
+Adds an additive `issue-report-draft-v1` one-shot Agent-run profile for the Mac
+report sheet's optional smart input.
+
+- `/api/v1/agent-runs/capabilities` advertises the profile in `profiles` and
+  describes it under the additive `issueReportDrafts` object (`tools: none`,
+  `oneShot: true`, kinds `bug`/`feature`, request fields `kind` and `text`,
+  output fields `title` and `body`, JSON response format, the source/title/body
+  scalar limits, and `maxSeconds: 60`).
+- The authenticated `POST /api/v1/agent-runs` route accepts only
+  `{profile, kind, text}` for this profile and rejects every other field instead
+  of ignoring it, so an attachment, working directory, model override, system
+  prompt, pane scope, continuation, or supplied context cannot ride along.
+- The server executes exactly one run in `ask` mode with thinking Off, no
+  tools, no explicit extension, an empty topology, and no profile snapshot or
+  awareness bootstrap. If a configured execution timeout is shorter, the
+  shorter value applies; the profile is capped at 60 seconds. The stored run
+  cannot be continued or promoted, and no generic-agent fallback exists.
+- The run's system prompt is exclusively server-owned: Pi's own prompt is
+  replaced and the discovered `SYSTEM.md`/`APPEND_SYSTEM.md` are suppressed, so
+  no private companion instruction can enter a drafting request. A short-lived,
+  server-owned workspace beneath the system temporary directory disables
+  automatic agent/provider retries and automatic compaction recovery for this
+  run only, keeping one draft at one provider inference without modifying
+  operator Pi settings. Pi appends the process working directory to every
+  system prompt, even when `--system-prompt` replaces the base prompt, so that
+  workspace never lives inside the operator's home or the private run store and
+  is removed when the run reaches a terminal state, including on cancellation,
+  deletion, shutdown, or restart recovery of an interrupted run.
+- The server resolves the configured `defaultProvider`/`defaultModel` from the
+  companion's Pi configuration directory (honoring `PI_CODING_AGENT_DIR`),
+  validates that exact model against `pi --list-models`, and pins it on the
+  run. An unset, unavailable, or unsupported default returns an actionable
+  error instead of letting Pi substitute another authenticated provider or
+  model.
+- The source text travels on Pi's stdin as the exact JSON object
+  `{"kind": …, "text": …}`. The server owns the drafting charter: a concise
+  single-line title and structured Markdown body for the chosen kind that
+  preserve the supplied details and never invent facts.
+- The Mac app sends the request only after it sees the advertised profile, so
+  an older companion keeps manual reporting, recording, and transcription and
+  shows upgrade guidance for the optional AI action alone.
+
+This is an additive companion change. Older clients are unaffected, and a
+companion without the profile is never sent a drafting request. Install the
+updated companion package separately from the Mac app; a Mac update does not
+install server packages. See `docs/issue-report-smart-input.md` for interaction,
+privacy, limits, and verification responsibilities.
+
 Update the companion separately from the Mac app. No server cutover is performed by installing a native app update.

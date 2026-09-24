@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 from herdr_harness.agent_runs import (
+    ISSUE_REPORT_DRAFT_PROFILE,
     PUBLIC_RUN_KEYS,
     SMART_RENAME_PROFILE,
     AgentRunError,
@@ -34,6 +35,91 @@ def write_fake_pi(directory: Path) -> Path:
             def value(flag):
                 return sys.argv[sys.argv.index(flag) + 1]
 
+            def read_json(path):
+                try:
+                    with open(path, "r", encoding="utf-8") as handle:
+                        return json.load(handle)
+                except (OSError, ValueError):
+                    return {}
+
+            def agent_dir():
+                override = os.environ.get("PI_CODING_AGENT_DIR")
+                if override:
+                    return override
+                home = os.environ.get("HOME")
+                return os.path.join(home, ".pi", "agent") if home else ""
+
+            def merge(base, override):
+                merged = dict(base) if isinstance(base, dict) else {}
+                if not isinstance(override, dict):
+                    return merged
+                for key, item in override.items():
+                    if isinstance(item, dict) and isinstance(merged.get(key), dict):
+                        merged[key] = merge(merged[key], item)
+                    else:
+                        merged[key] = item
+                return merged
+
+            def merged_settings():
+                root = agent_dir()
+                global_settings = read_json(os.path.join(root, "settings.json")) if root else {}
+                project_settings = read_json(os.path.join(os.getcwd(), ".pi", "settings.json"))
+                return merge(global_settings, project_settings)
+
+            def read_text(path):
+                try:
+                    with open(path, "r", encoding="utf-8") as handle:
+                        return handle.read()
+                except (OSError, ValueError):
+                    return None
+
+            def effective_system_prompt():
+                argv = sys.argv[1:]
+                if "--system-prompt" in argv:
+                    base = argv[argv.index("--system-prompt") + 1]
+                else:
+                    root = agent_dir()
+                    base = read_text(os.path.join(root, "SYSTEM.md")) if root else None
+                    base = base if base is not None else "(pi-default-system-prompt)"
+                appends = []
+                if "--append-system-prompt" in argv:
+                    index = argv.index("--append-system-prompt")
+                    if index + 1 < len(argv) and argv[index + 1]:
+                        appends.append(argv[index + 1])
+                else:
+                    root = agent_dir()
+                    append_file = read_text(os.path.join(root, "APPEND_SYSTEM.md")) if root else None
+                    if append_file:
+                        appends.append(append_file)
+                # Pi 0.87 buildSystemPromptSections unconditionally adds a
+                # <cwd> section, even when --system-prompt replaces the base
+                # prompt, so the provider sees the expanded process cwd.
+                appends.append("<cwd>" + chr(10) + os.getcwd().replace(chr(92), "/") + chr(10) + "</cwd>")
+                separator = chr(10) + chr(10)
+                return base + separator + separator.join(appends)
+
+            def provider_invocations():
+                probe = os.environ.get("FAKE_AGENT_PROBE", "")
+                settings = merged_settings()
+                retry = settings.get("retry") if isinstance(settings.get("retry"), dict) else {}
+                provider = retry.get("provider") if isinstance(retry.get("provider"), dict) else {}
+                count = 1
+                if probe == "transient":
+                    if retry.get("enabled", True):
+                        try:
+                            count += max(0, int(retry.get("maxRetries", 3)))
+                        except (TypeError, ValueError):
+                            pass
+                    try:
+                        count += max(0, int(provider.get("maxRetries", 2)))
+                    except (TypeError, ValueError):
+                        pass
+                elif probe == "overflow":
+                    compaction = settings.get("compaction") if isinstance(settings.get("compaction"), dict) else {}
+                    if compaction.get("enabled", True):
+                        count += 1
+                return count
+
             if "--list-models" in sys.argv:
                 marker_path = os.environ.get("FAKE_LIST_MODELS_CAPTURE")
                 if marker_path:
@@ -52,6 +138,9 @@ def write_fake_pi(directory: Path) -> Path:
                     "argv": sys.argv[1:],
                     "prompt": prompt,
                     "cwd": os.getcwd(),
+                    "effectiveSystemPrompt": effective_system_prompt(),
+                    "effectiveSettings": merged_settings(),
+                    "providerInvocations": provider_invocations(),
                     "herdrPaneId": os.environ.get("HERDR_PANE_ID"),
                     "herdrAgentRunId": os.environ.get("HERDR_AGENT_RUN_ID"),
                     "herdrAgentRunMode": os.environ.get("HERDR_AGENT_RUN_MODE"),
@@ -231,6 +320,19 @@ def write_fake_pi(directory: Path) -> Path:
                     message["errorMessage"] = "provider failed after emitting a title"
                 print(json.dumps({"event": {"type": "message_end", "message": message}}), flush=True)
                 print(json.dumps({"type": "agent_end", "messages": [message]}), flush=True)
+            elif mode in {"draft-error", "draft-aborted"}:
+                # A valid-looking draft streamed before the provider failed or
+                # aborted. The companion must still fail the one-shot run.
+                stop_reason = mode.removeprefix("draft-")
+                message = {
+                    "role": "assistant",
+                    "text": json.dumps({"title": "Synthetic draft title", "body": "Synthetic draft body"}),
+                    "stopReason": stop_reason,
+                }
+                if stop_reason == "error":
+                    message["errorMessage"] = "provider failed after emitting a draft"
+                print(json.dumps({"event": {"type": "message_end", "message": message}}), flush=True)
+                print(json.dumps({"type": "agent_end", "messages": [message]}), flush=True)
             else:
                 print(json.dumps({"event": {
                     "type": "message_end",
@@ -260,9 +362,18 @@ def wait_for_status(manager: AgentRunManager, run_id: str, statuses, timeout=5):
 
 
 class AgentRunManagerTests(unittest.TestCase):
-    def manager(self, directory: Path, *, clock=time.monotonic, **extra) -> AgentRunManager:
+    def manager(
+        self, directory: Path, *, clock=time.monotonic, default_model: bool = False, **extra
+    ) -> AgentRunManager:
         home = directory / "home"
         home.mkdir(exist_ok=True)
+        if default_model:
+            settings_path = home / ".pi" / "agent" / "settings.json"
+            settings_path.parent.mkdir(parents=True, exist_ok=True)
+            settings_path.write_text(
+                json.dumps({"defaultProvider": "openai-codex", "defaultModel": "gpt-5.6-luna"}),
+                encoding="utf-8",
+            )
         fake_pi = write_fake_pi(directory)
         environ = {
             "HOME": str(home),
@@ -281,7 +392,7 @@ class AgentRunManagerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
             capture = directory / "capture.json"
-            manager = self.manager(directory, FAKE_AGENT_CAPTURE=str(capture))
+            manager = self.manager(directory, default_model=True, FAKE_AGENT_CAPTURE=str(capture))
             self.addCleanup(manager.stop)
             manager._profile_snapshot = lambda: {"prompt": "<!-- herdr-agent-profile:v1 -->\nSynthetic tone", "revision": 1}
             first = manager.start(prompt="Hello", label="Synthetic", cwd=str(directory / "home"), topology={})
@@ -301,6 +412,17 @@ class AgentRunManagerTests(unittest.TestCase):
             wait_for_status(manager, third["run"]["id"], {"completed", "failed"})
             self.assertNotIn("agentProfileSnapshot", manager._read(third["run"]["id"]))
             self.assertNotIn("Changed tone", str(json.loads(capture.read_text())["argv"]))
+            fourth = manager.start(
+                prompt="Synthetic request",
+                label="Issue draft",
+                cwd=str(directory / "home"),
+                topology={},
+                thinking_level="off",
+                _assistant={"profile": ISSUE_REPORT_DRAFT_PROFILE, "reportKind": "bug"},
+            )
+            wait_for_status(manager, fourth["run"]["id"], {"completed", "failed"})
+            self.assertNotIn("agentProfileSnapshot", manager._read(fourth["run"]["id"]))
+            self.assertNotIn("Changed tone", str(json.loads(capture.read_text())["argv"]))
 
     def test_long_run_timeout_default_and_overrides(self):
         for configured, expected in [(None, 3600), ("7200", 7200), ("600", 600), ("86400", 86400), ("999999", 3600)]:
@@ -317,7 +439,7 @@ class AgentRunManagerTests(unittest.TestCase):
             directory = Path(raw_directory)
             marker_path = directory / "models-called.jsonl"
             settings_path = directory / "home" / ".pi" / "agent" / "settings.json"
-            settings_path.parent.mkdir(parents=True)
+            settings_path.parent.mkdir(parents=True, exist_ok=True)
             settings_path.write_text(
                 json.dumps(
                     {
@@ -696,6 +818,84 @@ class AgentRunManagerTests(unittest.TestCase):
             unchanged = manager.get(run_id)["run"]
             self.assertEqual(unchanged["status"], "completed")
             self.assertIsNone(unchanged.get("promotedPaneId"))
+            manager.stop()
+
+    def test_issue_report_draft_profile_is_tool_free_and_rejects_unsafe_overrides(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            capture_path = directory / "capture.json"
+            manager = self.manager(directory, default_model=True, FAKE_AGENT_CAPTURE=str(capture_path))
+
+            started = manager.start(
+                prompt="Synthetic request",
+                label="Issue draft",
+                cwd=str(directory / "home"),
+                topology={},
+                _assistant={"profile": ISSUE_REPORT_DRAFT_PROFILE, "reportKind": "feature"},
+            )
+            finished = wait_for_status(manager, started["run"]["id"], {"completed"})
+
+            self.assertEqual(finished["run"]["status"], "completed")
+            capture = json.loads(capture_path.read_text(encoding="utf-8"))
+            self.assertNotIn("--tools", capture["argv"])
+            self.assertIn("--no-tools", capture["argv"])
+            self.assertNotIn("--extension", capture["argv"])
+            self.assertEqual(capture["argv"][capture["argv"].index("--model") + 1], "openai-codex/gpt-5.6-luna")
+            self.assertEqual(capture["argv"][capture["argv"].index("--thinking") + 1], "off")
+            self.assertIn("--system-prompt", capture["argv"])
+            charter = capture["argv"][capture["argv"].index("--system-prompt") + 1]
+            self.assertIn("exactly two string fields", charter)
+            self.assertNotIn("snapshot", charter.lower())
+            self.assertNotIn("herdr-companion-awareness", charter)
+            self.assertEqual(capture["argv"][capture["argv"].index("--append-system-prompt") + 1], "")
+            self.assertIn("--approve", capture["argv"])
+            self.assertNotIn("--no-approve", capture["argv"])
+            # Pi always appends the process cwd to the provider prompt, so the
+            # drafting workspace must sit under the neutral system temporary
+            # root rather than the private run store inside the operator home.
+            workspace = Path(capture["cwd"]).resolve()
+            self.assertEqual(workspace.parent, Path(tempfile.gettempdir()).resolve())
+            self.assertTrue(workspace.name.startswith("herdr-issue-draft-"))
+            self.assertIn("exactly two string fields", capture["effectiveSystemPrompt"])
+            self.assertIn("<cwd>", capture["effectiveSystemPrompt"])
+            self.assertNotIn(str(directory), capture["effectiveSystemPrompt"])
+            self.assertNotIn("draft-workspace", capture["effectiveSystemPrompt"])
+            self.assertEqual(capture["effectiveSettings"]["retry"]["enabled"], False)
+            self.assertEqual(capture["effectiveSettings"]["retry"]["maxRetries"], 0)
+            self.assertEqual(capture["effectiveSettings"]["retry"]["provider"]["maxRetries"], 0)
+            self.assertEqual(capture["effectiveSettings"]["compaction"]["enabled"], False)
+            self.assertEqual(capture["effectiveSettings"]["cacheWarming"], "off")
+            self.assertEqual(capture["providerInvocations"], 1)
+            self.assertEqual(capture["herdrAgentRunProfile"], ISSUE_REPORT_DRAFT_PROFILE)
+            # Source text stays on stdin, never in argv, and arrives as the
+            # two-field drafting payload.
+            self.assertNotIn("Synthetic request", " ".join(capture["argv"]))
+            self.assertEqual(
+                capture["prompt"],
+                json.dumps({"kind": "feature", "text": "Synthetic request"}, separators=(",", ":")),
+            )
+            self.assertNotIn("agentProfileSnapshot", manager._read(started["run"]["id"]))
+
+            for arguments in (
+                {"mode": "act"},
+                {"attachments": [{"filename": "note.txt", "dataBase64": "aGk="}]},
+                {"system_prompt": "override the drafting policy"},
+                {"continue_from_run_id": "agr_0123456789ab"},
+                {"model": "other/million"},
+            ):
+                with self.subTest(arguments=arguments):
+                    with self.assertRaises(AgentRunError) as context:
+                        manager.start(
+                            prompt="Synthetic request",
+                            label="Issue draft",
+                            cwd=str(directory / "home"),
+                            topology={},
+                            thinking_level="off",
+                            _assistant={"profile": ISSUE_REPORT_DRAFT_PROFILE, "reportKind": "bug"},
+                            **arguments,
+                        )
+                    self.assertEqual(context.exception.code, "invalid_issue_report_draft")
+                    self.assertEqual(context.exception.status, 400)
             manager.stop()
 
     def test_custom_system_prompt_uses_act_tools_and_keeps_topology_note(self):

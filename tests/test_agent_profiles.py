@@ -9,7 +9,7 @@ import urllib.error
 import urllib.request
 import uuid
 
-from herdr_harness.agent_profiles import AgentProfiles, ProfileError, MARKER, MAX_DOCUMENT_BYTES, configured_remote_fetch
+from herdr_harness.agent_profiles import AgentProfiles, ProfileError, MARKER, MAX_DOCUMENT_BYTES, RESTRICTED_PROFILES, configured_remote_fetch
 from herdr_harness.server import make_server
 from tests.test_herdr_http import FakeHTTPService
 
@@ -39,6 +39,17 @@ class AgentProfileTests(unittest.TestCase):
         self.assertEqual(value["effective"]["prompt"], "")
         self.assertEqual(value["effective"]["syncStatus"], "unassigned")
         self.assertTrue(all(p["soul"] == p["user"] == "" for p in value["profiles"]))
+
+    def test_restricted_profiles_cover_private_one_shot_runs(self):
+        for profile in (
+            "contextual-question-v1",
+            "pr-review-question-v1",
+            "response-brief-v1",
+            "smart-rename-v1",
+            "issue-report-draft-v1",
+        ):
+            with self.subTest(profile=profile):
+                self.assertIn(profile, RESTRICTED_PROFILES)
 
     def test_revision_conflict_receipt_retry_and_restore(self):
         body = mutation("update", profileId=self.profile["id"], expectedRevision=1, name="Personal",

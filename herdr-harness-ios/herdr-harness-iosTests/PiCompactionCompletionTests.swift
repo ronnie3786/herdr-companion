@@ -140,8 +140,8 @@ struct PiCompactionCompletionTests {
 
         reducer.replace(with: try snapshot(
             entries: compactionEntry(id: "compact-1"),
-            state: #"{"isStreaming":true,"isCompacting":true,"compaction":{"active":true,"reason":"manual"}}"#,
-            cursor: "6"
+            cursor: "6",
+            state: #"{"isStreaming":true,"isCompacting":true,"compaction":{"active":true,"reason":"manual"}}"#
         ))
 
         #expect(reducer.compactionActivity != nil)

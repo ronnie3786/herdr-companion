@@ -58,10 +58,10 @@ struct PromptComposerSubmissionTests {
         store.submitProvider = { _, _, _ in submissions += 1 }
 
         let stream = AsyncThrowingStream<PiConversationStreamEvent, any Error> { continuation in
-            continuation.yield(try! envelope(
+            continuation.yield(.envelope(try! envelope(
                 1,
                 #"{"type":"session_before_compact","reason":"manual","willRetry":false}"#
-            ))
+            )))
             continuation.finish()
         }
         #expect(!(try await store.consume(stream)))

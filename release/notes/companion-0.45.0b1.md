@@ -1,6 +1,6 @@
 # Herdr Companion server 0.45.0b1
 
-Provides bounded First Mate data for the Mac Agent view.
+Provides bounded First Mate data for the Mac 0.45.0-beta.1 Dashboard and Agent view, which stop re-downloading and re-sorting entire First Mate histories (often 15–20 MB of Pi telemetry per feature) every few seconds.
 
 - Adds `GET /api/v1/first-mate/features/{featureId}/board`, a bounded Agent view projection with newest messages, recent journal events, trimmed assignments, and bounded sessions. It is built from SQLite alone and carries an opaque version; an unchanged poll with `if_version` returns only the version.
 - Adds opt-in `?events=journal` to First Mate feature detail. It omits only Pi telemetry (`pi.*` events). The default response still returns every event.

@@ -183,20 +183,26 @@ extension AgentBoardContent {
         )
     }
 
-    /// Only operational milestones a person would want to see between turns.
-    /// Message journal records repeat the conversation itself.
+    /// Only milestones a person would want to see between turns. Session,
+    /// handoff, and execution bookkeeping repeats on every turn and says nothing
+    /// new; message records repeat the conversation itself.
     private static func note(_ event: FirstMateEvent) -> NoteRow? {
         let summary = event.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !summary.isEmpty, !event.type.hasPrefix("message."),
-              !quietEventTypes.contains(event.type) else { return nil }
+        guard !summary.isEmpty, isMilestone(event.type) else { return nil }
         return NoteRow(id: event.id, text: AgentBoardProse.plainText(fromMarkdown: summary), count: 1,
                        date: HerdrTimestamp.date(from: event.createdAt))
     }
 
-    /// Bookkeeping that repeats on every turn or handoff and says nothing new.
-    static let quietEventTypes: Set<String> = [
-        "session.bound", "execution.stopped", "assignment.dispatch_claimed", "handoff.acknowledged",
-        "handoff.verification", "handoff.successor_started", "feature.model_settings_changed",
+    static func isMilestone(_ type: String) -> Bool {
+        type.hasPrefix("visit.") || milestoneEventTypes.contains(type)
+    }
+
+    static let milestoneEventTypes: Set<String> = [
+        "feature.created", "feature.revised", "feature.revised_selectively", "feature.pause", "feature.resume",
+        "feature.archived", "feature.unarchived", "revision.reason",
+        "assignment.queued", "assignment.outcome", "assignment.progress", "assignment.steered",
+        "assignment.waiting_children", "assignment.recovery_exhausted",
+        "advisor.assessment", "reliability.blocked", "reliability.restarted", "runtime.error",
     ]
 
     private static func collapse(_ notes: [NoteRow]) -> [NoteRow] {

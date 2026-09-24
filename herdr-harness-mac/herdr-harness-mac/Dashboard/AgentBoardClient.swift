@@ -25,7 +25,9 @@ enum AgentBoardFetch: Sendable, Equatable {
 /// journal (never Pi telemetry), stages, agents, and their latest sessions.
 struct AgentBoardPayload: Decodable, Equatable, Sendable {
     static let messageLimit = 60
-    static let journalLimit = 40
+    /// Most journal rows are bookkeeping the board hides, so ask for enough
+    /// to keep a useful set of milestones.
+    static let journalLimit = 60
 
     var version: String
     var feature: FirstMateFeature

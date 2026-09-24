@@ -42,6 +42,9 @@ struct PRReviewWindowSeed: Equatable {
 final class PRReviewWindowSession {
     let target: PRReviewWindowTarget
     let store: PRReviewStore
+    /// Presentation state for this window's comment sheet. The underlying
+    /// records live in the process-owned store shared with the main window.
+    let comments: PRReviewCommentsSession
 
     private(set) var hostState: PRReviewWindowHostState = .checking
     private(set) var hasQuestionDraft = false
@@ -59,11 +62,13 @@ final class PRReviewWindowSession {
     init(
         target: PRReviewWindowTarget,
         store: PRReviewStore = PRReviewStore(),
-        pollingInterval: @escaping @MainActor (PRReviewStore) -> Duration = { $0.pollingInterval }
+        pollingInterval: @escaping @MainActor (PRReviewStore) -> Duration = { $0.pollingInterval },
+        comments: PRReviewCommentsSession = PRReviewCommentsSession()
     ) {
         self.target = target
         self.store = store
         self.pollingInterval = pollingInterval
+        self.comments = comments
     }
 
     var canControl: Bool {

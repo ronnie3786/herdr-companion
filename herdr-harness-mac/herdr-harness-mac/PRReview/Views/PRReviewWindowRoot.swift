@@ -23,7 +23,8 @@ struct PRReviewWindowRoot: View {
         self.target = target
         _session = State(initialValue: PRReviewWindowSession(
             target: target,
-            store: PRReviewStore(documentResources: shell.prReviewDocumentResources)
+            store: PRReviewStore(documentResources: shell.prReviewDocumentResources),
+            comments: PRReviewCommentsSession(store: model.prReviewComments)
         ))
     }
 
@@ -67,6 +68,7 @@ struct PRReviewWindowRoot: View {
     private var content: some View {
         PRReviewContainerView(
             store: session.store,
+            comments: session.comments,
             canControl: session.canControl,
             openURL: { url in Task { try? await ActiveWorkLinkOpener.open(url) } },
             askAI: { selection, view, rect in

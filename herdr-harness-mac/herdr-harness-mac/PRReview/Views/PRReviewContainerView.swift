@@ -3,6 +3,7 @@ import SwiftUI
 
 struct PRReviewContainerView: View {
     @Bindable var store: PRReviewStore
+    @Bindable var comments: PRReviewCommentsSession
     var canControl = false
     var openURL: (URL) -> Void = { _ in }
     var askAI: (PRReviewSelection, NSView, CGRect) -> Void = { _, _, _ in }
@@ -15,6 +16,21 @@ struct PRReviewContainerView: View {
     /// The live model, when the container runs inside the app, so an opened
     /// document window can observe credential and machine changes on its own.
     var documentHost: HerdrAppModel? = nil
+
+    init(store: PRReviewStore, comments: PRReviewCommentsSession = PRReviewCommentsSession(), canControl: Bool = false, openURL: @escaping (URL) -> Void = { _ in }, askAI: @escaping (PRReviewSelection, NSView, CGRect) -> Void = { _, _, _ in }, questionDraftChanged: @escaping (Bool) -> Void = { _ in }, setCreating: @escaping (Bool) -> Void = { _ in }, openPane: @escaping (String, String?) -> Void = { _, _ in }, setAddingSkill: @escaping (Bool) -> Void = { _ in }, popOut: ((PRReviewWindowTarget) -> Void)? = nil, navigationTitle: String = "PR Review", documentHost: HerdrAppModel? = nil) {
+        _store = Bindable(store)
+        _comments = Bindable(comments)
+        self.canControl = canControl
+        self.openURL = openURL
+        self.askAI = askAI
+        self.questionDraftChanged = questionDraftChanged
+        self.setCreating = setCreating
+        self.openPane = openPane
+        self.setAddingSkill = setAddingSkill
+        self.popOut = popOut
+        self.navigationTitle = navigationTitle
+        self.documentHost = documentHost
+    }
 
     var body: some View {
         ZStack {
@@ -53,10 +69,19 @@ struct PRReviewContainerView: View {
                         .accessibilityIdentifier("pr-review-empty")
                 }
             }
+            .sheet(isPresented: commentsSheetPresented, onDismiss: { comments.dismissCommentsSheet() }) {
+                commentSheet
+            }
         }
         .navigationTitle(navigationTitle)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("pr-review-container")
+        .onAppear {
+            comments.updateScope(from: store)
+            comments.configure(openURL: openURL)
+        }
+        .onChange(of: store.currentMachineID) { _, _ in comments.updateScope(from: store) }
+        .onChange(of: store.selectedReviewID) { _, _ in comments.updateScope(from: store) }
         .sheet(isPresented: $store.isPresentingStartSheet, onDismiss: { setCreating(false) }) {
             PRReviewStartSheet(store: store) {
                 store.pendingURL = nil
@@ -73,6 +98,7 @@ struct PRReviewContainerView: View {
                     .herdrFont(size: 20, weight: .semibold, relativeTo: .title2)
                     .lineLimit(1)
                 Spacer()
+                commentsButton(review)
                 Button(store.isRefreshingReview ? "Refreshing…" : "Refresh") {
                     Task { await store.refreshReview() }
                 }.disabled(!canControl || store.isRefreshingReview)
@@ -122,11 +148,69 @@ struct PRReviewContainerView: View {
         }
     }
 
+    /// Review-wide saved comments are available from every tab, including
+    /// empty and filtered file states and archived reviews. The count is
+    /// scoped to this configured machine and review id, never to a label.
+    private func commentsButton(_ review: PRReviewSummary) -> some View {
+        let count = comments.count(machineID: store.currentMachineID, reviewID: review.id)
+        return Button {
+            comments.presentList(machineID: store.currentMachineID, reviewID: review.id)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "text.bubble")
+                Text("Comments")
+                if count > 0 {
+                    Text("\(count)")
+                        .herdrFont(.caption2, monospacedDigit: true)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(HerdrTheme.selection, in: .capsule)
+                }
+            }
+        }
+        .disabled(!comments.isReady)
+        .help("Saved comments for this review")
+        .accessibilityIdentifier("pr-review-comments-button")
+        .accessibilityValue("\(count) saved")
+    }
+
+    private var commentsSheetPresented: Binding<Bool> {
+        Binding(
+            get: { comments.isPresentingComments },
+            set: { presented in
+                if !presented { comments.dismissCommentsSheet() }
+            }
+        )
+    }
+
+    @ViewBuilder
+    private var commentSheet: some View {
+        Group {
+            if comments.composition != nil {
+                PRReviewCommentEditor(session: comments)
+            } else {
+                PRReviewCommentsView(
+                    session: comments,
+                    review: store.snapshot?.review ?? store.selectedReview,
+                    currentFilePaths: store.snapshot.map { Set($0.files.map(\.path)) },
+                    edit: { comments.beginEditing($0) },
+                    showInDiff: { comment in
+                        Task { await comments.showInDiff(comment, store: store) }
+                    }
+                )
+            }
+        }
+        .preferredColorScheme(.dark)
+        .tint(HerdrTheme.accent)
+        .interactiveDismissDisabled(comments.hasDirtyDraft || comments.isSaving)
+    }
+
     @ViewBuilder private func content(_ review: PRReviewSummary) -> some View {
         switch store.tab {
         case .files:
             PRReviewFilesView(
                 store: store,
+                comments: comments,
                 canControl: canControl,
                 questionHistory: documentHost?.prReviewQuestions,
                 openQuestion: { documentHost?.presentSavedPRReviewQuestion($0) },

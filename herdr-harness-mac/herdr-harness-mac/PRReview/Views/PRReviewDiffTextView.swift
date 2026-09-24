@@ -8,6 +8,9 @@ import WebKit
 /// already-loaded PR remains readable without the companion or network.
 final class PRReviewDiffTextView: WKWebView, WKScriptMessageHandler, WKNavigationDelegate, NSPopoverDelegate {
     var askAI: ((PRReviewSelection, NSView, CGRect) -> Void)?
+    var addComment: ((PRReviewSelection) -> Void)? {
+        didSet { syncCommentingAvailability() }
+    }
     var questionDraftChanged: ((Bool) -> Void)?
     var onVisibleLinesChange: ((String, Int, Int, PRReviewSide) -> Void)?
     private(set) var renderedIdentity: String?
@@ -17,7 +20,8 @@ final class PRReviewDiffTextView: WKWebView, WKScriptMessageHandler, WKNavigatio
     private var pendingPayload: PRReviewDiffRenderer.Payload?
     private var pendingScroll: (line: Int, side: PRReviewSide)?
     private var rendererURL: URL?
-    private var askPopover: NSPopover?
+    private(set) var askPopover: NSPopover?
+    private var reportedCommentingAvailability: Bool?
 
     init() {
         let configuration = WKWebViewConfiguration()
@@ -96,7 +100,11 @@ final class PRReviewDiffTextView: WKWebView, WKScriptMessageHandler, WKNavigatio
         switch kind {
         case "bridgeReady":
             isRendererReady = true
+            // A fresh document starts with commenting disabled until the host
+            // states whether it can receive a selection.
+            reportedCommentingAvailability = nil
             if let pendingPayload { send(pendingPayload) }
+            syncCommentingAvailability()
         case "ready":
             renderedIdentity = body["identity"] as? String
             sendPendingScroll()
@@ -104,6 +112,8 @@ final class PRReviewDiffTextView: WKWebView, WKScriptMessageHandler, WKNavigatio
             receiveVisibleLines(body)
         case "ask":
             receiveAsk(body)
+        case "comment":
+            receiveComment(body)
         default:
             break
         }
@@ -161,6 +171,31 @@ final class PRReviewDiffTextView: WKWebView, WKScriptMessageHandler, WKNavigatio
         let anchor = isFlipped ? rect : CGRect(x: rect.minX, y: bounds.height - rect.maxY, width: rect.width, height: rect.height)
         let clipped = anchor.intersection(bounds)
         showQuestionPopover(selection: selection, anchor: clipped.isNull ? CGRect(x: 8, y: 8, width: 1, height: 1) : clipped)
+    }
+
+    /// Local comments share the question path's main-frame, render-identity,
+    /// path and span validation. They never open a popover or dispatch an
+    /// agent; the host decides how to compose and persist the comment.
+    private func receiveComment(_ body: [String: Any]) {
+        guard let path = body["path"] as? String,
+              let oldPath = body["oldPath"] as? String,
+              let rawSpans = body["spans"] as? [[String: Any]],
+              path == pendingPayload?.path, oldPath == pendingPayload?.oldPath
+        else { return }
+        let spans = Self.coalescedSpans(rawSpans)
+        guard !spans.isEmpty else { return }
+        let selectedText = (body["exactCode"] as? String) ?? (body["code"] as? String) ?? ""
+        addComment?(PRReviewSelection(path: path, oldPath: oldPath, spans: spans, text: selectedText))
+    }
+
+    /// Enables the bundled renderer's Add comment action only while a host
+    /// callback exists, so existing call sites keep their exact behavior.
+    private func syncCommentingAvailability() {
+        let enabled = addComment != nil
+        guard reportedCommentingAvailability != enabled else { return }
+        reportedCommentingAvailability = enabled
+        guard isRendererReady else { return }
+        evaluateJavaScript("window.herdrNativeDiff?.setCommentingEnabled(\(enabled ? "true" : "false"))")
     }
 
     private func showQuestionPopover(selection: PRReviewSelection, anchor: CGRect) {
@@ -221,6 +256,7 @@ struct PRReviewDiffText: NSViewRepresentable {
     var highlight: (start: Int, end: Int, side: PRReviewSide)?
     var scrollRequest: (path: String, line: Int, side: PRReviewSide, token: Int)?
     var askAI: ((PRReviewSelection, NSView, CGRect) -> Void)?
+    var addComment: ((PRReviewSelection) -> Void)?
     var questionDraftChanged: ((Bool) -> Void)?
     var onVisibleLinesChange: ((String, Int, Int, PRReviewSide) -> Void)?
 
@@ -234,6 +270,7 @@ struct PRReviewDiffText: NSViewRepresentable {
 
     func updateNSView(_ view: PRReviewDiffTextView, context: Context) {
         view.askAI = askAI
+        view.addComment = addComment
         view.questionDraftChanged = questionDraftChanged
         view.onVisibleLinesChange = onVisibleLinesChange
         let identity = Coordinator.RenderIdentity(

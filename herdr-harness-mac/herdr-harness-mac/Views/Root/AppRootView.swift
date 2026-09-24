@@ -107,6 +107,11 @@ final class HerdrShellState {
     /// cache protection, so no window can evict a file another is displaying.
     let prReviewDocumentResources: PRReviewDocumentResources
     let prReview: PRReviewStore
+    /// The main window's comment sheet presentation state. The saved records
+    /// themselves live in the process-owned store in `HerdrAppModel`, shared
+    /// with every popped-out review window.
+    let prReviewComments = PRReviewCommentsSession()
+    @ObservationIgnored private var prReviewCommentStore: PRReviewCommentStore?
     var firstMateMachineID: String?
     // Start in the fleet view; explicit host choices stay in effect until changed.
     var firstMateScope: FirstMateMachineScope? = .all
@@ -317,6 +322,15 @@ final class HerdrShellState {
         prReview.configure(client: client ?? configuration.map { HerdrAPIClient(configuration: $0) }, machineID: machineID, demo: isDemo)
         configuredPRReviewConnectionIdentity = identity
         return true
+    }
+
+    /// Connects the process-owned comment store once the app model exists.
+    /// The shell is constructed before the model, so the store is attached
+    /// here rather than in `init`. Re-attaching the same store is a no-op.
+    func attachPRReviewCommentStore(_ store: PRReviewCommentStore) {
+        guard prReviewCommentStore !== store else { return }
+        prReviewCommentStore = store
+        prReviewComments.attach(store: store)
     }
 
     func showPRReview(machineID: String?, reviewID: String?, file: String? = nil, line: Int? = nil, side: PRReviewSide = .after, tab: PRReviewTab = .files, model: HerdrAppModel) {
@@ -649,6 +663,7 @@ final class HerdrShellState {
         if isCreatingPRReview { return "pr-review-create" }
         if isAddingPRReviewSkill { return "pr-review-add-skill" }
         if hasPRReviewQuestionDraft { return "pr-review-question" }
+        if prReviewComments.isPresentingComments { return "pr-review-comment" }
         if isAgentPresented { return "agent" }
         if isIssueReportPresented { return "issue-report" }
         if isJumpToPanePresented { return "jump-to-pane" }

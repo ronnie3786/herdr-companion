@@ -43,6 +43,8 @@ On the review host:
 | `checkout_timeout_seconds` | `900` | Timeout for each clone, fetch, and checkout command (10–3600). Clones fetch blobs on demand and skip checking out the default branch. |
 | `pi_binary`, `claude_binary` | found on `PATH` | Explicit binaries when the service PATH differs. |
 
+Local comments require no additional capability: the Mac stores them privately using the review and diff data already returned by `pr-review-v1`. There is no comment endpoint, no comment text is sent to the companion, and the `herdr-pr-review` CLI is unchanged.
+
 On the Mac: pair the review host in Settings → Machines as usual. The app picks the machine
 whose role is `development`; Settings → Machines → **PR review host** overrides that choice.
 Demo mode (`-HerdrDemoMode`) shows a synthetic review without any server.
@@ -100,7 +102,15 @@ conversation; **Continue in agent** hands off for actions. The system prompt req
 
 New questions stay as **Saved questions** bubbles below the diff. Click a bubble to reopen its saved conversation without sending the question again. Each new selection question starts a separate thread, and follow-ups stay in that thread. Bubbles survive file switches, review refreshes, pop-out closure and app relaunch. They are scoped to the original host/review, carry file and line context, and show **Earlier revision** after the PR changes. The index and transcripts are stored privately on this Mac; they do not sync to other clients. Questions created before this version are not retroactively indexed. A saved thread is not cleared by starting another question.
 
-**Refresh.** Companion 0.40.0b1 coalesces overlapping refreshes, fetches rebased PR heads, and publishes revision metadata and files together. Failed refreshes retain the last usable review with a retryable warning. Optional GitHub viewed-file sync cannot make a prepared review fail. Tracked edits in the managed checkout are preserved and block checkout replacement rather than being overwritten. New revisions invalidate old impact rankings and reset viewed state for changed patches; unchanged files keep their local marks. Old ranking jobs cannot overwrite ratings for a newer revision. The Mac keeps the file selection and filters when still applicable and keeps saved questions anchored to their original revision. Install the companion package separately on the review host; the Mac updater does not deploy it.
+**Local comments.** Select code and choose **Add comment** beside **Ask AI** (or keep using right-click for the Ask AI question field). The local editor freezes the file, before/after side, line ranges, exact selected code, and the review's `base`/`head` SHAs at the moment it opens, so one selection may cross added, removed and context lines. Save requires nonblank text and stores the Markdown exactly as typed — internal blank lines, trailing spaces and non-ASCII characters are preserved. Cancel creates no record; a blank Save is refused; a failed write keeps the draft in the editor with its reason and never reports success.
+
+Saved comments are private JSON under the app's Application Support directory (`Herdr/PRReview/pr-review-comments-v1.json`), written atomically with owner-only permissions. They are scoped by configured machine and review id — never by a display name or pull request number — so two hosts that reuse a review id or number stay separate. The main window and every popped-out review window share one process-wide store, so a comment saved in either appears in both, while the list itself remains scoped to the review it belongs to. Nothing is synchronized to the companion or another client, and comments are never pruned by refresh, archiving or window closure. Deleting that one file removes them; an unreadable, corrupt, or newer-version file is preserved and refuses writes until the operator resolves it.
+
+The review header's **Comments** count and button are available on every tab, filter and empty state. The list shows each comment's compact saved code excerpt (with **Show full selection** when it exceeds three lines), its file and before/after line metadata, the exact text, and an **Earlier revision** or **Not in current revision** badge when applicable. **Show in diff** verifies the revision, clears the impact, viewed and text filters, switches to Files, selects the saved file and highlights the first saved span; it refuses to guess when the file, lines or revision no longer match. **Edit** updates the saved text in place. **Copy comment** copies only the exact comment Markdown, and **Open file in GitHub** opens that file's place in the pull request's **Files changed** view (`/pull/<n>/files#diff-<sha256 of the file path>`); for a saved commit, **Open original revision** opens the recorded file at that revision. Herdr never submits a comment or a review, never marks a comment published, and never puts comment text into a URL. To publish, copy the comment and paste it into GitHub manually.
+
+After a refresh that changes the base or head, comments are not remapped onto the new diff. They keep their saved excerpt and an explicit **Earlier revision** label, and **Show in diff** explains why it will not highlight guessed current lines. A file or line that no longer exists in the loaded revision is reported instead of substituted.
+
+**Refresh.** Companion 0.40.0b1 coalesces overlapping refreshes, fetches rebased PR heads, and publishes revision metadata and files together. Failed refreshes retain the last usable review with a retryable warning. Optional GitHub viewed-file sync cannot make a prepared review fail. Tracked edits in the managed checkout are preserved and block checkout replacement rather than being overwritten. New revisions invalidate old impact rankings and reset viewed state for changed patches; unchanged files keep their local marks. Old ranking jobs cannot overwrite ratings for a newer revision. The Mac keeps the file selection and filters when still applicable and keeps saved questions and saved comments anchored to their original revision. A saved comment from before the change stays readable with its **Earlier revision** excerpt and is never silently moved onto current code. Install the companion package separately on the review host; the Mac updater does not deploy it.
 
 **Context.** The review library holds per-agent markdown findings, the consolidated HTML
 report, audio summaries, explainer videos, links and anything you drop in (files, folders, web
@@ -139,7 +149,9 @@ removed or unconfigured shows an unavailable message rather than silently fallin
 machine. Titles, display labels, and pull request numbers are presentation; windows are identified
 by machine and review id, so identical labels and duplicate numbers remain separate windows.
 Pop-outs are Mac-side secondary windows, not separate processes, and need no server support
-beyond the existing `pr-review-v1` capability.
+beyond the existing `pr-review-v1` capability. The review-wide comment list and its saved records
+are shared by the main window and every popped-out window: a comment saved in one appears in the
+other, and each window's list still shows only its own machine/review scope.
 
 ## Command line: `herdr-pr-review`
 
@@ -230,7 +242,7 @@ for byte, so an improvement cannot silently ship to only one surface.
   That suite covers the client contract, store and window scoping, routing identity, saved
   question persistence, refresh presentation, deleted-file disclosure and renderer mounting,
   the local WebKit renderer and synthetic demo layouts.
-- Mac interactive (final gate): `xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test -only-testing:herdr-harness-macUITests/HerdrPRReviewUITests`.
+- Mac interactive (final gate): `xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test -only-testing:herdr-harness-macUITests/HerdrPRReviewUITests -only-testing:herdr-harness-macUITests/HerdrPRReviewCommentUITests`.
   That suite exercises the row and header context menus, two concurrent review windows with
   independent tabs and files, chat navigation with an unsent draft, duplicate-window focus, and
   close-versus-archive. Deleted-file coverage selects the synthetic deleted source, prose and
@@ -239,6 +251,14 @@ for byte, so an improvement cannot silently ship to only one surface.
   keyboard navigation and independent main/pop-out choices, and proves a nonempty Ask AI draft
   blocks collapse. It is recorded as pending until the final gate executes it; generated
   render PNGs and screenshots are layout evidence, not installed-app verification.
+  `HerdrPRReviewCommentUITests` drives real diff selection and the bundled
+  renderer's **Add comment** action against a unique temporary comment store: multiline Save,
+  list preview and exact **Copy comment** text, **Edit**, **Show in diff** after obstructive
+  filters, shared main/pop-out records, another review's isolation, and reopening after app
+  termination on the same store. It never activates **Open file in GitHub**. Both suites are
+  recorded as pending until the final gate executes them; generated render PNGs and screenshots
+  are layout evidence, not installed-app verification. The manual GitHub link check below is the
+  only browser evidence for file anchoring.
 - Manual: [MANUAL_TEST_CHECKLIST.md](../herdr-harness-mac/MANUAL_TEST_CHECKLIST.md) → PR Review,
   including the production Git renderer comparison and simultaneous review/chat windows.
 
@@ -262,3 +282,11 @@ for byte, so an improvement cannot silently ship to only one surface.
   unchanged refreshes in the same window, but resets for another host, review, base/head revision,
   a newly opened window, or an app relaunch; it is never synchronized and never changes viewed
   state or the patch. No companion support beyond `pr-review-v1` is required.
+- Local comments are Mac-only and manual-publish only. There is no companion endpoint, no GitHub
+  API call, no publication status and no cross-client synchronization; the only outbound actions
+  are an explicit **Copy comment** and an explicit **Open file in GitHub** browser navigation.
+- Comment anchors are frozen at composition. A rebased, force-pushed or otherwise changed revision
+  shows **Earlier revision** with the saved excerpt rather than remapping to current lines; a file
+  or line missing from the loaded diff is reported, never guessed. Comment storage is one
+  versioned JSON file, replaced atomically; a corrupt, unreadable or unknown-version file is kept
+  byte-for-byte and blocks writes until it is resolved.

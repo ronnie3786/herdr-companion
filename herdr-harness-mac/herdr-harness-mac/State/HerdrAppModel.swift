@@ -71,6 +71,10 @@ final class HerdrAppModel {
     var selectedWorkspaceID: String?
     @ObservationIgnored let assistantCoordinator = AssistantCoordinator()
     let prReviewQuestions = PRReviewQuestionHistory()
+    /// Private, Mac-local saved PR Review comments. One store is shared by the
+    /// main window and every popped-out review window. Demo mode and ordinary
+    /// test processes never touch the operator's real comment storage.
+    let prReviewComments: PRReviewCommentStore
     let responseBriefs: ResponseBriefCoordinator
     @ObservationIgnored private let responseBriefNetworkIsolated: Bool
     var selectedPaneID: String?
@@ -316,6 +320,36 @@ final class HerdrAppModel {
         let isolateResponseBriefs = forcedDemo
             || Self.isRunningTests
             || arguments.contains("-HerdrUITestServerURL")
+        #if DEBUG
+        // Demo and UI-test processes may opt into a real file under a temporary
+        // path so a relaunch acceptance run can prove persistence. The argument
+        // is ignored outside demo/UI-test mode and in release builds.
+        let commentStorePath = (forcedDemo || userDefaults.bool(forKey: "herdr.demoMode") || arguments.contains("-HerdrUITestServerURL"))
+            ? Self.launchArgumentValue("-HerdrPRReviewCommentStorePath", in: arguments)
+            : nil
+        #else
+        let commentStorePath: String? = nil
+        #endif
+        let commentStoreURL = commentStorePath.flatMap { path -> URL? in
+            guard path.hasPrefix("/") else { return nil }
+            var url = URL(fileURLWithPath: path)
+            // Accept either a file path or an existing directory so a UI-test
+            // fixture can hand over a fresh temporary folder.
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+               isDirectory.boolValue {
+                url.append(path: "pr-review-comments-v1.json")
+            }
+            return url
+        }
+        prReviewComments = PRReviewCommentStore(
+            url: commentStoreURL,
+            inMemory: commentStoreURL == nil
+                && (forcedDemo
+                    || userDefaults.bool(forKey: "herdr.demoMode")
+                    || arguments.contains("-HerdrUITestServerURL")
+                    || Self.isRunningTests)
+        )
         responseBriefNetworkIsolated = isolateResponseBriefs
         responseBriefs = ResponseBriefCoordinator(
             defaults: userDefaults,

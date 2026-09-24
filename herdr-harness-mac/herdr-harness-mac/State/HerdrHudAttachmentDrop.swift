@@ -318,7 +318,7 @@ extension HerdrHudSession {
     /// is removed only after the whole batch has reported each promised file.
     /// A receiver that finishes first therefore cannot delete files a sibling
     /// still has to write, and an individual failure reports a recoverable
-    /// error without removing sibling deliveries.
+    /// error while the same receiver's remaining promised files still arrive.
     func acceptPromisedFiles(_ receivers: [any HerdrPromisedFileReceiver]) {
         let batch = Array(receivers.prefix(Self.maxAttachments))
         let root = HerdrAttachmentDropPolicy.promiseDirectory()
@@ -352,8 +352,9 @@ extension HerdrHudSession {
 
 /// One drop's promised-file batch. The shared destination must outlive every
 /// sibling receiver: a receiver only settles once it has reported its promised
-/// files, and the directory is removed when the whole batch has settled. An
-/// error settles that receiver without touching files other receivers wrote.
+/// files, and the directory is removed when the whole batch has settled. A
+/// failure counts as one of that receiver's promised files and never touches
+/// files another receiver wrote or that the same receiver still owes.
 @MainActor
 final class HerdrPromiseBatch {
     private struct ReceiverSlot {
@@ -387,12 +388,14 @@ final class HerdrPromiseBatch {
         guard var slot = slots[receiverID] else { return }
         slot.delivered += 1
         // `fileNames` is the only pre-completion signal for a legacy item that
-        // delivers several files through one receiver. A failure settles the
-        // receiver immediately; a file settles it once every promised file was
-        // delivered. A receiver whose count is not yet readable keeps the
-        // previous one-completion behavior.
+        // delivers several files through one receiver. Every callback, file or
+        // failure, counts as one delivered file: a partial failure must not
+        // settle a receiver that still owes the batch promised files, because
+        // that would remove the shared directory before a delayed delivery of
+        // the same receiver arrives. A receiver whose count is not yet readable
+        // keeps the previous one-completion behavior.
         let promisedCount = max(receivers[receiverID]?.promisedFileCount ?? 1, 1)
-        if !slot.settled, errorMessage != nil || slot.delivered >= promisedCount {
+        if !slot.settled, slot.delivered >= promisedCount {
             slot.settled = true
             unsettledReceivers -= 1
         }

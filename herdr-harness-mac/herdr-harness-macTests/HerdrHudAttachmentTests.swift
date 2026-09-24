@@ -533,6 +533,49 @@ struct HerdrHudAttachmentTests {
         #expect(!FileManager.default.fileExists(atPath: sharedDirectory.path))
     }
 
+    @Test("A partial multi-file promise failure keeps the staging for its delayed success")
+    func multiFilePromisePartialFailureKeepsDelayedSuccess() async throws {
+        let bytes = HerdrDropImageFixtures.makePNG()
+        let receiver = SyntheticPromiseReceiver(
+            deliveries: [
+                SyntheticPromiseReceiver.Delivery(
+                    outcome: .failure(SyntheticPromiseError())
+                ),
+                SyntheticPromiseReceiver.Delivery(
+                    outcome: .file(name: "legacy-late.png", data: bytes),
+                    writeDuringArming: true,
+                    delay: .milliseconds(150)
+                ),
+            ],
+            promisedFileCount: 2
+        )
+        let session = makeSession()
+        session.acceptPromisedFiles([receiver])
+
+        // The first promised file fails, but the receiver still owes its second
+        // callback, so the shared directory must survive for the delayed file
+        // already staged during arming. Settling the whole receiver here would
+        // delete that file and ignore the callback that follows.
+        try await waitForAttachmentError(session)
+        #expect(session.pendingAttachments.isEmpty)
+        let sharedDirectory = try #require(receiver.stagingDirectories.first)
+        #expect(FileManager.default.fileExists(atPath: sharedDirectory.path))
+        let delivered = try #require(receiver.deliveredFiles.first)
+        #expect(FileManager.default.fileExists(atPath: delivered.path))
+
+        try await waitForAttachments(session, count: 1)
+        let attachment = try #require(session.pendingAttachments.first)
+        #expect(attachment.filename == "legacy-late.png")
+        #expect(attachment.isImage)
+        #expect(try Data(contentsOf: attachment.url) == bytes)
+        #expect(session.validationError == nil)
+
+        // Cleanup waits for every promised callback: the durable copy exists
+        // and the staged file and shared directory are gone.
+        #expect(!FileManager.default.fileExists(atPath: delivered.path))
+        #expect(!FileManager.default.fileExists(atPath: sharedDirectory.path))
+    }
+
     // MARK: - Repeatability, durability, and explicit submission
 
     @Test("Three consecutive drop/remove cycles each import exactly one attachment")

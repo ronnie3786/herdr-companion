@@ -97,7 +97,8 @@ Each dropped item is copied into the session's durable attachment store before i
 removed, so the attachment stays readable after the source file is deleted. Promised files of one drop
 share one staging directory, and that directory is removed only after every receiver has delivered
 every promised file; a receiver that finishes first cannot delete files a sibling is still writing,
-and one failed promise does not remove a sibling's delivery. Dropping never starts a run
+and a failure counts as one of that receiver's own promised files, so neither a sibling's delivery
+nor a later file from the same receiver is removed early. Dropping never starts a run
 or uploads anything: the composer waits for an explicit send. A card drop belongs to that chat; a
 dropped item on the collapsed orb opens the HUD on the separate **New chat** composer. Removing an
 attachment deletes its durable copy, and another chat never receives the dropped image.
@@ -114,7 +115,8 @@ Automated Mac regression tests cover the production drop callbacks with syntheti
 promised files: real encoded PNG/JPEG/TIFF fixtures, Finder file URLs, raw provider data with
 asynchronous background completions, PNG/TIFF/JPEG pasteboards, browser URL-plus-image drags,
 multi-item pasteboards that mix files and images, successful and failed promises, delayed promise
-siblings, a failure beside an awaiting sibling delivery, a multi-file promise, three consecutive
+siblings, a failure beside an awaiting sibling delivery, a partial multi-file failure followed by its
+delayed success, a multi-file promise, three consecutive
 drop/remove cycles, durable bytes after the source is removed, explicit submission, one import per
 item, target-state reset, session isolation, and the existing 4-file, 20 MB, and 21 MB limits. A
 dropped image is also rendered through the composer's attachment chip so its thumbnail path is

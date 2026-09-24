@@ -16,6 +16,15 @@ struct PiSessionCost: Equatable, Sendable {
         self.totalTokens = totalTokens
     }
 
+    /// A numeric total already decoded from the run contract. Rejects
+    /// non-finite and negative values so an invalid sample can never be
+    /// formatted as a reported cost; bridge decoding above is unchanged.
+    init?(reportedUSD: Double, totalTokens: Int? = nil) {
+        guard reportedUSD.isFinite, reportedUSD >= 0 else { return nil }
+        self.totalUSD = reportedUSD
+        self.totalTokens = totalTokens
+    }
+
     /// A short display form such as "$1.87". "<$0.01" floor for tiny non-zero
     /// costs; cents dropped at $100+.
     var summary: String? {

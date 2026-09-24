@@ -10,8 +10,7 @@ struct HerdrHudChatBubbleView: View {
     @State private var showsRenameError = false
 
     private var isReady: Bool {
-        chat.session.hasUnseenAnswer && !chat.session.isRunning
-            && chat.session.exchanges.last?.status == .completed
+        HerdrHudChatBubblePresentation.isReady(HerdrHudChatBubblePresentation.State(chat.session))
     }
 
     private var isSmartRenaming: Bool {
@@ -44,26 +43,25 @@ struct HerdrHudChatBubbleView: View {
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                HStack {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
                     HerdrHudChatStatusView(session: chat.session)
-                    Spacer(minLength: 4)
-                    if let machine = model.machines.first(where: { $0.id == chat.session.selectedMachineID }) {
-                        Text(machine.name)
-                            .herdrFont(.caption2)
-                            .foregroundStyle(HerdrTheme.muted)
-                            .lineLimit(1)
-                    }
+                    HerdrHudSessionMetadataView(metadata: chat.session.bubbleMetadata)
+                        .accessibilityIdentifier("hud-chat-metadata-\(chat.id)")
                 }
             }
-            .padding(12)
+            .padding(.horizontal, HerdrHudChatBubblePresentation.horizontalPadding)
+            .padding(.vertical, HerdrHudChatBubblePresentation.verticalPadding)
             .frame(width: HerdrHudPlacement.chipWidth, alignment: .leading)
-            .background(HerdrTheme.graphite.opacity(0.96), in: .rect(cornerRadius: 12))
+            .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrHudChatBubblePresentation.cornerRadius))
             .overlay {
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(outlineColor, lineWidth: 1)
+                RoundedRectangle(cornerRadius: HerdrHudChatBubblePresentation.cornerRadius)
+                    .strokeBorder(HerdrHudChatBubblePresentation.outlineColor(isReady: isReady), lineWidth: 1)
             }
-            .shadow(color: shadowColor, radius: chat.session.isRunning ? 4 : 7)
-            .contentShape(.rect(cornerRadius: 12))
+            .shadow(
+                color: HerdrHudChatBubblePresentation.shadowColor(isReady: isReady),
+                radius: HerdrHudChatBubblePresentation.shadowRadius
+            )
+            .contentShape(.rect(cornerRadius: HerdrHudChatBubblePresentation.cornerRadius))
         }
         .buttonStyle(.plain)
         .help(model.showSessionTitles ? "Open HUD chat: \(chat.displayTitle)" : "Open HUD chat")
@@ -98,18 +96,6 @@ struct HerdrHudChatBubbleView: View {
         } message: {
             Text(renameError ?? "")
         }
-    }
-
-    private var outlineColor: Color {
-        if chat.session.isRunning {
-            return HerdrHudNotificationPresentation.outlineColor(for: AgentStatus.working).opacity(0.25)
-        }
-        return isReady ? HerdrTheme.success : HerdrTheme.accent.opacity(0.45)
-    }
-
-    private var shadowColor: Color {
-        if chat.session.isRunning { return AgentStatus.working.color.opacity(0.16) }
-        return isReady ? HerdrTheme.success.opacity(0.3) : .clear
     }
 
     private func smartRename() {

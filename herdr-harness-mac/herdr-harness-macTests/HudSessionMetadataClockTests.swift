@@ -1,6 +1,8 @@
+import Foundation
 import Observation
 import SwiftUI
 import Testing
+import Vision
 @testable import herdr_harness_mac
 
 @Suite("Shared HUD metadata clock", .serialized)
@@ -88,6 +90,96 @@ struct HudSessionMetadataClockTests {
         }
     }
 
+    @Test("HUD chat and ordinary agent content join the same five-second phase")
+    func chatAndAgentSharePhase() async throws {
+        let log = PhaseLog()
+        let clock = ManualHerdrHudMetadataClock()
+        let timeSource = HerdrHudMetadataTimeSource(clock)
+        let suiteName = "HudSessionMetadataClockTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let chatSession = HerdrHudSession(
+            userDefaults: defaults,
+            persistenceURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("\(suiteName)-hud-thread.json")
+        )
+        let metadata = HerdrHudSessionMetadata(modelName: "Sonnet 4.5", cost: "$0.37")
+        let agentChip = HerdrHudSessionChips.Chip(
+            id: "synthetic|w1:p1",
+            title: "Synthetic agent",
+            status: .working,
+            isMuted: false,
+            since: nil,
+            emoji: "",
+            activity: "Running tests"
+        )
+
+        func settle(maxAttempts: Int = 200, until condition: () -> Bool) async {
+            for _ in 0..<maxAttempts {
+                if condition() { return }
+                await Task.yield()
+                try? await Task.sleep(for: .milliseconds(2))
+            }
+        }
+
+        let render = try await HerdrRenderHarness.render(
+            "hud-shared-clock-surfaces.png",
+            size: CGSize(width: 240, height: 220),
+            afterSettling: {
+                await settle { log.phases["chat"] != nil && log.phases["agent"] != nil }
+                #expect(log.phases["chat"] == log.phases["agent"])
+
+                // One-second chunks cross at most one boundary each, giving
+                // SwiftUI a real chance to flush the recomputed environment
+                // through both surfaces between virtual instants.
+                for _ in 0..<6 {
+                    clock.advance(by: .milliseconds(1_000))
+                    let expected = HerdrHudSessionMetadataCycle.showsModel(at: timeSource.now())
+                    await settle { log.phases["chat"] == expected && log.phases["agent"] == expected }
+                }
+                #expect((log.changes["chat"] ?? 0) >= 2)
+                #expect((log.changes["agent"] ?? 0) >= 2)
+                #expect(log.phases["chat"] == log.phases["agent"])
+                // Let the last phase's 0.3-second fade finish before the
+                // harness snapshots, so OCR cannot catch both labels.
+                try? await Task.sleep(for: .milliseconds(450))
+                await settle { log.phases["chat"] == HerdrHudSessionMetadataCycle.showsModel(at: timeSource.now()) }
+            }
+        ) {
+            VStack(spacing: 8) {
+                ContentPhaseProbe(id: "chat", log: log) {
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        HerdrHudChatStatusView(session: chatSession)
+                        HerdrHudSessionMetadataView(metadata: metadata)
+                    }
+                }
+                ContentPhaseProbe(id: "agent", log: log) {
+                    HerdrHudSessionBubbleLabel(chip: agentChip, metadata: metadata)
+                }
+            }
+            .modifier(HerdrHudSessionMetadataClock())
+            .environment(\.herdrHudMetadataTimeSource, timeSource)
+        }
+        render.expectSubstantial(minimumBytes: 2_000)
+
+        // The snapshot is taken after the fixture settles, so both surfaces
+        // must show only the phase the shared clock holds right now.
+        let showsModel = HerdrHudSessionMetadataCycle.showsModel(at: timeSource.now())
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.minimumTextHeight = 0.005
+        try HerdrOCR.perform(request, url: render.url)
+        let visible = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        if showsModel {
+            #expect(visible.contains("Sonnet 4.5"))
+            #expect(!visible.contains("$0.37"))
+        } else {
+            #expect(visible.contains("$0.37"))
+            #expect(!visible.contains("Sonnet 4.5"))
+        }
+    }
+
     @Observable final class Mounts {
         var showsLate = false
         var revision = 0
@@ -160,6 +252,22 @@ struct HudSessionMetadataClockTests {
 
         var body: some View {
             HerdrHudSessionMetadataView(metadata: .init(modelName: "Sonnet 4.5", cost: "$0.37"))
+                .onChange(of: showsModel, initial: true) { _, phase in
+                    log.phases[id] = phase
+                    log.changes[id, default: 0] += 1
+                }
+        }
+    }
+
+    /// Logs the shared phase as the supplied HUD chat or agent content sees it.
+    private struct ContentPhaseProbe<Content: View>: View {
+        let id: String
+        let log: PhaseLog
+        @ViewBuilder var content: () -> Content
+        @Environment(\.herdrHudShowsModel) private var showsModel
+
+        var body: some View {
+            content()
                 .onChange(of: showsModel, initial: true) { _, phase in
                     log.phases[id] = phase
                     log.changes[id, default: 0] += 1

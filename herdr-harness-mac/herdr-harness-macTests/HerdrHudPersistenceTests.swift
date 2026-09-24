@@ -24,6 +24,7 @@ struct HerdrHudPersistenceTests {
                 prompt: "Second prompt",
                 response: "Second response",
                 modelLabel: "custom/model",
+                modelLabelIsProven: true,
                 steps: [step(id: "tool-1"), step(id: "tool-2")]
             )
         ]
@@ -42,6 +43,7 @@ struct HerdrHudPersistenceTests {
         #expect(second.response == "Second response")
         #expect(second.status == .completed)
         #expect(second.modelLabel == "custom/model")
+        #expect(second.modelLabelIsProven)
         #expect(second.steps.count == 2)
         #expect(second.workingFolderPath == HerdrHudWorkingFolder.homePath)
     }
@@ -211,6 +213,312 @@ struct HerdrHudPersistenceTests {
         #expect(session.lastHeadlessRunForTesting?.threadRootRunId == thread.lastRunID)
     }
 
+    @Test("A chat metadata aggregate round-trips with the persistence snapshot")
+    func chatMetadataRoundTrip() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("hud-thread.json")
+        let thread = HerdrHudSession.HerdrHudThread(
+            machineID: "demo1",
+            rootRunID: "root-run",
+            lastRunID: "run-2",
+            turnCount: 2
+        )
+        var metadata = HerdrHudChatMetadataAccumulator()
+        metadata.reconcile(
+            machineID: "demo1",
+            rootRunID: "root-run",
+            expectedTurnCount: 2,
+            samples: [
+                .init(id: "root-run", costUSD: 0.40, modelName: "Sonnet 4.5"),
+                .init(id: "run-2", costUSD: 1.00, modelName: "Opus 4.5"),
+            ]
+        )
+        try HerdrHudPersistenceSnapshot(
+            thread: thread,
+            exchanges: [exchange(id: "run-2", prompt: "Second", response: "Done")],
+            chatMetadata: metadata
+        ).save(to: fileURL)
+
+        let session = makeSession(fileURL: fileURL)
+        await session.waitForPersistenceRestoreForTesting()
+
+        #expect(session.chatMetadata.observedRunCount == 2)
+        #expect(session.bubbleMetadata.cost == "$1.40")
+        #expect(session.bubbleMetadata.modelName == "Opus 4.5")
+    }
+
+    @Test("A truncated legacy cache leaves the cost unknown until history proves coverage")
+    func truncatedLegacyCacheKeepsCostUnknown() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("hud-thread.json")
+        let thread = HerdrHudSession.HerdrHudThread(
+            machineID: "demo1",
+            rootRunID: "root-run",
+            lastRunID: "run-12",
+            turnCount: 12
+        )
+        let exchanges = (3..<13).map { index in
+            exchange(id: "run-\(index)", prompt: "Prompt \(index)", response: "Done")
+        }
+        try HerdrHudPersistenceSnapshot(thread: thread, exchanges: exchanges).save(to: fileURL)
+
+        let session = makeSession(fileURL: fileURL)
+        await session.waitForPersistenceRestoreForTesting()
+
+        // Only the thread's own last run is provable once the root fell out of
+        // the capped transcript; the missing prefix keeps the total unknown.
+        #expect(session.chatMetadata.observedRunCount == 1)
+        #expect(!session.chatMetadata.hasEstablishedCoverage)
+        #expect(session.bubbleMetadata.cost == nil)
+    }
+
+    @Test("A complete legacy cache rebuilds its cumulative cost but not its unproven model")
+    func completeLegacyCacheRebuildsCost() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("hud-thread.json")
+        let thread = HerdrHudSession.HerdrHudThread(
+            machineID: "demo1",
+            rootRunID: "run-1",
+            lastRunID: "run-2",
+            turnCount: 2
+        )
+        try HerdrHudPersistenceSnapshot(
+            thread: thread,
+            exchanges: [
+                exchange(id: "run-1", prompt: "First", response: "Done", modelLabel: "Sonnet 4.5"),
+                exchange(id: "run-2", prompt: "Second", response: "Done", modelLabel: "Opus 4.5"),
+            ]
+        ).save(to: fileURL)
+
+        let session = makeSession(fileURL: fileURL)
+        await session.waitForPersistenceRestoreForTesting()
+
+        // A cache that predates model attribution cannot prove its labels came
+        // from the executed runs, so only the reported costs survive.
+        #expect(session.bubbleMetadata.cost == "$2.46")
+        #expect(session.bubbleMetadata.modelName == nil)
+        #expect(session.exchanges.last?.modelLabel == "default")
+        #expect(session.exchanges.last?.modelLabelIsProven == false)
+    }
+
+    @Test("A legacy cache interrupted mid-run leaves the cost unknown")
+    func interruptedLegacyCacheKeepsCostUnknown() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("hud-thread.json")
+        let thread = HerdrHudSession.HerdrHudThread(
+            machineID: "demo1",
+            rootRunID: "run-1",
+            lastRunID: "run-1",
+            turnCount: 1
+        )
+        try HerdrHudPersistenceSnapshot(
+            thread: thread,
+            exchanges: [exchange(id: "run-1", prompt: "Interrupted", status: .running)]
+        ).save(to: fileURL)
+
+        let session = makeSession(fileURL: fileURL)
+        await session.waitForPersistenceRestoreForTesting()
+
+        #expect(session.exchanges.first?.status == .failed)
+        #expect(!session.chatMetadata.hasEstablishedCoverage)
+        #expect(session.bubbleMetadata.cost == nil)
+    }
+
+    @Test("Persisted metadata for a different conversation is not trusted")
+    func persistedMetadataForAnotherConversationIsRejected() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("hud-thread.json")
+        let thread = HerdrHudSession.HerdrHudThread(
+            machineID: "demo1",
+            rootRunID: "root-run",
+            lastRunID: "run-2",
+            turnCount: 2
+        )
+        var metadata = HerdrHudChatMetadataAccumulator()
+        metadata.reconcile(
+            machineID: "other-machine",
+            rootRunID: "other-root",
+            expectedTurnCount: 1,
+            samples: [.init(id: "other-run", costUSD: 9.99, modelName: "Other Model")]
+        )
+        try HerdrHudPersistenceSnapshot(
+            thread: thread,
+            exchanges: [exchange(id: "run-2", prompt: "Second", response: "Done")],
+            chatMetadata: metadata
+        ).save(to: fileURL)
+
+        let session = makeSession(fileURL: fileURL)
+        await session.waitForPersistenceRestoreForTesting()
+
+        #expect(session.chatMetadata.observedRunCount == 1)
+        #expect(session.bubbleMetadata.cost == nil)
+        #expect(session.bubbleMetadata.modelName == nil)
+    }
+
+    @Test("More than twenty live turns keep their aggregate after the transcript cap")
+    func moreThanTwentyLiveTurnsKeepAggregate() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = makeSession(fileURL: directory.appendingPathComponent("hud-thread.json"))
+        let model = makeDemoModel()
+
+        for index in 0...21 {
+            session.draft = "prompt \(index)"
+            await session.submit(model: model)
+        }
+
+        #expect(session.exchanges.count == 20)
+        #expect(session.chatMetadata.observedRunCount == 22)
+        #expect(session.bubbleMetadata.cost == "$0.00")
+    }
+
+    @Test("A legacy cache mixing machines rebuilds only the matching machine's turns")
+    func mixedMachineLegacyCacheIsScopedToItsMachine() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("hud-thread.json")
+        let thread = HerdrHudSession.HerdrHudThread(
+            machineID: "demo1",
+            rootRunID: "new-root",
+            lastRunID: "new-root",
+            turnCount: 1
+        )
+        try HerdrHudPersistenceSnapshot(
+            thread: thread,
+            exchanges: [
+                exchange(
+                    id: "stale-run", prompt: "Other machine", response: "Done",
+                    modelLabel: "Stale Model", machineID: "demo2", costUSD: 1.00
+                ),
+                exchange(
+                    id: "new-root", prompt: "New conversation", response: "Done",
+                    modelLabel: "Fresh Model", costUSD: 2.00
+                ),
+            ]
+        ).save(to: fileURL)
+
+        let session = makeSession(fileURL: fileURL)
+        await session.waitForPersistenceRestoreForTesting()
+
+        #expect(session.chatMetadata.hasEstablishedCoverage)
+        #expect(session.chatMetadata.observedRunCount == 1)
+        #expect(session.bubbleMetadata.cost == "$2.00")
+        #expect(session.bubbleMetadata.modelName == nil)
+    }
+
+    @Test("A legacy cache retaining a replaced root rebuilds only the current root's turns")
+    func replacedRootLegacyCacheRebuildsOnlyCurrentRoot() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("hud-thread.json")
+        let thread = HerdrHudSession.HerdrHudThread(
+            machineID: "demo1",
+            rootRunID: "new-root",
+            lastRunID: "new-root",
+            turnCount: 1
+        )
+        try HerdrHudPersistenceSnapshot(
+            thread: thread,
+            exchanges: [
+                exchange(
+                    id: "old-root", prompt: "Old conversation", response: "Done",
+                    modelLabel: "Old Model", costUSD: 1.00
+                ),
+                exchange(
+                    id: "new-root", prompt: "New conversation", response: "Done",
+                    modelLabel: "New Model", costUSD: 2.00
+                ),
+            ]
+        ).save(to: fileURL)
+
+        let session = makeSession(fileURL: fileURL)
+        await session.waitForPersistenceRestoreForTesting()
+
+        #expect(session.chatMetadata.hasEstablishedCoverage)
+        #expect(session.chatMetadata.observedRunCount == 1)
+        #expect(session.bubbleMetadata.cost == "$2.00")
+        #expect(session.bubbleMetadata.modelName == nil)
+    }
+
+    @Test("A legacy cache without its root anchor never reports a foreign total")
+    func legacyCacheWithoutRootAnchorKeepsCostUnknown() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("hud-thread.json")
+        let thread = HerdrHudSession.HerdrHudThread(
+            machineID: "demo1",
+            rootRunID: "evicted-root",
+            lastRunID: "run-2",
+            turnCount: 2
+        )
+        try HerdrHudPersistenceSnapshot(
+            thread: thread,
+            exchanges: [
+                exchange(
+                    id: "old-root", prompt: "Old conversation", response: "Done",
+                    modelLabel: "Old Model", costUSD: 1.00
+                ),
+                exchange(
+                    id: "run-2", prompt: "Current conversation", response: "Done",
+                    modelLabel: "Current Model", costUSD: 2.00
+                ),
+            ]
+        ).save(to: fileURL)
+
+        let session = makeSession(fileURL: fileURL)
+        await session.waitForPersistenceRestoreForTesting()
+
+        #expect(!session.chatMetadata.hasEstablishedCoverage)
+        #expect(session.chatMetadata.observedRunCount == 1)
+        #expect(session.bubbleMetadata.cost == nil)
+        #expect(session.bubbleMetadata.modelName == nil)
+    }
+
+    @Test("A legacy metadata cache keeps its cost but drops an unproven catalog model")
+    func legacyMetadataCacheDropsUnprovenModel() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("hud-thread.json")
+        // Version-1 payload without `modelAttributionVersion`: the model may be
+        // a catalog default that was never proven to have executed.
+        let json = #"""
+        {
+          "version": 1,
+          "hasUnseenAnswer": false,
+          "exchanges": [],
+          "chatMetadata": {
+            "machineID": "demo1",
+            "rootRunID": "root-run",
+            "knownTurnCount": 1,
+            "latestRunID": "root-run",
+            "latestRunCostUSD": 0.42,
+            "latestRunModelName": "Catalog Default",
+            "sealedCostUSD": 0,
+            "sealedKnownRunCount": 0,
+            "sealedUnknownRunCount": 0
+          },
+          "thread": {
+            "machineID": "demo1",
+            "rootRunID": "root-run",
+            "lastRunID": "root-run",
+            "turnCount": 1
+          }
+        }
+        """#
+        try Data(json.utf8).write(to: fileURL)
+
+        let session = makeSession(fileURL: fileURL)
+        await session.waitForPersistenceRestoreForTesting()
+
+        #expect(session.bubbleMetadata.cost == "$0.42")
+        #expect(session.bubbleMetadata.modelName == nil)
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("HerdrHudPersistenceTests-\(UUID().uuidString)", isDirectory: true)
@@ -238,23 +546,27 @@ struct HerdrHudPersistenceTests {
         response: String? = nil,
         status: HeadlessAgentRunStatus = .completed,
         modelLabel: String = "default",
+        modelLabelIsProven: Bool = false,
         steps: [HerdrHudStep] = [],
-        workingFolderPath: String = HerdrHudWorkingFolder.homePath
+        workingFolderPath: String = HerdrHudWorkingFolder.homePath,
+        machineID: String = "demo1",
+        costUSD: Double? = 1.23
     ) -> HerdrHudExchange {
         HerdrHudExchange(
             id: id,
-            machineID: "demo1",
+            machineID: machineID,
             prompt: prompt,
             sentPrompt: prompt,
             response: response,
             error: nil,
             status: status,
-            costUSD: 1.23,
+            costUSD: costUSD,
             createdAt: Date(timeIntervalSince1970: 1_700_000_000),
             promotedPaneID: nil,
             attachmentFilenames: ["image.png"],
             workingFolderPath: workingFolderPath,
             modelLabel: modelLabel,
+            modelLabelIsProven: modelLabelIsProven,
             steps: steps,
             stepsTruncated: true
         )

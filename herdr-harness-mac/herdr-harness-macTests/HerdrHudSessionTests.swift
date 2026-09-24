@@ -81,6 +81,28 @@ struct HerdrHudSessionTests {
         #expect(thread.turnCount == 2)
     }
 
+    @Test("Demo continuations keep the thread's original root after the second turn")
+    func demoLaterTurnsKeepThreadRoot() async throws {
+        let model = makeDemoModel()
+        let session = makeSession()
+        session.draft = "First turn"
+        await session.submit(model: model)
+        let firstRun = try #require(session.lastHeadlessRunForTesting)
+
+        for prompt in ["Second turn", "Third turn"] {
+            session.draft = prompt
+            await session.submit(model: model)
+        }
+
+        let thirdRun = try #require(session.lastHeadlessRunForTesting)
+        let thread = try #require(session.thread)
+        #expect(thirdRun.threadRootRunId == firstRun.id)
+        #expect(thread.rootRunID == firstRun.id)
+        #expect(thread.lastRunID == thirdRun.id)
+        #expect(thread.turnCount == 3)
+        #expect(session.exchanges.map(\.prompt) == ["First turn", "Second turn", "Third turn"])
+    }
+
     @Test("A reaped continuation response resets the HUD thread")
     func reapedContinuationResponseResetsThread() async throws {
         let model = makeDemoModel()
@@ -297,7 +319,7 @@ struct HerdrHudSessionTests {
             contextWindow: nil,
             supportsImages: true
         )
-        session.seedModelsForTesting([selected], default: nil)
+        session.seedModelsForTesting([selected], default: nil, machineID: "demo1")
         session.setSelectedModel(selected)
         session.addAttachments([url])
         session.draft = "Describe this image"
@@ -323,7 +345,7 @@ struct HerdrHudSessionTests {
             reasoning: true,
             contextWindow: nil
         )
-        session.seedModelsForTesting([selected], default: nil)
+        session.seedModelsForTesting([selected], default: nil, machineID: "demo1")
         session.setSelectedModel(selected)
         session.addAttachments([url])
         session.draft = "Describe this image"
@@ -334,8 +356,8 @@ struct HerdrHudSessionTests {
         #expect(session.lastHeadlessRunForTesting?.model == HerdrHudModelRouting.visionModel)
     }
 
-    @Test("Exchanges display the harness default or selected model name")
-    func exchangeModelLabelsReflectDefaultAndSelection() async {
+    @Test("Exchange labels only name an explicitly submitted model")
+    func exchangeModelLabelsOnlyReflectAProvenIdentifier() async {
         let model = makeDemoModel()
         let session = makeSession()
         let defaultModel = PiModelIdentity(provider: "provider", id: "default", name: "Harness Default")
@@ -346,15 +368,19 @@ struct HerdrHudSessionTests {
             reasoning: true,
             contextWindow: nil
         )
-        session.seedModelsForTesting([selected], default: defaultModel)
+        session.seedModelsForTesting([selected], default: defaultModel, machineID: "demo1")
         session.draft = "Use the default"
         await session.submit(model: model)
-        #expect(session.exchanges.last?.modelLabel == "Harness Default")
+        // A trusted project default can override the catalog's declared
+        // default, so an implicit submission must not claim either one.
+        #expect(session.exchanges.last?.modelLabel == "default")
+        #expect(session.exchanges.last?.modelLabelIsProven == false)
 
         session.setSelectedModel(selected)
         session.draft = "Use the selection"
         await session.submit(model: model)
         #expect(session.exchanges.last?.modelLabel == "Selected Choice")
+        #expect(session.exchanges.last?.modelLabelIsProven == true)
     }
 
     @Test("Attachments enforce count and file-size limits")

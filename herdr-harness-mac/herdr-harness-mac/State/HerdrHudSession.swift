@@ -38,6 +38,12 @@ struct HerdrHudExchange: Identifiable, Equatable, Sendable {
     var attachments: [HeadlessAgentAttachment] = []
     var localAttachments: [HerdrHudAttachment] = []
     var modelLabel: String = "default"
+    /// True only when `modelLabel` came from an explicit submitted identifier
+    /// or an authoritative run/history report. A catalog or composer fallback
+    /// may name a different model than the one a machine's trusted project
+    /// default executes, so an unproven label never contributes to bubble
+    /// metadata.
+    var modelLabelIsProven = false
     var steps: [HerdrHudStep] = []
     var stepsTruncated = false
 
@@ -57,6 +63,7 @@ struct HerdrHudExchange: Identifiable, Equatable, Sendable {
         attachments: [HeadlessAgentAttachment] = [],
         localAttachments: [HerdrHudAttachment] = [],
         modelLabel: String = "default",
+        modelLabelIsProven: Bool = false,
         steps: [HerdrHudStep] = [],
         stepsTruncated: Bool = false
     ) {
@@ -76,6 +83,7 @@ struct HerdrHudExchange: Identifiable, Equatable, Sendable {
         self.attachments = attachments
         self.localAttachments = localAttachments
         self.modelLabel = modelLabel
+        self.modelLabelIsProven = modelLabelIsProven
         self.steps = steps
         self.stepsTruncated = stepsTruncated
     }
@@ -108,6 +116,7 @@ final class HerdrHudSession {
     @ObservationIgnored private var elapsedTask: Task<Void, Never>?
     @ObservationIgnored private var restoreTask: Task<Void, Never>?
     @ObservationIgnored private var historyObservationTask: Task<Void, Never>?
+    @ObservationIgnored private var terminalMetadataReconciliationTask: Task<Void, Never>?
     @ObservationIgnored private var hasStartedSessionActivity = false
     /// Fires after an accepted run or a history load establishes this session's
     /// durable conversation identity. The owning HUD collection uses it to
@@ -122,6 +131,13 @@ final class HerdrHudSession {
     private(set) var latestPromotableExchangeID: String?
     private(set) var thread: HerdrHudThread?
     private var historyRootRunID: String?
+    /// Model and cumulative reported cost for this conversation's bubble. It is
+    /// fed from the runs the app already observes, survives the transcript
+    /// caps, and is scoped to the exact machine/root, so a different
+    /// conversation starts over instead of inheriting stale values.
+    private(set) var chatMetadata = HerdrHudChatMetadataAccumulator()
+
+    var bubbleMetadata: HerdrHudSessionMetadata { chatMetadata.metadata }
     /// The exact local submission placeholder whose accepted run established
     /// each durable history identity (`machineID:rootRunID`) this session has
     /// observed. Smart Rename's pending-title adoption consults this mapping so
@@ -149,6 +165,16 @@ final class HerdrHudSession {
             // machine's path across the switch.
             selectedWorkingFolder = .home
             workingFolderOptionsRevision &+= 1
+            // The catalog and its declared default are machine-specific. Drop
+            // them on a real switch so a submission that outruns the new
+            // machine's catalog (or a failed load) cannot capture the old
+            // machine's model name as run metadata.
+            if let selectedMachineID, modelsMachineID != selectedMachineID {
+                availableModels = []
+                defaultModel = nil
+                modelsMachineID = nil
+                didLoadCatalog = false
+            }
         }
     }
 
@@ -203,6 +229,10 @@ final class HerdrHudSession {
     private(set) var promotingExchangeIDs: Set<String> = []
     private(set) var availableModels: [PiAvailableModel] = []
     private(set) var defaultModel: PiModelIdentity?
+    /// The machine whose catalog produced `availableModels` and `defaultModel`.
+    /// A declared default is only trustworthy for that machine; metadata must
+    /// keep the model unknown rather than borrow another machine's default.
+    private(set) var modelsMachineID: String?
     private(set) var isLoadingModels = false
     private(set) var modelsError: String?
     private(set) var didLoadCatalog = false
@@ -251,6 +281,7 @@ final class HerdrHudSession {
         elapsedTask?.cancel()
         restoreTask?.cancel()
         historyObservationTask?.cancel()
+        terminalMetadataReconciliationTask?.cancel()
     }
 
     func makeIndependentSession(id: String) -> HerdrHudSession {
@@ -498,9 +529,24 @@ final class HerdrHudSession {
         await restoreTask?.value
     }
 
-    func seedModelsForTesting(_ models: [PiAvailableModel], default defaultModel: PiModelIdentity?) {
+    /// Awaits the bounded terminal reconciliation window, so a test can prove
+    /// the window ended instead of inferring its bound from elapsed time.
+    func awaitTerminalMetadataReconciliationForTesting() async {
+        await terminalMetadataReconciliationTask?.value
+    }
+
+    /// The exact file this session debounces into, so a test can prove a
+    /// corrected metadata aggregate reached disk rather than only memory.
+    var persistenceURLForTesting: URL { storeURL }
+
+    func seedModelsForTesting(
+        _ models: [PiAvailableModel],
+        default defaultModel: PiModelIdentity?,
+        machineID: String? = nil
+    ) {
         availableModels = models
         self.defaultModel = defaultModel
+        modelsMachineID = machineID ?? selectedMachineID
     }
     #endif
 
@@ -597,14 +643,15 @@ final class HerdrHudSession {
         let attachmentFilenames = attachmentsToSend.map(\.filename)
         let hasAttachments = !attachmentsToSend.isEmpty
         let hasImageAttachments = attachmentsToSend.contains(where: \.isImage)
+        let catalogIsForMachine = modelsMachineID == machineID
         let resolution = AgentModelResolver.resolve(
             preference: selectedModel,
-            catalog: availableModels,
-            isCatalogAuthoritative: didLoadCatalog
+            catalog: catalogIsForMachine ? availableModels : [],
+            isCatalogAuthoritative: catalogIsForMachine && didLoadCatalog
         )
         let agentModel = HerdrHudModelRouting.model(
             selection: resolution.modelID,
-            selectionSupportsImages: selectedModelSupportsImages,
+            selectionSupportsImages: selectedModelSupportsImages(on: machineID),
             hasImageAttachments: hasImageAttachments,
             visionModel: agentSettings.effectiveVisionModel
         )
@@ -612,7 +659,8 @@ final class HerdrHudSession {
         if resolution.preferenceIsUnavailable {
             validationError = "\(selectedModel ?? "") isn't offered by this machine — using its default model."
         }
-        let label = modelLabel(for: agentModel)
+        let metadataModelName = modelLabel(for: agentModel, on: machineID)
+        let label = metadataModelName ?? "default"
         let pendingID = "hud-pending-\(UUID().uuidString)"
         let submittedAt = Date.now
         let continueFromRunId = thread?.machineID == machineID ? thread?.lastRunID : nil
@@ -631,7 +679,8 @@ final class HerdrHudSession {
                 attachmentFilenames: attachmentFilenames,
                 workingFolderPath: workingFolder.path,
                 localAttachments: attachmentsToSend,
-                modelLabel: label
+                modelLabel: label,
+                modelLabelIsProven: metadataModelName != nil
             )
         )
         consumeComposerSnapshot(
@@ -691,6 +740,7 @@ final class HerdrHudSession {
             capabilitiesChecked: isNewRoot && !workingFolder.isHome,
             submissionOwnerID: ownerID,
             submissionID: pendingID,
+            submissionModelName: metadataModelName,
             model: model
         )
         guard let index = exchanges.firstIndex(where: { $0.id == pendingID }) else {
@@ -734,7 +784,8 @@ final class HerdrHudSession {
                     workingFolderPath: workingFolder.path,
                     attachments: wireAttachments,
                     localAttachments: attachmentsToSend,
-                    modelLabel: label
+                    modelLabel: label,
+                    modelLabelIsProven: metadataModelName != nil
                 )
                 markExchangesChanged()
                 await schedulePersistenceSave()
@@ -766,6 +817,7 @@ final class HerdrHudSession {
             attachments: retainedAttachments,
             localAttachments: attachmentsToSend,
             modelLabel: label,
+            modelLabelIsProven: metadataModelName != nil,
             steps: Self.hudSteps(from: run.steps ?? []),
             stepsTruncated: run.stepsTruncated == true
         )
@@ -885,8 +937,12 @@ final class HerdrHudSession {
         defer { isLoadingModels = false }
         do {
             let response = try await model.fetchAgentModels(machineID: machineID)
+            // The selection can move while the catalog request is in flight.
+            // A stale response must not become the new machine's catalog.
+            guard resolvedMachineIDReadOnly(in: model) == machineID else { return }
             availableModels = response.models
             defaultModel = response.defaultModel
+            modelsMachineID = machineID
             didLoadCatalog = true
         } catch {
             modelsError = error.localizedDescription
@@ -1165,14 +1221,15 @@ final class HerdrHudSession {
         let hasImageAttachments = retryAttachments.contains {
             HerdrAttachmentTypes.isImage(URL(fileURLWithPath: $0.filename))
         }
+        let catalogIsForMachine = modelsMachineID == exchange.machineID
         let resolution = AgentModelResolver.resolve(
             preference: selectedModel,
-            catalog: availableModels,
-            isCatalogAuthoritative: didLoadCatalog
+            catalog: catalogIsForMachine ? availableModels : [],
+            isCatalogAuthoritative: catalogIsForMachine && didLoadCatalog
         )
         let agentModel = HerdrHudModelRouting.model(
             selection: resolution.modelID,
-            selectionSupportsImages: selectedModelSupportsImages,
+            selectionSupportsImages: selectedModelSupportsImages(on: exchange.machineID),
             hasImageAttachments: hasImageAttachments,
             visionModel: agentSettings.effectiveVisionModel
         )
@@ -1180,7 +1237,8 @@ final class HerdrHudSession {
         if resolution.preferenceIsUnavailable {
             validationError = "\(selectedModel ?? "") isn't offered by this machine — using its default model."
         }
-        let label = modelLabel(for: agentModel)
+        let metadataModelName = modelLabel(for: agentModel, on: exchange.machineID)
+        let label = metadataModelName ?? "default"
         guard let run = await submitAndWait(
             prompt: exchange.sentPrompt,
             machineID: exchange.machineID,
@@ -1193,6 +1251,7 @@ final class HerdrHudSession {
             capabilitiesChecked: startsNewRoot && !workingFolder.isHome,
             submissionOwnerID: ownerID,
             submissionID: isUnacceptedPlaceholder ? exchange.id : nil,
+            submissionModelName: metadataModelName,
             model: model
         ) else {
             if submissionWasCancelled(ownerID) {
@@ -1236,6 +1295,7 @@ final class HerdrHudSession {
                 attachments: retainedAttachments,
                 localAttachments: exchange.localAttachments,
                 modelLabel: label,
+                modelLabelIsProven: metadataModelName != nil,
                 steps: Self.hudSteps(from: run.steps ?? []),
                 stepsTruncated: run.stepsTruncated == true
             )
@@ -1365,6 +1425,8 @@ final class HerdrHudSession {
         exchanges = turns.map { run in
             let local = localByID[run.id]
                 ?? (run.id == page.latestRunId ? acceptedPendingExchange : nil)
+            let restoredModelName = run.model.map(PiModelDisplayName.short(fullID:))
+                ?? Self.provenLocalModelName(local)
             return HerdrHudExchange(
                 id: run.id,
                 machineID: machineID,
@@ -1380,11 +1442,29 @@ final class HerdrHudSession {
                 workingFolderPath: historyWorkingFolder,
                 attachments: local?.attachments ?? [],
                 localAttachments: local?.localAttachments ?? [],
-                modelLabel: run.model.map(PiModelDisplayName.short(fullID:)) ?? local?.modelLabel ?? "default",
+                modelLabel: restoredModelName ?? "default",
+                modelLabelIsProven: restoredModelName != nil,
                 steps: Self.hudSteps(from: run.steps ?? []),
                 stepsTruncated: run.stepsTruncated == true
             )
         } + localPlaceholders
+        mutateChatMetadata { metadata in
+            metadata.reconcile(
+                machineID: machineID,
+                rootRunID: page.rootRunId,
+                expectedTurnCount: turns.count,
+                samples: turns.map { run in
+                    let local = localByID[run.id]
+                        ?? (run.id == page.latestRunId ? acceptedPendingExchange : nil)
+                    return HerdrHudChatMetadataAccumulator.RunSample(
+                        id: run.id,
+                        costUSD: run.costUSD,
+                        modelName: run.model.map(PiModelDisplayName.short(fullID:))
+                            ?? Self.provenLocalModelName(local)
+                    )
+                }
+            )
+        }
         savedHistoryRunKeys.formUnion(turns.map { "\(machineID):\($0.id)" })
         historyRootRunID = page.rootRunId
         if let latest = turns.last, latest.status.isTerminal, isCollapsed, wasAwaitingAnswer {
@@ -1429,6 +1509,7 @@ final class HerdrHudSession {
                         || self.exchanges[index].status != run.status
                         || self.exchanges[index].costUSD != run.costUSD
                         || self.exchanges[index].steps != Self.hudSteps(from: run.steps ?? [])
+                    self.recordObservedMetadataSample(run)
                     if changed {
                         self.exchanges[index].response = run.response
                         self.exchanges[index].error = run.error
@@ -1439,6 +1520,14 @@ final class HerdrHudSession {
                     }
                     if run.status.isTerminal {
                         self.hasUnseenAnswer = !self.hasEnded && self.isCollapsed
+                        if let identity = self.chatMetadata.identity {
+                            self.scheduleTerminalMetadataReconciliation(
+                                run: run,
+                                machineID: identity.machineID,
+                                rootRunID: identity.rootRunID,
+                                model: model
+                            )
+                        }
                         await self.schedulePersistenceSave()
                         if self.controller.run?.id == run.id { self.controller.reset() }
                         return
@@ -1446,6 +1535,16 @@ final class HerdrHudSession {
                     do { try await Task.sleep(for: .milliseconds(700)) } catch { return }
                 }
             }
+        } else if let latest = turns.last {
+            // A run that was already terminal when history loaded can still
+            // receive its drained cost later, so schedule the same bounded
+            // reconciliation without waiting for the card to reopen.
+            scheduleTerminalMetadataReconciliation(
+                run: latest,
+                machineID: machineID,
+                rootRunID: page.rootRunId,
+                model: model
+            )
         }
     }
 
@@ -1456,19 +1555,50 @@ final class HerdrHudSession {
     ) -> Bool {
         guard historyIdentity == "\(machineID):\(rootRunID)",
               page.promotedPaneId == nil,
+              page.nextOffset == nil,
+              chatMetadata.isComplete,
+              chatMetadata.latestRunID == page.latestRunId,
               let thread,
               thread.machineID == machineID,
               thread.rootRunID == page.rootRunId,
               thread.lastRunID == page.latestRunId,
               let localLatest = exchanges.first(where: { $0.id == page.latestRunId }),
-              localLatest.status.isTerminal else { return false }
-        if let remoteLatest = page.turns.first(where: { $0.id == page.latestRunId }) {
-            return remoteLatest.status == localLatest.status
-                && remoteLatest.response == localLatest.response
-                && remoteLatest.error == localLatest.error
-                && remoteLatest.promotedPaneID == localLatest.promotedPaneID
+              localLatest.status.isTerminal,
+              let remoteLatest = page.turns.first(where: { $0.id == page.latestRunId }) else {
+            // Only the complete page covers every turn. A page with more
+            // offsets, or an aggregate with an unresolved historical
+            // component, cannot prove the metadata is unchanged. Fall through
+            // to the full paginated fetch so the refresh task reconciles every
+            // turn.
+            return false
         }
-        return page.nextOffset != nil
+        guard remoteLatest.status == localLatest.status
+            && remoteLatest.response == localLatest.response
+            && remoteLatest.error == localLatest.error
+            && remoteLatest.promotedPaneID == localLatest.promotedPaneID
+        else { return false }
+        // A terminal report is not immutable: the server marks a cancelled run
+        // terminal before its stdout consumer drains, so an earlier turn's cost
+        // can be revised without the latest run changing. Reconcile the
+        // complete page into a scratch aggregate and compare every accepted
+        // turn against the live one, rather than trusting the latest sample
+        // alone. A model that finally resolved on the server also falls out of
+        // this comparison, replacing the submission-time fallback.
+        var authoritative = HerdrHudChatMetadataAccumulator()
+        authoritative.reconcile(
+            machineID: machineID,
+            rootRunID: page.rootRunId,
+            expectedTurnCount: page.turns.count,
+            samples: page.turns.map { run in
+                Self.metadataRunSample(
+                    for: run,
+                    fallbackModelName: Self.provenLocalModelName(
+                        exchanges.first(where: { $0.id == run.id })
+                    )
+                )
+            }
+        )
+        return authoritative == chatMetadata
     }
 
     func clear(model: HerdrAppModel) async {
@@ -1482,12 +1612,15 @@ final class HerdrHudSession {
             return
         }
         beginSessionActivity()
+        terminalMetadataReconciliationTask?.cancel()
+        terminalMetadataReconciliationTask = nil
         exchanges = []
         pendingQuotes = []
         markExchangesChanged()
         thread = nil
         historyRootRunID = nil
         acceptedSubmissionIDsByHistoryIdentity = [:]
+        chatMetadata = HerdrHudChatMetadataAccumulator()
         needsHistoryRefresh = false
         selectedWorkingFolder = .home
         await persistence.remove()
@@ -1523,14 +1656,35 @@ final class HerdrHudSession {
         return model.machines.first?.id
     }
 
-    private var selectedModelSupportsImages: Bool {
-        guard let selectedModel else { return false }
+    private func selectedModelSupportsImages(on machineID: String) -> Bool {
+        guard let selectedModel, modelsMachineID == machineID else { return false }
         return availableModels.first(where: { $0.id == selectedModel })?.supportsImages ?? false
     }
 
-    private func modelLabel(for requestedModel: String?) -> String {
-        guard let requestedModel else { return defaultModel?.displayName ?? "default" }
-        return availableModels.first(where: { $0.id == requestedModel })?.displayName ?? PiModelDisplayName.short(fullID: requestedModel)
+    /// The display name captured for an explicitly submitted model, or nil
+    /// while the executed model is genuinely unknown. Only the identifier in
+    /// the request — or the catalog entry naming that exact identifier — proves
+    /// what may run. A declared catalog default is never attribution: a
+    /// trusted project default can override it, so an implicit submission
+    /// stays unknown until the server reports the run's model. A cached
+    /// default from another machine is likewise never promoted. Dispatch is
+    /// unaffected; only the label is withheld.
+    private func modelLabel(for requestedModel: String?, on machineID: String) -> String? {
+        guard let requestedModel else { return nil }
+        if modelsMachineID == machineID,
+           let available = availableModels.first(where: { $0.id == requestedModel }) {
+            return available.displayName
+        }
+        return PiModelDisplayName.short(fullID: requestedModel)
+    }
+
+    /// A restored exchange's own label is usable only when it was captured from
+    /// an explicit submission or an authoritative run report. A transcript or
+    /// cache written before that distinction existed may hold a catalog guess,
+    /// so its provenance flag alone decides whether metadata may adopt it.
+    private static func provenLocalModelName(_ exchange: HerdrHudExchange?) -> String? {
+        guard let exchange, exchange.modelLabelIsProven else { return nil }
+        return exchange.modelLabel
     }
 
     private func append(_ exchange: HerdrHudExchange) {
@@ -1585,6 +1739,7 @@ final class HerdrHudSession {
         historyRootRunID = snapshot.historyRootRunID ?? thread?.rootRunID
         let restoredMachineID = thread?.machineID ?? exchanges.first?.machineID
         selectedMachineID = restoredMachineID ?? selectedMachineID
+        restoreChatMetadata(snapshot, exchanges: restored.exchanges)
         let restoredFolderPath = restored.exchanges.last(where: { exchange in
             exchange.machineID == restoredMachineID
         })?.workingFolderPath ?? HerdrHudWorkingFolder.homePath
@@ -1594,6 +1749,103 @@ final class HerdrHudSession {
         }
         pruneStoredAttachments()
         markExchangesChanged()
+    }
+
+    /// A persisted aggregate is trusted only for the exact restored identity.
+    /// A version-1 cache without one is rebuilt from its transcript only when
+    /// the retained turns provably belong to this machine and root, starting
+    /// at the root run and ending at the thread's last accepted run; otherwise
+    /// the cost stays unknown until full history establishes coverage.
+    private func restoreChatMetadata(
+        _ snapshot: HerdrHudPersistenceSnapshot,
+        exchanges: [HerdrHudExchange]
+    ) {
+        guard let identity = chatMetadataIdentity else {
+            chatMetadata = HerdrHudChatMetadataAccumulator()
+            return
+        }
+        if let persisted = snapshot.chatMetadata, persisted.isScoped(to: identity) {
+            chatMetadata = persisted
+            return
+        }
+        // A persisted run that was still in flight when the cache was written
+        // has a partial cost; its aggregate is unproven until history reloads.
+        let hasInterruptedExchange = snapshot.exchanges.contains { !$0.status.isTerminal }
+        let legacy = Self.legacyChatMetadataSamples(
+            exchanges: exchanges,
+            identity: identity,
+            lastRunID: thread?.lastRunID
+        )
+        chatMetadata = HerdrHudChatMetadataAccumulator()
+        chatMetadata.reconcile(
+            machineID: identity.machineID,
+            rootRunID: identity.rootRunID,
+            expectedTurnCount: hasInterruptedExchange || !legacy.coverageIsProvable
+                ? nil
+                : thread?.turnCount,
+            samples: legacy.samples
+        )
+    }
+
+    /// A version-1 cache has no identity of its own, so its retained turns may
+    /// contain previous roots or machines. Only the range that begins at the
+    /// conversation's root run, stays on the restored machine, and ends at the
+    /// thread's last accepted run is provably part of this conversation and can
+    /// establish coverage. When that range is unavailable, at most the
+    /// thread's own last run is kept: older retained turns may belong to a
+    /// replaced root, and sealing them could later be summed into an accepted
+    /// run's total.
+    private static func legacyChatMetadataSamples(
+        exchanges: [HerdrHudExchange],
+        identity: HerdrHudChatMetadataAccumulator.Identity,
+        lastRunID: String?
+    ) -> (samples: [HerdrHudChatMetadataAccumulator.RunSample], coverageIsProvable: Bool) {
+        let sameMachine = exchanges.filter {
+            $0.machineID == identity.machineID && !$0.id.hasPrefix("hud-pending-")
+        }
+        let rootScoped = sameMachine.firstIndex { $0.id == identity.rootRunID }
+            .map { Array(sameMachine[$0...]) } ?? []
+        let scoped: [HerdrHudExchange]
+        let coverageIsProvable: Bool
+        if !rootScoped.isEmpty, let lastRunID, rootScoped.last?.id == lastRunID {
+            scoped = rootScoped
+            coverageIsProvable = true
+        } else if !rootScoped.isEmpty, lastRunID == nil {
+            // Without an accepted-turn count the total stays unknown, but the
+            // retained suffix is still provably same-machine and after the root.
+            scoped = rootScoped
+            coverageIsProvable = false
+        } else if let lastRunID, let last = sameMachine.first(where: { $0.id == lastRunID }) {
+            scoped = [last]
+            coverageIsProvable = false
+        } else {
+            scoped = []
+            coverageIsProvable = false
+        }
+        let samples = scoped.map {
+            HerdrHudChatMetadataAccumulator.RunSample(
+                id: $0.id,
+                costUSD: $0.costUSD,
+                modelName: $0.modelLabelIsProven ? $0.modelLabel : nil
+            )
+        }
+        return (samples, coverageIsProvable)
+    }
+
+    /// Mirrors `historyIdentity`, so persisted metadata is only trusted for the
+    /// same machine and root the rest of the session already agrees on.
+    private var chatMetadataIdentity: HerdrHudChatMetadataAccumulator.Identity? {
+        if let thread {
+            return HerdrHudChatMetadataAccumulator.Identity(
+                machineID: thread.machineID,
+                rootRunID: thread.rootRunID
+            )
+        }
+        guard let first = exchanges.first, !first.id.hasPrefix("hud-") else { return nil }
+        return HerdrHudChatMetadataAccumulator.Identity(
+            machineID: first.machineID,
+            rootRunID: historyRootRunID ?? first.id
+        )
     }
 
     /// Startup restoration is allowed only until the user initiates real HUD work.
@@ -1606,8 +1858,13 @@ final class HerdrHudSession {
         // Keep the accepted running snapshot until the server tells us its real
         // outcome; the legacy cache decoder marks interrupted rows as failed.
         guard !needsHistoryRefresh else { return }
-        let snapshot = HerdrHudPersistenceSnapshot(thread: thread, exchanges: exchanges,
-                                                   hasUnseenAnswer: hasUnseenAnswer, historyRootRunID: historyRootRunID)
+        let snapshot = HerdrHudPersistenceSnapshot(
+            thread: thread,
+            exchanges: exchanges,
+            hasUnseenAnswer: hasUnseenAnswer,
+            historyRootRunID: historyRootRunID,
+            chatMetadata: chatMetadata
+        )
         await persistence.scheduleSave(snapshot)
     }
 
@@ -1623,6 +1880,7 @@ final class HerdrHudSession {
         capabilitiesChecked: Bool = false,
         submissionOwnerID ownerID: UUID? = nil,
         submissionID: String? = nil,
+        submissionModelName: String? = nil,
         model: HerdrAppModel
     ) async -> HeadlessAgentRun? {
         elapsedSeconds = 0
@@ -1690,6 +1948,14 @@ final class HerdrHudSession {
             let count = isNewRoot ? 1 : (thread?.turnCount ?? 0) + 1
             thread = HerdrHudThread(machineID: machineID, rootRunID: root,
                                    lastRunID: run.id, turnCount: count)
+            mutateChatMetadata { metadata in
+                metadata.recordAcceptedRun(
+                    machineID: machineID,
+                    rootRunID: root,
+                    expectedTurnCount: count,
+                    sample: Self.metadataRunSample(for: run, fallbackModelName: submissionModelName)
+                )
+            }
             if isNewRoot, let submissionID {
                 // Bind the new root to the exact submission that established
                 // it so a pending title is adopted only by that submission.
@@ -1710,17 +1976,165 @@ final class HerdrHudSession {
                 try await Task.sleep(for: .milliseconds(100))
             } catch {
                 await controller.cancel(model: model)
+                recordObservedMetadataSample(controller.run)
                 return controller.run
             }
-            let count = controller.run?.steps?.count ?? 0
+            let run = controller.run
+            let count = run?.steps?.count ?? 0
             if count != liveStepCount {
                 liveStepCount = count
             }
-            let steps = Self.hudSteps(from: controller.run?.steps ?? [])
+            let steps = Self.hudSteps(from: run?.steps ?? [])
             if steps != liveSteps { liveSteps = steps }
-            if controller.run?.response != liveResponse { liveResponse = controller.run?.response }
+            if run?.response != liveResponse { liveResponse = run?.response }
+            recordObservedMetadataSample(run)
+        }
+        recordObservedMetadataSample(controller.run)
+        if let finishedRun = controller.run, finishedRun.status.isTerminal {
+            scheduleTerminalMetadataReconciliation(
+                run: finishedRun,
+                machineID: machineID,
+                rootRunID: finishedRun.threadRootRunId ?? finishedRun.id,
+                model: model
+            )
         }
         return controller.run
+    }
+
+    private static func metadataRunSample(
+        for run: HeadlessAgentRun,
+        fallbackModelName: String? = nil
+    ) -> HerdrHudChatMetadataAccumulator.RunSample {
+        HerdrHudChatMetadataAccumulator.RunSample(
+            id: run.id,
+            costUSD: run.costUSD,
+            modelName: run.model.map(PiModelDisplayName.short(fullID:)) ?? fallbackModelName
+        )
+    }
+
+    private func recordObservedMetadataSample(_ run: HeadlessAgentRun?) {
+        guard let run else { return }
+        mutateChatMetadata { metadata in
+            metadata.updateObservedRun(
+                id: run.id,
+                costUSD: run.costUSD,
+                modelName: run.model.map(PiModelDisplayName.short(fullID:))
+            )
+        }
+    }
+
+    /// How many extra checks one terminal run gets, and how far apart. The
+    /// server marks a cancellation terminal before the run's stdout (and its
+    /// cost report) finishes draining, so the first terminal sample can be
+    /// incomplete or later revised. A handful of spaced reports closes that
+    /// gap and then stops; this is deliberately not a presentation poller.
+    private static let terminalMetadataReconciliationAttempts = 6
+    private static let terminalMetadataReconciliationInterval = Duration.milliseconds(700)
+
+    /// Re-checks one already-observed terminal run for a late or revised
+    /// report so a collapsed bubble does not wait for the next card refresh.
+    /// Every attempt revalidates the aggregate identity and the exact run, so
+    /// a replaced conversation or a newer accepted turn stops the task instead
+    /// of letting an old report leak into the new aggregate. Only a latest run
+    /// that can still gain a cost is scheduled: a cancellation is always
+    /// rechecked for the whole bounded window because its report may be
+    /// revised after two matching samples, and any other terminal run only
+    /// while its cost is still unknown.
+    private func scheduleTerminalMetadataReconciliation(
+        run: HeadlessAgentRun,
+        machineID: String,
+        rootRunID: String,
+        model: HerdrAppModel
+    ) {
+        guard !model.isDemoMode, run.status.isTerminal else { return }
+        let identity = HerdrHudChatMetadataAccumulator.Identity(machineID: machineID, rootRunID: rootRunID)
+        guard chatMetadata.isScoped(to: identity), chatMetadata.latestRunID == run.id else { return }
+        guard run.status == .cancelled || chatMetadata.latestRunCostUSD == nil else { return }
+        terminalMetadataReconciliationTask?.cancel()
+        terminalMetadataReconciliationTask = Task { [weak self] in
+            guard let self else { return }
+            var settledCost: Double?
+            for attempt in 0..<Self.terminalMetadataReconciliationAttempts {
+                if attempt > 0 {
+                    do {
+                        try await Task.sleep(for: Self.terminalMetadataReconciliationInterval)
+                    } catch {
+                        return
+                    }
+                }
+                guard !Task.isCancelled,
+                      !self.hasEnded,
+                      self.chatMetadata.isScoped(to: identity),
+                      self.chatMetadata.latestRunID == run.id else { return }
+                guard let report = try? await model.fetchHeadlessAgent(
+                    runID: run.id,
+                    machineID: machineID
+                ), report.status.isTerminal else { continue }
+                if self.applyReconciledTerminalRun(report, identity: identity) {
+                    await self.schedulePersistenceSave()
+                }
+                // For any non-cancelled terminal run, two consecutive reports
+                // that agree on the cost prove the record has settled, so the
+                // full bound is unnecessary. A cancellation never leaves on
+                // agreement: the server marks it terminal before stdout (and
+                // its cost report) finishes draining, so two equal early
+                // samples can still be revised (for example $0.05, $0.05,
+                // then $0.11). It always uses the bounded window instead.
+                if run.status != .cancelled,
+                   let cost = report.costUSD,
+                   let settledCost,
+                   cost == settledCost {
+                    return
+                }
+                settledCost = report.costUSD
+            }
+        }
+    }
+
+    /// Merges one authoritative terminal report into the aggregate and its
+    /// transcript row. The caller scoped the fetch to this conversation, but
+    /// the aggregate can still be replaced while the report is in flight, so
+    /// the exact identity and run are revalidated here as well before a late
+    /// cost can touch its accepted turn.
+    @discardableResult
+    private func applyReconciledTerminalRun(
+        _ run: HeadlessAgentRun,
+        identity: HerdrHudChatMetadataAccumulator.Identity
+    ) -> Bool {
+        guard run.status.isTerminal,
+              chatMetadata.isScoped(to: identity),
+              chatMetadata.latestRunID == run.id else { return false }
+        let modelName = run.model.map(PiModelDisplayName.short(fullID:))
+        var changed = false
+        mutateChatMetadata { metadata in
+            let updated = metadata.updateObservedRun(
+                id: run.id,
+                costUSD: run.costUSD,
+                modelName: modelName
+            )
+            changed = updated
+            return updated
+        }
+        if let index = exchanges.firstIndex(where: { $0.id == run.id }) {
+            if exchanges[index].costUSD != run.costUSD {
+                exchanges[index].costUSD = run.costUSD
+                changed = true
+            }
+            if exchanges[index].status != run.status {
+                exchanges[index].status = run.status
+                changed = true
+            }
+            if changed { markExchangesChanged() }
+        }
+        return changed
+    }
+
+    private func mutateChatMetadata(
+        _ mutate: (inout HerdrHudChatMetadataAccumulator) -> Bool
+    ) {
+        var updated = chatMetadata
+        guard mutate(&updated) else { return }
+        chatMetadata = updated
     }
 
     private func beginElapsedTimer() {

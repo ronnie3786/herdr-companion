@@ -68,6 +68,53 @@ struct FirstMateTests {
         #expect(store.snapshot?.documents == original.documents)
     }
 
+    @Test("Partial acknowledgements preserve cached scoped verification")
+    func partialAcknowledgementVerification() throws {
+        let store = FirstMateStore()
+        var original = FirstMateDemo.features(step: 3)[0]
+        let originalVerification = try #require(original.feature.verification)
+        original.feature.updatedAt = "2030-01-01T12:00:00Z"
+        store.receive(original)
+        store.select(original.feature.id)
+
+        var feature = original.feature
+        feature.status = "paused"
+        feature.updatedAt = "2030-01-01T12:01:00Z"
+        feature.verification = nil
+        let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(feature))
+        let data = try JSONSerialization.data(withJSONObject: ["ok": true, "feature": object])
+        let acknowledgment = try JSONDecoder().decode(FirstMateSnapshot.self, from: data)
+        #expect(!acknowledgment.hasDetails)
+        store.receive(acknowledgment)
+        #expect(store.snapshot?.feature.status == "paused")
+        #expect(store.snapshot?.feature.verification == originalVerification)
+    }
+
+    @Test("A stale feature-list assessment cannot downgrade a newer verified verdict")
+    func refreshKeepsNewerVerification() async {
+        let older = FirstMateVerification(
+            status: .partiallyVerified, featureRevision: 1, sourceRevisions: ["old"],
+            evidencePresent: true, computedAt: "2030-01-01T11:00:00Z"
+        )
+        let client = FirstMateTestClient(verification: older)
+        let store = FirstMateStore()
+        store.configure(client: client, demo: false)
+        await store.refresh()
+        #expect(store.snapshot?.feature.verification?.status == .partiallyVerified)
+
+        var newer = FirstMateDemo.features(step: 0)[0]
+        newer.feature.verification = FirstMateVerification(
+            status: .verified, featureRevision: 1, sourceRevisions: ["new"],
+            evidencePresent: true, computedAt: "2030-01-01T12:00:00Z"
+        )
+        store.receive(newer)
+        #expect(store.snapshot?.feature.verification?.status == .verified)
+
+        await store.refresh()
+        #expect(store.snapshot?.feature.verification?.status == .verified)
+        #expect(store.snapshot?.feature.verification?.sourceRevisions == ["new"])
+    }
+
     @Test("Partial acknowledgements distinguish explicit session rotation from omitted legacy metadata")
     func partialAcknowledgementSessionPresence() throws {
         let store = FirstMateStore()
@@ -595,6 +642,7 @@ private actor FirstMateTestClient: FirstMateClient {
     let mismatchedMutation: Bool
     let mismatchedSession: Bool
     let archiveCapability: Bool
+    let verification: FirstMateVerification?
     private var isArchived = false
     private var listContinuation: CheckedContinuation<Void, Never>?
     var isWaitingForList: Bool { listContinuation != nil }
@@ -605,7 +653,7 @@ private actor FirstMateTestClient: FirstMateClient {
     var creationRequests: [String] = []
     var archiveRequests: [String] = []
     var lastSessionID: String?
-    init(unsupported: Bool = false, paginated: Bool = false, holdEarlier: Bool = false, holdList: Bool = false, mismatchedMutation: Bool = false, mismatchedSession: Bool = false, archiveCapability: Bool = true) {
+    init(unsupported: Bool = false, paginated: Bool = false, holdEarlier: Bool = false, holdList: Bool = false, mismatchedMutation: Bool = false, mismatchedSession: Bool = false, archiveCapability: Bool = true, verification: FirstMateVerification? = nil) {
         self.unsupported = unsupported
         self.paginated = paginated
         self.holdEarlier = holdEarlier
@@ -613,6 +661,7 @@ private actor FirstMateTestClient: FirstMateClient {
         self.mismatchedMutation = mismatchedMutation
         self.mismatchedSession = mismatchedSession
         self.archiveCapability = archiveCapability
+        self.verification = verification
     }
     func releaseList() { listContinuation?.resume(); listContinuation = nil }
     func releaseEarlier() { earlierContinuation?.resume(); earlierContinuation = nil }
@@ -630,12 +679,14 @@ private actor FirstMateTestClient: FirstMateClient {
         var feature = FirstMateDemo.features(step: 0)[0].feature
         feature.archivedAt = isArchived ? FirstMateDemo.timestamp : nil
         feature.archiveReason = isArchived ? FirstMateArchiveReason.testSynthetic.rawValue : nil
+        feature.verification = verification
         return .init(ok: true, features: scope == .active && isArchived ? [] : [feature])
     }
     func fetchFirstMateFeature(_ id: String) async throws -> FirstMateSnapshot {
         var snapshot = FirstMateDemo.features(step: 0)[0]
         snapshot.feature.archivedAt = isArchived ? FirstMateDemo.timestamp : nil
         snapshot.feature.archiveReason = isArchived ? FirstMateArchiveReason.testSynthetic.rawValue : nil
+        snapshot.feature.verification = verification
         return snapshot
     }
     func createFirstMateFeature(title: String, goal: String, cwd: String, requestID: String) async throws -> FirstMateSnapshot {

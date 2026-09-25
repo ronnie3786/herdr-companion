@@ -307,6 +307,13 @@ final class FirstMateStore {
                 than: existing.feature.updatedAt
             )
             if feature.usage == nil { feature.usage = existing.feature.usage }
+            feature.verification = Self.retainedVerification(
+                incoming: feature.verification,
+                includesField: feature.includesVerification,
+                cached: existing.feature.verification,
+                incomingIsStale: hasStaleIdentityMetadata
+            )
+            feature.includesVerification = feature.includesVerification || existing.feature.includesVerification
             if hasStaleIdentityMetadata {
                 feature.updatedAt = existing.feature.updatedAt
                 feature.nativeSessionID = existing.feature.nativeSessionID
@@ -331,6 +338,22 @@ final class FirstMateStore {
             snapshots[value.feature.id] = existing
         } else {
             var incoming = value
+            if let existing = snapshots[incoming.feature.id] {
+                // A delayed full snapshot can carry an older assessment than
+                // the one already cached. Keep the newer verdict so a stale
+                // verified state cannot be resurrected.
+                incoming.feature.verification = Self.retainedVerification(
+                    incoming: incoming.feature.verification,
+                    includesField: incoming.feature.includesVerification,
+                    cached: existing.feature.verification,
+                    incomingIsStale: Self.isStrictlyOlderTimestamp(
+                        incoming.feature.updatedAt,
+                        than: existing.feature.updatedAt
+                    )
+                )
+                incoming.feature.includesVerification = incoming.feature.includesVerification
+                    || existing.feature.includesVerification
+            }
             if !incoming.includesLinks, let existing = snapshots[incoming.feature.id] {
                 // A server without the additive links field is not evidence
                 // that previously cached links were removed.
@@ -397,6 +420,13 @@ final class FirstMateStore {
                 }
                 var refreshed = feature
                 if refreshed.usage == nil { refreshed.usage = cached.usage }
+                refreshed.verification = Self.retainedVerification(
+                    incoming: refreshed.verification,
+                    includesField: refreshed.includesVerification,
+                    cached: cached.verification,
+                    incomingIsStale: Self.isStrictlyOlderTimestamp(refreshed.updatedAt, than: cached.updatedAt)
+                )
+                refreshed.includesVerification = refreshed.includesVerification || cached.includesVerification
                 return refreshed
             }
             reconcileSelection()
@@ -1339,6 +1369,27 @@ final class FirstMateStore {
         guard let candidateDate = HerdrTimestamp.date(from: candidate),
               let existingDate = HerdrTimestamp.date(from: existing) else { return false }
         return candidateDate < existingDate
+    }
+
+    /// Conservative verification merge for partial acknowledgements and
+    /// delayed full snapshots.
+    ///
+    /// - An omitted field (older companion) inherits the cached assessment.
+    /// - An explicit empty assessment never erases retained evidence.
+    /// - A strictly older feature timestamp keeps the cached assessment.
+    /// - Otherwise the assessment with the newer feature revision and
+    ///   computation timestamp wins, so a delayed verified response cannot
+    ///   overwrite a newer partial or failed verdict.
+    private static func retainedVerification(
+        incoming: FirstMateVerification?,
+        includesField: Bool,
+        cached: FirstMateVerification?,
+        incomingIsStale: Bool
+    ) -> FirstMateVerification? {
+        guard let cached else { return includesField ? incoming : nil }
+        guard includesField, let incoming else { return cached }
+        guard !incomingIsStale else { return cached }
+        return incoming.isAtLeastAsFresh(as: cached) ? incoming : cached
     }
 
     private func resetSessionPagination() {

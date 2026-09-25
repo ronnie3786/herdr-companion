@@ -13,6 +13,13 @@ struct FirstMateOverviewView: View {
                 Text(snapshot.feature.goal).herdrFont(.body).lineSpacing(5).textSelection(.enabled)
             }
             Divider()
+            FirstMateVerificationSummaryView(
+                verification: snapshot.feature.verification,
+                isLastReported: !store.isDemo && store.error != nil
+            )
+            .padding(16)
+            .background(FirstMatePalette(scheme: scheme).surface, in: .rect(cornerRadius: 10))
+            Divider()
             FirstMateUsageSummaryView(usage: snapshot.feature.usage, title: "Full task usage")
                 .padding(16)
                 .background(FirstMatePalette(scheme: scheme).surface, in: .rect(cornerRadius: 10))

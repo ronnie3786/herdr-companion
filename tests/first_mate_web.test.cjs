@@ -65,10 +65,10 @@ function inspector() {
     click(dataset) { return listeners.get('click')({ target: { closest: () => ({ dataset }) } }); },
     submit() { return element('#composer').emit('submit'); },
     poll() { return intervals[0](); },
-    async reply(suffix, body, method = 'GET') {
+    async reply(suffix, body, method = 'GET', status = 200) {
       const request = requests.find(r => !r.resolved && r.url.endsWith(suffix) && r.options.method === method);
       assert.ok(request, `Expected pending ${method} ${suffix}`);
-      request.respond(body);
+      request.respond(body, status);
       await flush();
       return request;
     },
@@ -590,4 +590,194 @@ test('whole-session usage is independent of transcript pagination and survives o
   assert.match(html, /Latest result/);
   assert.ok(html.indexOf('Original direction') < html.indexOf('Earlier result'));
   assert.ok(html.indexOf('Earlier result') < html.indexOf('Latest result'));
+});
+
+test('overview verification shows the tested revision, exact gate set, and coverage gaps', async () => {
+  const app = inspector();
+  await app.reply('/features', { ok: true, features: [feature('a')] });
+  const revision = 'a'.repeat(40);
+  const snapshot = detail('a');
+  snapshot.feature.verification = {
+    status: 'partially_verified', label: 'Partially verified', feature_revision: 3,
+    assessed_revisions: { ws_synthetic: revision },
+    source_revisions: [revision],
+    gate_set: [
+      { label: 'packages/sample-core/SampleCoordinatorFeatureTest', package: 'packages/sample-core', suite: 'SampleCoordinatorFeatureTest', configuration: '', outcome: 'passed', tested_revision: revision, run_id: 'fmvr_one', fresh: true },
+      { label: 'packages/sample-core/SamplePasteDetectorTests (debug)', package: 'packages/sample-core', suite: 'SamplePasteDetectorTests', configuration: 'debug', outcome: 'passed', tested_revision: revision, run_id: 'fmvr_one', fresh: true },
+    ],
+    missing_suites: [{ label: 'packages/sample-core/SampleAttachmentTests', package: 'packages/sample-core', suite: 'SampleAttachmentTests', reason: 'never run' }],
+    previously_green_missing: [{ label: 'packages/sample-composer/SamplePasteDetectorTests (debug)', package: 'packages/sample-composer', suite: 'SamplePasteDetectorTests', configuration: 'debug' }],
+    failing_suites: [],
+    stale_evidence: [],
+    coverage_reasons: ['2 required suites lack a current passing result'],
+    evidence_present: true,
+    computed_at: '2026-09-24T12:00:00Z',
+  };
+  await app.reply('/features/a', snapshot);
+  const html = app.element('#workspace').innerHTML;
+  assert.match(html, /Verification/);
+  assert.match(html, /Partially verified/);
+  assert.match(html, /Tested revision/);
+  assert.match(html, /aaaaaaaaaaaa…/);
+  assert.match(html, /Gate set \(2\)/);
+  assert.match(html, /SampleCoordinatorFeatureTest/);
+  assert.match(html, /SamplePasteDetectorTests \(debug\)/);
+  assert.match(html, /Missing suites \(1\)/);
+  assert.match(html, /SampleAttachmentTests/);
+  assert.match(html, /Previously passing suites dropped from the gate set \(1\)/);
+  assert.match(html, /packages\/sample-composer\/SamplePasteDetectorTests \(debug\)/);
+  assert.match(html, /Coverage/);
+  assert.match(html, /2 required suites lack a current passing result/);
+  assert.match(html, /This evidence is separate from the feature's workflow status/);
+  // The workflow badge stays exactly as the companion reported it.
+  assert.match(app.element('#feature-header').innerHTML, /status running/);
+});
+
+test('overview verification escapes untrusted suite and reason labels', async () => {
+  const app = inspector();
+  await app.reply('/features', { ok: true, features: [feature('a')] });
+  const snapshot = detail('a');
+  snapshot.feature.verification = {
+    status: 'partially_verified',
+    source_revisions: ['<script>bad()</script>'],
+    gate_set: [{ label: '<img src=x onerror=bad()>', outcome: 'passed' }],
+    missing_suites: [{ label: 'packages/<script>/Suite', configuration: '<b>' }],
+    previously_green_missing: [{ label: 'dropped <i>label</i>' }],
+    coverage_reasons: ['<script>alert(1)</script>'],
+    evidence_present: true,
+  };
+  await app.reply('/features/a', snapshot);
+  const html = app.element('#workspace').innerHTML;
+  assert.doesNotMatch(html, /<script>|<img/);
+  assert.match(html, /&lt;script&gt;bad/);
+  assert.match(html, /&lt;img src=x onerror=bad\(\)&gt;/);
+  assert.match(html, /packages\/&lt;script&gt;\/Suite/);
+  assert.match(html, /dropped &lt;i&gt;label&lt;\/i&gt;/);
+  assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+});
+
+test('unknown verification status is never presented as verified', async () => {
+  const app = inspector();
+  await app.reply('/features', { ok: true, features: [feature('a')] });
+  const snapshot = detail('a');
+  snapshot.feature.verification = {
+    status: 'future_verdict',
+    evidence_present: true,
+    gate_set: [{ label: 'packages/a/One', outcome: 'passed' }],
+  };
+  await app.reply('/features/a', snapshot);
+  const html = app.element('#workspace').innerHTML;
+  assert.match(html, /Verification unavailable/);
+  assert.match(html, /unrecognized verification status/);
+  assert.doesNotMatch(html, /<strong>Verified<\/strong>/);
+  assert.doesNotMatch(html, /verification-panel verified/);
+});
+
+test('absent structured evidence shows verification unavailable rather than green', async () => {
+  const absent = inspector();
+  await absent.refresh('a');
+  const absentHtml = absent.element('#workspace').innerHTML;
+  assert.match(absentHtml, /Verification unavailable/);
+  assert.match(absentHtml, /No structured suite evidence is reported/);
+  assert.doesNotMatch(absentHtml, /verification-panel verified/);
+
+  // The additive empty object a legacy companion returns reads the same way.
+  const legacy = inspector();
+  await legacy.reply('/features', { ok: true, features: [feature('a')] });
+  const snapshot = detail('a');
+  snapshot.feature.verification = {};
+  await legacy.reply('/features/a', snapshot);
+  const legacyHtml = legacy.element('#workspace').innerHTML;
+  assert.match(legacyHtml, /Verification unavailable/);
+  assert.match(legacyHtml, /No structured suite evidence is reported/);
+  assert.doesNotMatch(legacyHtml, /verification-panel verified/);
+});
+
+test('long verification gate sets disclose every entry without dropping any', async () => {
+  const app = inspector();
+  await app.reply('/features', { ok: true, features: [feature('a')] });
+  const snapshot = detail('a');
+  const gateSet = Array.from({ length: 9 }, (_, index) => ({
+    label: `packages/sample-core/Suite${index}`,
+    package: 'packages/sample-core',
+    suite: `Suite${index}`,
+    outcome: 'passed',
+  }));
+  snapshot.feature.verification = {
+    status: 'verified',
+    source_revisions: ['b'.repeat(40)],
+    gate_set: gateSet,
+    evidence_present: true,
+  };
+  await app.reply('/features/a', snapshot);
+  const html = app.element('#workspace').innerHTML;
+  assert.match(html, /Gate set \(9\)/);
+  for (let index = 0; index < 9; index += 1) {
+    assert.match(html, new RegExp(`Suite${index}\\b`), `missing Suite${index}`);
+  }
+  assert.match(html, /Show the remaining 5 of 9/);
+  assert.match(html, /verification-panel verified/);
+  assert.match(html, /Verified/);
+});
+
+test('offline cached verification is labeled last reported and clears on reconnect', async () => {
+  const app = inspector();
+  await app.reply('/features', { ok: true, features: [feature('a')] });
+  const snapshot = detail('a');
+  snapshot.feature.verification = {
+    status: 'verified',
+    source_revisions: ['c'.repeat(40)],
+    gate_set: [{ label: 'packages/sample-core/One', outcome: 'passed' }],
+    evidence_present: true,
+  };
+  await app.reply('/features/a', snapshot);
+  assert.doesNotMatch(app.element('#workspace').innerHTML, /Last reported/);
+
+  const outage = app.poll();
+  await app.reply('/features', { ok: false, error: { message: 'Synthetic outage' } }, 'GET', 503);
+  await outage;
+  const offline = app.element('#workspace').innerHTML;
+  assert.match(offline, /Last reported/);
+  assert.match(offline, /Showing the last reported evidence/);
+  assert.match(offline, /Verified/);
+
+  const recovery = app.poll();
+  await app.reply('/features', { ok: true, features: [feature('a')] });
+  await app.reply('/features/a', snapshot);
+  await recovery;
+  assert.doesNotMatch(app.element('#workspace').innerHTML, /Last reported/);
+});
+
+test('a verified verdict without a reported revision says so instead of implying coverage', async () => {
+  const app = inspector();
+  await app.reply('/features', { ok: true, features: [feature('a')] });
+  const snapshot = detail('a');
+  snapshot.feature.verification = {
+    status: 'verified',
+    gate_set: [{ label: 'packages/sample-core/One', outcome: 'passed' }],
+    evidence_present: true,
+  };
+  await app.reply('/features/a', snapshot);
+  const html = app.element('#workspace').innerHTML;
+  assert.match(html, /Verified/);
+  assert.match(html, /did not report a tested revision/);
+  assert.match(html, /Gate set \(1\)/);
+});
+
+test('malformed verification fields cannot break the overview or imply coverage', async () => {
+  const app = inspector();
+  await app.reply('/features', { ok: true, features: [feature('a')] });
+  const snapshot = detail('a');
+  snapshot.feature.verification = {
+    status: 'verified',
+    gate_set: { not: 'a list' },
+    source_revisions: 'not-a-list',
+    assessed_revisions: 'nope',
+  };
+  await app.reply('/features/a', snapshot);
+  const html = app.element('#workspace').innerHTML;
+  assert.match(html, /verification-panel verified/);
+  assert.match(html, /did not report a tested revision/);
+  assert.match(html, /No structured suite evidence is reported/);
+  assert.doesNotMatch(html, /not-a-list/);
 });

@@ -27,10 +27,8 @@ final class HerdrAppModel: HudChatTransport {
     var activityFeedError: String?
     var connectionState: ConnectionState = .disconnected
     var selectedTab: AppTab = .workspaces
-    let firstMate = FirstMateStore()
+    let firstMateFleet: FirstMateMobileFleetStore
     let hudChats = HudChatStore()
-    private(set) var firstMateMachineID = ""
-    @ObservationIgnored private var firstMateIdentity: FirstMateConnectionIdentity?
     var selectedWorkspaceID: String?
     var selectedPaneID: String?
     var workspacePath: [WorkspaceRoute] = []
@@ -165,10 +163,17 @@ final class HerdrAppModel: HudChatTransport {
             defaults.removeObject(forKey: "herdr.sidebar.starredChats")
             defaults.removeObject(forKey: "herdr.chatTabColors.v1")
         }
+        if arguments.contains("-HerdrResetFirstMateScope") {
+            // UI tests need a deterministic All Machines start. This removes
+            // only the versioned scope preference; the legacy machine key is
+            // never read or written by First Mate.
+            defaults.removeObject(forKey: FirstMateScopePreference.key)
+        }
         #else
         let uiTestServerURL: String? = nil
         let uiTestToken = ""
         #endif
+        self.firstMateFleet = FirstMateMobileFleetStore(defaults: userDefaults)
         self.chatTabColors = ChatTabColorStore(defaults: defaults)
         self.paneDrafts = PaneDraftStore()
         Self.migrateMachinesIfNeeded(defaults: defaults, credentials: credentials, bootstrapMachines: bootstrapMachines)
@@ -228,9 +233,6 @@ final class HerdrAppModel: HudChatTransport {
         if isDemoMode {
             loadDemo()
         }
-        let savedFirstMateMachine = defaults.string(forKey: "herdr.firstMate.machine")
-        firstMateMachineID = machines.first(where: { $0.id == savedFirstMateMachine })?.id
-            ?? machines.first?.id ?? ""
         if arguments.contains("-HerdrFirstMateDemo") || arguments.contains("-HerdrOpenFirstMate") {
             selectedTab = .firstMate
         }
@@ -1414,7 +1416,7 @@ final class HerdrAppModel: HudChatTransport {
         try await fetchAgentModels(machineID: machineID)
     }
 
-    private func machineName(_ machineID: String) -> String {
+    func machineName(_ machineID: String) -> String {
         machines.first(where: { $0.id == machineID })?.name ?? machineID
     }
 
@@ -2244,62 +2246,82 @@ final class HerdrAppModel: HudChatTransport {
         mirrorPrimaryConnection()
     }
 
-    var firstMateMachineName: String {
-        machines.first(where: { $0.id == firstMateMachineID })?.name ?? "Choose a machine"
+    /// The label for the machine menu: the explicit All Machines scope or the
+    /// one host currently in scope. A removed saved host resolves to All
+    /// Machines rather than falling through to an arbitrary machine.
+    var firstMateScopeLabel: String {
+        switch firstMateFleet.resolvedScope {
+        case .all: "All Machines"
+        case .machine(let machineID): machineName(machineID)
+        }
     }
 
-    var firstMateCanControl: Bool {
-        hasCompletedSetup && machines.contains(where: { $0.id == firstMateMachineID })
-            && (isDemoMode || canControl(machineID: firstMateMachineID)) && !firstMate.unsupported
+    /// Whether one host may receive First Mate mutations. This is per host so
+    /// the combined view never treats a healthy host as unavailable, or an
+    /// offline host as writable, because of a peer's state.
+    func firstMateCanControl(machineID: String) -> Bool {
+        hasCompletedSetup
+            && machines.contains(where: { $0.id == machineID })
+            && (isDemoMode || canControl(machineID: machineID))
+            && !(firstMateFleet.store(forMachineID: machineID)?.unsupported ?? false)
     }
 
-    func selectFirstMateMachine(id: String) {
-        guard id != firstMateMachineID, machines.contains(where: { $0.id == id }) else { return }
-        invalidateFirstMateConnection()
-        firstMateMachineID = id
-        if !isDemoMode { userDefaults.set(id, forKey: "herdr.firstMate.machine") }
+    /// Whether any host in the current browsing scope may receive mutations.
+    /// Used only to enable a scope-wide action; every write still resolves its
+    /// exact owning host.
+    var firstMateCanControlVisibleHosts: Bool {
+        firstMateFleet.visibleHosts.contains { firstMateCanControl(machineID: $0.machineID) }
+    }
+
+    func selectFirstMateScope(_ scope: FirstMateMachineScope) {
+        firstMateFleet.selectScope(scope)
     }
 
     private func invalidateFirstMateConnection() {
-        firstMate.configure(client: nil, demo: false)
-        firstMateIdentity = nil
-        if !machines.contains(where: { $0.id == firstMateMachineID }) {
-            firstMateMachineID = machines.first?.id ?? ""
-        }
+        // A replaced app connection retires every host store immediately, so a
+        // captured store reference, an open detail, or a create sheet can never
+        // operate on the replacement connection.
+        firstMateFleet.retireAll()
     }
 
-    /// The phone observes the host's durable workflow. Leaving this screen or
-    /// suspending the app never pauses the host's coordinator or its workers.
+    /// The phone observes every configured host's durable workflow. Leaving
+    /// this screen or suspending the app never pauses a host's coordinator or
+    /// its workers.
     func observeFirstMate() async {
         guard !Task.isCancelled, hasCompletedSetup else { return }
-        if !machines.contains(where: { $0.id == firstMateMachineID }) {
-            selectFirstMateMachine(id: machines.first?.id ?? "")
-        }
-        let machineID = firstMateMachineID
-        let currentConnection = runtimes[machineID]?.connection
-        let configuration: ServerConfiguration? = if currentConnection?.generation == connectionGeneration {
-            currentConnection?.configuration
-        } else {
-            machines.first(where: { $0.id == machineID }).flatMap {
-                ServerConfiguration(urlString: $0.urlString, token: connectionToken(for: $0.id))
-            }
-        }
-        let identity = FirstMateConnectionIdentity(
-            configuration: configuration, generation: connectionGeneration, isDemo: isDemoMode
+        await firstMateFleet.observe(
+            sources: firstMateSources(),
+            connectionGeneration: connectionGeneration
         )
-        if identity != firstMateIdentity {
-            firstMate.configure(client: isDemoMode ? nil : configuration.map(clientFactory), demo: isDemoMode)
-            firstMateIdentity = identity
+    }
+
+    /// One source per configured machine, each resolving the exact connection
+    /// that answers for that host. A machine with no usable address is handed
+    /// over without a client so the fleet can show it as unavailable instead of
+    /// borrowing another host's connection.
+    private func firstMateSources() -> [FirstMateMobileFleetSource] {
+        machines.map { machine in
+            if isDemoMode {
+                return FirstMateMobileFleetSource(
+                    machine: machine,
+                    configuration: nil,
+                    client: nil,
+                    isDemo: true
+                )
+            }
+            let currentConnection = runtimes[machine.id]?.connection
+            let configuration: ServerConfiguration? = if currentConnection?.generation == connectionGeneration {
+                currentConnection?.configuration
+            } else {
+                ServerConfiguration(urlString: machine.urlString, token: connectionToken(for: machine.id))
+            }
+            let client = runtimes[machine.id]?.client ?? configuration.map(clientFactory)
+            return FirstMateMobileFleetSource(
+                machine: machine,
+                configuration: configuration,
+                client: client
+            )
         }
-        guard isDemoMode || configuration != nil else { return }
-        repeat {
-            guard !Task.isCancelled, machineID == firstMateMachineID,
-                  identity == firstMateIdentity else { return }
-            await firstMate.refresh()
-            guard !Task.isCancelled, machineID == firstMateMachineID, identity == firstMateIdentity,
-                  !firstMate.isDemo, !firstMate.unsupported else { return }
-            do { try await Task.sleep(for: .seconds(2)) } catch { return }
-        } while !Task.isCancelled
     }
 
     private var primaryClient: HerdrAPIClient? {

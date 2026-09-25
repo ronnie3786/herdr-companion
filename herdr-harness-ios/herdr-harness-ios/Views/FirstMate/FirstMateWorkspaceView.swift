@@ -2,10 +2,12 @@ import SwiftUI
 
 struct FirstMateWorkspaceView: View {
     @Bindable var model: HerdrAppModel
-    @Bindable var store: FirstMateStore
+    @Bindable var fleet: FirstMateMobileFleetStore
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.colorScheme) private var scheme
-    @State private var path: [String] = []
+    @State private var path: [FirstMateFeatureTarget] = []
+
+    private var availableMachineIDs: [String] { fleet.hosts.map(\.machineID) }
 
     var body: some View {
         Group {
@@ -14,8 +16,8 @@ struct FirstMateWorkspaceView: View {
                     featureList
                         .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 380)
                 } detail: {
-                    if let id = store.selectedFeatureID {
-                        detail(id)
+                    if let target = fleet.selectedTarget, let store = fleet.store(for: target) {
+                        detail(store: store, target: target)
                     } else {
                         ContentUnavailableView("Your feature, in focus", systemImage: "sailboat", description: Text("Choose a feature to talk with its First Mate and follow the work."))
                     }
@@ -24,46 +26,54 @@ struct FirstMateWorkspaceView: View {
             } else {
                 NavigationStack(path: $path) {
                     featureList
-                        .navigationDestination(for: String.self) { id in detail(id) }
+                        .navigationDestination(for: FirstMateFeatureTarget.self) { target in
+                            if let store = fleet.store(for: target) {
+                                detail(store: store, target: target)
+                            }
+                        }
                 }
             }
         }
         .tint(FirstMatePalette(scheme: scheme).accent)
-        .sheet(isPresented: $store.isCreating) {
-            FirstMateCreateSheet(
-                store: store,
-                machineName: model.firstMateMachineName,
-                recentFolders: recentFolders,
-                canControl: model.firstMateCanControl,
-                onCreated: openFeature
-            )
+        .sheet(isPresented: $fleet.isCreating) {
+            FirstMateCreateSheet(model: model, fleet: fleet, onCreated: openFeature)
         }
-        .onChange(of: model.firstMateMachineID) { _, _ in path = [] }
-        .onChange(of: model.isDemoMode) { _, _ in path = [] }
-        .onChange(of: model.connectionGeneration) { _, _ in path = [] }
+        // A replaced connection fences every host store and any open create
+        // sheet before the next SwiftUI task can run.
+        .onChange(of: model.connectionGeneration) { _, _ in
+            path = []
+            fleet.isCreating = false
+        }
+        // Removing or reconfiguring a host invalidates only the navigation and
+        // sheets that pointed at it; nothing falls back to another machine.
+        .onChange(of: availableMachineIDs) { _, machineIDs in
+            path.removeAll { !machineIDs.contains($0.machineID) }
+            if let selected = fleet.selectedTarget, !machineIDs.contains(selected.machineID) {
+                fleet.selectTarget(nil)
+            }
+        }
+        .onChange(of: fleet.selectedTarget) { _, target in
+            if target == nil, !path.isEmpty { path = [] }
+        }
         .accessibilityIdentifier("first-mate-workspace")
     }
 
     private var featureList: some View {
-        FirstMateFeatureListView(model: model, store: store, openFeature: openFeature)
+        FirstMateFeatureListView(model: model, fleet: fleet, openFeature: openFeature)
     }
 
-    private func detail(_ id: String) -> some View {
+    private func detail(store: FirstMateStore, target: FirstMateFeatureTarget) -> some View {
         FirstMateFeatureDetailView(
-            store: store, featureID: id, machineName: model.firstMateMachineName,
-            canControl: model.firstMateCanControl
+            store: store,
+            featureID: target.featureID,
+            machineName: model.machineName(target.machineID),
+            canControl: model.firstMateCanControl(machineID: target.machineID)
         )
-        .id("\(model.firstMateMachineID)-\(id)")
+        .id("\(target.machineID)-\(target.featureID)")
     }
 
-    private var recentFolders: [String] {
-        let workspaces = model.workspaces.filter { $0.machineID == model.firstMateMachineID }
-        let folders = workspaces.map { $0.worktree?.repoRoot ?? $0.displayPath } + store.features.map(\.cwd)
-        return Array(Set(folders.filter { !$0.isEmpty })).sorted()
-    }
-
-    private func openFeature(_ id: String) {
-        store.select(id)
-        if horizontalSizeClass != .regular { path = [id] }
+    private func openFeature(_ target: FirstMateFeatureTarget) {
+        guard fleet.open(target) else { return }
+        if horizontalSizeClass != .regular { path = [target] }
     }
 }

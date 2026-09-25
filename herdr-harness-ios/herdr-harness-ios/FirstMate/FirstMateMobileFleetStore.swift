@@ -101,6 +101,13 @@ final class FirstMateMobileFleetStore {
     /// The feature conversation the detail surface shows. This never decides
     /// where a write goes; the target's machine ID does.
     var selectedTarget: FirstMateFeatureTarget?
+    /// Whether the create sheet is presented. The fleet owns this so the same
+    /// sheet can resolve one explicit destination host instead of belonging to
+    /// whichever store happened to open it.
+    var isCreating = false
+    /// The exact machine a new feature will be created on. `nil` while All
+    /// Machines still needs an explicit choice.
+    var creationMachineID: String?
     var search = ""
     var showArchived = false
     private(set) var hosts: [FirstMateMobileFleetHost] = []
@@ -145,6 +152,44 @@ final class FirstMateMobileFleetStore {
         preference.save(scope)
     }
 
+    /// Whether any visible host runs the synthetic mobile demo.
+    var isDemo: Bool { hosts.contains(where: \.isDemo) }
+
+    /// The shared demo scenario title, read from the first synthetic host.
+    var demoStepTitle: String? { stores.values.first(where: \.isDemo)?.demoStepTitle }
+
+    /// Advances every synthetic host's shared scenario together.
+    func advanceDemo() {
+        for store in stores.values { store.advanceDemo() }
+    }
+
+    /// Presents the create sheet with a destination preselected whenever there
+    /// is only one legitimate choice: an explicit single-machine scope, or an
+    /// All Machines roster that contains exactly one host. A combined view with
+    /// several hosts leaves the destination unset until the person chooses.
+    func beginCreating() {
+        if case .machine(let machineID) = resolvedScope, stores[machineID] != nil {
+            creationMachineID = machineID
+        } else if hosts.count == 1 {
+            creationMachineID = hosts.first?.machineID
+        } else {
+            creationMachineID = nil
+        }
+        isCreating = true
+    }
+
+    /// The stable accessibility identifier for one host-qualified row. The
+    /// machine ID is included so duplicate feature IDs on different hosts never
+    /// collide in a combined list or a UI test.
+    func featureIdentifier(for target: FirstMateFeatureTarget) -> String {
+        "first-mate-feature-\(target.machineID)-\(target.featureID)"
+    }
+
+    /// The stable accessibility identifier for one host's owner label.
+    func machineIdentifier(for machineID: String) -> String {
+        "first-mate-machine-label-\(machineID)"
+    }
+
     /// Applies a Show Archived choice to every host store immediately. The
     /// next ``refresh(lifecycle:)`` fetches the matching server scope, and
     /// ``visibleRows`` filters consistently in the meantime.
@@ -152,6 +197,57 @@ final class FirstMateMobileFleetStore {
         guard showArchived != value else { return }
         showArchived = value
         for store in stores.values { store.showArchived = value }
+    }
+
+    /// Whether Show Archived can be applied to at least one visible host. A
+    /// combined view never claims a capability that no companion advertises.
+    var canShowArchived: Bool { visibleHosts.contains(where: \.archiveSupported) }
+
+    /// Archives or unarchives one composite target through its exact owning
+    /// store. A captured context from before the asynchronous dispatch makes a
+    /// stale confirmation a no-op, and a target whose machine left the roster
+    /// is never redirected to another host.
+    @discardableResult
+    func setArchived(
+        _ target: FirstMateFeatureTarget,
+        archived: Bool,
+        reason: FirstMateArchiveReason? = nil,
+        expectedContext: FirstMateStore.OperationContext? = nil
+    ) async -> Bool {
+        guard let store = stores[target.machineID] else { return false }
+        if let expectedContext, expectedContext != store.operationContext { return false }
+        let archivedSuccessfully = await store.setArchived(
+            featureID: target.featureID,
+            archived: archived,
+            reason: reason
+        )
+        if archivedSuccessfully { mirrorHost(machineID: target.machineID) }
+        return archivedSuccessfully
+    }
+
+    /// Creates one feature on exactly one host and returns its composite
+    /// target. The destination store is resolved by machine ID, so a duplicate
+    /// feature ID on another host can never receive the write.
+    @discardableResult
+    func create(
+        on machineID: String,
+        title: String,
+        goal: String,
+        cwd: String,
+        requestID: String,
+        expectedContext: FirstMateStore.OperationContext? = nil
+    ) async -> FirstMateFeatureTarget? {
+        guard let store = stores[machineID] else { return nil }
+        if let expectedContext, expectedContext != store.operationContext { return nil }
+        guard await store.create(
+            title: title,
+            goal: goal,
+            cwd: cwd,
+            requestID: requestID
+        ) else { return nil }
+        mirrorHost(machineID: machineID)
+        guard stores[machineID] === store, let featureID = store.selectedFeatureID else { return nil }
+        return FirstMateFeatureTarget(machineID: machineID, featureID: featureID)
     }
 
     // MARK: - Visible rows
@@ -317,8 +413,11 @@ final class FirstMateMobileFleetStore {
                 // captured reference can never act on the new connection.
                 previousStore?.configure(client: nil, demo: false)
                 store = FirstMateStore()
-                store.showArchived = showArchived
                 store.configure(client: source.client, demo: source.isDemo)
+                store.showArchived = showArchived
+                for snapshot in FirstMateMobileDemo.supplementalSnapshots(forMachineID: machineID) {
+                    store.receive(snapshot)
+                }
                 retiredMachineIDs.insert(machineID)
             }
             nextStores[machineID] = store
@@ -334,11 +433,19 @@ final class FirstMateMobileFleetStore {
                 retained.isLoading = false
                 nextHosts.append(retained)
             } else {
-                nextHosts.append(FirstMateMobileFleetHost(
+                var host = FirstMateMobileFleetHost(
                     machineID: machineID,
                     machineName: source.machine.name,
                     isDemo: source.isDemo
-                ))
+                )
+                // A machine with neither a prepared connection nor a usable
+                // address is its own unavailable state, never a spinner and
+                // never a request sent with another host's client.
+                if !source.isDemo, source.client == nil {
+                    host.hasLoaded = true
+                    host.error = "No active connection"
+                }
+                nextHosts.append(host)
             }
         }
 
@@ -356,6 +463,12 @@ final class FirstMateMobileFleetStore {
         }
         if let target = selectedTarget, retiredMachineIDs.contains(target.machineID) {
             selectedTarget = nil
+        }
+        // A create sheet that pointed at a host which just left the roster must
+        // not silently fall back to another machine.
+        if let creationMachineID, nextStores[creationMachineID] == nil {
+            self.creationMachineID = nil
+            isCreating = false
         }
         return lifecycle
     }
@@ -385,6 +498,8 @@ final class FirstMateMobileFleetStore {
             contentRevision &+= 1
         }
         selectedTarget = nil
+        isCreating = false
+        creationMachineID = nil
     }
 
     // MARK: - Refresh
@@ -454,6 +569,9 @@ final class FirstMateMobileFleetStore {
         defer { deactivate(lifecycle: expectedLifecycle) }
         guard !sources.isEmpty else { return }
         await refresh(lifecycle: expectedLifecycle)
+        // The synthetic demo never changes on a companion, so polling adds
+        // nothing. Leaving and returning to the tab still refreshes it.
+        if stores.values.allSatisfy(\.isDemo) { return }
         while isObserving(expectedLifecycle) {
             do {
                 try await Task.sleep(for: pollingInterval)
@@ -493,6 +611,15 @@ final class FirstMateMobileFleetStore {
             linksSupported: store.linksSupported,
             feedbackCapability: store.feedbackCapability
         )
+    }
+
+    /// Republishes one host's mirrored fields from its existing store after a
+    /// mutation the fleet initiated, so the combined list reflects the write
+    /// without waiting for the next full poll.
+    private func mirrorHost(machineID: String) {
+        guard let store = stores[machineID],
+              let index = hosts.firstIndex(where: { $0.machineID == machineID }) else { return }
+        apply(Self.snapshot(from: store, machineID: machineID), at: index)
     }
 
     private func apply(_ snapshot: HostRefreshSnapshot, at index: Int) {

@@ -9,53 +9,156 @@ struct FirstMateMobileLifecycleTests {
     func foregroundReturnPreservesConversation() async throws {
         let model = makeModel()
         await model.observeFirstMate()
-        let feature = try #require(model.firstMate.features.last)
-        model.firstMate.select(feature.id)
-        model.firstMate.draft = "Check the accessibility findings before implementation."
+        let fleet = model.firstMateFleet
+        let row = try #require(fleet.visibleRows.first(where: { $0.machineID == "demo1" }))
+        #expect(fleet.open(row.target))
+        let store = try #require(fleet.store(for: row.target))
+        store.draft = "Check the accessibility findings before implementation."
         model.selectedTab = .notes
         model.selectedTab = .firstMate
         await model.observeFirstMate()
-        #expect(model.firstMate.selectedFeatureID == feature.id)
-        #expect(model.firstMate.draft == "Check the accessibility findings before implementation.")
+        #expect(fleet.selectedTarget == row.target)
+        #expect(store.draft == "Check the accessibility findings before implementation.")
     }
 
-    @Test("Host selection clears the previous feature and resource before fetching the new host")
-    func switchingHostsFencesVisibleData() async throws {
+    @Test("Machine scope offers All Machines, filters one host, and restores the combined view")
+    func machineScopeSelection() async throws {
         let model = makeModel()
         await model.observeFirstMate()
-        let document = try #require(model.firstMate.snapshot?.documents.first)
-        await model.firstMate.open(.document(document))
-        model.firstMate.draft = "Only for the first host"
-        let other = try #require(model.machines.first { $0.id != model.firstMateMachineID })
-        model.selectFirstMateMachine(id: other.id)
-        #expect(model.firstMateMachineID == other.id)
-        #expect(model.firstMate.snapshot == nil)
-        #expect(model.firstMate.openedResource == nil)
-        #expect(model.firstMate.draft.isEmpty)
+        let fleet = model.firstMateFleet
+
+        #expect(fleet.scope == .all)
+        #expect(fleet.resolvedScope == .all)
+        #expect(Set(fleet.visibleRows.map(\.machineID)) == ["demo1", "demo2"])
+
+        model.selectFirstMateScope(.machine("demo1"))
+        #expect(fleet.resolvedScope == .machine("demo1"))
+        #expect(!fleet.visibleRows.isEmpty)
+        #expect(fleet.visibleRows.allSatisfy { $0.machineID == "demo1" })
+
+        model.selectFirstMateScope(.machine("demo2"))
+        #expect(fleet.visibleRows.allSatisfy { $0.machineID == "demo2" })
+
+        model.selectFirstMateScope(.all)
+        #expect(Set(fleet.visibleRows.map(\.machineID)) == ["demo1", "demo2"])
+    }
+
+    @Test("Opening a feature keeps the browsing scope unchanged")
+    func openingAFeatureNeverChangesScope() async throws {
+        let model = makeModel()
         await model.observeFirstMate()
-        #expect(!model.firstMate.features.isEmpty)
+        let fleet = model.firstMateFleet
+        model.selectFirstMateScope(.machine("demo2"))
+        let row = try #require(fleet.visibleRows.first)
+        #expect(fleet.open(row.target))
+        #expect(fleet.resolvedScope == .machine("demo2"))
+        await model.observeFirstMate()
+        #expect(fleet.resolvedScope == .machine("demo2"))
+        #expect(fleet.selectedTarget == row.target)
+    }
+
+    @Test("The synthetic demo exposes host-owned lists with distinct composite identities")
+    func demoExposesHostOwnedLists() async throws {
+        let model = makeModel()
+        await model.observeFirstMate()
+        let fleet = model.firstMateFleet
+
+        #expect(fleet.hosts.map(\.machineID) == ["demo1", "demo2"])
+        // The two hosts share a feature ID. Composite targets keep them apart.
+        let duplicates = fleet.visibleRows.filter { $0.featureID == "demo-session-continuity" }
+        #expect(Set(duplicates.map(\.machineID)) == ["demo1", "demo2"])
+        #expect(Set(duplicates.map(\.target)).count == 2)
+        // The second host also owns a feature the first does not have.
+        #expect(
+            fleet.feature(for: FirstMateFeatureTarget(machineID: "demo2", featureID: "demo2-release-checklist"))?.title
+                == "Ship the release checklist"
+        )
+        #expect(
+            fleet.feature(for: FirstMateFeatureTarget(machineID: "demo1", featureID: "demo2-release-checklist")) == nil
+        )
+
+        let secondHost = FirstMateFeatureTarget(machineID: "demo2", featureID: "demo2-release-checklist")
+        #expect(fleet.open(secondHost))
+        #expect(fleet.selectedStore === fleet.store(forMachineID: "demo2"))
+        #expect(fleet.selectedFeature?.title == "Ship the release checklist")
+    }
+
+    @Test("Create destination is explicit from All Machines and preselected for one host")
+    func createDestinationSelection() async throws {
+        let model = makeModel()
+        await model.observeFirstMate()
+        let fleet = model.firstMateFleet
+
+        // All Machines with two hosts requires an explicit destination.
+        fleet.beginCreating()
+        #expect(fleet.isCreating)
+        #expect(fleet.creationMachineID == nil)
+        fleet.isCreating = false
+
+        // A single-machine scope preselects its host.
+        model.selectFirstMateScope(.machine("demo2"))
+        fleet.beginCreating()
+        #expect(fleet.creationMachineID == "demo2")
+        fleet.isCreating = false
+
+        // All Machines with exactly one configured host has only one choice.
+        let single = makeModel()
+        await single.observeFirstMate()
+        single.machines = [try #require(single.machines.first)]
+        await single.observeFirstMate()
+        single.firstMateFleet.beginCreating()
+        #expect(single.firstMateFleet.creationMachineID == single.machines.first?.id)
+    }
+
+    @Test("A removed creation host dismisses the create sheet without substitution")
+    func removedCreationHostClearsSheet() async throws {
+        let model = makeModel()
+        await model.observeFirstMate()
+        let fleet = model.firstMateFleet
+        model.selectFirstMateScope(.machine("demo2"))
+        fleet.beginCreating()
+        #expect(fleet.creationMachineID == "demo2")
+
+        model.removeMachine(id: "demo2")
+        #expect(fleet.creationMachineID == nil)
+        #expect(!fleet.isCreating)
+        #expect(!model.firstMateCanControl(machineID: "demo2"))
     }
 
     @Test("Connection changes fence First Mate immediately, before the next SwiftUI task")
-    func changedConnectionClearsDataSynchronously() async {
+    func changedConnectionClearsDataSynchronously() async throws {
         let model = makeModel()
         await model.observeFirstMate()
-        model.firstMate.draft = "Old connection"
+        let fleet = model.firstMateFleet
+        let row = try #require(fleet.visibleRows.first)
+        let store = try #require(fleet.store(for: row.target))
+        store.draft = "Old connection"
+        fleet.beginCreating()
+
         model.connectionGeneration += 1
-        #expect(model.firstMate.features.isEmpty)
-        #expect(model.firstMate.draft.isEmpty)
-        #expect(model.firstMate.openedResource == nil)
+        #expect(store.features.isEmpty)
+        #expect(store.draft.isEmpty)
+        #expect(fleet.hosts.isEmpty)
+        #expect(fleet.selectedTarget == nil)
+        #expect(!fleet.isCreating)
+        #expect(fleet.creationMachineID == nil)
     }
 
-    @Test("An unknown host cannot redirect the feature conversation")
-    func invalidSelectionLeavesHostAlone() async {
+    @Test("An unknown host cannot redirect the feature conversation or the scope")
+    func invalidSelectionLeavesHostAlone() async throws {
         let model = makeModel()
         await model.observeFirstMate()
-        let selected = model.firstMateMachineID
-        let feature = model.firstMate.selectedFeatureID
-        model.selectFirstMateMachine(id: "missing-host")
-        #expect(model.firstMateMachineID == selected)
-        #expect(model.firstMate.selectedFeatureID == feature)
+        let fleet = model.firstMateFleet
+        let target = try #require(fleet.visibleRows.first?.target)
+        #expect(fleet.open(target))
+
+        let missing = FirstMateFeatureTarget(machineID: "missing-host", featureID: target.featureID)
+        #expect(!fleet.open(missing))
+        fleet.selectTarget(missing)
+        #expect(fleet.selectedTarget == target)
+        model.selectFirstMateScope(.machine("missing-host"))
+        #expect(fleet.resolvedScope == .all)
+        #expect(fleet.visibleRows.contains { $0.target == target })
     }
 
     @Test("The dedicated demo opens First Mate without changing ordinary demo navigation")
@@ -64,33 +167,34 @@ struct FirstMateMobileLifecycleTests {
         #expect(makeModel(arguments: ["-HerdrDemoMode"]).selectedTab == .workspaces)
     }
 
-    @Test("Removing the last host clears its First Mate identity")
+    @Test("Removing every host clears the fleet and its control")
     func removedHostDoesNotLinger() async {
         let model = makeModel()
         await model.observeFirstMate()
         for id in model.machines.map(\.id) { model.removeMachine(id: id) }
-        #expect(model.firstMateMachineID.isEmpty)
-        #expect(model.firstMate.features.isEmpty)
-        #expect(model.firstMate.openedResource == nil)
-        #expect(!model.firstMateCanControl)
+        #expect(model.firstMateFleet.hosts.isEmpty)
+        #expect(model.firstMateFleet.visibleRows.isEmpty)
+        #expect(model.firstMateFleet.selectedTarget == nil)
+        #expect(!model.firstMateCanControlVisibleHosts)
+        #expect(model.firstMateScopeLabel == "All Machines")
     }
 
-    @Test("A cancelled old observer cannot populate a newly selected host")
-    func cancelledObservationIsInert() async throws {
+    @Test("A cancelled old observer cannot populate a newly activated roster")
+    func cancelledObservationIsInert() async {
         let model = makeModel()
         await model.observeFirstMate()
-        let other = try #require(model.machines.first { $0.id != model.firstMateMachineID })
-        model.selectFirstMateMachine(id: other.id)
+        let fleet = model.firstMateFleet
+        fleet.retireAll()
         let observation = Task {
             withUnsafeCurrentTask { $0?.cancel() }
             await model.observeFirstMate()
         }
         await observation.value
-        #expect(model.firstMate.features.isEmpty)
-        #expect(!model.firstMate.hasLoaded)
-        // The replacement observer is the one allowed to load the new host.
+        #expect(fleet.hosts.isEmpty)
+        // The replacement observer is the one allowed to load the roster.
         await model.observeFirstMate()
-        #expect(model.firstMate.hasLoaded)
+        #expect(fleet.hosts.map(\.machineID) == ["demo1", "demo2"])
+        #expect(!fleet.visibleRows.isEmpty)
     }
 
     @Test("String notification overrides honor the same values as launch arguments", arguments: [false, true])

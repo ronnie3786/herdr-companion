@@ -24,11 +24,11 @@ final class HerdrFirstMateServerUITests: XCTestCase {
 
         let app = XCUIApplication()
         app.launchArguments = ["-HerdrUITestServerURL", origin.absoluteString,
-            "-HerdrUITestAPIToken", token, "-HerdrOpenFirstMate",
+            "-HerdrUITestAPIToken", token, "-HerdrOpenFirstMate", "-HerdrResetFirstMateScope",
             "-herdr.firstMate.appearance", "light", "-herdr.smartAlerts", "NO"]
         app.launch()
         defer { app.terminate() }
-        let row = app.buttons["first-mate-feature-\(featureID)"]
+        let row = app.buttons["first-mate-feature-ui-test-\(featureID)"]
         XCTAssertTrue(row.waitForExistence(timeout: 15))
         row.tap()
         let composer = app.descendants(matching: .any)["first-mate-composer"]

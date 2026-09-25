@@ -19,6 +19,7 @@ from typing import Any, Mapping, Optional
 from . import attachments, chat_tab_colors, issue_reports, response_audio, result_artifacts, voice
 from .active_work import ActiveWorkError
 from .first_mate_store import FirstMateError
+from .first_mate_verification import VERIFICATION_CAPABILITY
 from .pr_review_store import PRReviewError
 from .agent_runs import ISSUE_REPORT_DRAFT_PROFILE, SMART_RENAME_PROFILE, AgentRunError, MAX_ATTACHMENTS, MODEL_PATTERN, THINKING_LEVELS
 from .alerts import utc_now
@@ -419,6 +420,7 @@ def api_description() -> dict:
             "first-mate-feedback-v1",
             "first-mate-git-v1",
             "first-mate-links-v1",
+            VERIFICATION_CAPABILITY,
             "pr-review-v1",
             "pi-session-context-v1",
             "agent-control-v1",
@@ -1086,6 +1088,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     "first-mate-board-v1", "first-mate-journal-events-v1",
                     "first-mate-feedback-v1",
                     "first-mate-links-v1",
+                    VERIFICATION_CAPABILITY,
                 ], **runtime.capabilities()}
             if method == "GET" and tail == ["models"]:
                 return {"ok": True, **service.first_mate.model_catalog()}

@@ -91,6 +91,23 @@ class FirstMateCLITests(unittest.TestCase):
         code,data=self.run_cli(['agents','fmf_sample'],{'ok':True,'assignments':[{'id':'a1'}]})
         self.assertEqual(data,{'ok':True,'assignments':[{'id':'a1'}]})
 
+    def test_get_passes_additive_verification_through_without_a_new_command(self):
+        value = {'ok': True, 'feature': {
+            'id': 'fmf_sample',
+            'verification': {'status': 'partially_verified', 'label': 'Partially verified',
+                             'gate_set': [{'label': 'pkg/app/SuiteOne', 'outcome': 'passed',
+                                           'tested_revision': 'a' * 40, 'run_id': 'fmvr_one', 'fresh': True}],
+                             'missing_suites': [{'label': 'pkg/app/SuiteTwo'}],
+                             'previously_green_missing': [], 'stale_evidence': []}},
+            'verification_runs': [{'id': 'fmvr_one'}]}
+        code, data = self.run_cli(['get', 'fmf_sample'], value)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.requests[0].full_url,
+                         'https://host.example.test/api/v1/first-mate/features/fmf_sample')
+        self.assertEqual(data['feature']['verification']['status'], 'partially_verified')
+        self.assertEqual(data['feature']['verification']['gate_set'][0]['label'], 'pkg/app/SuiteOne')
+        self.assertEqual(data['feature']['verification']['missing_suites'], [{'label': 'pkg/app/SuiteTwo'}])
+
     def test_session_pagination(self):
         self.run_cli(['session','native-1','--before','40','--limit','20'])
         self.assertTrue(self.requests[0].full_url.endswith('/sessions/native-1?limit=20&before=40'))

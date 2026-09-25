@@ -40,6 +40,12 @@ from .first_mate_routing import (
 )
 from .first_mate_store import FirstMateError
 from .first_mate_usage import FirstMateUsage
+from .first_mate_verification import (
+    VerificationValidationError,
+    evaluate_coverage,
+    normalize_selection,
+    suite_label,
+)
 
 MAX_RECORD = 4 * 1024 * 1024
 _PI_SESSION_ID = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
@@ -93,8 +99,14 @@ outcome summaries and bounded document/session readers for a short stage
 checkpoint. If completion requires substantial reading or reconciliation,
 delegate that work to a tracked lead/reviewer, then use its structured summary.
 Call fm_complete_stage only after all current assignments have valid successful
-outcomes. It continues only to a previously authorized next stage; otherwise it
-pauses for direction.
+outcomes. Before completing a stage whose work changed code, inspect the scoped
+feature.verification and retained verification run references. Discover every
+suite belonging to every changed package with fm_status, record the exact gate
+batch and results with the worker-reported evidence, and pass the run IDs you
+select to fm_complete_stage. Quote the service's scoped verdict (Verified or
+Partially verified) with its missing suites and previously green suites rather
+than claiming unqualified green from a total test count. It continues only to a
+previously authorized next stage; otherwise it pauses for direction.
 Report blockers accurately and never infer success from an agent exit.
 Use fm_save_link for the PR implementing or reviewing this feature or ticket,
 or a share link the human needs for this work. Match the feature goal, ticket,
@@ -173,6 +185,13 @@ A recovery successor must inspect its retained facts and fm_acknowledge_recovery
 before mutation. Continue from existing edits; never replay uncertain external
 side effects or advance a human gate. Prefer the latest checkpoint and targeted
 reads over reloading every predecessor's context.
+Before reporting an outcome for work that changed code, discover every suite in
+every changed package from the project's own test discovery or manifest, and
+record the exact gate batch and per-suite results promptly with
+fm_record_verification, including failures, interruptions and suites that did
+not run. Pass the returned run IDs to fm_outcome. Quote the service's scoped
+verdict and its exact missing or previously green suites; an aggregate test
+count alone never establishes coverage.
 """
 ADVISOR_PROMPT = """You are the read-only advisor for a potentially unhealthy Pi
 assignment. Inspect the evidence supplied. Repetition can be legitimate; do not
@@ -238,6 +257,15 @@ def _coordinator_state(snapshot: dict, claim: dict | None = None) -> dict:
                                                      "input_revision", "native_session_id"))
                                 for document in documents],
         "link_references": _link_references(list(snapshot.get("links", [])), 20),
+        "verification": feature.get("verification") or {},
+        "verification_run_count": len(snapshot.get("verification_runs", [])),
+        "verification_runs": [{"id": run.get("id"), "visit_id": run.get("visit_id"),
+                                "assignment_id": run.get("assignment_id"),
+                                "tested_revision": run.get("tested_revision"),
+                                "status": run.get("run_status"),
+                                "gate_set": [suite_label(gate.get("suite", {})) for gate in run.get("gates", [])][:50],
+                                "created_at": run.get("created_at")}
+                               for run in snapshot.get("verification_runs", [])[-20:]],
         "counts": {name: len(snapshot.get(name, [])) for name in
                    ("visits", "assignments", "documents", "handoffs", "links")},
     }
@@ -639,7 +667,9 @@ class FirstMateRuntime:
         except FirstMateError:
             # Keep the pure projection usable for synthetic/offline snapshots.
             return _coordinator_state(snapshot, claim)
-        enriched = {**snapshot, "assignments": detail["assignments"]}
+        enriched = {**snapshot, "feature": detail["feature"],
+                    "assignments": detail["assignments"],
+                    "verification_runs": detail.get("verification_runs", snapshot.get("verification_runs", []))}
         return _coordinator_state(enriched, claim)
 
     def _usage_account(self, feature: dict, *, assignments: list[dict] | None = None,
@@ -671,7 +701,23 @@ class FirstMateRuntime:
         selection = self._policy(feature, kind="coordinator", claim={}).selection()
         return {**feature, "usage": self._usage_account(feature, jobs=jobs)["usage"],
                 "model_selection": selection,
+                "verification": self._live_verification(feature),
                 "coordinator_context": self.context.project(feature, jobs)}
+
+    def _live_verification(self, feature: Mapping[str, Any]) -> dict:
+        """Current persisted verdict, recomputed live when structured evidence exists.
+
+        A later commit can make an older passing verdict stale; detail and status
+        reads must show that rather than resurrecting the old green.
+        """
+        persisted = feature.get("verification") or {}
+        try:
+            if not self.store.list_verification_runs(feature["id"]) and not self.store.list_suite_inventories(feature["id"]):
+                return persisted
+            live = self.verification_assessment(feature["id"], self._default_verification_selection(feature))
+        except (FirstMateError, OSError, subprocess.TimeoutExpired, VerificationValidationError):
+            return persisted
+        return live if live.get("evidence_present") else persisted
 
     def board(self, feature_id: str, **bounds) -> dict:
         """Bounded Agent view projection. It adds only the pure coordinator
@@ -690,6 +736,7 @@ class FirstMateRuntime:
         feature_selection = self._policy(snapshot["feature"], kind="coordinator", claim={}).selection()
         result["feature"] = {**snapshot["feature"], "usage": account["usage"],
                              "model_selection": feature_selection,
+                             "verification": self._live_verification(snapshot["feature"]),
                              "coordinator_context": self.context.project(snapshot["feature"], jobs)}
         assignment_jobs: dict[str, list[dict]] = {}
         for job in jobs:
@@ -1235,6 +1282,204 @@ class FirstMateRuntime:
                 self._git(prepared["source"], "worktree", "add", "-b", branch, str(path), metadata["base_revision"])
         return metadata
 
+    # -- durable verification scope and assessment ----------------------------
+
+    @staticmethod
+    def _workspace_identity(path: str) -> str:
+        """Opaque workspace identity; private machine paths never travel with evidence."""
+        return "ws_" + hashlib.sha256(str(path).encode()).hexdigest()[:16]
+
+    def _verification_scope(self, feature: Mapping[str, Any]) -> dict:
+        """Current revisions and cumulative changed paths from retained baselines.
+
+        The earliest retained baseline per deliverable workspace anchors the
+        feature's cumulative changes, so later commits and later review
+        baselines cannot shrink the changed set. Every value is observed from
+        the owned workspace at assessment time, never taken from a report.
+        """
+        snapshot = self.store.snapshot(feature["id"])
+        workspaces: dict[str, str] = {}
+        baselines: dict[str, list[str]] = {}
+        for assignment in snapshot["assignments"]:
+            metadata = assignment.get("metadata")
+            metadata = metadata if isinstance(metadata, Mapping) else {}
+            path = str(metadata.get("worktree_path") or feature["cwd"])
+            identity = self._workspace_identity(path)
+            workspaces.setdefault(identity, path)
+            base = metadata.get("base_revision")
+            if base:
+                ordered = baselines.setdefault(identity, [])
+                if str(base) not in ordered:
+                    ordered.append(str(base))
+        revisions: dict[str, str] = {}
+        changed: dict[str, list[str]] = {}
+        reasons: list[str] = []
+        complete = True
+        for identity, path in workspaces.items():
+            try:
+                head = self._git(path, "rev-parse", "HEAD")
+            except (FirstMateError, OSError, subprocess.TimeoutExpired) as exc:
+                complete = False
+                reasons.append("The current workspace revision is unavailable: " + str(exc)[:200])
+                continue
+            revisions[identity] = head
+            paths: set[str] = set()
+            bases = baselines.get(identity, [])
+            if bases:
+                try:
+                    output = self._git(path, "diff", "--name-only", f"{bases[0]}..HEAD")
+                    paths.update(line.strip() for line in output.splitlines() if line.strip())
+                except (FirstMateError, OSError, subprocess.TimeoutExpired) as exc:
+                    complete = False
+                    reasons.append("Cumulative changed paths are unavailable against the retained baseline: " + str(exc)[:200])
+            else:
+                complete = False
+                reasons.append("No retained baseline revision exists for this workspace")
+            try:
+                status = self._git(path, "status", "--porcelain", "--untracked-files=normal")
+            except (FirstMateError, OSError, subprocess.TimeoutExpired) as exc:
+                complete = False
+                reasons.append("Working-tree changes are unavailable: " + str(exc)[:200])
+                status = ""
+            for line in status.splitlines():
+                entry = line[3:] if len(line) > 3 else ""
+                if " -> " in entry:
+                    entry = entry.split(" -> ", 1)[1]
+                entry = entry.strip().strip('"')
+                if entry:
+                    paths.add(entry)
+            if status.strip():
+                # Untested uncommitted changes are never covered by a run that
+                # reported the committed revision.
+                complete = False
+                reasons.append(f"Workspace {identity} has uncommitted changes that the tested revision does not include")
+            changed[identity] = sorted(paths)
+        return {"revisions": revisions, "changed_paths": changed,
+                "complete": complete, "reasons": reasons}
+
+    def _default_verification_selection(self, feature: Mapping[str, Any]) -> list[str] | None:
+        """Runs the current visit's outcomes explicitly referenced, or its own runs."""
+        runs = self.store.list_verification_runs(feature["id"])
+        if not runs:
+            return None
+        current_visit = feature.get("current_visit_id")
+        referenced: list[str] = []
+        for assignment in self.store.snapshot(feature["id"])["assignments"]:
+            if assignment.get("visit_id") != current_visit:
+                continue
+            for run_id in assignment.get("verification_run_ids", []):
+                if run_id not in referenced:
+                    referenced.append(run_id)
+        if referenced:
+            return referenced
+        if not current_visit:
+            return None
+        visit_runs = [run["id"] for run in runs if run.get("visit_id") == current_visit]
+        return visit_runs or None
+
+    def _verification_selection(self, feature_id: str, requested: Any) -> list[str] | None:
+        """Resolve explicit coordinates; unknown or foreign run IDs are refused."""
+        if requested is None:
+            return self._default_verification_selection(self.store.get_feature(feature_id))
+        try:
+            selection = normalize_selection(requested)
+        except VerificationValidationError as exc:
+            raise FirstMateError(str(exc), code="invalid_request", status=400) from exc
+        for run_id in selection:
+            run = self.store.get_verification_run(run_id)
+            if run["feature_id"] != feature_id:
+                raise FirstMateError("Selected verification run belongs to another feature", code="verification_scope_mismatch")
+        return selection
+
+    def verification_assessment(self, feature_id: str, selected_run_ids: list[str] | None = None) -> dict:
+        """Compute the canonical coverage verdict from retained evidence."""
+        feature = self.store.get_feature(feature_id)
+        try:
+            selection = None if selected_run_ids is None else normalize_selection(selected_run_ids)
+        except VerificationValidationError as exc:
+            raise FirstMateError(str(exc), code="invalid_request", status=400) from exc
+        scope = self._verification_scope(feature)
+        return evaluate_coverage(
+            revision_by_workspace=scope["revisions"],
+            changed_paths_by_workspace=scope["changed_paths"],
+            inventories=self.store.list_suite_inventories(feature_id),
+            runs=self.store.list_verification_runs(feature_id),
+            selected_run_ids=selection,
+            feature_revision=feature.get("revision"),
+            scope_complete=scope["complete"],
+            scope_reasons=scope["reasons"],
+        )
+
+    def _record_verification(self, job: dict, params: dict, request_id: str) -> dict:
+        """Worker-scoped gate-batch recording. Provenance cannot be supplied."""
+        allowed = {"revision", "status", "gates", "summary", "inventory"}
+        if set(params) - allowed:
+            raise FirstMateError("Verification report contains an unsupported field", code="invalid_request", status=400)
+        feature = self.store.get_feature(job["feature_id"])
+        claim = job.get("claim") or {}
+        claim_id = claim.get("id")
+        if job["kind"] != "worker" or not isinstance(claim_id, str) or not claim_id:
+            raise FirstMateError("Verification can only be recorded by the current worker execution", code="stale_owner")
+        assignment = self.store.get_assignment(claim_id)
+        if (assignment["feature_id"] != feature["id"]
+                or assignment.get("generation") != claim.get("generation")
+                or assignment.get("native_session_id") != job.get("native_session_id")
+                or assignment.get("status") != "running"
+                or feature.get("status") != "running"
+                or not self.store.assignment_is_in_current_visit(assignment["id"])):
+            raise FirstMateError("Verification report is outside this execution's active assignment scope", code="stale_owner")
+        workspace_path = str(job.get("cwd") or feature["cwd"])
+        identity = self._workspace_identity(workspace_path)
+        try:
+            observed = self._git(workspace_path, "rev-parse", "HEAD")
+        except (FirstMateError, OSError, subprocess.TimeoutExpired):
+            observed = ""
+        body: dict[str, Any] = {
+            "workspace": identity,
+            "revision": params.get("revision"),
+            "observed_revision": observed,
+            "status": params.get("status", "completed"),
+            "gates": params.get("gates"),
+            "summary": params.get("summary", ""),
+        }
+        if params.get("inventory") is not None:
+            inventory = dict(params["inventory"])
+            inventory["workspace"] = identity
+            if not inventory.get("revision"):
+                inventory["revision"] = params.get("revision", "")
+            body["inventory"] = inventory
+        provenance = {"visit_id": assignment["visit_id"], "assignment_id": assignment["id"],
+                      "native_session_id": job.get("native_session_id"),
+                      "generation": claim.get("generation")}
+        recorded = self.store.record_verification(feature["id"], body, request_id, provenance)
+        run = recorded["run"]
+        assessment = self.verification_assessment(feature["id"])
+        if observed and run["tested_revision"] != observed:
+            warning = (f"Reported tested revision {run['tested_revision']} does not match the current workspace "
+                       f"revision {observed}; the batch is retained as stale evidence.")
+        elif not observed:
+            warning = "The current workspace revision is unavailable; the batch cannot establish current verification."
+        else:
+            warning = ""
+        return {
+            "run": {"id": run["id"], "tested_revision": run["tested_revision"],
+                    "observed_revision": run["observed_revision"], "status": run["run_status"],
+                    "revision_matches": bool(observed) and run["tested_revision"] == observed,
+                    "gate_set": [suite_label(gate["suite"]) for gate in run["gates"]]},
+            "warning": warning,
+            "verification": assessment,
+        }
+
+    def _verification_run_references(self, feature_id: str, maximum: int = 20) -> list[dict]:
+        runs = self.store.list_verification_runs(feature_id)
+        return [{"id": run["id"], "visit_id": run.get("visit_id"),
+                 "assignment_id": run.get("assignment_id"),
+                 "tested_revision": run.get("tested_revision"),
+                 "status": run.get("run_status"),
+                 "gate_set": [suite_label(gate["suite"]) for gate in run.get("gates", [])][:50],
+                 "created_at": run.get("created_at")}
+                for run in runs[-maximum:]]
+
     def reconcile(self) -> None:
         """One deterministic pass, also callable in integration tests."""
         with self._mutex:
@@ -1570,10 +1815,14 @@ class FirstMateRuntime:
             # Build that usage/session projection once for this status request.
             snapshot = self.snapshot(feature_id)
             links = snapshot.get("links", [])
+            verification = snapshot["feature"].get("verification") or {}
             return {"feature": snapshot["feature"], "visits": snapshot["visits"],
                     "assignments": [{key: value for key, value in a.items() if key != "prompt"} for a in snapshot["assignments"]],
                     "documents": snapshot["documents"], "memberships": snapshot.get("memberships", []),
                     "links": _link_references(links, 50), "links_truncated": len(links) > 50,
+                    "verification": verification,
+                    "verification_runs": self._verification_run_references(feature_id, 50),
+                    "verification_runs_truncated": len(snapshot.get("verification_runs", [])) > 50,
                     "last_updates": [{"sequence": e["sequence"], "type": e["type"], "summary": e["summary"][:500], "created_at": e["created_at"]}
                                      for e in snapshot["events"][-10:]]}
         if action == "fm_read_document":
@@ -1787,6 +2036,8 @@ class FirstMateRuntime:
                     _write_json(prepared_path, metadata)
                 return self.store.retry_assignment(assignment["id"], params["prompt"], request_id, metadata=metadata, verified_stopped=True)
             if action == "fm_complete_stage":
+                if set(params) - {"summary", "recommendation", "verification_run_ids"}:
+                    raise FirstMateError("Stage completion contains an unsupported field", code="invalid_request", status=400)
                 for assignment in self.store.snapshot(feature_id)["assignments"]:
                     metadata = assignment.get("metadata", {})
                     if self.store.assignment_is_in_current_visit(assignment["id"]) and metadata.get("expected_code_revision"):
@@ -1795,8 +2046,11 @@ class FirstMateRuntime:
                     for execution in self._jobs():
                         if execution["kind"] == "worker" and execution["claim"]["id"] == assignment["id"] and _locked(self._job_dir(execution) / "writer.lock"):
                             raise DeferredOperation()
+                selection = self._verification_selection(feature_id, params.get("verification_run_ids"))
+                verification = self.verification_assessment(feature_id, selection)
                 return self.store.complete_visit(feature["current_visit_id"], params["summary"], params["recommendation"], request_id,
-                                                 native_session_id=job.get("native_session_id"))
+                                                 native_session_id=job.get("native_session_id"),
+                                                 verification=verification if verification.get("evidence_present") else None)
             if action == "fm_revise":
                 revisions = job.setdefault("operation_revisions", {})
                 if request_id not in revisions:
@@ -1832,8 +2086,15 @@ class FirstMateRuntime:
                 self._event(feature_id, "revision.reason", params["reason"], {}, "reason:" + request_id)
                 return result
             if action == "fm_finish_feature":
-                return self.store.feature_action(feature_id, "complete", request_id)
+                if set(params) - {"summary", "verification_run_ids"}:
+                    raise FirstMateError("Feature completion contains an unsupported field", code="invalid_request", status=400)
+                selection = self._verification_selection(feature_id, params.get("verification_run_ids"))
+                verification = self.verification_assessment(feature_id, selection)
+                return self.store.feature_action(feature_id, "complete", request_id,
+                                                 verification=verification if verification.get("evidence_present") else None)
         elif job["kind"] == "worker":
+            if action == "fm_record_verification":
+                return self._record_verification(job, params, request_id)
             if action == "fm_progress":
                 return self.store.record_progress(claim["id"], claim["generation"], job["native_session_id"],
                     params["summary"], params["next_action"], params["evidence"], params.get("wait_seconds", 0), request_id)
@@ -1862,7 +2123,8 @@ class FirstMateRuntime:
                         raise
                 return self.store.record_outcome(claim["id"], claim["generation"], job["native_session_id"],
                                                   claim["input_revision"], params["verdict"], params["summary"], request_id,
-                                                  documents=params.get("documents", []), code_revision=code_revision)
+                                                  documents=params.get("documents", []), code_revision=code_revision,
+                                                  verification_run_ids=params.get("verification_run_ids"))
             if action == "fm_wait_for_children":
                 children = [a for a in self.store.list_assignments(feature_id=feature_id)
                             if a.get("metadata", {}).get("parent_assignment_id") == claim["id"]]
@@ -1930,8 +2192,19 @@ class FirstMateRuntime:
                     unconfirmed = [op["tool"] for op in operations if op["status"] == "unconfirmed"]
                     reply += "\n\nCoordinator stopped: " + str(state["error"])[:700]
                     reply += " Completed tools: " + (", ".join(completed) or "none") + ". Unconfirmed tools: " + (", ".join(unconfirmed) or "none") + ". Current feature state: " + current["status"] + "."
+                # Every park, including an informal awaiting-turn reply, carries
+                # the known coverage warning when structured evidence exists.
+                verification = None
+                try:
+                    feature_now = self.store.get_feature(job["feature_id"])
+                    candidate = self.verification_assessment(
+                        job["feature_id"], self._default_verification_selection(feature_now))
+                    verification = candidate if candidate.get("evidence_present") else None
+                except (FirstMateError, OSError, subprocess.TimeoutExpired, VerificationValidationError):
+                    verification = None
                 self.store.finish_message(claim["id"], job["owner"], reply=reply,
-                                          native_session_id=job.get("native_session_id"))
+                                          native_session_id=job.get("native_session_id"),
+                                          verification=verification)
             self._rotate_coordinator_if_needed(job)
         elif job["kind"] == "worker":
             assignment = self.store.get_assignment(claim["id"])

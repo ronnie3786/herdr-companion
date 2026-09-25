@@ -24,6 +24,13 @@ from .first_mate_links import (
     validate_internal_link_source,
     validate_link_provenance,
 )
+from .first_mate_verification import (
+    VerificationValidationError,
+    normalize_gate_run,
+    normalize_inventory,
+    normalize_selection,
+    suite_label,
+)
 
 
 class FirstMateError(RuntimeError):
@@ -182,6 +189,29 @@ CREATE TABLE IF NOT EXISTS fm_links(
  title_source TEXT NOT NULL DEFAULT '', source TEXT NOT NULL,
  provenance_json TEXT NOT NULL DEFAULT '{}', hidden INTEGER NOT NULL DEFAULT 0,
  created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(feature_id,url));
+CREATE TABLE IF NOT EXISTS fm_suite_inventories(
+ id TEXT PRIMARY KEY, feature_id TEXT NOT NULL REFERENCES fm_features(id),
+ workspace TEXT NOT NULL, package TEXT NOT NULL DEFAULT '', state TEXT NOT NULL,
+ revision TEXT NOT NULL DEFAULT '', suites_json TEXT NOT NULL DEFAULT '[]',
+ evidence TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '',
+ visit_id TEXT, assignment_id TEXT, native_session_id TEXT, generation INTEGER,
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ UNIQUE(feature_id,workspace,package));
+CREATE TABLE IF NOT EXISTS fm_verification_runs(
+ id TEXT PRIMARY KEY, feature_id TEXT NOT NULL REFERENCES fm_features(id),
+ visit_id TEXT, assignment_id TEXT, native_session_id TEXT, generation INTEGER,
+ workspace TEXT NOT NULL, tested_revision TEXT NOT NULL,
+ observed_revision TEXT NOT NULL DEFAULT '', run_status TEXT NOT NULL,
+ gates_json TEXT NOT NULL DEFAULT '[]', summary TEXT NOT NULL DEFAULT '',
+ recorded_by TEXT NOT NULL DEFAULT 'worker', created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS fm_verification_runs_feature ON fm_verification_runs(feature_id,created_at,id);
+CREATE INDEX IF NOT EXISTS fm_suite_inventories_feature ON fm_suite_inventories(feature_id,workspace,package);
+CREATE TABLE IF NOT EXISTS fm_verification_assessments(
+ id TEXT PRIMARY KEY, feature_id TEXT NOT NULL REFERENCES fm_features(id),
+ visit_id TEXT, message_id TEXT, feature_revision INTEGER NOT NULL DEFAULT 0,
+ status TEXT NOT NULL, assessment_json TEXT NOT NULL DEFAULT '{}',
+ created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS fm_verification_assessments_feature ON fm_verification_assessments(feature_id,created_at,id);
 CREATE INDEX IF NOT EXISTS fm_links_feature ON fm_links(feature_id,created_at,id);
 CREATE UNIQUE INDEX IF NOT EXISTS fm_sessions_file ON fm_sessions(session_file);
 CREATE INDEX IF NOT EXISTS fm_events_feature ON fm_events(feature_id,sequence);
@@ -275,6 +305,13 @@ class FirstMateStore:
                              AND json_extract(r.result_json,'$.hidden')=0))
                         AND json_extract(r.result_json,'$.id')=fm_links.id)""")
             self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(9,?)", (_now(),))
+            feature_columns = {row[1] for row in self._db.execute("PRAGMA table_info(fm_features)")}
+            if "verification_json" not in feature_columns:
+                self._db.execute("ALTER TABLE fm_features ADD COLUMN verification_json TEXT NOT NULL DEFAULT '{}'")
+            self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(10,?)", (_now(),))
+        attempt_columns = {row[1] for row in self._db.execute("PRAGMA table_info(fm_attempts)")}
+        if "verification_run_ids_json" not in attempt_columns:
+            self._db.execute("ALTER TABLE fm_attempts ADD COLUMN verification_run_ids_json TEXT NOT NULL DEFAULT '[]'")
         self._seed_feedback_categories()
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(7,?)", (_now(),))
 
@@ -365,7 +402,9 @@ class FirstMateStore:
         if row is None:
             return None
         result = dict(row)
-        for name in ("metadata_json", "payload_json", "followup_stages_json", "provenance_json"):
+        for name in ("metadata_json", "payload_json", "followup_stages_json", "provenance_json",
+                     "verification_json", "verification_run_ids_json", "suites_json", "gates_json",
+                     "assessment_json"):
             if name in result:
                 result[name[:-5]] = json.loads(result.pop(name))
         return result
@@ -390,8 +429,9 @@ class FirstMateStore:
 
     def _assignment_projection(self, result: dict) -> dict:
         result["visit_ids"] = [row[0] for row in self._db.execute("SELECT visit_id FROM fm_assignment_memberships WHERE assignment_id=? ORDER BY revision,visit_id", (result["id"],))]
-        attempt = self._db.execute("SELECT code_revision FROM fm_attempts WHERE assignment_id=? AND generation=?", (result["id"], result["generation"])).fetchone()
+        attempt = self._db.execute("SELECT code_revision,verification_run_ids_json FROM fm_attempts WHERE assignment_id=? AND generation=?", (result["id"], result["generation"])).fetchone()
         result["code_revision"] = attempt["code_revision"] if attempt else None
+        result["verification_run_ids"] = json.loads(attempt["verification_run_ids_json"]) if attempt else []
         result["has_outcome"] = self._db.execute(
             "SELECT 1 FROM fm_receipts WHERE scope=? AND json_extract(result_json,'$.generation')=? LIMIT 1",
             ("outcome:" + result["id"], result["generation"])).fetchone() is not None
@@ -983,6 +1023,10 @@ class FirstMateStore:
                 else:
                     result[key] = rows
             result["memberships"] = [dict(row) for row in self._db.execute("SELECT m.* FROM fm_assignment_memberships m JOIN fm_visits v ON v.id=m.visit_id WHERE v.feature_id=? ORDER BY m.revision,m.created_at,m.assignment_id", (feature_id,))]
+            result["verification_runs"] = [self._decode(row) for row in self._db.execute(
+                "SELECT * FROM fm_verification_runs WHERE feature_id=? ORDER BY created_at,id", (feature_id,))]
+            result["suite_inventories"] = [self._decode(row) for row in self._db.execute(
+                "SELECT * FROM fm_suite_inventories WHERE feature_id=? ORDER BY workspace,package", (feature_id,))]
             session_rows = self._db.execute(f"""SELECT {_SESSION_COLUMNS}
                 FROM fm_sessions s {_SESSION_JOINS}
                 WHERE s.feature_id=? ORDER BY s.created_at DESC,s.native_session_id LIMIT 1001""", (feature_id,)).fetchall()
@@ -1087,7 +1131,8 @@ class FirstMateStore:
             return self._one("fm_messages", row["id"])
 
     def finish_message(self, message_id: str, owner: str, reply: str | None = None,
-                       *, native_session_id: str | None = None) -> dict:
+                       *, native_session_id: str | None = None,
+                       verification: Mapping[str, Any] | None = None) -> dict:
         with self._transaction():
             message = self._one("fm_messages", message_id)
             if message["status"] == "done" and message["owner"] == owner:
@@ -1096,14 +1141,27 @@ class FirstMateStore:
             if message["status"] != "processing" or message["owner"] != owner or feature["coordinator_owner"] != owner:
                 raise FirstMateError("Coordinator ownership changed", code="stale_owner")
             if reply:
-                self._message(
-                    message["feature_id"], "assistant", reply, status="done",
-                    metadata={"in_reply_to": message_id},
+                metadata = {"in_reply_to": message_id}
+                text = reply
+                if verification and verification.get("evidence_present"):
+                    metadata["verification"] = self.verification_message_projection(verification)
+                    if verification.get("status") != "verified":
+                        text += "\n\n" + self._coverage_note(verification)
+                created = self._message(
+                    message["feature_id"], "assistant", text, status="done",
+                    metadata=metadata,
                     source={"source_kind": "reply", "in_reply_to": message_id,
                             "visit_id": feature["current_visit_id"],
                             "feature_revision": feature["revision"],
                             "native_session_id": native_session_id},
                 )
+                if verification and verification.get("evidence_present"):
+                    # An informal park retains the known coverage warning instead
+                    # of letting a later green claim outlive its gate set.
+                    self._save_verification_assessment(
+                        feature["id"], verification,
+                        visit_id=feature["current_visit_id"], message_id=created["id"],
+                    )
             self._db.execute("UPDATE fm_messages SET status='done',updated_at=? WHERE id=?", (_now(), message_id))
             self._db.execute("UPDATE fm_features SET coordinator_owner=NULL WHERE id=?", (message["feature_id"],))
             self._event(message["feature_id"], "message.processed", "First Mate processed an update", {"message_id": message_id})
@@ -1314,18 +1372,27 @@ class FirstMateStore:
         self._db.execute("INSERT INTO fm_documents VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (document_id, assignment["feature_id"], assignment["visit_id"], assignment["id"], assignment["native_session_id"], assignment["generation"], assignment["input_revision"], title, media_type, content, hashlib.sha256(content.encode()).hexdigest(), _now()))
         return self._one("fm_documents", document_id)
 
-    def record_outcome(self, assignment_id: str, generation: int, native_session_id: str, input_revision: int, verdict: str, summary: str, request_id: str, documents: list[dict] | None = None, code_revision: str | None = None) -> dict:
+    def record_outcome(self, assignment_id: str, generation: int, native_session_id: str, input_revision: int, verdict: str, summary: str, request_id: str, documents: list[dict] | None = None, code_revision: str | None = None, verification_run_ids: list[str] | None = None) -> dict:
         if verdict not in {"success", "passed", "needs_changes", "blocked", "failed", "cancelled"}:
             raise FirstMateError("Invalid outcome verdict", code="invalid_request", status=400)
         _text(summary, "summary")
         if documents is not None and (not isinstance(documents, list) or len(documents) > 100 or not all(isinstance(d, dict) for d in documents)):
             raise FirstMateError("Invalid documents", code="invalid_request", status=400)
-        payload = {"generation": generation, "native_session_id": native_session_id, "input_revision": input_revision, "verdict": verdict, "summary": summary, "documents": documents or [], "code_revision": code_revision}
+        try:
+            selected_runs = normalize_selection(verification_run_ids)
+        except VerificationValidationError as exc:
+            raise FirstMateError(str(exc), code="invalid_request", status=400) from exc
+        payload = {"generation": generation, "native_session_id": native_session_id, "input_revision": input_revision, "verdict": verdict, "summary": summary, "documents": documents or [], "code_revision": code_revision, "verification_run_ids": selected_runs}
         with self._transaction():
             cached = self._receipt(f"outcome:{assignment_id}", request_id, payload)
             if cached is not None:
                 return cached
             assignment = self._execution(assignment_id, generation, native_session_id, input_revision)
+            for run_id in selected_runs:
+                run = self._one("fm_verification_runs", run_id)
+                if (run["feature_id"] != assignment["feature_id"] or run["assignment_id"] != assignment_id
+                        or run["generation"] != generation):
+                    raise FirstMateError("Verification run does not belong to this execution", code="verification_scope_mismatch")
             if verdict in {"success", "passed"} and any(child["status"] != "completed" for child in self._children(assignment_id)):
                 raise FirstMateError("A parent cannot succeed before all direct children succeed", code="children_incomplete")
             expected_code_revision = assignment["metadata"].get("expected_code_revision")
@@ -1339,9 +1406,9 @@ class FirstMateStore:
             retained = [self._document(assignment, d.get("title"), d.get("content"), d.get("media_type", "text/markdown")) for d in documents or []]
             status = "completed" if verdict in {"success", "passed"} else ("blocked" if verdict in {"blocked", "needs_changes"} else verdict)
             self._db.execute("UPDATE fm_assignments SET status=?,verdict=?,summary=?,updated_at=? WHERE id=?", (status, verdict, summary, _now(), assignment_id))
-            self._db.execute("UPDATE fm_attempts SET status=?,verdict=?,summary=?,code_revision=?,updated_at=? WHERE assignment_id=? AND generation=?", (status, verdict, summary, code_revision, _now(), assignment_id, generation))
+            self._db.execute("UPDATE fm_attempts SET status=?,verdict=?,summary=?,code_revision=?,verification_run_ids_json=?,updated_at=? WHERE assignment_id=? AND generation=?", (status, verdict, summary, code_revision, _json(selected_runs), _now(), assignment_id, generation))
             self._db.execute("UPDATE fm_sessions SET status='retained',updated_at=? WHERE native_session_id=?", (_now(), native_session_id))
-            event_payload = {"assignment_id": assignment_id, "generation": generation, "native_session_id": native_session_id, "input_revision": input_revision, "verdict": verdict, "code_revision": code_revision, "document_ids": [d["id"] for d in retained]}
+            event_payload = {"assignment_id": assignment_id, "generation": generation, "native_session_id": native_session_id, "input_revision": input_revision, "verdict": verdict, "code_revision": code_revision, "document_ids": [d["id"] for d in retained], "verification_run_ids": selected_runs}
             self._event(assignment["feature_id"], "assignment.outcome", summary, event_payload)
             # The owning lead resumes from durable child state and synthesizes its
             # findings. Only its top-level outcome needs a First Mate turn.
@@ -1350,9 +1417,204 @@ class FirstMateStore:
             result = {**self._one("fm_assignments", assignment_id), "has_outcome": True}
             return self._save_receipt(f"outcome:{assignment_id}", request_id, payload, result)
 
+    # -- durable verification evidence ----------------------------------------
+    #
+    # Suite inventories describe what a workspace package contains. Gate runs
+    # are append-only batches of actual results, including failures and
+    # interruptions. Assessments are the canonical computed coverage verdict.
+    # These methods never execute discovery commands or evidence text; they
+    # only validate, retain, and project structured data.
+
+    @staticmethod
+    def _verification_provenance(provenance: Mapping[str, Any] | None) -> dict:
+        if provenance is None:
+            return {}
+        if not isinstance(provenance, Mapping):
+            raise FirstMateError("Invalid verification provenance", code="invalid_request", status=400)
+        if set(provenance) - {"visit_id", "assignment_id", "native_session_id", "generation"}:
+            raise FirstMateError("Verification provenance contains an unsupported field", code="invalid_request", status=400)
+        result: dict[str, Any] = {}
+        for name, maximum in (("visit_id", 200), ("assignment_id", 200), ("native_session_id", 500)):
+            if provenance.get(name) is not None:
+                result[name] = _text(provenance[name], name, maximum)
+        generation = provenance.get("generation")
+        if generation is not None:
+            if type(generation) is not int or generation < 0:
+                raise FirstMateError("Invalid verification generation", code="invalid_request", status=400)
+            result["generation"] = generation
+        return result
+
+    def record_suite_inventory(self, feature_id: str, body: Mapping[str, Any],
+                               provenance: Mapping[str, Any] | None = None) -> dict:
+        """Retain a discovery inventory separately from any selected gate set."""
+        try:
+            inventory = normalize_inventory(body)
+            recorded_provenance = self._verification_provenance(provenance)
+        except VerificationValidationError as exc:
+            raise FirstMateError(str(exc), code="invalid_request", status=400) from exc
+        with self._transaction():
+            self._one("fm_features", feature_id)
+            return self._upsert_inventory(feature_id, inventory["workspace"], inventory, recorded_provenance)
+
+    def _upsert_inventory(self, feature_id: str, workspace: str, inventory: dict,
+                          provenance: dict) -> dict:
+        now = _now()
+        package = inventory["package"]
+        existing = self._db.execute(
+            "SELECT id FROM fm_suite_inventories WHERE feature_id=? AND workspace=? AND package=?",
+            (feature_id, workspace, package)).fetchone()
+        values = (inventory["state"], inventory.get("revision", ""), _json(inventory["suites"]),
+                  inventory.get("evidence", ""), inventory.get("source", ""),
+                  provenance.get("visit_id"), provenance.get("assignment_id"),
+                  provenance.get("native_session_id"), provenance.get("generation"))
+        if existing:
+            identity = existing["id"]
+            self._db.execute(
+                "UPDATE fm_suite_inventories SET state=?,revision=?,suites_json=?,evidence=?,source=?,"
+                "visit_id=?,assignment_id=?,native_session_id=?,generation=?,updated_at=? WHERE id=?",
+                (*values, now, identity))
+        else:
+            identity = _id("fmi")
+            self._db.execute(
+                "INSERT INTO fm_suite_inventories(id,feature_id,workspace,package,state,revision,suites_json,"
+                "evidence,source,visit_id,assignment_id,native_session_id,generation,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (identity, feature_id, workspace, package, *values, now, now))
+        return self._decode(self._db.execute("SELECT * FROM fm_suite_inventories WHERE id=?", (identity,)).fetchone())
+
+    def record_verification(self, feature_id: str, body: Mapping[str, Any], request_id: str,
+                            provenance: Mapping[str, Any] | None = None) -> dict:
+        """Record one worker-reported gate batch promptly, failures included."""
+        try:
+            run = normalize_gate_run(body)
+            recorded_provenance = self._verification_provenance(provenance)
+        except VerificationValidationError as exc:
+            raise FirstMateError(str(exc), code="invalid_request", status=400) from exc
+        recorded = dict(body)
+        recorded["provenance"] = recorded_provenance
+        scope = "verification:" + feature_id
+        with self._transaction():
+            cached = self._receipt(scope, request_id, recorded)
+            if cached is not None:
+                return cached
+            self._one("fm_features", feature_id)
+            inventory = (self._upsert_inventory(feature_id, run["workspace"], run["inventory"], recorded_provenance)
+                         if run["inventory"] is not None else None)
+            run_id, now = _id("fmvr"), _now()
+            self._db.execute(
+                "INSERT INTO fm_verification_runs(id,feature_id,visit_id,assignment_id,native_session_id,"
+                "generation,workspace,tested_revision,observed_revision,run_status,gates_json,summary,"
+                "recorded_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (run_id, feature_id, recorded_provenance.get("visit_id"), recorded_provenance.get("assignment_id"),
+                 recorded_provenance.get("native_session_id"), recorded_provenance.get("generation"),
+                 run["workspace"], run["revision"], run["observed_revision"], run["status"],
+                 _json(run["gates"]), run["summary"],
+                 "worker" if recorded_provenance.get("assignment_id") else "coordinator", now))
+            self._event(feature_id, "verification.recorded",
+                        f"Verification batch recorded: {len(run['gates'])} suite(s)",
+                        {"run_id": run_id, "tested_revision": run["revision"],
+                         "observed_revision": run["observed_revision"], "status": run["status"],
+                         "gate_set": [suite_label(gate["suite"]) for gate in run["gates"]]})
+            projection = self._decode(self._db.execute(
+                "SELECT * FROM fm_verification_runs WHERE id=?", (run_id,)).fetchone())
+            return self._save_receipt(scope, request_id, recorded, {"run": projection, "inventory": inventory})
+
+    def list_verification_runs(self, feature_id: str) -> list[dict]:
+        """The complete retained gate history, ordered oldest to newest."""
+        with self._lock:
+            return [self._decode(row) for row in self._db.execute(
+                "SELECT * FROM fm_verification_runs WHERE feature_id=? ORDER BY created_at,id",
+                (feature_id,))]
+
+    def get_verification_run(self, run_id: str) -> dict:
+        with self._lock:
+            return self._one("fm_verification_runs", run_id)
+
+    def list_suite_inventories(self, feature_id: str) -> list[dict]:
+        with self._lock:
+            return [self._decode(row) for row in self._db.execute(
+                "SELECT * FROM fm_suite_inventories WHERE feature_id=? ORDER BY workspace,package",
+                (feature_id,))]
+
+    @staticmethod
+    def verification_message_projection(assessment: Mapping[str, Any]) -> dict:
+        """Compact canonical projection carried with checkpoint messages."""
+        return {
+            "status": assessment.get("status"),
+            "label": assessment.get("label"),
+            "feature_revision": assessment.get("feature_revision"),
+            "assessed_revisions": assessment.get("assessed_revisions", {}),
+            "source_revisions": assessment.get("source_revisions", []),
+            "gate_set": [{key: entry.get(key) for key in ("label", "outcome", "tested_revision", "run_id", "fresh")}
+                         for entry in assessment.get("gate_set", [])],
+            "missing_suites": [item.get("label") for item in assessment.get("missing_suites", [])],
+            "previously_green_missing": [item.get("label") for item in assessment.get("previously_green_missing", [])],
+            "failing_suites": [item.get("label") for item in assessment.get("failing_suites", [])],
+            "stale_evidence": assessment.get("stale_evidence", []),
+            "coverage_reasons": assessment.get("coverage_reasons", []),
+        }
+
+    def _save_verification_assessment(self, feature_id: str, assessment: Mapping[str, Any] | None,
+                                      *, visit_id: str | None = None,
+                                      message_id: str | None = None) -> dict | None:
+        if not assessment:
+            return None
+        if not isinstance(assessment, Mapping) or not assessment.get("status"):
+            raise FirstMateError("Invalid verification assessment", code="invalid_request", status=400)
+        payload = dict(assessment)
+        assessment_id, now = _id("fmva"), _now()
+        self._db.execute(
+            "INSERT INTO fm_verification_assessments(id,feature_id,visit_id,message_id,feature_revision,"
+            "status,assessment_json,created_at) VALUES(?,?,?,?,?,?,?,?)",
+            (assessment_id, feature_id, visit_id, message_id,
+             int(payload.get("feature_revision") or 0), str(payload["status"]), _json(payload), now))
+        self._db.execute("UPDATE fm_features SET verification_json=?,updated_at=? WHERE id=?",
+                         (_json(payload), now, feature_id))
+        return self._decode(self._db.execute(
+            "SELECT * FROM fm_verification_assessments WHERE id=?", (assessment_id,)).fetchone())
+
+    def latest_verification_assessment(self, feature_id: str) -> dict | None:
+        """The current canonical assessment, or None for legacy features."""
+        with self._lock:
+            feature = self._db.execute("SELECT verification_json FROM fm_features WHERE id=?", (feature_id,)).fetchone()
+            if feature is None:
+                raise FirstMateError("First Mate record not found", code="not_found", status=404)
+            assessment = json.loads(feature["verification_json"])
+            if not assessment:
+                return None
+            return {"id": None, "feature_id": feature_id, "visit_id": None, "message_id": None,
+                    "feature_revision": assessment.get("feature_revision", 0),
+                    "status": assessment.get("status"), "assessment": assessment,
+                    "created_at": assessment.get("computed_at")}
+
+    @staticmethod
+    def _coverage_note(assessment: Mapping[str, Any]) -> str:
+        """A deterministic human-readable warning; never a model claim."""
+        label = assessment.get("label") or assessment.get("status")
+        missing = [item.get("label") for item in assessment.get("missing_suites", [])]
+        prior = [item.get("label") for item in assessment.get("previously_green_missing", [])]
+        failing = [item.get("label") for item in assessment.get("failing_suites", [])]
+        parts = [f"Verification coverage: {label}."]
+        if failing:
+            parts.append("Failing suites: " + ", ".join(failing[:8]) + ".")
+        if missing:
+            parts.append("Missing suites: " + ", ".join(missing[:8]) + ".")
+        if prior:
+            parts.append("Previously passing suites dropped from the gate set: " + ", ".join(prior[:8]) + ".")
+        return " ".join(parts)
+
+    @staticmethod
+    def _stable_verification(assessment: Mapping[str, Any] | None) -> dict | None:
+        """Receipt-stable projection: the computation timestamp is not payload."""
+        if not assessment:
+            return None
+        return {key: value for key, value in assessment.items() if key != "computed_at"}
+
     def complete_visit(self, visit_id: str, summary: str, recommendation: str, request_id: str,
-                       *, native_session_id: str | None = None) -> dict:
-        payload = {"summary": _text(summary, "summary"), "recommendation": _text(recommendation, "recommendation", optional=True)}
+                       *, native_session_id: str | None = None,
+                       verification: Mapping[str, Any] | None = None) -> dict:
+        payload = {"summary": _text(summary, "summary"), "recommendation": _text(recommendation, "recommendation", optional=True),
+                   "verification": self._stable_verification(verification)}
         with self._transaction():
             cached = self._receipt(f"complete:{visit_id}", request_id, payload)
             if cached is not None:
@@ -1366,11 +1628,21 @@ class FirstMateStore:
             self._db.execute("UPDATE fm_visits SET status='completed',summary=?,recommendation=?,updated_at=? WHERE id=?", (summary, recommendation, _now(), visit_id))
             continuing = bool(visit["followup_stages"])
             self._db.execute("UPDATE fm_features SET status=? WHERE id=?", ("coordinating" if continuing else "awaiting_direction", feature["id"]))
-            self._message(feature["id"], "assistant", summary + (f"\n\nSuggested next step: {recommendation}" if recommendation else "") + (f"\n\nContinuing with the previously authorized {visit['followup_stages'][0]} stage." if continuing else "\n\nAwaiting your direction."), status="done", metadata={"visit_id": visit_id, "checkpoint": True},
+            message_metadata = {"visit_id": visit_id, "checkpoint": True}
+            note = ""
+            if verification and verification.get("evidence_present"):
+                self._save_verification_assessment(feature["id"], verification, visit_id=visit_id)
+                message_metadata["verification"] = self.verification_message_projection(verification)
+                if verification.get("status") != "verified":
+                    note = "\n\n" + self._coverage_note(verification)
+            self._message(feature["id"], "assistant", summary + (f"\n\nSuggested next step: {recommendation}" if recommendation else "") + (f"\n\nContinuing with the previously authorized {visit['followup_stages'][0]} stage." if continuing else "\n\nAwaiting your direction.") + note, status="done", metadata=message_metadata,
                           source={"source_kind": "checkpoint", "in_reply_to": None,
                                   "visit_id": visit_id, "feature_revision": visit["revision"],
                                   "native_session_id": native_session_id})
-            self._event(feature["id"], "visit.completed" if continuing else "visit.awaiting_direction", f"{visit['title']} complete. Continuing within the original direction." if continuing else f"{visit['title']} complete. Awaiting human direction.", {"visit_id": visit_id, "revision": visit["revision"], "recommendation": recommendation})
+            event_payload = {"visit_id": visit_id, "revision": visit["revision"], "recommendation": recommendation}
+            if verification and verification.get("evidence_present"):
+                event_payload["verification"] = verification
+            self._event(feature["id"], "visit.completed" if continuing else "visit.awaiting_direction", f"{visit['title']} complete. Continuing within the original direction." if continuing else f"{visit['title']} complete. Awaiting human direction.", event_payload)
             if continuing:
                 self._message(feature["id"], "system", f"The {visit['title']} stage finished with evidence. The original human direction authorized {visit['followup_stages'][0]} next. Inspect the completed visit and queued human updates; begin only that authorized stage if still appropriate. Do not treat this system update as new permission.")
             return self._save_receipt(f"complete:{visit_id}", request_id, payload, self._one("fm_visits", visit_id))
@@ -1438,10 +1710,12 @@ class FirstMateStore:
             self._event(feature_id, "coordinator.context_rotated", "First Mate context retired; feature decisions and session history retained", {"predecessor_session_id": previous_native_session_id, "revision": feature["revision"], "previous_session_file": feature["session_file"]})
             return self._save_receipt(f"coordinator_rotation:{feature_id}", request_id, payload, self._one("fm_features", feature_id))
 
-    def feature_action(self, feature_id: str, action: str, request_id: str, expected_revision: int | None = None) -> dict:
+    def feature_action(self, feature_id: str, action: str, request_id: str, expected_revision: int | None = None,
+                       *, verification: Mapping[str, Any] | None = None) -> dict:
         if action not in {"pause", "resume", "cancel", "complete"}:
             raise FirstMateError("Unsupported feature action", code="invalid_request", status=400)
-        payload = {"action": action, "expected_revision": expected_revision}
+        payload = {"action": action, "expected_revision": expected_revision,
+                   "verification": self._stable_verification(verification)}
         with self._transaction():
             cached = self._receipt(f"action:{feature_id}", request_id, payload)
             if cached is not None:
@@ -1483,7 +1757,13 @@ class FirstMateStore:
             # Pause is an execution-control request. Running workers remain visible
             # until the runtime establishes a safe boundary and acknowledges it.
             self._db.execute("UPDATE fm_features SET status=?,updated_at=? WHERE id=?", (status, _now(), feature_id))
-            self._event(feature_id, f"feature.{action}", f"Feature {status}", {"action": action, "revision": feature["revision"]})
+            event_payload = {"action": action, "revision": feature["revision"]}
+            if action == "complete" and verification and verification.get("evidence_present"):
+                # Completion records the canonical assessment it was given; it
+                # never upgrades partial evidence to verified.
+                self._save_verification_assessment(feature_id, verification, message_id=None)
+                event_payload["verification"] = verification
+            self._event(feature_id, f"feature.{action}", f"Feature {status}", event_payload)
             return self._save_receipt(f"action:{feature_id}", request_id, payload, self._one("fm_features", feature_id))
 
     def revise_feature(self, feature_id: str, goal: str, expected_revision: int, request_id: str, authorization_message_id: str, verified_stopped: bool = False, affected_assignment_ids: list[str] | None = None, carry_forward_evidence: dict | None = None) -> dict:

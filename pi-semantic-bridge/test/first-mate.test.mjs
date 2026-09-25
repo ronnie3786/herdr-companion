@@ -147,6 +147,33 @@ test("writable workers retain execution and detailed evidence capabilities", () 
   } finally { f.cleanup(); }
 });
 
+test("verification recording is worker-scoped and carries the exact gate contract", () => {
+  const worker = fixture("worker", {workspace_mode:"isolated"});
+  try {
+    assert.ok(worker.tools.has("fm_record_verification"));
+    assert.equal(worker.handlers.get("tool_call")({toolName:"fm_record_verification"}), undefined);
+    const record = worker.tools.get("fm_record_verification");
+    assert.match(record.description, /failures, errors, skipped suites, and interrupted runs/);
+    assert.match(record.description, /never claim unqualified green from a total test count/);
+    const inventory = record.parameters.properties.inventory;
+    assert.deepEqual(inventory.properties.state.anyOf.map((item) => item.const), ["complete", "incomplete"]);
+    const gates = record.parameters.properties.gates;
+    assert.deepEqual(gates.items.properties.outcome.anyOf.map((item) => item.const),
+                     ["passed", "failed", "error", "skipped"]);
+    assert.ok(worker.tools.get("fm_outcome").parameters.properties.verification_run_ids);
+  } finally { worker.cleanup(); }
+  for (const role of ["coordinator", "advisor"]) {
+    const other = fixture(role);
+    try {
+      assert.ok(!other.tools.has("fm_record_verification"));
+      assert.equal(other.handlers.get("tool_call")({toolName:"fm_record_verification"}).block, true);
+      if (role === "coordinator") {
+        assert.ok(other.tools.get("fm_complete_stage").parameters.properties.verification_run_ids);
+      }
+    } finally { other.cleanup(); }
+  }
+});
+
 test("read-only workers retain normal tools while workspace policy remains instructional", () => {
   const f = fixture("worker", {workspace_mode:"read_only"});
   try {

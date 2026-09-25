@@ -141,7 +141,7 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
       "fm_resolve_gate", "fm_steer", "fm_retry", "fm_complete_stage",
       "fm_revise", "fm_finish_feature", "fm_read_document", "fm_read_session", "fm_save_link",
     ] : role === "worker" ? [
-      "fm_status", "fm_read_document", "fm_read_session", "fm_outcome",
+      "fm_status", "fm_read_document", "fm_read_session", "fm_outcome", "fm_record_verification",
       "fm_handoff", "fm_acknowledge_handoff", "fm_acknowledge_recovery", "fm_progress", "fm_request_human",
       "fm_delegate", "fm_retry", "fm_wait_for_children", "fm_save_link",
     ] : [
@@ -239,8 +239,9 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
       register("fm_retry", "Repeat a blocked or failed assignment within this authorized stage after repairs or new instructions. Prior attempts and findings remain retained.", Type.Object({
         assignment_id: text("Exact assignment to repeat"), prompt: text("Complete revised assignment and evidence required"),
       }));
-      register("fm_complete_stage", "Present evidence and a recommendation after all assignments succeed. The service may continue only to the next stage recorded in the original human direction; otherwise it parks for direction.", Type.Object({
+      register("fm_complete_stage", "Present evidence and a recommendation after all assignments succeed. Inspect the scoped feature.verification, select the exact retained gate run IDs, and quote the service's scoped verdict with its missing and previously green suites; never claim unqualified green from an aggregate count. The service may continue only to the next stage recorded in the original human direction; otherwise it parks for direction.", Type.Object({
         summary: text("Concise evidence-backed synthesis"), recommendation: text("Suggested next action for the human to choose"),
+        verification_run_ids: Type.Optional(Type.Array(Type.String(), { description: "Exact retained verification run IDs selected as this stage's gate set. Omit to use the runs referenced by current-stage outcomes. A stale, incomplete, or failing selection is labeled Partially verified or Failed, never promoted to Verified." })),
       }));
       register("fm_revise", "Record a human-requested direction change and pause affected assignments. This versions the plan and fences stale outcomes. Only available on human turns.", Type.Object({
         goal: text("Revised goal preserving accepted constraints"), reason: text("What the human changed and why"),
@@ -255,9 +256,42 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
       register("fm_acknowledge_recovery", "Before mutation in a recovery successor inspect retained progress, predecessor session, workspace facts and recovery brief. If the advisor was uncertain, read the exact predecessor with fm_read_session; request a human decision if the next step remains unresolved. Never repeat an unverified external effect.", Type.Object({ summary: Type.String({ maxLength: 8000 }) }));
       register("fm_retry", "Retry only a directly delegated child within this authorized stage after its stopped execution reported failure or requested changes. Prior evidence remains retained.", Type.Object({ assignment_id: text("Direct child assignment ID"), prompt: text("Complete corrected assignment and evidence required") }));
       register("fm_wait_for_children", "Yield this worker conversation while its delegated children run. Save a checkpoint and end your turn. The service resumes this exact native conversation when they settle, without model polling.", Type.Object({ summary: text("Current assignment state, delegated work, acceptance criteria and what to do when children report") }));
-      register("fm_outcome", "Report the assignment's structured verdict and durable deliverables. An ordinary final answer or clean exit does not count as completion. End your turn after this tool succeeds.", Type.Object({
+      register("fm_outcome", "Report the assignment's structured verdict and durable deliverables. An ordinary final answer or clean exit does not count as completion. Before reporting work that changed code, discover every suite belonging to every changed package, record the exact gate batch with fm_record_verification including failures and suites that did not run, and cite the returned run IDs here. End your turn after this tool succeeds.", Type.Object({
         verdict: Type.Union(["success", "passed", "needs_changes", "blocked", "failed"].map(value => Type.Literal(value))),
         summary: text("Evidence, checks run, limitations and findings"), documents: Type.Array(documentSchema),
+        verification_run_ids: Type.Optional(Type.Array(Type.String(), { description: "Retained verification run IDs recorded by this execution with fm_record_verification." })),
+      }));
+      register("fm_record_verification", "Record the exact discovered suite inventory and one append-only gate batch from this execution, including failures, errors, skipped suites, and interrupted runs. Report every batch promptly rather than only a final successful report. The service derives the tested workspace and revision and returns the scoped verification verdict; quote that verdict and never claim unqualified green from a total test count.", Type.Object({
+        revision: text("Exact tested source revision (commit SHA) for this batch"),
+        status: Type.Optional(Type.Union([Type.Literal("completed"), Type.Literal("failed"), Type.Literal("interrupted")], { description: "Batch outcome. Defaults to completed only when every recorded gate passed." })),
+        summary: Type.Optional(text("Bounded evidence summary for this batch")),
+        inventory: Type.Optional(Type.Object({
+          package: text("Repository-relative package directory, or empty for the repository root"),
+          state: Type.Union([Type.Literal("complete"), Type.Literal("incomplete")]),
+          revision: Type.Optional(text("Revision the discovery inventory describes")),
+          evidence: Type.Optional(text("Exact discovery command or manifest evidence")),
+          source: Type.Optional(text("Short discovery source label")),
+          suites: Type.Array(Type.Object({
+            package: text("Repository-relative package directory, or empty for the repository root"),
+            suite: text("Suite or test-target name"),
+            configuration: Type.Optional(text("Relevant test configuration; keeps identically named suites distinct")),
+            selector: Type.Optional(text("Exact runner selector retained as evidence")),
+          })),
+        }, { description: "Complete or explicitly incomplete discovery inventory for one package. Omit only when an inventory for this package was recorded earlier." })),
+        gates: Type.Array(Type.Object({
+          suite: Type.Object({
+            package: text("Repository-relative package directory, or empty for the repository root"),
+            suite: text("Suite or test-target name"),
+            configuration: Type.Optional(text("Relevant test configuration")),
+            selector: Type.Optional(text("Exact runner selector")),
+          }),
+          outcome: Type.Union([Type.Literal("passed"), Type.Literal("failed"), Type.Literal("error"), Type.Literal("skipped")]),
+          passed_count: Type.Optional(Type.Integer({ minimum: 0 })),
+          failed_count: Type.Optional(Type.Integer({ minimum: 0 })),
+          skipped_count: Type.Optional(Type.Integer({ minimum: 0 })),
+          duration_seconds: Type.Optional(Type.Number({ minimum: 0 })),
+          detail: Type.Optional(text("Bounded per-suite result detail or failure excerpt")),
+        })),
       }));
       register("fm_request_human", "Stop at an explicit internal human checkpoint. Save the reason for the human, then end. Only a later human message can release this gate; background repair cannot bypass it.", Type.Object({ reason: text("Decision needed, relevant evidence and recommended options") }));
       register("fm_handoff", "Retain a checkpoint for a fresh successor session. Include completed work, decisions, files, checks, blockers, remaining work and the exact next action. Stop making changes and end the turn after acknowledgement.", Type.Object({

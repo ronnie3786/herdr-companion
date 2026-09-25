@@ -117,6 +117,10 @@ final class HerdrHudSession {
     @ObservationIgnored private var restoreTask: Task<Void, Never>?
     @ObservationIgnored private var historyObservationTask: Task<Void, Never>?
     @ObservationIgnored private var terminalMetadataReconciliationTask: Task<Void, Never>?
+    /// Promised-file drops in flight. Each batch removes its shared staging
+    /// directory and then releases itself here; the session owns the batch for
+    /// as long as any receiver has not reported yet.
+    @ObservationIgnored var activePromiseBatches: [HerdrPromiseBatch] = []
     @ObservationIgnored private var hasStartedSessionActivity = false
     /// Fires after an accepted run or a history load establishes this session's
     /// durable conversation identity. The owning HUD collection uses it to

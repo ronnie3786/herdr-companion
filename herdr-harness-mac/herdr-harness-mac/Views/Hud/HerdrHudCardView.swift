@@ -77,12 +77,11 @@ struct HerdrHudCardView: View {
         // without the dense, wide halo of a single high-opacity shadow.
         .shadow(color: HerdrTheme.ink.opacity(0.16), radius: 18, y: 6)
         .shadow(color: HerdrTheme.ink.opacity(0.10), radius: 3, y: 2)
-        .onDrop(of: [.fileURL, .image], isTargeted: $isDropTargeted) { providers in
-            session.acceptAttachmentDrop(providers)
-        }
-        // The AppKit target accepts file promises (the system screenshot preview),
-        // which SwiftUI's provider-based `onDrop` cannot match. It sits behind the
-        // card so clicks and drag-to-move stay with the content above it.
+        // The AppKit target is the HUD's single drop destination. It accepts
+        // files, raw image data, and the system screenshot preview's file
+        // promise, and it wins over the nested editor so a drop anywhere on the
+        // card attaches instead of inserting the file path as text. It sits
+        // behind the card so clicks and drag-to-move stay with the content above.
         .background {
             HerdrHudDropTarget(
                 onTargetingChanged: { isDropTargeted = $0 },

@@ -83,13 +83,9 @@ struct HerdrHudOrbView: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { controller.summon() }
             .onHover { isHovered = $0 }
-            .onDrop(of: [.fileURL, .image], isTargeted: $isDropTargeted) { providers in
-                let target = controller.chats?.composer ?? session
-                let accepted = target.acceptAttachmentDrop(providers)
-                if accepted { controller.summon() }
-                return accepted
-            }
-            // File promises need AppKit: see HerdrHudDropTarget.
+            // The AppKit target is the orb's single drop destination. It accepts
+            // files, raw image data, and the screenshot preview's file promise,
+            // and an accepted drop opens the HUD on the New chat composer.
             .background {
                 HerdrHudDropTarget(
                     onTargetingChanged: { isDropTargeted = $0 },

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Host evidence that identifies this Mac among Herdr's configured machines.
@@ -14,9 +15,69 @@ struct HerdrHudHostIdentity: Equatable, Sendable {
 
     /// The current process's host names and interface addresses. This is
     /// evidence only: identification still requires a unique roster match.
+    ///
+    /// The values come from `gethostname` and a numeric interface enumeration.
+    /// `Host.current().names` performs resolver lookups that can block for
+    /// tens of seconds on a host with no working resolver, so this avoids name
+    /// resolution entirely.
     static func current() -> HerdrHudHostIdentity {
-        let host = Host.current()
-        return HerdrHudHostIdentity(hostNames: host.names, addresses: host.addresses)
+        identity(hostName: systemHostName(), addresses: localInterfaceAddresses())
+    }
+
+    /// Expands one raw host name into the spellings a configured companion
+    /// URL may use, without resolving anything. Exposed so tests can pin the
+    /// DNS-free expansion deterministically.
+    static func identity(hostName: String?, addresses: [String]) -> HerdrHudHostIdentity {
+        var names: [String] = []
+        if let hostName {
+            let raw = hostName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !raw.isEmpty {
+                names.append(raw)
+                let short = raw.split(separator: ".").first.map(String.init) ?? raw
+                if !short.isEmpty, short != raw {
+                    names.append(short)
+                    names.append("\(short).local")
+                }
+            }
+        }
+        names.append("localhost")
+        return HerdrHudHostIdentity(hostNames: names, addresses: addresses)
+    }
+
+    private static func systemHostName() -> String? {
+        var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        guard gethostname(&buffer, buffer.count - 1) == 0 else { return nil }
+        return String(cString: buffer)
+    }
+
+    /// Numeric IPv4/IPv6 addresses from `getifaddrs`, which never resolves a
+    /// name and therefore cannot stall on DNS.
+    private static func localInterfaceAddresses() -> [String] {
+        var result: [String] = []
+        var head: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&head) == 0 else { return result }
+        defer { freeifaddrs(head) }
+        var cursor = head
+        while let entry = cursor {
+            defer { cursor = entry.pointee.ifa_next }
+            guard let address = entry.pointee.ifa_addr else { continue }
+            let family = Int32(address.pointee.sa_family)
+            guard family == AF_INET || family == AF_INET6 else { continue }
+            var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            let status = getnameinfo(
+                address,
+                socklen_t(address.pointee.sa_len),
+                &host,
+                socklen_t(host.count),
+                nil,
+                0,
+                NI_NUMERICHOST
+            )
+            guard status == 0 else { continue }
+            let value = String(cString: host)
+            if !value.isEmpty { result.append(value) }
+        }
+        return result
     }
 }
 

@@ -15,20 +15,25 @@ extension HerdrTheme {
 
 /// The single mapping from a First Mate status to what the person sees.
 struct FeatureStatusPresentation: Equatable {
-    enum Tone: Equatable { case attention, working, quiet, done }
+    enum Tone: Equatable { case blocked, awaiting, working, quiet, done }
 
     let label: String
     let symbol: String
     let tone: Tone
 
     init(status: String, awaitingTurn: Bool = false) {
+        // An explicit blocked status outranks a parked-turn flag, so a
+        // contradictory payload cannot conceal an intervention as Your turn.
+        if status == "blocked" {
+            (label, symbol, tone) = ("Blocked", "exclamationmark.triangle.fill", .blocked)
+            return
+        }
         if awaitingTurn {
-            (label, symbol, tone) = ("Your turn", "arrow.turn.down.left", .attention)
+            (label, symbol, tone) = ("Your turn", "arrow.turn.down.left", .awaiting)
             return
         }
         switch status {
-        case "awaiting_direction": (label, symbol, tone) = ("Needs you", "diamond.fill", .attention)
-        case "blocked": (label, symbol, tone) = ("Blocked", "exclamationmark.triangle.fill", .attention)
+        case "awaiting_direction": (label, symbol, tone) = ("Needs you", "diamond.fill", .awaiting)
         case "running", "coordinating": (label, symbol, tone) = ("Working", "circle.lefthalf.filled", .working)
         case "recovering": (label, symbol, tone) = ("Recovering", "arrow.triangle.2.circlepath", .quiet)
         case "ready": (label, symbol, tone) = ("Ready to plan", "circle", .quiet)
@@ -39,10 +44,14 @@ struct FeatureStatusPresentation: Equatable {
         }
     }
 
+    /// Dashboard and Agent view always render on the app's forced dark chrome,
+    /// so the pills use the agent HUD tokens exactly as First Mate's dark
+    /// badges do.
     var color: Color {
         switch tone {
-        case .attention: HerdrTheme.attention
-        case .working: HerdrTheme.signal
+        case .blocked: FirstMateStatusColors.color(for: .blocked, scheme: .dark)
+        case .awaiting: FirstMateStatusColors.color(for: .awaitingDirection, scheme: .dark)
+        case .working: FirstMateStatusColors.color(for: .working, scheme: .dark)
         case .quiet: HerdrTheme.mist
         case .done: HerdrTheme.success
         }

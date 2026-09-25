@@ -536,7 +536,8 @@ private final class RunningChatFixture {
         RunningChatURLProtocol.reset()
         session = HerdrHudSession(
             userDefaults: defaults,
-            persistenceURL: directory.appendingPathComponent("hud-thread.json")
+            persistenceURL: directory.appendingPathComponent("hud-thread.json"),
+            hostIdentity: HerdrHudHostIdentity(hostNames: ["hud.example.invalid"], addresses: [])
         )
         controller = HerdrHudController(userDefaults: defaults)
 
@@ -626,7 +627,8 @@ private func restoredChat(
     ).save(to: fixture.directory.appendingPathComponent("\(persistenceName).json"))
     let session = HerdrHudSession(
         userDefaults: fixture.defaults,
-        persistenceURL: fixture.directory.appendingPathComponent("\(persistenceName).json")
+        persistenceURL: fixture.directory.appendingPathComponent("\(persistenceName).json"),
+        hostIdentity: HerdrHudHostIdentity(hostNames: ["hud.example.invalid"], addresses: [])
     )
     await session.waitForPersistenceRestoreForTesting()
     return HerdrHudChats.Chat(id: persistenceName, title: title, session: session)

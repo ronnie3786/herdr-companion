@@ -4,6 +4,15 @@ import Testing
 
 @Suite("HUD new chat policy")
 struct HerdrHudNewChatPolicyTests {
+    @Test("Host identity expands a raw host name into URL spellings without resolving")
+    func identityExpandsRawHostNameWithoutResolution() {
+        let identity = HerdrHudHostIdentity.identity(hostName: "desk.lan", addresses: ["192.0.2.10", "2001:db8::1"])
+        #expect(identity.hostNames == ["desk.lan", "desk", "desk.local", "localhost"])
+        #expect(identity.addresses == ["192.0.2.10", "2001:db8::1"])
+        #expect(HerdrHudHostIdentity.identity(hostName: "  ", addresses: []).hostNames == ["localhost"])
+        #expect(HerdrHudHostIdentity.identity(hostName: nil, addresses: []).hostNames == ["localhost"])
+    }
+
     @Test("The local Mac is found by loopback evidence regardless of roster order or names")
     func localMachineIgnoresOrderAndNames() {
         let remote = machine(id: "remote-1", name: "Build", url: "https://build.example.test")

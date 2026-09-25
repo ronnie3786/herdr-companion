@@ -2,10 +2,10 @@
 
 The Mac app opens on Dashboard. It uses the existing purple Herdr theme and has
 three sections: active First Mates across connected machines, PR Reviews, and
-recent chats. The screens follow calm-UI rules: one color (amber) means "needs
-you", other states are a glyph plus a word, previews are plain text, loading
-states are static placeholders, and nothing animates or ticks faster than once a
-minute.
+recent chats. The screens follow calm-UI rules: status colors match the agent
+session HUD (red blocked, green waiting for you, yellow working), other states
+are a glyph plus a word, previews are plain text, loading states are static
+placeholders, and nothing animates or ticks faster than once a minute.
 
 ## Dashboard
 
@@ -22,6 +22,19 @@ A First Mate that finished its turn and is parked until you reply shows **Your
 turn** and counts as needing you on these screens (companion 0.45 or newer). The
 sidebar's First Mate badge still counts only features that are awaiting
 direction or blocked.
+
+Status pills use the same semantic colors as the agent session HUD, and so do
+the First Mate badges on Overview, saved sessions, the fleet sidebar, Agents,
+Workflow, and Chat: **Blocked** is red, **Needs you** and **Your turn** are
+green like an unread HUD result, and **Working** is yellow. An explicit blocked
+status stays red even if a contradictory payload also sets the parked-turn flag,
+and every other status keeps its previous quiet or done treatment. This is
+presentation only: attention counting, the orange sidebar attention badge,
+non-status banners, filtering, and execution behavior are unchanged, and no
+server update is needed because the statuses already arrive in the existing
+`first-mate-v1` responses. The dark appearance uses the HUD tokens themselves;
+the First Mate light appearance deepens the same hues so badge captions and
+icons stay readable.
 
 PR Reviews and Recent chats sit side by side when there are reviews to show.
 Otherwise PR Reviews collapses to one line. If no review host is chosen, the
@@ -101,8 +114,12 @@ deep links still open their requested destinations.
 ## Verification
 
 Use the README's native build/test command, selecting DashboardTests,
-AgentBoardStateTests, DashboardRenderTests, FirstMateFleetIndexTests, and the
-navigation history suites for focused coverage. Render fixtures are entirely
-synthetic and include thousands of Pi telemetry events, markdown, and escaped
-text to prove none of it reaches the screen. HerdrDashboardUITests covers home
+AgentBoardStateTests, DashboardRenderTests, FirstMateFleetIndexTests,
+FirstMateStatusColorTests, FirstMateStatusColorRenderTests, and the navigation
+history suites for focused coverage. Render fixtures are entirely synthetic and
+include thousands of Pi telemetry events, markdown, and escaped text to prove
+none of it reaches the screen. The status-color suites compare mapped dark
+colors with the HUD tokens, check the light appearance's hue and composited
+contrast, and assert the rendered foreground pixels of production badges and
+pills beside synthetic HUD session bubbles. HerdrDashboardUITests covers home
 navigation, Focus mode, and the Agent view filter in demo mode.

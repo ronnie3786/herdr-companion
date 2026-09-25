@@ -774,6 +774,37 @@ struct HerdrHudSessionTests {
         #expect(session.selectedMachineID == remote.id)
     }
 
+    @Test("A fresh composer resolves this Mac lazily instead of at session construction")
+    func freshComposerHostIdentityIsLazy() {
+        let defaults = makeDefaults(prefix: "lazy-host-identity")
+        var resolutionCount = 0
+        let session = HerdrHudSession(
+            userDefaults: defaults,
+            persistenceURL: temporaryURL(named: "hud-thread.json"),
+            hostIdentityProvider: {
+                resolutionCount += 1
+                return HerdrHudHostIdentity(hostNames: ["this-mac.example.test"], addresses: [])
+            }
+        )
+        let model = HerdrAppModel(credentials: credentials, arguments: ["HerdrTests"], userDefaults: defaults)
+        model.machines = [HerdrMachine(id: "local", name: "Desk", urlString: "https://this-mac.example.test")]
+
+        // Creating a session must not touch the resolver at all; every HUD
+        // session paid that cost eagerly before the fresh-composer lookup.
+        #expect(resolutionCount == 0)
+        #expect(session.selectedMachineID == nil)
+
+        #expect(session.applyLocalMachineDefaultIfNeeded(in: model))
+        #expect(resolutionCount == 1)
+        #expect(session.selectedMachineID == "local")
+
+        // The resolved identity is cached: a second fresh resolution reuses it.
+        session.selectedMachineID = nil
+        #expect(session.applyLocalMachineDefaultIfNeeded(in: model))
+        #expect(resolutionCount == 1)
+        #expect(session.selectedMachineID == "local")
+    }
+
     @Test("An unidentified local companion leaves a fresh composer unselected")
     func unidentifiedLocalMachineRequiresExplicitChoice() {
         let defaults = makeDefaults(prefix: "unidentified-machine")

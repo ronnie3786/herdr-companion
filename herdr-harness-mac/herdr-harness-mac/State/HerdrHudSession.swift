@@ -123,6 +123,10 @@ final class HerdrHudSession {
     /// the real per-machine client; tests inject a launcher with an isolated
     /// receipt store.
     typealias WorkspaceLauncherFactory = @MainActor (HerdrAppModel, String) throws -> HerdrHudWorkspaceLauncher
+    /// Supplies this Mac's host evidence on first use. The production default
+    /// is `HerdrHudHostIdentity.current()`; tests inject a provider so they can
+    /// prove session creation never resolves it eagerly.
+    typealias HostIdentityProvider = () -> HerdrHudHostIdentity
 
     static let machineIDDefaultsKey = "herdr.hud.machineID"
     static let maxAttachments = 4
@@ -130,7 +134,9 @@ final class HerdrHudSession {
 
     private let controller = HeadlessAgentController()
     private let userDefaults: UserDefaults
-    @ObservationIgnored private let hostIdentity: HerdrHudHostIdentity
+    @ObservationIgnored private let injectedHostIdentity: HerdrHudHostIdentity?
+    @ObservationIgnored private let hostIdentityProvider: HostIdentityProvider?
+    @ObservationIgnored private var cachedHostIdentity: HerdrHudHostIdentity?
     @ObservationIgnored private let mainWorkspaceStore: HerdrHudMainWorkspaceStore
     @ObservationIgnored private let workspaceLauncherFactory: WorkspaceLauncherFactory
     @ObservationIgnored private let workingFolderStore: HerdrHudWorkingFolderStore
@@ -354,12 +360,14 @@ final class HerdrHudSession {
         promptSettings: HerdrPromptSettingsStore? = nil,
         modelFavorites: ModelFavoritesStore? = nil,
         workingFolderStore: HerdrHudWorkingFolderStore? = nil,
-        hostIdentity: HerdrHudHostIdentity = .current(),
+        hostIdentity: HerdrHudHostIdentity? = nil,
+        hostIdentityProvider: HostIdentityProvider? = nil,
         mainWorkspaceStore: HerdrHudMainWorkspaceStore? = nil,
         workspaceLauncherFactory: WorkspaceLauncherFactory? = nil
     ) {
         self.userDefaults = userDefaults
-        self.hostIdentity = hostIdentity
+        self.injectedHostIdentity = hostIdentity
+        self.hostIdentityProvider = hostIdentityProvider
         self.workingFolderStore = workingFolderStore ?? HerdrHudWorkingFolderStore(userDefaults: userDefaults)
         self.mainWorkspaceStore = mainWorkspaceStore ?? HerdrHudMainWorkspaceStore(userDefaults: userDefaults)
         self.workspaceLauncherFactory = workspaceLauncherFactory ?? { model, machineID in
@@ -398,9 +406,20 @@ final class HerdrHudSession {
                             .appendingPathComponent("\(id).json"),
                         promptSettings: promptSettings, modelFavorites: modelFavorites,
                         workingFolderStore: workingFolderStore,
-                        hostIdentity: hostIdentity,
+                        hostIdentity: injectedHostIdentity,
+                        hostIdentityProvider: hostIdentityProvider,
                         mainWorkspaceStore: mainWorkspaceStore,
                         workspaceLauncherFactory: workspaceLauncherFactory)
+    }
+
+    /// This Mac's host evidence, resolved at most once and only when a fresh
+    /// composer actually needs to identify itself. Creating a session stays
+    /// cheap, and a caller-provided identity is never re-resolved.
+    private var hostIdentity: HerdrHudHostIdentity {
+        if let cachedHostIdentity { return cachedHostIdentity }
+        let identity = injectedHostIdentity ?? hostIdentityProvider?() ?? .current()
+        cachedHostIdentity = identity
+        return identity
     }
 
     func waitForPersistenceRestore() async { await restoreTask?.value }

@@ -73,13 +73,74 @@ Four equivalent routes use the same capture path and need no keyboard permission
 - **Capture frontmost window** in the HUD orb's context menu;
 - **Test capture now** in Settings.
 
-## Dropping screenshots instead
+## Dropping screenshots and files instead
 
-A file that already exists on disk can be dragged into the open HUD chat or the collapsed orb. The
-same drop target now also accepts a drag straight out of the system screenshot preview: that drag is
-a macOS *file promise* rather than a real file, and Herdr materializes it through
-`NSFilePromiseReceiver` before validating and storing it. Image data dragged from a browser or
-editor keeps working, and validated limits (4 attachments, 20 MB each, 21 MB combined) are
-unchanged.
+The open HUD card and the collapsed orb are drop targets for files and images. AppKit resolves the drop
+to one destination and the HUD imports it through one validated path, so a drag that carries several
+representations cannot attach twice:
+
+- a file that already exists on disk keeps its real path and filename;
+- raw image data dragged from a browser, editor, or screenshot tool is staged from the pasteboard's own
+  PNG, JPEG, TIFF, or other declared image representation, so AppKit's synthesized conversion never
+  replaces the original bytes;
+- a drag straight out of the system screenshot preview is a macOS *file promise* rather than a real file,
+  and Herdr materializes it through `NSFilePromiseReceiver` before validating and storing it;
+- a browser image drag that also carries the image's web URL still attaches the pixels; only real file
+  URLs take the file path, so the URL never shadows the image data;
+- a drop over the prompt editor counts too. It becomes an attachment instead of inserting the file path
+  as draft text;
+- a drag with several items keeps one attachment per item: two image items each import their own bytes,
+  and a file item no longer hides an image item beside it. A single item that advertises several image
+  representations still attaches only once, using its lossless-preferred representation.
+
+Each dropped item is copied into the session's durable attachment store before its staging copy is
+removed, so the attachment stays readable after the source file is deleted. Promised files of one drop
+share one staging directory, and that directory is removed only after every receiver has delivered
+every promised file; a receiver that finishes first cannot delete files a sibling is still writing,
+and a failure counts as one of that receiver's own promised files, so neither a sibling's delivery
+nor a later file from the same receiver is removed early. Dropping never starts a run
+or uploads anything: the composer waits for an explicit send. A card drop belongs to that chat; a
+dropped item on the collapsed orb opens the HUD on the separate **New chat** composer. Removing an
+attachment deletes its durable copy, and another chat never receives the dropped image.
+
+Validated limits (4 attachments, 20 MB each, 21 MB combined) are unchanged. An unreadable file, an
+empty or oversized image, an unsupported type, or a failed promise reports a recoverable error and
+leaves the existing draft and attachments intact.
 
 This Mac-only feature requires macOS 26 or later and does not require a companion server update.
+
+### Regression checklist
+
+Automated Mac regression tests cover the production drop callbacks with synthetic pasteboards and
+promised files: real encoded PNG/JPEG/TIFF fixtures, Finder file URLs, raw provider data with
+asynchronous background completions, PNG/TIFF/JPEG pasteboards, browser URL-plus-image drags,
+multi-item pasteboards that mix files and images, successful and failed promises, delayed promise
+siblings, a failure beside an awaiting sibling delivery, a partial multi-file failure followed by its
+delayed success, a multi-file promise, three consecutive
+drop/remove cycles, durable bytes after the source is removed, explicit submission, one import per
+item, target-state reset, session isolation, and the existing 4-file, 20 MB, and 21 MB limits. A
+dropped image is also rendered through the composer's attachment chip so its thumbnail path is
+exercised.
+
+Perform these checks against an installed build before publishing; they exercise the real drag system
+that unit tests cannot drive:
+
+1. Drag a Finder PNG and a Finder JPEG onto the open HUD card; drag one over the prompt editor
+   specifically. Each drop adds one attachment chip with a usable thumbnail and leaves the app
+   responsive.
+2. Drag an image out of a browser into the card. The image attaches; no error is shown and the
+   editor's draft is unchanged.
+3. Open the system screenshot preview and drag its thumbnail into the card, then repeat onto the
+   collapsed orb. The first stages in the current chat, the second opens the HUD on **New chat**.
+4. Repeat drop/remove three times in a row without restarting the HUD. Every cycle accepts, shows one
+   chip, remains editable, and removal clears the chip.
+5. Type a draft and add an attachment, then drop another image. The draft and the first attachment stay
+   untouched, and a second chat shows no attachment.
+6. Remove an attachment, drop the same image again, and explicitly send. One run starts only after the
+   send, and the attachment is still readable in the sent turn.
+7. Try a text drag, a web link, an unsupported file, and an oversized image. Nothing highlights the HUD
+   for text or a link, and the unsupported or oversized item reports an actionable error without losing
+   the draft.
+
+**Installed-UI status:** the real-drag checks above were not run in this environment; they are pending
+until an installed build is exercised. The automated Mac regression suites named above did run.

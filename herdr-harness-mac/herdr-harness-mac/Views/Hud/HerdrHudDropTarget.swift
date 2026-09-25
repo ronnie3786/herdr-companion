@@ -1,15 +1,18 @@
 import AppKit
 import SwiftUI
 
-/// AppKit drop target for the HUD composer.
+/// AppKit drop target for the HUD card and orb.
 ///
 /// SwiftUI's `onDrop`/`dropDestination` only match providers that already conform
 /// to a concrete type. A drag out of the system screenshot preview is a *file
 /// promise* whose provider exposes neither `public.file-url` nor `public.image`,
 /// so those modifiers never even highlight the HUD. AppKit materializes promises
 /// through `NSFilePromiseReceiver`, which is why the HUD uses an explicit drop
-/// view. It is mounted behind the SwiftUI content so clicks, hovers, and
-/// drag-to-move keep belonging to the views above it.
+/// view. The same view reads every other drag straight from the dragging
+/// pasteboard, so one destination decides each drop exactly once. It is mounted
+/// behind the SwiftUI content so clicks, hovers, and drag-to-move keep belonging
+/// to the views above it; the AppKit destination search still prefers it over a
+/// nested text editor for the types it registers.
 struct HerdrHudDropTarget: NSViewRepresentable {
     var onTargetingChanged: (Bool) -> Void = { _ in }
     var onDrop: (NSPasteboard) -> Bool
@@ -57,7 +60,11 @@ final class HerdrHudDropView: NSView {
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        isAcceptable(sender) ? .copy : []
+        let acceptable = isAcceptable(sender)
+        // Re-report on every update: a drag whose types change mid-flight must
+        // not leave a stale highlight behind.
+        onTargetingChanged?(acceptable)
+        return acceptable ? .copy : []
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {

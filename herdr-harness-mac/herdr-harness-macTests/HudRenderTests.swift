@@ -420,6 +420,38 @@ struct HudRenderTests {
         result.expectSubstantial(minimumBytes: 1024)
     }
 
+    @Test("HUD composer renders a dropped image attachment with its thumbnail")
+    func rendersComposerAfterImageDrop() async throws {
+        let model = HerdrRenderFixtures.demoModel()
+        let session = HerdrHudSession(
+            userDefaults: makeDefaults(),
+            persistenceURL: temporaryPersistenceURL()
+        )
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("HudRenderTests.\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        pasteboard.setData(HerdrDropImageFixtures.makePNG(), forType: .png)
+        #expect(session.acceptPasteboardDrop(pasteboard))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while session.pendingAttachments.isEmpty, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let attachment = try #require(session.pendingAttachments.first)
+        defer { session.removeAttachment(attachment.id) }
+
+        let result = try await HerdrRenderHarness.render(
+            "30-hud-composer-attachment.png",
+            size: CGSize(width: 420, height: 320),
+            settlePasses: 12,
+            afterSettling: {
+                // The chip loads its own thumbnail in a detached task.
+                try? await Task.sleep(for: .milliseconds(120))
+            }
+        ) {
+            HerdrHudComposerView(model: model, controller: HerdrHudController(), session: session)
+        }
+        result.expectSubstantial(minimumBytes: 3_000)
+    }
+
     @Test("A fresh composer renders the main-workspace checkbox and picker at large text")
     func rendersFreshComposerMainWorkspaceToggle() async throws {
         let model = HerdrRenderFixtures.demoModel()

@@ -253,6 +253,9 @@ struct HerdrHudWorkspaceLauncherTests {
         }
         let failedCreateCalls = await client.createCalls
         #expect(failedCreateCalls.isEmpty)
+        // The failed attempt never issued a create request, so its receipt is
+        // replay-safe rather than an uncertain create.
+        #expect(launcher.receipt(for: submission.requestID)?.phase == .prepared)
 
         let receipt = try await launcher.launch(submission)
         #expect(receipt.phase == .sent)
@@ -264,8 +267,39 @@ struct HerdrHudWorkspaceLauncherTests {
         #expect(prompts.count == 1)
     }
 
-    @Test("An unconfirmed create retries with the same request ID and sends one prompt")
-    func createRetryUsesSameRequestID() async throws {
+    @Test("A receipt that never attempted create safely reuses its request ID")
+    func preparedReceiptRetriesSafely() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let client = FakeWorkspaceLaunchClient()
+        let submission = makeSubmission()
+        let prepared = HerdrHudWorkspaceLaunchReceipt(
+            requestID: submission.requestID,
+            fingerprint: submission.fingerprint,
+            machineID: submission.machineID,
+            endpoint: HerdrNotesSource.normalizedEndpoint(submission.endpoint),
+            workspaceID: submission.workspaceID,
+            tabID: nil,
+            paneID: nil,
+            phase: .prepared,
+            createdAt: .now
+        )
+        try writeReceipts([prepared.requestID: prepared], to: storeURL(in: directory))
+
+        let restarted = HerdrHudWorkspaceLauncher(client: client, storeURL: storeURL(in: directory))
+        let receipt = try await restarted.launch(submission)
+
+        #expect(receipt.phase == .sent)
+        #expect(receipt.paneID == "w-main:p1")
+        let creates = await client.createCalls
+        let prompts = await client.promptCalls
+        #expect(creates.count == 1)
+        #expect(creates.first?.requestID == submission.requestID)
+        #expect(prompts.count == 1)
+    }
+
+    @Test("A lost create response is never replayed, even after a restart")
+    func lostCreateResponseIsNeverReplayed() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let client = FakeWorkspaceLaunchClient(createFailures: 1)
@@ -276,23 +310,36 @@ struct HerdrHudWorkspaceLauncherTests {
             _ = try await launcher.launch(submission)
             Issue.record("Expected an unconfirmed create")
         } catch let error as HerdrHudWorkspaceLaunchError {
-            guard case .createUnconfirmed = error else {
+            guard case let .createUnconfirmed(receipt, _) = error else {
                 Issue.record("Expected createUnconfirmed, got \(error)")
                 return
             }
+            #expect(receipt?.phase == .creating)
+            #expect(receipt?.paneID == nil)
         }
-        let failedCreateAttempts = await client.createCalls.count
-        let failedPromptAttempts = await client.promptCalls.count
-        #expect(failedCreateAttempts == 1)
-        #expect(failedPromptAttempts == 0)
+        #expect(launcher.receipt(for: submission.requestID)?.phase == .creating)
+        let firstCreateCount = await client.createCalls.count
+        let firstPromptCount = await client.promptCalls.count
+        #expect(firstCreateCount == 1)
+        #expect(firstPromptCount == 0)
 
-        let receipt = try await launcher.launch(submission)
-        #expect(receipt.phase == .sent)
-        let creates = await client.createCalls
-        let prompts = await client.promptCalls
-        #expect(creates.count == 2)
-        #expect(Set(creates.map(\.requestID)) == ["launch-1"])
-        #expect(prompts.count == 1)
+        // The companion's request-ID cache is memory-only and expires. Even a
+        // fresh launcher must refuse instead of creating a second pane.
+        let restarted = HerdrHudWorkspaceLauncher(client: client, storeURL: storeURL(in: directory))
+        do {
+            _ = try await restarted.launch(submission)
+            Issue.record("Expected the restarted launcher to refuse the uncertain create")
+        } catch let error as HerdrHudWorkspaceLaunchError {
+            guard case let .createUnconfirmed(receipt, _) = error else {
+                Issue.record("Expected createUnconfirmed, got \(error)")
+                return
+            }
+            #expect(receipt?.phase == .creating)
+        }
+        let restartedCreateCount = await client.createCalls.count
+        let restartedPromptCount = await client.promptCalls.count
+        #expect(restartedCreateCount == firstCreateCount)
+        #expect(restartedPromptCount == firstPromptCount)
     }
 
     @Test("A failed prompt retains the confirmed pane and is never sent again, even after restart")
@@ -350,8 +397,8 @@ struct HerdrHudWorkspaceLauncherTests {
         #expect(restartedPromptCount == 1)
     }
 
-    @Test("An unfinished create on disk is retried with the same request ID exactly once")
-    func restartWithUnfinishedCreateRetriesIdempotently() async throws {
+    @Test("A persisted unfinished create is refused instead of replayed after restart")
+    func restartWithUnfinishedCreateRefusesReplay() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let client = FakeWorkspaceLaunchClient()
@@ -370,15 +417,21 @@ struct HerdrHudWorkspaceLauncherTests {
         try writeReceipts([pending.requestID: pending], to: storeURL(in: directory))
 
         let restarted = HerdrHudWorkspaceLauncher(client: client, storeURL: storeURL(in: directory))
-        let receipt = try await restarted.launch(submission)
+        do {
+            _ = try await restarted.launch(submission)
+            Issue.record("Expected the persisted uncertain create to be refused")
+        } catch let error as HerdrHudWorkspaceLaunchError {
+            guard case let .createUnconfirmed(receipt, _) = error else {
+                Issue.record("Expected createUnconfirmed, got \(error)")
+                return
+            }
+            #expect(receipt?.requestID == submission.requestID)
+        }
 
-        #expect(receipt.phase == .sent)
-        #expect(receipt.paneID == "w-main:p1")
         let creates = await client.createCalls
         let prompts = await client.promptCalls
-        #expect(creates.count == 1)
-        #expect(creates.first?.requestID == submission.requestID)
-        #expect(prompts.count == 1)
+        #expect(creates.isEmpty)
+        #expect(prompts.isEmpty)
     }
 
     @Test("A finished receipt returns its pane identity without touching the network")
@@ -489,6 +542,86 @@ struct HerdrHudWorkspaceLauncherTests {
         #expect(uploads.isEmpty)
     }
 
+    @Test("Stop during upload prevents the create request and the prompt")
+    func stopDuringUploadPreventsDispatch() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let attachment = try makeAttachment(filename: "notes.txt", contents: "hello", in: directory)
+        let client = GatedWorkspaceLaunchClient()
+        let launcher = HerdrHudWorkspaceLauncher(client: client, storeURL: storeURL(in: directory))
+        let submission = makeSubmission(attachments: [attachment])
+        let stopped = StopFlag()
+
+        let task = Task { try await launcher.launch(submission) { stopped.isStopped } }
+        try await waitUntil { await !client.uploadRequests.isEmpty }
+        stopped.isStopped = true
+        await client.releaseUpload()
+
+        do {
+            _ = try await task.value
+            Issue.record("Expected the launch to stop")
+        } catch let error as HerdrHudWorkspaceLaunchError {
+            guard case let .stopped(receipt) = error else {
+                Issue.record("Expected stopped, got \(error)")
+                return
+            }
+            #expect(receipt?.scopedPaneID == nil)
+        }
+        let creates = await client.createCalls
+        let prompts = await client.promptCalls
+        #expect(creates.isEmpty)
+        #expect(prompts.isEmpty)
+        // The create was never attempted, so the same request ID stays safely
+        // retryable.
+        #expect(launcher.receipt(for: submission.requestID)?.phase == .prepared)
+    }
+
+    @Test("Stop during create retains the confirmed pane and never sends the prompt")
+    func stopDuringCreatePreservesConfirmedPane() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let client = GatedWorkspaceLaunchClient()
+        let launcher = HerdrHudWorkspaceLauncher(client: client, storeURL: storeURL(in: directory))
+        let submission = makeSubmission()
+        let stopped = StopFlag()
+
+        let task = Task { try await launcher.launch(submission) { stopped.isStopped } }
+        try await waitUntil { await !client.createCalls.isEmpty }
+        stopped.isStopped = true
+        await client.releaseCreate()
+
+        do {
+            _ = try await task.value
+            Issue.record("Expected the launch to stop")
+        } catch let error as HerdrHudWorkspaceLaunchError {
+            guard case let .stopped(receipt) = error else {
+                Issue.record("Expected stopped, got \(error)")
+                return
+            }
+            #expect(receipt?.paneID == "w-main:p1")
+            #expect(receipt?.phase == .created)
+            #expect(receipt?.scopedPaneID == "machine-1|w-main:p1")
+        }
+        let prompts = await client.promptCalls
+        #expect(prompts.isEmpty)
+        #expect(launcher.receipt(for: submission.requestID)?.phase == .created)
+
+        // A later attempt keeps the pane and still refuses to send the
+        // undispatched prompt automatically.
+        do {
+            _ = try await launcher.launch(submission)
+            Issue.record("Expected the retained pane to block a replay")
+        } catch let error as HerdrHudWorkspaceLaunchError {
+            guard case let .promptNotSent(receipt) = error else {
+                Issue.record("Expected promptNotSent, got \(error)")
+                return
+            }
+            #expect(receipt.scopedPaneID == "machine-1|w-main:p1")
+        }
+        let retriedPrompts = await client.promptCalls
+        #expect(retriedPrompts.isEmpty)
+    }
+
     private func makeSubmission(
         machineID: String = "machine-1",
         endpoint: String = "http://localhost:9092",
@@ -552,6 +685,20 @@ struct HerdrHudWorkspaceLauncherTests {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(receipts).write(to: url)
     }
+
+    private func waitUntil(
+        timeout: Duration = .seconds(2),
+        _ condition: () async -> Bool
+    ) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while !(await condition()) {
+            guard clock.now < deadline else { throw LauncherWaitError.timedOut }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    private enum LauncherWaitError: Error { case timedOut }
 }
 
 private actor FakeWorkspaceLaunchClient: HerdrHudWorkspaceLaunchClient {
@@ -714,5 +861,126 @@ private actor FakeWorkspaceLaunchClient: HerdrHudWorkspaceLaunchClient {
             promptFailuresRemaining -= 1
             throw URLError(.timedOut)
         }
+    }
+}
+
+/// A main-actor cancellation signal shared with a launcher's `isCancelled`
+/// closure. The closure is synchronous and actor-isolated, so the test mutates
+/// this value between the launcher's awaited network calls.
+@MainActor
+private final class StopFlag {
+    var isStopped = false
+}
+
+/// One machine's client that parks uploads and creates until the test releases
+/// them, so Stop can be proven to land at a deterministic point.
+private actor GatedWorkspaceLaunchClient: HerdrHudWorkspaceLaunchClient {
+    private let capabilities: [String]
+    private var uploadGateIsOpen = false
+    private var createGateIsOpen = false
+    private var uploadWaiter: CheckedContinuation<Void, Never>?
+    private var createWaiter: CheckedContinuation<Void, Never>?
+
+    private(set) var uploadRequests: [String] = []
+    private(set) var createCalls: [String] = []
+    private(set) var promptCalls: [String] = []
+
+    init(capabilities: [String] = [HerdrHudWorkspaceLauncher.requiredCapability]) {
+        self.capabilities = capabilities
+    }
+
+    func serverCapabilities() async throws -> ServerCapabilities {
+        ServerCapabilities(capabilities: capabilities)
+    }
+
+    func fetchWorkspaces() async throws -> WorkspacesResponse {
+        WorkspacesResponse(workspaces: [
+            HerdrWorkspace(
+                workspaceID: "w-main",
+                number: 1,
+                label: "Main",
+                focused: false,
+                paneCount: 1,
+                tabCount: 1,
+                activeTabID: "w-main:t1",
+                agentStatus: .idle
+            )
+        ])
+    }
+
+    func uploadAttachment(
+        workspaceID: String,
+        fileURL: URL,
+        contentType: String
+    ) async throws -> AttachmentUploadResponse {
+        uploadRequests.append(fileURL.lastPathComponent)
+        if !uploadGateIsOpen {
+            await withCheckedContinuation { uploadWaiter = $0 }
+        }
+        let uploaded = UploadedAttachment(
+            id: "attachment-\(uploadRequests.count)",
+            filename: fileURL.lastPathComponent,
+            originalFilename: fileURL.lastPathComponent,
+            contentType: contentType,
+            size: 1,
+            path: "/uploads/\(fileURL.lastPathComponent)",
+            workspaceID: workspaceID,
+            createdAt: "2024-01-01T00:00:00Z"
+        )
+        return AttachmentUploadResponse(ok: true, attachment: uploaded, error: nil)
+    }
+
+    func releaseUpload() {
+        uploadGateIsOpen = true
+        uploadWaiter?.resume()
+        uploadWaiter = nil
+    }
+
+    func createQuickPiSession(
+        label: String,
+        requestID: String,
+        workspaceID: String?,
+        tabID: String?,
+        cwd: String?,
+        sessionFile: String?,
+        sessionID: String?,
+        workspaceLabel: String?,
+        tabLabel: String?,
+        reuseNamedTab: Bool?,
+        model: QuickPiSessionModel?,
+        thinkingLevel: String?,
+        focus: Bool?
+    ) async throws -> QuickPiSessionResponse {
+        createCalls.append(requestID)
+        if !createGateIsOpen {
+            await withCheckedContinuation { createWaiter = $0 }
+        }
+        return QuickPiSessionResponse(
+            ok: true,
+            workspaceID: workspaceID ?? "w-main",
+            tabID: "w-main:t1",
+            paneID: "w-main:p1",
+            createdWorkspace: false,
+            createdTab: true,
+            createdPane: true,
+            piExtensionAttached: true,
+            requestID: requestID,
+            sessionID: nil
+        )
+    }
+
+    func releaseCreate() {
+        createGateIsOpen = true
+        createWaiter?.resume()
+        createWaiter = nil
+    }
+
+    func sendPiPrompt(
+        paneID: String,
+        text: String,
+        disposition: PiPromptDisposition,
+        waitForIdle: Bool
+    ) async throws {
+        promptCalls.append(paneID)
     }
 }

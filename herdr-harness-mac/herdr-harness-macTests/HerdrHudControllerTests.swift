@@ -133,8 +133,8 @@ struct HerdrHudControllerTests {
         #expect(harness.notes.isHudExpanded)
     }
 
-    @Test("Finishing or discarding a workspace recovery prepares the next local composer")
-    func workspaceRecoveryFinishPreparesNextComposer() throws {
+    @Test("Opening a workspace recovery keeps its draft, and only Start over prepares a fresh composer")
+    func workspaceRecoveryOpenChatKeepsDraft() throws {
         let harness = makeHarness()
         defer { harness.controller.setEnabled(false) }
         let chats = try #require(harness.controller.chats)
@@ -155,20 +155,22 @@ struct HerdrHudControllerTests {
 
         harness.controller.finishWorkspaceLaunch(session, openExistingChat: false, model: harness.model)
 
-        #expect(chats.composer !== session)
+        // Inspecting the created chat never consumes the draft or advances the
+        // composer; only Start over is the explicit discard path.
+        #expect(chats.composer === session)
+        #expect(session.draft == "Recover me")
+        guard case .needsRecovery = session.workspaceLaunchState else {
+            Issue.record("Expected the recovery state to remain")
+            return
+        }
+        #expect(session.workspaceLaunchPaneIDForOpening() == "demo1|w-main:p1")
+
+        harness.controller.discardWorkspaceLaunch(session, model: harness.model)
+
+        #expect(chats.composer === session)
+        #expect(session.draft.isEmpty)
         #expect(session.workspaceLaunchState == .idle)
-        #expect(chats.composer.isNewChat)
-        // The next fresh composer starts on this Mac's demo machine again.
-        #expect(chats.composer.selectedMachineID == "demo1")
-
-        let discarded = chats.composer
-        discarded.setWorkspaceLaunchStateForTesting(.needsRecovery(message: "unconfirmed", receipt: nil))
-        discarded.draft = "Discard me"
-        harness.controller.discardWorkspaceLaunch(discarded, model: harness.model)
-
-        #expect(chats.composer !== discarded)
-        #expect(discarded.draft.isEmpty)
-        #expect(discarded.workspaceLaunchState == .idle)
+        // The next fresh chat starts on this Mac's demo machine again.
         #expect(chats.composer.selectedMachineID == "demo1")
     }
 

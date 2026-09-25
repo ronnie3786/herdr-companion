@@ -181,7 +181,7 @@ struct HerdrHudComposerView: View {
                     .accessibilityIdentifier("hud-workspace-recovery-message")
             }
             HStack(spacing: 8) {
-                if session.workspaceLaunchReceipt != nil {
+                if session.workspaceLaunchPaneIDForOpening() != nil {
                     Button("Open chat") {
                         controller.finishWorkspaceLaunch(session, openExistingChat: true, model: model)
                     }

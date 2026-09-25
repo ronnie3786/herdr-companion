@@ -27,6 +27,23 @@ enum HerdrHudPersistedModelChoice: Codable, Equatable, Sendable {
     }
 }
 
+/// Durable ownership of one interrupted checked launch together with the
+/// frozen composer input needed to reconnect it after a relaunch. The request
+/// identity and receipt stay launcher-owned; this record lets a restored
+/// composer present the exact same unresolved launch instead of orphaning the
+/// draft or minting a new request ID.
+struct HerdrHudPendingWorkspaceLaunch: Codable, Equatable, Sendable {
+    let requestID: String?
+    let fingerprint: String?
+    let receipt: HerdrHudWorkspaceLaunchReceipt?
+    let draft: String
+    let quotes: [ChatQuote]
+    let attachments: [HerdrHudAttachment]
+    let selectedMachineID: String?
+    let createsInMainWorkspace: Bool
+    let updatedAt: Date
+}
+
 struct HerdrHudPersistenceSnapshot: Codable, Equatable, Sendable {
     static let currentVersion = 1
     static let maximumExchangeCount = 10
@@ -45,6 +62,9 @@ struct HerdrHudPersistenceSnapshot: Codable, Equatable, Sendable {
     /// Optional new-chat model ownership. Absent means the session predates
     /// this behavior and continues to follow the shared legacy preference.
     let modelChoice: HerdrHudPersistedModelChoice?
+    /// Optional ownership of an interrupted checked workspace launch. Absent
+    /// means no checked launch is pending or the cache predates this field.
+    let workspaceLaunch: HerdrHudPendingWorkspaceLaunch?
 
     init(
         version: Int = HerdrHudPersistenceSnapshot.currentVersion,
@@ -53,13 +73,15 @@ struct HerdrHudPersistenceSnapshot: Codable, Equatable, Sendable {
         hasUnseenAnswer: Bool = false,
         historyRootRunID: String? = nil,
         chatMetadata: HerdrHudChatMetadataAccumulator? = nil,
-        modelChoice: HerdrHudPersistedModelChoice? = nil
+        modelChoice: HerdrHudPersistedModelChoice? = nil,
+        workspaceLaunch: HerdrHudPendingWorkspaceLaunch? = nil
     ) {
         self.version = version
         self.hasUnseenAnswer = hasUnseenAnswer
         self.historyRootRunID = historyRootRunID
         self.chatMetadata = chatMetadata
         self.modelChoice = modelChoice
+        self.workspaceLaunch = workspaceLaunch
         self.thread = thread
         self.exchanges = exchanges.suffix(Self.maximumExchangeCount).map(PersistedExchange.init)
     }
@@ -212,6 +234,15 @@ actor HerdrHudPersistenceStore {
         Task.detached(priority: .utility) { [weak self] in
             await self?.writePendingSnapshots()
         }
+    }
+
+    /// Writes through the same latest-wins path, without handing the write to
+    /// an unstructured task. A checked launch persists its ownership and
+    /// frozen input this way before it creates anything, so a crash cannot
+    /// strand a request ID that was never written to disk.
+    func saveImmediately(_ snapshot: HerdrHudPersistenceSnapshot) {
+        pendingSnapshot = snapshot
+        writePendingSnapshots()
     }
 
     func remove() {

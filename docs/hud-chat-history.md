@@ -98,11 +98,16 @@ path; the checkbox and the automatic defaults below belong only to new chats.
 ### Designating a main workspace
 
 The checkbox appears only on a genuinely new composer and starts unchecked. The
-first time it is enabled, Herdr reads the selected companion's workspaces and
-asks the user to choose the exact main workspace, including when that workspace
-is not the first, is renamed, or shares a label with another workspace. Herdr
-never infers the destination from a label, workspace number, roster or list
-position, generic name, or the currently focused workspace.
+first time it is enabled — or whenever the selected machine or its endpoint
+changes — Herdr reads that companion's workspaces and asks the user to choose
+the exact main workspace, including when that workspace is not the first, is
+renamed, or shares a label with another workspace. Each choice shows its raw
+workspace ID beside any label, so two workspaces with the same label stay
+distinguishable in the menu, the selected destination, and accessibility text.
+Herdr never infers the destination from a label, workspace number, roster or
+list position, generic name, or the currently focused workspace. A delayed
+topology response for a machine the composer has already left is discarded
+instead of repopulating the picker.
 
 The designation is remembered privately on this Mac by paired companion —
 machine ID, normalized endpoint, and raw workspace ID. Renaming or reordering
@@ -113,14 +118,15 @@ workspace. Enabling the checkbox creates nothing; only Send does.
 
 ### Checked Send
 
-Checked Send creates one new tab and pane directly in the designated workspace
-on the selected machine, with named-tab reuse disabled and no focus theft, then
-uploads the pending attachments into that workspace and submits the initial
-text with its quotes once. Uploaded files travel in the shared composer's
-attachment convention: one `Attachment:` line per uploaded file carrying the
-companion-issued path. No standalone `hud-chat-v1` conversation is
-started, and no **Continue in agent** promotion is needed: the running
-conversation appears in the workspace before its first answer completes.
+Checked Send uploads the pending attachments into the designated workspace
+first, then creates one new tab and pane directly in that workspace on the
+selected machine, with named-tab reuse disabled and no focus theft, and
+submits the initial text with its quotes once. Uploaded files travel in the
+shared composer's attachment convention: one `Attachment:` line per uploaded
+file carrying the companion-issued path. No standalone `hud-chat-v1`
+conversation is started, and no **Continue in agent** promotion is needed: the
+running conversation appears in the workspace before its first answer
+completes.
 
 The HUD's existing folder semantics are preserved in both modes. The selected
 folder travels with the launch — home as the companion's `~` alias, custom
@@ -130,20 +136,33 @@ selected thinking level. Pi's global model settings are not changed.
 ### Failure recovery
 
 The launch records ownership before each side effect using a request ID and a
-content fingerprint. Recovery is deliberately conservative:
+content fingerprint, and the composer's frozen input and request identity are
+written to the session cache before the first network mutation. Recovery is
+deliberately conservative:
 
-- An unconfirmed create keeps the draft and attachments; retrying the same
-  unchanged draft reuses the request ID, so at most one pane is created.
+- A create request whose response was lost is never replayed automatically.
+  The companion's request-ID cache is memory-only and expires, so a retry
+  after a lost successful response could create a second pane. The draft and
+  attachments stay in the composer with an explicit message to check that
+  workspace or **Start over**. Only a failure recorded before the create was
+  attempted — for example an attachment upload failure — safely reuses the
+  request ID and keeps at most one pane.
 - A confirmed pane with an unconfirmed first prompt keeps the draft and exposes
   **Open chat** for that exact pane. Herdr refuses to resend automatically, even
   after relaunch, because prompt delivery is not an idempotent create. Changed
   content cannot silently reuse the unresolved request.
-- An upload failure keeps the draft and attachments for a safe idempotent retry.
-  A missing workspace, offline host, unsupported companion, or invalid model is
+- **Open chat** only opens the confirmed pane; it never consumes the draft or
+  advances the composer. **Keep draft** dismisses the recovery notice without
+  consuming input. **Start over** deliberately discards the uncertain draft; it
+  never deletes an existing pane or conversation.
+- An interrupted checked launch survives relaunch: the same composer restores
+  its frozen draft, attachments, selected machine, and request ID, and a
+  confirmed pane stays openable instead of being replaced by a new request.
+- Pressing **Stop** during an upload or create stops before the next side
+  effect. If the companion had already confirmed a pane, that pane is retained
+  with **Open chat**; the first prompt is never dispatched afterwards.
+- A missing workspace, offline host, unsupported companion, or invalid model is
   an explicit error — never a replacement destination or a headless fallback.
-- **Keep draft** dismisses the recovery notice without consuming input.
-  **Start over** deliberately discards the uncertain draft; it never deletes an
-  existing pane or conversation.
 
 ### Compatibility
 
@@ -348,16 +367,17 @@ by a green unit run; live Pi verification additionally needs provider access.
   checkbox, confirm the visible label and checked state are read correctly, toggle
   it by keyboard alone, and confirm the row reflows at the largest text size.
 - **R2 — checked creation.** *Automated:* with synthetic companions, a checked
-  Send creates exactly one pane in the designated raw workspace ID — including a
-  workspace that is listed second and shares its label with another workspace —
-  sends named-tab reuse and focus as false, pins that machine's declared default
-  model and the selected thinking level, prompts exactly that pane once with the
-  initial text and uploaded attachment paths, starts no headless conversation,
-  and needs no promotion. *Pending installed/live Pi:* with two disposable
-  companions, designate a workspace that is not first, Send checked, and confirm
-  the conversation and its first prompt appear in that exact workspace before the
-  answer completes, the HUD does not steal focus, and no duplicate bubble or
-  **Continue in agent** step exists.
+  Send uploads the pending attachments first, creates exactly one pane in the
+  designated raw workspace ID — including a workspace that is listed second and
+  shares its label with another workspace, whose menu entry and selected chip
+  also show the raw ID — sends named-tab reuse and focus as false, pins that
+  machine's declared default model and the selected thinking level, prompts
+  exactly that pane once with the initial text and uploaded attachment paths,
+  starts no headless conversation, and needs no promotion. *Pending
+  installed/live Pi:* with two disposable companions, designate a workspace that
+  is not first, Send checked, and confirm the conversation and its first prompt
+  appear in that exact workspace before the answer completes, the HUD does not
+  steal focus, and no duplicate bubble or **Continue in agent** step exists.
 - **R3 — new chats only.** *Automated:* a continuation submits its second turn
   through the ordinary continuation path even when the flag was left set; the
   existing-composer render test omits the checkbox, and unchecked Send keeps the
@@ -393,11 +413,14 @@ by a green unit run; live Pi verification additionally needs provider access.
   default**.
 - **Attachments and uncertain delivery.** *Automated:* a checked upload failure
   keeps the draft and attachments, retries with the same request ID, and sends
-  exactly one prompt carrying the attachment path; an unconfirmed create retries
-  its request ID, while an unconfirmed prompt retains the confirmed pane,
-  exposes **Open chat**, and is never sent again, including after a restart.
-  *Pending installed:* interrupt the connection between create and prompt against
-  a disposable companion and confirm **Open chat** opens the created pane, the
+  exactly one prompt carrying the attachment path; a create attempt whose
+  response was lost is refused on retry and after restart instead of risking a
+  second pane; an unconfirmed prompt retains the confirmed pane, exposes **Open
+  chat**, and is never sent again, including after a restart. A full
+  chats/session recreation restores the same frozen draft, selected machine,
+  request ID, and confirmed pane; **Open chat** is non-consuming. *Pending
+  installed:* interrupt the connection between create and prompt against a
+  disposable companion and confirm **Open chat** opens the created pane, the
   draft survives, and no replacement pane appears.
 - **Older-server behavior.** *Automated:* the launcher refuses a companion that
   does not advertise `quick-session-launch-options-v1` before any launch field is

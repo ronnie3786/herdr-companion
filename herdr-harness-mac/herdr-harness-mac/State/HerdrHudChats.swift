@@ -111,7 +111,10 @@ final class HerdrHudChats {
                         ? legacySession : legacySession.makeIndependentSession(id: item.id))
         }
         pendingRestorationIDs = seen
-        let id = UUID().uuidString
+        // A composer that recorded a checked launch before quitting owns its
+        // exact request ID and frozen input. Reconnect that snapshot instead of
+        // minting a new composer that could never find it again.
+        let id = prototype.newestPendingWorkspaceLaunchComposerID(excluding: seen) ?? UUID().uuidString
         composerID = id
         composer = legacySession.makeIndependentSession(id: id)
         for chat in chats { own(chat.session) }
@@ -131,9 +134,13 @@ final class HerdrHudChats {
 
     /// A checked workspace launch has no local chat bubble: the pane is the
     /// conversation, represented by the ordinary workspace-agent chips. The
-    /// composer still moves on to the next independent local/default draft.
+    /// composer stays in place — any edits, quotes, or attachments added while
+    /// the launch was in flight remain available for the next chat — and only
+    /// its launch-specific state is reset and persisted as cleared.
     func workspaceLaunchCompleted(_ session: HerdrHudSession) {
-        if session === composer { prepareNextComposer() }
+        if session === composer {
+            session.resetForNewChat()
+        }
         session.isCollapsed = true
         if displayedSession === session { selectedID = nil }
     }

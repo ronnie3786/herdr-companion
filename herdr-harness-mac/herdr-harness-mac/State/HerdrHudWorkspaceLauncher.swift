@@ -115,7 +115,18 @@ struct HerdrHudWorkspaceLaunchSubmission: Equatable, Sendable {
 /// fingerprint are persisted: never the prompt, attachment data, or paths.
 struct HerdrHudWorkspaceLaunchReceipt: Codable, Equatable, Sendable {
     enum Phase: String, Codable, Sendable {
+        /// Preflight passed and durable ownership is recorded. No create
+        /// request has been issued, so the same content may be retried safely.
+        case prepared
+        /// A create request was issued and its outcome is unknown. The
+        /// companion's request-ID cache is memory-only and expires, so this
+        /// must never be replayed automatically.
         case creating
+        /// The companion confirmed a pane and the first prompt was definitely
+        /// not issued. The confirmed identity is retained for recovery, and
+        /// the prompt is not replayed automatically.
+        case created
+        /// A prompt request was issued and its outcome is unknown.
         case sending
         case sent
     }
@@ -160,9 +171,11 @@ enum HerdrHudWorkspaceLaunchError: LocalizedError, Equatable {
     case alreadyInProgress
     case tooManyRequests
     case attachmentUploadFailed(filename: String, message: String)
-    case createUnconfirmed(message: String)
+    case createUnconfirmed(receipt: HerdrHudWorkspaceLaunchReceipt?, message: String)
     case promptUnconfirmed(receipt: HerdrHudWorkspaceLaunchReceipt, message: String)
-    case invalidCreateResponse
+    case promptNotSent(receipt: HerdrHudWorkspaceLaunchReceipt)
+    case invalidCreateResponse(receipt: HerdrHudWorkspaceLaunchReceipt?)
+    case stopped(receipt: HerdrHudWorkspaceLaunchReceipt?)
 
     var errorDescription: String? {
         switch self {
@@ -201,20 +214,34 @@ enum HerdrHudWorkspaceLaunchError: LocalizedError, Equatable {
             "Herdr is already starting several chats. Try again after they finish starting."
         case let .attachmentUploadFailed(filename, message):
             "Couldn't upload \(filename): \(message)"
-        case let .createUnconfirmed(message):
+        case let .createUnconfirmed(_, message):
             "Herdr couldn't confirm whether the chat was created in the main workspace. Check that workspace before trying again. The first message was not sent. \(message)"
         case let .promptUnconfirmed(_, message):
             "A chat was created in the main workspace, but Herdr couldn't confirm its first message was sent. Open that chat and check it before sending again. \(message)"
+        case .promptNotSent:
+            "A chat was created in the main workspace, but its first message was not sent. Open that chat and send it there, or deliberately start over."
         case .invalidCreateResponse:
             "The companion's reply didn't identify a pane in the requested workspace. Check the workspace before trying again. The first message was not sent."
+        case let .stopped(receipt):
+            if receipt?.scopedPaneID != nil {
+                "Stopped before the first message was sent. The chat that was already created in the main workspace is preserved; open it or deliberately start over."
+            } else {
+                "Stopped before the chat was created. Your draft is unchanged."
+            }
         }
     }
 
     /// The confirmed pane identity when one is known, so callers can offer
     /// "Open chat" instead of a blind retry.
     var confirmedReceipt: HerdrHudWorkspaceLaunchReceipt? {
-        if case let .promptUnconfirmed(receipt, _) = self { return receipt }
-        return nil
+        switch self {
+        case let .promptUnconfirmed(receipt, _): return receipt
+        case let .promptNotSent(receipt): return receipt
+        case let .createUnconfirmed(receipt, _): return receipt
+        case let .invalidCreateResponse(receipt): return receipt
+        case let .stopped(receipt): return receipt
+        default: return nil
+        }
     }
 }
 
@@ -262,7 +289,8 @@ final class HerdrHudWorkspaceLauncher {
     /// failure throws an error carrying the same confirmed pane identity.
     @discardableResult
     func launch(
-        _ submission: HerdrHudWorkspaceLaunchSubmission
+        _ submission: HerdrHudWorkspaceLaunchSubmission,
+        isCancelled: @MainActor () -> Bool = { false }
     ) async throws -> HerdrHudWorkspaceLaunchReceipt {
         if let loadError { throw loadError }
         try Self.validate(submission)
@@ -284,21 +312,38 @@ final class HerdrHudWorkspaceLauncher {
                 return existing
             case .sending:
                 guard let paneID = existing.paneID, !paneID.isEmpty else {
-                    throw HerdrHudWorkspaceLaunchError.createUnconfirmed(message: "The earlier reply was incomplete.")
+                    throw HerdrHudWorkspaceLaunchError.createUnconfirmed(
+                        receipt: existing,
+                        message: "The earlier reply was incomplete."
+                    )
                 }
                 throw HerdrHudWorkspaceLaunchError.promptUnconfirmed(
                     receipt: existing,
                     message: "The earlier send was not confirmed."
                 )
-            case .creating:
-                guard existing.paneID == nil else {
-                    throw HerdrHudWorkspaceLaunchError.promptUnconfirmed(
+            case .created:
+                guard let paneID = existing.paneID, !paneID.isEmpty else {
+                    throw HerdrHudWorkspaceLaunchError.createUnconfirmed(
                         receipt: existing,
-                        message: "The earlier send was not confirmed."
+                        message: "The earlier reply was incomplete."
                     )
                 }
-                // The create is idempotent for one request ID, so an unfinished
-                // create may be retried. The prompt was never attempted.
+                // The pane is confirmed and the prompt was provably never
+                // issued, but replaying the create is not safe and the prompt
+                // is not an idempotent create. Retain the pane for recovery.
+                throw HerdrHudWorkspaceLaunchError.promptNotSent(receipt: existing)
+            case .creating:
+                // A create request reached the companion, but its response was
+                // lost. Its request-ID cache lives only in memory and expires,
+                // so replaying this is not safe; check the workspace instead.
+                throw HerdrHudWorkspaceLaunchError.createUnconfirmed(
+                    receipt: existing,
+                    message: "The earlier create may have succeeded without being confirmed."
+                )
+            case .prepared:
+                // No create request was issued. The same content may safely
+                // reuse this request ID and proceed.
+                break
             }
         }
         guard activeRequestIDs.count < Self.maximumConcurrentLaunches else {
@@ -329,17 +374,34 @@ final class HerdrHudWorkspaceLauncher {
             workspaceID: submission.workspaceID,
             tabID: nil,
             paneID: nil,
-            phase: .creating,
+            phase: .prepared,
             createdAt: .now
         )
-        try record(receipt)
+        if receipts[submission.requestID] == nil {
+            try record(receipt)
+        }
+        if isCancelled() {
+            throw HerdrHudWorkspaceLaunchError.stopped(receipt: receipt)
+        }
 
         let attachmentPaths = try await uploadAttachments(
             submission.attachments,
             workspaceID: submission.workspaceID
         )
+        if isCancelled() {
+            throw HerdrHudWorkspaceLaunchError.stopped(receipt: receipt)
+        }
         let prompt = Self.composedPrompt(base: submission.prompt, attachmentPaths: attachmentPaths)
 
+        // Mark the create as attempted immediately before issuing it. A crash
+        // or transport failure after this point can never be replayed
+        // automatically, because the companion's request-ID cache is not
+        // durable.
+        if isCancelled() {
+            throw HerdrHudWorkspaceLaunchError.stopped(receipt: receipt)
+        }
+        receipt.phase = .creating
+        try record(receipt)
         let response: QuickPiSessionResponse
         do {
             response = try await client.createQuickPiSession(
@@ -358,18 +420,28 @@ final class HerdrHudWorkspaceLauncher {
                 focus: false
             )
         } catch {
-            throw HerdrHudWorkspaceLaunchError.createUnconfirmed(message: error.localizedDescription)
+            throw HerdrHudWorkspaceLaunchError.createUnconfirmed(
+                receipt: receipt,
+                message: error.localizedDescription
+            )
         }
         guard response.requestID == submission.requestID,
               !response.tabID.isEmpty,
               !response.paneID.isEmpty,
               response.workspaceID == submission.workspaceID
         else {
-            throw HerdrHudWorkspaceLaunchError.invalidCreateResponse
+            throw HerdrHudWorkspaceLaunchError.invalidCreateResponse(receipt: receipt)
         }
 
         receipt.tabID = response.tabID
         receipt.paneID = response.paneID
+        receipt.phase = .created
+        if isCancelled() {
+            // The pane exists but Stop arrived before the first prompt. Keep
+            // the confirmed identity and never send the prompt afterwards.
+            try record(receipt)
+            throw HerdrHudWorkspaceLaunchError.stopped(receipt: receipt)
+        }
         receipt.phase = .sending
         do {
             try record(receipt)

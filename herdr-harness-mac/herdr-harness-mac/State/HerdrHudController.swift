@@ -387,8 +387,10 @@ final class HerdrHudController {
         // theft or opening over a different conversation/draft.
     }
 
-    /// Opens the pane a checked workspace launch confirmed and moves the
-    /// composer on. Focus is deliberate here: the user asked to see the chat.
+    /// Opens the pane a checked workspace launch confirmed. This is
+    /// deliberately non-consuming: inspecting the created chat never replaces
+    /// the composer or discards the recovery draft. Only an explicit
+    /// **Start over** abandons that pending state.
     func finishWorkspaceLaunch(
         _ session: HerdrHudSession,
         openExistingChat: Bool,
@@ -397,8 +399,6 @@ final class HerdrHudController {
         if openExistingChat, let paneID = session.workspaceLaunchPaneIDForOpening() {
             HerdrMacAppDelegate.openPaneURLWithFallback(paneID)
         }
-        session.dismissWorkspaceLaunchRecovery()
-        chats?.workspaceLaunchCompleted(session)
         chats?.applyFreshComposerDefaults(model: model)
     }
 

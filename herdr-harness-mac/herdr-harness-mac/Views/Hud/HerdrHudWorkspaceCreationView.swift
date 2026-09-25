@@ -25,7 +25,7 @@ struct HerdrHudWorkspaceCreationView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .task(id: session.createsInMainWorkspace) {
+        .task(id: session.mainWorkspaceTopologyKey(in: model)) {
             guard session.createsInMainWorkspace else { return }
             session.applyLocalMachineDefaultIfNeeded(in: model)
             await session.loadMainWorkspaces(model: model)
@@ -69,7 +69,7 @@ struct HerdrHudWorkspaceCreationView: View {
                 isWarning: true
             )
             .accessibilityIdentifier("hud-main-workspace-no-machine")
-        } else if session.mainWorkspaces.isEmpty {
+        } else if session.currentMainWorkspaces(in: model).isEmpty {
             statusLabel(
                 "This machine has no workspaces to create a chat in.",
                 symbol: "rectangle.slash",
@@ -112,7 +112,7 @@ struct HerdrHudWorkspaceCreationView: View {
 
     private func workspaceMenu(selected: HerdrWorkspace?) -> some View {
         Menu {
-            ForEach(session.mainWorkspaces, id: \.workspaceID) { workspace in
+            ForEach(session.currentMainWorkspaces(in: model), id: \.workspaceID) { workspace in
                 Button {
                     session.selectMainWorkspace(workspace, in: model)
                 } label: {
@@ -149,6 +149,6 @@ struct HerdrHudWorkspaceCreationView: View {
     }
 
     private func workspaceChoiceTitle(_ workspace: HerdrWorkspace) -> String {
-        workspace.label.isEmpty ? workspace.workspaceID : workspace.label
+        HerdrHudWorkspaceChoiceText.title(for: workspace)
     }
 }

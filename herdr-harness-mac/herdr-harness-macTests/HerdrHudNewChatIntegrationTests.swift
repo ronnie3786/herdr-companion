@@ -67,9 +67,8 @@ struct HerdrHudNewChatIntegrationTests {
 
         let next = fixture.chats.composer
         #expect(next !== session)
-        #expect(next.selectedMachineID == nil)
-        #expect(next.selectedModel == nil)
-        next.applyLocalMachineDefaultIfNeeded(in: fixture.model)
+        // The collection applies this Mac's fresh-composer defaults as part of
+        // the ordinary submission hand-off.
         #expect(next.selectedMachineID == "local")
         #expect(next.selectedModel == nil) // machine default again
         #expect(fixture.defaults.string(forKey: AgentModelSettings.hudModelKey) == nil)
@@ -98,7 +97,12 @@ struct HerdrHudNewChatIntegrationTests {
 
         session.createsInMainWorkspace = true
         session.draft = "Create the launch chat"
-        await submit(session, fixture: fixture)
+        var sentReceipt: HerdrHudWorkspaceLaunchReceipt?
+        await session.submit(model: fixture.model) {
+            if case let .sent(receipt) = session.workspaceLaunchState { sentReceipt = receipt }
+            fixture.chats.workspaceLaunchCompleted(session)
+            fixture.chats.applyFreshComposerDefaults(model: fixture.model)
+        }
 
         #expect(fixture.client.quickSessionCreates.count == 1)
         let create = try #require(fixture.client.quickSessionCreates.first)
@@ -116,14 +120,248 @@ struct HerdrHudNewChatIntegrationTests {
         #expect(fixture.client.promptCalls.first?.text == "Create the launch chat")
         #expect(session.draft.isEmpty)
         #expect(session.pendingAttachments.isEmpty)
-        guard case let .sent(receipt) = session.workspaceLaunchState else {
-            Issue.record("Expected a sent launch state")
-            return
-        }
+        let receipt = try #require(sentReceipt)
         #expect(receipt.workspaceID == "w-main")
         #expect(receipt.scopedPaneID == "local|w-main:p1")
-        #expect(fixture.chats.composer !== session)
-        #expect(fixture.chats.composer.selectedMachineID == nil)
+        // The launch advances the same composer instead of replacing it, so
+        // input added while the launch was in flight stays available.
+        #expect(fixture.chats.composer === session)
+        #expect(session.isNewChat)
+        #expect(!session.createsInMainWorkspace)
+        #expect(session.workspaceLaunchState == .idle)
+    }
+
+    @Test("Advancing after a checked launch keeps input added during the launch")
+    func checkedLaunchAdvancementPreservesResidualInput() async throws {
+        let fixture = try Fixture(localHostNames: ["local.example.invalid"])
+        defer { fixture.cleanUp() }
+        let residualAttachment = fixture.directory.appendingPathComponent("residual.txt")
+        try FileManager.default.createDirectory(at: fixture.directory, withIntermediateDirectories: true)
+        try Data("synthetic residual attachment".utf8).write(to: residualAttachment)
+        let session = fixture.chats.composer
+        session.applyLocalMachineDefaultIfNeeded(in: fixture.model)
+        await session.loadMainWorkspaces(model: fixture.model)
+        let workspace = try #require(session.mainWorkspaces.first)
+        #expect(session.selectMainWorkspace(workspace, in: fixture.model))
+        session.createsInMainWorkspace = true
+        session.draft = "Launch this once"
+
+        await session.submit(model: fixture.model) {
+            // The launch has consumed its snapshot and is about to advance the
+            // composer; an edit and attachment added here must survive that
+            // advancement.
+            session.draft = "Residual idea"
+            session.addAttachments([residualAttachment])
+            fixture.chats.workspaceLaunchCompleted(session)
+            fixture.chats.applyFreshComposerDefaults(model: fixture.model)
+        }
+
+        #expect(fixture.chats.composer === session)
+        #expect(session.draft == "Residual idea")
+        #expect(session.pendingAttachments.count == 1)
+        #expect(session.pendingAttachments.first?.filename == "residual.txt")
+        #expect(session.isNewChat)
+        #expect(!session.createsInMainWorkspace)
+        #expect(session.selectedMachineID == "local")
+        #expect(fixture.client.promptCalls.first?.text == "Launch this once")
+        #expect(!fixture.client.promptCalls.contains { $0.text.contains("Residual idea") })
+    }
+
+    @Test("Switching the selected machine reloads its destinations without toggling the checkbox")
+    func machineSwitchReloadsDestinations() async throws {
+        let fixture = try Fixture(
+            machines: [
+                HerdrMachine(id: "alpha", name: "Alpha", urlString: "https://alpha.example.invalid"),
+                HerdrMachine(id: "beta", name: "Beta", urlString: "https://beta.example.invalid"),
+            ],
+            localHostNames: ["alpha.example.invalid"],
+            workspacesByHost: [
+                "alpha.example.invalid": [(id: "w-alpha", label: "Shared label")],
+                "beta.example.invalid": [(id: "w-beta", label: "Shared label")],
+            ]
+        )
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.createsInMainWorkspace = true
+        session.applyLocalMachineDefaultIfNeeded(in: fixture.model)
+        #expect(session.selectedMachineID == "alpha")
+        await session.loadMainWorkspaces(model: fixture.model)
+        #expect(session.currentMainWorkspaces(in: fixture.model).map(\.workspaceID) == ["w-alpha"])
+
+        let alphaKey = session.mainWorkspaceTopologyKey(in: fixture.model)
+        session.selectedMachineID = "beta"
+        // The machine switch drops the previous machine's list immediately...
+        #expect(session.currentMainWorkspaces(in: fixture.model).isEmpty)
+        #expect(session.mainWorkspaces.isEmpty)
+        // ...and the key the picker task watches changed, so the new machine's
+        // destinations become selectable without toggling or pressing Send.
+        #expect(session.mainWorkspaceTopologyKey(in: fixture.model) != alphaKey)
+        await session.loadMainWorkspaces(model: fixture.model)
+        #expect(session.currentMainWorkspaces(in: fixture.model).map(\.workspaceID) == ["w-beta"])
+    }
+
+    @Test("A delayed topology response for the previous machine cannot repopulate the picker")
+    func supersededTopologyCannotRepopulate() async throws {
+        let fixture = try Fixture(
+            machines: [
+                HerdrMachine(id: "alpha", name: "Alpha", urlString: "https://alpha.example.invalid"),
+                HerdrMachine(id: "beta", name: "Beta", urlString: "https://beta.example.invalid"),
+            ],
+            localHostNames: ["alpha.example.invalid"],
+            workspacesByHost: [
+                "alpha.example.invalid": [(id: "w-alpha", label: "Alpha Main")],
+                "beta.example.invalid": [(id: "w-beta", label: "Beta Main")],
+            ],
+            topologyDelayHost: "alpha.example.invalid"
+        )
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.createsInMainWorkspace = true
+        session.applyLocalMachineDefaultIfNeeded(in: fixture.model)
+        let alphaLoad = Task { await session.loadMainWorkspaces(model: fixture.model) }
+        try await wait { fixture.client.topologyRequests > 0 }
+
+        session.selectedMachineID = "beta"
+        await session.loadMainWorkspaces(model: fixture.model)
+        #expect(session.currentMainWorkspaces(in: fixture.model).map(\.workspaceID) == ["w-beta"])
+
+        fixture.client.releaseDelayedTopology()
+        await alphaLoad.value
+        // The stale Alpha response must not replace Beta's list or spinner.
+        #expect(session.currentMainWorkspaces(in: fixture.model).map(\.workspaceID) == ["w-beta"])
+        #expect(!session.isLoadingMainWorkspaces)
+    }
+
+    @Test("An interrupted checked launch reconnects its request, draft, and pane after relaunch")
+    func interruptedCheckedLaunchReconnectsAfterRelaunch() async throws {
+        let fixture = try Fixture(localHostNames: ["local.example.invalid"], promptFailures: 1)
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.applyLocalMachineDefaultIfNeeded(in: fixture.model)
+        await session.loadMainWorkspaces(model: fixture.model)
+        let workspace = try #require(session.mainWorkspaces.first)
+        #expect(session.selectMainWorkspace(workspace, in: fixture.model))
+        session.createsInMainWorkspace = true
+        session.draft = "Deliver exactly once"
+
+        await submit(session, fixture: fixture)
+        guard case .needsRecovery = session.workspaceLaunchState else {
+            Issue.record("Expected a recovery state before relaunch")
+            return
+        }
+
+        let relaunchedPrototype = HerdrHudSession(
+            userDefaults: fixture.defaults,
+            persistenceURL: fixture.directory.appendingPathComponent("hud-thread.json"),
+            hostIdentity: HerdrHudHostIdentity(hostNames: ["local.example.invalid"], addresses: []),
+            workspaceLauncherFactory: { model, machineID in
+                HerdrHudWorkspaceLauncher(
+                    client: try model.hudChatClient(machineID: machineID),
+                    storeURL: fixture.directory.appendingPathComponent("launches-\(machineID).json")
+                )
+            }
+        )
+        let relaunched = HerdrHudChats(legacySession: relaunchedPrototype, defaults: fixture.defaults)
+        let restored = relaunched.composer
+        await restored.waitForPersistenceRestore()
+        #expect(restored.draft == "Deliver exactly once")
+        #expect(restored.createsInMainWorkspace)
+        #expect(restored.selectedMachineID == "local")
+        #expect(restored.workspaceLaunchPaneIDForOpening() == "local|w-main:p1")
+        #expect(restored.workspaceLaunchRecoveryMessage != nil)
+
+        // The same request ID and pane are retained: resending never creates a
+        // second pane or sends a second prompt.
+        await restored.submit(model: fixture.model) { relaunched.workspaceLaunchCompleted(restored) }
+        #expect(fixture.client.quickSessionCreates.count == 1)
+        #expect(fixture.client.promptCalls.count == 1)
+    }
+
+    @Test("An uncertain create restored after relaunch is never replayed with a new pane")
+    func interruptedUncertainCreateReconnectsAfterRelaunch() async throws {
+        let fixture = try Fixture(localHostNames: ["local.example.invalid"], createFailures: 1)
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.applyLocalMachineDefaultIfNeeded(in: fixture.model)
+        await session.loadMainWorkspaces(model: fixture.model)
+        let workspace = try #require(session.mainWorkspaces.first)
+        #expect(session.selectMainWorkspace(workspace, in: fixture.model))
+        session.createsInMainWorkspace = true
+        session.draft = "Maybe created"
+
+        await submit(session, fixture: fixture)
+        guard case .needsRecovery = session.workspaceLaunchState else {
+            Issue.record("Expected an uncertain-create recovery state before relaunch")
+            return
+        }
+        #expect(session.draft == "Maybe created")
+
+        let relaunchedPrototype = HerdrHudSession(
+            userDefaults: fixture.defaults,
+            persistenceURL: fixture.directory.appendingPathComponent("hud-thread.json"),
+            hostIdentity: HerdrHudHostIdentity(hostNames: ["local.example.invalid"], addresses: []),
+            workspaceLauncherFactory: { model, machineID in
+                HerdrHudWorkspaceLauncher(
+                    client: try model.hudChatClient(machineID: machineID),
+                    storeURL: fixture.directory.appendingPathComponent("launches-\(machineID).json")
+                )
+            }
+        )
+        let relaunched = HerdrHudChats(legacySession: relaunchedPrototype, defaults: fixture.defaults)
+        let restored = relaunched.composer
+        await restored.waitForPersistenceRestore()
+        #expect(restored.draft == "Maybe created")
+        #expect(restored.createsInMainWorkspace)
+        #expect(restored.workspaceLaunchRecoveryMessage != nil)
+        #expect(restored.workspaceLaunchPaneIDForOpening() == nil)
+
+        // The durable receipt proves a create was attempted, so a resend must
+        // refuse instead of minting a second pane.
+        await restored.submit(model: fixture.model) { relaunched.workspaceLaunchCompleted(restored) }
+        #expect(fixture.client.quickSessionCreates.count == 1)
+        #expect(fixture.client.promptCalls.isEmpty)
+        guard case .needsRecovery = restored.workspaceLaunchState else {
+            Issue.record("Expected the restored recovery state to remain")
+            return
+        }
+    }
+
+    @Test("Stop during a checked create prevents the prompt and preserves the created pane")
+    func stopDuringCheckedCreatePreventsPrompt() async throws {
+        let fixture = try Fixture(localHostNames: ["local.example.invalid"], delayCreate: true)
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        session.applyLocalMachineDefaultIfNeeded(in: fixture.model)
+        await session.loadMainWorkspaces(model: fixture.model)
+        let workspace = try #require(session.mainWorkspaces.first)
+        #expect(session.selectMainWorkspace(workspace, in: fixture.model))
+        session.createsInMainWorkspace = true
+        session.draft = "Stop this launch"
+
+        let task = Task {
+            await session.submit(model: fixture.model) {
+                if case .sent = session.workspaceLaunchState {
+                    fixture.chats.workspaceLaunchCompleted(session)
+                } else {
+                    fixture.chats.submissionStarted(session)
+                }
+                fixture.chats.applyFreshComposerDefaults(model: fixture.model)
+            }
+        }
+        try await wait { fixture.client.createRequestsStarted == 1 }
+        await session.stop(model: fixture.model)
+        fixture.client.releaseDelayedCreate()
+        await task.value
+
+        #expect(fixture.client.quickSessionCreates.count == 1)
+        #expect(fixture.client.promptCalls.isEmpty)
+        #expect(session.draft == "Stop this launch")
+        guard case let .needsRecovery(_, receipt) = session.workspaceLaunchState else {
+            Issue.record("Expected the late confirmed pane to be retained")
+            return
+        }
+        #expect(receipt?.paneID == "w-main:p1")
+        #expect(session.workspaceLaunchPaneIDForOpening() == "local|w-main:p1")
     }
 
     @Test("Checked Send without a chosen main workspace sends nothing and keeps the draft")
@@ -300,6 +538,7 @@ struct HerdrHudNewChatIntegrationTests {
             } else {
                 fixture.chats.submissionStarted(session)
             }
+            fixture.chats.applyFreshComposerDefaults(model: fixture.model)
         }
     }
 
@@ -335,17 +574,23 @@ struct HerdrHudNewChatIntegrationTests {
             ],
             localHostNames: [String] = ["local.example.invalid"],
             workspaces: [(id: String, label: String)] = [("w-main", "Main")],
+            workspacesByHost: [String: [(id: String, label: String)]] = [:],
             promptFailures: Int = 0,
             uploadFailures: Int = 0,
             createFailures: Int = 0,
-            catalogDelayHost: String? = nil
+            catalogDelayHost: String? = nil,
+            topologyDelayHost: String? = nil,
+            delayCreate: Bool = false
         ) throws {
             let client = HudNewChatClient(
                 workspaces: workspaces,
+                workspacesByHost: workspacesByHost,
                 promptFailures: promptFailures,
                 uploadFailures: uploadFailures,
                 createFailures: createFailures,
-                catalogDelayHost: catalogDelayHost
+                catalogDelayHost: catalogDelayHost,
+                topologyDelayHost: topologyDelayHost,
+                delayCreate: delayCreate
             )
             self.client = client
             HudNewChatURLProtocol.state.withLock { $0 = client.initialState }
@@ -415,6 +660,7 @@ private final class HudNewChatClient: Sendable {
 
     struct State: Sendable {
         var workspaces: [(id: String, label: String)]
+        var workspacesByHost: [String: [(id: String, label: String)]] = [:]
         var catalogHosts: [String] = []
         var quickSessionCreates: [QuickSessionCreate] = []
         var promptCalls: [PromptCall] = []
@@ -426,8 +672,15 @@ private final class HudNewChatClient: Sendable {
         var createFailuresRemaining: Int
         var uploadFailuresRemaining: Int
         var catalogDelayHost: String?
+        var topologyDelayHost: String?
+        var delayCreate: Bool
+        var createRequestsStarted = 0
         let catalogGate = DispatchSemaphore(value: 0)
+        let topologyGate = DispatchSemaphore(value: 0)
+        let createGate = DispatchSemaphore(value: 0)
         var delayedCatalogReleased = false
+        var delayedTopologyReleased = false
+        var delayedCreateReleased = false
     }
 
     let initialState: State
@@ -437,20 +690,27 @@ private final class HudNewChatClient: Sendable {
     var headlessStarts: [HeadlessStart] { HudNewChatURLProtocol.state.withLock { $0.headlessStarts } }
     var catalogHosts: [String] { HudNewChatURLProtocol.state.withLock { $0.catalogHosts } }
     var topologyRequests: Int { HudNewChatURLProtocol.state.withLock { $0.topologyRequests } }
+    var createRequestsStarted: Int { HudNewChatURLProtocol.state.withLock { $0.createRequestsStarted } }
 
     init(
         workspaces: [(id: String, label: String)],
+        workspacesByHost: [String: [(id: String, label: String)]] = [:],
         promptFailures: Int,
         uploadFailures: Int,
         createFailures: Int,
-        catalogDelayHost: String?
+        catalogDelayHost: String?,
+        topologyDelayHost: String? = nil,
+        delayCreate: Bool = false
     ) {
         initialState = State(
             workspaces: workspaces,
+            workspacesByHost: workspacesByHost,
             promptFailuresRemaining: promptFailures,
             createFailuresRemaining: createFailures,
             uploadFailuresRemaining: uploadFailures,
-            catalogDelayHost: catalogDelayHost
+            catalogDelayHost: catalogDelayHost,
+            topologyDelayHost: topologyDelayHost,
+            delayCreate: delayCreate
         )
     }
 
@@ -458,6 +718,22 @@ private final class HudNewChatClient: Sendable {
         let gate = HudNewChatURLProtocol.state.withLock { state -> DispatchSemaphore in
             state.delayedCatalogReleased = true
             return state.catalogGate
+        }
+        gate.signal()
+    }
+
+    func releaseDelayedTopology() {
+        let gate = HudNewChatURLProtocol.state.withLock { state -> DispatchSemaphore in
+            state.delayedTopologyReleased = true
+            return state.topologyGate
+        }
+        gate.signal()
+    }
+
+    func releaseDelayedCreate() {
+        let gate = HudNewChatURLProtocol.state.withLock { state -> DispatchSemaphore in
+            state.delayedCreateReleased = true
+            return state.createGate
         }
         gate.signal()
     }
@@ -469,7 +745,9 @@ private final class HudNewChatURLProtocol: URLProtocol, @unchecked Sendable {
         promptFailuresRemaining: 0,
         createFailuresRemaining: 0,
         uploadFailuresRemaining: 0,
-        catalogDelayHost: nil
+        catalogDelayHost: nil,
+        topologyDelayHost: nil,
+        delayCreate: false
     ))
 
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -480,11 +758,26 @@ private final class HudNewChatURLProtocol: URLProtocol, @unchecked Sendable {
         guard let url = request.url else { return }
         let body = requestBody()
         let gate: DispatchSemaphore? = Self.state.withLock { state -> DispatchSemaphore? in
-            guard url.path == "/api/v1/agent-runs/models" else { return nil }
-            state.catalogHosts.append(url.host ?? "")
-            guard url.host == state.catalogDelayHost,
-                  !state.delayedCatalogReleased else { return nil }
-            return state.catalogGate
+            let path = url.path
+            if path == "/api/v1/agent-runs/models" {
+                state.catalogHosts.append(url.host ?? "")
+                guard url.host == state.catalogDelayHost,
+                      !state.delayedCatalogReleased else { return nil }
+                return state.catalogGate
+            }
+            if path == "/api/v1/workspaces" {
+                state.topologyRequests += 1
+                guard url.host == state.topologyDelayHost,
+                      !state.delayedTopologyReleased else { return nil }
+                return state.topologyGate
+            }
+            if path == "/api/v1/quick-sessions/pi", request.httpMethod == "POST" {
+                state.createRequestsStarted += 1
+                guard state.delayCreate,
+                      !state.delayedCreateReleased else { return nil }
+                return state.createGate
+            }
+            return nil
         }
         if let gate {
             DispatchQueue.global().async { [self] in
@@ -504,8 +797,8 @@ private final class HudNewChatURLProtocol: URLProtocol, @unchecked Sendable {
                 return (200, Data(#"{"ok":true,"capabilities":["quick-session-launch-options-v1"]}"#.utf8))
             }
             if path == "/api/v1/workspaces" {
-                state.topologyRequests += 1
-                let workspaces = state.workspaces.map { workspace -> [String: Any] in
+                let hostWorkspaces = state.workspacesByHost[url.host ?? ""] ?? state.workspaces
+                let workspaces = hostWorkspaces.map { workspace -> [String: Any] in
                     [
                         "workspace_id": workspace.id,
                         "number": 1,

@@ -33,11 +33,14 @@ struct FirstMateStatusLabel: View {
         }
     }
     private var color: Color {
+        if let mapped = FirstMateStatusColors.color(for: status, scheme: scheme) {
+            return mapped
+        }
         switch status {
-        case "awaiting_direction", "blocked", "paused", "recovering", "unverified": scheme == .light ? Color(red: 0.58, green: 0.39, blue: 0.09) : .orange
-        case "completed", "complete", "passed": scheme == .light ? Color(red: 0.14, green: 0.49, blue: 0.40) : .green
-        case "failed", "error": .red
-        default: .secondary
+        case "paused", "recovering", "unverified": return scheme == .light ? Color(red: 0.58, green: 0.39, blue: 0.09) : .orange
+        case "completed", "complete", "passed": return scheme == .light ? Color(red: 0.14, green: 0.49, blue: 0.40) : .green
+        case "failed", "error": return .red
+        default: return .secondary
         }
     }
 }

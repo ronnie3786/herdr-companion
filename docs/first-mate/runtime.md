@@ -143,7 +143,7 @@ not inherit the companion control token.
 
 - Coordinator: read reference-oriented status, record ordered stages from a human
   request and begin only the next authorized stage, delegate, steer, retry, revise affected work, resolve explicit human
-  gates, complete a stage and finish the feature. It can also read bounded
+  gates, select the exact retained gate runs, complete a stage and finish the feature. It can also read bounded
   feature Documents and saved sessions, and retain a known pull request or share
   link with `fm_save_link`. Pi's normal configured tools, extensions, skills,
   prompt templates and project context remain available. Its charter interprets
@@ -152,7 +152,8 @@ not inherit the companion control token.
   opinions on implementations. Names alone do not override host pins.
 - Worker: read feature evidence, delegate scoped children, yield until their
   outcomes, retry a direct child, record durable progress and bounded wait leases,
-  report a verdict with documents, retain a known pull request or share link with
+  report a verdict with documents, record discovered suite inventories and gate
+  batches with `fm_record_verification`, retain a known pull request or share link with
   `fm_save_link`, request a human decision, produce a checkpoint and acknowledge
   a predecessor's handoff or automatic recovery.
 - Advisor: return a bounded intervention decision or assemble an independent
@@ -194,6 +195,56 @@ end.
 A clean Git checkout is required for successful implementation and revision-bound
 review; exploratory planning can inspect an existing dirty checkout. A plan is
 not silently treated as a code review.
+
+## Gate verification evidence
+
+A managed worker's charter requires it to discover every suite in every changed
+package from the project's own discovery or manifest, record the inventory and
+the exact per-suite results with `fm_record_verification`, and reference the
+returned run IDs in `fm_outcome`. Batches are recorded promptly and include
+failures, errors, skipped suites, and interrupted runs; an aggregate test count
+is never treated as coverage. The typed report retains the worker's discovery
+statement (`source`, `evidence`, `state`) exactly as reported. Nothing in the
+runtime executes discovery or guesses suites from command text, counts, or
+names, so `state: "complete"` is a worker-reported claim rather than
+independent proof that arbitrary project discovery was exhaustive.
+
+Before a stage checkpoint, the coordinator inspects `fm_status.verification`
+and the retained `verification_runs`, then passes the exact run IDs to
+`fm_complete_stage` (or `fm_finish_feature`). When none are supplied the
+selection is the current visit's outcome-referenced runs, then the visit's
+recorded runs, then every retained run. Unknown or foreign run IDs are refused
+rather than silently dropped. The service recomputes the assessment and
+persists it in the same transaction as the checkpoint or completion, including
+its compact projection in the message metadata and the visit event.
+
+Scope is observed, not reported. The runtime computes one opaque workspace
+identity per deliverable assignment (`metadata.worktree_path`, else the feature
+checkout), reads the current `HEAD`, builds cumulative changed paths from the
+earliest retained assignment baseline plus uncommitted working-tree paths, and
+requires a retained baseline. A missing baseline, unreadable revision, failed
+diff, or dirty working tree lowers scope completeness and is named in
+`coverage_reasons`; a run that reported the committed revision cannot cover
+uncommitted changes. An interrupted run, a missing revision, or a revision that
+no longer matches current `HEAD` is retained as `stale_evidence` and cannot
+establish current verification.
+
+Assessments are feature-wide and durable. A restart, worker handoff, retry, or
+later stage keeps every run and inventory; a later stage defaults its selection
+to its own runs while the assessment still names earlier suites that dropped
+out. A checkpoint or informal park whose assessment is not `verified` appends
+the deterministic coverage note (`Verification coverage: <label>` with failing,
+missing, and previously passing dropped suites), so a partial park is visible
+in the conversation itself. Live detail and status reads recompute the
+assessment when structured evidence exists and fall back to the persisted
+assessment otherwise; a legacy feature with no structured evidence remains
+`unavailable` rather than inheriting an old green.
+
+Verification changes no authorization. A stage may park with a partial verdict;
+it does not grant extra stages, extra test execution, or a bypass of human
+gates, writer ownership, or revision fencing. The exact typed contract is in
+[the implementation contract](build-contract.md), and the human-facing
+behavior is in the [gate verification guide](gate-verification.md).
 
 ## Feature links and automatic discovery
 
@@ -396,7 +447,7 @@ the evidence back to First Mate. Interrupted executions are never labeled succes
 Run the focused suite from the repository with Python 3.11 or newer:
 
 ```sh
-python3 -m unittest tests.test_first_mate_store tests.test_first_mate_links tests.test_first_mate_link_discovery tests.test_first_mate_runtime tests.test_first_mate_cli tests.test_first_mate_acceptance tests.test_first_mate_usage tests.test_first_mate_recovery tests.test_first_mate_reliability
+python3 -m unittest tests.test_first_mate_store tests.test_first_mate_links tests.test_first_mate_link_discovery tests.test_first_mate_runtime tests.test_first_mate_cli tests.test_first_mate_acceptance tests.test_first_mate_usage tests.test_first_mate_recovery tests.test_first_mate_reliability tests.test_first_mate_verification tests.test_first_mate_verification_runtime
 node --test pi-semantic-bridge/test/first-mate.test.mjs
 ```
 

@@ -205,6 +205,113 @@ Links are stored privately on the owning companion and follow the existing
 authenticated First Mate boundary. The companion package is installed and
 restarted separately from any Mac app release.
 
+## Gate verification API
+
+Capability `first-mate-verification-v1` adds durable, revision-bound suite
+evidence. It is additive: older clients ignore the fields, and newer clients
+accept a companion that omits them. Recording is not an HTTP mutation route —
+only the managed worker extension reports evidence through its scoped tool
+spool. The authenticated API exposes the retained evidence read-only.
+
+Feature summaries and feature detail add `verification`. Feature detail also
+adds `verification_runs` and `suite_inventories`. All three are absent-safe; a
+legacy feature that never recorded structured evidence reports an empty object
+for `verification` and empty lists for the other two. Clients must not treat an
+empty or absent assessment as a pass.
+
+Assessment object (`feature.verification`), snake_case:
+
+```json
+{"status": "partially_verified", "label": "Partially verified", "feature_revision": 4,
+ "assessed_revisions": {"ws_0123456789abcdef": "commit-sha"},
+ "source_revisions": ["commit-sha"],
+ "gate_set": [{"key": "…", "label": "pkg/app/SuiteOne", "package": "pkg/app", "suite": "SuiteOne",
+               "configuration": "", "outcome": "passed", "passed_count": 12, "failed_count": 0,
+               "skipped_count": 0, "run_id": "fmvr_…", "tested_revision": "commit-sha",
+               "workspace": "ws_0123456789abcdef", "fresh": true, "reason": ""}],
+ "required_suites": [{"key": "…", "label": "pkg/app/SuiteOne", "package": "pkg/app",
+                      "suite": "SuiteOne", "configuration": ""}],
+ "missing_suites": [{"…": "…", "workspace": "ws_…", "reason": "never run"}],
+ "previously_green_missing": [{"…": "…"}],
+ "failing_suites": [{"…": "…", "outcome": "failed", "run_id": "fmvr_…", "tested_revision": "commit-sha"}],
+ "stale_evidence": [{"run_id": "fmvr_…", "workspace": "ws_…", "tested_revision": "commit-sha",
+                     "reason": "recorded revision … does not match current …"}],
+ "coverage_reasons": ["…"],
+ "unmapped_paths": [{"workspace": "ws_…", "path": "outside/orphan.swift"}],
+ "incomplete_inventories": [{"workspace": "ws_…", "package": "pkg/app", "state": "incomplete"}],
+ "changed_packages": [{"workspace": "ws_…", "package": "pkg/app"}],
+ "selected_run_ids": ["fmvr_…"], "recorded_run_ids": ["fmvr_…"],
+ "run_count": 2, "inventory_count": 1, "evidence_present": true,
+ "computed_at": "2026-09-24T12:00:00Z"}
+```
+
+Status is one of `verified`, `partially_verified`, `failed`, or `unavailable`.
+Only complete, current, passing coverage is `verified`; a later commit or
+uncommitted change downgrades a live read without erasing the history, and a
+newer failure remains visible even when a client selects or cites an older
+passing subset. Clients must keep unknown status values and never promote them
+to verified.
+
+Gate run object (`verification_runs[]`): `id`, `feature_id`, `visit_id`,
+`assignment_id`, `native_session_id`, `generation`, `workspace`,
+`tested_revision` (the worker-reported revision), `observed_revision` (the
+companion's read of HEAD when the batch was recorded), `run_status`
+(`completed`, `failed`, or `interrupted`), `gates` (the validated per-suite
+array), `summary`, `recorded_by` (`worker` or `coordinator`), and `created_at`.
+Gate entries carry `suite` (`package`, `suite`, `configuration`, `selector`),
+`outcome` (`passed`, `failed`, `error`, or `skipped`), optional
+`passed_count`, `failed_count`, `skipped_count`, `duration_seconds`, and a
+bounded `detail`. Runs are append-only; an identical `request_id` replay
+returns the persisted run, while different content returns
+`idempotency_conflict`.
+
+Inventory object (`suite_inventories[]`): `id`, `feature_id`, `workspace`,
+`package`, `state` (`complete` or `incomplete`), `revision`, `suites`,
+`evidence`, `source`, provenance fields, and timestamps. One inventory is
+retained per feature/workspace/package; a later inventory replaces it, but
+replaced suites remain in run history and can still appear as previously green.
+The evidence and source strings are worker-reported; `complete` is a claim
+about discovery, not independent proof of exhaustiveness.
+
+Suite identity is `package`, `suite`, and `configuration`; `selector` is
+evidence, not identity. An empty package is the repository root. Identically
+named suites in different packages or configurations remain distinct, and
+display labels use `package/suite` plus the configuration when present.
+
+### Typed tool contract
+
+- Worker `fm_record_verification` accepts required `revision`, optional
+  `status` (`completed`, `failed`, or `interrupted`), `summary`, `inventory`,
+  and a non-empty `gates` array. The service derives the workspace identity
+  and the observed revision; callers cannot supply either. A gate list
+  containing a `failed` or `error` outcome is retained as failure evidence even
+  when the batch summary reports success. The response returns the retained
+  run, a revision-mismatch warning when the reported revision differs from the
+  observed HEAD, and the recomputed assessment.
+- Worker `fm_outcome` accepts `verification_run_ids`: only runs recorded by
+  this execution and feature are retained. Unknown IDs are `not_found`; a run
+  from another execution or feature is `verification_scope_mismatch`.
+- Coordinator `fm_complete_stage` and `fm_finish_feature` accept
+  `verification_run_ids`. When omitted, the selection is the current visit's
+  outcome-referenced runs, then that visit's recorded runs, then every retained
+  run. Unknown selected IDs are refused with `not_found`, and any unknown ID
+  reaching the evaluator (for example through a retained reference) is named in
+  `coverage_reasons` and can never produce `verified`.
+- `fm_status` returns the live scoped `verification` assessment plus a bounded
+  `verification_runs` projection (20 for the coordinator, 50 with an explicit
+  `verification_runs_truncated` flag for workers and advisors).
+- Recording is limited to the running worker of the current visit, generation,
+  and native session; other callers receive `stale_owner`. Validation failures
+  use `invalid_request`.
+
+Assessments are persisted in the same transaction as the checkpoint or feature
+completion that cites them, and the compact projection travels with the
+checkpoint message metadata and event payload. A live detail or status read
+recomputes the assessment when structured evidence exists, so a commit made
+after a checkpoint is visible as stale rather than hidden behind the old green.
+The runtime observes workspace identities; no private machine path is part of
+any assessment, run, or inventory projection.
+
 ## Model routing and runtime evidence
 
 Feature, assignment, delegation, and session projections may contain additive

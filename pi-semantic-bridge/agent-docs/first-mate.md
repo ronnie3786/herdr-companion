@@ -18,7 +18,7 @@ Managed roles receive typed `fm_*` tools scoped to their validated feature/job:
 | Role | Typed workflow tools |
 | --- | --- |
 | Coordinator | `fm_status`, `fm_delegate`, `fm_begin_stage`, `fm_recover`, `fm_resolve_gate`, `fm_steer`, `fm_retry`, `fm_complete_stage`, `fm_revise`, `fm_finish_feature`, `fm_read_document`, `fm_read_session`, `fm_save_link` |
-| Worker | `fm_status`, `fm_delegate`, `fm_retry`, `fm_wait_for_children`, `fm_outcome`, `fm_handoff`, `fm_acknowledge_handoff`, `fm_progress`, `fm_acknowledge_recovery`, `fm_request_human`, `fm_read_document`, `fm_read_session`, `fm_save_link` |
+| Worker | `fm_status`, `fm_delegate`, `fm_retry`, `fm_wait_for_children`, `fm_outcome`, `fm_record_verification`, `fm_handoff`, `fm_acknowledge_handoff`, `fm_progress`, `fm_acknowledge_recovery`, `fm_request_human`, `fm_read_document`, `fm_read_session`, `fm_save_link` |
 | Advisor | `fm_status`, `fm_advice`, `fm_recovery_brief`, `fm_read_document`, `fm_read_session` |
 
 Use `fm_delegate`, never unmanaged Pi subprocesses. Do not poll: service code
@@ -50,6 +50,30 @@ Recovery advisors have read-only tools; ordinary roles keep their configured too
 Missing receipts, uncertain external effects, human gates, and exhausted budgets
 require direction rather than blind replay. `fm_recover` handles stopped/uncertain
 execution; `fm_retry` handles a reported failure. Neither authorizes another stage.
+
+## Gate verification evidence
+
+Before reporting an outcome for work that changed code, discover every suite in
+every changed package from the project's own test discovery or manifest, then
+record the inventory and the exact per-suite results with
+`fm_record_verification`. Include failures, errors, skipped suites, and
+interrupted batches, and record each batch promptly instead of only a final
+successful report. Pass the returned run IDs to `fm_outcome` as
+`verification_run_ids`.
+
+The coordinator inspects `fm_status.verification` and the retained
+`verification_runs`, then selects exact run IDs with `fm_complete_stage` (or
+`fm_finish_feature`) and quotes the service's scoped verdict. If any suite
+belonging to a changed package lacks a current passing result, the verdict is
+**Partially verified**, never Verified. The assessment also names failing,
+missing, and previously passing suites dropped from the current gate set.
+
+Never claim unqualified green from an aggregate test count, and never present
+an inventory as proof that discovery was exhaustive: `state: "complete"` is a
+worker-reported discovery claim, not independent proof. Missing structured
+evidence stays **Verification unavailable**. Earlier passes become stale as soon
+as the source revision moves, so record a fresh batch for the revision being
+reported.
 
 ## External management versus scoped self-management
 

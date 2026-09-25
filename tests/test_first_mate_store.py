@@ -539,6 +539,18 @@ class FirstMateStoreTests(unittest.TestCase):
         self.assertEqual(len(inventories), 1)
         self.assertEqual([suite["suite"] for suite in inventories[0]["suites"]], ["SuiteTwo"])
 
+    def test_coverage_note_discloses_bounded_lists_and_the_remainder(self):
+        assessment = {
+            "status": "partially_verified", "label": "Partially verified",
+            "missing_suites": [{"label": f"pkg/app/Suite{index}"} for index in range(10)],
+            "previously_green_missing": [], "failing_suites": [],
+        }
+        note = self.store._coverage_note(assessment)
+        self.assertIn("Missing suites (10):", note)
+        self.assertIn("pkg/app/Suite7", note)
+        self.assertIn("and 2 more (complete list in the persisted assessment)", note)
+        self.assertNotIn("pkg/app/Suite8", note)
+
     def test_link_storage_migrates_additively_and_persists(self):
         before = self.store.snapshot(self.feature["id"])
         self.assertEqual(before["links"], [])

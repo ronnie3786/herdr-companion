@@ -169,6 +169,7 @@ test("verification recording is worker-scoped and carries the exact gate contrac
       assert.equal(other.handlers.get("tool_call")({toolName:"fm_record_verification"}).block, true);
       if (role === "coordinator") {
         assert.ok(other.tools.get("fm_complete_stage").parameters.properties.verification_run_ids);
+        assert.ok(other.tools.get("fm_finish_feature").parameters.properties.verification_run_ids);
       }
     } finally { other.cleanup(); }
   }

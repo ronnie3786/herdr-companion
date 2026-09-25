@@ -33,9 +33,9 @@ def inventory(suites: list[dict], *, state: str = "complete", package: str = "pk
 
 
 def run(run_id: str, gates, *, revision: str = REV_A, status: str = "completed",
-        workspace: str = WORKSPACE) -> dict:
+        workspace: str = WORKSPACE, source_state: str = "clean") -> dict:
     return {"id": run_id, "workspace": workspace, "revision": revision, "observed_revision": revision,
-            "status": status, "gates": gates, "summary": "synthetic"}
+            "status": status, "gates": gates, "summary": "synthetic", "source_state": source_state}
 
 
 def gate(name: str, outcome: str = "passed", package: str = "pkg/app", configuration: str = "", **counts) -> dict:
@@ -260,6 +260,176 @@ class CoverageRulesTests(unittest.TestCase):
         self.assertEqual([item["label"] for item in assessment["missing_suites"]],
                          ["pkg/app/SuiteOne (Release)"])
 
+    def test_workspace_qualified_identity_keeps_two_worktrees_independent(self):
+        other = "ws_other"
+        assessment = evaluate(
+            revision_by_workspace={WORKSPACE: REV_A, other: REV_A},
+            changed_paths_by_workspace={WORKSPACE: ["pkg/app/Sources/Feature.swift"],
+                                        other: ["pkg/app/Sources/Feature.swift"]},
+            inventories=[inventory([suite("SharedTests")]),
+                         inventory([suite("SharedTests")], workspace=other)],
+            runs=[run("run-one", [gate("SharedTests")], workspace=WORKSPACE)],
+        )
+        self.assertEqual(assessment["status"], "partially_verified")
+        self.assertEqual([item["label"] for item in assessment["missing_suites"]], ["pkg/app/SharedTests"])
+        self.assertEqual(assessment["missing_suites"][0]["workspace"], other)
+        self.assertEqual(len(assessment["gate_set"]), 1)
+        self.assertEqual(assessment["gate_set"][0]["workspace"], WORKSPACE)
+
+    def test_workspace_qualified_failure_is_not_hidden_by_another_worktrees_pass(self):
+        other = "ws_other"
+        assessment = evaluate(
+            revision_by_workspace={WORKSPACE: REV_A, other: REV_A},
+            changed_paths_by_workspace={WORKSPACE: ["pkg/app/Sources/Feature.swift"],
+                                        other: ["pkg/app/Sources/Feature.swift"]},
+            inventories=[inventory([suite("SharedTests")]),
+                         inventory([suite("SharedTests")], workspace=other)],
+            runs=[run("run-pass", [gate("SharedTests")], workspace=WORKSPACE),
+                  run("run-fail", [gate("SharedTests", "failed")], workspace=other)],
+        )
+        self.assertEqual(assessment["status"], "failed")
+        self.assertEqual([item["workspace"] for item in assessment["failing_suites"]], [other])
+
+    def test_stale_discovery_inventory_cannot_establish_verified(self):
+        # Discovery listed one suite at revision A. At revision B a second
+        # suite exists but the inventory was never revalidated.
+        assessment = evaluate(
+            revision_by_workspace={WORKSPACE: REV_B},
+            inventories=[inventory([suite("SuiteOne")], revision=REV_A)],
+            runs=[run("run-one", [gate("SuiteOne")], revision=REV_B)],
+        )
+        self.assertEqual(assessment["status"], "partially_verified")
+        self.assertEqual(assessment["stale_inventories"][0]["revision"], REV_A)
+        self.assertEqual(assessment["stale_inventories"][0]["current_revision"], REV_B)
+        self.assertTrue(any("revalidate the inventory" in reason for reason in assessment["coverage_reasons"]))
+        # Revalidating at B restores the complete current case.
+        fresh = evaluate(
+            revision_by_workspace={WORKSPACE: REV_B},
+            inventories=[inventory([suite("SuiteOne")], revision=REV_B)],
+            runs=[run("run-one", [gate("SuiteOne")], revision=REV_B)],
+        )
+        self.assertEqual(fresh["status"], "verified")
+        self.assertEqual(fresh["stale_inventories"], [])
+
+    def test_revisionless_discovery_is_incomplete(self):
+        assessment = evaluate(
+            inventories=[inventory([suite("SuiteOne")], revision="")],
+            runs=[run("run-one", [gate("SuiteOne")])],
+        )
+        self.assertEqual(assessment["status"], "partially_verified")
+        self.assertEqual(len(assessment["stale_inventories"]), 1)
+        self.assertEqual(assessment["stale_inventories"][0]["revision"], "")
+
+    def test_ever_passed_history_survives_skipped_then_removed_inventory(self):
+        # Green at A, skipped at B, then the suite disappears from a
+        # replacement inventory: the coverage drop must stay named.
+        assessment = evaluate(
+            revision_by_workspace={WORKSPACE: REV_B},
+            inventories=[inventory([suite("KeptSuite")], revision=REV_B)],
+            runs=[
+                run("run-six", [gate("KeptSuite"), gate("DroppedSuite")], revision=REV_A),
+                run("run-four", [gate("KeptSuite"), gate("DroppedSuite", "skipped")], revision=REV_B),
+            ],
+            selected_run_ids=["run-four"],
+        )
+        self.assertEqual(assessment["status"], "partially_verified")
+        self.assertEqual([item["label"] for item in assessment["previously_green_missing"]],
+                         ["pkg/app/DroppedSuite"])
+        self.assertEqual(assessment["missing_suites"], [])
+
+    def test_stale_pass_cannot_clear_a_current_failure_and_failed_batches_do_not_verify(self):
+        assessment = evaluate(
+            revision_by_workspace={WORKSPACE: REV_B},
+            inventories=[inventory([suite("SuiteOne")], revision=REV_B)],
+            runs=[
+                run("run-pass", [gate("SuiteOne")], revision=REV_B),
+                run("run-fail", [gate("SuiteOne", "failed")], revision=REV_B),
+                run("run-delayed-old", [gate("SuiteOne")], revision=REV_A),
+            ],
+            selected_run_ids=["run-pass"],
+        )
+        self.assertEqual(assessment["status"], "failed")
+        self.assertEqual([item["label"] for item in assessment["failing_suites"]], ["pkg/app/SuiteOne"])
+        # A batch the caller marks failed cannot establish verification even
+        # though its gates are passing.
+        failed_batch = evaluate(
+            revision_by_workspace={WORKSPACE: REV_B},
+            inventories=[inventory([suite("SuiteOne")], revision=REV_B)],
+            runs=[run("run-failed-batch", [gate("SuiteOne")], revision=REV_B, status="failed")],
+        )
+        self.assertEqual(failed_batch["status"], "partially_verified")
+        self.assertEqual(len(failed_batch["stale_evidence"]), 1)
+
+    def test_interrupted_pass_cannot_clear_a_failure(self):
+        assessment = evaluate(
+            revision_by_workspace={WORKSPACE: REV_B},
+            inventories=[inventory([suite("SuiteOne")], revision=REV_B)],
+            runs=[
+                run("run-fail", [gate("SuiteOne", "error")], revision=REV_B),
+                run("run-interrupted", [gate("SuiteOne")], revision=REV_B, status="interrupted"),
+            ],
+            selected_run_ids=["run-interrupted"],
+        )
+        self.assertEqual(assessment["status"], "failed")
+        self.assertTrue(any("interrupted" in entry["reason"] for entry in assessment["stale_evidence"]))
+
+    def test_recording_time_dirty_evidence_cannot_establish_verification(self):
+        assessment = evaluate(
+            inventories=[inventory([suite("SuiteOne")])],
+            runs=[run("run-dirty", [gate("SuiteOne")], source_state="dirty")],
+        )
+        self.assertEqual(assessment["status"], "partially_verified")
+        self.assertTrue(any("dirty" in entry["reason"] for entry in assessment["stale_evidence"]))
+        unrecorded = evaluate(
+            inventories=[inventory([suite("SuiteOne")])],
+            runs=[run("run-unrecorded", [gate("SuiteOne")], source_state="")],
+        )
+        self.assertEqual(unrecorded["status"], "partially_verified")
+        self.assertTrue(any("not recorded as clean" in entry["reason"]
+                            for entry in unrecorded["stale_evidence"]))
+
+    def test_tested_revisions_come_from_selected_runs_not_current_head(self):
+        assessment = evaluate(
+            revision_by_workspace={WORKSPACE: REV_B},
+            inventories=[inventory([suite("SuiteOne")], revision=REV_A)],
+            runs=[run("run-old", [gate("SuiteOne")], revision=REV_A)],
+            selected_run_ids=["run-old"],
+        )
+        self.assertEqual(assessment["status"], "partially_verified")
+        self.assertEqual(assessment["assessed_revisions"], {WORKSPACE: REV_B})
+        self.assertEqual(assessment["source_revisions"], [REV_A])
+        self.assertEqual(assessment["tested_revisions"], [REV_A])
+
+    def test_workspace_alias_inherits_history_and_prefers_native_inventory(self):
+        old = "ws_old"
+        assessment = evaluate(
+            revision_by_workspace={WORKSPACE: REV_B},
+            changed_paths_by_workspace={WORKSPACE: ["pkg/app/Sources/Feature.swift"]},
+            inventories=[inventory([suite("SuiteOne")], revision=REV_A, workspace=old),
+                         inventory([suite("SuiteOne"), suite("SuiteTwo")], revision=REV_B)],
+            runs=[run("run-old", [gate("SuiteOne")], revision=REV_A, workspace=old),
+                  run("run-new", [gate("SuiteOne"), gate("SuiteTwo")], revision=REV_B)],
+            selected_run_ids=["run-new"],
+            workspace_aliases={old: [WORKSPACE]},
+        )
+        # The native inventory at B wins over the aliased A inventory, the old
+        # pass aliases into the leaf so a re-run satisfies history, and the
+        # successor's diff still requires every inherited suite.
+        self.assertEqual(assessment["status"], "verified")
+        self.assertEqual(assessment["previously_green_missing"], [])
+        self.assertEqual([item["label"] for item in assessment["required_suites"]],
+                         ["pkg/app/SuiteOne", "pkg/app/SuiteTwo"])
+        without_alias = evaluate(
+            revision_by_workspace={WORKSPACE: REV_B},
+            changed_paths_by_workspace={WORKSPACE: ["pkg/app/Sources/Feature.swift"]},
+            inventories=[inventory([suite("SuiteOne")], revision=REV_A, workspace=old),
+                         inventory([suite("SuiteOne"), suite("SuiteTwo")], revision=REV_B)],
+            runs=[run("run-old", [gate("SuiteOne")], revision=REV_A, workspace=old),
+                  run("run-new", [gate("SuiteOne"), gate("SuiteTwo")], revision=REV_B)],
+            selected_run_ids=["run-new"],
+        )
+        self.assertEqual(without_alias["previously_green_missing"][0]["workspace"], old)
+
 
 class ValidationTests(unittest.TestCase):
     def assert_invalid(self, callback):
@@ -286,6 +456,11 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(normalize_selection(["a", "b"]), ["a", "b"])
         self.assert_invalid(lambda: normalize_selection(["a", "a"]))
         self.assert_invalid(lambda: normalize_selection("run-one"))
+
+    def test_internal_selection_can_exceed_the_caller_limit(self):
+        many = [f"run-{index}" for index in range(250)]
+        self.assertEqual(normalize_selection(many, maximum=None), many)
+        self.assert_invalid(lambda: normalize_selection(many))
 
 
 if __name__ == "__main__":

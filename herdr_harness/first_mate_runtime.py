@@ -692,6 +692,7 @@ class FirstMateRuntime:
             account = self._usage_account(feature, jobs=jobs, ledger_sessions=ledger_sessions)
             selection = self._policy(feature, kind="coordinator", claim={}).selection()
             result.append({**feature, "usage": account["usage"], "model_selection": selection,
+                           "verification": self._live_verification(feature),
                            "coordinator_context": self.context.project(feature, jobs)})
         return result
 
@@ -705,19 +706,59 @@ class FirstMateRuntime:
                 "coordinator_context": self.context.project(feature, jobs)}
 
     def _live_verification(self, feature: Mapping[str, Any]) -> dict:
-        """Current persisted verdict, recomputed live when structured evidence exists.
+        """Current recomputed verdict; a cached verdict is never presented as current.
 
-        A later commit can make an older passing verdict stale; detail and status
-        reads must show that rather than resurrecting the old green.
+        Structured evidence is recomputed against the owned workspaces and the
+        coordinator's retained gate selection. When recomputation is impossible,
+        the last reported assessment is returned as historical evidence under an
+        explicit unavailable status instead of an old green.
         """
         persisted = feature.get("verification") or {}
-        try:
-            if not self.store.list_verification_runs(feature["id"]) and not self.store.list_suite_inventories(feature["id"]):
-                return persisted
-            live = self.verification_assessment(feature["id"], self._default_verification_selection(feature))
-        except (FirstMateError, OSError, subprocess.TimeoutExpired, VerificationValidationError):
+        runs = self.store.list_verification_runs(feature["id"])
+        inventories = self.store.list_suite_inventories(feature["id"])
+        if not runs and not inventories:
+            if persisted.get("status") == "verified":
+                return self._historical_unavailable(
+                    feature, persisted,
+                    "No structured suite evidence is retained for the previously reported Verified verdict; it cannot be treated as current.")
             return persisted
-        return live if live.get("evidence_present") else persisted
+        try:
+            live = self.verification_assessment(feature["id"])
+        except (FirstMateError, OSError, subprocess.TimeoutExpired, VerificationValidationError) as exc:
+            return self._historical_unavailable(
+                feature, persisted,
+                "The current coverage assessment could not be computed: " + str(exc)[:300])
+        if not live.get("evidence_present"):
+            return self._historical_unavailable(
+                feature, persisted,
+                "The current assessment retains no structured evidence; the last reported verdict is historical only.")
+        return live
+
+    def _historical_unavailable(self, feature: Mapping[str, Any], persisted: Mapping[str, Any] | None,
+                                reason: str) -> dict:
+        """A fail-closed current verdict that preserves the prior assessment as history."""
+        persisted = persisted if isinstance(persisted, Mapping) else {}
+        history = persisted.get("historical_evidence")
+        if not isinstance(history, Mapping):
+            history = dict(persisted) if persisted else None
+        return {
+            "status": "unavailable",
+            "label": "Verification unavailable",
+            "feature_revision": feature.get("revision"),
+            "evidence_present": True,
+            "assessed_revisions": {},
+            "source_revisions": [],
+            "tested_revisions": [],
+            "gate_set": [],
+            "required_suites": [],
+            "missing_suites": [],
+            "previously_green_missing": [],
+            "failing_suites": [],
+            "stale_evidence": [],
+            "coverage_reasons": [reason],
+            "historical_evidence": history,
+            "computed_at": utc_now(),
+        }
 
     def board(self, feature_id: str, **bounds) -> dict:
         """Bounded Agent view projection. It adds only the pure coordinator
@@ -725,7 +766,8 @@ class FirstMateRuntime:
         board = self.store.board(feature_id, **bounds)
         if not board["unchanged"]:
             selection = self._policy(board["feature"], kind="coordinator", claim={}).selection()
-            board["feature"] = {**board["feature"], "model_selection": selection}
+            board["feature"] = {**board["feature"], "model_selection": selection,
+                                "verification": self._live_verification(board["feature"])}
         return board
 
     def snapshot(self, feature_id: str, events: str = "all") -> dict:
@@ -1292,25 +1334,91 @@ class FirstMateRuntime:
     def _verification_scope(self, feature: Mapping[str, Any]) -> dict:
         """Current revisions and cumulative changed paths from retained baselines.
 
-        The earliest retained baseline per deliverable workspace anchors the
-        feature's cumulative changes, so later commits and later review
-        baselines cannot shrink the changed set. Every value is observed from
-        the owned workspace at assessment time, never taken from a report.
+        The earliest retained baseline along each assignment's
+        source-assignment lineage anchors its cumulative changes, so an isolated
+        successor includes work inherited from its predecessors even though the
+        successor's own physical baseline starts at the predecessor's HEAD.
+        A physical worktree whose lineage continues in a different worktree is
+        history, not a separate deliverable: only leaf workspaces are assessed.
+        Every value is observed from the owned workspace at assessment time,
+        never taken from a report.
         """
         snapshot = self.store.snapshot(feature["id"])
-        workspaces: dict[str, str] = {}
-        baselines: dict[str, list[str]] = {}
-        for assignment in snapshot["assignments"]:
+        assignments = snapshot["assignments"]
+        by_id = {assignment["id"]: assignment for assignment in assignments}
+
+        def _metadata(assignment: Mapping[str, Any]) -> Mapping[str, Any]:
             metadata = assignment.get("metadata")
-            metadata = metadata if isinstance(metadata, Mapping) else {}
-            path = str(metadata.get("worktree_path") or feature["cwd"])
+            return metadata if isinstance(metadata, Mapping) else {}
+
+        def _path(assignment: Mapping[str, Any]) -> str:
+            return str(_metadata(assignment).get("worktree_path") or feature["cwd"])
+
+        def _lineage(assignment: Mapping[str, Any]) -> list[dict]:
+            """Leaf-first source-assignment chain, cycle-safe and bounded by the ledger."""
+            chain: list[dict] = []
+            seen: set[str] = set()
+            current: Mapping[str, Any] | None = assignment
+            while current is not None:
+                identity = current.get("id")
+                if not identity or identity in seen:
+                    break
+                seen.add(identity)
+                chain.append(current)
+                source = _metadata(current).get("source_assignment_id")
+                current = by_id.get(str(source)) if source else None
+            return chain
+
+        def _anchor(chain: list[dict]) -> str | None:
+            """Earliest retained baseline in the lineage (root first)."""
+            for record in reversed(chain):
+                base = _metadata(record).get("base_revision")
+                if base:
+                    return str(base)
+            return None
+
+        lineages = {assignment["id"]: _lineage(assignment) for assignment in assignments}
+        superseded: set[str] = set()
+        path_edges: dict[str, set[str]] = {}
+        for assignment in assignments:
+            chain = lineages[assignment["id"]]
+            for index in range(len(chain) - 1):
+                descendant_path = _path(chain[index])
+                ancestor_path = _path(chain[index + 1])
+                if descendant_path != ancestor_path:
+                    superseded.add(ancestor_path)
+                    path_edges.setdefault(ancestor_path, set()).add(descendant_path)
+
+        workspaces: dict[str, str] = {}
+        anchors: dict[str, list[str]] = {}
+        for assignment in assignments:
+            path = _path(assignment)
+            if path in superseded:
+                continue
             identity = self._workspace_identity(path)
             workspaces.setdefault(identity, path)
-            base = metadata.get("base_revision")
-            if base:
-                ordered = baselines.setdefault(identity, [])
-                if str(base) not in ordered:
-                    ordered.append(str(base))
+            anchor = _anchor(lineages[assignment["id"]])
+            if anchor and anchor not in anchors.setdefault(identity, []):
+                anchors[identity].append(anchor)
+
+        # Superseded worktrees are one history with the deliverable leaf that
+        # inherited their commits: alias their retained runs and inventories
+        # into every reachable leaf so inherited packages stay required and a
+        # re-run at the leaf counts as the same suite, not a permanent drop.
+        aliases: dict[str, list[str]] = {}
+        for path in sorted(superseded):
+            reachable: set[str] = set()
+            frontier = list(path_edges.get(path, ()))
+            while frontier:
+                current = frontier.pop()
+                if current in reachable or current == path:
+                    continue
+                reachable.add(current)
+                frontier.extend(path_edges.get(current, ()))
+            leaves = sorted(candidate for candidate in reachable if candidate not in superseded)
+            if leaves:
+                aliases[self._workspace_identity(path)] = [self._workspace_identity(leaf) for leaf in leaves]
+
         revisions: dict[str, str] = {}
         changed: dict[str, list[str]] = {}
         reasons: list[str] = []
@@ -1324,14 +1432,15 @@ class FirstMateRuntime:
                 continue
             revisions[identity] = head
             paths: set[str] = set()
-            bases = baselines.get(identity, [])
+            bases = anchors.get(identity, [])
             if bases:
-                try:
-                    output = self._git(path, "diff", "--name-only", f"{bases[0]}..HEAD")
-                    paths.update(line.strip() for line in output.splitlines() if line.strip())
-                except (FirstMateError, OSError, subprocess.TimeoutExpired) as exc:
-                    complete = False
-                    reasons.append("Cumulative changed paths are unavailable against the retained baseline: " + str(exc)[:200])
+                for base in bases:
+                    try:
+                        output = self._git(path, "diff", "--name-only", f"{base}..HEAD")
+                        paths.update(line.strip() for line in output.splitlines() if line.strip())
+                    except (FirstMateError, OSError, subprocess.TimeoutExpired) as exc:
+                        complete = False
+                        reasons.append("Cumulative changed paths are unavailable against the retained baseline: " + str(exc)[:200])
             else:
                 complete = False
                 reasons.append("No retained baseline revision exists for this workspace")
@@ -1355,7 +1464,19 @@ class FirstMateRuntime:
                 reasons.append(f"Workspace {identity} has uncommitted changes that the tested revision does not include")
             changed[identity] = sorted(paths)
         return {"revisions": revisions, "changed_paths": changed,
-                "complete": complete, "reasons": reasons}
+                "complete": complete, "reasons": reasons, "aliases": aliases}
+
+    def _current_verification_selection(self, feature: Mapping[str, Any]) -> list[str] | None:
+        """The coordinator's retained explicit gate selection, else the default.
+
+        A selection recorded by fm_complete_stage or fm_finish_feature stays
+        authoritative for live reads and informal parks until a newer completion
+        explicitly supersedes it. Restarting the companion does not lose it.
+        """
+        persisted = feature.get("verification_selection")
+        if isinstance(persisted, list) and persisted:
+            return [str(identity) for identity in persisted]
+        return self._default_verification_selection(feature)
 
     def _default_verification_selection(self, feature: Mapping[str, Any]) -> list[str] | None:
         """Runs the current visit's outcomes explicitly referenced, or its own runs."""
@@ -1392,10 +1513,19 @@ class FirstMateRuntime:
         return selection
 
     def verification_assessment(self, feature_id: str, selected_run_ids: list[str] | None = None) -> dict:
-        """Compute the canonical coverage verdict from retained evidence."""
+        """Compute the canonical coverage verdict from retained evidence.
+
+        When no selection is supplied the coordinator's retained explicit gate
+        selection is authoritative, falling back to the current visit's runs.
+        Internally retained history is never subject to the caller-input
+        request-size limit.
+        """
         feature = self.store.get_feature(feature_id)
+        if selected_run_ids is None:
+            selected_run_ids = self._current_verification_selection(feature)
         try:
-            selection = None if selected_run_ids is None else normalize_selection(selected_run_ids)
+            selection = (None if selected_run_ids is None
+                         else normalize_selection(selected_run_ids, maximum=None))
         except VerificationValidationError as exc:
             raise FirstMateError(str(exc), code="invalid_request", status=400) from exc
         scope = self._verification_scope(feature)
@@ -1408,6 +1538,7 @@ class FirstMateRuntime:
             feature_revision=feature.get("revision"),
             scope_complete=scope["complete"],
             scope_reasons=scope["reasons"],
+            workspace_aliases=scope.get("aliases") or None,
         )
 
     def _record_verification(self, job: dict, params: dict, request_id: str) -> dict:
@@ -1434,6 +1565,13 @@ class FirstMateRuntime:
             observed = self._git(workspace_path, "rev-parse", "HEAD")
         except (FirstMateError, OSError, subprocess.TimeoutExpired):
             observed = ""
+        source_state = "unavailable"
+        if observed:
+            try:
+                dirty = self._git(workspace_path, "status", "--porcelain", "--untracked-files=normal")
+                source_state = "dirty" if dirty.strip() else "clean"
+            except (FirstMateError, OSError, subprocess.TimeoutExpired):
+                source_state = "unavailable"
         body: dict[str, Any] = {
             "workspace": identity,
             "revision": params.get("revision"),
@@ -1441,6 +1579,7 @@ class FirstMateRuntime:
             "status": params.get("status", "completed"),
             "gates": params.get("gates"),
             "summary": params.get("summary", ""),
+            "source_state": source_state,
         }
         if params.get("inventory") is not None:
             inventory = dict(params["inventory"])
@@ -1454,7 +1593,10 @@ class FirstMateRuntime:
         recorded = self.store.record_verification(feature["id"], body, request_id, provenance)
         run = recorded["run"]
         assessment = self.verification_assessment(feature["id"])
-        if observed and run["tested_revision"] != observed:
+        if source_state == "dirty":
+            warning = ("The workspace had uncommitted changes when this batch was recorded; it is retained but "
+                       "cannot establish current verification.")
+        elif observed and run["tested_revision"] != observed:
             warning = (f"Reported tested revision {run['tested_revision']} does not match the current workspace "
                        f"revision {observed}; the batch is retained as stale evidence.")
         elif not observed:
@@ -1464,6 +1606,7 @@ class FirstMateRuntime:
         return {
             "run": {"id": run["id"], "tested_revision": run["tested_revision"],
                     "observed_revision": run["observed_revision"], "status": run["run_status"],
+                    "source_state": run.get("source_state", source_state),
                     "revision_matches": bool(observed) and run["tested_revision"] == observed,
                     "gate_set": [suite_label(gate["suite"]) for gate in run["gates"]]},
             "warning": warning,
@@ -1474,8 +1617,10 @@ class FirstMateRuntime:
         runs = self.store.list_verification_runs(feature_id)
         return [{"id": run["id"], "visit_id": run.get("visit_id"),
                  "assignment_id": run.get("assignment_id"),
+                 "workspace": run.get("workspace"),
                  "tested_revision": run.get("tested_revision"),
                  "status": run.get("run_status"),
+                 "source_state": run.get("source_state", ""),
                  "gate_set": [suite_label(gate["suite"]) for gate in run.get("gates", [])][:50],
                  "created_at": run.get("created_at")}
                 for run in runs[-maximum:]]
@@ -2050,7 +2195,8 @@ class FirstMateRuntime:
                 verification = self.verification_assessment(feature_id, selection)
                 return self.store.complete_visit(feature["current_visit_id"], params["summary"], params["recommendation"], request_id,
                                                  native_session_id=job.get("native_session_id"),
-                                                 verification=verification if verification.get("evidence_present") else None)
+                                                 verification=verification if verification.get("evidence_present") else None,
+                                                 selection=selection)
             if action == "fm_revise":
                 revisions = job.setdefault("operation_revisions", {})
                 if request_id not in revisions:
@@ -2091,7 +2237,8 @@ class FirstMateRuntime:
                 selection = self._verification_selection(feature_id, params.get("verification_run_ids"))
                 verification = self.verification_assessment(feature_id, selection)
                 return self.store.feature_action(feature_id, "complete", request_id,
-                                                 verification=verification if verification.get("evidence_present") else None)
+                                                 verification=verification if verification.get("evidence_present") else None,
+                                                 selection=selection)
         elif job["kind"] == "worker":
             if action == "fm_record_verification":
                 return self._record_verification(job, params, request_id)
@@ -2197,11 +2344,15 @@ class FirstMateRuntime:
                 verification = None
                 try:
                     feature_now = self.store.get_feature(job["feature_id"])
-                    candidate = self.verification_assessment(
-                        job["feature_id"], self._default_verification_selection(feature_now))
+                except (FirstMateError, OSError) as exc:
+                    feature_now = {}
+                try:
+                    candidate = self.verification_assessment(job["feature_id"])
                     verification = candidate if candidate.get("evidence_present") else None
-                except (FirstMateError, OSError, subprocess.TimeoutExpired, VerificationValidationError):
-                    verification = None
+                except (FirstMateError, OSError, subprocess.TimeoutExpired, VerificationValidationError) as exc:
+                    verification = self._historical_unavailable(
+                        feature_now, feature_now.get("verification") or {},
+                        "The current coverage assessment could not be computed for this park: " + str(exc)[:300])
                 self.store.finish_message(claim["id"], job["owner"], reply=reply,
                                           native_session_id=job.get("native_session_id"),
                                           verification=verification)

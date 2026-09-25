@@ -247,7 +247,10 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
         goal: text("Revised goal preserving accepted constraints"), reason: text("What the human changed and why"),
         affected_assignment_ids: Type.Optional(Type.Array(Type.String(), { description: "Exact assignments affected by this change. Unaffected work remains active under explicit carried-forward membership. Omit only when the entire stage is affected." })),
       }));
-      register("fm_finish_feature", "Mark the agreed feature destination achieved only after the human explicitly confirms completion. Retain all history.", Type.Object({ summary: text("Delivered destination and evidence") }));
+      register("fm_finish_feature", "Mark the agreed feature destination achieved only after the human explicitly confirms completion. Inspect the scoped feature.verification, select the exact retained gate run IDs, and quote the service's scoped verdict with its missing and previously green suites; never claim unqualified green from an aggregate count. Retain all history.", Type.Object({
+        summary: text("Delivered destination and evidence"),
+        verification_run_ids: Type.Optional(Type.Array(Type.String(), { description: "Exact retained verification run IDs selected as the final gate set. Omit to use the runs referenced by current-stage outcomes. A stale, incomplete, or failing selection is labeled Partially verified or Failed, never promoted to Verified." })),
+      }));
     } else if (role === "worker") {
       register("fm_progress", "Save the durable current position at a meaningful milestone. Include concrete evidence and the exact next action, not a heartbeat. Before a long build/wait, request a lease of at most one hour with wait_seconds. Repeating unchanged text is not new progress.", Type.Object({
         summary: Type.String({ maxLength: 4000 }), next_action: Type.String({ maxLength: 2000 }),

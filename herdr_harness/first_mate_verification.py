@@ -8,8 +8,11 @@ produce the same assessment.
 
 Suite identity is package-qualified. Two suites with the same display name in
 different packages, or with different test configurations, remain distinct.
-Unknown fields, missing revisions, and malformed outcomes are rejected rather
-than silently normalized into trusted evidence.
+Inside an assessment, history and coverage keys are additionally
+workspace-qualified, so identically named packages in two deliverable
+worktrees never cover each other. Unknown fields, missing revisions, and
+malformed outcomes are rejected rather than silently normalized into trusted
+evidence.
 """
 from __future__ import annotations
 
@@ -22,6 +25,7 @@ INVENTORY_STATES = ("complete", "incomplete")
 RUN_STATUSES = ("completed", "failed", "interrupted")
 GATE_OUTCOMES = ("passed", "failed", "error", "skipped")
 FAILING_OUTCOMES = ("failed", "error")
+SOURCE_STATES = ("clean", "dirty", "unavailable")
 
 STATUS_VERIFIED = "verified"
 STATUS_PARTIALLY_VERIFIED = "partially_verified"
@@ -154,12 +158,15 @@ def normalize_gate_run(value: Any) -> dict:
     """Validate one append-only gate batch, including failures and interruptions."""
     run = _mapping(value, "run")
     allowed = {"workspace", "revision", "observed_revision", "status", "gates", "summary",
-               "inventory", "run_status"}
+               "inventory", "run_status", "source_state"}
     if set(run) - allowed:
         raise VerificationValidationError("Gate run contains an unsupported field")
     workspace = _clean(run.get("workspace", "project"), "run workspace", 200)
     revision = _clean(run.get("revision"), "tested revision", 200)
     observed = _clean(run.get("observed_revision", ""), "observed revision", 200, optional=True)
+    source_state = run.get("source_state", "")
+    if source_state not in ("",) + SOURCE_STATES:
+        raise VerificationValidationError("Source state must be clean, dirty or unavailable")
     raw_gates = run.get("gates")
     if not isinstance(raw_gates, list) or not raw_gates or len(raw_gates) > GATE_LIMIT:
         raise VerificationValidationError("A gate run needs a bounded non-empty gate list")
@@ -177,13 +184,14 @@ def normalize_gate_run(value: Any) -> dict:
     summary = _clean(run.get("summary", ""), "run summary", 8000, optional=True)
     inventory = normalize_inventory(run["inventory"]) if run.get("inventory") is not None else None
     return {"workspace": workspace, "revision": revision, "observed_revision": observed,
-            "status": status, "gates": gates, "summary": summary, "inventory": inventory}
+            "status": status, "gates": gates, "summary": summary, "inventory": inventory,
+            "source_state": source_state}
 
 
-def normalize_selection(value: Any) -> list[str]:
+def normalize_selection(value: Any, *, maximum: int | None = SELECTION_LIMIT) -> list[str]:
     if value is None:
         return []
-    if not isinstance(value, list) or len(value) > SELECTION_LIMIT:
+    if not isinstance(value, list) or (maximum is not None and len(value) > maximum):
         raise VerificationValidationError("Verification selection must be a bounded list of run IDs")
     selected: list[str] = []
     for item in value:
@@ -198,8 +206,19 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _suite_reference(suite: Mapping[str, Any]) -> dict:
-    return {"key": suite_key(suite), "label": suite_label(suite),
+def scoped_suite_key(workspace: str, suite: Mapping[str, Any]) -> str:
+    """Workspace-qualified identity for assessment and history lookups.
+
+    Two worktrees can each contain the same package and suite name. Suite
+    identity must never collapse across workspaces, or one worktree's pass
+    could cover the other's missing or failing result.
+    """
+    return f"{workspace}\u0000{suite_key(suite)}"
+
+
+def _suite_reference(workspace: str, suite: Mapping[str, Any]) -> dict:
+    return {"key": scoped_suite_key(workspace, suite), "label": suite_label(suite),
+            "workspace": workspace,
             "package": suite.get("package", ""), "suite": suite.get("suite", ""),
             "configuration": suite.get("configuration", "")}
 
@@ -213,6 +232,15 @@ def _best_package(path: str, packages: Iterable[str]) -> str | None:
     return max(matches, key=len)
 
 
+def _named(labels: Iterable[str], limit: int = 8) -> str:
+    """Deterministic bounded list that explicitly discloses the remainder."""
+    names = list(labels)
+    shown = ", ".join(names[:limit])
+    if len(names) > limit:
+        shown += f" and {len(names) - limit} more"
+    return shown
+
+
 def evaluate_coverage(*, revision_by_workspace: Mapping[str, str] | None = None,
                       changed_paths_by_workspace: Mapping[str, Iterable[str]] | None = None,
                       inventories: list[dict] | None = None,
@@ -220,20 +248,61 @@ def evaluate_coverage(*, revision_by_workspace: Mapping[str, str] | None = None,
                       selected_run_ids: list[str] | None = None,
                       feature_revision: int | None = None,
                       scope_complete: bool = True,
-                      scope_reasons: Iterable[str] = ()) -> dict:
+                      scope_reasons: Iterable[str] = (),
+                      workspace_aliases: Mapping[str, Iterable[str]] | None = None) -> dict:
     """Assess cumulative feature coverage from retained structured evidence.
 
     Only a complete, current, passing gate set that covers every suite belonging
-    to every changed package reaches ``verified``. Historical passes remain
-    history: they are reported as ``previously_green_missing`` when they drop
-    out of the current gate set, and a later failing result always supersedes an
-    earlier pass. Current failures stay visible even when the selected subset
-    omits their suite, and selecting a passing subset never hides them.
+    to every changed package at the current workspace revision reaches
+    ``verified``. Suite identity is workspace-qualified, so identically named
+    packages in two deliverable worktrees never cover each other.
+
+    ``workspace_aliases`` maps a superseded worktree to the leaf deliverable(s)
+    that inherited its commits. Retained runs and inventories are replicated
+    into those leaves so inherited packages stay required and a re-run at the
+    leaf counts as the same suite, while a native inventory always wins over an
+    aliased one for the same package.
+
+    Historical passes remain history: a suite that was ever green and lacks a
+    current fresh passing result is reported in ``previously_green_missing``
+    even when its latest recorded outcome is skipped or it dropped out of a
+    replacement inventory. A current failure stays visible until a later
+    completed, clean, current passing run supersedes it; stale, interrupted, or
+    failed batches never clear a failure and never establish verification.
+    Inventory discovery only counts when it was recorded at the current
+    workspace revision, so a suite added after discovery cannot be silently
+    missed.
     """
     revisions = {str(key): str(value) for key, value in (revision_by_workspace or {}).items()}
     changed = {str(key): sorted({str(item).lstrip("/") for item in value if str(item).strip()})
                for key, value in (changed_paths_by_workspace or {}).items()}
-    inventory_rows = list(inventories or [])
+    alias_map = {str(key): [str(target) for target in value]
+                 for key, value in (workspace_aliases or {}).items()} if workspace_aliases else {}
+
+    chosen_inventories: dict[tuple[str, str], tuple[bool, str, dict]] = {}
+    for raw_inventory in (inventories or []):
+        workspace = str(raw_inventory.get("workspace") or "project")
+        package = str(raw_inventory.get("package") or "")
+        targets = alias_map.get(workspace)
+        rows = [(workspace, False, raw_inventory)] if not targets else [
+            (target, True, {**raw_inventory, "workspace": target}) for target in targets]
+        for target, aliased, row in rows:
+            key = (target, package)
+            timestamp = str(row.get("updated_at") or row.get("created_at") or "")
+            previous = chosen_inventories.get(key)
+            if (previous is None or (previous[0] and not aliased)
+                    or (previous[0] == aliased and timestamp >= previous[1])):
+                chosen_inventories[key] = (aliased, timestamp, row)
+    inventory_rows = [row for _aliased, _timestamp, row in chosen_inventories.values()]
+
+    expanded_runs: list[dict] = []
+    for raw_run in (runs or []):
+        workspace = str(raw_run.get("workspace") or "project")
+        targets = alias_map.get(workspace)
+        if not targets:
+            expanded_runs.append(raw_run)
+            continue
+        expanded_runs.extend({**raw_run, "workspace": target} for target in targets)
 
     def _run_view(run: Mapping[str, Any]) -> dict:
         """Accept both the evaluator's natural shape and persisted SQLite rows."""
@@ -242,11 +311,12 @@ def evaluate_coverage(*, revision_by_workspace: Mapping[str, str] | None = None,
             "workspace": str(run.get("workspace") or "project"),
             "revision": str(run.get("revision") or run.get("tested_revision") or ""),
             "status": str(run.get("status") or run.get("run_status") or "completed"),
+            "source_state": str(run.get("source_state") or run.get("recorded_source_state") or ""),
             "gates": list(run.get("gates") or []),
             "created_at": run.get("created_at"),
         }
 
-    run_rows = [_run_view(run) for run in (runs or [])]
+    run_rows = [_run_view(run) for run in expanded_runs]
     reasons: list[str] = [str(reason) for reason in scope_reasons if str(reason).strip()]
 
     # ---- required suites from every changed package's discovery inventory ----
@@ -259,10 +329,12 @@ def evaluate_coverage(*, revision_by_workspace: Mapping[str, str] | None = None,
     changed_packages: list[dict] = []
     unmapped_paths: list[dict] = []
     incomplete_inventories: list[dict] = []
+    stale_inventories: list[dict] = []
     required: dict[str, dict] = {}
     covered_packages: set[tuple[str, str]] = set()
     for workspace, paths in changed.items():
         packages = inventories_by_workspace.get(workspace, {})
+        current_revision = revisions.get(workspace)
         for path in paths:
             package = _best_package(path, packages)
             if package is None:
@@ -280,32 +352,46 @@ def evaluate_coverage(*, revision_by_workspace: Mapping[str, str] | None = None,
                                                "state": inventory.get("state")})
                 reasons.append(f"Discovery for package {package or '<root>'} is incomplete")
                 continue
-            for suite in inventory.get("suites", []):
-                normalized = suite if isinstance(suite, dict) else normalize_suite(suite)
-                required[suite_key(normalized)] = {**normalized, "workspace": workspace, "package": package}
+            revision = str(inventory.get("revision") or "")
+            if not current_revision or not revision or revision != current_revision:
+                # Discovery describes a different source revision; its suite set
+                # may have gained or lost suites. Keep its suites as required
+                # evidence but never trust its completeness until revalidated.
+                stale_inventories.append({"workspace": workspace, "package": package,
+                                          "state": inventory.get("state"), "revision": revision,
+                                          "current_revision": current_revision or ""})
+                reasons.append(
+                    f"Discovery for package {package or '<root>'} was recorded at revision "
+                    f"{revision or '<missing>'} rather than the current revision "
+                    f"{current_revision or '<unavailable>'}; revalidate the inventory")
+            for raw_suite in inventory.get("suites", []):
+                normalized = raw_suite if isinstance(raw_suite, dict) else normalize_suite(raw_suite)
+                key = scoped_suite_key(workspace, normalized)
+                required[key] = {**normalized, "workspace": workspace, "package": package}
     if not scope_complete:
         pass  # scope_reasons already explain why the changed set is unknown.
     if changed and not inventory_rows:
         reasons.append("No suite discovery inventory was recorded for the changed workspace")
 
-    # ---- selected gate set, in recorded order, latest result per suite ------
+    # ---- selected gate set, evaluated in recorded order ---------------------
     by_id: dict[str, dict] = {}
     for run in run_rows:
         identity = str(run.get("id") or "")
         if identity:
             by_id[identity] = run
-    selection = list(selected_run_ids) if selected_run_ids is not None else [str(run.get("id")) for run in run_rows]
-    selected_runs: list[dict] = []
-    stale_evidence: list[dict] = []
+    requested = (list(selected_run_ids) if selected_run_ids is not None
+                 else [str(run.get("id")) for run in run_rows if run.get("id")])
     selection_complete = True
-    for identity in selection:
+    selected_ids: list[str] = []
+    for identity in requested:
         run = by_id.get(str(identity))
         if run is None:
             selection_complete = False
             reasons.append(f"Selected verification run {identity!r} is not retained for this feature")
             continue
-        selected_runs.append(run)
-    selected_ids = [str(run.get("id")) for run in selected_runs]
+        selected_ids.append(str(run.get("id")))
+    selected_set = set(selected_ids)
+    selected_runs = [run for run in run_rows if str(run.get("id")) in selected_set]
 
     def _fresh(run: Mapping[str, Any]) -> tuple[bool, str]:
         workspace = str(run.get("workspace") or "project")
@@ -313,12 +399,20 @@ def evaluate_coverage(*, revision_by_workspace: Mapping[str, str] | None = None,
         current = revisions.get(workspace)
         if str(run.get("status") or "completed") == "interrupted":
             return False, "the run was interrupted"
+        if str(run.get("status") or "completed") == "failed":
+            return False, "the batch reported a failure"
+        source_state = str(run.get("source_state") or "")
+        if source_state != "clean":
+            return False, ("the recording-time source state was " + source_state
+                           if source_state else
+                           "the recording-time source state was not recorded as clean")
         if not current:
             return False, "the current workspace revision is unavailable"
         if not revision or revision != current:
             return False, f"recorded revision {revision or '<missing>'} does not match current {current}"
         return True, ""
 
+    stale_evidence: list[dict] = []
     gate_entries: dict[str, dict] = {}
     for run in selected_runs:
         fresh, reason = _fresh(run)
@@ -326,44 +420,47 @@ def evaluate_coverage(*, revision_by_workspace: Mapping[str, str] | None = None,
             stale_evidence.append({"run_id": run.get("id"), "workspace": run.get("workspace"),
                                    "tested_revision": run.get("revision"), "reason": reason})
             reasons.append(f"Selected evidence from run {run.get('id')} is stale: {reason}")
+        workspace = str(run.get("workspace") or "project")
         for gate in run.get("gates", []):
             suite = gate.get("suite", {})
-            key = suite_key(suite)
-            entry = {
-                **_suite_reference(suite),
+            key = scoped_suite_key(workspace, suite)
+            gate_entries[key] = {
+                **_suite_reference(workspace, suite),
                 "outcome": gate.get("outcome"),
                 "passed_count": gate.get("passed_count"),
                 "failed_count": gate.get("failed_count"),
                 "skipped_count": gate.get("skipped_count"),
                 "run_id": run.get("id"),
                 "tested_revision": run.get("revision"),
-                "workspace": run.get("workspace"),
                 "fresh": fresh,
                 "reason": reason,
+                "source_state": run.get("source_state"),
             }
-            gate_entries[key] = entry  # the latest recorded result for a suite wins
     gate_set = list(gate_entries.values())
     fresh_passed = {key for key, entry in gate_entries.items()
                     if entry["fresh"] and entry["outcome"] == "passed"}
 
     # ---- current failures remain visible regardless of the selected subset --
-    latest_all: dict[str, dict] = {}
+    # A failure stays current until a later completed, clean, current passing
+    # result supersedes it. Stale, interrupted, or failed batches cannot clear
+    # it, and their passing gates cannot establish verification.
+    current_failures: dict[str, dict] = {}
     for run in run_rows:
-        fresh, _reason = _fresh(run)
+        run_fresh, _run_reason = _fresh(run)
+        workspace = str(run.get("workspace") or "project")
         for gate in run.get("gates", []):
-            suite = gate.get("suite", {})
-            latest_all[suite_key(suite)] = {"gate": gate, "run": run, "fresh": fresh}
+            key = scoped_suite_key(workspace, gate.get("suite", {}))
+            outcome = gate.get("outcome")
+            if outcome in FAILING_OUTCOMES:
+                current_failures[key] = {"gate": gate, "run": run, "fresh": run_fresh}
+            elif outcome == "passed" and run_fresh:
+                current_failures.pop(key, None)
     failing_suites: list[dict] = []
-    for key, latest in latest_all.items():
+    for key, latest in sorted(current_failures.items(), key=lambda item: item[0]):
         gate, run = latest["gate"], latest["run"]
-        if gate.get("outcome") not in FAILING_OUTCOMES:
-            continue
-        # Only the latest recorded result for the suite decides. A later fresh
-        # pass supersedes an earlier failure; a later failure supersedes an
-        # earlier pass and stays visible even when it is stale or omitted from
-        # the selected passing subset.
+        workspace = str(run.get("workspace") or "project")
         suite = gate.get("suite", {})
-        reference = {**_suite_reference(suite), "outcome": gate.get("outcome"),
+        reference = {**_suite_reference(workspace, suite), "outcome": gate.get("outcome"),
                      "run_id": run.get("id"), "tested_revision": run.get("revision")}
         failing_suites.append(reference)
         selected_entry = gate_entries.get(key)
@@ -372,27 +469,34 @@ def evaluate_coverage(*, revision_by_workspace: Mapping[str, str] | None = None,
         elif selected_entry.get("run_id") != run.get("id"):
             reasons.append(f"Current failure in {reference['label']} supersedes an earlier selected result")
 
-    # ---- previously green suites missing from the current gate set ----------
-    previously_green: dict[str, dict] = {}
+    # ---- ever-green history, independent of the latest recorded outcome -----
+    ever_passed: dict[str, dict] = {}
     for run in run_rows:
+        workspace = str(run.get("workspace") or "project")
         for gate in run.get("gates", []):
-            suite = gate.get("suite", {})
-            previously_green[suite_key(suite)] = {"suite": suite, "outcome": gate.get("outcome")}
+            if gate.get("outcome") == "passed":
+                suite = gate.get("suite", {})
+                ever_passed.setdefault(scoped_suite_key(workspace, suite),
+                                       {"suite": suite, "workspace": workspace})
     previously_green_missing = [
-        _suite_reference(record["suite"]) for key, record in previously_green.items()
-        if record["outcome"] == "passed" and key not in fresh_passed
+        _suite_reference(record["workspace"], record["suite"])
+        for key, record in ever_passed.items() if key not in fresh_passed
     ]
+    previously_green_missing.sort(key=lambda item: (item["label"], item["key"]))
 
     missing_suites = [
-        {**_suite_reference(suite), "workspace": suite.get("workspace"),
-         "reason": ("never run" if suite_key(suite) not in gate_entries
-                    else "no current passing result")}
+        {**_suite_reference(suite.get("workspace", "project"), suite),
+         "reason": ("never run" if key not in gate_entries else "no current passing result")}
         for key, suite in required.items() if key not in fresh_passed
     ]
 
+    # ---- tested revisions come from selected runs, never from current HEAD --
+    tested_revisions = sorted({str(run.get("revision") or "") for run in selected_runs
+                               if str(run.get("revision") or "")})
+
     # ---- verdict ------------------------------------------------------------
     has_evidence = bool(run_rows or inventory_rows)
-    if failing_suites:
+    if current_failures:
         status = STATUS_FAILED
     elif not has_evidence:
         status = STATUS_UNAVAILABLE
@@ -403,22 +507,21 @@ def evaluate_coverage(*, revision_by_workspace: Mapping[str, str] | None = None,
             and selection_complete
             and not unmapped_paths
             and not incomplete_inventories
+            and not stale_inventories
             and not missing_suites
             and not previously_green_missing
             and not stale_evidence
-            and all(entry["outcome"] == "passed" for entry in gate_entries.values())
             and bool(fresh_passed)
-            and not any(entry["fresh"] and entry["outcome"] != "passed"
-                        for entry in gate_entries.values())
+            and all(entry["outcome"] == "passed" for entry in gate_entries.values())
         )
         status = STATUS_VERIFIED if complete else STATUS_PARTIALLY_VERIFIED
         if status != STATUS_VERIFIED:
             if missing_suites:
-                labels = ", ".join(item["label"] for item in missing_suites[:8])
-                reasons.append(f"{len(missing_suites)} required suite(s) lack a current passing result: {labels}")
+                reasons.append(f"{len(missing_suites)} required suite(s) lack a current passing result: "
+                               + _named(item["label"] for item in missing_suites))
             if previously_green_missing:
-                labels = ", ".join(item["label"] for item in previously_green_missing[:8])
-                reasons.append(f"Previously passing suite(s) are missing from the current gate set: {labels}")
+                reasons.append("Previously passing suite(s) are missing from the current gate set: "
+                               + _named(item["label"] for item in previously_green_missing))
             if not gate_entries:
                 reasons.append("No selected gate results establish current passing coverage")
     return {
@@ -426,16 +529,20 @@ def evaluate_coverage(*, revision_by_workspace: Mapping[str, str] | None = None,
         "label": STATUS_LABELS[status],
         "feature_revision": feature_revision,
         "assessed_revisions": dict(revisions),
-        "source_revisions": sorted({value for value in revisions.values() if value}),
-        "gate_set": sorted(gate_set, key=lambda entry: (entry["package"], entry["suite"], entry["configuration"])),
-        "required_suites": [_suite_reference(suite) for suite in required.values()],
+        "source_revisions": tested_revisions,
+        "tested_revisions": tested_revisions,
+        "gate_set": sorted(gate_set, key=lambda entry: (entry["workspace"], entry["package"],
+                                                         entry["suite"], entry["configuration"])),
+        "required_suites": [_suite_reference(suite.get("workspace", "project"), suite)
+                            for suite in required.values()],
         "missing_suites": missing_suites,
-        "previously_green_missing": sorted(previously_green_missing, key=lambda item: item["label"]),
+        "previously_green_missing": previously_green_missing,
         "failing_suites": failing_suites,
         "stale_evidence": stale_evidence,
         "coverage_reasons": reasons,
         "unmapped_paths": unmapped_paths,
         "incomplete_inventories": incomplete_inventories,
+        "stale_inventories": stale_inventories,
         "changed_packages": changed_packages,
         "selected_run_ids": selected_ids,
         "recorded_run_ids": [str(run.get("id")) for run in run_rows if run.get("id")],

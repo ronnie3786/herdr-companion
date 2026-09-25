@@ -213,32 +213,43 @@ Before a stage checkpoint, the coordinator inspects `fm_status.verification`
 and the retained `verification_runs`, then passes the exact run IDs to
 `fm_complete_stage` (or `fm_finish_feature`). When none are supplied the
 selection is the current visit's outcome-referenced runs, then the visit's
-recorded runs, then every retained run. Unknown or foreign run IDs are refused
-rather than silently dropped. The service recomputes the assessment and
-persists it in the same transaction as the checkpoint or completion, including
-its compact projection in the message metadata and the visit event.
+recorded runs, then every retained run. The resolved selection is persisted
+independently of the computed assessment and reused by live reads and later
+informal parks until a newer completion explicitly supersedes it, including
+across companion restarts. Unknown or foreign run IDs are refused rather than
+silently dropped. The service recomputes the assessment and persists it in the
+same transaction as the checkpoint or completion, including its compact
+projection in the message metadata and the visit event.
 
-Scope is observed, not reported. The runtime computes one opaque workspace
-identity per deliverable assignment (`metadata.worktree_path`, else the feature
-checkout), reads the current `HEAD`, builds cumulative changed paths from the
-earliest retained assignment baseline plus uncommitted working-tree paths, and
-requires a retained baseline. A missing baseline, unreadable revision, failed
-diff, or dirty working tree lowers scope completeness and is named in
-`coverage_reasons`; a run that reported the committed revision cannot cover
-uncommitted changes. An interrupted run, a missing revision, or a revision that
-no longer matches current `HEAD` is retained as `stale_evidence` and cannot
-establish current verification.
+Scope is observed, not reported. The runtime resolves each assignment's
+source-assignment lineage, uses the earliest retained baseline in that lineage
+as the cumulative anchor, and assesses only leaf deliverable worktrees; a
+predecessor worktree whose lineage continues elsewhere is history whose runs
+and inventories are aliased into the successor. An assignment with no retained
+lineage baseline is an incomplete scope. For each leaf it reads the current
+`HEAD`, builds cumulative changed paths from the anchor plus uncommitted
+working-tree paths, and requires a retained baseline. A missing baseline,
+unreadable revision, failed diff, or dirty working tree lowers scope
+completeness and is named in `coverage_reasons`; a run that reported the
+committed revision cannot cover uncommitted changes. An interrupted, failed,
+stale-revision, or not-cleanly-recorded run is retained as `stale_evidence`
+and cannot establish current verification or clear a current failure.
 
 Assessments are feature-wide and durable. A restart, worker handoff, retry, or
 later stage keeps every run and inventory; a later stage defaults its selection
 to its own runs while the assessment still names earlier suites that dropped
 out. A checkpoint or informal park whose assessment is not `verified` appends
 the deterministic coverage note (`Verification coverage: <label>` with failing,
-missing, and previously passing dropped suites), so a partial park is visible
-in the conversation itself. Live detail and status reads recompute the
-assessment when structured evidence exists and fall back to the persisted
-assessment otherwise; a legacy feature with no structured evidence remains
-`unavailable` rather than inheriting an old green.
+missing, and previously passing dropped suites and an explicit remainder count
+for long lists), so a partial park is visible in the conversation itself.
+Live detail, feature-list, and board reads recompute the assessment when
+structured evidence exists and fail closed to an explicit `unavailable`
+assessment with `historical_evidence` when recomputation fails; they never
+return a cached green as current. A legacy feature with no structured evidence
+remains `unavailable` rather than inheriting an old green. A complete discovery
+inventory only counts when its recorded revision matches the current workspace
+HEAD; a stale or revisionless inventory keeps coverage partial until
+revalidated.
 
 Verification changes no authorization. A stage may park with a partial verdict;
 it does not grant extra stages, extra test execution, or a bypass of human

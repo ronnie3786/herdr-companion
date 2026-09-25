@@ -338,9 +338,8 @@ struct FirstMateVerification: Codable, Equatable, Sendable {
                 }
             }
         }
-        if values.isEmpty {
-            values = assessedRevisions.values.filter { !$0.isEmpty }.sorted()
-        }
+        // Assessed revisions describe the current workspace, not what was
+        // tested. They are never relabeled as tested revisions here.
         return values
     }
 }
@@ -358,7 +357,22 @@ struct FirstMateVerificationPresentation: Equatable, Sendable {
     }
 
     var hasEvidence: Bool { verification != nil }
-    var status: FirstMateVerificationStatus { verification?.status ?? .unavailable }
+
+    /// A verified verdict must ship the exact gate set and at least one tested
+    /// revision. A structurally incomplete payload degrades to unavailable
+    /// rather than rendering green.
+    private var hasRequiredVerifiedEvidence: Bool {
+        guard let verification, verification.status == .verified else { return false }
+        return !verification.gateSet.isEmpty && !verification.testedRevisions.isEmpty
+    }
+
+    var statusWasDowngraded: Bool {
+        verification?.status == .verified && !hasRequiredVerifiedEvidence
+    }
+
+    var status: FirstMateVerificationStatus {
+        statusWasDowngraded ? .unavailable : (verification?.status ?? .unavailable)
+    }
     var statusTitle: String { status.title }
     var statusTone: FirstMateVerificationTone { status.tone }
     var statusSymbol: String { status.systemImage }
@@ -407,6 +421,9 @@ struct FirstMateVerificationPresentation: Equatable, Sendable {
         var parts = ["Verification: \(statusTitle)."]
         if isLastReported {
             parts.append("Last reported while the companion connection was unavailable.")
+        }
+        if statusWasDowngraded {
+            parts.append("The companion reported Verified without a complete gate set and tested revision; it is not treated as verified.")
         }
         if hasUnrecognizedStatus {
             parts.append("The companion reported the unrecognized status \(status.rawValue); it is not treated as verified.")

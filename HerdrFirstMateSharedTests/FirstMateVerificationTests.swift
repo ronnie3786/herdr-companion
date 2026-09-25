@@ -139,10 +139,30 @@ struct FirstMateVerificationTests {
         #expect(lastReported.accessibilitySummary.contains("Last reported"))
 
         let noRevision = FirstMateVerificationPresentation(
-            verification: FirstMateVerification(status: .verified, evidencePresent: true)
+            verification: FirstMateVerification(status: .verified, gateSet: [
+                FirstMateVerificationSuite(label: "packages/a/One", outcome: "passed")
+            ], evidencePresent: true)
         )
-        #expect(noRevision.testedRevisionText == nil)
-        #expect(noRevision.accessibilitySummary.contains("No tested revision was reported"))
+        #expect(!noRevision.isVerified)
+        #expect(noRevision.status == .unavailable)
+        #expect(noRevision.statusWasDowngraded)
+        #expect(noRevision.accessibilitySummary.contains("not treated as verified"))
+
+        let noGateSet = FirstMateVerificationPresentation(
+            verification: FirstMateVerification(status: .verified, sourceRevisions: ["abc123"], evidencePresent: true)
+        )
+        #expect(!noGateSet.isVerified)
+        #expect(noGateSet.status == .unavailable)
+        #expect(noGateSet.statusWasDowngraded)
+
+        // Assessed revisions describe the current workspace and are never
+        // relabeled as tested revisions.
+        let assessedOnly = FirstMateVerification(
+            status: .verified, assessedRevisions: ["ws_a": "abc123"],
+            gateSet: [FirstMateVerificationSuite(label: "packages/a/One", outcome: "passed")],
+            evidencePresent: true
+        )
+        #expect(assessedOnly.testedRevisions.isEmpty)
 
         let absent = FirstMateVerificationPresentation(verification: nil)
         #expect(!absent.isVerified)
@@ -236,6 +256,41 @@ struct FirstMateVerificationTests {
         )
         store.receive(delayed)
         #expect(store.snapshot?.feature.verification?.status == .partiallyVerified)
+    }
+
+    @Test("An authoritative unavailable full snapshot downgrades cached verified evidence")
+    func authoritativeUnavailableDowngrades() {
+        let store = FirstMateStore()
+        let base = FirstMateDemo.features(step: 3)[0]
+        store.receive(base)
+        store.select(base.feature.id)
+        #expect(store.snapshot?.feature.verification?.status == .verified)
+
+        // An explicit empty field in a newer full snapshot is an authoritative
+        // "reported but unavailable", not a reason to keep the cached green.
+        var emptied = base
+        emptied.feature.updatedAt = "2030-01-02T00:00:00Z"
+        emptied.feature.verification = nil
+        emptied.feature.includesVerification = true
+        store.receive(emptied)
+        #expect(store.snapshot?.feature.verification?.status == .unavailable)
+
+        store.receive(base)
+        #expect(store.snapshot?.feature.verification?.status == .unavailable)
+
+        // A newer authoritative response restores the verified assessment...
+        var restored = base
+        restored.feature.updatedAt = "2030-01-04T00:00:00Z"
+        store.receive(restored)
+        #expect(store.snapshot?.feature.verification?.status == .verified)
+
+        // ...and a still-newer full snapshot from an older companion that
+        // omits the field again downgrades it.
+        var omitted = base
+        omitted.feature.updatedAt = "2030-01-05T00:00:00Z"
+        omitted.feature.includesVerification = false
+        store.receive(omitted)
+        #expect(store.snapshot?.feature.verification?.status == .unavailable)
     }
 
     @Test("The synthetic demo carries every verification presentation state")

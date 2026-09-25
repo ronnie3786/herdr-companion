@@ -759,9 +759,11 @@ test('a verified verdict without a reported revision says so instead of implying
   };
   await app.reply('/features/a', snapshot);
   const html = app.element('#workspace').innerHTML;
-  assert.match(html, /Verified/);
-  assert.match(html, /did not report a tested revision/);
+  assert.match(html, /Verification unavailable/);
+  assert.match(html, /without the required gate set and tested revision/);
   assert.match(html, /Gate set \(1\)/);
+  assert.doesNotMatch(html, /<strong>Verified<\/strong>/);
+  assert.doesNotMatch(html, /verification-panel verified/);
 });
 
 test('malformed verification fields cannot break the overview or imply coverage', async () => {
@@ -776,8 +778,29 @@ test('malformed verification fields cannot break the overview or imply coverage'
   };
   await app.reply('/features/a', snapshot);
   const html = app.element('#workspace').innerHTML;
-  assert.match(html, /verification-panel verified/);
-  assert.match(html, /did not report a tested revision/);
-  assert.match(html, /No structured suite evidence is reported/);
+  assert.match(html, /Verification unavailable/);
+  assert.match(html, /without the required gate set and tested revision/);
+  assert.doesNotMatch(html, /<strong>Verified<\/strong>/);
+  assert.doesNotMatch(html, /verification-panel verified/);
   assert.doesNotMatch(html, /not-a-list/);
+});
+
+test('assessed revisions are never relabeled as tested revisions', async () => {
+  const app = inspector();
+  await app.reply('/features', { ok: true, features: [feature('a')] });
+  const snapshot = detail('a');
+  const tested = 'a'.repeat(40);
+  const assessed = 'b'.repeat(40);
+  snapshot.feature.verification = {
+    status: 'partially_verified',
+    assessed_revisions: { ws_synthetic: assessed },
+    source_revisions: [tested],
+    gate_set: [{ label: 'packages/sample-core/One', outcome: 'passed', tested_revision: tested }],
+    evidence_present: true,
+  };
+  await app.reply('/features/a', snapshot);
+  const html = app.element('#workspace').innerHTML;
+  assert.match(html, /Tested revision/);
+  assert.match(html, /aaaaaaaaaaaa…/);
+  assert.doesNotMatch(html, /bbbbbbbbbbbb…/);
 });

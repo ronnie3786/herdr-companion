@@ -40,6 +40,14 @@ retained as display and replay evidence but is not part of identity. Display
 labels use `package/suite` with the configuration appended, for example
 `pkg/app/SuiteOne` or `pkg/app/SuiteOne (Release)`.
 
+Inside an assessment, identity is additionally workspace-qualified: the same
+package and suite in two deliverable worktrees are two required entries, so one
+worktree's pass can never cover the other's missing or failing result. A
+physical worktree whose source-assignment lineage continues in a different
+worktree is history for that successor; its retained runs and inventories are
+aliased into the successor so inherited packages stay required and a re-run at
+the successor counts as the same suite rather than a permanent drop.
+
 **Inventories versus selected gates versus history.** An inventory says what
 exists; a gate run says what was executed; an assessment selects retained runs
 and decides whether their results cover the changed packages at the current
@@ -67,21 +75,33 @@ exhaustive. Consequently:
 ## Freshness: evidence is bound to the current revision
 
 The companion observes each deliverable workspace's current HEAD and cumulative
-changed paths from the earliest retained assignment baseline, plus uncommitted
-working-tree paths. A retained run is **fresh** only when:
+changed paths from the earliest retained baseline along each assignment's
+source-assignment lineage, plus uncommitted working-tree paths. A successor
+worktree therefore includes changes it inherited from its predecessor. A
+retained run is **fresh** only when:
 
 - the run reported the exact current revision for that workspace;
-- the run was not interrupted; and
+- the run's recorded status is `completed`;
+- the source state observed at recording time was `clean`; and
 - the current revision could be observed at assessment time.
 
 A new commit or an unreadable revision makes earlier evidence stale, and
 uncommitted changes keep scope incomplete so no run can establish current
 verification. A selected run that no longer matches remains listed in
-`stale_evidence` with its recorded revision and the reason, but it cannot
-establish current verification. A later failure always supersedes an earlier
-pass, and choosing a passing subset of runs cannot hide it: the assessment
-examines the latest retained result for each suite, even when that suite is
-omitted from the selected gate set.
+`stale_evidence` with its recorded revision and the reason. A dirty or
+unrecorded recording-time source state is never promoted to trusted merely
+because the workspace is clean later. A later failure always supersedes an
+earlier pass, and choosing a passing subset of runs cannot hide it: the
+assessment examines the latest retained result for each suite across the whole
+history, even when that suite is omitted from the selected gate set. A stale,
+interrupted, dirty, or failed batch never clears a current failure and never
+establishes verification on its own.
+
+A **complete discovery inventory** only counts when its recorded revision
+matches the current workspace HEAD. A stale or revisionless inventory keeps
+coverage partial until it is revalidated, so a suite added after discovery can
+never be silently skipped; its suites are still required, so a newly added
+suite that has never run is named.
 
 ## Verdict semantics
 
@@ -101,12 +121,18 @@ has evidence is **Partially verified** or **Failed**; absent evidence is
 Every assessment carries the fields that explain it:
 
 - `gate_set`: the exact selected results with package-qualified labels, outcomes, tested revisions, run identity, and freshness.
-- `required_suites`: the suites of every changed package according to the retained inventories.
+- `required_suites`: the suites of every changed package according to the current, revalidated inventories, workspace-qualified.
 - `missing_suites`: required suites without a current passing result, with the reason `never run` or `no current passing result`.
-- `previously_green_missing`: suites whose latest retained result is a pass but which have no current fresh passing result. These are the coverage drops; they are named before a checkpoint parks.
-- `failing_suites`: the latest failing result per suite, independent of the selected subset.
-- `stale_evidence`: selected runs that no longer match the current revision, with the recorded revision and reason.
+- `previously_green_missing`: suites that were green at any retained point and have no current fresh passing result, even when their latest recorded outcome is skipped or they dropped out of a replacement inventory. These are the coverage drops; they are named before a checkpoint parks.
+- `failing_suites`: the current failure per workspace-qualified suite, independent of the selected subset, until a later completed, clean, current passing run supersedes it.
+- `stale_evidence`: selected runs that no longer match the current revision or were not recorded on a clean source state, with the recorded revision and reason.
+- `stale_inventories`: discovery inventories recorded at a revision other than the current HEAD, which must be revalidated before they count as complete.
 - `coverage_reasons`: deterministic human-readable explanations for each unmet requirement.
+
+`assessed_revisions` always describes the current workspace HEAD observed at
+assessment time. `tested_revisions` (also returned as `source_revisions`) comes
+only from the selected runs; current HEAD is never relabeled as a tested
+revision.
 
 Human-facing summaries render the same list. A checkpoint or informal park whose
 assessment is not **Verified** appends a deterministic
@@ -152,25 +178,32 @@ run cannot hide it. Covered by
 
 History belongs to the feature, not to a store instance or a session. Closing
 and reopening the store keeps the verdict and its gate set. A worker handoff
-and a later stage keep the earlier runs, default the later selection to the new
-stage's own runs, and still name the dropped suites. Covered by
-`test_stage_completion_persists_the_scoped_verdict_and_gate_set_atomically` and
-`test_history_survives_worker_handoff_and_a_later_stage`.
+and a later stage keep the earlier runs, and the coordinator's explicit gate
+selection is persisted separately from the computed assessment, so live reads
+and later informal parks keep using the selected gate set until a newer
+completion supersedes it. Covered by
+`test_stage_completion_persists_the_scoped_verdict_and_gate_set_atomically`,
+`test_history_survives_worker_handoff_and_a_later_stage`, and
+`test_explicit_gate_selection_survives_reads_restart_and_completion`.
 
 ### Alternate packages and configurations
 
-- Two changed packages each declare a suite named `SharedTests`; running only the first leaves `pkg/two/SharedTests` missing. Duplicate display names never collapse.
+- Two changed packages each declare a suite named `SharedTests`; running only the first leaves `pkg/two/SharedTests` missing. Duplicate display names never collapse, in different packages or different deliverable worktrees.
 - `Debug` and `Release` entries for the same suite name stay distinct; a passing `Debug` result does not cover a skipped `Release` entry.
 - A changed path outside every discovered package is reported in `unmapped_paths` and keeps coverage partial.
 - A separate deliverable worktree is assessed on its own revision; the primary checkout's evidence does not cover it.
+- An isolated successor whose lineage starts from a predecessor commit includes the predecessor's changed packages, so a pass in the successor cannot verify without testing the inherited package there.
 
 Covered by
 `test_duplicate_display_names_in_different_packages_stay_distinct`,
+`test_workspace_qualified_identity_keeps_two_worktrees_independent`,
+`test_workspace_qualified_failure_is_not_hidden_by_another_worktrees_pass`,
 `test_skipped_and_multiple_configurations_are_represented_exactly`,
 `test_multiple_changed_packages_union_their_required_suites`,
 `test_incomplete_inventory_and_unmapped_paths_lower_coverage`,
 `test_never_run_required_suite_is_partial_and_duplicate_names_stay_distinct`,
-and `test_isolated_workspace_scope_ignores_the_primary_checkout`.
+`test_isolated_workspace_scope_ignores_the_primary_checkout`, and
+`test_lineage_successor_inherits_predecessor_package_coverage`.
 
 ## Where humans inspect the gate set
 
@@ -185,7 +218,13 @@ and `test_isolated_workspace_scope_ignores_the_primary_checkout`.
 
 Clients never recompute coverage. They decode the companion's assessment and
 present exactly the gate set, tested revision, and gaps it names. An unknown
-future status is retained verbatim and never treated as verified.
+future status is retained verbatim and never treated as verified. A verified
+payload that omits its gate set or tested revision is structurally incomplete
+and renders **Verification unavailable**, not green, in both native and
+browser clients. An authoritative full response that reports unavailable or
+malformed evidence downgrades cached current verification; only a genuinely
+partial acknowledgement may inherit an omitted field. Cached evidence is
+retained for offline last-reported display, never as current green.
 
 ## Compatibility and installation
 
@@ -196,7 +235,10 @@ future status is retained verbatim and never treated as verified.
 - A legacy feature or an older companion that omits the fields shows
   **Verification unavailable**. Malformed or partial payloads degrade
   conservatively, and a delayed response or feature/host switch cannot
-  resurrect a stale **Verified** state.
+  resurrect a stale **Verified** state. A live read that cannot recompute the
+  current assessment fails closed to **Verification unavailable** with the
+  prior verdict retained as `historical_evidence`, and the feature list and
+  board surfaces recompute rather than returning an unqualified cached green.
 - Recording happens through the managed worker's typed
   `fm_record_verification` tool inside the First Mate extension; there is no
   new HTTP mutation route. The companion and Pi extension must be upgraded and

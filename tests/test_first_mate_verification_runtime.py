@@ -94,7 +94,8 @@ class VerificationRuntimeTests(unittest.TestCase):
 
     def record_run(self, run_id: str, names: list[str], *, revision: str, outcome: str = "passed",
                    selected_outcomes: dict | None = None, package: str = "pkg/app",
-                   assignment: dict | None = None, workspace: str | None = None) -> dict:
+                   assignment: dict | None = None, workspace: str | None = None,
+                   source_state: str = "clean") -> dict:
         gates = []
         for name in names:
             gates.append(gate(name, (selected_outcomes or {}).get(name, outcome), package=package))
@@ -104,7 +105,8 @@ class VerificationRuntimeTests(unittest.TestCase):
                       {"visit_id": None, "assignment_id": None, "native_session_id": None, "generation": None})
         return self.store.record_verification(self.feature["id"], {
             "workspace": workspace or self.workspace, "revision": revision, "observed_revision": revision,
-            "status": "completed", "gates": gates, "summary": "synthetic batch"},
+            "status": "completed", "gates": gates, "summary": "synthetic batch",
+            "source_state": source_state},
             run_id, provenance)["run"]
 
     def test_six_to_four_omission_survives_restart_and_names_dropped_suites(self):
@@ -175,7 +177,7 @@ class VerificationRuntimeTests(unittest.TestCase):
         narrow = self.store.record_verification(self.feature["id"], {
             "workspace": self.workspace, "revision": advanced, "observed_revision": advanced,
             "status": "completed", "gates": [gate(name) for name in SUITES[:4]],
-            "summary": "handoff successor batch"}, "run-narrow-successor", {
+            "summary": "handoff successor batch", "source_state": "clean"}, "run-narrow-successor", {
                 "visit_id": visit["id"], "assignment_id": assignment["id"],
                 "native_session_id": "native-successor", "generation": successor["generation"]})["run"]
 
@@ -466,6 +468,212 @@ class VerificationRuntimeTests(unittest.TestCase):
                                       {"summary": "Delivered"}, "finish-feature")
         self.assertEqual(finished["status"], "completed")
         self.assertEqual(self.store.get_feature(self.feature["id"])["verification"]["status"], "verified")
+
+    def test_lineage_successor_inherits_predecessor_package_coverage(self):
+        # Implementer A changes pkg/app in an isolated worktree; successor B
+        # starts from A's commit and changes pkg/other. B's cumulative diff must
+        # still cover pkg/app, so B's pkg/other pass alone cannot verify it.
+        worktree_a = self.root / "lineage-a"
+        subprocess.run(["git", "-C", str(self.repo), "worktree", "add", "-b", "lineage-a",
+                        str(worktree_a), self.base], capture_output=True, check=True)
+        first = self.stage_and_assignment(worktree=worktree_a)
+        with (worktree_a / "pkg/app/Sources/Feature.swift").open("a") as handle:
+            handle.write("// pkg app change\n")
+        subprocess.run(["git", "-C", str(worktree_a), "add", "."], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(worktree_a), "commit", "-m", "change pkg app"],
+                       capture_output=True, check=True)
+        a_head = subprocess.run(["git", "-C", str(worktree_a), "rev-parse", "HEAD"],
+                                capture_output=True, text=True, check=True).stdout.strip()
+        ws_a = FirstMateRuntime._workspace_identity(str(worktree_a))
+        self.record_inventory(["OneTests"], revision=a_head, package="pkg/app", workspace=ws_a)
+        old_run = self.record_run("run-a", ["OneTests"], revision=a_head, package="pkg/app", workspace=ws_a)
+
+        worktree_b = self.root / "lineage-b"
+        subprocess.run(["git", "-C", str(worktree_a), "worktree", "add", "-b", "lineage-b",
+                        str(worktree_b), a_head], capture_output=True, check=True)
+        feature = self.store.get_feature(self.feature["id"])
+        self.store.create_assignment(feature["current_visit_id"], {
+            "title": "Lineage successor", "role": "implementer", "prompt": "Continue.",
+            "request_id": "assignment-lineage-b",
+            "metadata": {"workspace_mode": "isolated", "worktree_path": str(worktree_b),
+                         "base_revision": a_head, "source_assignment_id": first["id"]}})
+        with (worktree_b / "pkg/other/Sources/Other.swift").open("a") as handle:
+            handle.write("// pkg other change\n")
+        subprocess.run(["git", "-C", str(worktree_b), "add", "."], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(worktree_b), "commit", "-m", "change pkg other"],
+                       capture_output=True, check=True)
+        b_head = subprocess.run(["git", "-C", str(worktree_b), "rev-parse", "HEAD"],
+                                capture_output=True, text=True, check=True).stdout.strip()
+        ws_b = FirstMateRuntime._workspace_identity(str(worktree_b))
+        self.record_inventory(["OneTests"], revision=b_head, package="pkg/app", workspace=ws_b)
+        self.record_inventory(["TwoTests"], revision=b_head, package="pkg/other", workspace=ws_b)
+        narrow = self.record_run("run-b", ["TwoTests"], revision=b_head, package="pkg/other", workspace=ws_b)
+
+        assessment = self.runtime.verification_assessment(self.feature["id"])
+        self.assertEqual(assessment["assessed_revisions"], {ws_b: b_head})
+        self.assertNotIn(ws_a, assessment["assessed_revisions"])
+        self.assertEqual(assessment["status"], "partially_verified")
+        self.assertIn("pkg/app/OneTests", {item["label"] for item in assessment["missing_suites"]})
+
+        # A fresh pass on pkg/app at B's revision supersedes the inherited
+        # evidence; selecting the B runs removes the stale predecessor run.
+        complete = self.record_run("run-b-all", ["OneTests"], revision=b_head, package="pkg/app", workspace=ws_b)
+        verified = self.runtime.verification_assessment(self.feature["id"], [narrow["id"], complete["id"]])
+        self.assertEqual(verified["status"], "verified")
+        self.assertEqual(verified["previously_green_missing"], [])
+        self.assertEqual(verified["source_revisions"], [b_head])
+
+    def test_stale_inventory_requires_revalidation_after_new_suite(self):
+        self.stage_and_assignment()
+        advanced = self.commit("add a suite after discovery")
+        self.record_inventory(["SuiteOne"], revision=self.base)
+        run = self.record_run("run-one", ["SuiteOne"], revision=advanced)
+        stale = self.runtime.verification_assessment(self.feature["id"], [run["id"]])
+        self.assertEqual(stale["status"], "partially_verified")
+        self.assertEqual(len(stale["stale_inventories"]), 1)
+        self.assertIn("revalidate the inventory", " ".join(stale["coverage_reasons"]))
+        # Revalidated discovery at the current revision names the suite that was
+        # added but has never run.
+        self.record_inventory(["SuiteOne", "SuiteTwo"], revision=advanced)
+        current = self.runtime.verification_assessment(self.feature["id"], [run["id"]])
+        self.assertEqual(current["status"], "partially_verified")
+        self.assertEqual([item["label"] for item in current["missing_suites"]], ["pkg/app/SuiteTwo"])
+
+    def test_explicit_gate_selection_survives_reads_restart_and_completion(self):
+        assignment = self.stage_and_assignment()
+        advanced = self.commit("implemented change")
+        self.record_inventory(SUITES, revision=advanced)
+        broad = self.record_run("run-six", SUITES, revision=advanced, assignment=assignment)
+        narrow = self.record_run("run-four", SUITES[:4], revision=advanced, assignment=assignment)
+        self.store.record_outcome(assignment["id"], assignment["generation"],
+                                  assignment["native_session_id"], assignment["input_revision"],
+                                  "success", "Complete", "outcome-selection",
+                                  verification_run_ids=[broad["id"]])
+        coordinator = {"kind": "coordinator", "feature_id": self.feature["id"],
+                       "claim": {"id": "synthetic-message", "role": "user"},
+                       "owner": "coordinator-owner", "cwd": str(self.repo)}
+        result = self.runtime._tool(coordinator, "fm_complete_stage", {
+            "summary": "Synthetic", "recommendation": "Next",
+            "verification_run_ids": [narrow["id"]]}, "complete-selection")
+        self.assertEqual(result["status"], "completed")
+        feature_id = self.feature["id"]
+        self.assertEqual(self.store.get_feature(feature_id)["verification_selection"], [narrow["id"]])
+        # An informal coordinator park also reuses the retained narrow selection
+        # rather than falling back to the outcome's broader references.
+        message = self.store.append_human_message(feature_id, "Are we done?", "park-selection")
+        claimed = self.store.claim_message(feature_id, "coordinator-park")
+        self.assertEqual(claimed["id"], message["id"])
+        self.runtime._finish(
+            {"kind": "coordinator", "id": "synthetic-park-job", "feature_id": feature_id,
+             "claim": {"id": claimed["id"], "role": "user"}, "owner": "coordinator-park",
+             "native_session_id": None},
+            {"ended": True, "response": "Still partial."})
+        reply = next(item for item in reversed(self.store.snapshot(feature_id)["messages"])
+                     if item["role"] == "assistant")
+        self.assertEqual(reply["metadata"]["verification"]["status"], "partially_verified")
+        # Every status surface recomputes the retained narrow selection rather
+        # than defaulting back to the outcome's broader references.
+        for surface in (self.runtime.feature(feature_id)["verification"],
+                        self.runtime.snapshot(feature_id)["feature"]["verification"],
+                        next(item for item in self.runtime.list_features("all") if item["id"] == feature_id)["verification"],
+                        self.runtime.board(feature_id)["feature"]["verification"]):
+            self.assertEqual(surface["status"], "partially_verified")
+            self.assertEqual(sorted(entry["label"] for entry in surface["gate_set"]),
+                             sorted(f"pkg/app/{name}" for name in SUITES[:4]))
+        # A restart keeps the selection and the partial verdict.
+        self.store.close()
+        self.store = FirstMateStore(self.root / "store.sqlite3")
+        self.runtime = FirstMateRuntime(self.store, environ={"PATH": "/usr/bin:/bin"},
+                                        runtime_root=self.root / "runtime")
+        self.assertEqual(self.store.get_feature(feature_id)["verification_selection"], [narrow["id"]])
+        self.assertEqual(self.runtime.feature(feature_id)["verification"]["status"], "partially_verified")
+
+    def test_advancing_head_after_a_checkpoint_downgrades_every_status_surface(self):
+        assignment = self.stage_and_assignment()
+        self.record_inventory(SUITES, revision=self.base)
+        broad = self.record_run("run-six", SUITES, revision=self.base, assignment=assignment)
+        assessment = self.runtime.verification_assessment(self.feature["id"], [broad["id"]])
+        self.assertEqual(assessment["status"], "verified")
+        self.store.record_outcome(assignment["id"], assignment["generation"],
+                                  assignment["native_session_id"], assignment["input_revision"],
+                                  "success", "Complete", "outcome-checkpoint",
+                                  verification_run_ids=[broad["id"]])
+        visit_id = self.store.get_feature(self.feature["id"])["current_visit_id"]
+        self.store.complete_visit(visit_id, "Synthetic stage done", "Review next", "complete-current",
+                                  verification=assessment, selection=[broad["id"]])
+        self.assertEqual(self.runtime.feature(self.feature["id"])["verification"]["status"], "verified")
+
+        self.commit("advance after the checkpoint")
+        feature_id = self.feature["id"]
+        surfaces = [self.runtime.feature(feature_id)["verification"],
+                    self.runtime.snapshot(feature_id)["feature"]["verification"],
+                    next(item for item in self.runtime.list_features("all") if item["id"] == feature_id)["verification"],
+                    self.runtime.board(feature_id)["feature"]["verification"]]
+        for surface in surfaces:
+            self.assertEqual(surface["status"], "partially_verified")
+            self.assertTrue(any(entry["run_id"] == broad["id"] for entry in surface["stale_evidence"]))
+
+    def test_assessment_failure_fails_closed_with_historical_evidence(self):
+        assignment = self.stage_and_assignment()
+        self.record_inventory(SUITES, revision=self.base)
+        broad = self.record_run("run-six", SUITES, revision=self.base, assignment=assignment)
+        assessment = self.runtime.verification_assessment(self.feature["id"], [broad["id"]])
+        self.assertEqual(assessment["status"], "verified")
+        self.store.record_outcome(assignment["id"], assignment["generation"],
+                                  assignment["native_session_id"], assignment["input_revision"],
+                                  "success", "Complete", "outcome-failure-surface",
+                                  verification_run_ids=[broad["id"]])
+        visit_id = self.store.get_feature(self.feature["id"])["current_visit_id"]
+        self.store.complete_visit(visit_id, "Synthetic stage done", "Review next", "complete-failure",
+                                  verification=assessment, selection=[broad["id"]])
+
+        def broken(*_args, **_kwargs):
+            raise FirstMateError("synthetic assessment failure")
+
+        original = self.runtime.verification_assessment
+        self.runtime.verification_assessment = broken
+        try:
+            for surface in (self.runtime.feature(self.feature["id"])["verification"],
+                            next(item for item in self.runtime.list_features("all")
+                                 if item["id"] == self.feature["id"])["verification"],
+                            self.runtime.board(self.feature["id"])["feature"]["verification"]):
+                self.assertEqual(surface["status"], "unavailable")
+                self.assertEqual(surface["historical_evidence"]["status"], "verified")
+                self.assertTrue(any("could not be computed" in reason
+                                    for reason in surface["coverage_reasons"]))
+        finally:
+            self.runtime.verification_assessment = original
+
+    def test_long_retained_history_is_assessed_without_a_selection_limit(self):
+        assignment = self.stage_and_assignment()
+        self.record_inventory(["SuiteOne"], revision=self.base)
+        for index in range(240):
+            self.record_run(f"run-long-{index:03d}", ["SuiteOne"], revision=self.base, assignment=assignment)
+        assessment = self.runtime.verification_assessment(self.feature["id"])
+        self.assertEqual(assessment["status"], "verified")
+        self.assertEqual(assessment["run_count"], 240)
+        self.assertEqual(self.runtime.feature(self.feature["id"])["verification"]["status"], "verified")
+
+    def test_recording_dirty_then_cleaning_does_not_promote_evidence(self):
+        assignment = self.stage_and_assignment()
+        job = {"kind": "worker", "feature_id": self.feature["id"],
+               "claim": {"id": assignment["id"], "generation": assignment["generation"]},
+               "native_session_id": assignment["native_session_id"], "cwd": str(self.repo)}
+        params = {
+            "revision": self.base, "status": "completed", "summary": "dirty batch",
+            "inventory": {"package": "pkg/app", "state": "complete", "revision": self.base,
+                          "suites": [suite(name) for name in SUITES], "evidence": "synthetic"},
+            "gates": [gate(name) for name in SUITES],
+        }
+        (self.repo / "uncommitted-fix.patch").write_text("synthetic pending fix\n")
+        recorded = self.runtime._record_verification(job, params, "verification-dirty")
+        self.assertEqual(recorded["run"]["source_state"], "dirty")
+        self.assertIn("uncommitted", recorded["warning"])
+        self.assertEqual(recorded["verification"]["status"], "partially_verified")
+        (self.repo / "uncommitted-fix.patch").unlink()
+        cleaned = self.runtime.feature(self.feature["id"])["verification"]
+        self.assertEqual(cleaned["status"], "partially_verified")
+        self.assertTrue(any("dirty" in entry["reason"] for entry in cleaned["stale_evidence"]))
 
 
 if __name__ == "__main__":

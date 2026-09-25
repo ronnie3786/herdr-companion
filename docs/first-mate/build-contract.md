@@ -223,22 +223,24 @@ Assessment object (`feature.verification`), snake_case:
 
 ```json
 {"status": "partially_verified", "label": "Partially verified", "feature_revision": 4,
- "assessed_revisions": {"ws_0123456789abcdef": "commit-sha"},
- "source_revisions": ["commit-sha"],
- "gate_set": [{"key": "…", "label": "pkg/app/SuiteOne", "package": "pkg/app", "suite": "SuiteOne",
+ "assessed_revisions": {"ws_0123456789abcdef": "current-head-sha"},
+ "source_revisions": ["tested-sha"], "tested_revisions": ["tested-sha"],
+ "gate_set": [{"key": "ws_…\u0000pkg/app\u0000SuiteOne\u0000", "label": "pkg/app/SuiteOne", "package": "pkg/app", "suite": "SuiteOne",
                "configuration": "", "outcome": "passed", "passed_count": 12, "failed_count": 0,
-               "skipped_count": 0, "run_id": "fmvr_…", "tested_revision": "commit-sha",
+               "skipped_count": 0, "run_id": "fmvr_…", "tested_revision": "tested-sha",
                "workspace": "ws_0123456789abcdef", "fresh": true, "reason": ""}],
  "required_suites": [{"key": "…", "label": "pkg/app/SuiteOne", "package": "pkg/app",
-                      "suite": "SuiteOne", "configuration": ""}],
+                      "suite": "SuiteOne", "configuration": "", "workspace": "ws_…"}],
  "missing_suites": [{"…": "…", "workspace": "ws_…", "reason": "never run"}],
- "previously_green_missing": [{"…": "…"}],
- "failing_suites": [{"…": "…", "outcome": "failed", "run_id": "fmvr_…", "tested_revision": "commit-sha"}],
- "stale_evidence": [{"run_id": "fmvr_…", "workspace": "ws_…", "tested_revision": "commit-sha",
+ "previously_green_missing": [{"…": "…", "workspace": "ws_…"}],
+ "failing_suites": [{"…": "…", "outcome": "failed", "run_id": "fmvr_…", "tested_revision": "tested-sha"}],
+ "stale_evidence": [{"run_id": "fmvr_…", "workspace": "ws_…", "tested_revision": "tested-sha",
                      "reason": "recorded revision … does not match current …"}],
  "coverage_reasons": ["…"],
  "unmapped_paths": [{"workspace": "ws_…", "path": "outside/orphan.swift"}],
  "incomplete_inventories": [{"workspace": "ws_…", "package": "pkg/app", "state": "incomplete"}],
+ "stale_inventories": [{"workspace": "ws_…", "package": "pkg/app", "state": "complete",
+                        "revision": "old-sha", "current_revision": "current-head-sha"}],
  "changed_packages": [{"workspace": "ws_…", "package": "pkg/app"}],
  "selected_run_ids": ["fmvr_…"], "recorded_run_ids": ["fmvr_…"],
  "run_count": 2, "inventory_count": 1, "evidence_present": true,
@@ -252,12 +254,26 @@ newer failure remains visible even when a client selects or cites an older
 passing subset. Clients must keep unknown status values and never promote them
 to verified.
 
+Suite identity is workspace-qualified inside an assessment: `key` is the
+workspace plus package, suite, and configuration, so identically named packages
+in two deliverable worktrees remain distinct. `assessed_revisions` describes
+the current workspace HEAD observed at assessment time. `tested_revisions` and
+`source_revisions` are derived only from the selected runs; they are never
+taken from current HEAD, and clients must not relabel `assessed_revisions` as
+tested revisions. A live read that cannot recompute the current assessment
+returns `unavailable` with `coverage_reasons` and, when available, the prior
+assessment under `historical_evidence` rather than a cached green.
+
 Gate run object (`verification_runs[]`): `id`, `feature_id`, `visit_id`,
 `assignment_id`, `native_session_id`, `generation`, `workspace`,
 `tested_revision` (the worker-reported revision), `observed_revision` (the
 companion's read of HEAD when the batch was recorded), `run_status`
-(`completed`, `failed`, or `interrupted`), `gates` (the validated per-suite
+(`completed`, `failed`, or `interrupted`), `source_state` (`clean`, `dirty`, or
+`unavailable`, observed at recording time), `gates` (the validated per-suite
 array), `summary`, `recorded_by` (`worker` or `coordinator`), and `created_at`.
+Only a `completed`, `clean` run whose tested revision matches current HEAD with
+a current inventory can establish verification; stale, interrupted, dirty, or
+failed batches never clear a current failure and never establish verification.
 Gate entries carry `suite` (`package`, `suite`, `configuration`, `selector`),
 `outcome` (`passed`, `failed`, `error`, or `skipped`), optional
 `passed_count`, `failed_count`, `skipped_count`, `duration_seconds`, and a
@@ -270,13 +286,17 @@ Inventory object (`suite_inventories[]`): `id`, `feature_id`, `workspace`,
 `evidence`, `source`, provenance fields, and timestamps. One inventory is
 retained per feature/workspace/package; a later inventory replaces it, but
 replaced suites remain in run history and can still appear as previously green.
-The evidence and source strings are worker-reported; `complete` is a claim
-about discovery, not independent proof of exhaustiveness.
+A complete inventory only counts when its `revision` matches the current
+workspace HEAD; a stale or revisionless inventory keeps coverage partial until
+revalidated, and its suite list is still used to require current passes. The
+evidence and source strings are worker-reported; `complete` is a claim about
+discovery, not independent proof of exhaustiveness.
 
-Suite identity is `package`, `suite`, and `configuration`; `selector` is
-evidence, not identity. An empty package is the repository root. Identically
-named suites in different packages or configurations remain distinct, and
-display labels use `package/suite` plus the configuration when present.
+Suite identity inside the evaluator is the workspace, `package`, `suite`, and
+`configuration`; `selector` is evidence, not identity. An empty package is the
+repository root. Identically named suites in different packages,
+configurations, or deliverable worktrees remain distinct, and display labels
+use `package/suite` plus the configuration when present.
 
 ### Typed tool contract
 
@@ -294,7 +314,10 @@ display labels use `package/suite` plus the configuration when present.
 - Coordinator `fm_complete_stage` and `fm_finish_feature` accept
   `verification_run_ids`. When omitted, the selection is the current visit's
   outcome-referenced runs, then that visit's recorded runs, then every retained
-  run. Unknown selected IDs are refused with `not_found`, and any unknown ID
+  run. The resolved selection is persisted independently of the computed
+  assessment and reused by live reads and later informal parks until a newer
+  completion explicitly supersedes it, including across companion restarts.
+  Unknown selected IDs are refused with `not_found`, and any unknown ID
   reaching the evaluator (for example through a retained reference) is named in
   `coverage_reasons` and can never produce `verified`.
 - `fm_status` returns the live scoped `verification` assessment plus a bounded
@@ -306,11 +329,13 @@ display labels use `package/suite` plus the configuration when present.
 
 Assessments are persisted in the same transaction as the checkpoint or feature
 completion that cites them, and the compact projection travels with the
-checkpoint message metadata and event payload. A live detail or status read
-recomputes the assessment when structured evidence exists, so a commit made
-after a checkpoint is visible as stale rather than hidden behind the old green.
-The runtime observes workspace identities; no private machine path is part of
-any assessment, run, or inventory projection.
+checkpoint message metadata and event payload. A live detail, feature list, or
+board read recomputes the assessment when structured evidence exists, so a
+commit made after a checkpoint is visible as stale rather than hidden behind
+the old green. Recomputation failure returns an explicit `unavailable`
+assessment with the prior verdict under `historical_evidence`, never a cached
+green. The runtime observes workspace identities; no private machine path is
+part of any assessment, run, or inventory projection.
 
 ## Model routing and runtime evidence
 

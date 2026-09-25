@@ -309,6 +309,16 @@ class FirstMateStore:
             if "verification_json" not in feature_columns:
                 self._db.execute("ALTER TABLE fm_features ADD COLUMN verification_json TEXT NOT NULL DEFAULT '{}'")
             self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(10,?)", (_now(),))
+            if "verification_selection_json" not in feature_columns:
+                # The coordinator's explicit current gate selection survives
+                # reads, live finalization, and restarts until superseded.
+                self._db.execute("ALTER TABLE fm_features ADD COLUMN verification_selection_json TEXT NOT NULL DEFAULT '[]'")
+            run_columns = {row[1] for row in self._db.execute("PRAGMA table_info(fm_verification_runs)")}
+            if "source_state" not in run_columns:
+                # Recording-time working-tree validity travels with the run so
+                # later cleanup cannot promote dirty evidence to trusted.
+                self._db.execute("ALTER TABLE fm_verification_runs ADD COLUMN source_state TEXT NOT NULL DEFAULT ''")
+            self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(11,?)", (_now(),))
         attempt_columns = {row[1] for row in self._db.execute("PRAGMA table_info(fm_attempts)")}
         if "verification_run_ids_json" not in attempt_columns:
             self._db.execute("ALTER TABLE fm_attempts ADD COLUMN verification_run_ids_json TEXT NOT NULL DEFAULT '[]'")
@@ -404,7 +414,7 @@ class FirstMateStore:
         result = dict(row)
         for name in ("metadata_json", "payload_json", "followup_stages_json", "provenance_json",
                      "verification_json", "verification_run_ids_json", "suites_json", "gates_json",
-                     "assessment_json"):
+                     "assessment_json", "verification_selection_json"):
             if name in result:
                 result[name[:-5]] = json.loads(result.pop(name))
         return result
@@ -1504,16 +1514,18 @@ class FirstMateStore:
             self._db.execute(
                 "INSERT INTO fm_verification_runs(id,feature_id,visit_id,assignment_id,native_session_id,"
                 "generation,workspace,tested_revision,observed_revision,run_status,gates_json,summary,"
-                "recorded_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "recorded_by,source_state,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (run_id, feature_id, recorded_provenance.get("visit_id"), recorded_provenance.get("assignment_id"),
                  recorded_provenance.get("native_session_id"), recorded_provenance.get("generation"),
                  run["workspace"], run["revision"], run["observed_revision"], run["status"],
                  _json(run["gates"]), run["summary"],
-                 "worker" if recorded_provenance.get("assignment_id") else "coordinator", now))
+                 "worker" if recorded_provenance.get("assignment_id") else "coordinator",
+                 run.get("source_state", ""), now))
             self._event(feature_id, "verification.recorded",
                         f"Verification batch recorded: {len(run['gates'])} suite(s)",
                         {"run_id": run_id, "tested_revision": run["revision"],
                          "observed_revision": run["observed_revision"], "status": run["status"],
+                         "source_state": run.get("source_state", ""),
                          "gate_set": [suite_label(gate["suite"]) for gate in run["gates"]]})
             projection = self._decode(self._db.execute(
                 "SELECT * FROM fm_verification_runs WHERE id=?", (run_id,)).fetchone())
@@ -1545,7 +1557,10 @@ class FirstMateStore:
             "feature_revision": assessment.get("feature_revision"),
             "assessed_revisions": assessment.get("assessed_revisions", {}),
             "source_revisions": assessment.get("source_revisions", []),
-            "gate_set": [{key: entry.get(key) for key in ("label", "outcome", "tested_revision", "run_id", "fresh")}
+            "tested_revisions": assessment.get("tested_revisions", assessment.get("source_revisions", [])),
+            "selected_run_ids": assessment.get("selected_run_ids", []),
+            "gate_set": [{key: entry.get(key) for key in
+                          ("key", "label", "workspace", "outcome", "tested_revision", "run_id", "fresh")}
                          for entry in assessment.get("gate_set", [])],
             "missing_suites": [item.get("label") for item in assessment.get("missing_suites", [])],
             "previously_green_missing": [item.get("label") for item in assessment.get("previously_green_missing", [])],
@@ -1589,18 +1604,29 @@ class FirstMateStore:
 
     @staticmethod
     def _coverage_note(assessment: Mapping[str, Any]) -> str:
-        """A deterministic human-readable warning; never a model claim."""
+        """A deterministic human-readable warning; never a model claim.
+
+        Every bounded list discloses the number of names it omitted so a long
+        gate set can never silently appear complete.
+        """
+        def named(items: list[str]) -> str:
+            shown = ", ".join(items[:8])
+            if len(items) > 8:
+                shown += f" and {len(items) - 8} more (complete list in the persisted assessment)"
+            return shown
+
         label = assessment.get("label") or assessment.get("status")
         missing = [item.get("label") for item in assessment.get("missing_suites", [])]
         prior = [item.get("label") for item in assessment.get("previously_green_missing", [])]
         failing = [item.get("label") for item in assessment.get("failing_suites", [])]
         parts = [f"Verification coverage: {label}."]
         if failing:
-            parts.append("Failing suites: " + ", ".join(failing[:8]) + ".")
+            parts.append(f"Failing suites ({len(failing)}): " + named(failing) + ".")
         if missing:
-            parts.append("Missing suites: " + ", ".join(missing[:8]) + ".")
+            parts.append(f"Missing suites ({len(missing)}): " + named(missing) + ".")
         if prior:
-            parts.append("Previously passing suites dropped from the gate set: " + ", ".join(prior[:8]) + ".")
+            parts.append(f"Previously passing suites dropped from the gate set ({len(prior)}): "
+                         + named(prior) + ".")
         return " ".join(parts)
 
     @staticmethod
@@ -1612,9 +1638,11 @@ class FirstMateStore:
 
     def complete_visit(self, visit_id: str, summary: str, recommendation: str, request_id: str,
                        *, native_session_id: str | None = None,
-                       verification: Mapping[str, Any] | None = None) -> dict:
+                       verification: Mapping[str, Any] | None = None,
+                       selection: list[str] | None = None) -> dict:
         payload = {"summary": _text(summary, "summary"), "recommendation": _text(recommendation, "recommendation", optional=True),
-                   "verification": self._stable_verification(verification)}
+                   "verification": self._stable_verification(verification),
+                   "selection": list(selection) if selection is not None else None}
         with self._transaction():
             cached = self._receipt(f"complete:{visit_id}", request_id, payload)
             if cached is not None:
@@ -1635,6 +1663,11 @@ class FirstMateStore:
                 message_metadata["verification"] = self.verification_message_projection(verification)
                 if verification.get("status") != "verified":
                     note = "\n\n" + self._coverage_note(verification)
+            if selection is not None:
+                # An explicit gate selection survives live reads, later informal
+                # parks, and restarts until a newer completion supersedes it.
+                self._db.execute("UPDATE fm_features SET verification_selection_json=? WHERE id=?",
+                                 (_json(list(selection)), feature["id"]))
             self._message(feature["id"], "assistant", summary + (f"\n\nSuggested next step: {recommendation}" if recommendation else "") + (f"\n\nContinuing with the previously authorized {visit['followup_stages'][0]} stage." if continuing else "\n\nAwaiting your direction.") + note, status="done", metadata=message_metadata,
                           source={"source_kind": "checkpoint", "in_reply_to": None,
                                   "visit_id": visit_id, "feature_revision": visit["revision"],
@@ -1711,11 +1744,13 @@ class FirstMateStore:
             return self._save_receipt(f"coordinator_rotation:{feature_id}", request_id, payload, self._one("fm_features", feature_id))
 
     def feature_action(self, feature_id: str, action: str, request_id: str, expected_revision: int | None = None,
-                       *, verification: Mapping[str, Any] | None = None) -> dict:
+                       *, verification: Mapping[str, Any] | None = None,
+                       selection: list[str] | None = None) -> dict:
         if action not in {"pause", "resume", "cancel", "complete"}:
             raise FirstMateError("Unsupported feature action", code="invalid_request", status=400)
         payload = {"action": action, "expected_revision": expected_revision,
-                   "verification": self._stable_verification(verification)}
+                   "verification": self._stable_verification(verification),
+                   "selection": list(selection) if selection is not None else None}
         with self._transaction():
             cached = self._receipt(f"action:{feature_id}", request_id, payload)
             if cached is not None:
@@ -1763,6 +1798,9 @@ class FirstMateStore:
                 # never upgrades partial evidence to verified.
                 self._save_verification_assessment(feature_id, verification, message_id=None)
                 event_payload["verification"] = verification
+            if action == "complete" and selection is not None:
+                self._db.execute("UPDATE fm_features SET verification_selection_json=? WHERE id=?",
+                                 (_json(list(selection)), feature_id))
             self._event(feature_id, f"feature.{action}", f"Feature {status}", event_payload)
             return self._save_receipt(f"action:{feature_id}", request_id, payload, self._one("fm_features", feature_id))
 

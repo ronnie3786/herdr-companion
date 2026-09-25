@@ -311,7 +311,8 @@ final class FirstMateStore {
                 incoming: feature.verification,
                 includesField: feature.includesVerification,
                 cached: existing.feature.verification,
-                incomingIsStale: hasStaleIdentityMetadata
+                incomingIsStale: hasStaleIdentityMetadata,
+                authoritative: false
             )
             feature.includesVerification = feature.includesVerification || existing.feature.includesVerification
             if hasStaleIdentityMetadata {
@@ -349,7 +350,8 @@ final class FirstMateStore {
                     incomingIsStale: Self.isStrictlyOlderTimestamp(
                         incoming.feature.updatedAt,
                         than: existing.feature.updatedAt
-                    )
+                    ),
+                    authoritative: true
                 )
                 incoming.feature.includesVerification = incoming.feature.includesVerification
                     || existing.feature.includesVerification
@@ -424,7 +426,8 @@ final class FirstMateStore {
                     incoming: refreshed.verification,
                     includesField: refreshed.includesVerification,
                     cached: cached.verification,
-                    incomingIsStale: Self.isStrictlyOlderTimestamp(refreshed.updatedAt, than: cached.updatedAt)
+                    incomingIsStale: Self.isStrictlyOlderTimestamp(refreshed.updatedAt, than: cached.updatedAt),
+                    authoritative: true
                 )
                 refreshed.includesVerification = refreshed.includesVerification || cached.includesVerification
                 return refreshed
@@ -1374,8 +1377,13 @@ final class FirstMateStore {
     /// Conservative verification merge for partial acknowledgements and
     /// delayed full snapshots.
     ///
-    /// - An omitted field (older companion) inherits the cached assessment.
-    /// - An explicit empty assessment never erases retained evidence.
+    /// - A partial acknowledgement (mutation response) that omits the field
+    ///   inherits the cached assessment.
+    /// - An authoritative full snapshot that omits, nulls, or malforms the
+    ///   field reports unavailable evidence: the cached verdict is downgraded
+    ///   so an old green never remains current.
+    /// - An explicit empty assessment never erases retained evidence for a
+    ///   partial acknowledgement.
     /// - A strictly older feature timestamp keeps the cached assessment.
     /// - Otherwise the assessment with the newer feature revision and
     ///   computation timestamp wins, so a delayed verified response cannot
@@ -1384,12 +1392,26 @@ final class FirstMateStore {
         incoming: FirstMateVerification?,
         includesField: Bool,
         cached: FirstMateVerification?,
-        incomingIsStale: Bool
+        incomingIsStale: Bool,
+        authoritative: Bool
     ) -> FirstMateVerification? {
+        if incomingIsStale { return cached }
         guard let cached else { return includesField ? incoming : nil }
-        guard includesField, let incoming else { return cached }
-        guard !incomingIsStale else { return cached }
+        guard includesField, let incoming else {
+            // An omitted or malformed field is evidence of absence only in an
+            // authoritative full snapshot; a mutation acknowledgement merely
+            // did not carry the assessment.
+            return authoritative ? Self.unavailableVerification() : cached
+        }
         return incoming.isAtLeastAsFresh(as: cached) ? incoming : cached
+    }
+
+    private static func unavailableVerification() -> FirstMateVerification {
+        FirstMateVerification(
+            status: .unavailable,
+            coverageReasons: ["The companion did not report structured suite evidence for this feature."],
+            evidencePresent: true
+        )
     }
 
     private func resetSessionPagination() {

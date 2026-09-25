@@ -65,8 +65,8 @@ struct FirstMateVerificationSummaryView: View {
                     .textSelection(.enabled)
                     .accessibilityLabel(presentation.testedRevisionAccessibilityText ?? tested)
             }
-            if presentation.isVerified && presentation.testedRevisions.isEmpty {
-                Label("This verified assessment did not report a tested revision.", systemImage: "exclamationmark.triangle")
+            if presentation.statusWasDowngraded {
+                Label("This companion reported Verified without a complete gate set and tested revision; it is not treated as verified.", systemImage: "exclamationmark.triangle")
                     .font(.footnote)
                     .foregroundStyle(FirstMateVerificationPalette.color(for: .caution, scheme: scheme))
                     .fixedSize(horizontal: false, vertical: true)

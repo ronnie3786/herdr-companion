@@ -104,26 +104,28 @@
   function verificationPanel(verification, lastReported=false) {
     const value=verification&&typeof verification==='object'?verification:null;
     const status=typeof value?.status==='string'?value.status.trim():'';
-    const tone=verificationTone(status);
     const reasons=(Array.isArray(value?.coverage_reasons)?value.coverage_reasons:[]).filter(text=>typeof text==='string'&&text.trim());
     const gateSet=verificationSuiteList(value?.gate_set);
     const missing=verificationSuiteList(value?.missing_suites);
     const dropped=verificationSuiteList(value?.previously_green_missing);
     const failing=verificationSuiteList(value?.failing_suites);
     const stale=(Array.isArray(value?.stale_evidence)?value.stale_evidence:[]).filter(item=>item&&typeof item==='object');
-    const assessed=value?.assessed_revisions&&typeof value.assessed_revisions==='object'?Object.values(value.assessed_revisions):[];
     const revisions=[...new Set([
       ...(Array.isArray(value?.source_revisions)?value.source_revisions:[]),
       ...(Array.isArray(value?.gate_set)?value.gate_set:[]).map(entry=>entry?.tested_revision),
-      ...assessed,
     ].filter(text=>typeof text==='string'&&text.trim()))];
+    // A verified verdict must ship its exact gate set and tested revision.
+    // Structurally incomplete payloads degrade to unavailable, never green.
+    const downgraded=status==='verified'&&(gateSet.length===0||revisions.length===0);
+    const effectiveStatus=downgraded?'unavailable':status;
+    const tone=verificationTone(effectiveStatus);
     const hasEvidence=!!value&&(value.evidence_present===true||gateSet.length||missing.length||dropped.length||failing.length||stale.length||reasons.length||revisions.length);
     const revisionText=revisions.length?`<p>Tested revision${revisions.length===1?'':'s'} ${revisions.map(revision=>`<code>${escape(shortRevision(revision))}</code>`).join(' ')}</p>`:'';
-    const missingRevision=tone==='verified'&&!revisions.length?'<p class="verification-warning">⚠ This verified assessment did not report a tested revision.</p>':'';
+    const downgradeWarning=downgraded?'<p class="verification-warning">⚠ The companion reported Verified without the required gate set and tested revision; it is not treated as verified.</p>':'';
     const unknown=status&&!['verified','partially_verified','failed','unavailable'].includes(status)?'<p class="verification-warning">⚠ This companion reported an unrecognized verification status; it is not treated as verified.</p>':'';
     const staleHtml=stale.length?`<div class="verification-section"><h3>Stale evidence</h3><ul>${stale.map(item=>`<li><span>${escape(shortRevision(item.tested_revision)||'unknown revision')}</span><small>${escape(item.reason||'no longer current')}</small></li>`).join('')}</ul></div>`:'';
     const evidence=hasEvidence?`${reasons.length?`<div class="verification-section"><h3>Coverage</h3><ul>${reasons.map(reason=>`<li><span>${escape(reason)}</span></li>`).join('')}</ul></div>`:''}${verificationSection(`Gate set (${gateSet.length})`,gateSet)}${verificationSection(`Missing suites (${missing.length})`,missing)}${verificationSection(`Previously passing suites dropped from the gate set (${dropped.length})`,dropped)}${verificationSection(`Failing suites (${failing.length})`,failing)}${staleHtml}`:'<p class="verification-warning">No structured suite evidence is reported. A green workflow status cannot be tied to a gate set until the companion reports one.</p>';
-    return `<section class="verification-panel ${tone}" aria-label="Verification"><div class="verification-heading"><h2>Verification</h2>${lastReported?'<span class="verification-last-reported">Last reported</span>':''}</div><p class="verification-status"><span class="verification-dot" aria-hidden="true"></span><strong>${escape(verificationStatusLabel(status))}</strong></p><p class="verification-note">This evidence is separate from the feature's workflow status.</p>${revisionText}${missingRevision}${lastReported?'<p class="verification-warning">⚠ Showing the last reported evidence. The companion connection is unavailable, so newer runs may not appear here.</p>':''}${unknown}${evidence}</section>`;
+    return `<section class="verification-panel ${tone}" aria-label="Verification"><div class="verification-heading"><h2>Verification</h2>${lastReported?'<span class="verification-last-reported">Last reported</span>':''}</div><p class="verification-status"><span class="verification-dot" aria-hidden="true"></span><strong>${escape(verificationStatusLabel(effectiveStatus))}</strong></p><p class="verification-note">This evidence is separate from the feature's workflow status.</p>${revisionText}${downgradeWarning}${lastReported?'<p class="verification-warning">⚠ Showing the last reported evidence. The companion connection is unavailable, so newer runs may not appear here.</p>':''}${unknown}${evidence}</section>`;
   }
   const sessionKind = session => session?.kind==='advisor'?'Advisor':session?.kind==='coordinator'||(!session?.kind&&session?.role==='first_mate')?'First Mate coordinator':'Worker';
   const selectionText = (selection, full=false) => {

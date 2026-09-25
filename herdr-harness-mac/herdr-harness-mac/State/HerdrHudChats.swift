@@ -123,15 +123,32 @@ final class HerdrHudChats {
         if session === composer {
             chats.insert(Chat(id: composerID, title: Self.title(for: session), session: session), at: 0)
             own(session)
-            let machineID = session.selectedMachineID
-            composerID = UUID().uuidString
-            composer = prototype.makeIndependentSession(id: composerID)
-            composer.selectedMachineID = machineID
-            composer.resetWorkingFolderForNewChat()
-            persistIndex()
+            prepareNextComposer()
         }
         session.isCollapsed = true
         if displayedSession === session { selectedID = nil }
+    }
+
+    /// A checked workspace launch has no local chat bubble: the pane is the
+    /// conversation, represented by the ordinary workspace-agent chips. The
+    /// composer still moves on to the next independent local/default draft.
+    func workspaceLaunchCompleted(_ session: HerdrHudSession) {
+        if session === composer { prepareNextComposer() }
+        session.isCollapsed = true
+        if displayedSession === session { selectedID = nil }
+    }
+
+    /// Gives the fresh composer this Mac's identity before it renders or loads
+    /// a catalog. An explicit choice made in the composer is never replaced.
+    func applyFreshComposerDefaults(model: HerdrAppModel) {
+        composer.applyLocalMachineDefaultIfNeeded(in: model)
+    }
+
+    private func prepareNextComposer() {
+        composerID = UUID().uuidString
+        composer = prototype.makeIndependentSession(id: composerID)
+        composer.resetForNewChat()
+        persistIndex()
     }
 
     /// Registers the identity seam once for every session this collection

@@ -133,6 +133,45 @@ struct HerdrHudControllerTests {
         #expect(harness.notes.isHudExpanded)
     }
 
+    @Test("Finishing or discarding a workspace recovery prepares the next local composer")
+    func workspaceRecoveryFinishPreparesNextComposer() throws {
+        let harness = makeHarness()
+        defer { harness.controller.setEnabled(false) }
+        let chats = try #require(harness.controller.chats)
+        let session = chats.composer
+        let receipt = HerdrHudWorkspaceLaunchReceipt(
+            requestID: "launch-1",
+            fingerprint: "synthetic-fingerprint",
+            machineID: "demo1",
+            endpoint: "http://localhost:9092",
+            workspaceID: "w-main",
+            tabID: "w-main:t1",
+            paneID: "w-main:p1",
+            phase: .sending,
+            createdAt: .now
+        )
+        session.setWorkspaceLaunchStateForTesting(.needsRecovery(message: "unconfirmed", receipt: receipt))
+        session.draft = "Recover me"
+
+        harness.controller.finishWorkspaceLaunch(session, openExistingChat: false, model: harness.model)
+
+        #expect(chats.composer !== session)
+        #expect(session.workspaceLaunchState == .idle)
+        #expect(chats.composer.isNewChat)
+        // The next fresh composer starts on this Mac's demo machine again.
+        #expect(chats.composer.selectedMachineID == "demo1")
+
+        let discarded = chats.composer
+        discarded.setWorkspaceLaunchStateForTesting(.needsRecovery(message: "unconfirmed", receipt: nil))
+        discarded.draft = "Discard me"
+        harness.controller.discardWorkspaceLaunch(discarded, model: harness.model)
+
+        #expect(chats.composer !== discarded)
+        #expect(discarded.draft.isEmpty)
+        #expect(discarded.workspaceLaunchState == .idle)
+        #expect(chats.composer.selectedMachineID == "demo1")
+    }
+
     @Test("Focused-window capture stages a retained PNG in New chat without sending or replacing its draft")
     func focusedWindowCaptureTargetsNewComposer() async throws {
         let source = temporaryURL(named: "focused-window.png")

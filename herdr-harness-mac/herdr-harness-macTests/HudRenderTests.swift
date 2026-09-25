@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import Testing
+import Vision
 @testable import herdr_harness_mac
 
 @Suite("Herdr HUD renders", .serialized)
@@ -417,6 +418,139 @@ struct HudRenderTests {
         }
 
         result.expectSubstantial(minimumBytes: 1024)
+    }
+
+    @Test("A fresh composer renders the main-workspace checkbox and picker at large text")
+    func rendersFreshComposerMainWorkspaceToggle() async throws {
+        let model = HerdrRenderFixtures.demoModel()
+        let session = HerdrHudSession(
+            userDefaults: makeDefaults(),
+            persistenceURL: temporaryPersistenceURL()
+        )
+        session.applyLocalMachineDefaultIfNeeded(in: model)
+        let workspace = HerdrWorkspace(
+            workspaceID: "w-main",
+            number: 1,
+            label: "Main workspace",
+            focused: false,
+            paneCount: 1,
+            tabCount: 1,
+            activeTabID: "w-main:t1",
+            agentStatus: .idle
+        )
+        session.seedMainWorkspacesForTesting([workspace])
+        #expect(session.selectMainWorkspace(workspace, in: model))
+        session.createsInMainWorkspace = true
+        session.draft = "Draft the release note"
+
+        let result = try await HerdrRenderHarness.render(
+            "30-hud-main-workspace-composer-xxxlarge.png",
+            size: CGSize(width: 480, height: 320),
+            settlePasses: 12
+        ) {
+            HerdrHudComposerView(model: model, controller: HerdrHudController(), session: session)
+                .environment(\.herdrFontScale, .xxxLarge)
+        }
+
+        result.expectSubstantial(minimumBytes: 2_000)
+        let text = try recognizedText(at: result.url).lowercased()
+        #expect(session.isNewChat)
+        #expect(text.contains("create in main workspace"))
+        #expect(text.contains("main workspace"))
+    }
+
+    @Test("An existing conversation composer omits the checkbox even when its flag was left set")
+    func rendersExistingComposerWithoutWorkspaceToggle() async throws {
+        let model = HerdrRenderFixtures.demoModel()
+        let session = HerdrHudSession(
+            userDefaults: makeDefaults(),
+            persistenceURL: temporaryPersistenceURL()
+        )
+        session.seedExchangesForTesting([
+            HerdrHudExchange(
+                id: "hud-existing-turn",
+                machineID: "demo1",
+                prompt: "Existing conversation",
+                sentPrompt: "Existing conversation",
+                response: "Already answered.",
+                error: nil,
+                status: .completed,
+                costUSD: nil,
+                createdAt: .now,
+                promotedPaneID: nil,
+                attachmentFilenames: []
+            ),
+        ])
+        session.createsInMainWorkspace = true
+
+        let result = try await HerdrRenderHarness.render(
+            "31-hud-existing-composer.png",
+            size: CGSize(width: 480, height: 320),
+            settlePasses: 12
+        ) {
+            HerdrHudComposerView(model: model, controller: HerdrHudController(), session: session)
+                .environment(\.herdrFontScale, .xxxLarge)
+        }
+
+        result.expectSubstantial(minimumBytes: 2_000)
+        let text = try recognizedText(at: result.url).lowercased()
+        #expect(!session.isNewChat)
+        #expect(!text.contains("create in main workspace"))
+    }
+
+    @Test("A workspace recovery composer renders Open chat and Keep draft")
+    func rendersWorkspaceLaunchRecovery() async throws {
+        let model = HerdrRenderFixtures.demoModel()
+        let session = HerdrHudSession(
+            userDefaults: makeDefaults(),
+            persistenceURL: temporaryPersistenceURL()
+        )
+        session.applyLocalMachineDefaultIfNeeded(in: model)
+        let receipt = HerdrHudWorkspaceLaunchReceipt(
+            requestID: "launch-1",
+            fingerprint: "synthetic-fingerprint",
+            machineID: "demo1",
+            endpoint: "http://localhost:9092",
+            workspaceID: "w-main",
+            tabID: "w-main:t1",
+            paneID: "w-main:p1",
+            phase: .sending,
+            createdAt: .now
+        )
+        session.createsInMainWorkspace = true
+        session.draft = "Recover this draft"
+        session.setWorkspaceLaunchStateForTesting(
+            .needsRecovery(
+                message: "A chat was created in the main workspace, but Herdr couldn't confirm its first message was sent.",
+                receipt: receipt
+            )
+        )
+
+        let result = try await HerdrRenderHarness.render(
+            "32-hud-workspace-recovery.png",
+            size: CGSize(width: 520, height: 360),
+            settlePasses: 12
+        ) {
+            HerdrHudComposerView(model: model, controller: HerdrHudController(), session: session)
+                .environment(\.herdrFontScale, .large)
+        }
+
+        result.expectSubstantial(minimumBytes: 2_000)
+        let text = try recognizedText(at: result.url).lowercased()
+        #expect(text.contains("open chat"))
+        #expect(text.contains("keep draft"))
+        #expect(session.workspaceLaunchPaneIDForOpening() == "demo1|w-main:p1")
+    }
+
+    private func recognizedText(at url: URL) throws -> String {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = ["en-US"]
+        request.minimumTextHeight = 0.005
+        try HerdrOCR.perform(request, url: url)
+        return (request.results ?? [])
+            .compactMap { $0.topCandidates(1).first?.string }
+            .joined(separator: " ")
     }
 
     private func makeDefaults() -> UserDefaults {

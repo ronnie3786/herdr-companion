@@ -90,6 +90,9 @@ struct HerdrHudCardView: View {
             )
         }
         .task(id: session.selectedMachineID) {
+            // A fresh composer resolves this Mac before rendering its machine
+            // or loading a catalog. An explicit choice is never replaced.
+            session.applyLocalMachineDefaultIfNeeded(in: model)
             if session.needsHistoryRefresh { await session.refreshSavedHistory(model: model) }
             updateResponseAudioAvailability()
             session.responseAudioPlayer.stop()

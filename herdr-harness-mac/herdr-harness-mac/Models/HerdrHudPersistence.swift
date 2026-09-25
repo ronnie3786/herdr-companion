@@ -1,5 +1,32 @@
 import Foundation
 
+/// The model choice a new-scheme HUD session owns, shaped for persistence.
+/// Optional in a snapshot so version-1 caches written before this behavior
+/// still decode; an absent value marks a legacy conversation that keeps
+/// following the shared HUD preference.
+enum HerdrHudPersistedModelChoice: Codable, Equatable, Sendable {
+    case machineDefault
+    case explicit(provider: String, id: String)
+
+    init(_ choice: HerdrHudModelChoice) {
+        switch choice {
+        case .machineDefault:
+            self = .machineDefault
+        case let .explicit(identity):
+            self = .explicit(provider: identity.provider, id: identity.id)
+        }
+    }
+
+    var choice: HerdrHudModelChoice {
+        switch self {
+        case .machineDefault:
+            return .machineDefault
+        case let .explicit(provider, id):
+            return .explicit(PiModelIdentity(provider: provider, id: id, name: nil))
+        }
+    }
+}
+
 struct HerdrHudPersistenceSnapshot: Codable, Equatable, Sendable {
     static let currentVersion = 1
     static let maximumExchangeCount = 10
@@ -15,6 +42,9 @@ struct HerdrHudPersistenceSnapshot: Codable, Equatable, Sendable {
     /// capped transcript and stays optional so version-1 caches written
     /// before it still decode.
     let chatMetadata: HerdrHudChatMetadataAccumulator?
+    /// Optional new-chat model ownership. Absent means the session predates
+    /// this behavior and continues to follow the shared legacy preference.
+    let modelChoice: HerdrHudPersistedModelChoice?
 
     init(
         version: Int = HerdrHudPersistenceSnapshot.currentVersion,
@@ -22,12 +52,14 @@ struct HerdrHudPersistenceSnapshot: Codable, Equatable, Sendable {
         exchanges: [HerdrHudExchange],
         hasUnseenAnswer: Bool = false,
         historyRootRunID: String? = nil,
-        chatMetadata: HerdrHudChatMetadataAccumulator? = nil
+        chatMetadata: HerdrHudChatMetadataAccumulator? = nil,
+        modelChoice: HerdrHudPersistedModelChoice? = nil
     ) {
         self.version = version
         self.hasUnseenAnswer = hasUnseenAnswer
         self.historyRootRunID = historyRootRunID
         self.chatMetadata = chatMetadata
+        self.modelChoice = modelChoice
         self.thread = thread
         self.exchanges = exchanges.suffix(Self.maximumExchangeCount).map(PersistedExchange.init)
     }

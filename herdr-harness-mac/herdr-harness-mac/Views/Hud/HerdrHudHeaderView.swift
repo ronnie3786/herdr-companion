@@ -15,7 +15,7 @@ struct HerdrHudHeaderView: View {
                 .herdrFont(.caption, weight: .semibold)
                 .foregroundStyle(HerdrTheme.text)
 
-            if model.machines.count > 1, let selectedMachine {
+            if !model.machines.isEmpty {
                 machineMenu(selectedMachine)
                     .disabled(session.isLoadingHistory || !session.exchanges.isEmpty || session.isRunning)
             }
@@ -79,13 +79,13 @@ struct HerdrHudHeaderView: View {
     }
 
     @ViewBuilder
-    private func machineMenu(_ selectedMachine: HerdrMachine) -> some View {
+    private func machineMenu(_ selectedMachine: HerdrMachine?) -> some View {
         Menu {
             ForEach(model.machines) { machine in
                 Button {
                     session.selectedMachineID = machine.id
                 } label: {
-                    if machine.id == selectedMachine.id {
+                    if machine.id == selectedMachine?.id {
                         Label(machine.name, systemImage: "checkmark")
                     } else {
                         Text(machine.name)
@@ -94,27 +94,26 @@ struct HerdrHudHeaderView: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Text(selectedMachine.name)
+                Text(selectedMachine?.name ?? "Choose machine")
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
                     .herdrFont(.caption2, weight: .bold)
             }
             .herdrFont(.caption)
-            .foregroundStyle(HerdrTheme.mist)
+            .foregroundStyle(selectedMachine == nil ? HerdrTheme.alert : HerdrTheme.mist)
             .frame(minHeight: HerdrTheme.minHitTarget)
             .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
-        .accessibilityLabel("HUD machine: \(selectedMachine.name)")
+        .accessibilityLabel(selectedMachine.map { "HUD machine: \($0.name)" } ?? "HUD machine: choose a machine")
+        .accessibilityIdentifier("hud-machine-picker")
     }
 
+    /// Never falls back to roster order: an unidentified fresh composer asks
+    /// for an explicit machine, while an existing conversation resolves its
+    /// own machine from its durable identity.
     private var selectedMachine: HerdrMachine? {
-        if let selectedMachineID = session.selectedMachineID,
-           let selected = model.machines.first(where: { $0.id == selectedMachineID }) {
-            selected
-        } else {
-            model.machines.first
-        }
+        session.selectedMachine(in: model)
     }
 
     private func startNewChat() {

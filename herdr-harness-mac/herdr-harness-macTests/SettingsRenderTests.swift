@@ -334,6 +334,20 @@ struct SettingsRenderTests {
         }
     }
 
+    @Test("Settings labels the saved HUD model as legacy rather than the new-chat default")
+    func rendersLegacyHudModelCopy() async throws {
+        let render = try await renderAgentsPane(
+            named: "settings-legacy-hud-model.png",
+            configure: { _ in }
+        )
+        render.result.expectSubstantial()
+        let text = try recognizedText(render).lowercased()
+        #expect(text.contains("legacy hud model"))
+        #expect(text.contains("machine default"))
+        #expect(text.contains("same as legacy hud model"))
+        #expect(!text.contains("same as hud model"))
+    }
+
     private struct AgentsPaneRender {
         let result: HerdrRenderHarness.RenderResult
         let settings: AgentModelSettingsStore

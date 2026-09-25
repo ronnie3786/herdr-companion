@@ -7,6 +7,9 @@ struct HerdrHudModelChip: View {
     let isLoading: Bool
     let errorMessage: String?
     let favorites: ModelFavoritesStore
+    /// What the automatic choice is called for this composer. New chats show
+    /// "Machine default"; existing conversations keep the legacy wording.
+    var defaultChoiceTitle: String = "Default"
     let selectModel: (PiAvailableModel?) -> Void
     let retry: () -> Void
 
@@ -42,12 +45,12 @@ struct HerdrHudModelChip: View {
     }
 
     private var defaultMenuTitle: String {
-        guard let defaultModel else { return "Default" }
-        return "Default: \(defaultModel.displayName)"
+        guard let defaultModel else { return defaultChoiceTitle }
+        return "\(defaultChoiceTitle): \(defaultModel.displayName)"
     }
 
     private var selectedDisplayName: String {
-        guard let currentSelectionID else { return "Default" }
+        guard let currentSelectionID else { return defaultChoiceTitle }
         return availableModels.first(where: { $0.id == currentSelectionID })?.displayName ?? PiModelDisplayName.short(fullID: currentSelectionID)
     }
 

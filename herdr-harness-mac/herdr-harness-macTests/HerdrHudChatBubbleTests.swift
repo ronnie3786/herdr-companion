@@ -657,6 +657,12 @@ private final class RunningChatURLProtocol: URLProtocol, @unchecked Sendable {
             if path.hasSuffix("/capabilities") {
                 response["profiles"] = ["hud-chat-v1"]
                 response["hudChatWorkingDirectory"] = true
+            } else if path == "/api/v1/agent-runs/models" {
+                // A fresh composer pins the execution companion's declared
+                // default before dispatch, so the synthetic companion must
+                // declare the same model its run reports.
+                response["models"] = [["provider": "synthetic", "id": "fixture7", "name": "Fixture7", "reasoning": true]]
+                response["default"] = ["provider": "synthetic", "id": "fixture7", "name": "Fixture7"]
             } else if path.hasSuffix("/cancel") {
                 state.status = "cancelled"
                 response["run"] = Self.run(state)

@@ -299,7 +299,7 @@ struct FirstMateChatView: View {
             } action: { _, nearBottom in
                 followsLatest = nearBottom
             }
-            .onChange(of: snapshot.messages.last?.id) { _, _ in
+            .onChange(of: snapshot.messages.last(where: \.isConversation)?.id) { _, _ in
                 if followsLatest { proxy.scrollTo("first-mate-chat-end", anchor: .bottom) }
             }
             .onChange(of: snapshot.feature.id) { followsLatest = true }

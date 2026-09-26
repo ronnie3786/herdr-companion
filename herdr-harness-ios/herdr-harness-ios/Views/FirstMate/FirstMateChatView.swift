@@ -35,7 +35,7 @@ struct FirstMateChatView: View {
                 .onScrollGeometryChange(for: Bool.self) { geometry in
                     geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 70
                 } action: { _, nearBottom in followsLatest = nearBottom }
-                .onChange(of: snapshot.messages.last?.id) { _, _ in
+                .onChange(of: messages.last?.id) { _, _ in
                     if followsLatest { proxy.scrollTo("first-mate-chat-end", anchor: .bottom) }
                 }
                 .accessibilityIdentifier("first-mate-conversation")

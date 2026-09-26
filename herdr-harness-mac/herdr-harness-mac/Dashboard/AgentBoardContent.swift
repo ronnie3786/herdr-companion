@@ -170,29 +170,13 @@ extension AgentBoardContent {
         )
     }
 
-    /// Only milestones a person would want to see in the journal. Session,
-    /// handoff, and execution bookkeeping repeats on every turn and says nothing
-    /// new; message records repeat the conversation itself.
+    /// Only journal milestones (see `FirstMateEvent.isMilestone`).
     private static func note(_ event: FirstMateEvent) -> NoteRow? {
         let summary = event.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !summary.isEmpty, isMilestone(event.type) else { return nil }
+        guard !summary.isEmpty, event.isMilestone else { return nil }
         return NoteRow(id: event.id, text: AgentBoardProse.plainText(fromMarkdown: summary), count: 1,
                        date: HerdrTimestamp.date(from: event.createdAt))
     }
-
-    static func isMilestone(_ type: String) -> Bool {
-        // Demo mode's synthetic journal uses its own `demo.` types.
-        type.hasPrefix("visit.") || type.hasPrefix("demo.") || milestoneEventTypes.contains(type)
-    }
-
-    static let milestoneEventTypes: Set<String> = [
-        "feature.created", "feature.revised", "feature.revised_selectively", "feature.pause", "feature.resume",
-        "feature.archived", "feature.unarchived", "revision.reason",
-        "assignment.queued", "assignment.outcome", "assignment.progress", "assignment.steered",
-        "assignment.waiting_children", "assignment.recovery_exhausted",
-        "advisor.assessment", "reliability.blocked", "reliability.restarted", "runtime.error",
-        "coordinator.note",
-    ]
 
     private static func collapse(_ notes: [NoteRow]) -> [NoteRow] {
         var result: [NoteRow] = []

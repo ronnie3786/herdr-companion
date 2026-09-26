@@ -9,6 +9,12 @@ struct FirstMateOverviewView: View {
         snapshot.currentVisit.map { snapshot.agents(for: $0.id) } ?? []
     }
 
+    /// The same journal milestones as Mac Overview, including First Mate's
+    /// private notes from background work; bookkeeping stays in the activity log.
+    private var latestMilestones: [FirstMateEvent] {
+        Array(snapshot.events.filter(\.isMilestone).sorted { $0.sequence > $1.sequence }.prefix(3))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             VStack(alignment: .leading, spacing: 12) {
@@ -78,10 +84,10 @@ struct FirstMateOverviewView: View {
 
             VStack(alignment: .leading, spacing: 14) {
                 Text("Latest in the journal").font(.headline).accessibilityAddTraits(.isHeader)
-                ForEach(Array(snapshot.events.sorted { $0.sequence > $1.sequence }.prefix(3))) { event in
+                ForEach(latestMilestones) { event in
                     FirstMateJournalRow(event: event)
                 }
-                if snapshot.events.isEmpty {
+                if latestMilestones.isEmpty {
                     Text("Decisions and progress will appear here as the feature moves forward.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)

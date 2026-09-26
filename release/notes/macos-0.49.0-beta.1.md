@@ -16,6 +16,13 @@ needs you.
 - First Mate's private notes from background work appear in
   **Overview → Journal**.
 
+## iOS source included
+
+The iPhone and iPad First Mate conversation uses the same rule: its chat shows
+the conversation only, and Overview's journal shows workflow milestones and First
+Mate's notes. The change is merged and tested in this source revision; this Mac
+update does not install an iOS build.
+
 ## Compatibility and installation
 
 Install this preview through **Herdr Companion → Check for Updates…**, with

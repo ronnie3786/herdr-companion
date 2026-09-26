@@ -1,6 +1,9 @@
 import AppKit
 import SwiftUI
 
+/// MonoCode's code block: a 36pt header (language label, copy icon), a hairline,
+/// then 12/20 monospaced code beside a fixed line-number gutter, all in an
+/// ink 6% box with a 10% outline and 10pt corners.
 struct PiCodeBlockView: View {
     let language: String?
     let code: String
@@ -12,13 +15,18 @@ struct PiCodeBlockView: View {
     @State private var copied = false
     @Environment(\.saveChatQuote) private var saveQuote
     @Environment(\.herdrFontScale) private var fontScale
+    @Environment(\.chatProsePalette) private var palette
+
+    private static let codeSize: CGFloat = 12
+    private static let numberSize: CGFloat = 10
+    private static let lineHeight: CGFloat = 20
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 Text((language ?? "code").lowercased())
-                    .herdrFont(.caption, weight: .medium)
-                    .foregroundStyle(HerdrTheme.mist)
+                    .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
+                    .foregroundStyle(palette.secondaryText)
                 Spacer()
                 Button {
                     copyCode()
@@ -28,56 +36,90 @@ struct PiCodeBlockView: View {
                         copied = false
                     }
                 } label: {
-                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-                        .herdrHitTarget(minWidth: 0)
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .herdrFont(size: 13)
+                        .foregroundStyle(copied ? HerdrTheme.success : HerdrTheme.iconTint)
+                        .herdrCompactHitTarget(visual: HerdrTheme.ControlHeight.small)
                 }
-                .herdrFont(.caption)
-                .foregroundStyle(copied ? HerdrTheme.success : HerdrTheme.mist)
                 .buttonStyle(.plain)
-                // Was hidden until hover, which made it read as missing. It now
-                // rests at a low opacity — which also drops one tracking area
-                // per code block from the timeline.
-                .opacity(copied ? 1 : 0.8)
                 .animation(PiChatChrome.hoverAnimation, value: copied)
+                .help(copied ? "Copied" : "Copy code")
                 .accessibilityLabel(copied ? "Code copied" : "Copy code")
                 .accessibilityIdentifier("pi-code-copy-\(ownerID)-\(blockID)")
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(HerdrTheme.elevated)
+            .padding(.leading, 10)
+            .padding(.trailing, 4)
+            .frame(minHeight: HerdrTheme.ControlHeight.bar)
 
             Rectangle()
-                .fill(HerdrTheme.separator)
+                .fill(palette.blockOutline)
                 .frame(height: 1)
 
-            ScrollView(.horizontal) {
-                Group {
-                    if saveQuote != nil {
-                        ChatSelectableText(text: AttributedString(code), font: .system(size: 14 * fontScale.rawValue, design: .monospaced), lineSpacing: 4)
+            HStack(alignment: .top, spacing: 8) {
+                lineNumbers
+                ScrollView(.horizontal) {
+                    Group {
+                        if saveQuote != nil {
+                            ChatSelectableText(
+                                text: AttributedString(code),
+                                font: .system(size: Self.codeSize * fontScale.rawValue, design: .monospaced),
+                                lineSpacing: codeLineSpacing
+                            )
                             .frame(width: codeWidth)
-                    } else {
-                        Text(code)
-                            .herdrFont(size: 14, monospaced: true)
-                            .foregroundStyle(HerdrTheme.text)
-                            .textSelection(.enabled)
-                            .lineSpacing(4)
+                            .environment(\.chatProsePalette, codePalette)
+                        } else {
+                            Text(code)
+                                .herdrFont(size: Self.codeSize, monospaced: true)
+                                .foregroundStyle(palette.code)
+                                .textSelection(.enabled)
+                                .lineSpacing(codeLineSpacing)
+                        }
                     }
+                    .padding(.trailing, 8)
                 }
-                .padding(12)
+                .scrollIndicators(.visible)
             }
-            .scrollIndicators(.visible)
+            .padding(.vertical, 10)
         }
-        .background(HerdrTheme.ink, in: RoundedRectangle(cornerRadius: HerdrTheme.compactRadius))
-        .clipShape(RoundedRectangle(cornerRadius: HerdrTheme.compactRadius))
+        .background(palette.blockFill, in: RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay {
-            RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                .stroke(HerdrTheme.separator, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(palette.blockOutline, lineWidth: 1)
         }
-        .environment(\.chatProsePalette, .chat)
+    }
+
+    /// Fixed beside the scrolling code, so numbers stay put while long lines scroll.
+    private var lineNumbers: some View {
+        let count = max(1, code.components(separatedBy: .newlines).count)
+        return Text((1...count).map(String.init).joined(separator: "\n"))
+            .herdrFont(size: Self.numberSize, monospaced: true)
+            .foregroundStyle(palette.marker)
+            .multilineTextAlignment(.trailing)
+            .lineSpacing(numberLineSpacing)
+            .frame(width: 24 * fontScale.rawValue, alignment: .trailing)
+            // Baseline-align the smaller numbers with their 12pt code lines.
+            .padding(.top, 2 * fontScale.rawValue)
+            .accessibilityHidden(true)
+    }
+
+    /// Code reads in full ink, not prose ink.
+    private var codePalette: ChatProsePalette {
+        var code = palette
+        code.text = palette.code
+        return code
+    }
+
+    private var codeLineSpacing: CGFloat {
+        HerdrProse.lineSpacing(size: Self.codeSize, lineHeight: Self.lineHeight, scale: fontScale, monospaced: true)
+    }
+
+    private var numberLineSpacing: CGFloat {
+        HerdrProse.lineSpacing(size: Self.numberSize, lineHeight: Self.lineHeight, scale: fontScale, monospaced: true)
     }
 
     private var codeWidth: CGFloat {
-        let font = NSFont.monospacedSystemFont(ofSize: 14 * fontScale.rawValue, weight: .regular)
+        let font = NSFont.monospacedSystemFont(ofSize: Self.codeSize * fontScale.rawValue, weight: .regular)
         return max(120, code.components(separatedBy: .newlines).map { ($0 as NSString).size(withAttributes: [.font: font]).width }.max() ?? 120) + 2
     }
 

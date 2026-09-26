@@ -14,22 +14,26 @@ struct PiClosedSessionView: View {
                     isExpanded.toggle()
                 } label: {
                     Label(isExpanded ? "Previous chat" : "Show previous chat", systemImage: isExpanded ? "chevron.down" : "chevron.right")
-                        .herdrFont(.subheadline, weight: .semibold)
+                        .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
+                        .foregroundStyle(HerdrTheme.primaryText)
+                        .herdrHitTarget(minWidth: 0)
                 }.buttonStyle(.plain)
                 Spacer()
                 Text(session.closedAt, format: .dateTime.month(.abbreviated).day().hour().minute())
-                    .herdrFont(.caption).foregroundStyle(HerdrTheme.muted)
+                    .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText)
             }
             HStack(spacing: 8) {
-                Text(session.id).herdrFont(.caption2, monospaced: true).textSelection(.enabled)
+                Text(session.id).herdrFont(size: HerdrTheme.TextSize.caption, monospaced: true).textSelection(.enabled)
                 Button("Copy session ID", systemImage: "doc.on.doc") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(session.id, forType: .string)
-                }.labelStyle(.iconOnly).buttonStyle(.plain).help("Copy closed Pi session ID")
-            }.foregroundStyle(HerdrTheme.muted)
+                }
+                .buttonStyle(HerdrIconButtonStyle(visualSize: HerdrTheme.ControlHeight.small))
+                .help("Copy closed Pi session ID")
+            }.foregroundStyle(HerdrTheme.tertiaryText)
             if isExpanded {
                 if session.wasTruncated {
-                    Text("Pi had omitted older context from this transcript.").herdrFont(.caption).foregroundStyle(HerdrTheme.muted)
+                    Text("Pi had omitted older context from this transcript.").herdrFont(size: HerdrTheme.TextSize.small).foregroundStyle(HerdrTheme.tertiaryText)
                 }
                 if session.entries.count > visibleCount {
                     Button("Show earlier messages") { visibleCount += 80 }.buttonStyle(.plain)
@@ -50,19 +54,28 @@ struct PiClosedSessionView: View {
 private struct PiClosedSessionEntryView: View {
     let entry: PiClosedSession.Entry
     let sessionID: String
+    @State private var isExpanded = false
+
     var body: some View {
         if entry.role == "You" || entry.role == "Pi" {
             VStack(alignment: .leading, spacing: 6) {
-                Text(entry.role).herdrFont(.caption, weight: .semibold).foregroundStyle(HerdrTheme.muted)
+                Text(entry.role).herdrFont(size: HerdrTheme.TextSize.caption, weight: .semibold).foregroundStyle(HerdrTheme.tertiaryText)
                 PiMarkdownMessageView(source: entry.text, isStreaming: false, id: "closed-\(sessionID)-\(entry.id)", detectsPaneLinks: entry.role == "Pi")
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(entry.role == "You" ? HerdrTheme.elevated : .clear, in: .rect(cornerRadius: 10))
+            .background(entry.role == "You" ? HerdrTheme.selectedFill : .clear, in: .rect(cornerRadius: HerdrTheme.Radius.card))
         } else {
-            DisclosureGroup(entry.role) {
+            // A plain disclosure card: up to 36 of these can mount at once,
+            // and `DisclosureGroup` is too expensive in the transcript.
+            PiDisclosureCard(isExpanded: $isExpanded, chevronColor: HerdrTheme.iconTint) {
                 PiMarkdownMessageView(source: entry.text, isStreaming: false, id: "closed-\(sessionID)-\(entry.id)", detectsPaneLinks: false)
-            }.herdrFont(.caption).foregroundStyle(HerdrTheme.muted)
+                    .padding(.top, 4)
+            } label: {
+                Text(entry.role)
+                    .herdrFont(size: HerdrTheme.TextSize.small)
+                    .foregroundStyle(HerdrTheme.tertiaryText)
+            }
         }
     }
 }

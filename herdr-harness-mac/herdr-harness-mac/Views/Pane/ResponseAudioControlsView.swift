@@ -7,7 +7,7 @@ struct ResponseAudioControlsView: View {
 
     var body: some View {
         if player.isVisible {
-            HStack(spacing: 6) {
+            HStack(spacing: 4) {
                 ForEach(ResponseAudioAction.allCases) { action in
                     if player.capabilities.supports(action) {
                         ResponseAudioButton(
@@ -38,28 +38,27 @@ private struct ResponseAudioButton: View {
             HStack(spacing: 5) {
                 if isPreparing {
                     ProgressView()
-                        .controlSize(.small)
+                        .controlSize(.mini)
                 } else {
                     Image(systemName: systemImage)
-                        .herdrFont(.caption, weight: .bold)
+                        .herdrFont(size: showsTitle ? 12 : HerdrTheme.TextSize.reading, weight: .semibold)
                 }
 
                 if showsTitle {
                     Text(title)
-                        .herdrFont(.caption, weight: .medium)
+                        .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                         .lineLimit(1)
                 }
             }
-            .foregroundStyle(tint)
-            .padding(.horizontal, showsTitle ? 10 : 9)
-            .frame(minWidth: PiChatChrome.controlHeight, minHeight: PiChatChrome.controlHeight)
-            .background(tint.opacity(isActive ? 0.16 : isHovering ? 0.08 : 0))
-            .overlay {
-                RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                    .strokeBorder(tint.opacity(isActive ? 0.45 : 0), lineWidth: 1)
-            }
-            .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
-            .contentShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+            .foregroundStyle(isHovering && !isActive ? HerdrTheme.primaryText : tint)
+            .padding(.horizontal, showsTitle ? 8 : 0)
+            .frame(minWidth: HerdrTheme.ControlHeight.regular, minHeight: HerdrTheme.ControlHeight.regular)
+            .background(
+                isActive ? tint.opacity(0.16) : isHovering ? HerdrTheme.selectedFill : .clear,
+                in: .rect(cornerRadius: HerdrTheme.Radius.control)
+            )
+            .frame(minWidth: HerdrTheme.minHitTarget, minHeight: HerdrTheme.minHitTarget)
+            .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .disabled(activeAction != nil && activeAction != action)
@@ -99,7 +98,7 @@ private struct ResponseAudioButton: View {
 
     private var tint: Color {
         if isActive { return phase == .paused(action) ? HerdrTheme.signal : HerdrTheme.working }
-        return HerdrTheme.mist
+        return HerdrTheme.iconTint
     }
 
     private var accessibilityLabel: String {

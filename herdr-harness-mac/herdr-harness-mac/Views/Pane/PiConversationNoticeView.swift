@@ -4,26 +4,28 @@ struct PiConversationNoticeView: View {
     let notice: PiConversationNotice
 
     var body: some View {
-        HStack(alignment: .top, spacing: 9) {
+        HStack(alignment: .top, spacing: 8) {
             Image(systemName: symbol)
+                .herdrFont(size: HerdrTheme.TextSize.small)
                 .foregroundStyle(tint)
+                .padding(.top, 2)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text(notice.title)
-                    .herdrFont(.caption, weight: .semibold)
-                    .foregroundStyle(HerdrTheme.mist)
+                    .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
+                    .foregroundStyle(HerdrTheme.primaryText)
                 if let detail = notice.detail, !detail.isEmpty {
                     Text(detail)
-                        .herdrFont(.caption)
-                        .foregroundStyle(HerdrTheme.muted)
+                        .herdrFont(size: HerdrTheme.TextSize.small)
+                        .foregroundStyle(HerdrTheme.tertiaryText)
                         .lineLimit(4)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .herdrCard(radius: HerdrTheme.Radius.control, fill: tint.opacity(0.08), outline: tint.opacity(0.22))
         .accessibilityElement(children: .combine)
     }
 

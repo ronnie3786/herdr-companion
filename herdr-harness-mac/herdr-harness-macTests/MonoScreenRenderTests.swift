@@ -25,24 +25,30 @@ struct MonoScreenRenderTests {
         let workspace = try #require(model.workspace(id: "demo1|w1"))
         let pane = try HerdrRenderFixtures.piCapablePane()
         let store = try await HerdrRenderFixtures.populatedPiStore()
+        let brief = ResponseBriefPresentation()
 
         let result = try await HerdrRenderHarness.renderWindow("mono-chat.png", size: Self.window) {
+            // Mirrors `PaneSessionView`: the pane's title and actions go to the
+            // window title bar; the chat fills the detail column.
             MonoRenderFixtures.window(model: model, shell: shell, detail: AnyView(
-                VStack(spacing: 0) {
-                    PaneSessionHeader(model: model, pane: pane, store: store)
-                    PiChatView(
-                        model: model,
-                        store: store,
-                        paneID: pane.id,
-                        interactionResponseAvailable: true,
-                        composerPane: pane,
-                        workspace: workspace,
-                        draft: .constant(""),
-                        attachments: .constant([]),
-                        focusRequest: 0,
-                        interactionResponder: PiInteractionResponder(),
-                        modelFavorites: modelFavorites
-                    )
+                PiChatView(
+                    model: model,
+                    store: store,
+                    paneID: pane.id,
+                    interactionResponseAvailable: true,
+                    composerPane: pane,
+                    workspace: workspace,
+                    draft: .constant(""),
+                    attachments: .constant([]),
+                    focusRequest: 0,
+                    interactionResponder: PiInteractionResponder(),
+                    modelFavorites: modelFavorites,
+                    briefPresentation: brief
+                )
+                .herdrTitleBar {
+                    PaneSessionTitle(model: model, pane: pane, store: store)
+                } trailing: {
+                    PaneSessionActions(model: model, pane: pane, showsPiSessionSummary: true, briefPresentation: brief)
                 }
             ))
         }

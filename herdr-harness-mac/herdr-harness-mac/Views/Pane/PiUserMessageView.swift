@@ -9,15 +9,17 @@ struct PiUserMessageView: View {
         let accessibilityLabel = labelCache.accessibilityLabel(for: message)
         // A trailing-aligned frame instead of `HStack { Spacer; bubble }`: the
         // stack would size-probe the bubble at several widths per layout pass.
-        PiMarkdownText(message.text, font: HerdrProse.font(.body, scale: fontScale))
-            .lineSpacing(HerdrProse.lineSpacing(.body, scale: fontScale))
-            .padding(.horizontal, 18)
-            .padding(.vertical, 14)
-            .background(HerdrTheme.elevated, in: RoundedRectangle(cornerRadius: HerdrTheme.cardRadius))
-            .overlay {
-                RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
-                    .stroke(HerdrTheme.separator, lineWidth: 1)
-            }
+        PiMarkdownText(message.text, font: HerdrProse.font(.userBubble, scale: fontScale))
+            .lineSpacing(HerdrProse.lineSpacing(.userBubble, scale: fontScale))
+            .environment(\.chatProsePalette, Self.bubblePalette)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 8)
+            // A pill while the prompt fits one line, 12pt corners beyond.
+            .background(
+                HerdrTheme.selectedFill,
+                in: HerdrBubbleShape(singleLineHeight: (HerdrProse.Role.userBubble.lineHeight + 16) * fontScale.rawValue)
+            )
+            .frame(maxWidth: 576 * fontScale.rawValue, alignment: .trailing)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(accessibilityLabel)
             // Attached to the bubble rather than the row: the row is full width,
@@ -32,7 +34,26 @@ struct PiUserMessageView: View {
                 offset: CGSize(width: -28, height: 4)
             )
             .frame(maxWidth: .infinity, alignment: .trailing)
-            .padding(.leading, 42)
+            .padding(.leading, 40)
+            .padding(.bottom, 12)
+    }
+
+    /// The user's own words read in full ink.
+    static let bubblePalette: ChatProsePalette = {
+        var palette = ChatProsePalette.chat
+        palette.text = HerdrTheme.primaryText
+        return palette
+    }()
+}
+
+/// MonoCode's message bubble: fully rounded while it holds one line, 12pt
+/// corners once it wraps. Decided from its own height, with no geometry state.
+struct HerdrBubbleShape: Shape {
+    var singleLineHeight: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let radius = rect.height <= singleLineHeight + 1 ? rect.height / 2 : HerdrTheme.Radius.card
+        return Path(roundedRect: rect, cornerRadius: min(radius, rect.height / 2))
     }
 }
 

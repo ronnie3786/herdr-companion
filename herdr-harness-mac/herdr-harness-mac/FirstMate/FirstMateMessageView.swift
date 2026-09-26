@@ -17,9 +17,7 @@ struct FirstMateMessageView: View {
 
     private var human: Bool { message.role == "user" || message.role == "human" }
     private var palette: FirstMatePalette { FirstMatePalette(scheme: scheme) }
-    private var prosePalette: ChatProsePalette {
-        .init(text: palette.text, secondaryText: palette.secondaryText, accent: palette.accent, separator: palette.line)
-    }
+    private var prosePalette: ChatProsePalette { .firstMate(palette) }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {

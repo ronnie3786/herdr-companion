@@ -12,10 +12,7 @@ struct FirstMateSessionTranscriptView: View {
     @Environment(\.herdrFontScale) private var fontScale
 
     private var palette: FirstMatePalette { .init(scheme: scheme) }
-    private var prosePalette: ChatProsePalette {
-        .init(text: palette.text, secondaryText: palette.secondaryText,
-              accent: palette.accent, separator: palette.line)
-    }
+    private var prosePalette: ChatProsePalette { .firstMate(palette) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: HerdrProse.turnSpacing) {

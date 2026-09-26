@@ -6,7 +6,9 @@ import SwiftUI
 struct ChatSelectableText: NSViewRepresentable {
     let text: AttributedString
     let font: Font
-    var lineSpacing: CGFloat = 3
+    /// Nil follows the environment's `.lineSpacing`, which the Markdown
+    /// callers set, so quotable and plain prose share one leading.
+    var lineSpacing: CGFloat? = 3
     @Environment(\.self) private var environment
     @Environment(\.saveChatQuote) private var saveQuote
     @Environment(\.chatQuoteSource) private var source
@@ -34,19 +36,24 @@ struct ChatSelectableText: NSViewRepresentable {
         let result = NSMutableAttributedString(attributedString: NSAttributedString(text))
         let fullRange = NSRange(location: 0, length: result.length)
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = lineSpacing
+        paragraph.lineSpacing = lineSpacing ?? environment.lineSpacing
         result.addAttributes([.font: baseFont, .foregroundColor: NSColor(palette.text), .paragraphStyle: paragraph], range: fullRange)
         for run in text.runs {
             let range = NSRange(run.range, in: text)
             var runFont = run.font.map { $0.resolve(in: environment.fontResolutionContext).ctFont as NSFont } ?? baseFont
             if let intent = run.inlinePresentationIntent {
-                if intent.contains(.code) { runFont = NSFont.monospacedSystemFont(ofSize: baseFont.pointSize, weight: .regular) }
-                if intent.contains(.stronglyEmphasized) { runFont = NSFontManager.shared.convert(runFont, toHaveTrait: .boldFontMask) }
+                if intent.contains(.code), run.font == nil {
+                    runFont = NSFont.monospacedSystemFont(ofSize: (baseFont.pointSize * 0.8).rounded(), weight: .regular)
+                }
+                if intent.contains(.stronglyEmphasized), run.font == nil {
+                    runFont = NSFont.systemFont(ofSize: runFont.pointSize, weight: .semibold)
+                }
                 if intent.contains(.emphasized) { runFont = NSFontManager.shared.convert(runFont, toHaveTrait: .italicFontMask) }
                 if intent.contains(.strikethrough) { result.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: range) }
             }
             result.addAttribute(.font, value: runFont, range: range)
             if let color = run.foregroundColor { result.addAttribute(.foregroundColor, value: NSColor(color), range: range) }
+            if let background = run.backgroundColor { result.addAttribute(.backgroundColor, value: NSColor(background), range: range) }
         }
         layoutView.setAttributedText(result)
         view.saveQuote = saveQuote

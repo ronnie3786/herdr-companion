@@ -17,27 +17,30 @@ struct PaneResultArtifactView: View {
                         ProgressView().controlSize(.small)
                     } else {
                         Image(systemName: artifact.kind == .link ? "link" : "doc")
+                            .herdrFont(size: HerdrTheme.TextSize.reading)
                             .foregroundStyle(HerdrTheme.accent)
                     }
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text(artifact.displayTitle)
-                            .herdrFont(.body, weight: .semibold)
+                            .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
+                            .foregroundStyle(HerdrTheme.primaryText)
                             .lineLimit(2)
                         if let detail = artifact.url?.absoluteString ?? artifact.filename {
                             Text(detail)
-                                .herdrFont(.caption, monospaced: true)
-                                .foregroundStyle(HerdrTheme.mist)
+                                .herdrFont(size: HerdrTheme.TextSize.caption, monospaced: true)
+                                .foregroundStyle(HerdrTheme.tertiaryText)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                         }
                     }
                     Spacer(minLength: 8)
                     Image(systemName: "arrow.up.right.square")
-                        .foregroundStyle(HerdrTheme.mist)
+                        .foregroundStyle(HerdrTheme.iconTint)
                         .accessibilityHidden(true)
                 }
-                .padding(12)
-                .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.compactRadius))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .herdrCard(radius: HerdrTheme.Radius.composer)
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
@@ -47,7 +50,7 @@ struct PaneResultArtifactView: View {
 
             if case let .failed(message) = phase {
                 Text(message)
-                    .herdrFont(.caption)
+                    .herdrFont(size: HerdrTheme.TextSize.small)
                     .foregroundStyle(HerdrTheme.alert)
             }
         }

@@ -1,9 +1,10 @@
 import AppKit
 import SwiftUI
+import os
 
-/// Comfortable reading typography for rendered chat output. Prose uses the
-/// native system face at full contrast; activity and code remain distinct
-/// through their smaller size and restrained foreground colors.
+/// Mono × Herdr typography for rendered chat output: MonoCode's 14/24 prose at
+/// ink 78%, 18/26 headings, and inline code as an ink chip. Activity and code
+/// stay distinct through size and tone, never through low-contrast dimming.
 enum HerdrProse {
     /// A semantic role within Pi's rendered markdown output.
     enum Role: CaseIterable, Sendable {
@@ -18,25 +19,34 @@ enum HerdrProse {
         case heading6
         case tableHeader
         case tableCell
+        /// The user's own prompt in its bubble.
+        case userBubble
 
         /// Base point size at 100% font scale (before `HerdrFontScale`).
         var baseSize: CGFloat {
             switch self {
-            case .body, .quote, .listItem: 15
-            case .heading1: 21
-            case .heading2: 18
-            case .heading3: 16
-            case .heading4, .heading5, .heading6: 15
-            case .tableHeader, .tableCell: 14
+            case .body, .quote, .listItem, .userBubble: 14
+            case .heading1, .heading2: 18
+            case .heading3, .heading4, .heading5, .heading6: 14
+            case .tableHeader, .tableCell: 12
+            }
+        }
+
+        /// Target line height at 100% (MonoCode's leading).
+        var lineHeight: CGFloat {
+            switch self {
+            case .body, .quote, .listItem: 24
+            case .heading1, .heading2: 26
+            case .heading3, .heading4, .heading5, .heading6: 20
+            case .tableHeader, .tableCell: 18
+            case .userBubble: 20
             }
         }
 
         var weight: Font.Weight {
             switch self {
-            case .body, .quote, .listItem, .tableCell: .regular
-            case .heading1, .heading2, .heading3: .semibold
-            case .heading4: .semibold
-            case .heading5, .heading6: .semibold
+            case .body, .quote, .listItem, .tableCell, .userBubble: .regular
+            case .heading1, .heading2, .heading3, .heading4, .heading5, .heading6: .semibold
             case .tableHeader: .semibold
             }
         }
@@ -47,19 +57,16 @@ enum HerdrProse {
 
     /// Spacing between adjacent markdown blocks (paragraph, heading, list,
     /// quote, table, code) inside a single rendered message.
-    static let blockSpacing: CGFloat = 18
+    static let blockSpacing: CGFloat = 16
 
     /// Spacing between conversation turns in `PiChatTimelineView`.
     static let turnSpacing: CGFloat = 24
 
-    /// How far "sub-output" cards — thinking disclosures, tool cards, and
-    /// working groups — are dimmed so they read as visually recessive relative
-    /// to Pi's actual output prose. Applied to the cards' foreground colours
-    /// (`dimmed(_:)`), never as `.opacity` on the whole card: a group-opacity
-    /// on each of a hundred cards cost ~170 ms per card per layout pass.
+    /// Kept for callers that still dim sub-output *icons*. Text never uses it:
+    /// tertiary ink × 0.9 falls below 4.5:1 on a 10% fill.
     static let subOutputOpacity: Double = 0.9
 
-    /// A card foreground colour at `subOutputOpacity`.
+    /// A card foreground colour at `subOutputOpacity`. Icons only.
     static func dimmed(_ color: Color) -> Color {
         color.opacity(subOutputOpacity)
     }
@@ -70,30 +77,49 @@ enum HerdrProse {
         return role.isItalic ? font.italic() : font
     }
 
-    /// Monospaced chip font for inline `code` spans within prose, sized
-    /// relative to the surrounding role and the user's font-scale preference.
+    /// Monospaced chip font for inline `code` spans: 0.8em of the surrounding
+    /// role, like MonoCode's `code { font-size: .8em }`.
     static func inlineCodeFont(_ role: Role, scale: HerdrFontScale) -> Font {
-        .system(size: (role.baseSize * 0.9 * scale.rawValue).rounded(), weight: .regular, design: .monospaced)
+        .system(size: (role.baseSize * 0.8 * scale.rawValue).rounded(), weight: .regular, design: .monospaced)
     }
 
-    /// Foreground color for inline `code` spans within prose.
-    static let inlineCodeColor: Color = HerdrTheme.code
+    /// Foreground color for inline `code` spans within prose: full ink on a chip.
+    static let inlineCodeColor: Color = HerdrTheme.primaryText
 
-    /// `.lineSpacing(...)` for reading-prose roles (body, quote, list items)
-    /// at the given scale. Call sites for headings and tables keep their own
-    /// existing tight spacing instead of calling this.
+    /// `.lineSpacing(...)` that makes `role` reach its MonoCode line height at
+    /// this scale. AppKit's natural line height is subtracted so the result is
+    /// exact rather than a flat allowance.
     static func lineSpacing(_ role: Role, scale: HerdrFontScale) -> CGFloat {
-        (8 * scale.rawValue).rounded()
+        lineSpacing(size: role.baseSize, lineHeight: role.lineHeight, scale: scale)
     }
 
-    /// Extra space ABOVE a heading, added on top of `blockSpacing`, so
-    /// headings read as new sections rather than just another paragraph.
+    /// Line spacing for an arbitrary size and target line height.
+    static func lineSpacing(size: CGFloat, lineHeight: CGFloat, scale: HerdrFontScale, monospaced: Bool = false) -> CGFloat {
+        let key = LineSpacingKey(size: size, lineHeight: lineHeight, scale: scale.rawValue, monospaced: monospaced)
+        if let cached = lineSpacingCache.withLock({ $0[key] }) { return cached }
+        let pointSize = size * scale.rawValue
+        let font = monospaced
+            ? NSFont.monospacedSystemFont(ofSize: pointSize, weight: .regular)
+            : NSFont.systemFont(ofSize: pointSize)
+        let natural = NSLayoutManager().defaultLineHeight(for: font)
+        let spacing = max(0, (lineHeight * scale.rawValue - natural).rounded())
+        lineSpacingCache.withLock { $0[key] = spacing }
+        return spacing
+    }
+
+    private struct LineSpacingKey: Hashable, Sendable {
+        let size: CGFloat
+        let lineHeight: CGFloat
+        let scale: Double
+        let monospaced: Bool
+    }
+
+    private static let lineSpacingCache = OSAllocatedUnfairLock<[LineSpacingKey: CGFloat]>(initialState: [:])
+
+    /// Extra space ABOVE a heading, added on top of `blockSpacing`, so a
+    /// heading gets MonoCode's 24pt top margin.
     static func headingTopSpacing(_ level: Int) -> CGFloat {
-        switch level {
-        case ...2: 12
-        case 3: 6
-        default: 2
-        }
+        level <= 2 ? 8 : 4
     }
 
     /// Runtime check that the bundled Inter-Regular face actually resolves.

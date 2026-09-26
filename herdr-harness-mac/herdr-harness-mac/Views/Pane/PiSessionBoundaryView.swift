@@ -9,31 +9,33 @@ struct PiSessionBoundaryView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Text("Previous session")
-                    .herdrFont(.caption, weight: .semibold)
+                    .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
+                    .foregroundStyle(HerdrTheme.secondaryText)
                 Text(previousSessionID)
-                    .herdrFont(.caption, monospaced: true).textSelection(.enabled)
+                    .herdrFont(size: HerdrTheme.TextSize.caption, monospaced: true).textSelection(.enabled)
+                    .foregroundStyle(HerdrTheme.tertiaryText)
                 Button("Copy previous session ID", systemImage: "doc.on.doc") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(previousSessionID, forType: .string)
                 }
-                .labelStyle(.iconOnly).buttonStyle(.plain).help("Copy the session ID of the chat just closed")
+                .buttonStyle(HerdrIconButtonStyle())
+                .help("Copy the session ID of the chat just closed")
             }
-            .foregroundStyle(HerdrTheme.mist)
-            HStack(spacing: 12) {
-                Rectangle().fill(HerdrTheme.separator).frame(height: 1)
+            HStack(spacing: 10) {
+                Rectangle().fill(HerdrTheme.inkFill(0.12)).frame(height: 1)
                 Label("New conversation", systemImage: "sparkle")
-                    .herdrFont(.subheadline, weight: .semibold).fixedSize()
+                    .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium).fixedSize()
                     .foregroundStyle(HerdrTheme.accent)
-                Rectangle().fill(HerdrTheme.separator).frame(height: 1)
+                Rectangle().fill(HerdrTheme.inkFill(0.12)).frame(height: 1)
             }
             Text("Fresh context for Pi. Your previous chat stays above for reference.")
-                .herdrFont(.caption).foregroundStyle(HerdrTheme.muted)
+                .herdrFont(size: HerdrTheme.TextSize.small).foregroundStyle(HerdrTheme.tertiaryText)
             if let currentSessionID {
-                Text(currentSessionID).herdrFont(.caption2, monospaced: true)
-                    .foregroundStyle(HerdrTheme.muted).textSelection(.enabled)
+                Text(currentSessionID).herdrFont(size: HerdrTheme.TextSize.caption, monospaced: true)
+                    .foregroundStyle(HerdrTheme.tertiaryText).textSelection(.enabled)
             }
         }
-        .padding(.vertical, 24)
+        .padding(.vertical, 20)
         .environment(\.saveChatQuote, nil)
         .accessibilityIdentifier("pi-new-session-divider")
     }

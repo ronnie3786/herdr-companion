@@ -61,7 +61,9 @@ struct PiMarkdownMessageView: View {
                     split.tail,
                     font: HerdrProse.font(.body, scale: fontScale),
                     inlineCodeFont: HerdrProse.inlineCodeFont(.body, scale: fontScale),
-                    inlineCodeColor: palette.accent,
+                    inlineCodeColor: palette.code,
+                    inlineCodeBackground: palette.codeFill,
+                    strongColor: palette.strong,
                     id: id,
                     cacheKeyLength: fullSourceLength
                 )

@@ -96,6 +96,9 @@ struct WorkspaceNavigationView: View {
             detailColumn
         }
         .ignoresSafeArea(.container, edges: .top)
+        // Our 40pt bars end in a hairline; the system's toolbar blur under the
+        // title bar would smear content behind them.
+        .scrollEdgeEffectHidden()
         // Home screens start without the sidebar and other screens with it, but
         // a person's own toggle is remembered per context instead of being
         // overwritten on every navigation.
@@ -134,7 +137,7 @@ struct WorkspaceNavigationView: View {
     /// extend into the window's top safe area, and must not paint over it.
     private var sidebarColumn: some View {
         VStack(spacing: 0) {
-            Color.clear.frame(height: SidebarMetrics.headerHeight)
+            chromeBarSpacer
             Group {
                 if shell.detailScope == .firstMate {
                     VStack(spacing: 0) {
@@ -239,8 +242,20 @@ struct WorkspaceNavigationView: View {
         .lineLimit(1)
         .padding(.leading, isFullScreen ? 13 : HerdrWindowChrome.trafficLightInset)
         .padding(.trailing, 6)
-        .herdrBar(hairline: chromeHairline)
+        .herdrBar(hairline: .clear)
         .accessibilityElement(children: .contain)
+    }
+
+    /// The 40pt band under a bar overlay plus its hairline as a real 1pt row.
+    /// On macOS 26 a scroll view whose top edge meets the window's title-bar
+    /// edge extends under the bar with a 40pt inset and a blurred scroll
+    /// pocket; the hairline row keeps every column's content clear of it.
+    private var chromeBarSpacer: some View {
+        VStack(spacing: 0) {
+            Color.clear.frame(height: HerdrTheme.ControlHeight.titleBar)
+            Rectangle().fill(chromeHairline).frame(height: 1)
+        }
+        .accessibilityHidden(true)
     }
 
     private var sidebarToggleButton: some View {
@@ -329,7 +344,7 @@ struct WorkspaceNavigationView: View {
 
     private var detailColumn: some View {
         VStack(spacing: 0) {
-            Color.clear.frame(height: HerdrTheme.ControlHeight.titleBar)
+            chromeBarSpacer
             if updates.isBannerVisible, let version = updates.availableVersion {
                 HerdrUpdateBanner(version: version, updates: updates)
             }
@@ -880,7 +895,7 @@ struct WorkspaceNavigationView: View {
         }
         .padding(.leading, titleBarLeadingPadding)
         .padding(.trailing, 8)
-        .herdrBar(hairline: chromeHairline)
+        .herdrBar(hairline: .clear)
         .foregroundStyle(chromeTitle)
     }
 

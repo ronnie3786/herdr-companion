@@ -11,13 +11,14 @@ struct PiInteractionCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label(interaction.title, systemImage: "person.crop.circle.badge.questionmark")
-                .herdrFont(.headline)
+                .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
                 .foregroundStyle(HerdrTheme.text)
 
             if let message = interaction.message {
                 Text(message)
-                    .herdrFont(.callout)
-                    .foregroundStyle(HerdrTheme.mist)
+                    .herdrFont(size: HerdrTheme.TextSize.body)
+                    .lineSpacing(4)
+                    .foregroundStyle(HerdrTheme.proseText)
             }
 
             controls
@@ -25,16 +26,13 @@ struct PiInteractionCardView: View {
             Button("Cancel", role: .cancel) {
                 submit(.cancelled)
             }
-            .buttonStyle(PiChatButtonStyle(tint: HerdrTheme.mist, emphasis: .text))
-            .herdrFont(.caption)
+            .buttonStyle(PiChatButtonStyle(tint: HerdrTheme.secondaryText, emphasis: .text))
+            .herdrFont(size: HerdrTheme.TextSize.small)
             .disabled(isSubmitting)
         }
-        .padding(14)
-        .background(HerdrTheme.elevated.opacity(0.72), in: RoundedRectangle(cornerRadius: 14))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(HerdrTheme.working.opacity(0.28), lineWidth: 1)
-        }
+        .padding(12)
+        // Keeps the attention hue on the ring: this card is waiting on you.
+        .herdrCard(outline: HerdrTheme.working.opacity(0.22))
         .herdrHaptic(trigger: hapticPulse)
         .disabled(!isConnected)
         .accessibilityIdentifier("pi-interaction-\(interaction.id)")
@@ -52,7 +50,7 @@ struct PiInteractionCardView: View {
         case .confirm:
             HStack {
                 Button("No") { submit(.confirmation(false)) }
-                    .buttonStyle(PiChatButtonStyle(tint: HerdrTheme.mist, emphasis: .soft))
+                    .buttonStyle(PiChatButtonStyle(tint: HerdrTheme.secondaryText, emphasis: .soft))
                 Button("Yes") { submit(.confirmation(true)) }
                     .buttonStyle(PiChatButtonStyle(tint: HerdrTheme.accent, emphasis: .prominent))
             }
@@ -62,13 +60,13 @@ struct PiInteractionCardView: View {
                 TextField(interaction.placeholder ?? "Response", text: $text, axis: .vertical)
                     .lineLimit(1...5)
                     .textFieldStyle(.plain)
-                    .padding(10)
-                    .background(HerdrTheme.graphite, in: RoundedRectangle(cornerRadius: 10))
+                    .herdrFont(size: HerdrTheme.TextSize.body)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .herdrField()
                     .onSubmit(submitText)
-                Button("Submit", systemImage: "arrow.up.circle.fill", action: submitText)
-                    .buttonStyle(PiChatButtonStyle(tint: HerdrTheme.accent, emphasis: .text))
-                    .labelStyle(.iconOnly)
-                    .herdrFont(.title2)
+                Button("Submit", systemImage: "arrow.up", action: submitText)
+                    .buttonStyle(HerdrPrimarySquareButtonStyle())
                     .disabled(trimmedText.isEmpty || isSubmitting)
             }
         }

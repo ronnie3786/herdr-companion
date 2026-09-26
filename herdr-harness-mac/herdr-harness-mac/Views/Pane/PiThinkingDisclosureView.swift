@@ -8,44 +8,42 @@ struct PiThinkingDisclosureView: View {
     @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
-        PiDisclosureCard(isExpanded: $isExpanded, chevronColor: HerdrTheme.mauve) {
+        PiDisclosureCard(isExpanded: $isExpanded, chevronColor: HerdrTheme.iconTint) {
             markdownContent()
         } label: {
-            HStack(spacing: 9) {
+            HStack(spacing: 6) {
                 ZStack {
                     if block.isStreaming {
                         ProgressView()
-                            .controlSize(.small)
-                            .tint(HerdrTheme.mauve)
+                            .controlSize(.mini)
+                            .tint(HerdrTheme.iconTint)
                             .transition(PiChatMotion.stateTransition(reduceMotion: reduceMotion))
                     } else {
                         Image(systemName: "brain.head.profile")
-                            .foregroundStyle(HerdrProse.dimmed(HerdrTheme.mauve))
+                            .herdrFont(size: HerdrTheme.TextSize.reading)
+                            .foregroundStyle(HerdrTheme.iconTint)
                             .transition(PiChatMotion.stateTransition(reduceMotion: reduceMotion))
                     }
                 }
-                .frame(width: 18, height: 18)
+                .frame(width: 16, height: 16)
                 .accessibilityHidden(true)
 
                 Text(block.isStreaming ? "Thinking" : "Thought process")
-                    .herdrFont(.caption, weight: .semibold)
-                    .foregroundStyle(HerdrProse.dimmed(HerdrTheme.mist))
+                    .herdrFont(size: HerdrTheme.TextSize.reading)
+                    .foregroundStyle(HerdrTheme.tertiaryText)
                     .contentTransition(.opacity)
 
                 Spacer(minLength: 8)
 
                 if block.isStreaming, let startedAt = block.startedAt {
                     Text(startedAt, style: .relative)
-                        .herdrFont(.caption, monospacedDigit: true)
-                        .foregroundStyle(HerdrProse.dimmed(HerdrTheme.muted))
+                        .herdrFont(size: HerdrTheme.TextSize.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(HerdrTheme.tertiaryText)
                         .transition(.opacity)
                 }
             }
         }
-        // This padding sits outside the header button, so that band is deliberately not clickable.
-        .padding(.horizontal, 12)
-        .padding(.vertical, 2)
-        .background(HerdrTheme.elevated.opacity(0.35), in: RoundedRectangle(cornerRadius: HerdrTheme.compactRadius))
         .animation(PiChatMotion.disclosureAnimation(reduceMotion: reduceMotion), value: isExpanded)
         .animation(PiChatMotion.stateAnimation(reduceMotion: reduceMotion), value: block.isStreaming)
         .onChange(of: isExpanded) { _, expanded in
@@ -67,12 +65,14 @@ struct PiThinkingDisclosureView: View {
         }
         return PiMarkdownText(
             text,
-            font: HerdrTheme.scaled(.callout, scale: fontScale),
+            font: .system(size: HerdrTheme.TextSize.body * fontScale.rawValue),
             id: isLiveBlockText ? block.id : nil,
             cacheKeyLength: isLiveBlockText ? text.utf8.count : nil
         )
-        .foregroundStyle(HerdrProse.dimmed(HerdrTheme.mist))
-        .padding(.top, 10)
+        .lineSpacing(HerdrProse.lineSpacing(size: HerdrTheme.TextSize.body, lineHeight: 20, scale: fontScale))
+        .environment(\.chatProsePalette, .reasoning)
+        .padding(.top, 4)
+        .padding(.leading, 22)
     }
 
     private var visibleText: String {

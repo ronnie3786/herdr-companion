@@ -5,21 +5,21 @@ struct ChatQuotePreview: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Quoted chat", systemImage: "quote.bubble").herdrFont(.headline)
-            Text(quote.source).herdrFont(.caption2).foregroundStyle(HerdrTheme.muted)
+            Label("Quoted chat", systemImage: "quote.bubble").herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
+            Text(quote.source).herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText)
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(quote.text).textSelection(.enabled)
                         .padding(.leading, 10)
                         .overlay(alignment: .leading) { Rectangle().fill(HerdrTheme.accent).frame(width: 2) }
-                    Divider()
+                    Rectangle().fill(HerdrTheme.hairline).frame(height: 1)
                     Text(quote.comment).textSelection(.enabled)
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }.frame(maxHeight: 240)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .herdrFont(.callout).padding(16).frame(width: 360)
-        .foregroundStyle(HerdrTheme.text).background(HerdrTheme.graphite)
+        .herdrFont(size: HerdrTheme.TextSize.body).padding(16).frame(width: 360)
+        .foregroundStyle(HerdrTheme.text).background(HerdrTheme.windowBackground)
         .preferredColorScheme(.dark)
     }
 }

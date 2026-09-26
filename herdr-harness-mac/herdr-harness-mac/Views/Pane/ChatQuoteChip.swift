@@ -6,20 +6,20 @@ struct ChatQuoteChip: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "quote.bubble").foregroundStyle(HerdrTheme.accent)
+            Image(systemName: "quote.bubble")
+                .herdrFont(size: HerdrTheme.TextSize.reading)
+                .foregroundStyle(HerdrTheme.accent)
             VStack(alignment: .leading, spacing: 2) {
-                Text(quote.comment).herdrFont(.caption, weight: .medium)
+                Text(quote.comment).herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
                     .foregroundStyle(HerdrTheme.text).lineLimit(1)
-                Text(quote.text).herdrFont(.caption2)
-                    .foregroundStyle(HerdrTheme.muted).lineLimit(1)
+                Text(quote.text).herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(HerdrTheme.tertiaryText).lineLimit(1)
             }.frame(maxWidth: 190, alignment: .leading)
             Button("Remove quote", systemImage: "xmark", action: remove)
-                .labelStyle(.iconOnly).buttonStyle(.plain)
-                .frame(width: 28, height: 30)
-                .foregroundStyle(HerdrTheme.mist)
+                .buttonStyle(HerdrIconButtonStyle(visualSize: HerdrTheme.ControlHeight.small))
         }
-        .padding(.leading, 10).padding(.trailing, 2).padding(.vertical, 5)
-        .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.compactRadius))
+        .padding(.leading, 8).padding(.trailing, 2).padding(.vertical, 3)
+        .herdrCard(radius: HerdrTheme.Radius.control, fill: HerdrTheme.insetFill)
         .chatQuotePreview(quote)
         .accessibilityIdentifier("chat-quote-chip-\(quote.id)")
     }

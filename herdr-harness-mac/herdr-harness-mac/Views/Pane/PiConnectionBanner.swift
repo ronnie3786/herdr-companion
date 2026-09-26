@@ -7,7 +7,7 @@ struct PiConnectionBanner: View {
 
     var body: some View {
         if let content {
-            HStack(spacing: 9) {
+            HStack(spacing: 8) {
                 if content.showsProgress {
                     ProgressView()
                         .controlSize(.small)
@@ -17,29 +17,30 @@ struct PiConnectionBanner: View {
                         .foregroundStyle(content.tint)
                 }
                 Text(message ?? content.text)
-                    .herdrFont(.caption)
-                    .foregroundStyle(HerdrTheme.mist)
+                    .herdrFont(size: HerdrTheme.TextSize.small)
+                    .foregroundStyle(HerdrTheme.secondaryText)
                     .lineLimit(2)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .background(content.tint.opacity(0.09))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(content.tint.opacity(0.08))
+            .herdrHairline(.bottom)
             .accessibilityElement(children: .combine)
         } else if connection == .connected, transport == .polling {
             HStack {
                 Text("polling")
-                    .herdrFont(.caption, monospaced: true)
+                    .herdrFont(size: HerdrTheme.TextSize.caption, monospaced: true, weight: .medium)
                     .foregroundStyle(HerdrTheme.warning)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(HerdrTheme.warning.opacity(0.12), in: Capsule())
+                    .padding(.horizontal, 6)
+                    .frame(minHeight: 20)
+                    .background(HerdrTheme.warning.opacity(0.12), in: .rect(cornerRadius: 4))
                     .accessibilityIdentifier("pi-transport-polling")
 
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
         }
     }
 

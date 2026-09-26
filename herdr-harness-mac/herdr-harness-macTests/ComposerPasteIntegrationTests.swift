@@ -35,8 +35,10 @@ struct ComposerPasteIntegrationTests {
             if isHud {
                 HerdrHudComposerView(model: model, controller: HerdrHudController(userDefaults: defaults), session: session, codePasteboard: board)
             } else {
+                // Paste code lives in the composer's `+` popover.
                 PromptComposerView(model: model, pane: pane, workspace: workspace, draft: $editable.draft,
                                    attachments: .constant([]), focusRequest: 0, modelFavorites: ModelFavoritesStore(userDefaults: defaults), codePasteboard: board)
+                    .environment(\.composerAddMenuInitiallyPresented, route.contains("button"))
             }
         }.frame(width: 540))
         let window: NSWindow = isHud
@@ -61,15 +63,18 @@ struct ComposerPasteIntegrationTests {
             #expect(window.makeFirstResponder(other))
         }
         if route.contains("button") {
-            let location = try pasteButtonLocation(in: host)
+            // The HUD shows Paste code in its toolbar; the main composer shows
+            // it in the `+` popover's window.
+            let (target, targetView) = isHud ? (window, host as NSView) : try await popoverWindow(for: window)
+            let location = try pasteButtonLocation(in: targetView)
             let down = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: location, modifierFlags: [], timestamp: 0,
-                windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+                windowNumber: target.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
             let up = try #require(NSEvent.mouseEvent(with: .leftMouseUp, location: location, modifierFlags: [], timestamp: 0.1,
-                windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0))
+                windowNumber: target.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0))
             NSApp.postEvent(up, atStart: true)
-            window.sendEvent(down)
+            target.sendEvent(down)
             if let pendingUp = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
-                window.sendEvent(pendingUp)
+                target.sendEvent(pendingUp)
             }
         } else {
             let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command, .shift], timestamp: 0,
@@ -92,6 +97,21 @@ struct ComposerPasteIntegrationTests {
         try await Task.sleep(for: .milliseconds(50))
         #expect(session.draft == expected)
         #expect(editor.string == expected)
+    }
+
+    /// The `+` popover opened by `composerAddMenuInitiallyPresented`.
+    private func popoverWindow(for owner: NSWindow) async throws -> (NSWindow, NSView) {
+        for _ in 0..<40 {
+            if let popover = NSApp.windows.first(where: {
+                $0 !== owner && $0.isVisible && String(describing: type(of: $0)).contains("Popover")
+            }), let content = popover.contentView {
+                content.layoutSubtreeIfNeeded()
+                return (popover, content)
+            }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        Issue.record("The composer's + popover did not open")
+        throw CancellationError()
     }
 
     private func descendants(_ view: NSView) -> [NSView] {

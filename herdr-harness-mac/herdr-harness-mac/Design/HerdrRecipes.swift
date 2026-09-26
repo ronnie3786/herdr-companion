@@ -232,9 +232,11 @@ struct HerdrIconButtonStyle: ButtonStyle {
     var visualSize: CGFloat = HerdrTheme.ControlHeight.regular
     var isActive = false
     var tint: Color = HerdrTheme.iconTint
+    /// MonoCode's `.tb`: a resting 10% wash (the composer's `+`).
+    var restingFill: Color = .clear
 
     func makeBody(configuration: Configuration) -> some View {
-        HerdrIconButtonBody(configuration: configuration, visualSize: visualSize, isActive: isActive, tint: tint)
+        HerdrIconButtonBody(configuration: configuration, visualSize: visualSize, isActive: isActive, tint: tint, restingFill: restingFill)
     }
 }
 
@@ -243,6 +245,7 @@ private struct HerdrIconButtonBody: View {
     let visualSize: CGFloat
     let isActive: Bool
     let tint: Color
+    let restingFill: Color
     @Environment(\.isEnabled) private var isEnabled
     @State private var isHovering = false
 
@@ -253,7 +256,9 @@ private struct HerdrIconButtonBody: View {
             .foregroundStyle(isHovering || isActive ? HerdrTheme.primaryText : tint)
             .frame(width: visualSize, height: visualSize)
             .background(
-                isHovering || isActive || configuration.isPressed ? HerdrTheme.selectedFill : .clear,
+                isHovering || isActive || configuration.isPressed
+                    ? (restingFill == .clear ? HerdrTheme.selectedFill : HerdrTheme.focusOutline)
+                    : restingFill,
                 in: .rect(cornerRadius: HerdrTheme.Radius.control)
             )
             .frame(minWidth: HerdrTheme.minHitTarget, minHeight: HerdrTheme.minHitTarget)
@@ -315,5 +320,36 @@ private struct HerdrButtonBody: View {
         case .outline: isHovering && isEnabled ? HerdrTheme.hoverFill : .clear
         case .ghost: isHovering && isEnabled ? HerdrTheme.selectedFill : .clear
         }
+    }
+}
+
+/// The composer's primary square: 26pt lavender with a dark glyph. Disabled is
+/// lavender at 28% with the glyph at 55% (disabled controls are exempt from the
+/// 4.5:1 text rule). `fill` overrides the lavender, e.g. alert while recording.
+struct HerdrPrimarySquareButtonStyle: ButtonStyle {
+    var fill: Color?
+    var visualSize: CGFloat = HerdrTheme.ControlHeight.regular
+
+    func makeBody(configuration: Configuration) -> some View {
+        HerdrPrimarySquareBody(configuration: configuration, fill: fill, visualSize: visualSize)
+    }
+}
+
+private struct HerdrPrimarySquareBody: View {
+    let configuration: ButtonStyle.Configuration
+    let fill: Color?
+    let visualSize: CGFloat
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        configuration.label
+            .labelStyle(.iconOnly)
+            .herdrFont(size: 14, weight: .semibold)
+            .foregroundStyle(isEnabled ? HerdrTheme.onPrimary : HerdrTheme.onPrimaryDisabled)
+            .frame(width: visualSize, height: visualSize)
+            .background(isEnabled ? (fill ?? HerdrTheme.primaryAction) : HerdrTheme.primaryDisabled, in: .rect(cornerRadius: HerdrTheme.Radius.control))
+            .frame(minWidth: HerdrTheme.minHitTarget, minHeight: HerdrTheme.minHitTarget)
+            .contentShape(Rectangle())
+            .opacity(configuration.isPressed ? 0.85 : 1)
     }
 }

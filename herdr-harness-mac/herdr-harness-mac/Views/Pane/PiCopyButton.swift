@@ -12,15 +12,16 @@ struct PiCopyButton: View {
     let text: String
     var label: String
     var accessibilityIdentifier: String?
-    var restingOpacity: Double = 0.75
+    /// Full strength: the 50% icon ink is already the quiet level.
+    var restingOpacity: Double = 1
 
     @State private var copied = false
 
     var body: some View {
         Button(action: copy) {
             Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                .herdrFont(.caption)
-                .foregroundStyle(copied ? HerdrTheme.success : HerdrTheme.mist.opacity(restingOpacity))
+                .herdrFont(size: 13)
+                .foregroundStyle(copied ? HerdrTheme.success : HerdrTheme.iconTint.opacity(restingOpacity))
                 .herdrHitTarget(minWidth: 0)
         }
         .buttonStyle(.plain)

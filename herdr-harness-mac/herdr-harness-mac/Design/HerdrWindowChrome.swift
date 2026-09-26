@@ -95,6 +95,9 @@ struct HerdrMainWindowChromeModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            // The shell draws its own 40pt bars at the top edge; nothing below
+            // them should treat the transparent title bar as a safe area.
+            .ignoresSafeArea(.container, edges: .top)
             .environment(\.herdrWindowIsFullScreen, isFullScreen)
             .background { HerdrWindowChrome(isFullScreen: $isFullScreen) }
     }

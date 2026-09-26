@@ -16,6 +16,9 @@ extension PromptComposerView: Equatable {
             && lhs.toolRowFit == rhs.toolRowFit
             && lhs.modelFavorites === rhs.modelFavorites
             && lhs.codePasteboard === rhs.codePasteboard
+            && lhs.contextLine == rhs.contextLine
+            && lhs.contextAccessory == rhs.contextAccessory
+            && lhs.toolbarAccessory == rhs.toolbarAccessory
     }
 
     private static func optionalPanesEqual(_ lhs: HerdrPane?, _ rhs: HerdrPane?) -> Bool {

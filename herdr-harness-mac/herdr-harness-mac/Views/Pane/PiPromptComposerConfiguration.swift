@@ -25,6 +25,9 @@ struct PiPromptComposerConfiguration {
     let thinkingLevel: String?
     let isSettingThinkingLevel: Bool
     let selectThinkingLevel: (PiThinkingLevel) async -> Bool
+    /// The context line's ring and cost. Defaulted so existing fixtures build.
+    var contextUsage: PiContextUsage? = nil
+    var sessionCost: PiSessionCost? = nil
 
     var isCompacting: Bool {
         compactionActivity != nil
@@ -115,5 +118,7 @@ extension PiPromptComposerConfiguration: Equatable {
             && lhs.isModelSwitchingUnsupported == rhs.isModelSwitchingUnsupported
             && lhs.thinkingLevel == rhs.thinkingLevel
             && lhs.isSettingThinkingLevel == rhs.isSettingThinkingLevel
+            && lhs.contextUsage == rhs.contextUsage
+            && lhs.sessionCost == rhs.sessionCost
     }
 }

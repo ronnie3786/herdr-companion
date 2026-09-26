@@ -9,9 +9,13 @@ struct ComposerDraftEditor: View {
     var maximumVisibleLines = 5
     var pasteCode: (() -> Void)? = nil
     var editorTarget: ComposerEditorTarget? = nil
+    /// Applied to the hidden sizing text and the editor alike, so the
+    /// five-line scroll threshold matches what is drawn.
+    var lineSpacing: CGFloat = 0
 
     var body: some View {
         Text(text.isEmpty ? " " : text + " ")
+            .lineSpacing(lineSpacing)
             .lineLimit(1...maximumVisibleLines)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -20,6 +24,7 @@ struct ComposerDraftEditor: View {
             .accessibilityHidden(true)
             .overlay(alignment: .topLeading) {
                 TextEditor(text: $text)
+                    .lineSpacing(lineSpacing)
                     .scrollContentBackground(.hidden)
                     .scrollIndicators(.visible)
                     .accessibilityLabel(placeholder)
@@ -28,7 +33,7 @@ struct ComposerDraftEditor: View {
                     .overlay(alignment: .topLeading) {
                         if text.isEmpty {
                             Text(placeholder)
-                                .foregroundStyle(HerdrTheme.muted)
+                                .foregroundStyle(HerdrTheme.tertiaryText)
                                 .padding(.top, 4)
                                 .padding(.leading, 5)
                                 .allowsHitTesting(false)

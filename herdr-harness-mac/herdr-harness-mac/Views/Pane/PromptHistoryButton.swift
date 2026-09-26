@@ -10,10 +10,7 @@ struct PromptHistoryButton: View {
         Button("Prompt history", systemImage: "text.bubble.badge.clock") {
             isPresented = true
         }
-        .labelStyle(.iconOnly)
-        .foregroundStyle(HerdrTheme.mist)
-        .frame(width: 30, height: 28)
-        .buttonStyle(.plain)
+        .buttonStyle(HerdrIconButtonStyle(isActive: isPresented))
         .help("Browse, search, copy, or reuse your submitted prompts")
         .accessibilityIdentifier("pane-prompt-history")
         .popover(isPresented: $isPresented) {

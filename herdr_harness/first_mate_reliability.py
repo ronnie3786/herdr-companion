@@ -392,7 +392,7 @@ class FirstMateReliability:
             return
         # The stable attempt ID bridges DB commit -> controller receipt failure.
         identity = f"coordinator-kick:{feature['current_visit_id']}:{record['attempts']}"
-        self.store.queue_system_message(feature['id'], 'Stability sweep found the current authorized stage marked running with no active assignment. Inspect authoritative state, collect settled outcomes, and complete this stage or explain its blocker. Do not begin another stage or invent human permission.', identity)
+        self.store.queue_system_message(feature['id'], 'Stability sweep found the current authorized stage marked running with no active assignment. Inspect authoritative state, collect settled outcomes, and complete this stage or explain its blocker. Do not begin another stage or invent human permission.', identity, attention='background')
         self.runtime._event(feature['id'], 'reliability.coordinator_kickstarted', 'Woke the stranded coordinator to settle the current stage.', {'visit_id': feature['current_visit_id']}, identity)
         _write_json(path, {'attempts': record['attempts'] + 1, 'at': iso(now)})
 

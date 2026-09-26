@@ -32,7 +32,7 @@ struct FirstMateDashboardSummary: Codable, Equatable, Sendable {
     static func from(_ snapshot: FirstMateSnapshot) -> Self {
         let visits = snapshot.visits.filter { $0.revision == snapshot.feature.revision }
         let stages = visits.isEmpty ? snapshot.visits : visits
-        let latest = snapshot.messages.last { $0.role == "assistant" }
+        let latest = snapshot.messages.last { $0.role == "assistant" && $0.isConversation }
         let needsUser = ["awaiting_direction", "blocked"].contains(snapshot.feature.status)
         return Self(
             currentStageTitle: snapshot.currentVisit?.title,

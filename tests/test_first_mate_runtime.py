@@ -1628,4 +1628,99 @@ class FirstMateRuntimeTests(unittest.TestCase):
         self.assertEqual(records['checkpoint']['provenance']['visit_id'], visit['id'])
         self.assertEqual(records['checkpoint']['provenance']['feature_revision'], visit['revision'])
 
+    def test_background_turns_leave_only_the_stage_report_in_the_chat(self):
+        feature = self.feature()
+        # The checkpoint lands mid-turn; wait for that turn to settle too.
+        self.until(lambda: self.store.get_feature(feature['id'])['status']=='awaiting_direction'
+                   and not self.store.pending_messages(feature['id']))
+        snapshot = self.store.snapshot(feature['id'])
+        chat = [m for m in snapshot['messages'] if m['role'] != 'system' and m['visibility'] == 'conversation']
+        self.assertEqual([(m['role'], m['text']) for m in chat[:2]],
+                         [('user', 'Plan the synthetic feature'),
+                          ('assistant', 'Planning is running. Follow it in the sidebar.')])
+        self.assertEqual(len(chat), 3)
+        self.assertTrue(chat[2]['metadata']['checkpoint'])
+        self.assertTrue(chat[2]['text'].startswith('Plan inspected and complete'))
+        # The worker's outcome woke the coordinator; its closing words are a note.
+        notes = [e for e in snapshot['events'] if e['type'] == 'coordinator.note']
+        self.assertEqual([(n['summary'], n['payload']['reason']) for n in notes],
+                         [('Awaiting your direction.', 'reported_this_turn')])
+        self.assertTrue(all(m['visibility'] == 'background' for m in snapshot['messages'] if m['role'] == 'system'))
+        self.assertEqual(self.store.board(feature['id'])['messages_total'], 3)
+
+    def test_coordinator_input_names_who_reads_the_final_message(self):
+        feature = self.feature()
+        snapshot = self.store.snapshot(feature['id'])
+        background = {'id':'update','role':'system','text':'Lane 1 reported success: done',
+                      'metadata':{'assignment_id':'lane','attention':'background'}}
+        rendered = self.runtime._coordinator_input(snapshot, background)
+        self.assertIn('background turn, your final message is a private journal note', rendered)
+        self.assertIn('"attention": "background"', rendered)
+        legacy_gate = {'id':'gate','role':'system','text':'Human checkpoint: pick one',
+                       'metadata':{'human_gate':{'status':'pending'}}}
+        self.assertIn('the human must act', self.runtime._coordinator_input(snapshot, legacy_gate))
+        human = {'id':'direction','role':'user','text':'Plan it','metadata':{}}
+        rendered = self.runtime._coordinator_input(snapshot, human)
+        self.assertTrue(rendered.startswith('Human direction:\nPlan it'))
+        self.assertNotIn('"attention"', rendered)
+        self.assertIn('fm_notify_human', COORDINATOR_PROMPT)
+        self.assertIn('private work', COORDINATOR_PROMPT)
+
+    def test_chat_reports_are_budgeted_and_notices_are_background_only(self):
+        feature = self.feature()
+        claim = self.store.claim_message(feature['id'], 'owner')
+        job = {'feature_id':feature['id'],'kind':'coordinator','claim':claim,'owner':'owner'}
+        self.runtime._tool(job, 'fm_begin_stage', {'title':'Plan','stage_key':'planning'}, 'stage')
+        for params in ({'summary':'x' * 1300, 'recommendation':'Next'},
+                       {'summary':'Done', 'recommendation':'y' * 450}):
+            with self.assertRaises(FirstMateError) as error:
+                self.runtime._tool(job, 'fm_complete_stage', params, 'long-' + str(len(params['summary'])))
+            self.assertEqual(error.exception.code, 'report_too_long')
+            self.assertIn('characters; the chat budget is', str(error.exception))
+        with self.assertRaises(FirstMateError) as error:
+            self.runtime._tool(job, 'fm_notify_human', {'text':'z' * 700}, 'long-notice')
+        self.assertEqual(error.exception.code, 'report_too_long')
+        with self.assertRaises(FirstMateError) as error:
+            self.runtime._tool(job, 'fm_notify_human', {'text':'Draft PR is ready.'}, 'human-turn-notice')
+        self.assertEqual(error.exception.code, 'notice_not_needed')
+
+    def settled_stage(self, feature, job):
+        self.runtime._tool(job, 'fm_begin_stage', {'title':'Plan','stage_key':'planning'}, 'stage')
+        visit_id = self.store.get_feature(feature['id'])['current_visit_id']
+        assignment = self.store.create_assignment(visit_id, {
+            'title':'Synthetic planner','role':'planner','prompt':'Plan it','request_id':'assignment-settled'})
+        worker = self.store.claim_assignment(assignment['id'], 'synthetic-worker')
+        self.store.bind_session(assignment['id'], worker['generation'], 'synthetic-worker', 'synthetic-worker-session',
+                                str(self.root / 'worker-settled.jsonl'), 'run-settled')
+        self.store.record_outcome(assignment['id'], worker['generation'], 'synthetic-worker-session',
+                                  worker['input_revision'], 'success', 'Synthetic plan verified', 'outcome-settled')
+
+    def test_a_failed_background_turn_on_a_settled_stage_tells_the_human(self):
+        feature = self.feature()
+        human = self.store.claim_message(feature['id'], self.runtime.owner)
+        self.settled_stage(feature, {'feature_id':feature['id'],'kind':'coordinator','claim':human,'owner':self.runtime.owner})
+        self.store.finish_message(human['id'], self.runtime.owner, 'Planning is running.')
+        claim = self.store.claim_message(feature['id'], self.runtime.owner)
+        self.assertEqual(claim['role'], 'system')
+        job = self.runtime._new_job(self.store.get_feature(feature['id']), kind='coordinator', prompt='Outcome', claim=claim)
+        self.runtime._finish(job, {'ended': True, 'error': 'Synthetic provider outage'})
+        report = [m for m in self.store.snapshot(feature['id'])['messages']
+                  if m['role'] == 'assistant' and m['visibility'] == 'conversation'][-1]
+        self.assertTrue(report['text'].startswith('First Mate stopped while handling a background update.'))
+        self.assertIn('Coordinator stopped: Synthetic provider outage', report['text'])
+        self.assertEqual(report['metadata']['in_reply_to'], claim['id'])
+
+    def test_a_committed_long_checkpoint_replays_from_its_receipt(self):
+        feature = self.feature()
+        claim = self.store.claim_message(feature['id'], 'owner')
+        job = {'feature_id':feature['id'],'kind':'coordinator','claim':claim,'owner':'owner'}
+        self.settled_stage(feature, job)
+        params = {'summary':'Long synthetic summary. ' * 70, 'recommendation':'Choose the next stage'}
+        with patch('herdr_harness.first_mate_runtime.CHECKPOINT_SUMMARY_LIMIT', 5000):
+            first = self.runtime._tool(job, 'fm_complete_stage', params, 'committed-long')
+        self.assertEqual(self.runtime._tool(job, 'fm_complete_stage', params, 'committed-long'), first)
+        with self.assertRaises(FirstMateError) as error:
+            self.runtime._tool(job, 'fm_complete_stage', params, 'new-long')
+        self.assertEqual(error.exception.code, 'report_too_long')
+
 if __name__ == '__main__': unittest.main()

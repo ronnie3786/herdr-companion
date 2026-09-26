@@ -82,7 +82,7 @@ struct AgentBoardPayload: Decodable, Equatable, Sendable {
     /// Adapts an older companion's full snapshot. Callers run this off the main
     /// actor: a long-running feature's snapshot holds tens of thousands of events.
     static func adapting(_ snapshot: FirstMateSnapshot, messageLimit: Int = messageLimit, journalLimit: Int = journalLimit) -> Self {
-        let conversation = snapshot.messages.filter { ["user", "human", "assistant"].contains($0.role) }
+        let conversation = snapshot.messages.filter(\.isConversation)
         let journal = snapshot.events.filter { isJournal($0) && $0.featureID == snapshot.feature.id }
         let version = [
             String(snapshot.feature.revision), snapshot.feature.updatedAt, snapshot.feature.status,

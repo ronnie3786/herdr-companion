@@ -143,7 +143,8 @@ not inherit the companion control token.
 
 - Coordinator: read reference-oriented status, record ordered stages from a human
   request and begin only the next authorized stage, delegate, steer, retry, revise affected work, resolve explicit human
-  gates, select the exact retained gate runs, complete a stage and finish the feature. It can also read bounded
+  gates, select the exact retained gate runs, complete a stage and finish the feature. On a background turn it
+  can send the human one brief notice (`fm_notify_human`) for a decision, blocker, or deliverable. It can also read bounded
   feature Documents and saved sessions, and retain a known pull request or share
   link with `fm_save_link`. Pi's normal configured tools, extensions, skills,
   prompt templates and project context remain available. Its charter interprets
@@ -161,9 +162,12 @@ not inherit the companion control token.
   read-only tools; ordinary advisors retain normal configured tools. Advisors
   cannot save, hide, restore, or otherwise mutate feature links.
 
-The coordinator is a small conversational router. Simple direction,
-clarification and status replies stay in the feature conversation and default to
-one to three sentences (normally at most 80 words). Substantive planning,
+The coordinator is the feature's lead developer and a small conversational
+router. Simple direction, clarification and status replies stay in the feature
+conversation and default to one to three sentences (normally at most 80 words).
+Only replies to the human, stage results, notices, and escalations reach the
+chat; a background turn's closing message is a private journal note. See
+[what reaches the chat](conversation.md). Substantive planning,
 research, investigation, implementation, review, testing, evidence reading and
 synthesis are tracked worker assignments; their detailed deliverables live in
 Documents. The coordinator can use concise structured worker summaries to close
@@ -317,7 +321,12 @@ Every completed major stage records evidence and a recommendation. A recorded
 human-authorized follow-up enters `coordinating` and queues a background update;
 the coordinator may consume only that next stage under the same human message
 and revision. Otherwise it enters `awaiting_direction`. A system outcome cannot
-add stage authority. Explicit internal gates require a later human message;
+add stage authority. Worker outcomes, follow-ups, and stability sweeps are
+background turns: their queued update is a pointer to the evidence, and the
+coordinator's closing message is recorded as a `coordinator.note` event unless the
+update needs the human or the turn leaves the stage with nothing running or queued
+(including when the turn itself failed), and the same workflow state was not
+already reported since the human's last message. Explicit internal gates require a later human message;
 background repair and generic Resume cannot bypass them.
 
 Within a stage, independent assignments and bounded review/fix rounds run

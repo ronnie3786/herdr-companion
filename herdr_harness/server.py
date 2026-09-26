@@ -450,6 +450,7 @@ def api_description() -> dict:
             "first-mate-feedback-v1",
             "first-mate-git-v1",
             "first-mate-links-v1",
+            "first-mate-quiet-chat-v1",
             VERIFICATION_CAPABILITY,
             "pr-review-v1",
             "pi-session-context-v1",
@@ -1119,6 +1120,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     "first-mate-board-v1", "first-mate-journal-events-v1",
                     "first-mate-feedback-v1",
                     "first-mate-links-v1",
+                    "first-mate-quiet-chat-v1",
                     VERIFICATION_CAPABILITY,
                 ], **runtime.capabilities()}
             if method == "GET" and tail == ["models"]:

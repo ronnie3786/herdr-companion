@@ -34,18 +34,6 @@ struct AgentBoardContent: Equatable, Sendable {
         let date: Date?
     }
 
-    enum TimelineRow: Equatable, Sendable, Identifiable {
-        case message(MessageRow)
-        case note(NoteRow)
-
-        var id: String {
-            switch self {
-            case .message(let row): "message:\(row.id)"
-            case .note(let row): "note:\(row.id)"
-            }
-        }
-    }
-
     struct AgentRow: Equatable, Sendable, Identifiable {
         let id: String
         let title: String
@@ -80,7 +68,9 @@ struct AgentBoardContent: Equatable, Sendable {
     var stageTitle: String?
     var stageIndex: Int?
     var attention: String?
-    var timeline: [TimelineRow]
+    /// The conversation only. Journal milestones and First Mate's private
+    /// background notes stay in Overview's journal (`latestNotes`).
+    var timeline: [MessageRow]
     var earlierMessageCount: Int
     var agents: [AgentRow]
     var stages: [StageRow]
@@ -137,7 +127,7 @@ extension AgentBoardContent {
             stageTitle: summary?.currentStageTitle ?? currentVisit?.title,
             stageIndex: stageIndex,
             attention: attentionText(feature: feature, messages: payload.messages),
-            timeline: timeline(messages: payload.messages, notes: notes, featureID: feature.id),
+            timeline: timeline(messages: payload.messages, featureID: feature.id),
             earlierMessageCount: max(0, payload.messagesTotal - payload.messages.count),
             agents: agents,
             stages: stageVisits.map { stageRow($0, currentID: feature.currentVisitID) },
@@ -153,40 +143,17 @@ extension AgentBoardContent {
 
     // MARK: - Timeline
 
-    private struct Stamped<Value> {
-        let value: Value
-        let date: Date?
-        let order: Int
-    }
-
-    private static func timeline(messages: [FirstMateMessage], notes: [NoteRow], featureID: String) -> [TimelineRow] {
+    private static func timeline(messages: [FirstMateMessage], featureID: String) -> [MessageRow] {
         // Parse every timestamp exactly once. The server's order breaks ties,
         // so an answer can never sort above the question it replies to.
-        var rows: [Stamped<TimelineRow>] = []
-        rows.reserveCapacity(messages.count + notes.count)
-        for (offset, message) in messages.enumerated()
-        where message.featureID == featureID && ["user", "human", "assistant"].contains(message.role) {
-            let row = messageRow(message)
-            rows.append(Stamped(value: .message(row), date: row.date, order: offset))
-        }
-        for (offset, note) in notes.enumerated() {
-            rows.append(Stamped(value: .note(note), date: note.date, order: messages.count + offset))
-        }
-        let ordered = rows.sorted { lhs, rhs in
-            let left = lhs.date ?? .distantPast
-            let right = rhs.date ?? .distantPast
+        let rows = messages.enumerated()
+            .filter { $0.element.featureID == featureID && $0.element.isConversation }
+            .map { (row: messageRow($0.element), order: $0.offset) }
+        return rows.sorted { lhs, rhs in
+            let left = lhs.row.date ?? .distantPast
+            let right = rhs.row.date ?? .distantPast
             return left == right ? lhs.order < rhs.order : left < right
-        }.map(\.value)
-        // Only a repeat of the same note collapses, and a message breaks a run.
-        var result: [TimelineRow] = []
-        for row in ordered {
-            if case .note(let note) = row, case .note(let last)? = result.last, last.text == note.text {
-                result[result.count - 1] = .note(NoteRow(id: last.id, text: note.text, count: last.count + note.count, date: note.date))
-            } else {
-                result.append(row)
-            }
-        }
-        return result
+        }.map(\.row)
     }
 
     private static func messageRow(_ message: FirstMateMessage) -> MessageRow {
@@ -203,7 +170,7 @@ extension AgentBoardContent {
         )
     }
 
-    /// Only milestones a person would want to see between turns. Session,
+    /// Only milestones a person would want to see in the journal. Session,
     /// handoff, and execution bookkeeping repeats on every turn and says nothing
     /// new; message records repeat the conversation itself.
     private static func note(_ event: FirstMateEvent) -> NoteRow? {
@@ -224,6 +191,7 @@ extension AgentBoardContent {
         "assignment.queued", "assignment.outcome", "assignment.progress", "assignment.steered",
         "assignment.waiting_children", "assignment.recovery_exhausted",
         "advisor.assessment", "reliability.blocked", "reliability.restarted", "runtime.error",
+        "coordinator.note",
     ]
 
     private static func collapse(_ notes: [NoteRow]) -> [NoteRow] {
@@ -328,7 +296,7 @@ extension AgentBoardContent {
         guard FirstMateAttention.needsHumanDecision(status: feature.status) || feature.dashboardSummary?.awaitingTurn == true
         else { return nil }
         let prompt = feature.dashboardSummary?.needsUserPrompt
-            ?? messages.last { $0.role == "assistant" }?.text
+            ?? messages.last { $0.role == "assistant" && $0.isConversation }?.text
         let text = prompt.map { AgentBoardProse.plainText(fromMarkdown: $0) } ?? ""
         return text.isEmpty ? "Waiting for your direction." : text
     }

@@ -27,13 +27,8 @@ struct AgentBoardChatView: View {
                             .foregroundStyle(HerdrTheme.muted)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    ForEach(content.timeline) { row in
-                        switch row {
-                        case .message(let message):
-                            AgentBoardMessageView(message: message, openFullView: openFullView)
-                        case .note(let note):
-                            AgentBoardNoteView(note: note)
-                        }
+                    ForEach(content.timeline) { message in
+                        AgentBoardMessageView(message: message, openFullView: openFullView)
                     }
                     Color.clear.frame(height: 1).id(Self.endID)
                 }
@@ -68,20 +63,5 @@ struct AgentBoardChatView: View {
                 }
             }
         }
-    }
-}
-
-private struct AgentBoardNoteView: View {
-    let note: AgentBoardContent.NoteRow
-
-    var body: some View {
-        Text(note.count > 1 ? "\(note.text) · \(note.count) updates" : note.text)
-            .herdrFont(.subheadline)
-            .foregroundStyle(HerdrTheme.muted)
-            .multilineTextAlignment(.center)
-            .lineLimit(2)
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 12)
-            .help(note.date.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "")
     }
 }

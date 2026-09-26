@@ -206,7 +206,7 @@ struct FirstMateChatView: View {
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 24) {
-                    ForEach(snapshot.messages.filter { ["user", "human", "assistant"].contains($0.role) }) { message in
+                    ForEach(snapshot.messages.filter(\.isConversation)) { message in
                         let feedback = FirstMateResponseFeedbackPresentation.make(
                             message: message,
                             supported: feedbackSupported,

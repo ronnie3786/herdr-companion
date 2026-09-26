@@ -122,12 +122,8 @@ struct AgentBoardStateTests {
         #expect(await client.journalOnlyRequests == [true])
         let content = try #require(state.content)
         #expect(content.earlierMessageCount == 20)
-        let notes = content.timeline.compactMap { row -> String? in
-            if case .note(let note) = row { return note.text } else { return nil }
-        }
-        #expect(notes == stride(from: 50, through: 500, by: 50).map { "Step \($0)" })
-        let messages = content.timeline.filter { if case .message = $0 { true } else { false } }
-        #expect(messages.count == AgentBoardPayload.messageLimit)
+        #expect(content.latestNotes.map(\.text) == ["Step 500", "Step 450", "Step 400"])
+        #expect(content.timeline.count == AgentBoardPayload.messageLimit)
     }
 
     @Test("A reply sent during a running poll is fetched as soon as that poll ends")

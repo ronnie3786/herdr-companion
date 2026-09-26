@@ -5,9 +5,11 @@ struct ConnectionPill: View {
 
     var body: some View {
         Label(state.title, systemImage: state.symbol)
-            .herdrFont(.caption, monospaced: true, weight: .bold)
+            .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
             .foregroundStyle(state.color)
-            .padding(.vertical, 8)
+            .lineLimit(1)
+            .fixedSize()
+            .frame(minHeight: HerdrTheme.minHitTarget)
             .accessibilityLabel("Server \(state.title)")
     }
 }

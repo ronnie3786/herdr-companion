@@ -901,6 +901,88 @@ enum HerdrRenderHarness {
         )
     }
 
+    /// Renders `content` as the main window does: a titled, full-size-content
+    /// window whose frame view is captured, so the transparent 40pt title bar
+    /// and its traffic lights (drawn inactive offscreen) appear in the PNG.
+    @MainActor
+    static func renderWindow(
+        _ name: String,
+        size: CGSize,
+        settlePasses: Int = 10,
+        @ViewBuilder content: () -> some View
+    ) async throws -> RenderResult {
+        try await renderGate.acquire()
+        defer { renderGate.release() }
+        try Task.checkCancellation()
+        HerdrTestAppIcon.install()
+
+        let hosting = NSHostingView(
+            rootView: content()
+                .modifier(HerdrMainWindowChromeModifier())
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .environment(\.colorScheme, .dark)
+                .preferredColorScheme(.dark)
+                .tint(HerdrTheme.accent)
+        )
+        let window = NSWindow(
+            contentRect: CGRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.backgroundColor = .black
+        window.contentView = hosting
+        // Full-size content: the frame, title bar included, is the requested size.
+        window.setFrame(CGRect(origin: .zero, size: size), display: false)
+        window.alphaValue = 0
+        window.orderFrontRegardless()
+        defer {
+            window.orderOut(nil)
+            window.contentView = nil
+        }
+
+        for _ in 0..<settlePasses {
+            hosting.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        guard let frameView = hosting.superview else { throw RenderError.bitmapUnavailable(name) }
+        frameView.layoutSubtreeIfNeeded()
+        let bounds = frameView.bounds
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(bounds.width * scale),
+            pixelsHigh: Int(bounds.height * scale),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else { throw RenderError.bitmapUnavailable(name) }
+        bitmap.size = bounds.size
+        frameView.cacheDisplay(in: bounds, to: bitmap)
+        guard let data = bitmap.representation(using: .png, properties: [:]) else {
+            throw RenderError.encodingFailed(name)
+        }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appending(path: name)
+        try data.write(to: url, options: .atomic)
+        return RenderResult(
+            name: name,
+            url: url,
+            byteCount: data.count,
+            pixelSize: CGSize(width: bitmap.pixelsWide, height: bitmap.pixelsHigh),
+            pointSize: bounds.size
+        )
+    }
+
     private static func isWritable(_ directory: URL) -> Bool {
         let manager = FileManager.default
         do {

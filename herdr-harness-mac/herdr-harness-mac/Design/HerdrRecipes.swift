@@ -61,6 +61,14 @@ extension View {
             .background(HerdrTheme.selectedFill, in: .rect(cornerRadius: HerdrTheme.Radius.control))
     }
 
+    /// A `Menu` drawn as a flat icon button (title-bar and toolbar menus).
+    func herdrIconMenu(visualSize: CGFloat = HerdrTheme.ControlHeight.regular, tint: Color = HerdrTheme.iconTint) -> some View {
+        menuStyle(.button)
+            .buttonStyle(HerdrIconButtonStyle(visualSize: visualSize, tint: tint))
+            .menuIndicator(.hidden)
+            .fixedSize()
+    }
+
     /// Keeps a 28pt pointer target around a control drawn at 20–26pt.
     /// Apply inside a `Button`/`Menu` label, after the visual frame.
     func herdrCompactHitTarget(visual: CGFloat) -> some View {

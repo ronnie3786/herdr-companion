@@ -12,9 +12,10 @@ struct WorkspaceScopeSegment: View {
             Label(scope.label, systemImage: scope.symbol)
                 .labelStyle(.iconOnly)
                 .herdrFont(size: 14, relativeTo: .body)
-                .foregroundStyle(isSelected ? HerdrTheme.text : HerdrTheme.muted)
-                .frame(minWidth: 30, minHeight: 28)
-                .background(background, in: .rect(cornerRadius: 4))
+                .foregroundStyle(isSelected || isHovering ? HerdrTheme.primaryText : HerdrTheme.iconTint)
+                .frame(width: HerdrTheme.ControlHeight.regular, height: HerdrTheme.ControlHeight.small)
+                .background(background, in: .rect(cornerRadius: HerdrTheme.Radius.control))
+                .frame(minWidth: HerdrTheme.minHitTarget, minHeight: HerdrTheme.minHitTarget)
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -37,7 +38,7 @@ struct WorkspaceScopeSegment: View {
     }
 
     private var background: Color {
-        if isSelected { return HerdrTheme.selection }
-        return isHovering ? HerdrTheme.elevated : .clear
+        if isSelected { return HerdrTheme.selectedFill }
+        return isHovering ? HerdrTheme.hoverFill : .clear
     }
 }

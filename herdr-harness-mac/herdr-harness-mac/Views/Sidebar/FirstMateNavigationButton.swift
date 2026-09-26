@@ -13,13 +13,14 @@ struct FirstMateNavigationButton: View {
     /// host. Zero hides the badge.
     var attentionCount: Int = 0
     let action: () -> Void
+    @State private var isHovering = false
 
     /// The largest count the compact badge spells out. Larger totals render as
     /// `99+`, while accessibility and hover help keep the exact number.
     static let badgeMaximum = 99
 
     /// Human-attention orange, matching ``FirstMateStatusLabel``.
-    static let badgeColor = Color.orange
+    static let badgeColor = HerdrTheme.attentionBadge
 
     /// The compact visible text, or `nil` while there is nothing to report.
     static func badgeText(for count: Int) -> String? {
@@ -53,16 +54,21 @@ struct FirstMateNavigationButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                Label("First Mate", systemImage: "sailboat")
-                    .herdrFont(.headline)
+                Image(systemName: "sailboat")
+                    .herdrFont(size: 15)
+                    .frame(width: 18)
+                    .accessibilityHidden(true)
+                Text("First Mate")
+                    .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
+                    .lineLimit(1)
                 Spacer(minLength: 8)
                 if let badgeText = Self.badgeText(for: attentionCount) {
                     Text(badgeText)
-                        .herdrFont(.caption2, weight: .bold, monospacedDigit: true)
-                        .foregroundStyle(HerdrTheme.ink)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .frame(minWidth: 20, minHeight: 20)
+                        .herdrFont(size: 10, weight: .bold)
+                        .monospacedDigit()
+                        .foregroundStyle(HerdrTheme.onAttentionBadge)
+                        .padding(.horizontal, 5)
+                        .frame(minWidth: 18, minHeight: 18)
                         .background(Self.badgeColor, in: .capsule)
                         // The button's value already announces the exact
                         // count, so the decorative capsule stays out of the
@@ -71,10 +77,14 @@ struct FirstMateNavigationButton: View {
                 }
             }
             .foregroundStyle(HerdrTheme.accent)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: SidebarMetrics.navRowHeight)
             .contentShape(.rect)
+            .herdrRowBackground(selected: false, hovered: isHovering)
         }
         .buttonStyle(.plain)
-        .padding(.vertical, 10)
+        .onHover { isHovering = $0 }
+        .accessibilityLabel("First Mate")
         .accessibilityIdentifier("open-first-mate")
         .accessibilityValue(Self.accessibilityValue(for: attentionCount))
         .help(Self.helpText(for: attentionCount))

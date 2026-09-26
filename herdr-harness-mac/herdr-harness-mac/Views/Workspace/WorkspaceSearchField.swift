@@ -1,5 +1,6 @@
 import SwiftUI
 
+/// MonoCode's search row: a bare 36pt band with a 12pt magnifier, no box.
 struct WorkspaceSearchField: View {
     @Binding var text: String
     var placeholder: String = "Filter spaces"
@@ -8,12 +9,15 @@ struct WorkspaceSearchField: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .foregroundStyle(isFocused ? HerdrTheme.accent : HerdrTheme.mist)
+                .herdrFont(size: HerdrTheme.TextSize.small)
+                .foregroundStyle(isFocused ? HerdrTheme.accent : HerdrTheme.iconTint)
+                .accessibilityHidden(true)
 
-            TextField(placeholder, text: $text)
+            // An explicit prompt color: the system placeholder falls below 4.5:1.
+            TextField(placeholder, text: $text, prompt: Text(placeholder).foregroundStyle(HerdrTheme.tertiaryText))
                 // Plain style, or AppKit draws its own bezel inside our chrome.
                 .textFieldStyle(.plain)
-                .herdrFont(size: 12, relativeTo: .subheadline)
+                .herdrFont(size: HerdrTheme.TextSize.small, relativeTo: .subheadline)
                 .foregroundStyle(HerdrTheme.text)
                 .autocorrectionDisabled()
                 .focused($isFocused)
@@ -21,26 +25,16 @@ struct WorkspaceSearchField: View {
                 .accessibilityLabel(placeholder)
 
             if !text.isEmpty {
-                Button {
+                Button("Clear filter", systemImage: "xmark.circle.fill") {
                     text = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .herdrHitTarget(minWidth: 28, minHeight: 28)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(HerdrTheme.mist)
+                .buttonStyle(HerdrIconButtonStyle(visualSize: HerdrTheme.ControlHeight.small))
                 .help("Clear filter")
                 .accessibilityLabel("Clear workspace filter")
             }
         }
-        .padding(.leading, 10)
-        .padding(.trailing, text.isEmpty ? 10 : 3)
-        .frame(minHeight: 34)
-        .background(HerdrTheme.graphite)
-        .overlay {
-            RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                .strokeBorder(isFocused ? HerdrTheme.accent.opacity(0.65) : HerdrTheme.surface, lineWidth: 1)
-        }
-        .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+        .padding(.leading, 12)
+        .padding(.trailing, 6)
+        .frame(minHeight: HerdrTheme.ControlHeight.bar)
     }
 }

@@ -10,8 +10,7 @@ final class HerdrChatColorsUITests: HerdrUITestCase {
         let other = app.buttons["sidebar-pane-demo1|w2:p1"]
         XCTAssertTrue(first.waitForExistence(timeout: 10))
 
-        app.control(identifier: "sidebar-recent-filter").click()
-        app.menuItems["Recents"].click()
+        app.buttons["sidebar-recent-recents"].click()
         first.rightClick()
         app.menuItems["Tab color"].hover()
         let lavender = app.menuItems["tab-color-lavender"]

@@ -12,7 +12,7 @@ struct PaneCardView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     Text(pane.displayTitle)
-                        .herdrFont(.headline, weight: .semibold)
+                        .herdrFont(size: HerdrTheme.TextSize.reading, weight: .semibold)
                         .foregroundStyle(HerdrTheme.text)
                         .lineLimit(1)
                     Spacer()
@@ -28,30 +28,29 @@ struct PaneCardView: View {
                             .truncationMode(.middle)
                     }
                 }
-                .herdrFont(.caption)
-                .foregroundStyle(HerdrTheme.mist)
+                .herdrFont(size: HerdrTheme.TextSize.caption)
+                .foregroundStyle(HerdrTheme.tertiaryText)
 
                 HStack {
                     Text(pane.id)
                     Spacer()
                     Text("rev \(pane.revision)")
                 }
-                .herdrFont(.caption)
+                .herdrFont(size: HerdrTheme.TextSize.caption)
                 .fontDesign(.monospaced)
-                .foregroundStyle(HerdrTheme.muted)
+                .foregroundStyle(HerdrTheme.tertiaryText)
             }
 
             Image(systemName: "chevron.right")
-                .herdrFont(.caption, weight: .bold)
-                .foregroundStyle(HerdrTheme.muted)
+                .herdrFont(size: HerdrTheme.TextSize.small, weight: .semibold)
+                .foregroundStyle(HerdrTheme.iconTint)
         }
-        .padding(15)
-        .background(isSelected ? HerdrTheme.selection : HerdrTheme.elevated)
-        .clipShape(.rect(cornerRadius: HerdrTheme.cardRadius))
-        .overlay {
-            RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
-                .strokeBorder(isSelected ? HerdrTheme.accent.opacity(0.5) : HerdrTheme.separator, lineWidth: 1)
-        }
+        .padding(.vertical, 12)
+        .padding(.horizontal, 14)
+        .herdrCard(
+            fill: isSelected ? HerdrTheme.selectedFill : HerdrTheme.cardFill,
+            outline: isSelected ? HerdrTheme.accent.opacity(0.45) : HerdrTheme.outline
+        )
         .contentShape(.rect)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(pane.displayTitle), \(pane.displayAgentName), \(pane.agentStatus.title)")

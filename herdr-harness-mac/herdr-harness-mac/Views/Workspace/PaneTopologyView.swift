@@ -8,7 +8,7 @@ struct PaneTopologyView: View {
         Canvas { context, size in
             guard let layout, layout.area.width > 0, layout.area.height > 0 else {
                 let rect = CGRect(origin: .zero, size: size).insetBy(dx: 2, dy: 2)
-                context.stroke(Path(roundedRect: rect, cornerRadius: 5), with: .color(HerdrTheme.muted.opacity(0.45)))
+                context.stroke(Path(roundedRect: rect, cornerRadius: 5), with: .color(HerdrTheme.inkFill(0.15)))
                 return
             }
 
@@ -23,10 +23,10 @@ struct PaneTopologyView: View {
                 )
                 let path = Path(roundedRect: rect, cornerRadius: 4)
                 let isHighlighted = pane.paneID == highlightedPaneID || (highlightedPaneID == nil && pane.focused)
-                context.fill(path, with: .color(isHighlighted ? HerdrTheme.accent.opacity(0.32) : HerdrTheme.mist.opacity(0.10)))
+                context.fill(path, with: .color(isHighlighted ? HerdrTheme.accent.opacity(0.32) : HerdrTheme.inkFill(0.10)))
                 context.stroke(
                     path,
-                    with: .color(isHighlighted ? HerdrTheme.accent : HerdrTheme.mist.opacity(0.38)),
+                    with: .color(isHighlighted ? HerdrTheme.accent : HerdrTheme.inkFill(0.30)),
                     lineWidth: isHighlighted ? 1.5 : 1
                 )
             }

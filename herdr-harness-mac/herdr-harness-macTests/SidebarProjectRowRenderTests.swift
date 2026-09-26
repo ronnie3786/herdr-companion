@@ -226,7 +226,7 @@ struct SidebarProjectRowRenderTests {
         let row = SidebarProjectRow(workspace: fixture.ordinary, isExpanded: false, action: {})
 
         #expect(row.titleColor == HerdrTheme.text)
-        #expect(row.folderIconColor == HerdrTheme.mist)
+        #expect(row.folderIconColor == HerdrTheme.folder)
     }
 
     private func titleText(_ label: String, scale: HerdrFontScale) -> some View {

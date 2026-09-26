@@ -9,7 +9,7 @@ struct OnboardingView: View {
             HerdrBackground()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
+                VStack(alignment: .leading, spacing: 24) {
                     brand
                     promise
                     connectionCard
@@ -27,14 +27,14 @@ struct OnboardingView: View {
 
     private var brand: some View {
         HStack(spacing: 14) {
-            HerdrBrandMark(size: 58)
+            HerdrBrandMark(size: 40)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text("herdr")
-                    .herdrFont(.largeTitle, weight: .semibold)
+                    .herdrFont(size: HerdrTheme.TextSize.title, weight: .semibold)
                 Text("Your agents, within reach")
-                    .herdrFont(.subheadline)
-                    .foregroundStyle(HerdrTheme.mist)
+                    .herdrFont(size: HerdrTheme.TextSize.body)
+                    .foregroundStyle(HerdrTheme.secondaryText)
             }
         }
     }
@@ -42,10 +42,11 @@ struct OnboardingView: View {
     private var promise: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Know where to look.")
-                .herdrFont(.largeTitle, weight: .semibold)
+                .herdrFont(size: HerdrTheme.TextSize.title, weight: .semibold)
             Text("Move from workspace to pane to live agent in seconds. Herdr keeps the terminals real; this app keeps the decisions close.")
-                .herdrFont(.title3)
-                .foregroundStyle(HerdrTheme.mist)
+                .herdrFont(size: HerdrTheme.TextSize.reading)
+                .lineSpacing(8)
+                .foregroundStyle(HerdrTheme.proseText)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -54,7 +55,7 @@ struct OnboardingView: View {
         GlassCard {
             VStack(alignment: .leading, spacing: 18) {
                 Label("Connect to your Mac", systemImage: "macbook.and.iphone")
-                    .herdrFont(.headline, weight: .semibold)
+                    .herdrFont(size: HerdrTheme.TextSize.reading, weight: .semibold)
 
                 TextField("https://your-mac.example.test", text: $model.serverURLString)
                     .textContentType(.URL)
@@ -63,12 +64,10 @@ struct OnboardingView: View {
                     .submitLabel(.next)
                     .onSubmit { focusedField = .token }
                     .textFieldStyle(.plain)
-                    .padding(14)
-                    .background(HerdrTheme.input, in: .rect(cornerRadius: HerdrTheme.compactRadius))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                            .strokeBorder(HerdrTheme.surface, lineWidth: 1)
-                    }
+                    .herdrFont(size: HerdrTheme.TextSize.body)
+                    .padding(.horizontal, 10)
+                    .frame(minHeight: HerdrTheme.ControlHeight.row)
+                    .herdrField(focused: focusedField == .url)
 
                 SecureField("Pairing token", text: $model.apiToken)
                     .textContentType(.password)
@@ -76,35 +75,31 @@ struct OnboardingView: View {
                     .submitLabel(.go)
                     .onSubmit(model.connect)
                     .textFieldStyle(.plain)
-                    .padding(14)
-                    .background(HerdrTheme.input, in: .rect(cornerRadius: HerdrTheme.compactRadius))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                            .strokeBorder(HerdrTheme.surface, lineWidth: 1)
-                    }
+                    .herdrFont(size: HerdrTheme.TextSize.body)
+                    .padding(.horizontal, 10)
+                    .frame(minHeight: HerdrTheme.ControlHeight.row)
+                    .herdrField(focused: focusedField == .token)
 
                 Button("Connect", systemImage: "bolt.horizontal.circle.fill", action: model.connect)
-                    .herdrProminentButton()
-                    .controlSize(.large)
+                    .buttonStyle(HerdrButtonStyle(kind: .primary, height: HerdrTheme.ControlHeight.row))
                     .frame(maxWidth: .infinity, alignment: .trailing)
 
                 Label("Use localhost when Herdr runs on this Mac, or the private HTTPS URL from tailscale serve status for another Mac. The token stays in Keychain.", systemImage: "lock.shield")
-                    .herdrFont(.footnote)
-                    .foregroundStyle(HerdrTheme.mist)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(HerdrTheme.tertiaryText)
                     .fixedSize(horizontal: false, vertical: true)
 
                 Text("You can add more machines later in Settings.")
-                    .herdrFont(.footnote)
-                    .foregroundStyle(HerdrTheme.mist)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(HerdrTheme.tertiaryText)
             }
-            .padding(22)
+            .padding(16)
         }
     }
 
     private var demoButton: some View {
         Button("Explore with live-looking demo data", systemImage: "sparkles", action: model.useDemo)
-            .buttonStyle(.bordered)
-            .controlSize(.large)
+            .buttonStyle(HerdrButtonStyle(kind: .outline, height: HerdrTheme.ControlHeight.row))
             .frame(maxWidth: .infinity)
             .accessibilityHint("Opens the app without connecting to a Mac")
     }

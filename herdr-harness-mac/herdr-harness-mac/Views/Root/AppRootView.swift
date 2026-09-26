@@ -127,6 +127,11 @@ final class HerdrShellState {
     @ObservationIgnored private var firstMateCacheIsDemo: Bool?
     @ObservationIgnored private var configuredPRReviewConnectionIdentity: PRReviewConnectionIdentity?
     private(set) var paneModeFocusRequest = 0
+    /// View ▸ Show/Hide Sidebar. The shell owns the rail's visibility; menu
+    /// commands only ask for a toggle.
+    private(set) var sidebarToggleRequest = 0
+
+    func requestSidebarToggle() { sidebarToggleRequest += 1 }
     private(set) var agentControlPaneMode: PaneDetailMode?
     private var agentControlPaneID: String?
     private var agentControlSelectionPaneID: String?
@@ -760,6 +765,12 @@ struct AppRootView: View {
                 )
             } else {
                 OnboardingView(model: model)
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        if updates.isBannerVisible, let version = updates.availableVersion {
+                            HerdrUpdateBanner(version: version, updates: updates)
+                                .padding(.top, HerdrTheme.ControlHeight.titleBar)
+                        }
+                    }
             }
         }
         // The event stream and the pulse feed belong to the process, not this
@@ -899,7 +910,7 @@ struct AppRootView: View {
         .overlay(alignment: .top) {
             if let message = model.toastMessage {
                 ToastView(message: message, dismiss: model.clearToast)
-                    .padding(.top, 8)
+                    .padding(.top, HerdrTheme.ControlHeight.titleBar + 8)
                     .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
             }
         }

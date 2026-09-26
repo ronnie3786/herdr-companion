@@ -7,14 +7,12 @@ struct ToastView: View {
     var body: some View {
         Button(action: dismiss) {
             Label(message, systemImage: "checkmark.circle.fill")
-                .herdrFont(.subheadline, weight: .medium)
+                .herdrFont(size: HerdrTheme.TextSize.body, weight: .medium)
                 .foregroundStyle(HerdrTheme.text)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(HerdrTheme.elevated, in: Capsule())
-                .overlay {
-                    Capsule().strokeBorder(HerdrTheme.separator, lineWidth: 1)
-                }
+                .padding(.horizontal, 12)
+                .frame(minHeight: HerdrTheme.ControlHeight.bar)
+                .herdrCard(fill: HerdrTheme.base)
+                // One floating toast may carry a shadow; lists never do.
                 .shadow(color: .black.opacity(0.26), radius: 16, y: 8)
         }
         .buttonStyle(.plain)

@@ -19,11 +19,11 @@ struct FleetSummaryView: View {
     private func metric(value: Int, label: String, symbol: String) -> some View {
         VStack(spacing: 5) {
             Label("\(value)", systemImage: symbol)
-                .herdrFont(.headline, weight: .semibold)
+                .herdrFont(size: HerdrTheme.TextSize.reading, weight: .semibold)
                 .foregroundStyle(value > 0 && label == "need you" ? HerdrTheme.alert : HerdrTheme.text)
             Text(label)
-                .herdrFont(.caption)
-                .foregroundStyle(HerdrTheme.mist)
+                .herdrFont(size: HerdrTheme.TextSize.caption)
+                .foregroundStyle(HerdrTheme.tertiaryText)
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)
@@ -31,7 +31,7 @@ struct FleetSummaryView: View {
 
     private var divider: some View {
         Rectangle()
-            .fill(HerdrTheme.separator)
+            .fill(HerdrTheme.rowDivider)
             .frame(width: 1, height: 34)
     }
 }

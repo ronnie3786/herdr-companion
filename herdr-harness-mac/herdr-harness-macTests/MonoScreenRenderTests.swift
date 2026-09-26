@@ -15,17 +15,19 @@ import Testing
 struct MonoScreenRenderTests {
     static let window = CGSize(width: 1280, height: 800)
 
-    @Test("Chat: sidebar, pane header, transcript and composer")
+    @Test("Chat: sidebar, title bar, transcript and composer")
     func chat() async throws {
         let model = HerdrRenderFixtures.demoModel()
         model.openPane(id: "demo1|w1:p2")
+        let shell = MonoRenderFixtures.shell(sidebarOnHome: true)
+        shell.showSession()
         let modelFavorites = ModelFavoritesStore()
         let workspace = try #require(model.workspace(id: "demo1|w1"))
         let pane = try HerdrRenderFixtures.piCapablePane()
         let store = try await HerdrRenderFixtures.populatedPiStore()
 
-        let result = try await HerdrRenderHarness.render("mono-chat.png", size: Self.window) {
-            MonoWindowFrame(model: model) {
+        let result = try await HerdrRenderHarness.renderWindow("mono-chat.png", size: Self.window) {
+            MonoRenderFixtures.window(model: model, shell: shell, detail: AnyView(
                 VStack(spacing: 0) {
                     PaneSessionHeader(model: model, pane: pane, store: store)
                     PiChatView(
@@ -42,7 +44,7 @@ struct MonoScreenRenderTests {
                         modelFavorites: modelFavorites
                     )
                 }
-            }
+            ))
         }
         result.expectSubstantial()
     }
@@ -50,10 +52,13 @@ struct MonoScreenRenderTests {
     @Test("Git: sidebar and the workspace source-control view")
     func git() async throws {
         let model = HerdrRenderFixtures.demoModel()
+        model.openPane(id: "demo1|w1:p2")
+        let shell = MonoRenderFixtures.shell(sidebarOnHome: true)
+        shell.showSession()
         let workspace = try #require(model.workspace(id: "demo1|w1"))
 
-        let result = try await HerdrRenderHarness.render("mono-git.png", size: Self.window) {
-            MonoWindowFrame(model: model) {
+        let result = try await HerdrRenderHarness.renderWindow("mono-git.png", size: Self.window) {
+            MonoRenderFixtures.window(model: model, shell: shell, detail: AnyView(
                 WorkspaceGitView(
                     workspace: workspace,
                     loadStatus: { try await model.fetchGitStatus(for: workspace) },
@@ -63,7 +68,7 @@ struct MonoScreenRenderTests {
                     stageFile: { file in try await model.stageGitFile(file, in: workspace) },
                     unstageFile: { file in try await model.unstageGitFile(file, in: workspace) }
                 )
-            }
+            ))
         }
         result.expectSubstantial()
     }
@@ -71,16 +76,28 @@ struct MonoScreenRenderTests {
     @Test("Dashboard and Agent view beside the sidebar")
     func dashboardAndAgents() async throws {
         let model = HerdrRenderFixtures.demoModel()
-        let shell = HerdrShellState(userDefaults: UserDefaults(suiteName: "MonoRender.\(UUID())")!)
+        let shell = MonoRenderFixtures.shell(sidebarOnHome: true)
         shell.firstMate.configure(client: nil, demo: true)
         shell.prReview.configure(client: nil, machineID: "demo", demo: true)
         await shell.prReview.refresh()
         let entries = MonoRenderFixtures.seedFeatures(shell: shell)
+        shell.show(.dashboard, model: model)
 
-        let dashboard = try await HerdrRenderHarness.render("mono-dashboard.png", size: Self.window) {
-            MonoWindowFrame(model: model) { DashboardView(model: model, shell: shell) }
+        let dashboard = try await HerdrRenderHarness.renderWindow("mono-dashboard.png", size: Self.window) {
+            MonoRenderFixtures.window(model: model, shell: shell)
         }
         dashboard.expectSubstantial()
+
+        // The Dashboard's default: no rail, so the title bar starts after the
+        // traffic lights with the sidebar toggle.
+        let hiddenShell = MonoRenderFixtures.shell(sidebarOnHome: false)
+        hiddenShell.firstMate.configure(client: nil, demo: true)
+        MonoRenderFixtures.seedFeatures(shell: hiddenShell)
+        hiddenShell.show(.dashboard, model: model)
+        let collapsed = try await HerdrRenderHarness.renderWindow("mono-dashboard-no-sidebar.png", size: Self.window) {
+            MonoRenderFixtures.window(model: model, shell: hiddenShell)
+        }
+        collapsed.expectSubstantial()
 
         for (index, entry) in entries.enumerated() {
             let column = shell.agentBoard.column(for: entry)
@@ -88,8 +105,9 @@ struct MonoScreenRenderTests {
                              demoSnapshot: shell.firstMate.snapshots[entry.feature.id])
             if index == 2 { column.tab = .overview }
         }
-        let agents = try await HerdrRenderHarness.render("mono-agents.png", size: Self.window) {
-            MonoWindowFrame(model: model) { AgentBoardView(model: model, shell: shell) }
+        shell.show(.agentBoard, model: model)
+        let agents = try await HerdrRenderHarness.renderWindow("mono-agents.png", size: Self.window) {
+            MonoRenderFixtures.window(model: model, shell: shell)
         }
         agents.expectSubstantial()
     }
@@ -97,34 +115,20 @@ struct MonoScreenRenderTests {
     @Test("First Mate workspace in dark and light", arguments: [ColorScheme.dark, .light])
     func firstMate(scheme: ColorScheme) async throws {
         let model = HerdrRenderFixtures.demoModel()
-        let store = FirstMateStore()
-        store.configure(client: nil, demo: true)
-        store.advanceDemo()
-        store.isDark = scheme == .dark
-        _ = try #require(store.snapshot)
-        let palette = FirstMatePalette(scheme: scheme)
+        let shell = MonoRenderFixtures.shell(sidebarOnHome: true)
+        shell.show(.firstMate, model: model)
+        shell.configureFirstMateIfNeeded(machineID: "demo", configuration: nil, connectionGeneration: model.connectionGeneration, isDemo: true)
+        await shell.firstMate.refresh()
+        shell.firstMate.advanceDemo()
+        shell.firstMate.isDark = scheme == .dark
+        _ = try #require(shell.firstMate.snapshot)
         let name = scheme == .dark ? "dark" : "light"
 
-        let result = try await HerdrRenderHarness.render("mono-first-mate-\(name).png", size: Self.window) {
-            HStack(spacing: 0) {
-                FirstMateSidebarView(store: store, back: {}, canControl: true)
-                    .frame(width: HerdrTheme.sidebarWidth)
-                Rectangle().fill(palette.hairline).frame(width: 1)
-                FirstMateWorkspaceView(
-                    model: model,
-                    store: store,
-                    modelFavorites: ModelFavoritesStore(),
-                    canControl: true,
-                    owningMachineID: "demo",
-                    gitOwnerIsReady: false,
-                    configuration: nil,
-                    configurationRevision: 0,
-                    owningMachineName: "Demo Mac"
-                )
-            }
-            .background(palette.background)
-            .environment(\.colorScheme, scheme)
-            .preferredColorScheme(scheme)
+        let result = try await HerdrRenderHarness.renderWindow("mono-first-mate-\(name).png", size: Self.window) {
+            MonoRenderFixtures.window(model: model, shell: shell)
+                .background(FirstMatePalette(scheme: scheme).background)
+                .environment(\.colorScheme, scheme)
+                .preferredColorScheme(scheme)
         }
         result.expectSubstantial()
     }
@@ -170,29 +174,33 @@ struct MonoScreenRenderTests {
     }
 }
 
-/// The main window's shell as `WorkspaceNavigationView` lays it out, minus
-/// the split view and window chrome that offscreen snapshots cannot draw.
-private struct MonoWindowFrame<Detail: View>: View {
-    let model: HerdrAppModel
-    @ViewBuilder let detail: () -> Detail
-
-    var body: some View {
-        HStack(spacing: 0) {
-            HerdrSidebarView(model: model, openPane: { _ in }, openWorkspace: { _ in })
-                .frame(width: HerdrTheme.sidebarWidth)
-                .background(HerdrTheme.railBackground)
-            Rectangle()
-                .fill(HerdrTheme.hairline)
-                .frame(width: 1)
-            detail()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(HerdrTheme.windowBackground)
-        }
-    }
-}
-
 @MainActor
 enum MonoRenderFixtures {
+    /// A shell with its own defaults; the Dashboard and Agent view show the
+    /// sidebar, as they do in the study's frames.
+    static func shell(sidebarOnHome: Bool) -> HerdrShellState {
+        let defaults = UserDefaults(suiteName: "MonoRender.\(UUID().uuidString)")!
+        let shell = HerdrShellState(userDefaults: defaults)
+        shell.rememberSidebarVisibility(sidebarOnHome ? .all : .detailOnly, home: true)
+        shell.rememberSidebarVisibility(.all, home: false)
+        return shell
+    }
+
+    /// The production window shell: `WorkspaceNavigationView` with its rail,
+    /// title bar and routed (or injected) detail.
+    static func window(model: HerdrAppModel, shell: HerdrShellState, detail: AnyView? = nil) -> some View {
+        WorkspaceNavigationView(
+            model: model,
+            shell: shell,
+            activeWorkStore: ActiveWorkStore(),
+            modelFavorites: ModelFavoritesStore(),
+            updates: HerdrUpdateController(defaults: UserDefaults(suiteName: "MonoRender.updates.\(UUID().uuidString)")!),
+            detailOverride: detail
+        )
+        .environment(HerdPulseCoordinator(defaults: UserDefaults(suiteName: "MonoRender.pulse")!))
+        .environment(\.herdrFontScale, .medium)
+    }
+
     /// A Herdr-owned dusk gradient standing in for a desktop picture.
     static var desktop: some View {
         ZStack {

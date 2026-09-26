@@ -110,18 +110,16 @@ struct PaneSessionView: View {
                 paneID: pane.id
             )
         }
-        .toolbar {
-            if selectedMode == .git {
-                ToolbarItem(placement: .primaryAction) {
+        .herdrTitleBarActions {
+            HStack(spacing: 2) {
+                if selectedMode == .git {
                     Button("Open Git in New Window", systemImage: "rectangle.on.rectangle") {
                         openGitWindow()
                     }
-                    .labelStyle(.iconOnly)
+                    .buttonStyle(HerdrIconButtonStyle())
                     .help("Open Git in a separate window")
                     .accessibilityIdentifier("pane-git-open-window")
                 }
-            }
-            ToolbarItem(placement: .primaryAction) {
                 PaneActionsMenu(
                     model: model,
                     pane: currentPane,

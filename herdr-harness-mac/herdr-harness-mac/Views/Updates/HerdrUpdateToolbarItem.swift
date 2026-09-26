@@ -15,21 +15,17 @@ struct HerdrUpdateToolbarItem: View {
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "arrow.down.circle.fill")
-                        .herdrFont(.caption, weight: .semibold)
                     Text(version)
-                        .herdrFont(.caption, weight: .semibold)
                         .lineLimit(1)
                 }
+                .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                 .foregroundStyle(HerdrTheme.accent)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(HerdrTheme.accent.opacity(0.12), in: .capsule)
-                .overlay {
-                    Capsule().strokeBorder(HerdrTheme.accent.opacity(0.45), lineWidth: 1)
-                }
+                .padding(.horizontal, 6)
+                .frame(height: HerdrTheme.ControlHeight.small)
+                .background(HerdrTheme.accent.opacity(0.15), in: .rect(cornerRadius: HerdrTheme.Radius.control))
+                .herdrHitTarget()
             }
             .buttonStyle(.plain)
-            .herdrHitTarget()
             .help("Herdr \(version) is available. Click to review and install it.")
             .accessibilityLabel("Herdr \(version) is available")
             .accessibilityIdentifier("update-toolbar-item")

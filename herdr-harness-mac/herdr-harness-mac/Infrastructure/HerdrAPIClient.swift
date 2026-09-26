@@ -1050,7 +1050,10 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, AgentPr
         sessionID: String? = nil,
         workspaceLabel: String? = nil,
         tabLabel: String? = nil,
-        reuseNamedTab: Bool? = nil
+        reuseNamedTab: Bool? = nil,
+        model: QuickPiSessionModel? = nil,
+        thinkingLevel: String? = nil,
+        focus: Bool? = nil
     ) async throws -> QuickPiSessionResponse {
         let response: QuickPiSessionResponse = try await request(
             path: "/api/v1/quick-sessions/pi",
@@ -1065,7 +1068,10 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, AgentPr
                 sessionID: sessionID,
                 workspaceLabel: workspaceLabel,
                 tabLabel: tabLabel,
-                reuseNamedTab: reuseNamedTab
+                reuseNamedTab: reuseNamedTab,
+                model: model,
+                thinkingLevel: thinkingLevel,
+                focus: focus
             )
         )
         guard response.ok,
@@ -2042,3 +2048,8 @@ private struct ResponseAudioSpeechBody: Encodable, Sendable {
 }
 
 private struct PRReviewStatusRefreshResponse: Decodable, Sendable { let ok: Bool }
+
+/// The workspace launcher's network seam. `HerdrAPIClient` already speaks every
+/// requirement, so production code can inject the real per-machine client
+/// without a wrapper.
+extension HerdrAPIClient: HerdrHudWorkspaceLaunchClient {}

@@ -26,6 +26,7 @@ struct HerdrHudComposerView: View {
                     isLoading: session.isLoadingModels,
                     errorMessage: session.modelsError,
                     favorites: session.modelFavorites,
+                    defaultChoiceTitle: session.isNewChat ? "Machine default" : "Default",
                     selectModel: { session.setSelectedModel($0) },
                     retry: { Task { await session.loadModels(model: model) } }
                 )
@@ -46,6 +47,12 @@ struct HerdrHudComposerView: View {
                         .foregroundStyle(HerdrTheme.muted)
                         .lineLimit(1)
                 }
+            }
+            if session.isNewChat {
+                HerdrHudWorkspaceCreationView(model: model, session: session)
+            }
+            if session.workspaceLaunchRecoveryMessage != nil {
+                workspaceLaunchRecoveryRow
             }
             if !session.pendingAttachments.isEmpty || !session.pendingQuotes.isEmpty {
                 attachmentChips
@@ -162,6 +169,33 @@ struct HerdrHudComposerView: View {
         composerWidth < 340 * fontScale.rawValue
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
             : AnyLayout(HStackLayout(spacing: 4))
+    }
+
+    private var workspaceLaunchRecoveryRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let message = session.workspaceLaunchRecoveryMessage {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.alert)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("hud-workspace-recovery-message")
+            }
+            HStack(spacing: 8) {
+                if session.workspaceLaunchPaneIDForOpening() != nil {
+                    Button("Open chat") {
+                        controller.finishWorkspaceLaunch(session, openExistingChat: true, model: model)
+                    }
+                    .accessibilityIdentifier("hud-workspace-open-chat")
+                }
+                Button("Keep draft") { session.dismissWorkspaceLaunchRecovery() }
+                    .accessibilityIdentifier("hud-workspace-keep-draft")
+                Button("Start over") { controller.discardWorkspaceLaunch(session, model: model) }
+                    .accessibilityIdentifier("hud-workspace-discard")
+            }
+            .buttonStyle(.bordered)
+            .herdrFont(.caption)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func pasteCodeBlock() {

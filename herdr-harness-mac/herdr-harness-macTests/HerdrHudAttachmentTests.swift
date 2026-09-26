@@ -717,7 +717,7 @@ struct HerdrHudAttachmentTests {
         #expect(session.validationError != nil)
     }
 
-    @Test("Only image attachments select a vision model")
+    @Test("A fresh text-only submission pins the machine default and images use it when compatible")
     func onlyImageAttachmentsSelectVisionModel() async throws {
         let textURL = temporaryURL(named: "notes.txt")
         let imageURL = temporaryURL(named: "photo.png")
@@ -732,7 +732,9 @@ struct HerdrHudAttachmentTests {
         textSession.addAttachments([textURL])
         textSession.draft = "Read these notes"
         await textSession.submit(model: makeDemoModel())
-        #expect(textSession.lastHeadlessRunForTesting?.model == nil)
+        // The demo companion declares a vision-capable default, so both text
+        // and image submissions pin that exact declared model.
+        #expect(textSession.lastHeadlessRunForTesting?.model == HerdrHudModelRouting.visionModel)
 
         let imageSession = makeSession()
         imageSession.addAttachments([textURL, imageURL])

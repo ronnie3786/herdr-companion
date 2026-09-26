@@ -1583,38 +1583,39 @@ struct HerdrHudChatsTests {
         await session.loadModels(model: fixture.model)
         #expect(session.defaultModel?.displayName == "Alpha Default")
 
-        // Switch to Beta while its catalog is unresolved, then submit without
-        // an explicit model. The cached Alpha default must stay out of it.
+        // Switching machines drops the previous catalog, so the fresh
+        // submission must read Beta's own declared default instead of
+        // capturing Alpha's.
         session.selectedMachineID = "machine-b"
         session.draft = "Run on Beta"
         let task = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
         try await wait { session.thread != nil }
         let runID = try #require(session.thread?.lastRunID)
+        let start = try #require(HudChatsURLProtocol.state.withLock { $0.starts.last })
+        #expect(start.model == "synthetic/beta-default")
         #expect(session.exchanges.last?.machineID == "machine-b")
-        #expect(session.exchanges.last?.modelLabel == "default")
-        #expect(session.bubbleMetadata.modelName == nil)
+        #expect(session.exchanges.last?.modelLabel == "Beta Default")
+        #expect(session.bubbleMetadata.modelName == "Beta Default")
 
-        // A history refresh that still sees no authoritative run model must
-        // keep the model unknown instead of promoting the local placeholder or
-        // a previous machine's default. Marking the reported cost missing
-        // forces the full paginated reconcile path rather than the unchanged
-        // shortcut.
+        // A history refresh without an authoritative run model keeps the
+        // pinned Beta identity rather than promoting Alpha's default.
         HudChatsURLProtocol.finish(runID)
         await task.value
         HudChatsURLProtocol.setMissingCost(runID, true)
         #expect(await session.refreshSavedHistoryPassivelyForTesting(model: fixture.model))
-        #expect(session.bubbleMetadata.modelName == nil)
-        #expect(session.exchanges.last?.modelLabel == "default")
+        #expect(session.bubbleMetadata.modelName == "Beta Default")
+        #expect(session.exchanges.last?.modelLabel == "Beta Default")
 
-        // Only the authoritative run report may resolve the Beta model.
+        // A newer authoritative run report replaces the pinned label.
         HudChatsURLProtocol.setMissingCost(runID, false)
         HudChatsURLProtocol.setModel(runID, "synthetic/beta-model")
         #expect(await session.refreshSavedHistoryPassivelyForTesting(model: fixture.model))
         #expect(session.bubbleMetadata.modelName == "Beta Model")
+        #expect(session.bubbleMetadata.modelName != session.defaultModel?.displayName)
     }
 
-    @Test("An implicit submission never presents the catalog default as the executed model")
-    func implicitSubmissionDoesNotAttributeCatalogDefault() async throws {
+    @Test("A fresh submission pins the catalog default in the request and in metadata")
+    func freshSubmissionPinsCatalogDefault() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanUp() }
         let session = fixture.chats.composer
@@ -1622,22 +1623,19 @@ struct HerdrHudChatsTests {
         await session.loadModels(model: fixture.model)
         #expect(session.defaultModel?.displayName == "Synthetic Naming")
 
-        // The catalog's declared default is machine-global, but a trusted
-        // project default can override it. An implicit submission omits
-        // `model`, so the run report — not the catalog — is the only authority
-        // for what executed.
+        // A new HUD chat pins the execution companion's exact declared default
+        // rather than omitting `model` and letting a project default win.
         session.draft = "Use the project default"
         let task = Task { await session.submit(model: fixture.model) { fixture.chats.submissionStarted(session) } }
         try await wait { session.thread != nil }
         let runID = try #require(session.thread?.lastRunID)
         let start = try #require(HudChatsURLProtocol.state.withLock { $0.starts.last })
-        #expect(start.model == nil)
-        #expect(session.exchanges.last?.modelLabel == "default")
-        #expect(session.exchanges.last?.modelLabelIsProven == false)
-        #expect(session.bubbleMetadata.modelName == nil)
+        #expect(start.model == "synthetic/naming")
+        #expect(session.exchanges.last?.modelLabel == "Synthetic Naming")
+        #expect(session.exchanges.last?.modelLabelIsProven == true)
+        #expect(session.bubbleMetadata.modelName == "Synthetic Naming")
 
-        // With no authoritative model, neither persistence nor a history
-        // refresh may promote the catalog default into bubble metadata.
+        // The pinned identity survives persistence and a history refresh.
         HudChatsURLProtocol.finish(runID)
         await task.value
         try await wait {
@@ -1645,13 +1643,13 @@ struct HerdrHudChatsTests {
                   let metadata = snapshot.chatMetadata else {
                 return false
             }
-            return metadata.latestRunID == runID && metadata.latestRunModelName == nil
+            return metadata.latestRunID == runID && metadata.latestRunModelName == "Synthetic Naming"
         }
         #expect(await session.refreshSavedHistoryPassivelyForTesting(model: fixture.model))
-        #expect(session.bubbleMetadata.modelName == nil)
+        #expect(session.bubbleMetadata.modelName == "Synthetic Naming")
 
-        // A transcript row that somehow holds an unproven catalog label must
-        // not feed a history reconcile either.
+        // A transcript row that holds an unproven catalog guess must not feed
+        // a history reconcile; only the run report or the request itself can.
         var localGuess = try #require(session.exchanges.last)
         localGuess.modelLabel = "Catalog Guess"
         localGuess.modelLabelIsProven = false
@@ -1848,7 +1846,9 @@ struct HerdrHudChatsTests {
         HudChatsURLProtocol.finish(root)
         await task.value
         #expect(session.bubbleMetadata.cost == "$0.42")
-        #expect(session.bubbleMetadata.modelName == nil)
+        // A fresh submission pins the catalog default, so metadata starts with
+        // that proven identity rather than unknown.
+        #expect(session.bubbleMetadata.modelName == "Synthetic Naming")
 
         HudChatsURLProtocol.setCost(root, 0.99)
         #expect(await session.refreshSavedHistoryPassivelyForTesting(model: fixture.model))
@@ -1983,15 +1983,23 @@ struct HerdrHudChatsTests {
                 $0.catalogByHost = catalogByHost
             }
             defaults = try #require(UserDefaults(suiteName: suite))
-            prototype = HerdrHudSession(userDefaults: defaults, persistenceURL: directory.appendingPathComponent("hud-thread.json"))
+            let roster = machines ?? [
+                HerdrMachine(id: "synthetic", name: "Example Mac", urlString: "https://hud.example.invalid")
+            ]
+            // Explicit local identity: the roster host is this Mac, so a fresh
+            // composer selects it without relying on roster order or names.
+            prototype = HerdrHudSession(
+                userDefaults: defaults,
+                persistenceURL: directory.appendingPathComponent("hud-thread.json"),
+                hostIdentity: HerdrHudHostIdentity(hostNames: roster.compactMap {
+                    URLComponents(string: $0.urlString)?.host
+                }, addresses: [])
+            )
             chats = HerdrHudChats(legacySession: prototype, defaults: defaults)
             let urlSessionConfiguration = URLSessionConfiguration.ephemeral
             urlSessionConfiguration.protocolClasses = [HudChatsURLProtocol.self]
             let urlSession = URLSession(configuration: urlSessionConfiguration)
             model = HerdrAppModel(credentials: TestCredentialStore(), arguments: [], userDefaults: defaults)
-            let roster = machines ?? [
-                HerdrMachine(id: "synthetic", name: "Example Mac", urlString: "https://hud.example.invalid")
-            ]
             model.machines = roster
             model.clientFactory = { configuration in
                 HerdrAPIClient(configuration: configuration, session: urlSession)

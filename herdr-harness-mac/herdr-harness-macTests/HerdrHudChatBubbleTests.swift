@@ -536,7 +536,8 @@ private final class RunningChatFixture {
         RunningChatURLProtocol.reset()
         session = HerdrHudSession(
             userDefaults: defaults,
-            persistenceURL: directory.appendingPathComponent("hud-thread.json")
+            persistenceURL: directory.appendingPathComponent("hud-thread.json"),
+            hostIdentity: HerdrHudHostIdentity(hostNames: ["hud.example.invalid"], addresses: [])
         )
         controller = HerdrHudController(userDefaults: defaults)
 
@@ -626,7 +627,8 @@ private func restoredChat(
     ).save(to: fixture.directory.appendingPathComponent("\(persistenceName).json"))
     let session = HerdrHudSession(
         userDefaults: fixture.defaults,
-        persistenceURL: fixture.directory.appendingPathComponent("\(persistenceName).json")
+        persistenceURL: fixture.directory.appendingPathComponent("\(persistenceName).json"),
+        hostIdentity: HerdrHudHostIdentity(hostNames: ["hud.example.invalid"], addresses: [])
     )
     await session.waitForPersistenceRestoreForTesting()
     return HerdrHudChats.Chat(id: persistenceName, title: title, session: session)
@@ -657,6 +659,12 @@ private final class RunningChatURLProtocol: URLProtocol, @unchecked Sendable {
             if path.hasSuffix("/capabilities") {
                 response["profiles"] = ["hud-chat-v1"]
                 response["hudChatWorkingDirectory"] = true
+            } else if path == "/api/v1/agent-runs/models" {
+                // A fresh composer pins the execution companion's declared
+                // default before dispatch, so the synthetic companion must
+                // declare the same model its run reports.
+                response["models"] = [["provider": "synthetic", "id": "fixture7", "name": "Fixture7", "reasoning": true]]
+                response["default"] = ["provider": "synthetic", "id": "fixture7", "name": "Fixture7"]
             } else if path.hasSuffix("/cancel") {
                 state.status = "cancelled"
                 response["run"] = Self.run(state)

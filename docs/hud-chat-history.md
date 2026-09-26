@@ -57,6 +57,128 @@ chats remain compatible with existing `hud-chat-v1` servers. The Mac updater doe
 not install this server fix: update the companion package separately on each
 machine where custom-folder chats should run.
 
+## New chats: this Mac, its default model, and the main workspace
+
+A genuinely fresh composer has two Mac-only outcomes. Unchecked Send keeps the
+independent saved-HUD conversation described in this guide. Checked Send —
+**Create in main workspace** — starts the conversation directly in a workspace
+the user designated for that machine. Existing, restored, and continued
+conversations keep their original machine, conversation identity, and submission
+path; the checkbox and the automatic defaults below belong only to new chats.
+
+### Fresh composer defaults
+
+- A fresh composer starts on the companion this Mac uniquely identifies as local
+  from loopback or its own host/address evidence. Roster position, machine
+  names, role labels, the last-used machine, and the conversation being viewed
+  never decide it. If the evidence is absent or ambiguous, the composer starts
+  with no machine and asks for an explicit selection instead of falling back to
+  the first roster entry.
+- If the uniquely identified local companion is offline, it stays selected and
+  Send reports the connection problem. Herdr never silently dispatches the chat
+  to another machine.
+- The composer starts in machine-default mode and displays **Machine default**.
+  Before dispatch it resolves the execution companion's own declared default
+  from that companion's model catalog and pins that exact provider and model ID
+  on the request.
+- A catalog that is missing, unreadable, empty, or tagged for another machine,
+  and a declared default that is absent or not offered by its own catalog, are
+  actionable errors. Herdr never substitutes another machine's catalog, the
+  legacy global HUD model preference, or a vision model. If a new chat carries
+  an image and the selected or declared default model cannot accept images, the
+  selection is retained and an explicit compatible model is required.
+- The machine and model pickers above the prompt remain available as per-chat
+  overrides before sending. An explicit choice belongs to the current draft,
+  survives catalog refreshes and HUD collapse/reopen, and does not become the
+  next fresh composer's default. Switching a fresh draft's machine returns its
+  model choice to the new machine's declared default.
+- Existing and restored conversations keep the legacy shared HUD model
+  preference and their original routing; these defaults never rewrite them.
+
+### Designating a main workspace
+
+The checkbox appears only on a genuinely new composer and starts unchecked. The
+first time it is enabled — or whenever the selected machine or its endpoint
+changes — Herdr reads that companion's workspaces and asks the user to choose
+the exact main workspace, including when that workspace is not the first, is
+renamed, or shares a label with another workspace. Each choice shows its raw
+workspace ID beside any label, so two workspaces with the same label stay
+distinguishable in the menu, the selected destination, and accessibility text.
+Herdr never infers the destination from a label, workspace number, roster or
+list position, generic name, or the currently focused workspace. A delayed
+topology response for a machine the composer has already left is discarded
+instead of repopulating the picker.
+
+The designation is remembered privately on this Mac by paired companion —
+machine ID, normalized endpoint, and raw workspace ID. Renaming or reordering
+the machine or workspace preserves it. Removing the workspace, replacing the
+endpoint, or otherwise changing that paired record invalidates it and asks for a
+new choice instead of silently reassigning to a similarly labeled or numbered
+workspace. Enabling the checkbox creates nothing; only Send does.
+
+### Checked Send
+
+Checked Send uploads the pending attachments into the designated workspace
+first, then creates one new tab and pane directly in that workspace on the
+selected machine, with named-tab reuse disabled and no focus theft, and
+submits the initial text with its quotes once. Uploaded files travel in the
+shared composer's attachment convention: one `Attachment:` line per uploaded
+file carrying the companion-issued path. No standalone `hud-chat-v1`
+conversation is started, and no **Continue in agent** promotion is needed: the
+running conversation appears in the workspace before its first answer
+completes.
+
+The HUD's existing folder semantics are preserved in both modes. The selected
+folder travels with the launch — home as the companion's `~` alias, custom
+absolute paths unchanged and validated on the target server — together with the
+selected thinking level. Pi's global model settings are not changed.
+
+### Failure recovery
+
+The launch records ownership before each side effect using a request ID and a
+content fingerprint, and the composer's frozen input and request identity are
+written to the session cache before the first network mutation. Recovery is
+deliberately conservative:
+
+- A create request whose response was lost is never replayed automatically.
+  The companion's request-ID cache is memory-only and expires, so a retry
+  after a lost successful response could create a second pane. The draft and
+  attachments stay in the composer with an explicit message to check that
+  workspace or **Start over**. Only a failure recorded before the create was
+  attempted — for example an attachment upload failure — safely reuses the
+  request ID and keeps at most one pane.
+- A confirmed pane with an unconfirmed first prompt keeps the draft and exposes
+  **Open chat** for that exact pane. Herdr refuses to resend automatically, even
+  after relaunch, because prompt delivery is not an idempotent create. Changed
+  content cannot silently reuse the unresolved request.
+- **Open chat** only opens the confirmed pane; it never consumes the draft or
+  advances the composer. **Keep draft** dismisses the recovery notice without
+  consuming input. **Start over** deliberately discards the uncertain draft; it
+  never deletes an existing pane or conversation.
+- An interrupted checked launch survives relaunch: the same composer restores
+  its frozen draft, attachments, selected machine, and request ID, and a
+  confirmed pane stays openable instead of being replaced by a new request.
+- Pressing **Stop** during an upload or create stops before the next side
+  effect. If the companion had already confirmed a pane, that pane is retained
+  with **Open chat**; the first prompt is never dispatched afterwards.
+- A missing workspace, offline host, unsupported companion, or invalid model is
+  an explicit error — never a replacement destination or a headless fallback.
+
+### Compatibility
+
+Checked creation requires a companion advertising
+`quick-session-launch-options-v1`. The Mac checks that capability before sending;
+an older companion keeps unchecked saved-HUD chats fully working and receives
+no new model, thinking, focus, or home-alias launch fields. The checkbox area
+explains that the companion server must be updated instead of sending an
+unexplained request.
+
+The Mac updater installs only the Mac app. Install and restart the updated
+companion package separately on each machine where checked workspace creation
+should run. The extension is additive and backward compatible: clients that do
+not use it keep the existing quick-session payload, and the web and Pi contracts
+are unchanged.
+
 ## Independent one-off chats on Mac
 
 Sending from the fresh HUD composer immediately creates a **HUD chat** mini bubble
@@ -230,6 +352,83 @@ completion, per-chat cancellation, continuation routing, history deduplication,
 restart reattachment, offline stale-write prevention, and no-auto-open controller
 behavior. Existing HUD attachment, persistence, placement, notes, and render tests
 remain regression coverage.
+
+### New-chat routing and main workspace (R1–R6)
+
+Run the Mac unit test target for the automated items below. Their synthetic
+companions assert request destinations without touching a real machine. The
+installed items need a signed app and disposable companions and are not implied
+by a green unit run; live Pi verification additionally needs provider access.
+
+- **R1 — checkbox presentation.** *Automated:* a fresh composer renders the
+  accessible **Create in main workspace** checkbox and its destination picker at
+  extra-large text, and an existing conversation renders the composer without
+  the checkbox even when a stale flag is set. *Pending installed UI:* tab to the
+  checkbox, confirm the visible label and checked state are read correctly, toggle
+  it by keyboard alone, and confirm the row reflows at the largest text size.
+- **R2 — checked creation.** *Automated:* with synthetic companions, a checked
+  Send uploads the pending attachments first, creates exactly one pane in the
+  designated raw workspace ID — including a workspace that is listed second and
+  shares its label with another workspace, whose menu entry and selected chip
+  also show the raw ID — sends named-tab reuse and focus as false, pins that
+  machine's declared default model and the selected thinking level, prompts
+  exactly that pane once with the initial text and uploaded attachment paths,
+  starts no headless conversation, and needs no promotion. *Pending
+  installed/live Pi:* with two disposable companions, designate a workspace that
+  is not first, Send checked, and confirm the conversation and its first prompt
+  appear in that exact workspace before the answer completes, the HUD does not
+  steal focus, and no duplicate bubble or **Continue in agent** step exists.
+- **R3 — new chats only.** *Automated:* a continuation submits its second turn
+  through the ordinary continuation path even when the flag was left set; the
+  existing-composer render test omits the checkbox, and unchecked Send keeps the
+  saved-HUD path. *Pending installed:* open a saved transcript from **Chat
+  history**, restore a bubble after relaunch, and continue a promoted
+  conversation while a fresh composer has the checkbox checked; none may expose
+  the option, inherit the designation, or issue a creation request.
+- **R4 — local machine default.** *Automated:* with the local connection second
+  in the roster, a renamed local machine, and injected host evidence, the fresh
+  composer selects the unique local companion regardless of order; ambiguous or
+  absent evidence selects no machine, and an offline local companion is retained
+  with a connection error and no dispatch elsewhere. *Pending installed:* on a
+  Mac with two or more companions, place the local connection second, seed a
+  previous remote selection, rename and reorder machines, and relaunch; confirm
+  every fresh composer shows the local machine and never silently selects another
+  one while the local companion is offline.
+- **R5 — declared default model.** *Automated:* two synthetic companions with
+  different declared defaults send their own model identifiers; a delayed or
+  stale catalog cannot replace a newer machine's catalog; missing, unreadable,
+  and unavailable defaults are actionable errors; an incompatible image input
+  requires an explicit compatible choice rather than the global vision model;
+  and the legacy shared HUD model preference cannot decide a fresh chat. *Pending
+  installed/live Pi:* send from two disposable companions whose defaults differ
+  and confirm each resulting Pi session reports its own machine's default; unset
+  one default and confirm Send names the machine and model problem instead of
+  choosing another model, including with an image attached.
+- **R6 — explicit overrides.** *Automated:* an explicit draft choice survives a
+  later catalog refresh, affects only its own submission, is not the next
+  composer's default, and switching a fresh draft's machine returns it to that
+  machine's default without touching shared preferences. *Pending installed:*
+  choose a non-default model and another machine, collapse and reopen the HUD,
+  send, then open the next fresh composer and confirm it is back on **Machine
+  default**.
+- **Attachments and uncertain delivery.** *Automated:* a checked upload failure
+  keeps the draft and attachments, retries with the same request ID, and sends
+  exactly one prompt carrying the attachment path; a create attempt whose
+  response was lost is refused on retry and after restart instead of risking a
+  second pane; an unconfirmed prompt retains the confirmed pane, exposes **Open
+  chat**, and is never sent again, including after a restart. A full
+  chats/session recreation restores the same frozen draft, selected machine,
+  request ID, and confirmed pane; **Open chat** is non-consuming. *Pending
+  installed:* interrupt the connection between create and prompt against a
+  disposable companion and confirm **Open chat** opens the created pane, the
+  draft survives, and no replacement pane appears.
+- **Older-server behavior.** *Automated:* the launcher refuses a companion that
+  does not advertise `quick-session-launch-options-v1` before any launch field is
+  sent, and the ordinary saved-HUD path needs no new fields. *Pending installed:*
+  pair an older companion, confirm unchecked saved-HUD chats keep working, and
+  confirm the checkbox reports the required companion update while sending
+  nothing; after updating and restarting the companion separately, retry
+  succeeds. The Mac updater itself installs no companion package.
 
 ## Agent discovery
 

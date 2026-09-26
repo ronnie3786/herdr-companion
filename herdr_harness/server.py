@@ -290,6 +290,36 @@ def _optional_cwd(body: dict) -> Optional[str]:
     return expanded
 
 
+def _optional_quick_session_model(body: dict) -> Optional[dict[str, str]]:
+    if "model" not in body or body.get("model") is None:
+        return None
+    model = body.get("model")
+    if (
+        not isinstance(model, dict)
+        or set(model) != {"provider", "id"}
+        or any(
+            not isinstance(value, str)
+            or not value.strip()
+            or len(value) > 256
+            or "\x00" in value
+            for value in model.values()
+        )
+    ):
+        raise HTTPValidationError(
+            "model requires provider and id", code="invalid_agent_model"
+        )
+    return {"provider": model["provider"], "id": model["id"]}
+
+
+def _quick_session_cwd(body: dict) -> Optional[str]:
+    # "~" is the HUD's home-folder alias: HerdrService resolves it against the
+    # service account instead of the request process. Other endpoints keep the
+    # generic absolute-path validation.
+    if body.get("cwd") == "~":
+        return "~"
+    return _optional_cwd(body)
+
+
 def _optional_env(body: dict) -> dict[str, str]:
     value = body.get("env", {})
     if value is None:
@@ -426,6 +456,7 @@ def api_description() -> dict:
             "discovery-v1",
             "chat-tab-colors-v1",
             "issue-reports-v1",
+            "quick-session-launch-options-v1",
         ],
         "endpoints": {
             "health": "/api/v1/health",
@@ -2505,6 +2536,9 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         "workspaceLabel",
                         "tabLabel",
                         "reuseNamedTab",
+                        "model",
+                        "thinkingLevel",
+                        "focus",
                     }
                     for key in body
                 ):
@@ -2553,11 +2587,21 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     extra["tab_label"] = tab_label
                 if "reuseNamedTab" in body:
                     extra["reuse_named_tab"] = reuse_named_tab
+                model = _optional_quick_session_model(body)
+                if model is not None:
+                    extra["model"] = model
+                thinking_level = _optional_agent_thinking_level(body)
+                if thinking_level is not None:
+                    extra["thinking_level"] = thinking_level
+                if "focus" in body:
+                    if body.get("focus") is None:
+                        raise HTTPValidationError("focus must be a boolean")
+                    extra["focus"] = _boolean(body.get("focus"), "focus")
                 return service.quick_pi_session(
                     label,
                     workspace_id=workspace_id,
                     tab_id=tab_id,
-                    cwd=_optional_cwd(body),
+                    cwd=_quick_session_cwd(body),
                     session_file=session_file,
                     session_id=session_id,
                     request_id=request_id,

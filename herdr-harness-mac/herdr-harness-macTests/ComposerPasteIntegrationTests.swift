@@ -16,7 +16,11 @@ struct ComposerPasteIntegrationTests {
             defaults.removePersistentDomain(forName: domain)
             try? FileManager.default.removeItem(at: root)
         }
-        let session = HerdrHudSession(userDefaults: defaults, persistenceURL: root.appendingPathComponent("hud.json"))
+        let session = HerdrHudSession(
+            userDefaults: defaults,
+            persistenceURL: root.appendingPathComponent("hud.json"),
+            hostIdentity: HerdrHudHostIdentity(hostNames: ["hud.example.invalid"], addresses: [])
+        )
         session.draft = "Review 👋 this selection"
         let original = session.draft
         @Bindable var editable = session

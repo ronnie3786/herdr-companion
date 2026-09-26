@@ -893,8 +893,89 @@ class HerdrServiceTests(unittest.TestCase):
             starts = [payload for method, payload in client.requests if method == "agent.start"]
             self.assertEqual(len(starts), 1)
             self.assertEqual(starts[0]["args"], ["--extension", extension_path, "--provider", "example-provider-example-model", "--model", "qwen3.8-27b-nvfp4-example-model", "--thinking", "high"])
-            with self.assertRaises(HerdrClientError):
-                service.quick_pi_session("Voice agent", **{**options, "thinking_level": "low"})
+            # Session-scoped flags, not global Pi model or thinking RPCs.
+            self.assertEqual(
+                [method for method, _ in client.requests if method in {"set_model", "set_thinking_level"}],
+                [],
+            )
+            for change in (
+                {"thinking_level": "low"},
+                {"model": {"provider": "other-provider", "id": "other-model"}},
+                {"focus": False},
+            ):
+                with self.subTest(change=change), self.assertRaises(HerdrClientError) as conflict:
+                    service.quick_pi_session("Voice agent", **{**options, **change})
+                self.assertEqual(conflict.exception.code, "quick_session_request_conflict")
+            self.assertEqual(len([payload for method, payload in client.requests if method == "agent.start"]), 1)
+
+    def test_quick_pi_session_rejects_invalid_focus_before_any_mutation(self):
+        client = FakeQuickSessionClient({"workspaces": [], "tabs": [], "panes": []}, {})
+        service = HerdrService(client, environ={})
+        for focus in (None, 0, 1, "false", [], {}):
+            with self.subTest(focus=focus), self.assertRaises(HerdrClientError) as invalid:
+                service.quick_pi_session("Voice agent", focus=focus)
+            self.assertEqual(invalid.exception.code, "invalid_focus")
+        self.assertEqual(client.requests, [])
+
+    @patch("herdr_harness.resources.pi_extension_path", new=lambda _env: None)
+    def test_quick_pi_session_resolves_home_alias_to_the_service_account(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory) / "service-home"
+            home.mkdir()
+            workspace = Path(directory) / "workspace"
+            workspace.mkdir()
+            client = FakeQuickSessionClient(
+                {
+                    "workspaces": [
+                        {"workspace_id": "w-target", "label": "Project", "cwd": str(workspace)}
+                    ],
+                    "tabs": [],
+                    "panes": [],
+                },
+                {
+                    "tab.create": {
+                        "tab": {
+                            "tab_id": "w-target:t2",
+                            "root_pane": {"pane_id": "w-target:p2", "tab_id": "w-target:t2"},
+                        }
+                    }
+                },
+            )
+            service = HerdrService(
+                client,
+                environ={"HOME": str(home)},
+                pi_semantic=FakeReadyPiSemantic(),
+            )
+
+            service.quick_pi_session("new session", workspace_id="w-target", cwd="~")
+
+        tab_request = next(params for method, params in client.requests if method == "tab.create")
+        self.assertEqual(tab_request["cwd"], str(home.resolve()))
+        self.assertNotEqual(tab_request["cwd"], str(workspace.resolve()))
+
+    @patch("herdr_harness.resources.pi_extension_path", new=lambda _env: None)
+    def test_quick_pi_session_rejects_unavailable_home_alias_before_any_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client = FakeQuickSessionClient(
+                {
+                    "workspaces": [{"workspace_id": "w-target", "label": "Project"}],
+                    "tabs": [],
+                    "panes": [],
+                },
+                {},
+            )
+            service = HerdrService(
+                client,
+                environ={
+                    "HOME": str(Path(directory) / "missing-home"),
+                    "HERDR_HARNESS_NOTES_STORE_PATH": ":memory:",
+                },
+                pi_semantic=FakeReadyPiSemantic(),
+            )
+            with self.assertRaises(HerdrClientError) as invalid:
+                service.quick_pi_session("new session", workspace_id="w-target", cwd="~")
+            self.assertEqual(invalid.exception.code, "invalid_cwd")
+            self.assertEqual(client.requests, [])
 
     def test_quick_pi_session_rejects_invalid_model_options_before_creating_a_pane(self):
         client = FakeQuickSessionClient({"workspaces": [], "tabs": [], "panes": []}, {})

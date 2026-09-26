@@ -8,6 +8,9 @@ final class DashboardState {
     var recentMachineID: String { didSet { defaults.set(recentMachineID, forKey: "herdr.dashboard.recent-machine") } }
     var search = ""
     var reviewRefreshError: String?
+    /// Builds for the apps chosen in Settings; kept while the app runs so the
+    /// Dashboard reopens with them already in place.
+    let builds = MobileAppHubFeed()
     var isRefreshingReviews = false
     /// Built once per fleet change; views ask for it on every render.
     @ObservationIgnored private var cachedEntries: (revision: Int, value: [DashboardFeatureEntry])?

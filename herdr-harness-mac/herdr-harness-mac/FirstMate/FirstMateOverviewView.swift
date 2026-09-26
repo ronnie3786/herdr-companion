@@ -4,9 +4,19 @@ struct FirstMateOverviewView: View {
     @Bindable var store: FirstMateStore
     let snapshot: FirstMateSnapshot
     @Environment(\.colorScheme) private var scheme
+    @AppStorage(MobileAppHubSettings.hubURLKey) private var buildsHubURL = ""
+    @State private var builds = MobileAppHubFeed()
+
     var body: some View {
+        let buildsQuery = MobileAppHubSettings.firstMateQuery(hubURLText: buildsHubURL, featureID: snapshot.feature.id)
         VStack(alignment: .leading, spacing: 22) {
             FirstMatePullRequestsSection(store: store, snapshot: snapshot, surface: .overview)
+            FirstMateBuildsSection(
+                featureID: snapshot.feature.id,
+                assignments: snapshot.assignments.map { ($0.id, $0.title) },
+                feed: builds,
+                query: buildsQuery
+            )
             Text("The feature at a glance").herdrFont(.title2, weight: .semibold)
             VStack(alignment: .leading, spacing: 12) {
                 Label("GOAL", systemImage: "scope").herdrFont(.caption, weight: .semibold).foregroundStyle(.secondary)
@@ -62,5 +72,6 @@ struct FirstMateOverviewView: View {
                     .buttonStyle(.plain).herdrFont(.caption).foregroundStyle(FirstMatePalette(scheme: scheme).accent)
             }
         }
+        .mobileAppHubRefresh(builds, query: buildsQuery, enabled: !store.isDemo)
     }
 }

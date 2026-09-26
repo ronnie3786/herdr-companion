@@ -53,6 +53,27 @@ execution. Press ⌘F to search all three sections; Esc clears the search.
 Card and row clicks open the existing First Mate, PR Review, and chat screens;
 section headings open those screens directly.
 
+## Builds
+
+Herdr can read a Mobile App Hub: a private, tailnet-only web app where agents
+publish installable iOS builds. Set its address and the apps to feature in
+**Settings → General → Builds** (bundle IDs, separated by commas). Both are
+saved on this Mac only; with no address, nothing about builds appears.
+
+- **Dashboard:** below the First Mates, the newest builds of the listed apps,
+  with ticket, feature, version, building machine, and age. Search and Focus
+  mode apply (Focus keeps builds from the last day). Clicking a build opens its
+  hub page; the heading opens the app's page in the hub.
+- **First Mate Overview:** under Pull requests, the builds that First Mate's
+  agents published, with the assignment that made each one. The hub's publish
+  command tags a build with its First Mate automatically when it runs inside a
+  First Mate session, so this needs no companion change.
+
+Herdr only reads the hub (`GET /api/v1/builds` with `bundle_id` or
+`first_mate_feature` filters), refreshes once a minute while visible, and keeps
+the last good list when the hub is unreachable. Full history, installs, and
+cleanup live in the hub's own web app.
+
 ## Agent view
 
 Agent view (**Agent view** on the Dashboard, **Navigate → Agent View**, or

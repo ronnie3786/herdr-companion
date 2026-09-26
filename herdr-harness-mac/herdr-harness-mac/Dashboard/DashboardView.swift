@@ -4,15 +4,19 @@ struct DashboardView: View {
     @Bindable var model: HerdrAppModel
     @Bindable var shell: HerdrShellState
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage(MobileAppHubSettings.hubURLKey) private var buildsHubURL = ""
+    @AppStorage(MobileAppHubSettings.dashboardBundleIDsKey) private var buildsBundleIDs = ""
 
     var body: some View {
         let entries = shell.dashboard.entries(shell: shell, isDemo: model.isDemoMode)
+        let buildsQuery = MobileAppHubSettings.dashboardQuery(hubURLText: buildsHubURL, bundleIDsText: buildsBundleIDs)
         VStack(spacing: 0) {
             DashboardHeaderBar(dashboard: shell.dashboard)
             GeometryReader { geometry in
                 ScrollView(.vertical) {
                     VStack(alignment: .leading, spacing: 28) {
                         DashboardFirstMatesSection(model: model, shell: shell, entries: entries, width: geometry.size.width)
+                        DashboardBuildsSection(dashboard: shell.dashboard, query: buildsQuery)
                         DashboardLowerRegion(model: model, shell: shell, width: geometry.size.width)
                     }
                     .padding(.top, 20)
@@ -27,6 +31,7 @@ struct DashboardView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("dashboard")
         .task(id: reviewRefreshIdentity) { await observeReviews() }
+        .mobileAppHubRefresh(shell.dashboard.builds, query: buildsQuery, enabled: !model.isDemoMode)
     }
 
     private var reviewRefreshIdentity: String {

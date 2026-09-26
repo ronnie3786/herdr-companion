@@ -19,6 +19,9 @@ for you. **Agent view** (Shift-Command-A) opens First Mate columns with
 independent Chat, Overview, Agents, and Workflow tabs and a reply box in each
 column; columns poll a bounded board and never re-download full histories.
 **Navigate → Dashboard** (Shift-Command-D) returns home from any screen.
+With a Mobile App Hub set in **Settings → General → Builds**, the Dashboard
+lists the newest builds of chosen apps and each First Mate's Overview lists the
+builds its agents published.
 See [Dashboard behavior and companion compatibility](../docs/macos-dashboard.md).
 
 ## September Mac improvements

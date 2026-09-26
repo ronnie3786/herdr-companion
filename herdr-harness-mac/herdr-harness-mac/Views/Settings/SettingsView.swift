@@ -15,6 +15,8 @@ struct SettingsView: View {
     @Environment(\.openWindow) private var openWindow
     @AppStorage(ChatActivityPreferences.groupAllClankingActivityKey)
     private var groupAllClankingActivity = ChatActivityPreferences.defaultGroupAllClankingActivity
+    @AppStorage(MobileAppHubSettings.hubURLKey) private var buildsHubURL = ""
+    @AppStorage(MobileAppHubSettings.dashboardBundleIDsKey) private var buildsDashboardApps = ""
     @State private var isPresentingMachines = false
     @State private var isPresentingMachineEditor = false
     @State private var editingMachine: HerdrMachine?
@@ -147,6 +149,7 @@ struct SettingsView: View {
             textSizeSection
             feedbackSection
             chatSection
+            buildsSection
             aboutSection
         case .machines:
             statusSection
@@ -419,6 +422,25 @@ struct SettingsView: View {
             Text("Chat")
         } footer: {
             Text("Keep thinking, tool use, and interim Pi commentary in one collapsed Clanking group for each turn. The final answer appears when the turn finishes.")
+        }
+    }
+
+    private var buildsSection: some View {
+        Section {
+            TextField("Mobile App Hub address", text: $buildsHubURL, prompt: Text("https://builds.example.invalid"))
+                .autocorrectionDisabled()
+                .accessibilityIdentifier("settings-builds-hub-url")
+            if !buildsHubURL.isEmpty, MobileAppHubSettings.hubURL(from: buildsHubURL) == nil {
+                Label("Enter the hub's full address, starting with https://", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(HerdrTheme.warning)
+            }
+            TextField("Dashboard apps", text: $buildsDashboardApps, prompt: Text("com.example.app"))
+                .autocorrectionDisabled()
+                .accessibilityIdentifier("settings-builds-dashboard-apps")
+        } header: {
+            Text("Builds")
+        } footer: {
+            Text("Each First Mate's Overview lists the builds its agents published to Mobile App Hub. The Dashboard shows the newest builds of the apps listed here, by bundle ID, separated by commas. Leave the address empty to hide builds.")
         }
     }
 

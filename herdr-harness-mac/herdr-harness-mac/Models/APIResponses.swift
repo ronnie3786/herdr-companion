@@ -7,6 +7,20 @@ struct WorkspacesResponse: Decodable, Sendable {
     let generatedAt: String?
     let starredPaneIDs: [String]?
 
+    init(
+        ok: Bool = true,
+        workspaces: [HerdrWorkspace],
+        alerts: [HerdrAlert] = [],
+        generatedAt: String? = nil,
+        starredPaneIDs: [String]? = nil
+    ) {
+        self.ok = ok
+        self.workspaces = workspaces
+        self.alerts = alerts
+        self.generatedAt = generatedAt
+        self.starredPaneIDs = starredPaneIDs
+    }
+
     enum CodingKeys: String, CodingKey {
         case ok
         case workspaces
@@ -97,6 +111,30 @@ struct QuickPiSessionResponse: Decodable, Sendable {
         case sessionID = "session_id"
     }
 
+    init(
+        ok: Bool,
+        workspaceID: String,
+        tabID: String,
+        paneID: String,
+        createdWorkspace: Bool,
+        createdTab: Bool,
+        createdPane: Bool,
+        piExtensionAttached: Bool,
+        requestID: String?,
+        sessionID: String?
+    ) {
+        self.ok = ok
+        self.workspaceID = workspaceID
+        self.tabID = tabID
+        self.paneID = paneID
+        self.createdWorkspace = createdWorkspace
+        self.createdTab = createdTab
+        self.createdPane = createdPane
+        self.piExtensionAttached = piExtensionAttached
+        self.requestID = requestID
+        self.sessionID = sessionID
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         ok = try container.decode(Bool.self, forKey: .ok)
@@ -127,6 +165,23 @@ struct AgentPromptDefaultsResponse: Decodable, Sendable {
     let prompts: [String: String]
 }
 
+/// The exact `{provider, id}` pair the quick-session endpoint accepts. A
+/// display name is deliberately not part of this payload, so a label can never
+/// be mistaken for model identity.
+struct QuickPiSessionModel: Encodable, Equatable, Sendable {
+    let provider: String
+    let id: String
+
+    init(provider: String, id: String) {
+        self.provider = provider
+        self.id = id
+    }
+
+    init(_ identity: PiModelIdentity) {
+        self.init(provider: identity.provider, id: identity.id)
+    }
+}
+
 struct QuickPiSessionRequest: Encodable, Sendable {
     let label: String
     let requestID: String
@@ -138,6 +193,11 @@ struct QuickPiSessionRequest: Encodable, Sendable {
     let workspaceLabel: String?
     let tabLabel: String?
     let reuseNamedTab: Bool?
+    /// Optional launch options require `quick-session-launch-options-v1`.
+    /// Omitting them keeps the legacy payload byte-for-byte unchanged.
+    let model: QuickPiSessionModel?
+    let thinkingLevel: String?
+    let focus: Bool?
 
     enum CodingKeys: String, CodingKey {
         case label
@@ -150,6 +210,39 @@ struct QuickPiSessionRequest: Encodable, Sendable {
         case workspaceLabel
         case tabLabel
         case reuseNamedTab
+        case model
+        case thinkingLevel
+        case focus
+    }
+
+    init(
+        label: String,
+        requestID: String,
+        workspaceID: String? = nil,
+        tabID: String? = nil,
+        cwd: String? = nil,
+        sessionFile: String? = nil,
+        sessionID: String? = nil,
+        workspaceLabel: String? = nil,
+        tabLabel: String? = nil,
+        reuseNamedTab: Bool? = nil,
+        model: QuickPiSessionModel? = nil,
+        thinkingLevel: String? = nil,
+        focus: Bool? = nil
+    ) {
+        self.label = label
+        self.requestID = requestID
+        self.workspaceID = workspaceID
+        self.tabID = tabID
+        self.cwd = cwd
+        self.sessionFile = sessionFile
+        self.sessionID = sessionID
+        self.workspaceLabel = workspaceLabel
+        self.tabLabel = tabLabel
+        self.reuseNamedTab = reuseNamedTab
+        self.model = model
+        self.thinkingLevel = thinkingLevel
+        self.focus = focus
     }
 }
 

@@ -1254,6 +1254,92 @@ class HerdrHTTPTests(unittest.TestCase):
         self.assertNotIn("workspace_label", self.service.calls[-1][1])
         self.assertNotIn("tab_label", self.service.calls[-1][1])
 
+    def test_quick_pi_session_forwards_launch_options_and_advertises_capability(self):
+        description = self.request("/api/v1")[2]
+        self.assertIn("quick-session-launch-options-v1", description["capabilities"])
+
+        status, _, _ = self.request(
+            "/api/v1/quick-sessions/pi",
+            method="POST",
+            payload={
+                "label": "Project question",
+                "workspaceId": "w1",
+                "model": {"provider": "synthetic-provider", "id": "synthetic-model"},
+                "thinkingLevel": "high",
+                "focus": False,
+            },
+        )
+        self.assertEqual(status, 200)
+        call = self.service.calls[-1][1]
+        self.assertEqual(call["workspace_id"], "w1")
+        self.assertEqual(call["model"], {"provider": "synthetic-provider", "id": "synthetic-model"})
+        self.assertEqual(call["thinking_level"], "high")
+        self.assertIs(call["focus"], False)
+
+        status, _, _ = self.request(
+            "/api/v1/quick-sessions/pi",
+            method="POST",
+            payload={"label": "Project question", "focus": True},
+        )
+        self.assertEqual(status, 200)
+        self.assertIs(self.service.calls[-1][1]["focus"], True)
+
+        # Omitted options preserve the legacy payload exactly.
+        status, _, _ = self.request(
+            "/api/v1/quick-sessions/pi",
+            method="POST",
+            payload={"label": "Project question", "model": None, "thinkingLevel": None},
+        )
+        self.assertEqual(status, 200)
+        legacy = self.service.calls[-1][1]
+        self.assertNotIn("model", legacy)
+        self.assertNotIn("thinking_level", legacy)
+        self.assertNotIn("focus", legacy)
+
+    def test_quick_pi_session_home_alias_is_endpoint_scoped(self):
+        status, _, _ = self.request(
+            "/api/v1/quick-sessions/pi",
+            method="POST",
+            payload={"label": "Home chat", "workspaceId": "w1", "cwd": "~"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(self.service.calls[-1][1]["cwd"], "~")
+
+        # Generic endpoints still require an absolute directory.
+        generic_status, _, _ = self.request(
+            "/api/v1/workspaces",
+            method="POST",
+            payload={"label": "Home workspace", "cwd": "~"},
+        )
+        self.assertEqual(generic_status, 400)
+
+    def test_quick_pi_session_rejects_invalid_launch_options_before_dispatch(self):
+        call_count = len(self.service.calls)
+        for payload in (
+            {"label": "x", "model": "provider/id"},
+            {"label": "x", "model": {"id": "missing-provider"}},
+            {"label": "x", "model": {"provider": "p"}},
+            {"label": "x", "model": {"provider": "p", "id": ""}},
+            {"label": "x", "model": {"provider": "p", "id": "   "}},
+            {"label": "x", "model": {"provider": "p", "id": 3}},
+            {"label": "x", "model": {"provider": "p", "id": "m" * 257}},
+            {"label": "x", "model": {"provider": "p", "id": "m", "extra": "no"}},
+            {"label": "x", "thinkingLevel": "ultra"},
+            {"label": "x", "thinkingLevel": 3},
+            {"label": "x", "focus": "yes"},
+            {"label": "x", "focus": None},
+            {"label": "x", "cwd": "relative/path"},
+            {"label": "x", "cwd": "~/projects"},
+        ):
+            with self.subTest(payload=payload):
+                status, _, _ = self.request(
+                    "/api/v1/quick-sessions/pi",
+                    method="POST",
+                    payload=payload,
+                )
+                self.assertEqual(status, 400)
+        self.assertEqual(len(self.service.calls), call_count)
+
     def test_contextual_question_capabilities_and_dispatch(self):
         status, _, body = self.request("/api/v1/agent-runs/capabilities")
         self.assertEqual(status, 200)

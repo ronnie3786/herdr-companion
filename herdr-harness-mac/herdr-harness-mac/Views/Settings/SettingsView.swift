@@ -446,7 +446,7 @@ struct SettingsView: View {
 
     private var agentModelSection: some View {
         Section {
-            LabeledContent("HUD model") {
+            LabeledContent("Legacy HUD model") {
                 modelMenu(
                     selection: $agentSettings.hudModel,
                     identifier: "settings-hud-model-picker",
@@ -494,7 +494,7 @@ struct SettingsView: View {
                 modelMenu(
                     selection: $agentSettings.notesModel,
                     identifier: "settings-notes-model-picker",
-                    defaultTitle: "Same as HUD model",
+                    defaultTitle: "Same as legacy HUD model",
                     catalog: agentCatalog,
                     isLoading: isLoadingAgentModels,
                     loadError: agentModelsError,
@@ -524,7 +524,7 @@ struct SettingsView: View {
         } header: {
             Text("Agent models")
         } footer: {
-            Text("The HUD (⌃⌥Space) and the Agent sheet (⌘⌥A) each carry their own model and thinking level. \"Machine default\" uses whatever pi is configured to use on that machine. Images are rerouted to the vision model when the chosen model cannot see them. This list comes from the primary machine's pi installation, so it updates without a new Herdr build. Notes use their own model for tidying and smart actions; leave it on Same as HUD model to follow the HUD.")
+            Text("The HUD (⌃⌥Space) starts each new chat on its machine's declared default model, with an in-composer override. This legacy HUD model applies only when you continue an existing HUD conversation. The Agent sheet (⌘⌥A) carries its own model and thinking level. \"Machine default\" uses whatever pi is configured to use on that machine. Images are rerouted to the vision model only for existing conversations; a new chat asks for a compatible model instead. This list comes from the primary machine's pi installation, so it updates without a new Herdr build. Notes use their own model for tidying and smart actions; leave it on Same as legacy HUD model to follow it.")
         }
     }
 

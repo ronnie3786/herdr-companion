@@ -67,6 +67,118 @@ struct HerdrHudPersistenceTests {
         #expect(restored.selectedWorkingFolder.path == folder)
     }
 
+    @Test("A pending checked launch round-trips its frozen input and confirmed receipt")
+    func pendingWorkspaceLaunchRoundTrip() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("hud-thread.json")
+        let receipt = HerdrHudWorkspaceLaunchReceipt(
+            requestID: "launch-1",
+            fingerprint: "synthetic-fingerprint",
+            machineID: "machine-1",
+            endpoint: "http://localhost:9092",
+            workspaceID: "w-main",
+            tabID: "w-main:t1",
+            paneID: "w-main:p1",
+            phase: .sending,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let attachment = HerdrHudAttachment(
+            id: UUID(),
+            url: directory.appendingPathComponent("notes.txt"),
+            filename: "notes.txt",
+            byteCount: 5,
+            isImage: false
+        )
+        let pending = HerdrHudPendingWorkspaceLaunch(
+            requestID: receipt.requestID,
+            fingerprint: receipt.fingerprint,
+            receipt: receipt,
+            draft: "Frozen draft",
+            quotes: [ChatQuote(text: "Quoted response", comment: "Comment", source: "HUD chat")],
+            attachments: [attachment],
+            selectedMachineID: "machine-1",
+            createsInMainWorkspace: true,
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_100)
+        )
+        try HerdrHudPersistenceSnapshot(thread: nil, exchanges: [], workspaceLaunch: pending)
+            .save(to: fileURL)
+
+        let decoded = try #require(HerdrHudPersistenceSnapshot.load(from: fileURL))
+        #expect(decoded.workspaceLaunch == pending)
+
+        let session = makeSession(fileURL: fileURL)
+        await session.waitForPersistenceRestoreForTesting()
+        #expect(session.draft == "Frozen draft")
+        #expect(session.pendingAttachments.count == 1)
+        #expect(session.pendingQuotes.count == 1)
+        #expect(session.createsInMainWorkspace)
+        #expect(session.selectedMachineID == "machine-1")
+        #expect(session.workspaceLaunchPaneIDForOpening() == "machine-1|w-main:p1")
+        #expect(session.workspaceLaunchRecoveryMessage != nil)
+    }
+
+    @Test("Starting over clears the persisted pending launch")
+    func discardClearsPendingLaunchPersistence() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("hud-thread.json")
+        let pending = HerdrHudPendingWorkspaceLaunch(
+            requestID: "launch-1",
+            fingerprint: "synthetic-fingerprint",
+            receipt: nil,
+            draft: "Abandoned draft",
+            quotes: [],
+            attachments: [],
+            selectedMachineID: "machine-1",
+            createsInMainWorkspace: true,
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        try HerdrHudPersistenceSnapshot(thread: nil, exchanges: [], workspaceLaunch: pending)
+            .save(to: fileURL)
+        let session = makeSession(fileURL: fileURL)
+        await session.waitForPersistenceRestoreForTesting()
+        #expect(session.draft == "Abandoned draft")
+        #expect(session.createsInMainWorkspace)
+
+        session.discardUnresolvedWorkspaceLaunch()
+        await session.waitForWorkspaceLaunchPersistenceForTesting()
+
+        #expect(session.draft.isEmpty)
+        // The checkbox stays checked for the next attempt; Start over discards
+        // the unresolved draft, not the user's destination preference.
+        #expect(session.createsInMainWorkspace)
+        let reloaded = try #require(HerdrHudPersistenceSnapshot.load(from: fileURL))
+        #expect(reloaded.workspaceLaunch == nil)
+    }
+
+    @Test("A saved conversation ID is never reopened as a pending composer")
+    func savedConversationIDIsExcludedFromPendingComposerScan() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = makeSession(fileURL: directory.appendingPathComponent("hud-thread.json"))
+        let composerDirectory = directory.appendingPathComponent("hud-chats", isDirectory: true)
+        try FileManager.default.createDirectory(at: composerDirectory, withIntermediateDirectories: true)
+        let chatID = UUID().uuidString
+        let pending = HerdrHudPendingWorkspaceLaunch(
+            requestID: "launch-1",
+            fingerprint: "synthetic-fingerprint",
+            receipt: nil,
+            draft: "Stale draft",
+            quotes: [],
+            attachments: [],
+            selectedMachineID: "machine-1",
+            createsInMainWorkspace: true,
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        try HerdrHudPersistenceSnapshot(thread: nil, exchanges: [], workspaceLaunch: pending)
+            .save(to: composerDirectory.appendingPathComponent("\(chatID).json"))
+
+        #expect(session.newestPendingWorkspaceLaunchComposerID() == chatID)
+        #expect(session.newestPendingWorkspaceLaunchComposerID(excluding: [chatID]) == nil)
+        #expect(session.newestPendingWorkspaceLaunchComposerID(excluding: [UUID().uuidString]) == chatID)
+    }
+
     @Test("A missing persistence file restores as an empty HUD")
     func missingFile() async throws {
         let directory = try makeTemporaryDirectory()

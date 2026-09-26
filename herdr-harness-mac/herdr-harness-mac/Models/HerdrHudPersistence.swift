@@ -1,5 +1,49 @@
 import Foundation
 
+/// The model choice a new-scheme HUD session owns, shaped for persistence.
+/// Optional in a snapshot so version-1 caches written before this behavior
+/// still decode; an absent value marks a legacy conversation that keeps
+/// following the shared HUD preference.
+enum HerdrHudPersistedModelChoice: Codable, Equatable, Sendable {
+    case machineDefault
+    case explicit(provider: String, id: String)
+
+    init(_ choice: HerdrHudModelChoice) {
+        switch choice {
+        case .machineDefault:
+            self = .machineDefault
+        case let .explicit(identity):
+            self = .explicit(provider: identity.provider, id: identity.id)
+        }
+    }
+
+    var choice: HerdrHudModelChoice {
+        switch self {
+        case .machineDefault:
+            return .machineDefault
+        case let .explicit(provider, id):
+            return .explicit(PiModelIdentity(provider: provider, id: id, name: nil))
+        }
+    }
+}
+
+/// Durable ownership of one interrupted checked launch together with the
+/// frozen composer input needed to reconnect it after a relaunch. The request
+/// identity and receipt stay launcher-owned; this record lets a restored
+/// composer present the exact same unresolved launch instead of orphaning the
+/// draft or minting a new request ID.
+struct HerdrHudPendingWorkspaceLaunch: Codable, Equatable, Sendable {
+    let requestID: String?
+    let fingerprint: String?
+    let receipt: HerdrHudWorkspaceLaunchReceipt?
+    let draft: String
+    let quotes: [ChatQuote]
+    let attachments: [HerdrHudAttachment]
+    let selectedMachineID: String?
+    let createsInMainWorkspace: Bool
+    let updatedAt: Date
+}
+
 struct HerdrHudPersistenceSnapshot: Codable, Equatable, Sendable {
     static let currentVersion = 1
     static let maximumExchangeCount = 10
@@ -15,6 +59,12 @@ struct HerdrHudPersistenceSnapshot: Codable, Equatable, Sendable {
     /// capped transcript and stays optional so version-1 caches written
     /// before it still decode.
     let chatMetadata: HerdrHudChatMetadataAccumulator?
+    /// Optional new-chat model ownership. Absent means the session predates
+    /// this behavior and continues to follow the shared legacy preference.
+    let modelChoice: HerdrHudPersistedModelChoice?
+    /// Optional ownership of an interrupted checked workspace launch. Absent
+    /// means no checked launch is pending or the cache predates this field.
+    let workspaceLaunch: HerdrHudPendingWorkspaceLaunch?
 
     init(
         version: Int = HerdrHudPersistenceSnapshot.currentVersion,
@@ -22,12 +72,16 @@ struct HerdrHudPersistenceSnapshot: Codable, Equatable, Sendable {
         exchanges: [HerdrHudExchange],
         hasUnseenAnswer: Bool = false,
         historyRootRunID: String? = nil,
-        chatMetadata: HerdrHudChatMetadataAccumulator? = nil
+        chatMetadata: HerdrHudChatMetadataAccumulator? = nil,
+        modelChoice: HerdrHudPersistedModelChoice? = nil,
+        workspaceLaunch: HerdrHudPendingWorkspaceLaunch? = nil
     ) {
         self.version = version
         self.hasUnseenAnswer = hasUnseenAnswer
         self.historyRootRunID = historyRootRunID
         self.chatMetadata = chatMetadata
+        self.modelChoice = modelChoice
+        self.workspaceLaunch = workspaceLaunch
         self.thread = thread
         self.exchanges = exchanges.suffix(Self.maximumExchangeCount).map(PersistedExchange.init)
     }
@@ -180,6 +234,22 @@ actor HerdrHudPersistenceStore {
         Task.detached(priority: .utility) { [weak self] in
             await self?.writePendingSnapshots()
         }
+    }
+
+    /// Writes through the same latest-wins path, without handing the write to
+    /// an unstructured task. A checked launch persists its ownership and
+    /// frozen input this way before it creates anything, so a crash cannot
+    /// strand a request ID that was never written to disk.
+    func saveImmediately(_ snapshot: HerdrHudPersistenceSnapshot) {
+        pendingSnapshot = snapshot
+        writePendingSnapshots()
+    }
+
+    /// Launch admission requires a successful write, unlike best-effort history caching.
+    /// Clear an older queued snapshot so it cannot overwrite this ownership record.
+    func saveDurably(_ snapshot: HerdrHudPersistenceSnapshot) throws {
+        pendingSnapshot = nil
+        try snapshot.save(to: fileURL)
     }
 
     func remove() {

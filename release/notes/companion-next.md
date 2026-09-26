@@ -1,5 +1,34 @@
 # Next companion update, unreleased
 
+## Quick-session launch options
+
+- Adds `quick-session-launch-options-v1` as an additive authenticated API
+  capability, advertised by the `GET /api/v1` capability list.
+- `POST /api/v1/quick-sessions/pi` additionally accepts optional `model`
+  (`{provider, id}`), `thinkingLevel`, and `focus` fields, and accepts the
+  endpoint-scoped `cwd: "~"` home alias. Values are validated before any
+  workspace, tab, or pane mutation and forwarded to the existing quick-session
+  implementation. Omitting or nulling model/thinking and omitting focus keeps
+  the legacy payload byte-for-byte.
+- The home alias resolves to the server account's home directory on the
+  execution machine, not the request process and not the target workspace's
+  folder. Other endpoints keep rejecting `~` and short relative paths, and an
+  unavailable home fails before any mutation.
+- Existing request-ID idempotency is unchanged: replaying a request ID with
+  different model, thinking, focus, or target content fails with a conflict and
+  starts no duplicate session, while an unchanged replay returns the original
+  result.
+- The Mac app uses this capability for its new-chat **Create in main workspace**
+  option and local/default-model routing: it pins the execution companion's
+  declared default model, passes the selected thinking level, creates without
+  focus, and reuses the existing saved workspace ID and working folder. An
+  older companion keeps serving saved-HUD chats with the existing quick-session
+  fields; a newer Mac app checks the capability first and sends no new fields
+  when it is absent.
+- Additive and backward compatible for existing clients, the web client, and the
+  Pi package. Install and restart the companion package separately from the Mac
+  app; a Mac update does not install or restart server packages.
+
 ## First Mate response feedback
 
 - Adds `first-mate-feedback-v1` as an additive authenticated API capability.

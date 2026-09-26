@@ -484,6 +484,73 @@ class FirstMateStoreTests(unittest.TestCase):
         later = self.store.get_events(self.feature["id"], after=cursor)
         self.assertTrue(all(e["sequence"] > cursor for e in later["events"]))
 
+    def test_verification_evidence_migrates_additively_and_stays_conservative(self):
+        self.assertEqual(self.store.get_feature(self.feature["id"])["verification"], {})
+        self.assertIsNone(self.store.latest_verification_assessment(self.feature["id"]))
+        self.assertEqual(self.store.list_verification_runs(self.feature["id"]), [])
+        self.assertEqual(self.store.list_suite_inventories(self.feature["id"]), [])
+        self.store.close()
+        with contextlib.closing(sqlite3.connect(str(self.path))) as raw:
+            raw.execute("DROP TABLE fm_verification_runs")
+            raw.execute("DROP TABLE fm_suite_inventories")
+            raw.execute("DROP TABLE fm_verification_assessments")
+            raw.execute("DELETE FROM fm_schema WHERE version=10")
+            raw.execute("ALTER TABLE fm_features DROP COLUMN verification_json")
+            raw.execute("ALTER TABLE fm_attempts DROP COLUMN verification_run_ids_json")
+            raw.commit()
+        self.store = FirstMateStore(self.path)
+        # Legacy records stay readable and conservatively unavailable.
+        self.assertEqual(self.store.get_feature(self.feature["id"])["verification"], {})
+        self.assertEqual(self.store.list_verification_runs(self.feature["id"]), [])
+        self.assertEqual(self.store.list_suite_inventories(self.feature["id"]), [])
+        assignment = self.assignment()
+        self.assertEqual(assignment["verification_run_ids"], [])
+        with contextlib.closing(sqlite3.connect(str(self.path))) as raw:
+            self.assertIn(10, {row[0] for row in raw.execute("SELECT version FROM fm_schema")})
+
+    def test_verification_batches_are_append_only_idempotent_and_validated(self):
+        inventory = {"workspace": "project", "package": "pkg/app", "state": "complete",
+                     "revision": "synthetic-rev", "suites": [
+                         {"package": "pkg/app", "suite": "SuiteOne", "configuration": "", "selector": ""}],
+                     "evidence": "synthetic list", "source": "manifest"}
+        self.store.record_suite_inventory(self.feature["id"], inventory)
+        body = {"workspace": "project", "revision": "synthetic-rev", "observed_revision": "synthetic-rev",
+                "status": "completed", "summary": "one batch", "gates": [
+                    {"suite": {"package": "pkg/app", "suite": "SuiteOne"}, "outcome": "passed", "passed_count": 3}]}
+        provenance = {"visit_id": None, "assignment_id": None, "native_session_id": None, "generation": None}
+        first = self.store.record_verification(self.feature["id"], body, "verification-one", provenance)
+        replay = self.store.record_verification(self.feature["id"], body, "verification-one", provenance)
+        self.assertEqual(first, replay)
+        self.assertEqual(first["run"]["tested_revision"], "synthetic-rev")
+        self.assert_code("idempotency_conflict", lambda: self.store.record_verification(
+            self.feature["id"], {**body, "revision": "other-rev"}, "verification-one", provenance))
+        second = self.store.record_verification(
+            self.feature["id"], {**body, "status": "interrupted"}, "verification-two", provenance)
+        self.assertEqual(len(self.store.list_verification_runs(self.feature["id"])), 2)
+        self.assertEqual(second["run"]["run_status"], "interrupted")
+        self.assert_code("invalid_request", lambda: self.store.record_verification(
+            self.feature["id"], {"workspace": "project", "gates": []}, "verification-invalid", provenance))
+        self.assert_code("invalid_request", lambda: self.store.record_suite_inventory(
+            self.feature["id"], {**inventory, "state": "unknown"}))
+        # Replacing the inventory retains one row per workspace package.
+        self.store.record_suite_inventory(self.feature["id"], {
+            **inventory, "suites": [{"package": "pkg/app", "suite": "SuiteTwo"}]})
+        inventories = self.store.list_suite_inventories(self.feature["id"])
+        self.assertEqual(len(inventories), 1)
+        self.assertEqual([suite["suite"] for suite in inventories[0]["suites"]], ["SuiteTwo"])
+
+    def test_coverage_note_discloses_bounded_lists_and_the_remainder(self):
+        assessment = {
+            "status": "partially_verified", "label": "Partially verified",
+            "missing_suites": [{"label": f"pkg/app/Suite{index}"} for index in range(10)],
+            "previously_green_missing": [], "failing_suites": [],
+        }
+        note = self.store._coverage_note(assessment)
+        self.assertIn("Missing suites (10):", note)
+        self.assertIn("pkg/app/Suite7", note)
+        self.assertIn("and 2 more (complete list in the persisted assessment)", note)
+        self.assertNotIn("pkg/app/Suite8", note)
+
     def test_link_storage_migrates_additively_and_persists(self):
         before = self.store.snapshot(self.feature["id"])
         self.assertEqual(before["links"], [])

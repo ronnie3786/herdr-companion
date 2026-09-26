@@ -301,6 +301,7 @@ final class HerdrHudController {
         isConfigured = true
         self.session = session
         self.chats = HerdrHudChats(legacySession: session, defaults: userDefaults)
+        self.chats?.applyFreshComposerDefaults(model: model)
         self.notes = notes
         notes.setVisible(areNotesVisible)
         self.fontScaleStore = fontScale
@@ -374,11 +375,39 @@ final class HerdrHudController {
     func submitChat(_ submittedSession: HerdrHudSession, model: HerdrAppModel) async {
         await submittedSession.submit(model: model) { [self] in
             let wasDisplayed = displayedSession === submittedSession
-            chats?.submissionStarted(submittedSession)
+            if case .sent = submittedSession.workspaceLaunchState {
+                chats?.workspaceLaunchCompleted(submittedSession)
+            } else {
+                chats?.submissionStarted(submittedSession)
+            }
             if wasDisplayed { collapse() }
+            chats?.applyFreshComposerDefaults(model: model)
         }
         // Completion is represented by the conversation bubble, never by focus
         // theft or opening over a different conversation/draft.
+    }
+
+    /// Opens the pane a checked workspace launch confirmed. This is
+    /// deliberately non-consuming: inspecting the created chat never replaces
+    /// the composer or discards the recovery draft. Only an explicit
+    /// **Start over** abandons that pending state.
+    func finishWorkspaceLaunch(
+        _ session: HerdrHudSession,
+        openExistingChat: Bool,
+        model: HerdrAppModel
+    ) {
+        if openExistingChat, let paneID = session.workspaceLaunchPaneIDForOpening() {
+            HerdrMacAppDelegate.openPaneURLWithFallback(paneID)
+        }
+        chats?.applyFreshComposerDefaults(model: model)
+    }
+
+    /// Explicitly abandons an uncertain workspace launch. The durable launcher
+    /// receipt is retained, so this is never a silent retry path.
+    func discardWorkspaceLaunch(_ session: HerdrHudSession, model: HerdrAppModel) {
+        session.discardUnresolvedWorkspaceLaunch()
+        chats?.workspaceLaunchCompleted(session)
+        chats?.applyFreshComposerDefaults(model: model)
     }
 
     private func showSelectedChat() {

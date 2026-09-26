@@ -19,6 +19,7 @@ from typing import Any, Mapping, Optional
 from . import attachments, chat_tab_colors, issue_reports, response_audio, result_artifacts, voice
 from .active_work import ActiveWorkError
 from .first_mate_store import FirstMateError
+from .first_mate_verification import VERIFICATION_CAPABILITY
 from .pr_review_store import PRReviewError
 from .agent_runs import ISSUE_REPORT_DRAFT_PROFILE, SMART_RENAME_PROFILE, AgentRunError, MAX_ATTACHMENTS, MODEL_PATTERN, THINKING_LEVELS
 from .alerts import utc_now
@@ -290,6 +291,36 @@ def _optional_cwd(body: dict) -> Optional[str]:
     return expanded
 
 
+def _optional_quick_session_model(body: dict) -> Optional[dict[str, str]]:
+    if "model" not in body or body.get("model") is None:
+        return None
+    model = body.get("model")
+    if (
+        not isinstance(model, dict)
+        or set(model) != {"provider", "id"}
+        or any(
+            not isinstance(value, str)
+            or not value.strip()
+            or len(value) > 256
+            or "\x00" in value
+            for value in model.values()
+        )
+    ):
+        raise HTTPValidationError(
+            "model requires provider and id", code="invalid_agent_model"
+        )
+    return {"provider": model["provider"], "id": model["id"]}
+
+
+def _quick_session_cwd(body: dict) -> Optional[str]:
+    # "~" is the HUD's home-folder alias: HerdrService resolves it against the
+    # service account instead of the request process. Other endpoints keep the
+    # generic absolute-path validation.
+    if body.get("cwd") == "~":
+        return "~"
+    return _optional_cwd(body)
+
+
 def _optional_env(body: dict) -> dict[str, str]:
     value = body.get("env", {})
     if value is None:
@@ -419,6 +450,7 @@ def api_description() -> dict:
             "first-mate-feedback-v1",
             "first-mate-git-v1",
             "first-mate-links-v1",
+            VERIFICATION_CAPABILITY,
             "pr-review-v1",
             "pi-session-context-v1",
             "agent-control-v1",
@@ -426,6 +458,7 @@ def api_description() -> dict:
             "discovery-v1",
             "chat-tab-colors-v1",
             "issue-reports-v1",
+            "quick-session-launch-options-v1",
         ],
         "endpoints": {
             "health": "/api/v1/health",
@@ -1086,6 +1119,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     "first-mate-board-v1", "first-mate-journal-events-v1",
                     "first-mate-feedback-v1",
                     "first-mate-links-v1",
+                    VERIFICATION_CAPABILITY,
                 ], **runtime.capabilities()}
             if method == "GET" and tail == ["models"]:
                 return {"ok": True, **service.first_mate.model_catalog()}
@@ -2505,6 +2539,9 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         "workspaceLabel",
                         "tabLabel",
                         "reuseNamedTab",
+                        "model",
+                        "thinkingLevel",
+                        "focus",
                     }
                     for key in body
                 ):
@@ -2553,11 +2590,21 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     extra["tab_label"] = tab_label
                 if "reuseNamedTab" in body:
                     extra["reuse_named_tab"] = reuse_named_tab
+                model = _optional_quick_session_model(body)
+                if model is not None:
+                    extra["model"] = model
+                thinking_level = _optional_agent_thinking_level(body)
+                if thinking_level is not None:
+                    extra["thinking_level"] = thinking_level
+                if "focus" in body:
+                    if body.get("focus") is None:
+                        raise HTTPValidationError("focus must be a boolean")
+                    extra["focus"] = _boolean(body.get("focus"), "focus")
                 return service.quick_pi_session(
                     label,
                     workspace_id=workspace_id,
                     tab_id=tab_id,
-                    cwd=_optional_cwd(body),
+                    cwd=_quick_session_cwd(body),
                     session_file=session_file,
                     session_id=session_id,
                     request_id=request_id,

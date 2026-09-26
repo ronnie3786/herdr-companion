@@ -6,15 +6,31 @@ No other orchestration server is required.
 
 ## First Mate
 
-The **First Mate** tab brings the feature workspace to iPhone and iPad. Talk to one
-First Mate per feature, then inspect its workflow, independent agents, documents,
-and exact saved sessions. Features waiting for your direction appear first. iPhone uses
-focused detail sheets; iPad keeps a feature sidebar and a trailing inspector.
-Choose System, Light, or Dark from First Mate options.
+The **First Mate** tab brings the feature workspace to iPhone and iPad. It opens
+on **All Machines**, combining features from every configured host with items
+waiting for your direction first; each combined card names its host. The host
+menu also lists every machine individually, and choosing one filters the list to
+it. An explicit choice is remembered until you change it, and a host removed from
+the roster falls back to All Machines rather than another machine. Search matches
+title, goal, ticket, or machine name, and **Show archived** applies across the
+hosts in scope.
+
+Talk to one First Mate per feature, then inspect its workflow, independent agents,
+documents, and exact saved sessions. Creating a feature from All Machines
+requires choosing its destination host; a single-machine scope preselects that
+host. Recent folders belong to the chosen destination, and changing the
+destination clears the previous folder. Every message, archive action, and saved
+resource resolves the machine that owns the feature, even when two hosts share a
+feature ID. One offline or older companion shows its own notice without hiding a
+healthy host's features. iPhone uses focused detail sheets; iPad keeps a feature
+sidebar and a trailing inspector. Choose System, Light, or Dark from First Mate
+options.
 
 The matching companion server with `first-mate-v1` is required. Work continues on
-that host when the phone app closes. Launch with `-HerdrFirstMateDemo` to explore
-synthetic planning, seven reviewers, checkpoints, and session handoffs. See
+that host when the phone app closes. The scope preference is versioned; a missing
+or legacy-only value opens on All Machines without changing the older machine
+preference. Launch with `-HerdrFirstMateDemo` to explore two synthetic hosts,
+shared planning, seven reviewers, checkpoints, and session handoffs. See
 [mobile behavior and verification](../docs/first-mate/ios.md).
 
 ## Native mobile interface

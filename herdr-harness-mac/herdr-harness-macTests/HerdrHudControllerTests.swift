@@ -133,6 +133,47 @@ struct HerdrHudControllerTests {
         #expect(harness.notes.isHudExpanded)
     }
 
+    @Test("Opening a workspace recovery keeps its draft, and only Start over prepares a fresh composer")
+    func workspaceRecoveryOpenChatKeepsDraft() throws {
+        let harness = makeHarness()
+        defer { harness.controller.setEnabled(false) }
+        let chats = try #require(harness.controller.chats)
+        let session = chats.composer
+        let receipt = HerdrHudWorkspaceLaunchReceipt(
+            requestID: "launch-1",
+            fingerprint: "synthetic-fingerprint",
+            machineID: "demo1",
+            endpoint: "http://localhost:9092",
+            workspaceID: "w-main",
+            tabID: "w-main:t1",
+            paneID: "w-main:p1",
+            phase: .sending,
+            createdAt: .now
+        )
+        session.setWorkspaceLaunchStateForTesting(.needsRecovery(message: "unconfirmed", receipt: receipt))
+        session.draft = "Recover me"
+
+        harness.controller.finishWorkspaceLaunch(session, openExistingChat: false, model: harness.model)
+
+        // Inspecting the created chat never consumes the draft or advances the
+        // composer; only Start over is the explicit discard path.
+        #expect(chats.composer === session)
+        #expect(session.draft == "Recover me")
+        guard case .needsRecovery = session.workspaceLaunchState else {
+            Issue.record("Expected the recovery state to remain")
+            return
+        }
+        #expect(session.workspaceLaunchPaneIDForOpening() == "demo1|w-main:p1")
+
+        harness.controller.discardWorkspaceLaunch(session, model: harness.model)
+
+        #expect(chats.composer === session)
+        #expect(session.draft.isEmpty)
+        #expect(session.workspaceLaunchState == .idle)
+        // The next fresh chat starts on this Mac's demo machine again.
+        #expect(chats.composer.selectedMachineID == "demo1")
+    }
+
     @Test("Focused-window capture stages a retained PNG in New chat without sending or replacing its draft")
     func focusedWindowCaptureTargetsNewComposer() async throws {
         let source = temporaryURL(named: "focused-window.png")

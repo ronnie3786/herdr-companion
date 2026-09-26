@@ -193,6 +193,37 @@ class FirstMateHTTPTests(unittest.TestCase):
             self.assertIn(capability, top["capabilities"])
             self.assertIn(capability, first_mate["capabilities"])
 
+    def test_verification_capability_and_projection_are_additive_and_conservative(self):
+        _, created = self.create()
+        feature_id = created["feature"]["id"]
+        self.assertEqual(created["feature"]["verification"], {})
+        self.assertIn("first-mate-verification-v1", self.request("/api/v1")[1]["capabilities"])
+        self.assertIn("first-mate-verification-v1",
+                      self.request("/api/v1/first-mate/capabilities")[1]["capabilities"])
+        assessment = {
+            "status": "partially_verified", "label": "Partially verified", "evidence_present": True,
+            "feature_revision": 1, "assessed_revisions": {"ws_synthetic": "a" * 40},
+            "gate_set": [{"label": "pkg/app/SuiteOne", "outcome": "passed", "tested_revision": "a" * 40,
+                          "run_id": "fmvr_one", "fresh": True}],
+            "missing_suites": [{"label": "pkg/app/SuiteTwo"}], "previously_green_missing": [],
+            "failing_suites": [], "stale_evidence": [], "coverage_reasons": ["one required suite is missing"],
+        }
+        message = self.store.claim_message(feature_id, "coordinator")
+        self.store.finish_message(message["id"], "coordinator",
+                                  reply="Parked with partial coverage.", verification=assessment)
+        code, detail = self.request(f"/api/v1/first-mate/features/{feature_id}")
+        self.assertEqual(code, 200)
+        self.assertEqual(detail["feature"]["verification"]["status"], "partially_verified")
+        self.assertEqual(detail["feature"]["verification"]["missing_suites"], [{"label": "pkg/app/SuiteTwo"}])
+        reply = [item for item in detail["messages"] if item["role"] == "assistant"][-1]
+        self.assertIn("Verification coverage: Partially verified", reply["text"])
+        self.assertEqual(reply["metadata"]["verification"]["gate_set"][0]["label"], "pkg/app/SuiteOne")
+        code, board = self.request(f"/api/v1/first-mate/features/{feature_id}/board")
+        self.assertEqual(code, 200)
+        self.assertEqual(board["feature"]["verification"]["status"], "partially_verified")
+        _, listing = self.request("/api/v1/first-mate/features")
+        self.assertEqual(listing["features"][0]["verification"]["status"], "partially_verified")
+
     def test_git_capability_and_every_authenticated_operation_forward_the_complete_contract(self):
         _, created = self.create()
         feature_id = created["feature"]["id"]

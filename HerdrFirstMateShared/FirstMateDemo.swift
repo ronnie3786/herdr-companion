@@ -57,6 +57,7 @@ enum FirstMateDemo {
         let current = stageKeys[currentIndex]
         let statuses = ["awaiting_direction", "running", "running", "awaiting_direction", "awaiting_direction", "awaiting_direction"]
         var feature = FirstMateFeature(id: "demo-session-continuity", title: "Keep agent sessions connected", goal: "A feature keeps its agents, evidence, and decisions together, even when a session moves to a new process.", cwd: "/workspace/sample-app", status: statuses[step], currentVisitID: "demo-\(current)", revision: step + 1, createdAt: timestamp, updatedAt: timestamp, workItemID: "DEMO-104")
+        feature.verification = verification(step: step, featureRevision: feature.revision)
         let visits = stageKeys.enumerated().map { index, key in
             FirstMateVisit(id: "demo-\(key)", featureID: feature.id, stageKey: key == "revision" ? "implement" : key, title: visitTitles[index], status: index < currentIndex ? "completed" : index == currentIndex ? statuses[step] : "planned", revision: index < 3 ? 1 : 2, createdAt: timestamp, predecessorVisitID: index == 0 ? nil : "demo-\(stageKeys[index - 1])")
         }
@@ -172,6 +173,103 @@ enum FirstMateDemo {
             "Saved session\n\(session.nativeSessionID)\n\n\(session.title)\nGeneration \(session.generation), \(session.ownershipStatus).\n\nThis retained conversation remains accessible independently of whether it produced a document.\n\nSynthetic demo. No model or repository changes were executed."
         case .session(let agent):
             "You\n\(agent.title). Work within revision \(agent.inputRevision). Report evidence and a verdict.\n\n\(agent.role)\nI am examining the explicit session ownership and recovery behavior. This is an independently saved Pi session.\n\nVerification\nThe assignment belongs to \(agent.visitID). Results are attached to this visit and retain their source session.\n\nOutcome\n\(agent.verdict ?? "Work is still in progress. No verdict has been reported.")\n\nSynthetic demo. No model or repository changes were executed."
+        }
+    }
+
+    /// Synthetic scoped-verification evidence for the demo. Every step shows a
+    /// different verdict so no presentation state needs a live companion.
+    private static func verification(step: Int, featureRevision: Int) -> FirstMateVerification? {
+        let revisionOne = "demo-1a2b3c4d5e6f"
+        let revisionTwo = "demo-9f8e7d6c5b4a"
+        let runOne = "fmvr-demo-one"
+        let appPackage = "packages/sample-app"
+        let composerPackage = "packages/sample-composer"
+        func gate(_ package: String, _ name: String, outcome: String, revision: String,
+                  run: String, passed: Int, failed: Int = 0, configuration: String = "") -> FirstMateVerificationSuite {
+            let label = configuration.isEmpty ? "\(package)/\(name)" : "\(package)/\(name) (\(configuration))"
+            return FirstMateVerificationSuite(
+                label: label, package: package, suite: name, configuration: configuration,
+                workspace: "ws_demo", outcome: outcome, testedRevision: revision, runID: run,
+                fresh: true, passedCount: passed, failedCount: failed
+            )
+        }
+        switch step {
+        case 0:
+            return nil
+        case 1:
+            let coordinator = gate(appPackage, "SampleCoordinatorFeatureTest", outcome: "passed", revision: revisionOne, run: runOne, passed: 54)
+            let composer = gate(composerPackage, "SampleComposerTests", outcome: "passed", revision: revisionOne, run: runOne, passed: 41)
+            let missing = FirstMateVerificationSuite(
+                label: "\(appPackage)/SampleAttachmentTests", package: appPackage, suite: "SampleAttachmentTests",
+                workspace: "ws_demo", reason: "never run"
+            )
+            let dropped = FirstMateVerificationSuite(
+                label: "\(composerPackage)/SamplePasteDetectorTests (debug)", package: composerPackage,
+                suite: "SamplePasteDetectorTests", configuration: "debug"
+            )
+            return FirstMateVerification(
+                status: .partiallyVerified, label: "Partially verified", featureRevision: featureRevision,
+                assessedRevisions: ["ws_demo": revisionOne], sourceRevisions: [revisionOne],
+                gateSet: [coordinator, composer], missingSuites: [missing],
+                previouslyGreenMissing: [dropped],
+                coverageReasons: [
+                    "2 required suites lack a current passing result",
+                    "Previously passing suites are missing from the current gate set",
+                ],
+                evidencePresent: true, computedAt: timestamp
+            )
+        case 2:
+            let coordinator = gate(appPackage, "SampleCoordinatorFeatureTest", outcome: "passed", revision: revisionOne, run: runOne, passed: 54)
+            let composer = gate(composerPackage, "SampleComposerTests", outcome: "passed", revision: revisionOne, run: runOne, passed: 41)
+            let failing = gate(appPackage, "SamplePasteTests", outcome: "failed", revision: revisionOne, run: runOne, passed: 9, failed: 22)
+            return FirstMateVerification(
+                status: .failed, label: "Failed", featureRevision: featureRevision,
+                assessedRevisions: ["ws_demo": revisionOne], sourceRevisions: [revisionOne],
+                gateSet: [coordinator, composer, failing], failingSuites: [failing],
+                coverageReasons: ["Current failures remain visible even when a passing subset is selected"],
+                evidencePresent: true, computedAt: timestamp
+            )
+        case 3:
+            let suites = [
+                gate(appPackage, "SampleCoordinatorFeatureTest", outcome: "passed", revision: revisionTwo, run: "fmvr-demo-two", passed: 54),
+                gate(appPackage, "SamplePasteTests", outcome: "passed", revision: revisionTwo, run: "fmvr-demo-two", passed: 31),
+                gate(composerPackage, "SampleComposerTests", outcome: "passed", revision: revisionTwo, run: "fmvr-demo-two", passed: 41),
+                gate(composerPackage, "SamplePasteDetectorTests", outcome: "passed", revision: revisionTwo, run: "fmvr-demo-two", passed: 12, configuration: "debug"),
+            ]
+            return FirstMateVerification(
+                status: .verified, label: "Verified", featureRevision: featureRevision,
+                assessedRevisions: ["ws_demo": revisionTwo], sourceRevisions: [revisionTwo],
+                gateSet: suites, requiredSuites: suites, evidencePresent: true, computedAt: timestamp
+            )
+        case 4:
+            let suites = [
+                gate(appPackage, "SampleCoordinatorFeatureTest", outcome: "passed", revision: revisionOne, run: runOne, passed: 54),
+                gate(composerPackage, "SampleComposerTests", outcome: "passed", revision: revisionOne, run: runOne, passed: 41),
+            ]
+            return FirstMateVerification(
+                status: .partiallyVerified, label: "Partially verified", featureRevision: featureRevision,
+                assessedRevisions: ["ws_demo": revisionTwo], sourceRevisions: [revisionOne],
+                gateSet: suites,
+                staleEvidence: [FirstMateVerificationEvidence(
+                    runID: runOne, workspace: "ws_demo", testedRevision: revisionOne,
+                    reason: "recorded revision \(revisionOne) does not match current \(revisionTwo)"
+                )],
+                coverageReasons: ["Selected evidence is stale and cannot establish current coverage"],
+                evidencePresent: true, computedAt: timestamp
+            )
+        default:
+            let suites = [
+                gate(appPackage, "SampleCoordinatorFeatureTest", outcome: "passed", revision: revisionTwo, run: "fmvr-demo-three", passed: 54),
+                gate(appPackage, "SamplePasteTests", outcome: "passed", revision: revisionTwo, run: "fmvr-demo-three", passed: 31),
+                gate(composerPackage, "SampleComposerTests", outcome: "passed", revision: revisionTwo, run: "fmvr-demo-three", passed: 41),
+                gate(composerPackage, "SamplePasteDetectorTests", outcome: "passed", revision: revisionTwo, run: "fmvr-demo-three", passed: 12),
+                gate(composerPackage, "SamplePasteDetectorTests", outcome: "passed", revision: revisionTwo, run: "fmvr-demo-three", passed: 12, configuration: "release"),
+            ]
+            return FirstMateVerification(
+                status: .verified, label: "Verified", featureRevision: featureRevision,
+                assessedRevisions: ["ws_demo": revisionTwo], sourceRevisions: [revisionTwo],
+                gateSet: suites, requiredSuites: suites, evidencePresent: true, computedAt: timestamp
+            )
         }
     }
 

@@ -18,4 +18,12 @@ struct ServerCapabilities: Decodable, Sendable {
     var supportsPRReview: Bool {
         capabilities?.contains("pr-review-v1") == true
     }
+
+    /// Requires `quick-session-launch-options-v1`: the quick-session endpoint
+    /// accepts an exact model, thinking level, and focus flag. Older
+    /// companions keep the legacy payload and must be updated before a
+    /// workspace launch can pin its options.
+    var supportsQuickSessionLaunchOptions: Bool {
+        capabilities?.contains("quick-session-launch-options-v1") == true
+    }
 }

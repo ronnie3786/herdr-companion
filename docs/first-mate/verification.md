@@ -89,3 +89,42 @@ persistence evidence. The automated HTTP close/reopen check proves companion
 storage survives a restart at the API boundary, not the Mac relaunch half.
 Generated screenshots and layout renders are presentation evidence, not
 installed-app verification.
+
+## First Mate gate verification (issue #68)
+
+The verification feature adds a companion-side coverage assessment, the
+worker-scoped `fm_record_verification` tool, additive API fields, and a shared
+native/web Verification summary. The final gate completes this table on the
+delivered revision, recording exact-source automated results separately from
+rendered-UI and connected-app evidence. A row is complete only when it records
+the delivered commit SHA, its **Tested revision** matches that revision, the
+exact command(s) appear in the protocol, and its **Evidence** cell names the
+captured log, artifact, or screenshot; a result from another revision is not
+evidence. Rendered rows require the synthetic result bundle below, and demo
+renders or in-memory fixtures never substitute for connected-app persistence.
+All fixtures are synthetic; no production companion, host, or data is used.
+
+| Gate item | Exact-source protocol | Tested revision | Result | Evidence |
+| --- | --- | --- | --- | --- |
+| Coverage evaluator rules | `.venv/bin/python -m unittest tests.test_first_mate_verification` (deterministic six-to-four omission, complete-coverage recovery, never-run suite, duplicate names, incomplete inventory, unmapped path, stale revision, interrupted run, failure supersession, invalid payloads) | Pending final gate | Pending final gate | Pending final gate |
+| Store, runtime, HTTP, and CLI integration | `.venv/bin/python -m unittest tests.test_first_mate_verification_runtime tests.test_first_mate_store tests.test_first_mate_runtime tests.test_first_mate_http tests.test_first_mate_board tests.test_first_mate_cli` (temporary Git repositories exercise restart, handoff, later-stage, and isolated-worktree persistence) | Pending final gate | Pending final gate | Pending final gate |
+| Pi extension typed contract | `npm --prefix pi-semantic-bridge test` (includes `verification recording is worker-scoped and carries the exact gate contract`) | Pending final gate | Pending final gate | Pending final gate |
+| Browser Overview | `node --test tests/first_mate_web.test.cjs` (verified, partial, failed, unknown, absent, long-list, and offline last-reported rendering) | Pending final gate | Pending final gate | Pending final gate |
+| Shared native unit tests (Mac and iOS) | Mac: `xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test -only-testing:herdr-harness-macTests`. iOS: the `herdr-harness-iosTests` target with the same `HerdrFirstMateSharedTests`; it must not be skipped when shared sources change. | Pending final gate | Pending final gate | Pending final gate |
+| Rendered verification summary | `xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO -resultBundlePath build/first-mate-verification/rendered-<full-commit-sha>.xcresult test -only-testing:herdr-harness-macTests/FirstMateVerificationRenderTests`. The suite runs inside the Mac unit target and writes light/dark PNGs for verified, partial, failed, last-reported, and long-identifier states; the result bundle retains the screenshots and accessibility attachments. | Pending final gate | Pending final gate | Pending final gate |
+| Connected Mac, iOS, and browser Overview | With a disposable companion and synthetic data, open a feature at each verdict and confirm the Verification section shows the tested revision and package-qualified gate set with named missing, previously passing dropped, failing, and stale suites; a long gate set discloses its remainder; the section stays visually separate from the workflow badge. | Pending final gate | Pending final gate | Pending final gate |
+| Connected-app persistence and downgrade | Record complete passing evidence, restart the companion, relaunch the client, and confirm the verdict and gate set return; advance the synthetic source revision and confirm the older green becomes stale with its gate set retained instead of staying verified; record a later failure and confirm selecting the earlier passing run cannot hide it. | Pending final gate | Pending final gate | Pending final gate |
+| Legacy and stale-client compatibility | Against a companion that omits `first-mate-verification-v1`, confirm **Verification unavailable** with no green promotion and no invented gate set; then reconnect a client that previously cached a verified state and confirm a delayed, partial, or malformed response cannot resurrect it. | Pending final gate | Pending final gate | Pending final gate |
+| Public source guard and staged whitespace | `scripts/check-public-source.py` plus `git diff --check`. | Pending final gate | Pending final gate | Pending final gate |
+
+The Python, Pi, and web rows run inside the repository Verify workflow's full
+`python -m unittest discover -s tests`, `npm --prefix pi-semantic-bridge test`,
+and `node --test tests/first_mate_web.test.cjs` jobs; the shared native and
+rendered rows run inside the Mac and iOS unit targets. The rendered row emits
+synthetic screenshots and accessibility attachments, and the connected-app rows
+are additional required gate items, not substitutes for the automated matrix.
+At documentation time the focused checks
+`python3 -m unittest tests.test_agent_docs`,
+`python3 scripts/check-public-source.py`, and `git diff --check` passed locally;
+they are documentation checks and do not replace the exact-revision gate above.
+No row above records a result for another revision.

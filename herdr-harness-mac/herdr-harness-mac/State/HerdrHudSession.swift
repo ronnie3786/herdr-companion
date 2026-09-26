@@ -100,12 +100,45 @@ final class HerdrHudSession {
         var turnCount: Int
     }
 
+    /// Which model rules govern this session. A genuinely new composer owns
+    /// its own choice and starts in Machine default mode; a conversation that
+    /// existed before this behavior (or was loaded from saved history) keeps
+    /// following the shared legacy HUD preference exactly as before.
+    enum ModelChoiceSource: Equatable, Sendable {
+        case sessionOwned
+        case sharedPreference
+    }
+
+    /// One checked "create in main workspace" send's state. A confirmed pane
+    /// is retained whenever it is known so the UI can offer Open chat instead
+    /// of repeating work that may already exist.
+    enum WorkspaceLaunchState: Equatable, Sendable {
+        case idle
+        case launching
+        case sent(HerdrHudWorkspaceLaunchReceipt)
+        case needsRecovery(message: String, receipt: HerdrHudWorkspaceLaunchReceipt?)
+    }
+
+    /// Builds the network seam for one execution companion. The default uses
+    /// the real per-machine client; tests inject a launcher with an isolated
+    /// receipt store.
+    typealias WorkspaceLauncherFactory = @MainActor (HerdrAppModel, String) throws -> HerdrHudWorkspaceLauncher
+    /// Supplies this Mac's host evidence on first use. The production default
+    /// is `HerdrHudHostIdentity.current()`; tests inject a provider so they can
+    /// prove session creation never resolves it eagerly.
+    typealias HostIdentityProvider = () -> HerdrHudHostIdentity
+
     static let machineIDDefaultsKey = "herdr.hud.machineID"
     static let maxAttachments = 4
     static let maxCombinedAttachmentBytes: Int64 = 21 * 1024 * 1024
 
     private let controller = HeadlessAgentController()
     private let userDefaults: UserDefaults
+    @ObservationIgnored private let injectedHostIdentity: HerdrHudHostIdentity?
+    @ObservationIgnored private let hostIdentityProvider: HostIdentityProvider?
+    @ObservationIgnored private var cachedHostIdentity: HerdrHudHostIdentity?
+    @ObservationIgnored private let mainWorkspaceStore: HerdrHudMainWorkspaceStore
+    @ObservationIgnored private let workspaceLauncherFactory: WorkspaceLauncherFactory
     @ObservationIgnored private let workingFolderStore: HerdrHudWorkingFolderStore
     private let attachmentDirectory: URL
     private let storeURL: URL
@@ -117,6 +150,9 @@ final class HerdrHudSession {
     @ObservationIgnored private var restoreTask: Task<Void, Never>?
     @ObservationIgnored private var historyObservationTask: Task<Void, Never>?
     @ObservationIgnored private var terminalMetadataReconciliationTask: Task<Void, Never>?
+    /// Serializes the fire-and-forget writes that clear a pending checked
+    /// launch after an explicit discard or a successful advance.
+    @ObservationIgnored private var workspaceLaunchPersistenceTask: Task<Void, Never>?
     /// Promised-file drops in flight. Each batch removes its shared staging
     /// directory and then releases itself here; the session owns the batch for
     /// as long as any receiver has not reported yet.
@@ -162,13 +198,26 @@ final class HerdrHudSession {
     private(set) var workingFolderOptionsRevision = 0
     var selectedMachineID: String? {
         didSet {
-            userDefaults.set(selectedMachineID, forKey: Self.machineIDDefaultsKey)
+            // Notes resolve their own machine from this shared fallback. Keep
+            // the last explicit selection instead of erasing it when a fresh
+            // composer starts unselected.
+            if let selectedMachineID {
+                userDefaults.set(selectedMachineID, forKey: Self.machineIDDefaultsKey)
+            }
             guard oldValue != selectedMachineID else { return }
+            // A fresh draft's explicit model belonged to the previous machine.
+            // Return to the new machine's declared default instead of carrying
+            // an override that machine may not offer.
+            if isNewChat, modelChoiceSource == .sessionOwned, modelChoice.isExplicit,
+               oldValue != nil, oldValue != selectedMachineID {
+                modelChoice = .machineDefault
+            }
             // A machine owns its filesystem. A fresh composer always returns
             // to that machine's home choice instead of carrying the previous
             // machine's path across the switch.
             selectedWorkingFolder = .home
             workingFolderOptionsRevision &+= 1
+            invalidateMainWorkspaces()
             // The catalog and its declared default are machine-specific. Drop
             // them on a real switch so a submission that outruns the new
             // machine's catalog (or a failed load) cannot capture the old
@@ -195,9 +244,66 @@ final class HerdrHudSession {
         set { agentSettings.hudThinkingLevel = newValue }
     }
 
+    /// Which model rules this session follows. New chats own their choice;
+    /// existing conversations keep the legacy shared HUD preference.
+    private(set) var modelChoiceSource: ModelChoiceSource = .sessionOwned
+    /// The session-owned choice for a new chat. `.machineDefault` is the
+    /// automatic selection and carries no identity until the execution
+    /// companion's own catalog resolves it.
+    private(set) var modelChoice: HerdrHudModelChoice = .machineDefault
+    /// True only while this session has no accepted or restored conversation
+    /// yet. The main-workspace checkbox and automatic local machine/model
+    /// defaults apply here and nowhere else.
+    var isNewChat: Bool { thread == nil && exchanges.isEmpty }
+
+    /// Checkbox state for the current new chat. It deliberately does not leak
+    /// to another composer or to an existing conversation.
+    var createsInMainWorkspace = false {
+        didSet {
+            guard oldValue != createsInMainWorkspace else { return }
+            validationError = nil
+            if !createsInMainWorkspace { mainWorkspaceErrorMessage = nil }
+        }
+    }
+    private(set) var workspaceLaunchState: WorkspaceLaunchState = .idle
+    private(set) var mainWorkspaces: [HerdrWorkspace] = []
+    private(set) var isLoadingMainWorkspaces = false
+    private(set) var mainWorkspaceErrorMessage: String?
+    private(set) var mainWorkspaceUnsupported = false
+    /// Identity (machine ID plus normalized endpoint) of the topology currently
+    /// held in `mainWorkspaces`. A nil value means the list was seeded by a
+    /// test rather than read from a companion.
+    @ObservationIgnored private var loadedMainWorkspaceTargetKey: String?
+    @ObservationIgnored private var mainWorkspacesRequestRevision = 0
+    @ObservationIgnored private var modelsRequestRevision = 0
+    /// True once a persisted new-scheme choice was restored. A legacy snapshot
+    /// without one keeps the conversation on the shared preference.
+    @ObservationIgnored private var ownsPersistedModelChoice = false
+    @ObservationIgnored private var unresolvedWorkspaceRequestID: String?
+    @ObservationIgnored private var unresolvedWorkspaceFingerprint: String?
+    @ObservationIgnored private var unresolvedWorkspaceReceipt: HerdrHudWorkspaceLaunchReceipt?
+
     var selectedModel: String? {
-        get { agentSettings.hudModel.isEmpty ? nil : agentSettings.hudModel }
-        set { agentSettings.hudModel = newValue ?? "" }
+        get {
+            switch modelChoiceSource {
+            case .sharedPreference:
+                return agentSettings.hudModel.isEmpty ? nil : agentSettings.hudModel
+            case .sessionOwned:
+                return modelChoice.explicitIdentity?.fullID
+            }
+        }
+        set {
+            switch modelChoiceSource {
+            case .sharedPreference:
+                agentSettings.hudModel = newValue ?? ""
+            case .sessionOwned:
+                if let newValue, let identity = HerdrHudModelRouting.identity(fullID: newValue) {
+                    modelChoice = .explicit(identity)
+                } else {
+                    modelChoice = .machineDefault
+                }
+            }
+        }
     }
     var isCollapsed = true {
         didSet {
@@ -257,10 +363,20 @@ final class HerdrHudSession {
         persistenceURL: URL? = nil,
         promptSettings: HerdrPromptSettingsStore? = nil,
         modelFavorites: ModelFavoritesStore? = nil,
-        workingFolderStore: HerdrHudWorkingFolderStore? = nil
+        workingFolderStore: HerdrHudWorkingFolderStore? = nil,
+        hostIdentity: HerdrHudHostIdentity? = nil,
+        hostIdentityProvider: HostIdentityProvider? = nil,
+        mainWorkspaceStore: HerdrHudMainWorkspaceStore? = nil,
+        workspaceLauncherFactory: WorkspaceLauncherFactory? = nil
     ) {
         self.userDefaults = userDefaults
+        self.injectedHostIdentity = hostIdentity
+        self.hostIdentityProvider = hostIdentityProvider
         self.workingFolderStore = workingFolderStore ?? HerdrHudWorkingFolderStore(userDefaults: userDefaults)
+        self.mainWorkspaceStore = mainWorkspaceStore ?? HerdrHudMainWorkspaceStore(userDefaults: userDefaults)
+        self.workspaceLauncherFactory = workspaceLauncherFactory ?? { model, machineID in
+            HerdrHudWorkspaceLauncher(client: try model.hudChatClient(machineID: machineID))
+        }
         let storeURL = persistenceURL ?? HerdrHudPersistenceStore.defaultFileURL()
         self.storeURL = storeURL
         self.attachmentDirectory = storeURL.deletingPathExtension().appendingPathExtension("attachments")
@@ -270,7 +386,6 @@ final class HerdrHudSession {
         self.persistence = HerdrHudPersistenceStore(
             fileURL: persistenceURL ?? HerdrHudPersistenceStore.defaultFileURL()
         )
-        self.selectedMachineID = userDefaults.string(forKey: Self.machineIDDefaultsKey)
         responseAudioPlayer.onPlaybackCompleted = { [weak self] in
             self?.captureVoiceReplyTarget()
         }
@@ -294,7 +409,21 @@ final class HerdrHudSession {
                             .appendingPathComponent("hud-chats", isDirectory: true)
                             .appendingPathComponent("\(id).json"),
                         promptSettings: promptSettings, modelFavorites: modelFavorites,
-                        workingFolderStore: workingFolderStore)
+                        workingFolderStore: workingFolderStore,
+                        hostIdentity: injectedHostIdentity,
+                        hostIdentityProvider: hostIdentityProvider,
+                        mainWorkspaceStore: mainWorkspaceStore,
+                        workspaceLauncherFactory: workspaceLauncherFactory)
+    }
+
+    /// This Mac's host evidence, resolved at most once and only when a fresh
+    /// composer actually needs to identify itself. Creating a session stays
+    /// cheap, and a caller-provided identity is never re-resolved.
+    private var hostIdentity: HerdrHudHostIdentity {
+        if let cachedHostIdentity { return cachedHostIdentity }
+        let identity = injectedHostIdentity ?? hostIdentityProvider?() ?? .current()
+        cachedHostIdentity = identity
+        return identity
     }
 
     func waitForPersistenceRestore() async { await restoreTask?.value }
@@ -363,6 +492,241 @@ final class HerdrHudSession {
     func resetWorkingFolderForNewChat() {
         guard exchanges.isEmpty else { return }
         selectedWorkingFolder = .home
+    }
+
+    /// The machine an existing conversation already belongs to, if any. A
+    /// fresh composer has none and resolves this Mac instead.
+    var conversationMachineID: String? {
+        thread?.machineID ?? exchanges.first?.machineID
+    }
+
+    /// Chooses the initial machine for a genuinely new composer exactly once.
+    /// A prior explicit choice is preserved; otherwise the uniquely identified
+    /// local companion wins; otherwise the composer waits for an explicit
+    /// choice instead of falling back to roster order.
+    @discardableResult
+    func applyLocalMachineDefaultIfNeeded(in model: HerdrAppModel) -> Bool {
+        guard isNewChat else { return false }
+        if let selectedMachineID, model.machines.contains(where: { $0.id == selectedMachineID }) {
+            return false
+        }
+        guard let local = resolvedLocalMachine(in: model) else { return false }
+        selectedMachineID = local.id
+        return true
+    }
+
+    /// The unique configured machine that is this Mac, or nil when host
+    /// evidence is missing or ambiguous. Demo mode is synthetic by definition.
+    func resolvedLocalMachine(in model: HerdrAppModel) -> HerdrMachine? {
+        if model.isDemoMode { return model.machines.first }
+        return HerdrHudNewChatPolicy(hostIdentity: hostIdentity).localMachine(in: model.machines)
+    }
+
+    /// Resets a composer that has not been used yet: this Mac's machine, the
+    /// selected machine's declared default model, home folder, and an
+    /// unchecked workspace toggle. Never touches shared preferences or the
+    /// composer's remaining draft, quotes, and attachments.
+    @discardableResult
+    func resetForNewChat() -> Bool {
+        guard isNewChat else { return false }
+        modelChoiceSource = .sessionOwned
+        modelChoice = .machineDefault
+        ownsPersistedModelChoice = false
+        let hadPendingWorkspaceLaunch = unresolvedWorkspaceRequestID != nil
+            || unresolvedWorkspaceReceipt != nil
+        createsInMainWorkspace = false
+        workspaceLaunchState = .idle
+        invalidateMainWorkspaces()
+        unresolvedWorkspaceRequestID = nil
+        unresolvedWorkspaceFingerprint = nil
+        unresolvedWorkspaceReceipt = nil
+        selectedMachineID = nil
+        selectedWorkingFolder = .home
+        if hadPendingWorkspaceLaunch { persistWorkspaceLaunchState() }
+        return true
+    }
+
+    /// The machine this session's composer or conversation displays. A fresh
+    /// composer has no roster-order fallback, so an unidentified Mac asks the
+    /// user instead of silently choosing the first machine.
+    func selectedMachine(in model: HerdrAppModel) -> HerdrMachine? {
+        if let selectedMachineID,
+           let machine = model.machines.first(where: { $0.id == selectedMachineID }) {
+            return machine
+        }
+        if let conversationMachineID,
+           let machine = model.machines.first(where: { $0.id == conversationMachineID }) {
+            return machine
+        }
+        return nil
+    }
+
+    /// The key that identifies the destination topology shown for the current
+    /// selection. The checkbox state participates so enabling it with no
+    /// resolved machine still restarts the picker's load, and a machine or
+    /// endpoint change starts a fresh read instead of reusing the old list.
+    func mainWorkspaceTopologyKey(in model: HerdrAppModel) -> String? {
+        guard createsInMainWorkspace else { return nil }
+        guard let machine = selectedMachine(in: model) else { return "machine-unresolved" }
+        return Self.mainWorkspaceTargetKey(for: machine)
+    }
+
+    /// The topology that belongs to the current selection. A list read from a
+    /// replaced endpoint or a different machine is never presented, even
+    /// before the replacement's own read completes.
+    func currentMainWorkspaces(in model: HerdrAppModel) -> [HerdrWorkspace] {
+        guard let machine = selectedMachine(in: model) else { return [] }
+        if let loadedMainWorkspaceTargetKey,
+           loadedMainWorkspaceTargetKey != Self.mainWorkspaceTargetKey(for: machine) {
+            return []
+        }
+        return mainWorkspaces
+    }
+
+    /// The saved main-workspace designation for the selected companion, if the
+    /// paired endpoint still matches.
+    func mainWorkspaceDestination(in model: HerdrAppModel) -> HerdrHudMainWorkspaceDestination? {
+        selectedMachine(in: model).flatMap { mainWorkspaceStore.destination(for: $0) }
+    }
+
+    /// The exact saved workspace while it is still present in the selected
+    /// companion's current topology. Matching is by raw workspace ID.
+    func mainWorkspace(in model: HerdrAppModel) -> HerdrWorkspace? {
+        guard let machine = selectedMachine(in: model),
+              let destination = mainWorkspaceStore.destination(for: machine) else { return nil }
+        return currentMainWorkspaces(in: model).first {
+            $0.workspaceID == destination.workspaceID
+                && ($0.machineID.isEmpty || $0.machineID == machine.id)
+        }
+    }
+
+    /// Records an explicit main-workspace choice for the selected companion.
+    @discardableResult
+    func selectMainWorkspace(_ workspace: HerdrWorkspace, in model: HerdrAppModel) -> Bool {
+        guard isNewChat, let machine = selectedMachine(in: model) else { return false }
+        return mainWorkspaceStore.remember(workspace: workspace, for: machine) != nil
+    }
+
+    /// Reads the selected companion's capability and workspace topology for
+    /// the new-chat destination picker. This is a read-only preflight: nothing
+    /// is created until Send, a machine switch drops the previous machine's
+    /// list instead of reusing it, and a superseded response can never
+    /// repopulate the picker for the newer selection.
+    func loadMainWorkspaces(model: HerdrAppModel, force: Bool = false) async {
+        guard isNewChat, !model.isDemoMode else { return }
+        mainWorkspacesRequestRevision &+= 1
+        let revision = mainWorkspacesRequestRevision
+        guard let machineID = resolvedMachineIDReadOnly(in: model),
+              let targetKey = currentTargetKey(for: machineID, in: model) else {
+            invalidateMainWorkspaces()
+            return
+        }
+        if !force,
+           loadedMainWorkspaceTargetKey == targetKey,
+           !isLoadingMainWorkspaces,
+           mainWorkspaceErrorMessage == nil {
+            return
+        }
+        isLoadingMainWorkspaces = true
+        mainWorkspaceErrorMessage = nil
+        defer {
+            // A superseded load must not clear the newer load's spinner.
+            if revision == mainWorkspacesRequestRevision {
+                isLoadingMainWorkspaces = false
+            }
+        }
+        do {
+            let client = try model.hudChatClient(machineID: machineID)
+            let capabilities = try await client.serverCapabilities()
+            guard revision == mainWorkspacesRequestRevision,
+                  currentTargetKey(for: machineID, in: model) == targetKey else { return }
+            guard capabilities.supportsQuickSessionLaunchOptions else {
+                mainWorkspaces = []
+                loadedMainWorkspaceTargetKey = targetKey
+                mainWorkspaceUnsupported = true
+                return
+            }
+            let response = try await client.fetchWorkspaces()
+            guard revision == mainWorkspacesRequestRevision,
+                  currentTargetKey(for: machineID, in: model) == targetKey else { return }
+            guard response.ok else {
+                mainWorkspaceErrorMessage = "This machine's workspaces could not be read. Try again."
+                return
+            }
+            mainWorkspaces = response.workspaces.filter {
+                $0.machineID.isEmpty || $0.machineID == machineID
+            }
+            loadedMainWorkspaceTargetKey = targetKey
+            mainWorkspaceUnsupported = false
+        } catch {
+            guard !Task.isCancelled,
+                  revision == mainWorkspacesRequestRevision,
+                  currentTargetKey(for: machineID, in: model) == targetKey else { return }
+            mainWorkspaceErrorMessage = error.localizedDescription
+            mainWorkspaceUnsupported = false
+        }
+    }
+
+    private func invalidateMainWorkspaces() {
+        mainWorkspacesRequestRevision &+= 1
+        mainWorkspaces = []
+        loadedMainWorkspaceTargetKey = nil
+        mainWorkspaceErrorMessage = nil
+        mainWorkspaceUnsupported = false
+        isLoadingMainWorkspaces = false
+    }
+
+    private func currentTargetKey(for machineID: String, in model: HerdrAppModel) -> String? {
+        model.machines.first(where: { $0.id == machineID }).map(Self.mainWorkspaceTargetKey(for:))
+    }
+
+    private static func mainWorkspaceTargetKey(for machine: HerdrMachine) -> String {
+        "\(machine.id)|\(HerdrNotesSource.normalizedEndpoint(machine.urlString))"
+    }
+
+    private func mainWorkspaceTopologyIsCurrent(for machineID: String, in model: HerdrAppModel) -> Bool {
+        guard let key = currentTargetKey(for: machineID, in: model) else { return false }
+        return loadedMainWorkspaceTargetKey == key
+    }
+
+    /// The pane that should be opened for a confirmed workspace launch, if the
+    /// companion ever named one.
+    func workspaceLaunchPaneIDForOpening() -> String? {
+        switch workspaceLaunchState {
+        case let .sent(receipt): receipt.scopedPaneID
+        case let .needsRecovery(_, receipt): receipt?.scopedPaneID
+        case .idle, .launching: nil
+        }
+    }
+
+    var workspaceLaunchRecoveryMessage: String? {
+        guard case let .needsRecovery(message, _) = workspaceLaunchState else { return nil }
+        return message
+    }
+
+    /// Clears a recovery banner without consuming the draft. An unconfirmed
+    /// create stays retryable with its original request ID; a confirmed pane
+    /// keeps the launcher's refusal to resend the uncertain prompt.
+    func dismissWorkspaceLaunchRecovery() {
+        guard case .needsRecovery = workspaceLaunchState else { return }
+        workspaceLaunchState = .idle
+        validationError = nil
+    }
+
+    /// Explicitly abandons an unresolved workspace launch. The durable
+    /// launcher receipt remains, so callers present this as a deliberate
+    /// discard rather than a retry.
+    func discardUnresolvedWorkspaceLaunch() {
+        workspaceLaunchState = .idle
+        unresolvedWorkspaceRequestID = nil
+        unresolvedWorkspaceFingerprint = nil
+        unresolvedWorkspaceReceipt = nil
+        draft = ""
+        pendingAttachments = []
+        pendingQuotes = []
+        pruneStoredAttachments()
+        validationError = nil
+        persistWorkspaceLaunchState()
     }
 
     var historyIdentity: String? {
@@ -551,11 +915,33 @@ final class HerdrHudSession {
         availableModels = models
         self.defaultModel = defaultModel
         modelsMachineID = machineID ?? selectedMachineID
+        didLoadCatalog = true
+    }
+
+    func seedMainWorkspacesForTesting(_ workspaces: [HerdrWorkspace]) {
+        mainWorkspaces = workspaces
+        // A nil key marks a directly seeded list that no companion read
+        // produced, so `currentMainWorkspaces` keeps trusting it.
+        loadedMainWorkspaceTargetKey = nil
+    }
+
+    func setWorkspaceLaunchStateForTesting(_ state: WorkspaceLaunchState) {
+        workspaceLaunchState = state
+    }
+
+    /// Awaits the serialized fire-and-forget write that clears a pending
+    /// checked launch, so a test can prove the cleared state reached disk.
+    func waitForWorkspaceLaunchPersistenceForTesting() async {
+        await workspaceLaunchPersistenceTask?.value
     }
     #endif
 
     func submit(model: HerdrAppModel, onStarted: () -> Void = {}) async {
         guard !isEnding, !hasEnded else { return }
+        if createsInMainWorkspace, isNewChat {
+            await submitToMainWorkspace(model: model, onStarted: onStarted)
+            return
+        }
         let draftSnapshot = draft
         let enteredPrompt = draftSnapshot.trimmingCharacters(in: .whitespacesAndNewlines)
         let attachmentsToSend = pendingAttachments
@@ -569,7 +955,9 @@ final class HerdrHudSession {
             return
         }
         guard let machineID = resolvedMachineID(in: model) else {
-            validationError = "No machine is available for the HUD."
+            validationError = isNewChat
+                ? "Choose the machine that should run this chat."
+                : "No machine is available for the HUD."
             return
         }
         guard model.canControl(machineID: machineID) else {
@@ -647,23 +1035,50 @@ final class HerdrHudSession {
         let attachmentFilenames = attachmentsToSend.map(\.filename)
         let hasAttachments = !attachmentsToSend.isEmpty
         let hasImageAttachments = attachmentsToSend.contains(where: \.isImage)
-        let catalogIsForMachine = modelsMachineID == machineID
-        let resolution = AgentModelResolver.resolve(
-            preference: selectedModel,
-            catalog: catalogIsForMachine ? availableModels : [],
-            isCatalogAuthoritative: catalogIsForMachine && didLoadCatalog
-        )
-        let agentModel = HerdrHudModelRouting.model(
-            selection: resolution.modelID,
-            selectionSupportsImages: selectedModelSupportsImages(on: machineID),
-            hasImageAttachments: hasImageAttachments,
-            visionModel: agentSettings.effectiveVisionModel
-        )
-        let thinkingLevel = agentSettings.hudThinkingLevel.rawValue
-        if resolution.preferenceIsUnavailable {
-            validationError = "\(selectedModel ?? "") isn't offered by this machine — using its default model."
+        let agentModel: String?
+        let metadataModelName: String?
+        if modelChoiceSource == .sessionOwned {
+            // Fresh and session-owned chats pin the selected machine's own
+            // declared default (or the exact override) before dispatch. An
+            // image-bearing new chat never silently reroutes to the global
+            // vision model.
+            do {
+                let resolved = try await resolveModelForSession(
+                    machineID: machineID,
+                    model: model,
+                    hasImageAttachments: hasImageAttachments
+                )
+                agentModel = resolved.identity.fullID
+                metadataModelName = resolved.displayName
+                    ?? PiModelDisplayName.short(fullID: resolved.identity.fullID)
+            } catch {
+                if !submissionWasCancelled(ownerID) { validationError = error.localizedDescription }
+                return
+            }
+            guard !submissionWasCancelled(ownerID) else { return }
+            guard selectedMachineID == machineID, model.canControl(machineID: machineID) else {
+                validationError = "The selected machine changed while preparing this message. Your draft is unchanged."
+                return
+            }
+        } else {
+            let catalogIsForMachine = modelsMachineID == machineID
+            let resolution = AgentModelResolver.resolve(
+                preference: selectedModel,
+                catalog: catalogIsForMachine ? availableModels : [],
+                isCatalogAuthoritative: catalogIsForMachine && didLoadCatalog
+            )
+            agentModel = HerdrHudModelRouting.model(
+                selection: resolution.modelID,
+                selectionSupportsImages: selectedModelSupportsImages(on: machineID),
+                hasImageAttachments: hasImageAttachments,
+                visionModel: agentSettings.effectiveVisionModel
+            )
+            if resolution.preferenceIsUnavailable {
+                validationError = "\(selectedModel ?? "") isn't offered by this machine — using its default model."
+            }
+            metadataModelName = modelLabel(for: agentModel, on: machineID)
         }
-        let metadataModelName = modelLabel(for: agentModel, on: machineID)
+        let thinkingLevel = agentSettings.hudThinkingLevel.rawValue
         let label = metadataModelName ?? "default"
         let pendingID = "hud-pending-\(UUID().uuidString)"
         let submittedAt = Date.now
@@ -859,6 +1274,225 @@ final class HerdrHudSession {
         await schedulePersistenceSave()
     }
 
+    /// Creates a new chat directly in the user's remembered main workspace on
+    /// the selected companion, then submits the initial text, quotes, and
+    /// uploaded attachments there exactly once. No headless HUD conversation
+    /// is created and no later promotion is needed.
+    private func submitToMainWorkspace(model: HerdrAppModel, onStarted: () -> Void) async {
+        guard isNewChat, !isEnding, !hasEnded else { return }
+        let draftSnapshot = draft
+        let enteredPrompt = draftSnapshot.trimmingCharacters(in: .whitespacesAndNewlines)
+        let attachmentsToSend = pendingAttachments
+        let quotesToSend = pendingQuotes
+        guard !enteredPrompt.isEmpty || !attachmentsToSend.isEmpty || !quotesToSend.isEmpty else { return }
+        guard !isRunning, !isLoadingHistory, promotingExchangeIDs.isEmpty,
+              !exchanges.contains(where: { $0.promotedPaneID != nil }) else {
+            if isRunning, !isPreparingSubmission {
+                validationError = "Wait for this saved chat’s current reply before sending another message."
+            }
+            return
+        }
+        guard let machineID = resolvedMachineID(in: model),
+              let machine = model.machines.first(where: { $0.id == machineID }) else {
+            validationError = "Choose the machine that should create this chat."
+            return
+        }
+        guard model.canControl(machineID: machineID) else {
+            validationError = "This machine is not connected."
+            return
+        }
+        guard attachmentsToSend.reduce(Int64(0), { $0 + Int64($1.byteCount) }) <= Self.maxCombinedAttachmentBytes else {
+            validationError = "Attachments can total up to 21 MB per message."
+            return
+        }
+
+        let ownerID = UUID()
+        submissionOwnerID = ownerID
+        defer {
+            if submissionOwnerID == ownerID { submissionOwnerID = nil }
+            if cancelledSubmissionOwnerID == ownerID { cancelledSubmissionOwnerID = nil }
+        }
+        beginSessionActivity()
+        validationError = nil
+        promoteErrorMessage = nil
+        audioErrorMessage = nil
+        workspaceLaunchState = .launching
+
+        // The picker's cached topology is used without another request when it
+        // already describes this machine; otherwise read it before dispatch.
+        await loadMainWorkspaces(model: model, force: !mainWorkspaceTopologyIsCurrent(for: machineID, in: model))
+        guard !submissionWasCancelled(ownerID) else {
+            workspaceLaunchState = .idle
+            return
+        }
+        guard selectedMachineID == machineID else {
+            workspaceLaunchState = .idle
+            validationError = "The selected machine changed while preparing this message. Your draft is unchanged."
+            return
+        }
+        if mainWorkspaceUnsupported {
+            workspaceLaunchState = .idle
+            validationError = HerdrHudWorkspaceLaunchError
+                .unsupportedCompanion(machineName: machine.name).localizedDescription
+            return
+        }
+        if let mainWorkspaceErrorMessage {
+            workspaceLaunchState = .idle
+            validationError = mainWorkspaceErrorMessage
+            return
+        }
+        guard let destination = mainWorkspaceStore.destination(for: machine) else {
+            workspaceLaunchState = .idle
+            validationError = "Choose the main workspace for this machine before sending."
+            return
+        }
+        guard let workspace = currentMainWorkspaces(in: model).first(where: { candidate in
+            candidate.workspaceID == destination.workspaceID
+                && (candidate.machineID.isEmpty || candidate.machineID == machine.id)
+        }) else {
+            workspaceLaunchState = .idle
+            validationError = HerdrHudWorkspaceLaunchError.workspaceUnavailable.localizedDescription
+            return
+        }
+
+        let hasImageAttachments = attachmentsToSend.contains(where: \.isImage)
+        let resolved: (identity: PiModelIdentity, displayName: String?)
+        do {
+            resolved = try await resolveModelForSession(
+                machineID: machineID,
+                model: model,
+                hasImageAttachments: hasImageAttachments
+            )
+        } catch {
+            workspaceLaunchState = .idle
+            if !submissionWasCancelled(ownerID) { validationError = error.localizedDescription }
+            return
+        }
+        guard !submissionWasCancelled(ownerID) else {
+            workspaceLaunchState = .idle
+            return
+        }
+        guard selectedMachineID == machineID, model.canControl(machineID: machineID) else {
+            workspaceLaunchState = .idle
+            validationError = "The selected machine changed while preparing this message. Your draft is unchanged."
+            return
+        }
+
+        let basePrompt = enteredPrompt.isEmpty && quotesToSend.isEmpty ? "Please review the attached files." : enteredPrompt
+        let prompt = ChatQuote.prompt(basePrompt, quotes: quotesToSend)
+        let requestID = unresolvedWorkspaceRequestID ?? UUID().uuidString
+        let submission = HerdrHudWorkspaceLaunchSubmission(
+            machineID: machineID,
+            endpoint: machine.urlString,
+            machineName: machine.name,
+            workspaceID: workspace.workspaceID,
+            workspaceLabel: workspace.label,
+            requestID: requestID,
+            label: Self.workspaceChatLabel(for: enteredPrompt),
+            folder: selectedWorkingFolder,
+            model: resolved.identity,
+            thinkingLevel: selectedThinkingLevel,
+            prompt: prompt,
+            attachments: attachmentsToSend
+        )
+        if let unresolvedWorkspaceFingerprint,
+           unresolvedWorkspaceFingerprint != submission.fingerprint {
+            // The previous attempt's content is frozen: resending changed
+            // content under a new request ID could duplicate an unconfirmed
+            // create. The user must open the possible chat or start over.
+            workspaceLaunchState = .needsRecovery(
+                message: "A previous send from this draft used different content. Open the chat it may have created, or start a new chat instead of sending again.",
+                receipt: unresolvedWorkspaceReceipt
+            )
+            return
+        }
+        unresolvedWorkspaceRequestID = requestID
+        unresolvedWorkspaceFingerprint = submission.fingerprint
+        // Durable ownership and the frozen input must exist on disk before the
+        // first side effect, so a relaunch can reconnect this exact request
+        // instead of minting a new one.
+        do {
+            try await persistence.saveDurably(makePersistenceSnapshot())
+        } catch {
+            workspaceLaunchState = .idle
+            validationError = "Couldn't save this chat's recovery state. No chat was created. Try again after resolving the storage problem."
+            return
+        }
+
+        let launcher: HerdrHudWorkspaceLauncher
+        do {
+            launcher = try workspaceLauncherFactory(model, machineID)
+        } catch {
+            workspaceLaunchState = .idle
+            if !submissionWasCancelled(ownerID) { validationError = error.localizedDescription }
+            return
+        }
+        do {
+            let receipt = try await launcher.launch(submission) { [weak self] in
+                self?.submissionWasCancelled(ownerID) ?? true
+            }
+            // A confirmed receipt is retained even when Stop arrived after the
+            // prompt was delivered; throwing it away would hide running work.
+            unresolvedWorkspaceRequestID = nil
+            unresolvedWorkspaceFingerprint = nil
+            unresolvedWorkspaceReceipt = nil
+            workspaceLaunchState = .sent(receipt)
+            consumeComposerSnapshot(
+                draft: draftSnapshot,
+                attachments: attachmentsToSend,
+                quotes: quotesToSend
+            )
+            hasUnseenAnswer = false
+            await persistence.saveImmediately(makePersistenceSnapshot())
+            onStarted()
+        } catch let error as HerdrHudWorkspaceLaunchError {
+            if let receipt = error.confirmedReceipt {
+                unresolvedWorkspaceReceipt = receipt
+                workspaceLaunchState = .needsRecovery(
+                    message: error.localizedDescription,
+                    receipt: receipt
+                )
+            } else if case .stopped = error {
+                // Nothing uncertain was created; the draft and the unresolved
+                // request identity stay available for an explicit retry.
+                workspaceLaunchState = .idle
+                validationError = nil
+            } else {
+                workspaceLaunchState = .idle
+                validationError = error.localizedDescription
+            }
+            await persistPendingWorkspaceLaunch()
+        } catch {
+            workspaceLaunchState = .idle
+            validationError = error.localizedDescription
+            await persistPendingWorkspaceLaunch()
+        }
+    }
+
+    /// Records the current checked-launch ownership and the composer input it
+    /// must be able to restore. Writes through the launcher-independent
+    /// session cache so the two halves of recovery live or die together.
+    private func persistPendingWorkspaceLaunch() async {
+        await persistence.saveImmediately(makePersistenceSnapshot())
+    }
+
+    /// Fire-and-forget variant for synchronous discard/reset paths. Writes are
+    /// serialized so an earlier write can never land after a later one.
+    private func persistWorkspaceLaunchState() {
+        let previous = workspaceLaunchPersistenceTask
+        workspaceLaunchPersistenceTask = Task { [weak self] in
+            await previous?.value
+            guard let self else { return }
+            await self.persistence.saveImmediately(self.makePersistenceSnapshot())
+        }
+    }
+
+    private static func workspaceChatLabel(for prompt: String) -> String {
+        let line = prompt.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "HUD chat" : String(trimmed.prefix(120))
+    }
+
     func stop(model: HerdrAppModel) async {
         guard !isEnding, !hasEnded else { return }
         if let ownerID = submissionOwnerID, controller.run == nil {
@@ -937,20 +1571,76 @@ final class HerdrHudSession {
     func loadModels(model: HerdrAppModel) async {
         modelsError = nil
         guard let machineID = resolvedMachineIDReadOnly(in: model) else { return }
+        await refreshCatalog(for: machineID, model: model)
+    }
+
+    /// Fetches one machine's catalog and tags it with that exact machine. A
+    /// newer request always wins over a delayed older response, and a response
+    /// for a machine the composer has left is dropped rather than published.
+    @discardableResult
+    private func refreshCatalog(for machineID: String, model: HerdrAppModel) async -> Bool {
+        modelsRequestRevision &+= 1
+        let revision = modelsRequestRevision
         isLoadingModels = true
         defer { isLoadingModels = false }
         do {
             let response = try await model.fetchAgentModels(machineID: machineID)
-            // The selection can move while the catalog request is in flight.
-            // A stale response must not become the new machine's catalog.
-            guard resolvedMachineIDReadOnly(in: model) == machineID else { return }
+            guard revision == modelsRequestRevision,
+                  resolvedMachineIDReadOnly(in: model) == machineID else { return false }
             availableModels = response.models
             defaultModel = response.defaultModel
             modelsMachineID = machineID
             didLoadCatalog = true
+            modelsError = nil
+            return true
         } catch {
+            guard revision == modelsRequestRevision else { return false }
             modelsError = error.localizedDescription
+            return false
         }
+    }
+
+    private func catalog(for machineID: String) -> HerdrHudMachineModelCatalog? {
+        guard modelsMachineID == machineID, didLoadCatalog else { return nil }
+        return HerdrHudMachineModelCatalog(
+            machineID: machineID,
+            isAvailable: true,
+            models: availableModels,
+            defaultModel: defaultModel
+        )
+    }
+
+    private func ensureCatalog(
+        for machineID: String,
+        model: HerdrAppModel
+    ) async -> HerdrHudMachineModelCatalog? {
+        if let catalog = catalog(for: machineID) { return catalog }
+        _ = await refreshCatalog(for: machineID, model: model)
+        return catalog(for: machineID)
+    }
+
+    /// Resolves this session's model choice against the execution companion's
+    /// own catalog. A declared default is pinned exactly; an explicit override
+    /// is preserved and validated; images require a compatible model and never
+    /// reroute to another machine's or the global vision model.
+    private func resolveModelForSession(
+        machineID: String,
+        model: HerdrAppModel,
+        hasImageAttachments: Bool
+    ) async throws -> (identity: PiModelIdentity, displayName: String?) {
+        guard let catalog = await ensureCatalog(for: machineID, model: model) else {
+            throw HerdrHudNewChatPolicyError.catalogUnavailable
+        }
+        guard resolvedMachineIDReadOnly(in: model) == machineID else {
+            throw HerdrHudNewChatPolicyError.staleCatalog
+        }
+        let policy = HerdrHudNewChatPolicy(hostIdentity: hostIdentity)
+        let identity = try policy.resolve(modelChoice, for: machineID, catalog: catalog)
+        if hasImageAttachments,
+           catalog.models.first(where: { $0.id == identity.fullID })?.supportsImages != true {
+            throw HerdrHudFreshChatError.incompatibleImageModel(identity)
+        }
+        return (identity, catalog.models.first(where: { $0.id == identity.fullID })?.displayName)
     }
 
     func setSelectedModel(_ candidate: PiAvailableModel?) {
@@ -1383,6 +2073,13 @@ final class HerdrHudSession {
         let ownsSubmission = ownerID != nil && ownerID == submissionOwnerID
         guard !hasEnded, (!isRunning || ownsSubmission), !isLoadingHistory,
               promotingExchangeIDs.isEmpty else { return }
+        // Loading saved history into a previously unused session is a legacy
+        // conversation: its model keeps following the shared HUD preference
+        // exactly as existing conversations did. A new-scheme session that
+        // already owns a persisted choice keeps it.
+        if exchanges.isEmpty, thread == nil, !ownsPersistedModelChoice {
+            modelChoiceSource = .sharedPreference
+        }
         isLoadingHistory = true
         defer { isLoadingHistory = false }
 
@@ -1627,6 +2324,15 @@ final class HerdrHudSession {
         chatMetadata = HerdrHudChatMetadataAccumulator()
         needsHistoryRefresh = false
         selectedWorkingFolder = .home
+        modelChoiceSource = .sessionOwned
+        modelChoice = .machineDefault
+        ownsPersistedModelChoice = false
+        createsInMainWorkspace = false
+        workspaceLaunchState = .idle
+        invalidateMainWorkspaces()
+        unresolvedWorkspaceRequestID = nil
+        unresolvedWorkspaceFingerprint = nil
+        unresolvedWorkspaceReceipt = nil
         await persistence.remove()
         pruneStoredAttachments()
     }
@@ -1647,9 +2353,16 @@ final class HerdrHudSession {
            model.machines.contains(where: { $0.id == selectedMachineID }) {
             return selectedMachineID
         }
-        let fallback = model.machines.first?.id
-        selectedMachineID = fallback
-        return fallback
+        if let conversationMachineID,
+           model.machines.contains(where: { $0.id == conversationMachineID }) {
+            selectedMachineID = conversationMachineID
+            return conversationMachineID
+        }
+        if isNewChat, let local = resolvedLocalMachine(in: model) {
+            selectedMachineID = local.id
+            return local.id
+        }
+        return nil
     }
 
     private func resolvedMachineIDReadOnly(in model: HerdrAppModel) -> String? {
@@ -1657,7 +2370,11 @@ final class HerdrHudSession {
            model.machines.contains(where: { $0.id == selectedMachineID }) {
             return selectedMachineID
         }
-        return model.machines.first?.id
+        if let conversationMachineID,
+           model.machines.contains(where: { $0.id == conversationMachineID }) {
+            return conversationMachineID
+        }
+        return nil
     }
 
     private func selectedModelSupportsImages(on machineID: String) -> Bool {
@@ -1741,9 +2458,21 @@ final class HerdrHudSession {
             || (restored.thread != nil && restored.thread?.lastRunID != snapshot.exchanges.last?.id)
         thread = restored.thread
         historyRootRunID = snapshot.historyRootRunID ?? thread?.rootRunID
+        if let persistedChoice = snapshot.modelChoice {
+            modelChoiceSource = .sessionOwned
+            modelChoice = persistedChoice.choice
+            ownsPersistedModelChoice = true
+        } else if !restored.exchanges.isEmpty || restored.thread != nil {
+            // A version-1 cache has no model-choice record, so it can only be
+            // a conversation created under the legacy shared preference.
+            modelChoiceSource = .sharedPreference
+        }
         let restoredMachineID = thread?.machineID ?? exchanges.first?.machineID
         selectedMachineID = restoredMachineID ?? selectedMachineID
         restoreChatMetadata(snapshot, exchanges: restored.exchanges)
+        if let pending = snapshot.workspaceLaunch, restored.exchanges.isEmpty, restored.thread == nil {
+            restoreWorkspaceLaunch(pending)
+        }
         let restoredFolderPath = restored.exchanges.last(where: { exchange in
             exchange.machineID == restoredMachineID
         })?.workingFolderPath ?? HerdrHudWorkingFolder.homePath
@@ -1753,6 +2482,44 @@ final class HerdrHudSession {
         }
         pruneStoredAttachments()
         markExchangesChanged()
+    }
+
+    /// Reconnects an interrupted checked launch to the composer that owned it.
+    /// The frozen input and the exact request identity come back together, and
+    /// an already-confirmed pane is retained for **Open chat** instead of
+    /// being replaced by a new request.
+    private func restoreWorkspaceLaunch(_ pending: HerdrHudPendingWorkspaceLaunch) {
+        draft = pending.draft
+        pendingQuotes = pending.quotes
+        pendingAttachments = pending.attachments
+        createsInMainWorkspace = pending.createsInMainWorkspace
+        if let machineID = pending.selectedMachineID, !machineID.isEmpty {
+            selectedMachineID = machineID
+        }
+        unresolvedWorkspaceRequestID = pending.requestID
+        unresolvedWorkspaceFingerprint = pending.fingerprint
+        unresolvedWorkspaceReceipt = pending.receipt
+        guard let receipt = pending.receipt else {
+            // A launch persisted before its create was attempted. The draft is
+            // restored and an explicit Send safely retries the same request
+            // ID; nothing created yet needs recovery.
+            workspaceLaunchState = .idle
+            return
+        }
+        switch receipt.phase {
+        case .prepared:
+            workspaceLaunchState = .idle
+        case .creating:
+            workspaceLaunchState = .needsRecovery(
+                message: "Herdr couldn't confirm whether the chat was created in the main workspace before it restarted. Check that workspace before trying again.",
+                receipt: nil
+            )
+        case .created, .sending, .sent:
+            workspaceLaunchState = .needsRecovery(
+                message: "This chat was created in the main workspace before Herdr restarted. Open it and check its first message before sending anything else.",
+                receipt: receipt
+            )
+        }
     }
 
     /// A persisted aggregate is trusted only for the exact restored identity.
@@ -1862,14 +2629,75 @@ final class HerdrHudSession {
         // Keep the accepted running snapshot until the server tells us its real
         // outcome; the legacy cache decoder marks interrupted rows as failed.
         guard !needsHistoryRefresh else { return }
-        let snapshot = HerdrHudPersistenceSnapshot(
+        await persistence.scheduleSave(makePersistenceSnapshot())
+    }
+
+    private func makePersistenceSnapshot() -> HerdrHudPersistenceSnapshot {
+        HerdrHudPersistenceSnapshot(
             thread: thread,
             exchanges: exchanges,
             hasUnseenAnswer: hasUnseenAnswer,
             historyRootRunID: historyRootRunID,
-            chatMetadata: chatMetadata
+            chatMetadata: chatMetadata,
+            modelChoice: modelChoiceSource == .sessionOwned
+                ? HerdrHudPersistedModelChoice(modelChoice)
+                : nil,
+            workspaceLaunch: pendingWorkspaceLaunchSnapshot()
         )
-        await persistence.scheduleSave(snapshot)
+    }
+
+    /// The checked-launch record that must survive a relaunch. A checked but
+    /// unsent draft needs no special recovery, and a session that has become a
+    /// conversation is no longer a composer, so a late record can never turn a
+    /// saved chat's cache into a second composer at startup.
+    private func pendingWorkspaceLaunchSnapshot() -> HerdrHudPendingWorkspaceLaunch? {
+        guard isNewChat else { return nil }
+        let isLaunching: Bool
+        if case .launching = workspaceLaunchState { isLaunching = true } else { isLaunching = false }
+        let isRecovering: Bool
+        if case .needsRecovery = workspaceLaunchState { isRecovering = true } else { isRecovering = false }
+        guard unresolvedWorkspaceRequestID != nil
+                || unresolvedWorkspaceFingerprint != nil
+                || unresolvedWorkspaceReceipt != nil
+                || isLaunching
+                || isRecovering else { return nil }
+        return HerdrHudPendingWorkspaceLaunch(
+            requestID: unresolvedWorkspaceRequestID,
+            fingerprint: unresolvedWorkspaceFingerprint,
+            receipt: unresolvedWorkspaceReceipt,
+            draft: draft,
+            quotes: pendingQuotes,
+            attachments: pendingAttachments,
+            selectedMachineID: selectedMachineID,
+            createsInMainWorkspace: createsInMainWorkspace,
+            updatedAt: .now
+        )
+    }
+
+    /// The newest independent composer snapshot that holds a pending checked
+    /// launch. `HerdrHudChats` uses this at startup so an interrupted launch
+    /// reconnects to the same draft and request ID instead of orphaning both.
+    /// Saved conversation IDs are excluded so a stale record on a chat cache
+    /// can never be reopened as a second composer.
+    func newestPendingWorkspaceLaunchComposerID(excluding excludedIDs: Set<String> = []) -> String? {
+        let directory = storeURL.deletingLastPathComponent()
+            .appendingPathComponent("hud-chats", isDirectory: true)
+        guard let urls = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ) else { return nil }
+        var newest: (id: String, updatedAt: Date)?
+        for url in urls where url.pathExtension == "json" {
+            let id = url.deletingPathExtension().lastPathComponent
+            guard UUID(uuidString: id) != nil,
+                  !excludedIDs.contains(id),
+                  let snapshot = HerdrHudPersistenceSnapshot.load(from: url),
+                  let pending = snapshot.workspaceLaunch else { continue }
+            if newest == nil || pending.updatedAt > newest!.updatedAt {
+                newest = (id, pending.updatedAt)
+            }
+        }
+        return newest?.id
     }
 
     private func submitAndWait(

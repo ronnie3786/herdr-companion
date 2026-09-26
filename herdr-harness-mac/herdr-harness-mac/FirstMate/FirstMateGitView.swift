@@ -23,6 +23,7 @@ struct FirstMateGitView: View {
     @State private var catalog: FirstMateGitCatalog
     @State private var retryGeneration = 0
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.herdrFontScale) private var fontScale
 
     init(
         model: HerdrAppModel,
@@ -87,17 +88,25 @@ struct FirstMateGitView: View {
         .accessibilityIdentifier("first-mate-git")
     }
 
+    /// A 36pt bar: feature title over "machine · workspace · path", the
+    /// workspace picker, pop-out and refresh. It follows First Mate's palette
+    /// (light or dark); the Git content below stays dark.
     private var contextBar: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(catalog.featureTitle ?? featureTitle).herdrFont(.headline, weight: .semibold)
-                Text("\(machineName) · \(workspaceTitle) · \(workspaceContext)")
-                    .herdrFont(.caption, monospaced: true)
-                    .foregroundStyle(.secondary)
+        let palette = FirstMatePalette(scheme: scheme)
+        return HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(catalog.featureTitle ?? featureTitle)
+                    .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
+                    .foregroundStyle(palette.text)
                     .lineLimit(1)
+                Text("\(machineName) · \(workspaceTitle) · \(workspaceContext)")
+                    .herdrFont(size: HerdrTheme.TextSize.caption, monospaced: true)
+                    .foregroundStyle(palette.tertiaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                     .accessibilityIdentifier("first-mate-git-workspace-context")
             }
-            Spacer()
+            Spacer(minLength: 8)
             if catalog.phase == .ready, !catalog.isPinned {
                 Picker(
                     "Git workspace",
@@ -114,6 +123,7 @@ struct FirstMateGitView: View {
                     }
                 }
                 .labelsHidden()
+                .controlSize(.small)
                 .frame(maxWidth: 280)
                 .accessibilityLabel("Git workspace")
                 .accessibilityIdentifier("first-mate-git-workspace-picker")
@@ -121,7 +131,7 @@ struct FirstMateGitView: View {
                     Button("Open Git in New Window", systemImage: "macwindow.badge.plus") {
                         popOut(target)
                     }
-                    .labelStyle(.iconOnly)
+                    .buttonStyle(FirstMateGitIconButtonStyle(palette: palette))
                     .help("Open Git in New Window")
                     .accessibilityLabel("Open Git in New Window")
                     .accessibilityIdentifier("first-mate-git-open-window")
@@ -130,13 +140,15 @@ struct FirstMateGitView: View {
             Button("Refresh Git workspaces", systemImage: "arrow.clockwise") {
                 retryGeneration &+= 1
             }
-            .labelStyle(.iconOnly)
+            .buttonStyle(FirstMateGitIconButtonStyle(palette: palette))
             .help("Refresh Git workspaces")
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(FirstMatePalette(scheme: scheme).surface)
-        .overlay(alignment: .bottom) { Divider() }
+        .padding(.leading, 12)
+        .padding(.trailing, 6)
+        .padding(.vertical, 2)
+        .frame(minHeight: HerdrTheme.ControlHeight.bar * fontScale.rawValue)
+        .background(palette.surface)
+        .herdrHairline(.bottom, color: palette.hairline)
     }
 
     @ViewBuilder
@@ -176,7 +188,9 @@ struct FirstMateGitView: View {
     private var loading: some View {
         VStack(spacing: 10) {
             ProgressView().controlSize(.small)
-            Text("Loading Git workspaces…").foregroundStyle(.secondary)
+            Text("Loading Git workspaces…")
+                .herdrFont(size: HerdrTheme.TextSize.small)
+                .foregroundStyle(FirstMatePalette(scheme: scheme).secondaryText)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)
@@ -231,6 +245,40 @@ struct FirstMateGitView: View {
             token: configuration?.token,
             retryGeneration: retryGeneration
         )
+    }
+}
+
+/// `HerdrIconButtonStyle` in First Mate's palette, so the bar's icons keep
+/// their contrast in First Mate light: 26pt glyph box on a 28pt hit area,
+/// icon ink at rest, text ink and a selection wash while hovered.
+private struct FirstMateGitIconButtonStyle: ButtonStyle {
+    let palette: FirstMatePalette
+
+    func makeBody(configuration: Configuration) -> some View {
+        FirstMateGitIconButtonBody(configuration: configuration, palette: palette)
+    }
+}
+
+private struct FirstMateGitIconButtonBody: View {
+    let configuration: ButtonStyle.Configuration
+    let palette: FirstMatePalette
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovering = false
+
+    var body: some View {
+        configuration.label
+            .labelStyle(.iconOnly)
+            .herdrFont(size: 14)
+            .foregroundStyle(isHovering ? palette.text : palette.iconTint)
+            .frame(width: HerdrTheme.ControlHeight.regular, height: HerdrTheme.ControlHeight.regular)
+            .background(
+                isHovering || configuration.isPressed ? palette.selectedFill : .clear,
+                in: .rect(cornerRadius: HerdrTheme.Radius.control)
+            )
+            .frame(minWidth: HerdrTheme.minHitTarget, minHeight: HerdrTheme.minHitTarget)
+            .contentShape(Rectangle())
+            .opacity(isEnabled ? 1 : 0.42)
+            .onHover { isHovering = $0 }
     }
 }
 

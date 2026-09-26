@@ -32,7 +32,7 @@ struct PaneGitWebView: View {
                 failureView(message: message)
             }
         }
-        .background(HerdrTheme.graphite)
+        .background(HerdrTheme.windowBackground)
         .accessibilityIdentifier("pane-git-web")
     }
 
@@ -41,11 +41,11 @@ struct PaneGitWebView: View {
             ProgressView()
                 .controlSize(.small)
             Text("Loading Git changes…")
-                .herdrFont(.caption, monospaced: true, weight: .medium)
-                .foregroundStyle(HerdrTheme.mist)
+                .herdrFont(size: HerdrTheme.TextSize.small)
+                .foregroundStyle(HerdrTheme.secondaryText)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(HerdrTheme.graphite.opacity(0.94))
+        .background(HerdrTheme.windowBackground.opacity(0.94))
         .accessibilityElement(children: .combine)
     }
 
@@ -61,8 +61,8 @@ struct PaneGitWebView: View {
             }
             .herdrProminentButton()
         }
-        .foregroundStyle(HerdrTheme.text)
+        .foregroundStyle(HerdrTheme.primaryText)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(HerdrTheme.graphite)
+        .background(HerdrTheme.windowBackground)
     }
 }

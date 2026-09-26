@@ -155,7 +155,7 @@ final class HerdrDemoNavigationUITests: HerdrUITestCase {
         XCTAssertTrue(diffButton.waitForExistence(timeout: 3))
         diffButton.click()
         XCTAssertTrue(
-            app.text(containing: "diff --git").waitForExistence(timeout: 5),
+            app.text(containing: "@@ -42,6 +42,9 @@").waitForExistence(timeout: 5),
             "The persistent diff inspector should render the demo patch"
         )
         saveScreenshot("04-git-diff", app: app, directory: screenshotDirectory)

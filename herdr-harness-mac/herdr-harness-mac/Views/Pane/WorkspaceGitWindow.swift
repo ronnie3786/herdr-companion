@@ -66,7 +66,7 @@ struct WorkspaceGitWindowRoot: View {
             }
         }
         .frame(minWidth: 720, minHeight: 520)
-        .background(HerdrTheme.ink)
+        .background(HerdrTheme.windowBackground)
         .foregroundStyle(HerdrTheme.text)
         .preferredColorScheme(.dark)
         .tint(HerdrTheme.accent)
@@ -122,8 +122,8 @@ struct WorkspaceGitWindowRoot: View {
             ProgressView()
                 .controlSize(.small)
             Text(message)
-                .herdrFont(.caption, monospaced: true, weight: .medium)
-                .foregroundStyle(HerdrTheme.mist)
+                .herdrFont(size: HerdrTheme.TextSize.small)
+                .foregroundStyle(HerdrTheme.secondaryText)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)

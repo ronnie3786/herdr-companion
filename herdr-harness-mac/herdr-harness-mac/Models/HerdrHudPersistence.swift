@@ -245,6 +245,13 @@ actor HerdrHudPersistenceStore {
         writePendingSnapshots()
     }
 
+    /// Launch admission requires a successful write, unlike best-effort history caching.
+    /// Clear an older queued snapshot so it cannot overwrite this ownership record.
+    func saveDurably(_ snapshot: HerdrHudPersistenceSnapshot) throws {
+        pendingSnapshot = nil
+        try snapshot.save(to: fileURL)
+    }
+
     func remove() {
         pendingSnapshot = nil
         try? FileManager.default.removeItem(at: fileURL)

@@ -764,10 +764,24 @@ class FirstMateRuntime:
         """Bounded Agent view projection. It adds only the pure coordinator
         routing selection: no job scan, usage accounting, or context projection."""
         board = self.store.board(feature_id, **bounds)
+        verification = self._live_verification(self.store.get_feature(feature_id))
+        if verification.get("evidence_present"):
+            # Git can change without a ledger event. Bind conditional board
+            # reads to the current assessment as well as the SQLite version.
+            # Computation time is not a semantic change and must not defeat
+            # unchanged polling on every request.
+            requested_version = bounds.get("if_version")
+            if board["unchanged"]:
+                board = self.store.board(feature_id, **{**bounds, "if_version": None})
+            stable = {key: value for key, value in verification.items() if key != "computed_at"}
+            marker = json.dumps([board["version"], stable], sort_keys=True, separators=(",", ":"))
+            board["version"] = "bv1-" + hashlib.sha256(marker.encode()).hexdigest()[:20]
+            if requested_version == board["version"]:
+                return {"version": board["version"], "unchanged": True}
         if not board["unchanged"]:
             selection = self._policy(board["feature"], kind="coordinator", claim={}).selection()
             board["feature"] = {**board["feature"], "model_selection": selection,
-                                "verification": self._live_verification(board["feature"])}
+                                "verification": verification}
         return board
 
     def snapshot(self, feature_id: str, events: str = "all") -> dict:
@@ -1474,7 +1488,7 @@ class FirstMateRuntime:
         explicitly supersedes it. Restarting the companion does not lose it.
         """
         persisted = feature.get("verification_selection")
-        if isinstance(persisted, list) and persisted:
+        if isinstance(persisted, list) and (persisted or feature.get("verification_selection_explicit")):
             return [str(identity) for identity in persisted]
         return self._default_verification_selection(feature)
 

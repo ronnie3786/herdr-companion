@@ -1411,7 +1411,13 @@ final class HerdrHudSession {
         // Durable ownership and the frozen input must exist on disk before the
         // first side effect, so a relaunch can reconnect this exact request
         // instead of minting a new one.
-        await persistPendingWorkspaceLaunch()
+        do {
+            try await persistence.saveDurably(makePersistenceSnapshot())
+        } catch {
+            workspaceLaunchState = .idle
+            validationError = "Couldn't save this chat's recovery state. No chat was created. Try again after resolving the storage problem."
+            return
+        }
 
         let launcher: HerdrHudWorkspaceLauncher
         do {

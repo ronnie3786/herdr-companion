@@ -588,6 +588,58 @@ class VerificationRuntimeTests(unittest.TestCase):
         self.assertEqual(self.store.get_feature(feature_id)["verification_selection"], [narrow["id"]])
         self.assertEqual(self.runtime.feature(feature_id)["verification"]["status"], "partially_verified")
 
+    def test_explicit_empty_gate_selection_survives_reads_and_restart(self):
+        assignment = self.stage_and_assignment()
+        revision = self.commit("implemented change")
+        self.record_inventory(SUITES, revision=revision)
+        broad = self.record_run("run-six", SUITES, revision=revision, assignment=assignment)
+        self.store.record_outcome(assignment["id"], assignment["generation"],
+                                  assignment["native_session_id"], assignment["input_revision"],
+                                  "success", "Complete", "outcome-empty-selection",
+                                  verification_run_ids=[broad["id"]])
+        coordinator = {"kind": "coordinator", "feature_id": self.feature["id"],
+                       "claim": {"id": "synthetic-message", "role": "user"},
+                       "owner": "coordinator-owner", "cwd": str(self.repo)}
+        self.runtime._tool(coordinator, "fm_complete_stage", {
+            "summary": "Synthetic", "recommendation": "Next",
+            "verification_run_ids": []}, "complete-empty-selection")
+        for restart in (False, True):
+            if restart:
+                self.store.close()
+                self.store = FirstMateStore(self.root / "store.sqlite3")
+                self.runtime = FirstMateRuntime(self.store, environ={"PATH": "/usr/bin:/bin"},
+                                                runtime_root=self.root / "runtime")
+            feature_id = self.feature["id"]
+            self.assertEqual(self.store.get_feature(feature_id)["verification_selection"], [])
+            for surface in (self.runtime.feature(feature_id)["verification"],
+                            self.runtime.snapshot(feature_id)["feature"]["verification"],
+                            self.runtime.board(feature_id)["feature"]["verification"]):
+                self.assertEqual(surface["status"], "partially_verified")
+                self.assertEqual(surface["gate_set"], [])
+                self.assertEqual(len(surface["previously_green_missing"]), len(SUITES))
+
+    def test_conditional_board_refreshes_when_git_changes_without_ledger_events(self):
+        assignment = self.stage_and_assignment()
+        self.record_inventory(SUITES, revision=self.base)
+        self.record_run("run-six", SUITES, revision=self.base, assignment=assignment)
+        feature_id = self.feature["id"]
+        verified = self.runtime.board(feature_id)
+        self.assertEqual(verified["feature"]["verification"]["status"], "verified")
+        self.assertEqual(self.runtime.board(feature_id, if_version=verified["version"]),
+                         {"version": verified["version"], "unchanged": True})
+        self.commit("advance without a ledger mutation")
+        partial = self.runtime.board(feature_id, if_version=verified["version"])
+        self.assertFalse(partial["unchanged"])
+        self.assertEqual(partial["feature"]["verification"]["status"], "partially_verified")
+        self.assertNotEqual(partial["version"], verified["version"])
+        self.assertEqual(self.runtime.board(feature_id, if_version=partial["version"]),
+                         {"version": partial["version"], "unchanged": True})
+        (self.repo / "pkg/app/Sources/Feature.swift").write_text("// dirty synthetic source\n")
+        dirty = self.runtime.board(feature_id, if_version=partial["version"])
+        self.assertFalse(dirty["unchanged"])
+        self.assertTrue(any("uncommitted" in reason for reason in
+                            dirty["feature"]["verification"]["coverage_reasons"]))
+
     def test_advancing_head_after_a_checkpoint_downgrades_every_status_surface(self):
         assignment = self.stage_and_assignment()
         self.record_inventory(SUITES, revision=self.base)

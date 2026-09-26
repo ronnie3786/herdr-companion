@@ -313,6 +313,10 @@ class FirstMateStore:
                 # The coordinator's explicit current gate selection survives
                 # reads, live finalization, and restarts until superseded.
                 self._db.execute("ALTER TABLE fm_features ADD COLUMN verification_selection_json TEXT NOT NULL DEFAULT '[]'")
+            if "verification_selection_explicit" not in feature_columns:
+                # Distinguish an explicitly empty gate set from no selection.
+                self._db.execute("ALTER TABLE fm_features ADD COLUMN verification_selection_explicit INTEGER NOT NULL DEFAULT 0")
+            self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(12,?)", (_now(),))
             run_columns = {row[1] for row in self._db.execute("PRAGMA table_info(fm_verification_runs)")}
             if "source_state" not in run_columns:
                 # Recording-time working-tree validity travels with the run so
@@ -1666,7 +1670,7 @@ class FirstMateStore:
             if selection is not None:
                 # An explicit gate selection survives live reads, later informal
                 # parks, and restarts until a newer completion supersedes it.
-                self._db.execute("UPDATE fm_features SET verification_selection_json=? WHERE id=?",
+                self._db.execute("UPDATE fm_features SET verification_selection_json=?,verification_selection_explicit=1 WHERE id=?",
                                  (_json(list(selection)), feature["id"]))
             self._message(feature["id"], "assistant", summary + (f"\n\nSuggested next step: {recommendation}" if recommendation else "") + (f"\n\nContinuing with the previously authorized {visit['followup_stages'][0]} stage." if continuing else "\n\nAwaiting your direction.") + note, status="done", metadata=message_metadata,
                           source={"source_kind": "checkpoint", "in_reply_to": None,
@@ -1799,7 +1803,7 @@ class FirstMateStore:
                 self._save_verification_assessment(feature_id, verification, message_id=None)
                 event_payload["verification"] = verification
             if action == "complete" and selection is not None:
-                self._db.execute("UPDATE fm_features SET verification_selection_json=? WHERE id=?",
+                self._db.execute("UPDATE fm_features SET verification_selection_json=?,verification_selection_explicit=1 WHERE id=?",
                                  (_json(list(selection)), feature_id))
             self._event(feature_id, f"feature.{action}", f"Feature {status}", event_payload)
             return self._save_receipt(f"action:{feature_id}", request_id, payload, self._one("fm_features", feature_id))

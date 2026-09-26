@@ -1401,16 +1401,34 @@ final class FirstMateStore {
             // An omitted or malformed field is evidence of absence only in an
             // authoritative full snapshot; a mutation acknowledgement merely
             // did not carry the assessment.
-            return authoritative ? Self.unavailableVerification() : cached
+            return authoritative ? Self.unavailableVerification(previous: cached) : cached
+        }
+        if authoritative, incoming.status != .verified,
+           incoming.featureRevision == nil, incoming.computedAtDate == nil {
+            // A full response without usable ordering still withdraws green.
+            // Keep the last ordering fence so a delayed green cannot revive it.
+            var unavailable = incoming
+            unavailable.featureRevision = cached.featureRevision
+            unavailable.computedAt = cached.computedAt
+            return unavailable
+        }
+        if cached.status != .verified, incoming.status == .verified,
+           incoming.featureRevision == cached.featureRevision,
+           let cachedDate = cached.computedAtDate,
+           let incomingDate = incoming.computedAtDate,
+           incomingDate <= cachedDate {
+            return cached
         }
         return incoming.isAtLeastAsFresh(as: cached) ? incoming : cached
     }
 
-    private static func unavailableVerification() -> FirstMateVerification {
+    private static func unavailableVerification(previous: FirstMateVerification) -> FirstMateVerification {
         FirstMateVerification(
             status: .unavailable,
+            featureRevision: previous.featureRevision,
             coverageReasons: ["The companion did not report structured suite evidence for this feature."],
-            evidencePresent: true
+            evidencePresent: true,
+            computedAt: previous.computedAt
         )
     }
 

@@ -74,6 +74,39 @@ struct HerdrHudNewChatIntegrationTests {
         #expect(fixture.defaults.string(forKey: AgentModelSettings.hudModelKey) == nil)
     }
 
+    @Test("Checked Send requires durable recovery state before creating a chat")
+    func checkedSendStopsWhenRecoveryStateCannotBeSaved() async throws {
+        let fixture = try Fixture(localHostNames: ["local.example.invalid"])
+        defer { fixture.cleanUp() }
+        let session = fixture.chats.composer
+        await session.waitForPersistenceRestoreForTesting()
+        session.applyLocalMachineDefaultIfNeeded(in: fixture.model)
+        await session.loadMainWorkspaces(model: fixture.model)
+        let workspace = try #require(session.mainWorkspaces.first)
+        #expect(session.selectMainWorkspace(workspace, in: fixture.model))
+        session.createsInMainWorkspace = true
+        session.draft = "Keep this draft if storage fails"
+
+        // A directory at the snapshot file path deterministically rejects an
+        // atomic file write without depending on permissions or disk capacity.
+        try FileManager.default.createDirectory(
+            at: session.persistenceURLForTesting, withIntermediateDirectories: true
+        )
+        await submit(session, fixture: fixture)
+
+        #expect(fixture.client.quickSessionCreates.isEmpty)
+        #expect(fixture.client.promptCalls.isEmpty)
+        #expect(fixture.client.headlessStarts.isEmpty)
+        #expect(session.draft == "Keep this draft if storage fails")
+        #expect(session.validationError?.contains("recovery state") == true)
+
+        // An explicit retry after repairing storage remains usable.
+        try FileManager.default.removeItem(at: session.persistenceURLForTesting)
+        await submit(session, fixture: fixture)
+        #expect(fixture.client.quickSessionCreates.count == 1)
+        #expect(fixture.client.promptCalls.count == 1)
+    }
+
     @Test("Checked Send creates in the exact main workspace and prompts it once, before any answer")
     func checkedSendCreatesInExactWorkspace() async throws {
         let fixture = try Fixture(

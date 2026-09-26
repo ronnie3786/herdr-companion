@@ -281,6 +281,7 @@ struct FirstMateVerificationTests {
         // A newer authoritative response restores the verified assessment...
         var restored = base
         restored.feature.updatedAt = "2030-01-04T00:00:00Z"
+        restored.feature.verification?.computedAt = "2030-01-04T00:00:00Z"
         store.receive(restored)
         #expect(store.snapshot?.feature.verification?.status == .verified)
 
@@ -290,6 +291,39 @@ struct FirstMateVerificationTests {
         omitted.feature.updatedAt = "2030-01-05T00:00:00Z"
         omitted.feature.includesVerification = false
         store.receive(omitted)
+        #expect(store.snapshot?.feature.verification?.status == .unavailable)
+    }
+
+    @Test("Missing authoritative evidence keeps its freshness fence at an unchanged feature timestamp")
+    func unavailableDoesNotResurrectDelayedGreen() {
+        let store = FirstMateStore()
+        let base = FirstMateDemo.features(step: 3)[0]
+        store.receive(base)
+        store.select(base.feature.id)
+        #expect(store.snapshot?.feature.verification?.status == .verified)
+
+        // Git observations and missing evidence need not mutate updatedAt.
+        var unavailable = base
+        unavailable.feature.verification = nil
+        unavailable.feature.includesVerification = true
+        store.receive(unavailable)
+        #expect(store.snapshot?.feature.verification?.status == .unavailable)
+        store.receive(base)
+        #expect(store.snapshot?.feature.verification?.status == .unavailable)
+
+        var fresh = base
+        fresh.feature.verification?.computedAt = "2030-01-04T00:00:00Z"
+        store.receive(fresh)
+        #expect(store.snapshot?.feature.verification?.status == .verified)
+
+        // A well-formed unavailable object without ordering also withdraws green.
+        unavailable.feature.verification = FirstMateVerification(
+            status: .unavailable, coverageReasons: ["Synthetic evidence unavailable"],
+            evidencePresent: true
+        )
+        store.receive(unavailable)
+        #expect(store.snapshot?.feature.verification?.status == .unavailable)
+        store.receive(fresh)
         #expect(store.snapshot?.feature.verification?.status == .unavailable)
     }
 

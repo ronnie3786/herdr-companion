@@ -11,7 +11,7 @@ struct WorkspaceScopeSegment: View {
         Button(action: action) {
             Label(scope.label, systemImage: scope.symbol)
                 .labelStyle(.iconOnly)
-                .herdrFont(size: 14, relativeTo: .body)
+                .font(.system(size: 14))
                 .foregroundStyle(isSelected || isHovering ? HerdrTheme.primaryText : HerdrTheme.iconTint)
                 .frame(width: HerdrTheme.ControlHeight.regular, height: HerdrTheme.ControlHeight.small)
                 .background(background, in: .rect(cornerRadius: HerdrTheme.Radius.control))

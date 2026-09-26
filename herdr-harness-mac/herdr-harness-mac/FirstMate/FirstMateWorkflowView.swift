@@ -30,7 +30,7 @@ struct FirstMateWorkflowView: View {
                                 Image(systemName: visit.status == "completed" ? "checkmark.circle.fill" : "circle")
                                     .herdrFont(size: HerdrTheme.TextSize.body).foregroundStyle(FirstMatePalette(scheme: scheme).accent)
                                 Rectangle().fill(HerdrTheme.hairline).frame(width: 1)
-                            }.frame(width: 20)
+                            }.herdrIconSlot(width: 20)
                             VStack(alignment: .leading, spacing: 12) {
                                 HStack(alignment: .top) {
                                     Text(visit.title).herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)

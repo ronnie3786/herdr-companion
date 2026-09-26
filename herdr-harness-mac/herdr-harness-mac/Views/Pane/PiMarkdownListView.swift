@@ -12,7 +12,7 @@ struct PiMarkdownListView: View {
                 // SwiftUI baseline, and both paths start their first line at 0.
                 HStack(alignment: .top, spacing: 8) {
                     marker(for: item.marker)
-                        .frame(width: 16, alignment: .trailing)
+                        .herdrIconSlot(width: 16, alignment: .trailing)
                         .accessibilityHidden(true)
                     PiMarkdownText(
                         item.text,

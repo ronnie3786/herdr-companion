@@ -119,7 +119,7 @@ struct SidebarProjectRow: View {
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                         .opacity(isHovering ? 1 : 0)
                 }
-                .frame(width: 16)
+                .herdrIconSlot(width: 16)
                 .animation(.snappy, value: isExpanded)
                 .accessibilityHidden(true)
 
@@ -217,7 +217,7 @@ struct SidebarMachineRow: View {
                             .rotationEffect(.degrees(isExpanded ? 90 : 0))
                             .opacity(isHovering ? 1 : 0)
                     }
-                    .frame(width: 18)
+                    .herdrIconSlot(width: 18)
                     .animation(.snappy, value: isExpanded)
                     .accessibilityHidden(true)
 

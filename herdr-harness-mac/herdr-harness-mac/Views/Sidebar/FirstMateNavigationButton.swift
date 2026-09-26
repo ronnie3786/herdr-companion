@@ -56,7 +56,7 @@ struct FirstMateNavigationButton: View {
             HStack(spacing: 8) {
                 Image(systemName: "sailboat")
                     .herdrFont(size: 15)
-                    .frame(width: 18)
+                    .herdrIconSlot(width: 18)
                     .accessibilityHidden(true)
                 Text("First Mate")
                     .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)

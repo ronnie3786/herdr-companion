@@ -57,7 +57,7 @@ struct PiWorkingGroupView: View {
                         .transition(PiChatMotion.stateTransition(reduceMotion: reduceMotion))
                 }
             }
-            .frame(width: 16, height: 16)
+            .herdrIconSlot(width: 16, height: 16)
             .accessibilityHidden(true)
 
             Text(group.isLive ? "Clanking…" : "Clanking")

@@ -29,7 +29,7 @@ struct PiToolCardView: View {
         HStack(spacing: 6) {
             Image(systemName: presentation.symbol)
                 .herdrFont(size: HerdrTheme.TextSize.reading)
-                .frame(width: 16)
+                .herdrIconSlot(width: 16)
                 .foregroundStyle(isFailed ? HerdrTheme.alert : HerdrTheme.iconTint)
                 .accessibilityHidden(true)
 

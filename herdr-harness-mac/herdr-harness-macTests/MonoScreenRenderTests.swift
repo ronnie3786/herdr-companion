@@ -79,6 +79,57 @@ struct MonoScreenRenderTests {
         result.expectSubstantial()
     }
 
+    @Test("The largest text size keeps every screen's bars and cards intact")
+    func largestText() async throws {
+        let model = HerdrRenderFixtures.demoModel()
+        model.openPane(id: "demo1|w1:p2")
+        let shell = MonoRenderFixtures.shell(sidebarOnHome: true)
+        shell.firstMate.configure(client: nil, demo: true)
+        shell.prReview.configure(client: nil, machineID: "demo", demo: true)
+        await shell.prReview.refresh()
+        MonoRenderFixtures.seedFeatures(shell: shell)
+        shell.show(.dashboard, model: model)
+        let size = CGSize(width: 1440, height: 900)
+        let dashboard = try await HerdrRenderHarness.renderWindow("mono-dashboard-160.png", size: size) {
+            MonoRenderFixtures.window(model: model, shell: shell, scale: .xxxLarge)
+        }
+        dashboard.expectSubstantial()
+
+        let chatShell = MonoRenderFixtures.shell(sidebarOnHome: true)
+        chatShell.showSession()
+        let workspace = try #require(model.workspace(id: "demo1|w1"))
+        let pane = try HerdrRenderFixtures.piCapablePane()
+        let store = try await HerdrRenderFixtures.populatedPiStore()
+        let brief = ResponseBriefPresentation()
+        let chat = try await HerdrRenderHarness.renderWindow("mono-chat-160.png", size: size) {
+            MonoRenderFixtures.window(model: model, shell: chatShell, detail: AnyView(
+                PiChatView(
+                    model: model, store: store, paneID: pane.id, interactionResponseAvailable: true,
+                    composerPane: pane, workspace: workspace, draft: .constant(""), attachments: .constant([]),
+                    focusRequest: 0, interactionResponder: PiInteractionResponder(),
+                    modelFavorites: ModelFavoritesStore(), briefPresentation: brief
+                )
+                .herdrTitleBar {
+                    PaneSessionTitle(model: model, pane: pane, store: store)
+                } trailing: {
+                    PaneSessionActions(model: model, pane: pane, showsPiSessionSummary: true, briefPresentation: brief)
+                }
+            ), scale: .xxxLarge)
+        }
+        chat.expectSubstantial()
+
+        let firstMateShell = MonoRenderFixtures.shell(sidebarOnHome: true)
+        firstMateShell.show(.firstMate, model: model)
+        firstMateShell.configureFirstMateIfNeeded(machineID: "demo", configuration: nil,
+                                                  connectionGeneration: model.connectionGeneration, isDemo: true)
+        await firstMateShell.firstMate.refresh()
+        firstMateShell.firstMate.advanceDemo()
+        let firstMate = try await HerdrRenderHarness.renderWindow("mono-first-mate-160.png", size: size) {
+            MonoRenderFixtures.window(model: model, shell: firstMateShell, scale: .xxxLarge)
+        }
+        firstMate.expectSubstantial()
+    }
+
     @Test("Dashboard and Agent view beside the sidebar")
     func dashboardAndAgents() async throws {
         let model = HerdrRenderFixtures.demoModel()
@@ -200,7 +251,8 @@ enum MonoRenderFixtures {
     /// desktop sits behind the window the way the blurred desktop does in the
     /// app (offscreen captures never include behind-window blur, so the base
     /// shows at its Legible level over the unblurred gradient).
-    static func window(model: HerdrAppModel, shell: HerdrShellState, detail: AnyView? = nil, glass: Bool = true) -> some View {
+    static func window(model: HerdrAppModel, shell: HerdrShellState, detail: AnyView? = nil, glass: Bool = true,
+                       scale: HerdrFontScale = .medium) -> some View {
         ZStack {
             if glass { desktop }
             WorkspaceNavigationView(
@@ -216,7 +268,7 @@ enum MonoRenderFixtures {
         .environment(\.herdrHazeActive, glass)
         .environment(\.herdrGlassDrawsBlur, false)
         .environment(HerdPulseCoordinator(defaults: UserDefaults(suiteName: "MonoRender.pulse")!))
-        .environment(\.herdrFontScale, .medium)
+        .environment(\.herdrFontScale, scale)
     }
 
     /// A Herdr-owned dusk gradient standing in for a desktop picture.

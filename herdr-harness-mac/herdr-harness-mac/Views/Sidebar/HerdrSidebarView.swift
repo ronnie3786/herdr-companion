@@ -1398,7 +1398,7 @@ struct SidebarNavRowLabel: View {
                         .opacity(tint == HerdrTheme.accent ? 1 : 0.8)
                 }
             }
-            .frame(width: 18)
+            .herdrIconSlot(width: 18)
             .accessibilityHidden(true)
             Text(title)
                 .herdrFont(size: HerdrTheme.TextSize.body, weight: .medium)

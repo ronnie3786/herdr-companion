@@ -91,7 +91,7 @@ struct AgentBoardAgentRow: View {
                 Image(systemName: glyph.symbol)
                     .imageScale(.small)
                     .foregroundStyle(glyph.color)
-                    .frame(width: 16)
+                    .herdrIconSlot(width: 16)
                     .accessibilityHidden(true)
                 Text(agent.title)
                     .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)

@@ -265,9 +265,11 @@ private struct HerdrIconButtonBody: View {
     @State private var isHovering = false
 
     var body: some View {
+        // Like native toolbar icons, the glyph keeps its size at every text
+        // size; the 26pt box and 28pt hit area never overflow their bar.
         configuration.label
             .labelStyle(.iconOnly)
-            .herdrFont(size: 14)
+            .font(.system(size: 14))
             .foregroundStyle(isHovering || isActive ? HerdrTheme.primaryText : tint)
             .frame(width: visualSize, height: visualSize)
             .background(
@@ -433,5 +435,28 @@ struct HerdrSelectTrigger: View {
         }
         .frame(minHeight: HerdrTheme.minHitTarget)
         .contentShape(Rectangle())
+    }
+}
+
+extension View {
+    /// An icon column beside text: `width` at 100%, growing with the text
+    /// size so a larger glyph never runs into its label.
+    func herdrIconSlot(width: CGFloat, height: CGFloat? = nil, alignment: Alignment = .center) -> some View {
+        modifier(HerdrIconSlot(width: width, height: height, alignment: alignment))
+    }
+}
+
+private struct HerdrIconSlot: ViewModifier {
+    let width: CGFloat
+    let height: CGFloat?
+    let alignment: Alignment
+    @Environment(\.herdrFontScale) private var fontScale
+
+    func body(content: Content) -> some View {
+        content.frame(
+            width: width * fontScale.rawValue,
+            height: height.map { $0 * fontScale.rawValue },
+            alignment: alignment
+        )
     }
 }

@@ -110,7 +110,7 @@ struct DashboardChatRow: View {
                     else { Color.clear }
                 }
                 .imageScale(.small)
-                .frame(width: 12)
+                .herdrIconSlot(width: 12)
                 .accessibilityHidden(true)
                 Text(title)
                     .herdrFont(size: HerdrTheme.TextSize.body)

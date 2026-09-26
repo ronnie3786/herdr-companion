@@ -41,10 +41,7 @@ struct DashboardRenderTests {
             if index == 3 { column.tab = .agents }
             if index == 4 { column.tab = .workflow }
             let content = try #require(column.content)
-            #expect(content.timeline.allSatisfy { row in
-                if case .note(let note) = row { return !note.text.hasPrefix("Telemetry") }
-                return true
-            })
+            #expect(content.latestNotes.allSatisfy { !$0.text.hasPrefix("Telemetry") })
         }
         for (name, size) in [("agent-board-default", CGSize(width: 1280, height: 860)),
                              ("agent-board-wide", CGSize(width: 1764, height: 1100)),

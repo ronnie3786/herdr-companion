@@ -206,7 +206,7 @@ struct FirstMateChatView: View {
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 24) {
-                    ForEach(snapshot.messages.filter { ["user", "human", "assistant"].contains($0.role) }) { message in
+                    ForEach(snapshot.messages.filter(\.isConversation)) { message in
                         let feedback = FirstMateResponseFeedbackPresentation.make(
                             message: message,
                             supported: feedbackSupported,
@@ -299,7 +299,7 @@ struct FirstMateChatView: View {
             } action: { _, nearBottom in
                 followsLatest = nearBottom
             }
-            .onChange(of: snapshot.messages.last?.id) { _, _ in
+            .onChange(of: snapshot.messages.last(where: \.isConversation)?.id) { _, _ in
                 if followsLatest { proxy.scrollTo("first-mate-chat-end", anchor: .bottom) }
             }
             .onChange(of: snapshot.feature.id) { followsLatest = true }

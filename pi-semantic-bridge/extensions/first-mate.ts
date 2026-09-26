@@ -138,7 +138,7 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
     const restrictedAdvisor = role === "advisor" && (job.recovery_mode || job.reliability_assessment);
     const roleTools = new Set(role === "coordinator" ? [
       "fm_status", "fm_delegate", "fm_begin_stage", "fm_recover",
-      "fm_resolve_gate", "fm_steer", "fm_retry", "fm_complete_stage",
+      "fm_resolve_gate", "fm_steer", "fm_retry", "fm_complete_stage", "fm_notify_human",
       "fm_revise", "fm_finish_feature", "fm_read_document", "fm_read_session", "fm_save_link",
     ] : role === "worker" ? [
       "fm_status", "fm_read_document", "fm_read_session", "fm_outcome", "fm_record_verification",
@@ -239,9 +239,12 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
       register("fm_retry", "Repeat a blocked or failed assignment within this authorized stage after repairs or new instructions. Prior attempts and findings remain retained.", Type.Object({
         assignment_id: text("Exact assignment to repeat"), prompt: text("Complete revised assignment and evidence required"),
       }));
-      register("fm_complete_stage", "Present evidence and a recommendation after all assignments succeed. Inspect the scoped feature.verification, select the exact retained gate run IDs, and quote the service's scoped verdict with its missing and previously green suites; never claim unqualified green from an aggregate count. The service may continue only to the next stage recorded in the original human direction; otherwise it parks for direction.", Type.Object({
-        summary: text("Concise evidence-backed synthesis"), recommendation: text("Suggested next action for the human to choose"),
+      register("fm_complete_stage", "Post the stage result to the human after all assignments succeed. This checkpoint is the human's report for the stage, so keep it to at most four short sentences (1,200 characters): the result, the deliverable (PR or Document ID), the verification verdict, and any risk or decision needed; leave detail in Documents. Inspect the scoped feature.verification, select the exact retained gate run IDs, and quote the service's scoped verdict with its missing and previously green suites; never claim unqualified green from an aggregate count. The service may continue only to the next stage recorded in the original human direction; otherwise it parks for direction. Do not repeat the checkpoint in your final message.", Type.Object({
+        summary: text("The stage result for the human: at most four short sentences (1,200 characters)"), recommendation: text("Suggested next action for the human to choose, in one sentence (400 characters)"),
         verification_run_ids: Type.Optional(Type.Array(Type.String(), { description: "Exact retained verification run IDs selected as this stage's gate set. Omit to use the runs referenced by current-stage outcomes. A stale, incomplete, or failing selection is labeled Partially verified or Failed, never promoted to Verified." })),
+      }));
+      register("fm_notify_human", "On a background turn only, tell the human something they must act on or look at now: a decision you need, a blocker you cannot resolve inside the authorized stage, or a finished deliverable ready for their review. Never use it for progress, restated outcomes, or unchanged state; your final message on a background turn stays a private journal note. At most one notice per turn.", Type.Object({
+        text: text("One to three sentences (600 characters), leading with what you need from the human; cite a PR or Document ID for detail"),
       }));
       register("fm_revise", "Record a human-requested direction change and pause affected assignments. This versions the plan and fences stale outcomes. Only available on human turns.", Type.Object({
         goal: text("Revised goal preserving accepted constraints"), reason: text("What the human changed and why"),

@@ -9,7 +9,7 @@ struct FirstMateChatView: View {
     @State private var followsLatest = true
     private var palette: FirstMatePalette { FirstMatePalette(scheme: scheme) }
     private var featureIsClosed: Bool { ["completed", "cancelled"].contains(snapshot.feature.status) }
-    private var messages: [FirstMateMessage] { snapshot.messages.filter { ["user", "human", "assistant"].contains($0.role) } }
+    private var messages: [FirstMateMessage] { snapshot.messages.filter(\.isConversation) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -35,7 +35,7 @@ struct FirstMateChatView: View {
                 .onScrollGeometryChange(for: Bool.self) { geometry in
                     geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 70
                 } action: { _, nearBottom in followsLatest = nearBottom }
-                .onChange(of: snapshot.messages.last?.id) { _, _ in
+                .onChange(of: messages.last?.id) { _, _ in
                     if followsLatest { proxy.scrollTo("first-mate-chat-end", anchor: .bottom) }
                 }
                 .accessibilityIdentifier("first-mate-conversation")

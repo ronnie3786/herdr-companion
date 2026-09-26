@@ -10,14 +10,10 @@ struct DashboardTests {
     func timelineOrder() {
         let snapshot = FirstMateDemo.features(step: 2)[0]
         let content = AgentBoardContent.build(from: .adapting(snapshot))
-        let messageIDs = content.timeline.compactMap { row -> String? in
-            if case .message(let message) = row { return message.id }
-            return nil
-        }
-        #expect(messageIDs == snapshot.messages.filter { ["user", "human", "assistant"].contains($0.role) }.map(\.id))
+        #expect(content.timeline.map(\.id) == snapshot.messages.filter { ["user", "human", "assistant"].contains($0.role) }.map(\.id))
     }
 
-    @Test("A 20,000-event feature builds bounded column content quickly and without telemetry")
+    @Test("A 20,000-event feature builds bounded column content quickly and keeps its journal out of chat")
     func largeFeature() {
         var snapshot = FirstMateDemo.features(step: 2)[0]
         let base = Date(timeIntervalSince1970: 1_780_000_000)
@@ -31,14 +27,13 @@ struct DashboardTests {
         var content: AgentBoardContent?
         let elapsed = clock.measure { content = AgentBoardContent.build(from: .adapting(snapshot)) }
         #expect(elapsed < .milliseconds(500))
-        let rows = content?.timeline ?? []
-        #expect(rows.count <= AgentBoardPayload.messageLimit + AgentBoardPayload.journalLimit)
-        let notes = rows.compactMap { row -> String? in if case .note(let note) = row { note.text } else { nil } }
+        #expect(content?.timeline.map(\.id) == snapshot.messages.map(\.id))
+        let notes = content?.latestNotes.map(\.text) ?? []
         #expect(!notes.isEmpty)
         #expect(notes.allSatisfy { text in text.hasPrefix("Event ") && Int(text.dropFirst(6))!.isMultiple(of: 400) })
     }
 
-    @Test("Only repeats of the same note collapse, and messages break a run")
+    @Test("Chat shows only the conversation; journal milestones collapse into Overview")
     func noteCollapsing() {
         var snapshot = FirstMateDemo.features(step: 2)[0]
         let id = snapshot.feature.id
@@ -52,13 +47,36 @@ struct DashboardTests {
             FirstMateEvent(sequence: 4, id: "e4", featureID: id, type: "assignment.queued", summary: "Worker queued", createdAt: at(42)),
             FirstMateEvent(sequence: 5, id: "e5", featureID: id, type: "session.bound", summary: "Saved Pi session attached", createdAt: at(43)),
         ]
-        let rows = AgentBoardContent.build(from: .adapting(snapshot)).timeline.map { row -> String in
-            switch row {
-            case .message(let message): "message:\(message.id)"
-            case .note(let note): note.count > 1 ? "\(note.text) ×\(note.count)" : note.text
-            }
-        }
-        #expect(rows == ["Planning complete", "message:m1", "Implementation started", "Worker queued ×2"])
+        let content = AgentBoardContent.build(from: .adapting(snapshot))
+        #expect(content.timeline.map(\.id) == ["m1"])
+        let journal = content.latestNotes.map { $0.count > 1 ? "\($0.text) ×\($0.count)" : $0.text }
+        #expect(journal == ["Worker queued ×2", "Implementation started", "Planning complete"])
+    }
+
+    @Test("Background replies and system updates never reach the chat, and a private note journals")
+    func backgroundRowsStayOutOfChat() {
+        var snapshot = FirstMateDemo.features(step: 2)[0]
+        let id = snapshot.feature.id
+        let base = Date(timeIntervalSince1970: 1_780_000_000)
+        func at(_ seconds: Double) -> String { HerdrTimestamp.string(from: base.addingTimeInterval(seconds)) }
+        snapshot.messages = [
+            .init(id: "direction", featureID: id, role: "user", text: "Build it", status: "done", createdAt: at(0)),
+            .init(id: "update", featureID: id, role: "system", text: "Lane 1 reported success", status: "done",
+                  createdAt: at(10), visibility: "background"),
+            .init(id: "chatter", featureID: id, role: "assistant", text: "Lane 1 closed out clean.", status: "done",
+                  createdAt: at(11), visibility: "background"),
+            .init(id: "checkpoint", featureID: id, role: "assistant", text: "Stage done. Awaiting your direction.",
+                  status: "done", createdAt: at(12), visibility: "conversation"),
+            .init(id: "legacy", featureID: id, role: "assistant", text: "Older companions omit visibility.",
+                  status: "done", createdAt: at(13)),
+        ]
+        snapshot.events = [FirstMateEvent(sequence: 1, id: "note", featureID: id, type: "coordinator.note",
+                                          summary: "Waiting on lane 2.", createdAt: at(11))]
+        let content = AgentBoardContent.build(from: .adapting(snapshot))
+        #expect(content.timeline.map(\.id) == ["direction", "checkpoint", "legacy"])
+        #expect(content.earlierMessageCount == 0)
+        #expect(content.latestNotes.map(\.text) == ["Waiting on lane 2."])
+        #expect(FirstMateDashboardSummary.from(snapshot).latestMessage == "Older companions omit visibility.")
     }
 
     @Test("Message rows compare by their source text, not their styled runs")

@@ -73,6 +73,52 @@ def _is_journal_event_type(kind: str) -> bool:
 # The Agent view board is bounded independently of the ledger's size.
 BOARD_MAX_MESSAGES, BOARD_MAX_JOURNAL, BOARD_MAX_SESSIONS = 200, 200, 200
 BOARD_MESSAGE_ROLES = ("user", "assistant", "human")
+
+# The chat is the conversation between the human and First Mate. System rows
+# are coordinator inputs; a coordinator's reply to a routine background update
+# is a private journal note unless the human must act. Stored per message so
+# clients filter on one explicit field instead of re-deriving the policy.
+CONVERSATION, BACKGROUND = "conversation", "background"
+COORDINATOR_NOTE_LIMIT = 1200
+OUTCOME_EXCERPT_LIMIT = 360
+_FOLLOWUP_NOTICE = " stage finished with evidence. The original human direction authorized "
+_SWEEP_NOTICE = "Stability sweep found the current authorized stage"
+_ACTIVE_ASSIGNMENT_STATUSES = ("queued", "dispatching", "running", "waiting_children",
+                               "handoff_pending", "awaiting_ack", "recovering")
+
+
+def system_message_attention(message: Mapping[str, Any]) -> str:
+    """Whether a queued system update needs the human ("human") or not.
+
+    New rows carry an explicit flag. Rows written before the flag existed are
+    classified by their fixed service templates; anything unrecognized counts
+    as needing the human, so reclassified history never hides an escalation.
+    """
+    metadata = message.get("metadata") or {}
+    attention = metadata.get("attention")
+    if attention in {"human", "background"}:
+        return attention
+    text = message.get("text") or ""
+    if "verdict" in metadata or _FOLLOWUP_NOTICE in text or text.startswith(_SWEEP_NOTICE):
+        return "background"
+    return "human"
+
+
+def _outcome_notice(title: str, verdict: str, summary: str, assignment_id: str,
+                    document_ids: list[str]) -> str:
+    """A pointer to the outcome, not a second copy of the worker's report.
+
+    The coordinator's router state carries the full summary and the Documents
+    hold the evidence, so the queued update stays short.
+    """
+    excerpt = " ".join(summary.split())
+    if len(excerpt) > OUTCOME_EXCERPT_LIMIT:
+        excerpt = excerpt[:OUTCOME_EXCERPT_LIMIT].rsplit(" ", 1)[0].rstrip(",.;:") + "…"
+    text = f"{title} reported {verdict}: {excerpt}"
+    references = [f"full summary in router state for assignment {assignment_id}"]
+    if document_ids:
+        references.append("Documents " + ", ".join(document_ids))
+    return text + " (" + "; ".join(references) + ")"
 # Exactly the fields native assignment rows decode. Never prompts, metadata,
 # session paths, owners, dispatch or run identities.
 BOARD_ASSIGNMENT_COLUMNS = ("id,feature_id,visit_id,title,role,status,verdict,native_session_id,attempt,"
@@ -91,6 +137,7 @@ _SESSION_JOINS = """LEFT JOIN fm_assignments a ON a.id=s.assignment_id
 _BOARD_VERSION_SQL = f"""SELECT f.*,
                 (SELECT max(sequence) FROM fm_events WHERE feature_id=f.id AND {JOURNAL_EVENT_SQL}) AS board_journal,
                 (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_messages WHERE feature_id=f.id) AS board_messages,
+                (SELECT count(*) FROM fm_messages WHERE feature_id=f.id AND visibility='conversation') AS board_conversation,
                 (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_assignments WHERE feature_id=f.id) AS board_assignments,
                 (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_visits WHERE feature_id=f.id) AS board_visits,
                 (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_sessions WHERE feature_id=f.id) AS board_sessions
@@ -326,8 +373,63 @@ class FirstMateStore:
         attempt_columns = {row[1] for row in self._db.execute("PRAGMA table_info(fm_attempts)")}
         if "verification_run_ids_json" not in attempt_columns:
             self._db.execute("ALTER TABLE fm_attempts ADD COLUMN verification_run_ids_json TEXT NOT NULL DEFAULT '[]'")
+        if "visibility" not in {row[1] for row in self._db.execute("PRAGMA table_info(fm_messages)")}:
+            with self._transaction():
+                # Another process may have migrated between the check and the lock.
+                if "visibility" not in {row[1] for row in self._db.execute("PRAGMA table_info(fm_messages)")}:
+                    self._migrate_message_visibility()
+                self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(13,?)", (_now(),))
         self._seed_feedback_categories()
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(7,?)", (_now(),))
+
+    def _migrate_message_visibility(self) -> None:
+        """Version 13: classify the existing chat once, when the column is added.
+
+        System rows are coordinator inputs. A historical reply to a routine
+        background update leaves the conversation when the same turn already
+        posted a report (a checkpoint), or when a report follows it before the
+        human speaks. A run of such replies that the human then answered stays,
+        so a question never disappears beside its answer. Replies to
+        escalations, checkpoints, and anything unrecognized stay. Text is never
+        modified; rows are only labeled. Rows stream in order and only the
+        leading part of system text (where the service templates are) is read.
+        """
+        self._db.execute(f"ALTER TABLE fm_messages ADD COLUMN visibility TEXT NOT NULL DEFAULT '{CONVERSATION}'")
+        self._db.execute("UPDATE fm_messages SET visibility=? WHERE role='system'", (BACKGROUND,))
+        # A preempted update can be claimed again; its turn began at the latest claim.
+        claimed_at = dict(self._db.execute(
+            "SELECT json_extract(payload_json,'$.message_id'),max(created_at) FROM fm_events "
+            "WHERE type='message.claimed' GROUP BY 1").fetchall())
+        hidden: list[str] = []
+        routine: dict[str, str] = {}
+        run: list[str] = []
+        feature_id, reported_at = None, ""
+        rows = self._db.execute(
+            "SELECT id,feature_id,role,created_at,metadata_json,"
+            "CASE WHEN role='system' THEN substr(text,1,600) ELSE '' END AS text "
+            "FROM fm_messages ORDER BY feature_id,created_at,id")
+        for row in rows:
+            if row["feature_id"] != feature_id:
+                hidden.extend(run)
+                run, routine, feature_id, reported_at = [], {}, row["feature_id"], ""
+            if row["role"] == "system":
+                message = {"text": row["text"], "metadata": json.loads(row["metadata_json"])}
+                if system_message_attention(message) == "background":
+                    routine[row["id"]] = claimed_at.get(row["id"]) or row["created_at"]
+            elif row["role"] in {"user", "human"}:
+                run = []  # The human answered this run; keep it.
+            elif row["role"] == "assistant":
+                turn_started = routine.get(json.loads(row["metadata_json"]).get("in_reply_to"))
+                if turn_started is None:
+                    hidden.extend(run)  # A later report supersedes the unanswered run.
+                    run, reported_at = [], row["created_at"]
+                elif reported_at >= turn_started:
+                    hidden.append(row["id"])  # Its turn already reported.
+                else:
+                    run.append(row["id"])
+        hidden.extend(run)
+        self._db.executemany("UPDATE fm_messages SET visibility=? WHERE id=?",
+                             [(BACKGROUND, message_id) for message_id in hidden])
 
     def _seed_feedback_categories(self) -> None:
         """Install the stable starting reasons once; custom categories append."""
@@ -364,7 +466,7 @@ class FirstMateStore:
                          visit_id: str | None, feature_revision: int | None,
                          native_session_id: str | None) -> None:
         """Freeze the producing context beside the message; legacy rows stay null."""
-        if source_kind not in {"reply", "checkpoint", "unknown"}:
+        if source_kind not in {"reply", "checkpoint", "notice", "unknown"}:
             raise FirstMateError("Invalid feedback source kind", code="invalid_request", status=400)
         coordinator_session_id, session_provenance = None, "unavailable"
         if native_session_id is not None:
@@ -484,6 +586,11 @@ class FirstMateStore:
             return json.loads(row["result_json"])
         return None
 
+    def has_receipt(self, scope: str, request_id: str) -> bool:
+        with self._lock:
+            return self._db.execute("SELECT 1 FROM fm_receipts WHERE scope=? AND request_id=?",
+                                    (scope, request_id)).fetchone() is not None
+
     def _save_receipt(self, scope: str, request_id: str, payload: Any, result: dict) -> dict:
         self._db.execute("INSERT INTO fm_receipts VALUES(?,?,?,?,?)", (scope, request_id, hashlib.sha256(_json(payload).encode()).hexdigest(), _json(result), _now()))
         return result
@@ -495,8 +602,9 @@ class FirstMateStore:
     def _message(self, feature_id: str, role: str, text: str, *, status: str = "queued",
                  metadata: dict | None = None, source: dict | None = None) -> dict:
         message_id, now = _id("fmm"), _now()
-        self._db.execute("INSERT INTO fm_messages(id,feature_id,role,text,status,metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
-                         (message_id, feature_id, role, _text(text, "text"), status, _json(metadata or {}), now, now))
+        visibility = BACKGROUND if role == "system" else CONVERSATION
+        self._db.execute("INSERT INTO fm_messages(id,feature_id,role,text,status,metadata_json,created_at,updated_at,visibility) VALUES(?,?,?,?,?,?,?,?,?)",
+                         (message_id, feature_id, role, _text(text, "text"), status, _json(metadata or {}), now, now, visibility))
         message = self._one("fm_messages", message_id)
         if role == "assistant" and status == "done":
             # Provenance is written once, with the response, and never inferred later.
@@ -646,7 +754,7 @@ class FirstMateStore:
                     AND a.status IN ('dispatching','running','waiting_children','handoff_pending','awaiting_ack','recovering')) AS running_assignment_count
                 FROM fm_features f LEFT JOIN fm_visits v ON v.id=f.current_visit_id
                 LEFT JOIN fm_messages m ON m.id=(SELECT id FROM fm_messages WHERE feature_id=f.id
-                    AND role='assistant' ORDER BY created_at DESC,id DESC LIMIT 1)
+                    AND role='assistant' AND visibility='conversation' ORDER BY created_at DESC,id DESC LIMIT 1)
                 LEFT JOIN fm_events e ON e.sequence=(SELECT max(sequence) FROM fm_events WHERE feature_id=f.id
                     AND {JOURNAL_EVENT_SQL} AND type IN ('assignment.awaiting_human','reliability.blocked','visit.awaiting_direction'))
                 {clause}""", args).fetchall()
@@ -1093,10 +1201,11 @@ class FirstMateStore:
                 "visits": [self._decode(row) for row in self._db.execute("SELECT * FROM fm_visits WHERE feature_id=? ORDER BY created_at,id", (feature_id,))],
                 "assignments": [{**dict(row), "visit_ids": visit_ids.get(row["id"], [])} for row in self._db.execute(
                     f"SELECT {BOARD_ASSIGNMENT_COLUMNS} FROM fm_assignments WHERE feature_id=? ORDER BY created_at,id", (feature_id,))],
+                # Only the conversation: background notes live in the journal.
                 "messages": [self._decode(row) for row in reversed(self._db.execute(
-                    f"SELECT * FROM fm_messages WHERE feature_id=? AND role IN ({roles}) ORDER BY created_at DESC,id DESC LIMIT ?",
-                    (feature_id, *BOARD_MESSAGE_ROLES, messages)).fetchall())],
-                "messages_total": self._db.execute(f"SELECT count(*) FROM fm_messages WHERE feature_id=? AND role IN ({roles})", (feature_id, *BOARD_MESSAGE_ROLES)).fetchone()[0],
+                    f"SELECT * FROM fm_messages WHERE feature_id=? AND role IN ({roles}) AND visibility=? ORDER BY created_at DESC,id DESC LIMIT ?",
+                    (feature_id, *BOARD_MESSAGE_ROLES, CONVERSATION, messages)).fetchall())],
+                "messages_total": self._db.execute(f"SELECT count(*) FROM fm_messages WHERE feature_id=? AND role IN ({roles}) AND visibility=?", (feature_id, *BOARD_MESSAGE_ROLES, CONVERSATION)).fetchone()[0],
                 "journal": [self._decode(row) for row in reversed(self._db.execute(
                     f"SELECT * FROM fm_events INDEXED BY fm_events_journal WHERE feature_id=? AND {JOURNAL_EVENT_SQL} ORDER BY sequence DESC LIMIT ?", (feature_id, journal)).fetchall())],
                 "journal_total": self._db.execute(f"SELECT count(*) FROM fm_events WHERE feature_id=? AND {JOURNAL_EVENT_SQL}", (feature_id,)).fetchone()[0],
@@ -1147,6 +1256,12 @@ class FirstMateStore:
     def finish_message(self, message_id: str, owner: str, reply: str | None = None,
                        *, native_session_id: str | None = None,
                        verification: Mapping[str, Any] | None = None) -> dict:
+        """Settle a coordinator turn.
+
+        A human turn's reply always joins the conversation. A background turn's
+        final text becomes a private journal note unless the human must act (see
+        _background_report).
+        """
         with self._transaction():
             message = self._one("fm_messages", message_id)
             if message["status"] == "done" and message["owner"] == owner:
@@ -1155,31 +1270,155 @@ class FirstMateStore:
             if message["status"] != "processing" or message["owner"] != owner or feature["coordinator_owner"] != owner:
                 raise FirstMateError("Coordinator ownership changed", code="stale_owner")
             if reply:
-                metadata = {"in_reply_to": message_id}
-                text = reply
-                if verification and verification.get("evidence_present"):
-                    metadata["verification"] = self.verification_message_projection(verification)
-                    if verification.get("status") != "verified":
-                        text += "\n\n" + self._coverage_note(verification)
-                created = self._message(
-                    message["feature_id"], "assistant", text, status="done",
-                    metadata=metadata,
-                    source={"source_kind": "reply", "in_reply_to": message_id,
-                            "visit_id": feature["current_visit_id"],
-                            "feature_revision": feature["revision"],
-                            "native_session_id": native_session_id},
-                )
+                posted, detail = True, {}
+                if message["role"] == "system":
+                    posted, detail = self._background_report(feature, message)
+                created = None
+                if posted:
+                    metadata = {"in_reply_to": message_id, **detail}
+                    text = reply
+                    if verification and verification.get("evidence_present"):
+                        metadata["verification"] = self.verification_message_projection(verification)
+                        if verification.get("status") != "verified":
+                            text += "\n\n" + self._coverage_note(verification)
+                    created = self._message(
+                        message["feature_id"], "assistant", text, status="done",
+                        metadata=metadata,
+                        source={"source_kind": "reply", "in_reply_to": message_id,
+                                "visit_id": feature["current_visit_id"],
+                                "feature_revision": feature["revision"],
+                                "native_session_id": native_session_id},
+                    )
+                else:
+                    note = reply.strip()
+                    self._event(message["feature_id"], "coordinator.note",
+                                note[:COORDINATOR_NOTE_LIMIT] or "First Mate handled a background update",
+                                {"message_id": message_id, "reason": detail["reason"],
+                                 "characters": len(note), "truncated": len(note) > COORDINATOR_NOTE_LIMIT,
+                                 "native_session_id": native_session_id})
                 if verification and verification.get("evidence_present"):
                     # An informal park retains the known coverage warning instead
                     # of letting a later green claim outlive its gate set.
                     self._save_verification_assessment(
                         feature["id"], verification,
-                        visit_id=feature["current_visit_id"], message_id=created["id"],
+                        visit_id=feature["current_visit_id"],
+                        message_id=created["id"] if created else None,
                     )
             self._db.execute("UPDATE fm_messages SET status='done',updated_at=? WHERE id=?", (_now(), message_id))
             self._db.execute("UPDATE fm_features SET coordinator_owner=NULL WHERE id=?", (message["feature_id"],))
             self._event(message["feature_id"], "message.processed", "First Mate processed an update", {"message_id": message_id})
             return self._one("fm_messages", message_id)
+
+    # -- what reaches the human -------------------------------------------------
+    #
+    # Background updates (worker outcomes, authorized follow-ups, stability
+    # sweeps) wake the coordinator, but its answer is a private note unless:
+    # the update itself needs the human (a gate or an exhausted recovery), or
+    # the turn leaves nothing running and nothing queued, so only the human can
+    # unblock the stage (including when the turn itself failed). A claim that
+    # already reported (checkpoint or notice) adds nothing, and an unchanged
+    # workflow state is never reported twice between two human messages; an
+    # escalation is keyed to its assignment so each decision in a burst lands.
+
+    def _turn_reported(self, feature_id: str, turn: Mapping[str, Any]) -> bool:
+        # A released and re-claimed update is a new turn: its claim moved updated_at.
+        return self._db.execute(
+            "SELECT 1 FROM fm_messages WHERE feature_id=? AND role='assistant' AND visibility=? "
+            "AND json_extract(metadata_json,'$.turn_id')=? AND created_at>=? LIMIT 1",
+            (feature_id, CONVERSATION, turn["id"], turn["updated_at"])).fetchone() is not None
+
+    @staticmethod
+    def _report_subject(turn: Mapping[str, Any]) -> str | None:
+        """The assignment an escalation is about; routine reports have none."""
+        if system_message_attention(turn) != "human":
+            return None
+        subject = (turn.get("metadata") or {}).get("assignment_id")
+        return subject if isinstance(subject, str) else None
+
+    def _stranded(self, feature: Mapping[str, Any], turn_id: str) -> bool:
+        """Nothing will move this stage again without the human."""
+        if feature["status"] not in {"running", "coordinating"}:
+            return False
+        if self._db.execute("SELECT 1 FROM fm_messages WHERE feature_id=? AND id<>? AND status IN ('queued','processing') LIMIT 1",
+                            (feature["id"], turn_id)).fetchone():
+            return False
+        if not feature["current_visit_id"]:
+            return True
+        active = ",".join("?" for _ in _ACTIVE_ASSIGNMENT_STATUSES)
+        return self._db.execute(
+            f"""SELECT 1 FROM fm_assignment_memberships m JOIN fm_assignments a ON a.id=m.assignment_id
+                WHERE m.visit_id=? AND m.revision=? AND a.status IN ({active}) LIMIT 1""",
+            (feature["current_visit_id"], feature["revision"], *_ACTIVE_ASSIGNMENT_STATUSES)).fetchone() is None
+
+    def _state_fingerprint(self, feature: Mapping[str, Any], subject: str | None = None) -> str:
+        """The workflow facts a human report describes, and nothing volatile."""
+        visit = self._db.execute("SELECT id,status,revision FROM fm_visits WHERE id=?",
+                                 (feature["current_visit_id"],)).fetchone() if feature["current_visit_id"] else None
+        assignments = self._db.execute(
+            """SELECT a.id,a.status,a.verdict,json_extract(a.metadata_json,'$.human_gate.id'),
+                      json_extract(a.metadata_json,'$.human_gate.status')
+               FROM fm_assignment_memberships m JOIN fm_assignments a ON a.id=m.assignment_id
+               WHERE m.visit_id=? AND m.revision=? ORDER BY a.id""",
+            (feature["current_visit_id"], feature["revision"])).fetchall() if visit else []
+        state = [feature["status"], feature["revision"], dict(visit) if visit else None,
+                 [list(row) for row in assignments], subject]
+        return hashlib.sha256(_json(state).encode()).hexdigest()[:24]
+
+    def _last_background_fingerprint(self, feature_id: str) -> str | None:
+        row = self._db.execute(
+            """SELECT json_extract(metadata_json,'$.state_fingerprint') FROM fm_messages
+               WHERE feature_id=? AND role='assistant' AND visibility=?
+                 AND json_extract(metadata_json,'$.origin')='background'
+                 AND created_at>COALESCE((SELECT max(created_at) FROM fm_messages
+                                          WHERE feature_id=? AND role IN ('user','human')),'')
+               ORDER BY created_at DESC,id DESC LIMIT 1""",
+            (feature_id, CONVERSATION, feature_id)).fetchone()
+        return row[0] if row else None
+
+    def _background_report(self, feature: Mapping[str, Any], turn: Mapping[str, Any]) -> tuple[bool, dict]:
+        if self._turn_reported(feature["id"], turn):
+            return False, {"reason": "reported_this_turn"}
+        if system_message_attention(turn) != "human" and not self._stranded(feature, turn["id"]):
+            return False, {"reason": "background_update"}
+        fingerprint = self._state_fingerprint(feature, self._report_subject(turn))
+        if fingerprint == self._last_background_fingerprint(feature["id"]):
+            return False, {"reason": "unchanged_state"}
+        return True, {"origin": "background", "state_fingerprint": fingerprint}
+
+    def notify_human(self, feature_id: str, turn_id: str, owner: str, text: str, request_id: str,
+                     *, native_session_id: str | None = None) -> dict:
+        """One brief report from a background turn: a decision, blocker, or deliverable."""
+        payload = {"turn_id": turn_id, "text": _text(text, "text")}
+        with self._transaction():
+            scope = f"notice:{feature_id}"
+            cached = self._receipt(scope, request_id, payload)
+            if cached is not None:
+                return cached
+            feature = self._one("fm_features", feature_id)
+            turn = self._one("fm_messages", turn_id)
+            if (turn["feature_id"] != feature_id or turn["status"] != "processing" or turn["owner"] != owner
+                    or feature["coordinator_owner"] != owner):
+                raise FirstMateError("Coordinator ownership changed", code="stale_owner")
+            if turn["role"] != "system":
+                raise FirstMateError("The human is waiting for your reply. Answer in your final message instead of a notice.",
+                                     code="notice_not_needed")
+            if self._turn_reported(feature_id, turn):
+                raise FirstMateError("This background turn already reported to the human. End the turn.",
+                                     code="notice_already_sent")
+            fingerprint = self._state_fingerprint(feature, self._report_subject(turn))
+            if fingerprint == self._last_background_fingerprint(feature_id):
+                raise FirstMateError("Nothing changed since your last update to the human. Do not repeat it; end the turn.",
+                                     code="notice_unchanged")
+            message = self._message(
+                feature_id, "assistant", text, status="done",
+                metadata={"notice": True, "turn_id": turn_id, "origin": "background",
+                          "state_fingerprint": fingerprint},
+                source={"source_kind": "notice", "in_reply_to": None,
+                        "visit_id": feature["current_visit_id"], "feature_revision": feature["revision"],
+                        "native_session_id": native_session_id})
+            self._event(feature_id, "coordinator.notice", "First Mate reported to the human",
+                        {"message_id": message["id"], "turn_id": turn_id})
+            return self._save_receipt(scope, request_id, payload, message)
 
     def release_message(self, message_id: str, owner: str, reason: str, *, verified_stopped: bool = False, request_id: str | None = None) -> dict:
         if not verified_stopped:
@@ -1425,9 +1664,13 @@ class FirstMateStore:
             event_payload = {"assignment_id": assignment_id, "generation": generation, "native_session_id": native_session_id, "input_revision": input_revision, "verdict": verdict, "code_revision": code_revision, "document_ids": [d["id"] for d in retained], "verification_run_ids": selected_runs}
             self._event(assignment["feature_id"], "assignment.outcome", summary, event_payload)
             # The owning lead resumes from durable child state and synthesizes its
-            # findings. Only its top-level outcome needs a First Mate turn.
+            # findings. Only its top-level outcome needs a First Mate turn, and
+            # that turn gets a pointer: the summary is already in router state.
             if not assignment["metadata"].get("parent_assignment_id"):
-                self._message(assignment["feature_id"], "system", f"{assignment['title']}: {summary}", metadata=event_payload)
+                self._message(assignment["feature_id"], "system",
+                              _outcome_notice(assignment["title"], verdict, summary, assignment_id,
+                                              event_payload["document_ids"]),
+                              metadata={**event_payload, "attention": "background"})
             result = {**self._one("fm_assignments", assignment_id), "has_outcome": True}
             return self._save_receipt(f"outcome:{assignment_id}", request_id, payload, result)
 
@@ -1643,7 +1886,8 @@ class FirstMateStore:
     def complete_visit(self, visit_id: str, summary: str, recommendation: str, request_id: str,
                        *, native_session_id: str | None = None,
                        verification: Mapping[str, Any] | None = None,
-                       selection: list[str] | None = None) -> dict:
+                       selection: list[str] | None = None,
+                       turn_id: str | None = None) -> dict:
         payload = {"summary": _text(summary, "summary"), "recommendation": _text(recommendation, "recommendation", optional=True),
                    "verification": self._stable_verification(verification),
                    "selection": list(selection) if selection is not None else None}
@@ -1661,6 +1905,9 @@ class FirstMateStore:
             continuing = bool(visit["followup_stages"])
             self._db.execute("UPDATE fm_features SET status=? WHERE id=?", ("coordinating" if continuing else "awaiting_direction", feature["id"]))
             message_metadata = {"visit_id": visit_id, "checkpoint": True}
+            if turn_id:
+                # The checkpoint is this turn's report; its closing reply is not.
+                message_metadata["turn_id"] = turn_id
             note = ""
             if verification and verification.get("evidence_present"):
                 self._save_verification_assessment(feature["id"], verification, visit_id=visit_id)
@@ -1681,17 +1928,21 @@ class FirstMateStore:
                 event_payload["verification"] = verification
             self._event(feature["id"], "visit.completed" if continuing else "visit.awaiting_direction", f"{visit['title']} complete. Continuing within the original direction." if continuing else f"{visit['title']} complete. Awaiting human direction.", event_payload)
             if continuing:
-                self._message(feature["id"], "system", f"The {visit['title']} stage finished with evidence. The original human direction authorized {visit['followup_stages'][0]} next. Inspect the completed visit and queued human updates; begin only that authorized stage if still appropriate. Do not treat this system update as new permission.")
+                self._message(feature["id"], "system", f"The {visit['title']} stage finished with evidence. The original human direction authorized {visit['followup_stages'][0]} next. Inspect the completed visit and queued human updates; begin only that authorized stage if still appropriate. Do not treat this system update as new permission.",
+                              metadata={"attention": "background", "visit_id": visit_id})
             return self._save_receipt(f"complete:{visit_id}", request_id, payload, self._one("fm_visits", visit_id))
 
-    def queue_system_message(self, feature_id: str, text: str, request_id: str) -> dict:
+    def queue_system_message(self, feature_id: str, text: str, request_id: str, *,
+                             attention: str = "human") -> dict:
+        if attention not in {"human", "background"}:
+            raise FirstMateError("Invalid system update attention", code="invalid_request", status=400)
         payload = {"text": _text(text, "text")}
         with self._transaction():
             self._one("fm_features", feature_id)
             cached = self._receipt(f"system_message:{feature_id}", request_id, payload)
             if cached is not None:
                 return cached
-            message = self._message(feature_id, "system", text)
+            message = self._message(feature_id, "system", text, metadata={"attention": attention})
             self._event(feature_id, "message.queued", "Background update queued", {"message_id": message["id"]})
             return self._save_receipt(f"system_message:{feature_id}", request_id, payload, message)
 
@@ -1942,7 +2193,7 @@ class FirstMateStore:
                 self._db.execute("UPDATE fm_attempts SET status='interrupted',summary=?,updated_at=? WHERE assignment_id=? AND generation=?", (reason, _now(), stopped_assignment_id, stopped_generation))
                 self._db.execute("UPDATE fm_sessions SET status='retained',updated_at=? WHERE assignment_id=? AND generation=?", (_now(), stopped_assignment_id, stopped_generation))
             self._db.execute("UPDATE fm_features SET status='blocked',updated_at=? WHERE id=?", (_now(), feature_id))
-            self._message(feature_id, "system", "Automatic recovery needs direction: " + reason)
+            self._message(feature_id, "system", "Automatic recovery needs direction: " + reason, metadata={"attention": "human"})
             self._event(feature_id, "reliability.blocked", reason, {"revision": revision})
             return self._save_receipt(f"reliability_block:{feature_id}", request_id, payload, self._one("fm_features", feature_id))
 
@@ -1963,7 +2214,7 @@ class FirstMateStore:
             self._db.execute("UPDATE fm_attempts SET status='human_checkpoint',summary=?,updated_at=? WHERE assignment_id=? AND generation=?", (reason, now, assignment_id, generation))
             # The executor remains active until its observed stop is acknowledged.
             self._db.execute("UPDATE fm_features SET status='awaiting_direction' WHERE id=?", (assignment["feature_id"],))
-            self._message(assignment["feature_id"], "system", "Human checkpoint: " + reason, metadata={"assignment_id": assignment_id, "human_gate": gate})
+            self._message(assignment["feature_id"], "system", "Human checkpoint: " + reason, metadata={"assignment_id": assignment_id, "human_gate": gate, "attention": "human"})
             self._event(assignment["feature_id"], "assignment.awaiting_human", reason, {"assignment_id": assignment_id, "human_gate": gate})
             return self._save_receipt(f"human_gate:{assignment_id}", request_id, payload, self._one("fm_assignments", assignment_id))
 
@@ -2035,7 +2286,7 @@ class FirstMateStore:
             self._db.execute("UPDATE fm_assignments SET status=?,owner=NULL,prompt=?,verdict=NULL,metadata_json=?,updated_at=? WHERE id=?", (status, prompt, _json(merged), _now(), assignment_id))
             if status == "blocked":
                 self._db.execute("UPDATE fm_features SET status='blocked' WHERE id=?", (feature["id"],))
-                self._message(feature["id"], "system", "Internal repair limit reached. Awaiting human direction.", metadata={"assignment_id": assignment_id, "repair_count": repair_count})
+                self._message(feature["id"], "system", "Internal repair limit reached. Awaiting human direction.", metadata={"assignment_id": assignment_id, "repair_count": repair_count, "attention": "human"})
             self._event(feature["id"], "assignment.retry_queued" if status == "queued" else "assignment.repair_exhausted", "Internal repair queued" if status == "queued" else "Internal repair limit reached", {"assignment_id": assignment_id, "repair_count": repair_count, "previous_verdict": assignment["verdict"], "metadata": merged})
             return self._save_receipt(f"retry:{assignment_id}", request_id, payload, self._one("fm_assignments", assignment_id))
 
@@ -2103,7 +2354,8 @@ class FirstMateStore:
                 assignment["feature_id"], "system", reason,
                 metadata={"assignment_id": assignment_id,
                           "generation": generation,
-                          "model_profile": metadata.get("model_profile")},
+                          "model_profile": metadata.get("model_profile"),
+                          "attention": "human"},
             )
             self._event(
                 assignment["feature_id"], "assignment.configuration_blocked", reason,
@@ -2185,7 +2437,7 @@ class FirstMateStore:
                 self._db.execute(f"UPDATE fm_features SET status='running' WHERE id=? AND status IN {resumable} AND NOT EXISTS (SELECT 1 FROM fm_assignments WHERE feature_id=? AND status='recovering')", (assignment["feature_id"], assignment["feature_id"]))
             if status == "blocked":
                 self._db.execute("UPDATE fm_features SET status='blocked' WHERE id=?", (assignment["feature_id"],))
-                self._message(assignment["feature_id"], "system", "Recovery limit reached. Do not repeat recover. A new human direction can reset the budget with fm_recover(reset_budget=true), or replace work with fm_revise. " + reason, metadata={"assignment_id": assignment_id, "recovery_count": count})
+                self._message(assignment["feature_id"], "system", "Recovery limit reached. Do not repeat recover. A new human direction can reset the budget with fm_recover(reset_budget=true), or replace work with fm_revise. " + reason, metadata={"assignment_id": assignment_id, "recovery_count": count, "attention": "human"})
             self._event(assignment["feature_id"], "assignment.recovery_queued" if status == "queued" else "assignment.recovery_exhausted", reason, {"assignment_id": assignment_id, "generation": generation, "recovery_count": count})
             return self._save_receipt(f"recover:{assignment_id}", request_id, payload, self._one("fm_assignments", assignment_id))
 
@@ -2268,7 +2520,12 @@ class FirstMateStore:
             self._event(assignment["feature_id"], "assignment.stopped", reason, {"assignment_id": assignment_id, "generation": generation, "status": status})
             return self._save_receipt(f"stopped:{assignment_id}", request_id, payload, self._one("fm_assignments", assignment_id))
 
-    def mark_dispatch_unknown(self, assignment_id: str, generation: int, reason: str, request_id: str) -> dict:
+    def mark_dispatch_unknown(self, assignment_id: str, generation: int, reason: str, request_id: str,
+                              *, attention: str = "human") -> dict:
+        """attention="background" when automatic recovery will assess the stop
+        first; it escalates through block_reliability if it cannot continue."""
+        if attention not in {"human", "background"}:
+            raise FirstMateError("Invalid system update attention", code="invalid_request", status=400)
         payload = {"generation": generation, "reason": _text(reason, "reason")}
         with self._transaction():
             cached = self._receipt(f"dispatch_unknown:{assignment_id}", request_id, payload)
@@ -2280,7 +2537,7 @@ class FirstMateStore:
             self._db.execute("UPDATE fm_assignments SET status='recovering',summary=?,updated_at=? WHERE id=?", (reason, _now(), assignment_id))
             self._db.execute("UPDATE fm_features SET status='recovering' WHERE id=? AND status NOT IN ('paused','cancelled','completed')", (assignment["feature_id"],))
             self._db.execute("UPDATE fm_attempts SET status='unknown',summary=?,updated_at=? WHERE assignment_id=? AND generation=?", (reason, _now(), assignment_id, generation))
-            self._message(assignment["feature_id"], "system", reason + " Work and saved sessions are retained. Ask the human for recovery direction; do not silently replay uncertain side effects.", metadata={"assignment_id": assignment_id, "generation": generation})
+            self._message(assignment["feature_id"], "system", reason + " Work and saved sessions are retained. Ask the human for recovery direction; do not silently replay uncertain side effects.", metadata={"assignment_id": assignment_id, "generation": generation, "attention": attention})
             self._event(assignment["feature_id"], "assignment.dispatch_unknown", reason, {"assignment_id": assignment_id, "generation": generation, "dispatch_id": assignment["dispatch_id"], "replay_allowed": False})
             return self._save_receipt(f"dispatch_unknown:{assignment_id}", request_id, payload, self._one("fm_assignments", assignment_id))
 

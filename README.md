@@ -361,7 +361,12 @@ recorded workflow; Agents and Documents open the evidence behind each visit.
 On Mac, use the **Chat / Git** control above the feature to open its full-width
 Git workbench. The workspace picker defaults to the project checkout and lists
 only exact worktrees recorded for that feature's assignments; see
-[First Mate Git](docs/first-mate/git.md). Completed Mac responses can be rated
+[First Mate Git](docs/first-mate/git.md). The chat stays a conversation with
+the feature's lead developer: your direction, its replies, one result per stage,
+and a message only when it needs you. Worker outcomes and other background turns
+go to **Overview → Journal**; this needs a companion advertising
+`first-mate-quiet-chat-v1` (see [what reaches the chat](docs/first-mate/conversation.md)).
+Completed Mac responses can be rated
 thumbs up or thumbs down; that feedback surface needs a companion advertising
 `first-mate-feedback-v1` (installed separately) and is documented in
 [response feedback](docs/first-mate/response-feedback.md).

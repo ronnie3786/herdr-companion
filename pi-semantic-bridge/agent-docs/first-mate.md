@@ -17,9 +17,18 @@ Managed roles receive typed `fm_*` tools scoped to their validated feature/job:
 
 | Role | Typed workflow tools |
 | --- | --- |
-| Coordinator | `fm_status`, `fm_delegate`, `fm_begin_stage`, `fm_recover`, `fm_resolve_gate`, `fm_steer`, `fm_retry`, `fm_complete_stage`, `fm_revise`, `fm_finish_feature`, `fm_read_document`, `fm_read_session`, `fm_save_link` |
+| Coordinator | `fm_status`, `fm_delegate`, `fm_begin_stage`, `fm_recover`, `fm_resolve_gate`, `fm_steer`, `fm_retry`, `fm_complete_stage`, `fm_notify_human`, `fm_revise`, `fm_finish_feature`, `fm_read_document`, `fm_read_session`, `fm_save_link` |
 | Worker | `fm_status`, `fm_delegate`, `fm_retry`, `fm_wait_for_children`, `fm_outcome`, `fm_record_verification`, `fm_handoff`, `fm_acknowledge_handoff`, `fm_progress`, `fm_acknowledge_recovery`, `fm_request_human`, `fm_read_document`, `fm_read_session`, `fm_save_link` |
 | Advisor | `fm_status`, `fm_advice`, `fm_recovery_brief`, `fm_read_document`, `fm_read_session` |
+
+The coordinator is the feature's lead developer; the human reads only a short
+conversation. On a human turn, the final message is the reply. On a background
+turn (worker outcome, authorized follow-up, stability sweep), the final message is
+a private journal note. `fm_complete_stage` posts the stage result, which is the
+report and is limited to four short sentences (1,200 characters). Use
+`fm_notify_human` at most once per background turn, and only for a decision,
+blocker, or finished deliverable the human must see now. Never narrate progress
+or repeat an unchanged state.
 
 Use `fm_delegate`, never unmanaged Pi subprocesses. Do not poll: service code
 watches assignments and resumes the correct saved conversation. An agent exit or

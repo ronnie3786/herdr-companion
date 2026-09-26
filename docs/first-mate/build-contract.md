@@ -16,7 +16,7 @@ Root prefix `/api/v1/first-mate`, authenticated with normal companion read/contr
 
 - GET `/features`: `{ok:true,features:[feature]}`
 - POST `/features`: `{title,goal,cwd,request_id,work_item_id?}` -> `{ok:true,feature}`
-- GET `/features/{id}`: `{ok:true,feature,visits,assignments,documents,messages,events,handoffs,memberships,sessions,sessions_truncated,event_cursor?}`. Optional `?events=journal` omits `pi.*` telemetry events; see “Agent view board extension”.
+- GET `/features/{id}`: `{ok:true,feature,visits,assignments,documents,messages,events,handoffs,memberships,sessions,sessions_truncated,event_cursor?}`. Optional `?events=journal` omits `pi.*` telemetry events; see “Agent view board extension”. With `first-mate-quiet-chat-v1`, every message carries `visibility` (`conversation` or `background`); clients render only `conversation` rows with role `user`, `human`, or `assistant`. The board's `messages` and `messages_total`, and the feature summary's latest message and parked-turn flag, count only `conversation` rows.
 - POST `/features/{id}/messages`: `{text,request_id}` -> `{ok:true,message,feature}` immediately after durable queueing. This acknowledgment is partial; clients fetch feature detail separately.
 - POST `/features/{id}/actions`: `{action,request_id,expected_revision?}` for pause/resume/cancel. No HTTP action bypasses a human gate; demo scenario advancement is local to the synthetic native fixture.
 - GET `/features/{id}/events?after=0`: `{ok:true,events,cursor}`
@@ -311,6 +311,17 @@ use `package/suite` plus the configuration when present.
 - Worker `fm_outcome` accepts `verification_run_ids`: only runs recorded by
   this execution and feature are retained. Unknown IDs are `not_found`; a run
   from another execution or feature is `verification_scope_mismatch`.
+- Coordinator `fm_notify_human` accepts exactly `text` (at most 600
+  characters) and only on a background (system) turn: it posts one assistant
+  message with `metadata.notice`, `turn_id`, `origin: "background"`, and a
+  workflow `state_fingerprint`. A second notice in the same turn is
+  `notice_already_sent` (a released and re-claimed update is a new turn), a
+  human turn is `notice_not_needed`, and a notice whose state fingerprint (plus
+  the assignment of an escalation turn) matches the last background report since
+  the human's latest message is `notice_unchanged`. `fm_complete_stage` refuses a summary over 1,200
+  characters or a recommendation over 400 with `report_too_long`; a committed
+  completion still replays from its receipt. See
+  [what reaches the chat](conversation.md).
 - Coordinator `fm_complete_stage` and `fm_finish_feature` accept
   `verification_run_ids`. When omitted, the selection is the current visit's
   outcome-referenced runs, then that visit's recorded runs, then every retained

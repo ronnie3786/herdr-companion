@@ -137,6 +137,37 @@ test("coordinator exposes evidence and orchestration while normal tools remain u
   } finally { f.cleanup(); }
 });
 
+test("only the coordinator can report to the human from a background turn", async () => {
+  const f = fixture("coordinator");
+  try {
+    const notify = f.tools.get("fm_notify_human");
+    assert.ok(notify);
+    assert.deepEqual(Object.keys(notify.parameters.properties), ["text"]);
+    assert.match(notify.description, /background turn only/);
+    assert.match(notify.description, /private journal note/);
+    assert.match(f.tools.get("fm_complete_stage").description, /at most four short sentences \(1,200 characters\)/);
+    assert.equal(f.handlers.get("tool_call")({toolName:"fm_notify_human"}), undefined);
+    const pending = notify.execute("notice-call", {text:"Draft PR #7 is ready for your review."}, undefined, undefined, f.ctx);
+    let requests = [];
+    for (let attempt = 0; attempt < 50 && !requests.length; attempt++) {
+      requests = readdirSync(join(f.root, "requests"));
+      if (!requests.length) await new Promise((done) => setTimeout(done, 10));
+    }
+    const request = JSON.parse(readFileSync(join(f.root, "requests", requests[0]), "utf8"));
+    assert.equal(request.action, "fm_notify_human");
+    assert.deepEqual(request.params, {text:"Draft PR #7 is ready for your review."});
+    writeFileSync(join(f.root, "responses", requests[0]), JSON.stringify({ok:true, result:{id:"fmm_notice"}}));
+    assert.deepEqual((await pending).details, {id:"fmm_notice"});
+  } finally { f.cleanup(); }
+  for (const role of ["worker", "advisor"]) {
+    const other = fixture(role);
+    try {
+      assert.ok(!other.tools.has("fm_notify_human"));
+      assert.equal(other.handlers.get("tool_call")({toolName:"fm_notify_human"}).block, true);
+    } finally { other.cleanup(); }
+  }
+});
+
 test("writable workers retain execution and detailed evidence capabilities", () => {
   const f = fixture("worker", {workspace_mode:"isolated"});
   try {

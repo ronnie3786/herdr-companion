@@ -31,6 +31,12 @@ On iPad, the feature list stays in a sidebar and an inspector uses the available
 space. First Mate supports System, Light, and Dark appearance from its options
 menu. It uses scalable text and native scrolling and navigation.
 
+The conversation holds only your messages and First Mate's replies, stage
+results, and requests for your direction, as on Mac. Background activity,
+including First Mate's private notes, appears under Overview's **Latest in the
+journal** and in Workflow's activity log. This needs a companion advertising
+`first-mate-quiet-chat-v1`; see [what reaches the chat](conversation.md).
+
 Workflow offers a journal and a graphical route through recorded stages. Each
 stage exposes its documents and agents through compact controls. Open an agent
 to read its exact saved Pi session, including retained sessions from handoffs.

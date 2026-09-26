@@ -5,7 +5,7 @@ enum FirstMateQuoteEligibility {
     /// active feature are quotable. User and older messages remain copyable.
     static func messageIDs(in messages: [FirstMateMessage]) -> Set<String> {
         Set(messages.reversed().lazy.filter {
-            $0.role == "assistant"
+            $0.role == "assistant" && $0.isConversation
                 && ["delivered", "completed", "complete"].contains($0.status)
                 && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }.prefix(3).map(\.id))

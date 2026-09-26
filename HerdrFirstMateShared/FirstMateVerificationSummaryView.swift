@@ -49,37 +49,37 @@ struct FirstMateVerificationSummaryView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(title)
-                    .font(.headline)
+                    .summaryFont(.headline)
                     .accessibilityAddTraits(.isHeader)
                 Spacer(minLength: 8)
                 if isLastReported { lastReportedBadge }
             }
             statusLine
             Text("This evidence is separate from the feature's workflow status.")
-                .font(.footnote)
+                .summaryFont(.footnote)
                 .foregroundStyle(.secondary)
             if let tested = presentation.testedRevisionText {
                 Text(tested)
-                    .font(.footnote)
+                    .summaryFont(.footnote)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .accessibilityLabel(presentation.testedRevisionAccessibilityText ?? tested)
             }
             if presentation.statusWasDowngraded {
                 Label("This companion reported Verified without a complete gate set and tested revision; it is not treated as verified.", systemImage: "exclamationmark.triangle")
-                    .font(.footnote)
+                    .summaryFont(.footnote)
                     .foregroundStyle(FirstMateVerificationPalette.color(for: .caution, scheme: scheme))
                     .fixedSize(horizontal: false, vertical: true)
             }
             if isLastReported {
                 Label(presentation.lastReportedNote, systemImage: "wifi.slash")
-                    .font(.footnote)
+                    .summaryFont(.footnote)
                     .foregroundStyle(FirstMateVerificationPalette.color(for: .caution, scheme: scheme))
                     .fixedSize(horizontal: false, vertical: true)
             }
             if presentation.hasUnrecognizedStatus {
                 Label("This companion reported an unrecognized verification status (\(presentation.status.rawValue)); it is not treated as verified.", systemImage: "questionmark.circle")
-                    .font(.footnote)
+                    .summaryFont(.footnote)
                     .foregroundStyle(FirstMateVerificationPalette.color(for: .unavailable, scheme: scheme))
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -103,7 +103,7 @@ struct FirstMateVerificationSummaryView: View {
                 if !presentation.staleEvidence.isEmpty { staleEvidenceSection }
             } else {
                 Text(presentation.unavailableNote)
-                    .font(.footnote)
+                    .summaryFont(.footnote)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -119,7 +119,7 @@ struct FirstMateVerificationSummaryView: View {
             Image(systemName: presentation.statusSymbol)
                 .accessibilityHidden(true)
             Text(presentation.statusTitle)
-                .font(.subheadline.weight(.semibold))
+                .summaryFont(.subheadline, weight: .semibold)
             Spacer(minLength: 0)
         }
         .foregroundStyle(FirstMateVerificationPalette.color(for: presentation.statusTone, scheme: scheme))
@@ -130,7 +130,7 @@ struct FirstMateVerificationSummaryView: View {
 
     private var lastReportedBadge: some View {
         Text("Last reported")
-            .font(.caption.weight(.semibold))
+            .summaryFont(.caption, weight: .semibold)
             .foregroundStyle(FirstMateVerificationPalette.color(for: .caution, scheme: scheme))
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
@@ -145,7 +145,7 @@ struct FirstMateVerificationSummaryView: View {
         VStack(alignment: .leading, spacing: 5) {
             ForEach(Array(presentation.coverageReasons.enumerated()), id: \.offset) { _, reason in
                 Label(reason, systemImage: "exclamationmark.triangle")
-                    .font(.footnote)
+                    .summaryFont(.footnote)
                     .foregroundStyle(FirstMateVerificationPalette.color(for: .caution, scheme: scheme))
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -155,12 +155,12 @@ struct FirstMateVerificationSummaryView: View {
     private var staleEvidenceSection: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text("Stale evidence (\(presentation.staleEvidence.count))")
-                .font(.subheadline.weight(.semibold))
+                .summaryFont(.subheadline, weight: .semibold)
             ForEach(Array(presentation.staleEvidence.enumerated()), id: \.offset) { _, evidence in
                 let revision = evidence.testedRevision.map(FirstMateVerificationPresentation.shortRevision)
                     ?? "unknown revision"
                 Text("\(revision) · \(evidence.reason ?? "no longer current")")
-                    .font(.footnote)
+                    .summaryFont(.footnote)
                     .foregroundStyle(FirstMateVerificationPalette.color(for: .caution, scheme: scheme))
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
@@ -175,14 +175,14 @@ struct FirstMateVerificationSummaryView: View {
         let accent = FirstMateVerificationPalette.color(for: tone ?? .unavailable, scheme: scheme)
         VStack(alignment: .leading, spacing: 6) {
             Text(heading)
-                .font(.subheadline.weight(.semibold))
+                .summaryFont(.subheadline, weight: .semibold)
                 .foregroundStyle(tone == nil ? .secondary : accent)
             suiteRows(Array(suites.prefix(Self.collapsedSuiteLimit)))
             if suites.count > Self.collapsedSuiteLimit {
                 DisclosureGroup("Show the remaining \(suites.count - Self.collapsedSuiteLimit) of \(suites.count)") {
                     suiteRows(Array(suites.dropFirst(Self.collapsedSuiteLimit)))
                 }
-                .font(.footnote)
+                .summaryFont(.footnote)
             }
         }
         .accessibilityElement(children: .contain)
@@ -193,17 +193,17 @@ struct FirstMateVerificationSummaryView: View {
         ForEach(Array(suites.enumerated()), id: \.offset) { _, suite in
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(systemName: outcomeSymbol(suite))
-                    .font(.caption)
+                    .summaryFont(.caption)
                     .foregroundStyle(outcomeColor(suite))
                     .accessibilityHidden(true)
                 Text(suite.displayLabel)
-                    .font(.footnote)
+                    .summaryFont(.footnote)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
                 if let outcomeTitle = suite.outcomeTitle {
                     Text(outcomeTitle)
-                        .font(.caption)
+                        .summaryFont(.caption)
                         .foregroundStyle(outcomeColor(suite))
                         .fixedSize(horizontal: true, vertical: false)
                 }
@@ -222,5 +222,23 @@ struct FirstMateVerificationSummaryView: View {
         if suite.isPassing { return FirstMateVerificationPalette.color(for: .positive, scheme: scheme) }
         if suite.isFailing { return FirstMateVerificationPalette.color(for: .negative, scheme: scheme) }
         return FirstMateVerificationPalette.color(for: .unavailable, scheme: scheme)
+    }
+}
+
+/// Mono sizes on the Mac (through the font-scale preference); iOS keeps its
+/// text styles.
+private extension View {
+    func summaryFont(_ style: Font.TextStyle, weight: Font.Weight? = nil) -> some View {
+        #if os(macOS)
+        let size: CGFloat = switch style {
+        case .title3: 14
+        case .headline: 13
+        case .subheadline: 12
+        default: 11
+        }
+        return herdrFont(size: size, weight: weight ?? (style == .headline ? .semibold : nil))
+        #else
+        return font(weight.map { Font.system(style).weight($0) } ?? Font.system(style))
+        #endif
     }
 }

@@ -91,7 +91,7 @@ struct FirstMateMarkdownContentTests {
     }
 
     private func luminance(_ color: Color) throws -> Double {
-        let rgb = try #require(NSColor(color).usingColorSpace(.sRGB))
+        let rgb = HerdrTheme.resolved(color)
         func linear(_ channel: Double) -> Double {
             channel <= 0.04045 ? channel / 12.92 : pow((channel + 0.055) / 1.055, 2.4)
         }

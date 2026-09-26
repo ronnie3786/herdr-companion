@@ -6,12 +6,14 @@ enum HerdrNoteColor: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var id: String { rawValue }
 
+    /// Literal pastels: notes render in the light scheme, where the status
+    /// roles resolve to their deepened light hues.
     var fill: Color {
         switch self {
-        case .yellow: HerdrTheme.working
+        case .yellow: Color(red: 0xE4 / 255, green: 0xC3 / 255, blue: 0x86 / 255)
         case .peach: Color(red: 0.8745, green: 0.7020, blue: 0.6078)
         case .pink: Color(red: 0.8471, green: 0.6980, blue: 0.7922)
-        case .green: HerdrTheme.signal
+        case .green: Color(red: 0x9C / 255, green: 0xCD / 255, blue: 0xB9 / 255)
         case .blue: HerdrTheme.brandBlue
         case .lavender: Color(red: 0.7333, green: 0.7059, blue: 0.8941)
         }

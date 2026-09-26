@@ -210,12 +210,14 @@ struct WorkspaceNavigationView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .overlay(alignment: .top) { sidebarHeader }
+        .overlayPreferenceValue(HerdrRailHeaderActionsKey.self, alignment: .top) { actions in
+            sidebarHeader(actions: actions)
+        }
     }
 
     /// The rail's 40pt header: room for the traffic lights, the context's
     /// name, and the sidebar toggle.
-    private var sidebarHeader: some View {
+    private func sidebarHeader(actions: AnyView?) -> some View {
         HStack(spacing: 7) {
             switch shell.detailScope {
             case .firstMate:
@@ -235,6 +237,9 @@ struct WorkspaceNavigationView: View {
                 Text("herdr")
             }
             Spacer(minLength: 4)
+            if let actions {
+                HStack(spacing: 2) { actions }
+            }
             sidebarToggleButton
         }
         .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)

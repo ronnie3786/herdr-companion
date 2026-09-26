@@ -195,7 +195,7 @@ private struct RenderRGB: Equatable, CustomStringConvertible {
 }
 
 private func rgb(_ color: Color) throws -> RenderRGB {
-    let converted = try #require(NSColor(color).usingColorSpace(.sRGB))
+    let converted = HerdrTheme.resolved(color)
     return RenderRGB(
         red: converted.redComponent,
         green: converted.greenComponent,

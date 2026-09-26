@@ -15,39 +15,11 @@ struct HerdrHudComposerView: View {
     @Environment(\.herdrFontScale) private var fontScale
     @State private var composerWidth: CGFloat = .infinity
     @State private var editorTarget = ComposerEditorTarget()
+    @State private var isShowingAddMenu = false
+    @Environment(\.composerAddMenuInitiallyPresented) private var addMenuInitiallyPresented
 
     var body: some View {
-        VStack(spacing: 7) {
-            HStack(spacing: 12) {
-                HerdrHudModelChip(
-                    currentSelectionID: session.selectedModel,
-                    availableModels: session.availableModels,
-                    defaultModel: session.defaultModel,
-                    isLoading: session.isLoadingModels,
-                    errorMessage: session.modelsError,
-                    favorites: session.modelFavorites,
-                    defaultChoiceTitle: session.isNewChat ? "Machine default" : "Default",
-                    selectModel: { session.setSelectedModel($0) },
-                    retry: { Task { await session.loadModels(model: model) } }
-                )
-                PiThinkingLevelChip(
-                    currentLevel: session.selectedThinkingLevel.rawValue,
-                    isSetting: false,
-                    isEnabled: true,
-                    isInteractive: true,
-                    selectLevel: { session.selectedThinkingLevel = $0 }
-                )
-                .accessibilityIdentifier("hud-thinking")
-                .help("Thinking level for the next HUD prompt")
-                .layoutPriority(1)
-                Spacer(minLength: 4)
-                if let thread = session.thread {
-                    Text("Thread · \(thread.turnCount) turns")
-                        .herdrFont(.caption2)
-                        .foregroundStyle(HerdrTheme.muted)
-                        .lineLimit(1)
-                }
-            }
+        VStack(spacing: 6) {
             if session.isNewChat {
                 HerdrHudWorkspaceCreationView(model: model, session: session)
             }
@@ -59,87 +31,84 @@ struct HerdrHudComposerView: View {
             }
             if let voiceErrorMessage, !voiceErrorMessage.isEmpty {
                 Text(voiceErrorMessage)
-                    .herdrFont(.caption)
+                    .herdrFont(size: HerdrTheme.TextSize.small)
                     .foregroundStyle(HerdrTheme.alert)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             VStack(spacing: 0) {
                 composerInput
                 composerActionsLayout {
-                    HStack(spacing: 2) {
-                        Button {
-                            isShowingFilePicker = true
-                        } label: {
-                            Label("Attach", systemImage: "paperclip")
-                                .frame(minHeight: HerdrTheme.minHitTarget)
-                                .padding(.horizontal, 6)
-                        }
-                        .help("Attach files to this prompt")
-                        .accessibilityLabel("Attach file")
-                        .accessibilityIdentifier("hud-attach-file")
+                    // MonoCode's tool row: +, voice, the model + effort pill.
+                    HStack(spacing: 4) {
+                        addMenuButton
 
-                        Button(action: pasteCodeBlock) {
-                            Label("Paste code", systemImage: "chevron.left.forwardslash.chevron.right")
-                                .frame(minHeight: HerdrTheme.minHitTarget)
-                                .padding(.horizontal, 6)
-                        }
-                        .help("Append clipboard as a fenced code block (⌘⇧V in the prompt)")
-                        .accessibilityLabel("Paste code block")
-                        .accessibilityIdentifier("hud-code-block-paste")
+                        Button(isVoiceCaptureActive ? "Finish" : "Voice", systemImage: isVoiceCaptureActive ? "stop.fill" : "mic", action: toggleVoiceCapture)
+                            .buttonStyle(HerdrIconButtonStyle(tint: isVoiceCaptureActive ? HerdrTheme.alert : HerdrTheme.iconTint))
+                            .disabled(quickVoiceCapture.phase == .transcribing)
+                            .help(voiceCaptureAccessibilityLabel)
+                            .accessibilityLabel(voiceCaptureAccessibilityLabel)
+                            .accessibilityIdentifier("hud-mic")
 
-                        Button(action: toggleVoiceCapture) {
-                            Label(isVoiceCaptureActive ? "Finish" : "Voice", systemImage: isVoiceCaptureActive ? "stop.fill" : "mic")
-                                .frame(minHeight: HerdrTheme.minHitTarget)
-                                .padding(.horizontal, 6)
+                        PiModelEffortPill {
+                            HerdrHudModelChip(
+                                currentSelectionID: session.selectedModel,
+                                availableModels: session.availableModels,
+                                defaultModel: session.defaultModel,
+                                isLoading: session.isLoadingModels,
+                                errorMessage: session.modelsError,
+                                favorites: session.modelFavorites,
+                                defaultChoiceTitle: session.isNewChat ? "Machine default" : "Default",
+                                selectModel: { session.setSelectedModel($0) },
+                                retry: { Task { await session.loadModels(model: model) } }
+                            )
+                        } effort: {
+                            PiThinkingLevelChip(
+                                currentLevel: session.selectedThinkingLevel.rawValue,
+                                isSetting: false,
+                                isEnabled: true,
+                                isInteractive: true,
+                                selectLevel: { session.selectedThinkingLevel = $0 },
+                                style: .segment
+                            )
+                            .accessibilityIdentifier("hud-thinking")
+                            .help("Thinking level for the next HUD prompt")
                         }
-                        .foregroundStyle(isVoiceCaptureActive ? HerdrTheme.alert : HerdrTheme.mist)
-                        .disabled(quickVoiceCapture.phase == .transcribing)
-                        .help(voiceCaptureAccessibilityLabel)
-                        .accessibilityLabel(voiceCaptureAccessibilityLabel)
-                        .accessibilityIdentifier("hud-mic")
                     }
-                    .buttonStyle(.plain)
-                    .herdrFont(.caption)
-                    .foregroundStyle(HerdrTheme.mist)
-                    .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
 
-                    HStack(spacing: 0) {
+                    HStack(spacing: 8) {
                         Spacer(minLength: 4)
-                        Button(action: submit) {
-                            Image(systemName: "arrow.up")
-                                .herdrFont(.headline, weight: .semibold)
-                                .foregroundStyle(HerdrTheme.ink)
-                                .frame(width: 30, height: 30)
-                                .background(HerdrTheme.primaryAction, in: .rect(cornerRadius: HerdrTheme.compactRadius))
-                                .opacity(canSubmit ? 1 : 0.45)
+                        if let thread = session.thread {
+                            Text("Thread · \(thread.turnCount) turns")
+                                .herdrFont(size: HerdrTheme.TextSize.caption)
+                                .foregroundStyle(HerdrTheme.tertiaryText)
+                                .lineLimit(1)
                         }
-                        .buttonStyle(.plain)
-                        .disabled(!canSubmit)
-                        .help("Send prompt. Return sends; modified Return inserts a new line.")
-                        .accessibilityLabel("Send HUD prompt")
-                        .accessibilityIdentifier("hud-send")
+                        Button("Send HUD prompt", systemImage: "arrow.up", action: submit)
+                            .buttonStyle(HerdrPrimarySquareButtonStyle())
+                            .disabled(!canSubmit)
+                            .help("Send prompt. Return sends; modified Return inserts a new line.")
+                            .accessibilityLabel("Send HUD prompt")
+                            .accessibilityIdentifier("hud-send")
                     }
                 }
                 .padding(.horizontal, 8)
-                .padding(.bottom, 7)
+                .padding(.bottom, 8)
             }
-            .background(HerdrTheme.input, in: .rect(cornerRadius: 9))
+            .background(HerdrTheme.cardFill, in: .rect(cornerRadius: HerdrTheme.Radius.composer))
             .overlay {
-                RoundedRectangle(cornerRadius: 9)
-                    .strokeBorder(isComposerFocused ? HerdrTheme.accent : HerdrTheme.separator, lineWidth: 1)
+                RoundedRectangle(cornerRadius: HerdrTheme.Radius.composer)
+                    .strokeBorder(isComposerFocused ? HerdrTheme.focusOutline : HerdrTheme.outline, lineWidth: 1)
             }
-            .clipShape(.rect(cornerRadius: 9))
+            .clipShape(.rect(cornerRadius: HerdrTheme.Radius.composer))
         }
         .onGeometryChange(for: CGFloat.self) { geometry in
             geometry.size.width
         } action: { width in
             composerWidth = width
         }
-        .padding(.horizontal, 17)
-        .padding(.top, 8)
-        .padding(.bottom, 10)
-        .background(HerdrTheme.graphite)
+        .padding(.horizontal, 6)
+        .padding(.top, 6)
         .fileImporter(
             isPresented: $isShowingFilePicker,
             allowedContentTypes: [.image, .pdf, .text, .sourceCode, .json, .commaSeparatedText, .data],
@@ -154,6 +123,9 @@ struct HerdrHudComposerView: View {
         }
         .task(id: controller.focusRequest) {
             isComposerFocused = true
+        }
+        .onAppear {
+            if addMenuInitiallyPresented { isShowingAddMenu = true }
         }
         .onDisappear {
             quickVoiceCapture.cancel()
@@ -175,7 +147,7 @@ struct HerdrHudComposerView: View {
         VStack(alignment: .leading, spacing: 6) {
             if let message = session.workspaceLaunchRecoveryMessage {
                 Label(message, systemImage: "exclamationmark.triangle.fill")
-                    .herdrFont(.caption)
+                    .herdrFont(size: HerdrTheme.TextSize.small)
                     .foregroundStyle(HerdrTheme.alert)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("hud-workspace-recovery-message")
@@ -192,10 +164,35 @@ struct HerdrHudComposerView: View {
                 Button("Start over") { controller.discardWorkspaceLaunch(session, model: model) }
                     .accessibilityIdentifier("hud-workspace-discard")
             }
-            .buttonStyle(.bordered)
-            .herdrFont(.caption)
+            .buttonStyle(HerdrButtonStyle(kind: .outline))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var addMenuButton: some View {
+        Button("Add to prompt", systemImage: "plus") {
+            isShowingAddMenu.toggle()
+        }
+        .buttonStyle(HerdrIconButtonStyle(isActive: isShowingAddMenu, restingFill: HerdrTheme.selectedFill))
+        .help("Attach files or paste code")
+        .accessibilityValue(isShowingAddMenu ? "Expanded" : "Collapsed")
+        .accessibilityIdentifier("hud-composer-add")
+        .popover(isPresented: $isShowingAddMenu, arrowEdge: .top) {
+            ComposerAddMenuContent(
+                showsAttach: true,
+                canPasteCode: true,
+                attach: {
+                    isShowingAddMenu = false
+                    isShowingFilePicker = true
+                },
+                pasteCode: {
+                    isShowingAddMenu = false
+                    pasteCodeBlock()
+                },
+                attachIdentifier: "hud-attach-file",
+                pasteIdentifier: "hud-code-block-paste"
+            )
+        }
     }
 
     private func pasteCodeBlock() {
@@ -243,10 +240,10 @@ struct HerdrHudComposerView: View {
                         .controlSize(.small)
                         .tint(HerdrTheme.accent)
                     Text("Transcribing…")
-                        .herdrFont(.caption)
-                        .foregroundStyle(HerdrTheme.mist)
+                        .herdrFont(size: HerdrTheme.TextSize.small)
+                        .foregroundStyle(HerdrTheme.secondaryText)
                 }
-                .frame(maxWidth: .infinity, minHeight: 42)
+                .frame(maxWidth: .infinity, minHeight: 46)
             } else {
                 ComposerDraftEditor(
                     placeholder: session.thread == nil ? "Ask anything, or tell it what to do…" : "Reply to this thread…",
@@ -255,17 +252,17 @@ struct HerdrHudComposerView: View {
                     pasteCode: pasteCodeBlock,
                     editorTarget: editorTarget
                 )
-                    .herdrFont(size: 13)
-                    .foregroundStyle(HerdrTheme.text)
+                    .herdrFont(size: HerdrTheme.TextSize.reading)
+                    .foregroundStyle(HerdrTheme.primaryText)
                     .focused($isComposerFocused)
                     .onSubmit(handleSubmit)
                     .onKeyPress(.return, phases: .down, action: handleReturnKey)
-                    .padding(.horizontal, 13)
-                    .padding(.top, 11)
-                    .padding(.bottom, 4)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 12)
+                    .padding(.bottom, 8)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 50, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 46, alignment: .topLeading)
     }
 
     private var canSubmit: Bool {

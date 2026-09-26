@@ -17,7 +17,7 @@ struct HerdrHudInlineResultArtifactsView: View {
                 Task { openFailure = await model.openResultArtifact(artifact) }
             } label: {
                 Label(artifact.displayTitle, systemImage: artifact.kind == .link ? "link" : "doc")
-                    .herdrFont(.callout)
+                    .herdrFont(size: HerdrTheme.TextSize.small)
                     .foregroundStyle(HerdrTheme.accent)
                     .lineLimit(2)
                     .padding(10)

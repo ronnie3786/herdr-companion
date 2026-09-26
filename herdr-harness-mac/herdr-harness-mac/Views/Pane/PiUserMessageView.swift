@@ -19,13 +19,12 @@ struct PiUserMessageView: View {
                 HerdrTheme.selectedFill,
                 in: HerdrBubbleShape(singleLineHeight: (HerdrProse.Role.userBubble.lineHeight + 16) * fontScale.rawValue)
             )
-            .frame(maxWidth: 576 * fontScale.rawValue, alignment: .trailing)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(accessibilityLabel)
-            // Attached to the bubble rather than the row: the row is full width,
-            // so a row-level overlay strands the control at the far left while
-            // the bubble hugs the right. Offset into the leading gutter the
-            // 42pt pad already reserves, so it never sits over the text.
+            // Attached to the bubble itself, before the 576pt cap: any wider
+            // frame strands the control far left of a short bubble. Offset
+            // into the leading gutter the 40pt pad reserves, so it never sits
+            // over the text.
             .piCopyAffordance(
                 message.text,
                 label: "Copy prompt",
@@ -33,6 +32,7 @@ struct PiUserMessageView: View {
                 alignment: .topLeading,
                 offset: CGSize(width: -28, height: 4)
             )
+            .frame(maxWidth: 576 * fontScale.rawValue, alignment: .trailing)
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.leading, 40)
             .padding(.bottom, 12)

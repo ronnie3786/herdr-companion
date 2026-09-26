@@ -229,7 +229,7 @@ struct PRReviewDiffTextTests {
         }
         let base = HerdrTheme.windowBackground
         func channels(_ color: Color) -> [Double] {
-            let value = NSColor(color).usingColorSpace(.sRGB)!
+            let value = HerdrTheme.resolved(color)
             return [value.redComponent, value.greenComponent, value.blueComponent].map { Double($0) * 255 }
         }
         func close(_ key: String, _ color: Color) {

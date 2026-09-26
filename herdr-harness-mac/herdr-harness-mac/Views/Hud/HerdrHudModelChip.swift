@@ -54,30 +54,26 @@ struct HerdrHudModelChip: View {
         return availableModels.first(where: { $0.id == currentSelectionID })?.displayName ?? PiModelDisplayName.short(fullID: currentSelectionID)
     }
 
+    /// The model half of the composer's model + effort pill.
     private var chipLabel: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 5) {
             if isLoading {
-                ProgressView().controlSize(.small)
+                ProgressView().controlSize(.mini)
             } else {
                 Image(systemName: "bolt")
+                    .herdrFont(size: 13)
+                    .foregroundStyle(HerdrTheme.iconTint)
                     .accessibilityHidden(true)
             }
             Text(selectedDisplayName)
+                .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
+                .foregroundStyle(HerdrTheme.primaryText)
                 .lineLimit(1)
                 .truncationMode(.middle)
-            Image(systemName: "chevron.down")
-                .herdrFont(.caption2)
         }
-        .herdrFont(.caption, weight: .medium)
-        .foregroundStyle(HerdrTheme.accent)
-        .padding(.horizontal, 8)
+        .padding(.leading, 4)
+        .padding(.trailing, 2)
         .frame(minHeight: HerdrTheme.minHitTarget)
-        .background(HerdrTheme.elevated, in: .rect(cornerRadius: 6))
-        .overlay {
-            RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(HerdrTheme.separator, lineWidth: 1)
-        }
-        .contentShape(.rect(cornerRadius: 6))
+        .contentShape(.rect)
     }
-
 }

@@ -12,10 +12,10 @@ struct HerdrHudWorkspaceCreationView: View {
         VStack(alignment: .leading, spacing: 6) {
             Toggle(isOn: $session.createsInMainWorkspace) {
                 Label("Create in main workspace", systemImage: "sidebar.left")
-                    .herdrFont(.caption)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
             }
             .toggleStyle(.checkbox)
-            .foregroundStyle(HerdrTheme.mist)
+            .foregroundStyle(HerdrTheme.secondaryText)
             .help("Create this new chat directly in the main workspace on the selected machine instead of a standalone HUD chat.")
             .accessibilityLabel("Create in main workspace")
             .accessibilityIdentifier("hud-create-in-main-workspace")
@@ -47,8 +47,8 @@ struct HerdrHudWorkspaceCreationView: View {
                 ProgressView()
                     .controlSize(.small)
                 Text("Reading \(machine?.name ?? "machine") workspaces…")
-                    .herdrFont(.caption)
-                    .foregroundStyle(HerdrTheme.mist)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(HerdrTheme.secondaryText)
             }
             .accessibilityIdentifier("hud-main-workspace-loading")
         } else if let error = session.mainWorkspaceErrorMessage {
@@ -58,7 +58,7 @@ struct HerdrHudWorkspaceCreationView: View {
                     Task { await session.loadMainWorkspaces(model: model, force: true) }
                 }
                 .buttonStyle(.borderless)
-                .herdrFont(.caption)
+                .herdrFont(size: HerdrTheme.TextSize.caption)
                 .accessibilityIdentifier("hud-main-workspace-retry")
             }
             .accessibilityIdentifier("hud-main-workspace-error")
@@ -79,8 +79,8 @@ struct HerdrHudWorkspaceCreationView: View {
         } else if let workspace = session.mainWorkspace(in: model) {
             HStack(spacing: 6) {
                 Text("Main workspace:")
-                    .herdrFont(.caption)
-                    .foregroundStyle(HerdrTheme.mist)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(HerdrTheme.secondaryText)
                 workspaceMenu(selected: workspace)
             }
             .accessibilityIdentifier("hud-main-workspace-selected")
@@ -93,8 +93,8 @@ struct HerdrHudWorkspaceCreationView: View {
                 )
                 HStack(spacing: 6) {
                     Text("Main workspace:")
-                        .herdrFont(.caption)
-                        .foregroundStyle(HerdrTheme.mist)
+                        .herdrFont(size: HerdrTheme.TextSize.caption)
+                        .foregroundStyle(HerdrTheme.secondaryText)
                     workspaceMenu(selected: nil)
                 }
             }
@@ -102,8 +102,8 @@ struct HerdrHudWorkspaceCreationView: View {
         } else {
             HStack(spacing: 6) {
                 Text("Main workspace:")
-                    .herdrFont(.caption)
-                    .foregroundStyle(HerdrTheme.mist)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(HerdrTheme.secondaryText)
                 workspaceMenu(selected: nil)
             }
             .accessibilityIdentifier("hud-main-workspace-first-use")
@@ -129,22 +129,22 @@ struct HerdrHudWorkspaceCreationView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Image(systemName: "chevron.down")
-                    .herdrFont(.caption2, weight: .bold)
+                    .herdrFont(size: HerdrTheme.TextSize.caption, weight: .bold)
             }
-            .herdrFont(.caption)
+            .herdrFont(size: HerdrTheme.TextSize.caption)
             .foregroundStyle(HerdrTheme.accent)
             .frame(minHeight: HerdrTheme.minHitTarget)
             .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
+        .piChipMenu()
         .accessibilityLabel(selected.map { "Main workspace: \(workspaceChoiceTitle($0))" } ?? "Main workspace: choose")
         .accessibilityIdentifier("hud-main-workspace-picker")
     }
 
     private func statusLabel(_ text: String, symbol: String, isWarning: Bool = false) -> some View {
         Label(text, systemImage: symbol)
-            .herdrFont(.caption)
-            .foregroundStyle(isWarning ? HerdrTheme.alert : HerdrTheme.mist)
+            .herdrFont(size: HerdrTheme.TextSize.caption)
+            .foregroundStyle(isWarning ? HerdrTheme.alert : HerdrTheme.secondaryText)
             .fixedSize(horizontal: false, vertical: true)
     }
 

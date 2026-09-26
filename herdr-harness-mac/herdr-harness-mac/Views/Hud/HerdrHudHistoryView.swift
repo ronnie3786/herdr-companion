@@ -18,18 +18,18 @@ struct HerdrHudHistoryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("HUD chat history").font(.headline)
+                Text("HUD chat history").herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
                 Spacer()
                 Button("Close", systemImage: "xmark") { dismiss() }.labelStyle(.iconOnly)
             }
             Text("Saved indefinitely on this machine. Chats stay outside terminal workspaces until you choose Continue in agent.")
-                .font(.caption).foregroundStyle(.secondary)
+                .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText)
             TextField("Search prompts and replies", text: $query)
                 .textFieldStyle(.roundedBorder)
                 .disabled(isOpening)
                 .accessibilityIdentifier("hud-history-search")
             if let error {
-                Text(error).font(.caption).foregroundStyle(HerdrTheme.alert).textSelection(.enabled)
+                Text(error).herdrFont(size: HerdrTheme.TextSize.small).foregroundStyle(HerdrTheme.alert).textSelection(.enabled)
                 Button("Retry") { Task { await load() } }.disabled(isLoading || isOpening)
             }
             ScrollView {
@@ -39,7 +39,7 @@ struct HerdrHudHistoryView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(chat.title).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
                                 Text("\(chat.turnCount) replies · \(chat.status.label)")
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText)
                             }
                             .padding(10)
                             .background(HerdrTheme.elevated, in: .rect(cornerRadius: 8))

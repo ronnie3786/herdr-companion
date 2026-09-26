@@ -109,6 +109,8 @@ struct FirstMateResponseFeedbackPresentation: Equatable {
 struct FirstMateResponseFeedbackFooter: View {
     let messageID: String
     let presentation: FirstMateResponseFeedbackPresentation
+    /// The reply's text, for the copy control that sits beside the thumbs.
+    var copyText: String? = nil
     var onRateUp: @MainActor () -> Void = {}
     var onEditFeedback: @MainActor () -> Void = {}
     var onRemoveRating: @MainActor () -> Void = {}
@@ -120,31 +122,38 @@ struct FirstMateResponseFeedbackFooter: View {
     private var palette: FirstMatePalette { FirstMatePalette(scheme: scheme) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                Text(presentation.statusText ?? "Rate this response")
-                    .herdrFont(.caption)
-                    .foregroundStyle(presentation.statusText == nil ? Color.secondary.opacity(0.65) : Color.secondary)
-                    .lineLimit(1)
-                    .accessibilityIdentifier("first-mate-feedback-status-\(messageID)")
+        VStack(alignment: .leading, spacing: 2) {
+            // MonoCode's `.fm-fb`: thumbs and copy first, then the rating state.
+            HStack(spacing: 2) {
+                thumb(up: true)
+                thumb(up: false)
+                if let copyText {
+                    PiCopyButton(text: copyText, label: "Copy response", accessibilityIdentifier: "first-mate-copy-\(messageID)")
+                }
 
-                Spacer(minLength: 6)
+                Text(presentation.statusText ?? "Rate this response")
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(palette.tertiaryText)
+                    .lineLimit(1)
+                    .padding(.leading, 6)
+                    .accessibilityIdentifier("first-mate-feedback-status-\(messageID)")
 
                 if presentation.isSaving {
                     ProgressView()
                         .controlSize(.mini)
+                        .padding(.leading, 4)
                         .accessibilityIdentifier("first-mate-feedback-saving-\(messageID)")
                         .accessibilityLabel("Saving rating")
                 }
 
-                thumb(up: true)
-                thumb(up: false)
-
                 if presentation.isSelectedDown {
                     Button("Edit", action: onEditFeedback)
-                        .buttonStyle(.borderless)
-                        .herdrFont(.caption)
+                        .buttonStyle(.plain)
+                        .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                         .foregroundStyle(palette.accent)
+                        .frame(minHeight: HerdrTheme.minHitTarget)
+                        .contentShape(.rect)
+                        .padding(.leading, 8)
                         .disabled(!presentation.isWritable || presentation.isSaving)
                         .accessibilityIdentifier("first-mate-feedback-edit-\(messageID)")
                         .accessibilityLabel("Edit response feedback")
@@ -153,21 +162,26 @@ struct FirstMateResponseFeedbackFooter: View {
 
                 if presentation.hasSavedRating {
                     Button("Remove rating", action: onRemoveRating)
-                        .buttonStyle(.borderless)
-                        .herdrFont(.caption)
+                        .buttonStyle(.plain)
+                        .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                         .foregroundStyle(palette.secondaryText)
+                        .frame(minHeight: HerdrTheme.minHitTarget)
+                        .contentShape(.rect)
+                        .padding(.leading, 8)
                         .disabled(!presentation.isWritable || presentation.isSaving)
                         .accessibilityIdentifier("first-mate-feedback-remove-\(messageID)")
                         .accessibilityLabel("Remove rating")
                         .help("Remove this response's rating")
                 }
+
+                Spacer(minLength: 0)
             }
 
             if let saveErrorMessage = presentation.saveErrorMessage {
                 HStack(spacing: 6) {
                     Label(saveErrorMessage, systemImage: "exclamationmark.triangle")
-                        .herdrFont(.caption)
-                        .foregroundStyle(.orange)
+                        .herdrFont(size: HerdrTheme.TextSize.caption)
+                        .foregroundStyle(HerdrTheme.warning)
                         .lineLimit(2)
                         .accessibilityIdentifier("first-mate-feedback-error-\(messageID)")
                     if presentation.hasConflict {
@@ -176,7 +190,7 @@ struct FirstMateResponseFeedbackFooter: View {
                         // retries it with a fresh request identity.
                         Button("Reload and retry", action: onResolveConflict)
                             .buttonStyle(.link)
-                            .herdrFont(.caption)
+                            .herdrFont(size: HerdrTheme.TextSize.caption)
                             .disabled(!presentation.isWritable || presentation.isSaving)
                             .accessibilityIdentifier("first-mate-feedback-conflict-\(messageID)")
                             .accessibilityLabel("Reload the latest rating and retry")
@@ -184,16 +198,16 @@ struct FirstMateResponseFeedbackFooter: View {
                     } else {
                         Button("Try again", action: onRetry)
                             .buttonStyle(.link)
-                            .herdrFont(.caption)
+                            .herdrFont(size: HerdrTheme.TextSize.caption)
                             .disabled(!presentation.isWritable || presentation.isSaving)
                             .accessibilityIdentifier("first-mate-feedback-retry-\(messageID)")
                             .accessibilityLabel("Retry saving this rating")
                             .help("Retry saving this rating")
                     }
                 }
+                .padding(.leading, 4)
             }
         }
-        .padding(.top, 2)
         .accessibilityIdentifier("first-mate-feedback-\(messageID)")
     }
 
@@ -206,15 +220,31 @@ struct FirstMateResponseFeedbackFooter: View {
             Image(systemName: up
                 ? (selected ? "hand.thumbsup.fill" : "hand.thumbsup")
                 : (selected ? "hand.thumbsdown.fill" : "hand.thumbsdown"))
-                .frame(width: 18, height: 18)
-                .contentShape(.rect)
         }
-        .buttonStyle(.borderless)
-        .foregroundStyle(selected ? palette.accent : palette.secondaryText)
+        .buttonStyle(FirstMateActionButtonStyle(isSelected: selected))
         .disabled(!presentation.isWritable || presentation.isSaving || (up && selected))
         .accessibilityIdentifier("first-mate-feedback-\(up ? "up" : "down")-\(messageID)")
         .accessibilityLabel(selected ? "\(title), selected" : title)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .help(selected ? "\(title) — selected" : title)
+    }
+}
+
+/// A 24pt icon action in a transcript row: a 10% wash when selected or
+/// pressed, and no hover tracking (transcript rows never observe the pointer).
+struct FirstMateActionButtonStyle: ButtonStyle {
+    var isSelected = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .herdrFont(size: 13)
+            .foregroundStyle(isSelected ? HerdrTheme.primaryText : HerdrTheme.iconTint)
+            .frame(width: HerdrTheme.ControlHeight.small, height: HerdrTheme.ControlHeight.small)
+            .background(
+                isSelected || configuration.isPressed ? HerdrTheme.selectedFill : .clear,
+                in: .rect(cornerRadius: HerdrTheme.Radius.control)
+            )
+            .frame(minWidth: HerdrTheme.minHitTarget, minHeight: HerdrTheme.minHitTarget)
+            .contentShape(.rect)
     }
 }

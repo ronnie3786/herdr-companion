@@ -196,7 +196,7 @@ struct GitRenderTests {
 
     private func contrast(_ first: Color, _ second: Color) -> Double {
         func luminance(_ color: Color) -> Double {
-            let value = NSColor(color).usingColorSpace(.sRGB)!
+            let value = HerdrTheme.resolved(color)
             func linear(_ channel: CGFloat) -> Double {
                 let c = Double(channel)
                 return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)

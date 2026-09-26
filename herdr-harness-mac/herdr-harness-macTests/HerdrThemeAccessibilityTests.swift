@@ -171,18 +171,61 @@ struct HerdrThemeAccessibilityTests {
         }
     }
 
+    // MARK: Light (First Mate's light appearance)
+
+    @Test("The shared roles stay readable in First Mate's light appearance")
+    func lightRoleContrast() throws {
+        let base = try rgb(HerdrTheme.base, .light)
+        let card = try over(HerdrTheme.cardFill, base, .light)
+        let surfaces: [(String, RGB)] = [
+            ("base", base),
+            ("rail", try rgb(HerdrTheme.railBackground, .light)),
+            ("card", card),
+            ("field", try over(HerdrTheme.fieldFill, base, .light)),
+            ("hovered row", try over(HerdrTheme.hoverFill, base, .light)),
+            ("selected / bubble", try over(HerdrTheme.selectedFill, base, .light)),
+            ("code block", try over(HerdrTheme.codeFill, base, .light)),
+            ("chip in card", try over(HerdrTheme.chipFill, card, .light)),
+            ("NOW block", try over(HerdrTheme.insetFill, card, .light)),
+        ]
+        let text: [(String, Color)] = [
+            ("primary", HerdrTheme.primaryText), ("prose", HerdrTheme.proseText),
+            ("secondary", HerdrTheme.secondaryText), ("tertiary", HerdrTheme.tertiaryText),
+            ("accent", HerdrTheme.accent), ("signal", HerdrTheme.signal), ("working", HerdrTheme.working),
+            ("alert", HerdrTheme.alert), ("warning", HerdrTheme.warning), ("success", HerdrTheme.success),
+        ]
+        for (surfaceName, surface) in surfaces {
+            for (textName, color) in text {
+                let contrast = ratio(try rgb(color, .light), surface)
+                #expect(contrast >= 4.5, "light \(textName) on \(surfaceName) was \(contrast):1")
+            }
+        }
+        // The lavender CTA takes a white label in light.
+        let cta = ratio(try rgb(HerdrTheme.onPrimary, .light), try rgb(HerdrTheme.primaryAction, .light))
+        #expect(cta >= 4.5, "light onPrimary on primary was \(cta):1")
+        // The light roles match First Mate's palette, so shared chrome and
+        // First Mate views agree.
+        let palette = FirstMatePalette(scheme: .light)
+        for (role, token) in [(HerdrTheme.base, palette.background), (HerdrTheme.tertiaryText, palette.tertiaryText),
+                              (HerdrTheme.accent, palette.accent)] {
+            let difference = try rgb(role, .light) - rgb(token, .light)
+            let largest = [difference.x, difference.y, difference.z].map(Swift.abs).max() ?? 0
+            #expect(largest <= 1, "light role differs from First Mate's palette by \(difference)")
+        }
+    }
+
     // MARK: Helpers
 
     /// sRGB channels in 0...255; the color must be opaque.
-    private func rgb(_ color: Color) throws -> RGB {
-        let value = try #require(NSColor(color).usingColorSpace(.sRGB))
+    private func rgb(_ color: Color, _ scheme: ColorScheme = .dark) throws -> RGB {
+        let value = HerdrTheme.resolved(color, scheme: scheme)
         #expect(value.alphaComponent > 0.999, "Measured an unexpectedly translucent color")
         return RGB(value.redComponent, value.greenComponent, value.blueComponent) * 255
     }
 
     /// A translucent `fill` composited over an opaque `background`.
-    private func over(_ fill: Color, _ background: RGB) throws -> RGB {
-        let value = try #require(NSColor(fill).usingColorSpace(.sRGB))
+    private func over(_ fill: Color, _ background: RGB, _ scheme: ColorScheme = .dark) throws -> RGB {
+        let value = HerdrTheme.resolved(fill, scheme: scheme)
         let top = RGB(value.redComponent, value.greenComponent, value.blueComponent) * 255
         return mix(top, value.alphaComponent, over: background)
     }

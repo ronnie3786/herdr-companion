@@ -8,8 +8,8 @@ struct HerdrHudChatResizeHandle: View {
 
     var body: some View {
         Label("Resize", systemImage: "arrow.up.right.and.arrow.down.left")
-            .herdrFont(.caption2)
-            .foregroundStyle(HerdrTheme.muted)
+            .herdrFont(size: HerdrTheme.TextSize.caption)
+            .foregroundStyle(HerdrTheme.tertiaryText)
             .padding(.horizontal, 10)
             .frame(minHeight: HerdrTheme.minHitTarget)
             .contentShape(.rect)

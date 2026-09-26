@@ -17,14 +17,14 @@ struct HerdrHudSentAttachmentView: View {
                         .clipShape(.rect(cornerRadius: 7))
                 }
                 Label(attachment.quote?.comment ?? attachment.filename, systemImage: attachment.quote != nil ? "quote.bubble" : attachment.isImage ? "photo" : "doc")
-                    .herdrFont(.caption)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
                     .lineLimit(2)
                     .truncationMode(.middle)
                 Text(Int64(attachment.byteCount).formatted(.byteCount(style: .file)))
-                    .herdrFont(.caption2)
-                    .foregroundStyle(HerdrTheme.muted)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(HerdrTheme.tertiaryText)
             }
-            .foregroundStyle(HerdrTheme.mist)
+            .foregroundStyle(HerdrTheme.secondaryText)
             .padding(8)
             .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.compactRadius))
         }

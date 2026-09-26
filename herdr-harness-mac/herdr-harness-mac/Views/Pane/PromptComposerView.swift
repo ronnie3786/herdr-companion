@@ -1365,6 +1365,14 @@ struct ComposerContextLine: Equatable {
 
 /// Host content placed in the composer, compared by `key` alone so the
 /// composer's `.equatable()` still refreshes when the host's state changes.
+/// Keys an accessory by any Equatable value (feature state, contexts) so
+/// `ComposerAccessory` can compare hosts that are not Hashable.
+struct ComposerAccessoryKey<Value: Equatable>: Hashable {
+    let value: Value
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.value == rhs.value }
+    func hash(into hasher: inout Hasher) {}
+}
+
 struct ComposerAccessory: Equatable {
     let key: AnyHashable
     let view: AnyView
@@ -1383,6 +1391,8 @@ struct ComposerAddMenuContent: View {
     let canPasteCode: Bool
     let attach: () -> Void
     let pasteCode: () -> Void
+    var attachIdentifier = "composer-attach-file"
+    var pasteIdentifier = "composer-code-block-paste"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1399,7 +1409,7 @@ struct ComposerAddMenuContent: View {
                     action: attach
                 )
                 .help("Attach files to this prompt")
-                .accessibilityIdentifier("composer-attach-file")
+                .accessibilityIdentifier(attachIdentifier)
             }
             ComposerPopoverRow(
                 title: "Paste code block",
@@ -1410,7 +1420,7 @@ struct ComposerAddMenuContent: View {
             )
             .disabled(!canPasteCode)
             .help("Append clipboard as a code block (⌘⇧V in the prompt)")
-            .accessibilityIdentifier("composer-code-block-paste")
+            .accessibilityIdentifier(pasteIdentifier)
         }
         .padding(6)
         .frame(width: 250)

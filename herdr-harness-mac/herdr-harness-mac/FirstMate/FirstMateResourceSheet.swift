@@ -10,31 +10,31 @@ struct FirstMateResourceSheet: View {
                 VStack(alignment: .leading, spacing: 8) {
                     if resource.nativeSessionID != nil {
                         Label("Agent Session", systemImage: "bubble.left.and.bubble.right")
-                            .herdrFont(.caption, weight: .semibold)
+                            .herdrFont(size: HerdrTheme.TextSize.caption, weight: .semibold)
                             .foregroundStyle(FirstMatePalette(scheme: scheme).accent)
-                        Text(resource.title).herdrFont(.title2, weight: .semibold)
+                        Text(resource.title).herdrFont(size: 15, weight: .semibold)
                         Label("Read-only saved conversation", systemImage: "lock")
-                            .herdrFont(.caption).foregroundStyle(.secondary)
+                            .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
                     } else {
-                        Text(resource.title).herdrFont(.title2, weight: .semibold)
+                        Text(resource.title).herdrFont(size: 15, weight: .semibold)
                     }
                     switch resource {
                     case .session(let agent):
                         Text("Saved Pi session · \(agent.role) · generation \(agent.generation)")
-                            .herdrFont(.caption).foregroundStyle(.secondary)
-                        Text(agent.nativeSessionID ?? "Session pending").herdrFont(.caption2, monospaced: true).textSelection(.enabled)
+                            .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
+                        Text(agent.nativeSessionID ?? "Session pending").herdrFont(size: HerdrTheme.TextSize.caption, monospaced: true).textSelection(.enabled)
                         FirstMateSessionHistoryView(store: store, resource: resource)
                     case .history(let session):
                         Text("Saved Pi session · \(session.kindDisplayName) · \(session.role) · generation \(session.generation) · \(session.ownershipStatus)")
-                            .herdrFont(.caption).foregroundStyle(.secondary)
-                        Text(session.nativeSessionID).herdrFont(.caption, monospaced: true).textSelection(.enabled)
+                            .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
+                        Text(session.nativeSessionID).herdrFont(size: HerdrTheme.TextSize.caption, monospaced: true).textSelection(.enabled)
                         FirstMateSessionHistoryView(store: store, resource: resource)
                     case .document(let document):
-                        Text(document.mediaType).herdrFont(.caption).foregroundStyle(.secondary)
+                        Text(document.mediaType).herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
                         if let author = store.snapshot?.author(of: document), author.nativeSessionID == document.nativeSessionID {
                             Button("Produced by \(author.title)", systemImage: "person.crop.circle") {
                                 Task { await store.open(.session(author)) }
-                            }.buttonStyle(.plain).herdrFont(.caption).foregroundStyle(FirstMatePalette(scheme: scheme).accent)
+                            }.buttonStyle(.plain).herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(FirstMatePalette(scheme: scheme).accent)
                             .accessibilityIdentifier("first-mate-document-author")
                         }
                     }
@@ -44,7 +44,7 @@ struct FirstMateResourceSheet: View {
                     .labelStyle(.iconOnly).keyboardShortcut(.cancelAction)
                     .accessibilityIdentifier("first-mate-resource-close")
             }.padding(24)
-            Divider()
+            Rectangle().fill(HerdrTheme.hairline).frame(height: 1)
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     if resource.nativeSessionID != nil {
@@ -59,13 +59,13 @@ struct FirstMateResourceSheet: View {
                                 )
                             }.padding(.top, 10)
                         }
-                        .herdrFont(.caption)
+                        .herdrFont(size: HerdrTheme.TextSize.caption)
                         .accessibilityIdentifier("first-mate-session-details")
                     }
                     if resource.nativeSessionID != nil, let total = store.sessionTotalMessages {
-                        Divider()
+                        Rectangle().fill(HerdrTheme.hairline).frame(height: 1)
                         HStack {
-                            Text("\(store.sessionLoadedMessages) of \(total) saved messages").herdrFont(.caption).foregroundStyle(.secondary)
+                            Text("\(store.sessionLoadedMessages) of \(total) saved messages").herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
                             Spacer()
                             if store.sessionNextBefore != nil {
                                 Button(store.isLoadingEarlier ? "Loading earlier…" : "Load earlier messages") {
@@ -76,10 +76,10 @@ struct FirstMateResourceSheet: View {
                             }
                         }
                         if let error = store.sessionPageError {
-                            Text(error).herdrFont(.caption).foregroundStyle(.orange)
+                            Text(error).herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.warning)
                         }
                     }
-                    Divider()
+                    Rectangle().fill(HerdrTheme.hairline).frame(height: 1)
                     if store.resourceLoading {
                         ProgressView("Loading saved resource…")
                             .frame(maxWidth: .infinity, minHeight: 220)
@@ -97,7 +97,7 @@ struct FirstMateResourceSheet: View {
                         )
                     } else {
                         Text(store.resourceText)
-                            .herdrFont(.body)
+                            .herdrFont(size: HerdrTheme.TextSize.body)
                             .lineSpacing(6)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -106,12 +106,12 @@ struct FirstMateResourceSheet: View {
                 .padding(24)
             }
             .defaultScrollAnchor(resource.nativeSessionID == nil ? .top : .bottom, for: .initialOffset)
-            Divider()
+            Rectangle().fill(HerdrTheme.hairline).frame(height: 1)
             Text(store.isDemo ? "Synthetic recording fixture" : "Read-only saved history. Closing this view does not end the session.")
-                .herdrFont(.caption).foregroundStyle(.secondary).padding(16)
+                .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText).padding(16)
         }
         .frame(minWidth: 580, idealWidth: 720, minHeight: 480, idealHeight: 650)
-        .background(FirstMatePalette(scheme: scheme).background).foregroundStyle(.primary)
+        .background(FirstMatePalette(scheme: scheme).background).foregroundStyle(HerdrTheme.primaryText, HerdrTheme.secondaryText, HerdrTheme.tertiaryText)
         .accessibilityIdentifier("first-mate-resource-sheet")
     }
 

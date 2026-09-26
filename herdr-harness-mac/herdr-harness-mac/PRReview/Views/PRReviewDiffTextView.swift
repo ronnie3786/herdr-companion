@@ -145,7 +145,7 @@ final class PRReviewDiffTextView: WKWebView, WKScriptMessageHandler, WKNavigatio
     }
 
     private static func cssHex(_ color: Color) -> String {
-        guard let value = NSColor(color).usingColorSpace(.sRGB) else { return "#151519" }
+        let value = HerdrTheme.resolved(color)
         return String(
             format: "#%02x%02x%02x",
             Int((value.redComponent * 255).rounded()),

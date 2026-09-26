@@ -11,10 +11,9 @@ struct HerdrHudEndChatButton: View {
     var body: some View {
         Button(role: .destructive) { confirmsEnd = true } label: {
             Label(chat.session.isEnding ? "Ending…" : "End Chat", systemImage: "xmark.circle")
-                .herdrFont(.caption, weight: .semibold)
+                .labelStyle(DashboardInlineLabelStyle(spacing: 4))
         }
-        .buttonStyle(.bordered)
-        .tint(HerdrTheme.alert)
+        .buttonStyle(HerdrRowButtonStyle(tint: HerdrTheme.alert))
         .disabled(chat.session.isEnding || chat.session.isLoadingHistory || !chat.session.promotingExchangeIDs.isEmpty)
         .accessibilityIdentifier("hud-end-chat")
         .help("Stop this HUD task and close its bubble. Saved history is kept.")

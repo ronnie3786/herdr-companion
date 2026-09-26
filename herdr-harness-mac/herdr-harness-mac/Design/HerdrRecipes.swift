@@ -368,3 +368,35 @@ private struct HerdrPrimarySquareBody: View {
             .opacity(configuration.isPressed ? 0.85 : 1)
     }
 }
+
+/// MonoCode's `.btn-out.sm` for transcript rows: a 24pt outlined button with
+/// a 28pt hit area and no hover tracking (transcript rows never observe the
+/// pointer). Pressed dims to 70%.
+struct HerdrRowButtonStyle: ButtonStyle {
+    var tint: Color = HerdrTheme.secondaryText
+
+    func makeBody(configuration: Configuration) -> some View {
+        HerdrRowButtonBody(configuration: configuration, tint: tint)
+    }
+}
+
+private struct HerdrRowButtonBody: View {
+    let configuration: ButtonStyle.Configuration
+    let tint: Color
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        configuration.label
+            .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
+            .foregroundStyle(isEnabled ? tint : HerdrTheme.tertiaryText)
+            .padding(.horizontal, 8)
+            .frame(minHeight: HerdrTheme.ControlHeight.small)
+            .overlay {
+                RoundedRectangle(cornerRadius: HerdrTheme.Radius.control)
+                    .strokeBorder(HerdrTheme.outline, lineWidth: 1)
+            }
+            .frame(minHeight: HerdrTheme.minHitTarget)
+            .contentShape(Rectangle())
+            .opacity(configuration.isPressed ? 0.7 : 1)
+    }
+}

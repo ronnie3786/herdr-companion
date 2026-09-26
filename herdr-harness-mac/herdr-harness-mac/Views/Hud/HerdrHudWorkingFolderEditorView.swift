@@ -33,21 +33,21 @@ struct HerdrHudWorkingFolderEditorView: View {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Working folders")
-                        .herdrFont(.headline, weight: .semibold)
+                        .herdrFont(size: HerdrTheme.TextSize.reading, weight: .semibold)
                         .foregroundStyle(HerdrTheme.text)
                     Text(machine.name)
-                        .herdrFont(.caption)
-                        .foregroundStyle(HerdrTheme.muted)
+                        .herdrFont(size: HerdrTheme.TextSize.caption)
+                        .foregroundStyle(HerdrTheme.tertiaryText)
                 }
                 Spacer()
                 Button("Done", action: dismiss.callAsFunction)
-                    .buttonStyle(.bordered)
+                    .buttonStyle(HerdrButtonStyle(kind: .outline))
                     .controlSize(.small)
             }
 
             Text(folderHelpText)
-                .herdrFont(.caption)
-                .foregroundStyle(HerdrTheme.mist)
+                .herdrFont(size: HerdrTheme.TextSize.caption)
+                .foregroundStyle(HerdrTheme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 6) {
@@ -57,7 +57,7 @@ struct HerdrHudWorkingFolderEditorView: View {
                 if isLocalMachine {
                     Button("Choose", systemImage: "folder", action: chooseFolder)
                         .labelStyle(.iconOnly)
-                        .buttonStyle(.bordered)
+                        .buttonStyle(HerdrButtonStyle(kind: .outline))
                         .controlSize(.regular)
                         .help("Choose a folder on this Mac")
                         .accessibilityLabel("Choose a folder on this Mac")
@@ -72,32 +72,32 @@ struct HerdrHudWorkingFolderEditorView: View {
 
             if isLocalMachine {
                 Text("Choose a folder or enter its absolute path.")
-                    .herdrFont(.caption2)
-                    .foregroundStyle(HerdrTheme.muted)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(HerdrTheme.tertiaryText)
             } else {
                 Text(remoteFolderHelpText)
-                    .herdrFont(.caption2)
-                    .foregroundStyle(HerdrTheme.muted)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(HerdrTheme.tertiaryText)
             }
 
             if let errorMessage, !errorMessage.isEmpty {
                 Label(errorMessage, systemImage: "exclamationmark.triangle")
-                    .herdrFont(.caption)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
                     .foregroundStyle(HerdrTheme.alert)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("hud-working-folder-error")
             }
 
-            Divider().overlay { HerdrTheme.separator }
+            Divider().overlay { HerdrTheme.outline }
 
             Text("Saved for this machine")
-                .herdrFont(.caption, weight: .semibold)
-                .foregroundStyle(HerdrTheme.mist)
+                .herdrFont(size: HerdrTheme.TextSize.caption, weight: .semibold)
+                .foregroundStyle(HerdrTheme.secondaryText)
 
             if session.customWorkingFolders(for: machine.id).isEmpty {
                 Text("No custom folders yet.")
-                    .herdrFont(.caption)
-                    .foregroundStyle(HerdrTheme.muted)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(HerdrTheme.tertiaryText)
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 4) {
@@ -107,7 +107,7 @@ struct HerdrHudWorkingFolderEditorView: View {
                                     .foregroundStyle(HerdrTheme.accent)
                                     .accessibilityHidden(true)
                                 Text(folder.displayPath(for: machine))
-                                    .herdrFont(.caption)
+                                    .herdrFont(size: HerdrTheme.TextSize.caption)
                                     .foregroundStyle(HerdrTheme.text)
                                     .lineLimit(2)
                                     .truncationMode(.middle)
@@ -117,7 +117,7 @@ struct HerdrHudWorkingFolderEditorView: View {
                                 })
                                 .labelStyle(.iconOnly)
                                 .buttonStyle(.plain)
-                                .foregroundStyle(HerdrTheme.muted)
+                                .foregroundStyle(HerdrTheme.tertiaryText)
                                 .help("Remove this saved folder")
                                 .accessibilityLabel("Remove \(folder.displayPath(for: machine))")
                                 .accessibilityIdentifier("hud-working-folder-remove-\(folder.id)")
@@ -132,7 +132,7 @@ struct HerdrHudWorkingFolderEditorView: View {
         }
         .padding(16)
         .frame(width: 430)
-        .background(HerdrTheme.graphite)
+        .background(HerdrTheme.windowBackground)
         .fileImporter(
             isPresented: $isChoosingFolder,
             allowedContentTypes: [.folder]

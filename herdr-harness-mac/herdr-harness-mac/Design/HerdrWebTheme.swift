@@ -48,7 +48,7 @@ enum HerdrWebTheme {
 
     /// `#rrggbb` for opaque tokens, `rgb(r g b / a)` for Mono's translucent fills and lines.
     private static func hex(_ color: Color) -> String {
-        let value = NSColor(color).usingColorSpace(.sRGB)!
+        let value = HerdrTheme.resolved(color)
         let red = Int((value.redComponent * 255).rounded())
         let green = Int((value.greenComponent * 255).rounded())
         let blue = Int((value.blueComponent * 255).rounded())
@@ -387,7 +387,7 @@ enum HerdrWebTheme {
 
     /// sRGB channels (0...255) and alpha.
     private static func components(_ color: Color) -> (rgb: RGB, alpha: Double) {
-        let value = NSColor(color).usingColorSpace(.sRGB)!
+        let value = HerdrTheme.resolved(color)
         return (
             (Double(value.redComponent) * 255, Double(value.greenComponent) * 255, Double(value.blueComponent) * 255),
             Double(value.alphaComponent)

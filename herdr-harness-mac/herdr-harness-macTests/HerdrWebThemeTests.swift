@@ -222,7 +222,7 @@ struct HerdrWebThemeTests {
 
     /// sRGB channels 0...255 of an opaque color.
     private func rgb(_ color: Color) -> [Double] {
-        let value = NSColor(color).usingColorSpace(.sRGB)!
+        let value = HerdrTheme.resolved(color)
         return [value.redComponent, value.greenComponent, value.blueComponent].map { Double($0) * 255 }
     }
 }

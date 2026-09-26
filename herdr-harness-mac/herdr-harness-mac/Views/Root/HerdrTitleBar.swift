@@ -38,6 +38,22 @@ extension View {
     }
 }
 
+/// Actions a sidebar puts in the rail's 40pt header, before the sidebar
+/// toggle (First Mate's New feature and Refresh).
+struct HerdrRailHeaderActionsKey: PreferenceKey {
+    static var defaultValue: AnyView? { nil }
+
+    static func reduce(value: inout AnyView?, nextValue: () -> AnyView?) {
+        if let next = nextValue() { value = next }
+    }
+}
+
+extension View {
+    func herdrRailHeaderActions<Actions: View>(@ViewBuilder _ actions: () -> Actions) -> some View {
+        preference(key: HerdrRailHeaderActionsKey.self, value: AnyView(actions()))
+    }
+}
+
 extension EnvironmentValues {
     /// True inside the main window's detail column, where screens put their
     /// title and controls in the window title bar (`herdrTitleBar`) instead of

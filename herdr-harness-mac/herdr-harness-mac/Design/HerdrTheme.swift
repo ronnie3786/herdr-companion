@@ -11,16 +11,25 @@ import os
 /// composited over `base`, so their contrast is fixed and testable. Nothing a
 /// person reads falls below 4.5:1 (`HerdrThemeAccessibilityTests`).
 ///
+/// The Mac app is dark everywhere except First Mate's light appearance. The
+/// neutral, accent and status roles follow the view's color scheme there,
+/// resolving to MonoCode light (base hsl(240 8% 97%), ink hsl(240 8% 18%)), so
+/// shared chrome such as the composer and title bar works on both. Code
+/// colors (diff, syntax) stay dark. Outside a view, `resolved(_:scheme:)`
+/// picks an appearance explicitly.
+///
 /// Older names (`graphite`, `elevated`, `mist`, …) remain as aliases of these
 /// roles so every view reads as the new palette; components adopt the role
 /// names and recipes in `HerdrRecipes.swift` as they are restyled.
 enum HerdrTheme {
     // MARK: Generator
 
-    /// hsl(240 8% 9%), #151519. The pane and window background.
-    static let base = hsl(240, 8, 9)
-    /// hsl(240 8% 92%), #E9E9EC. Primary text; every neutral fill is this at an alpha.
-    static let foreground = hsl(240, 8, 92)
+    /// hsl(240 8% 9%), #151519 (light: hsl(240 8% 97%), #F7F7F8). The pane and
+    /// window background.
+    static let base = adaptive(dark: baseRGB, light: lightBaseRGB)
+    /// hsl(240 8% 92%), #E9E9EC (light: hsl(240 8% 18%), #2A2A32). Primary
+    /// text; every neutral fill is this at an alpha.
+    static let foreground = adaptive(dark: foregroundRGB, light: lightForegroundRGB)
 
     /// `foreground` at `alpha`: translucent, for fills and lines that sit on
     /// any surface (including glass).
@@ -31,14 +40,14 @@ enum HerdrTheme {
     /// `foreground` at `alpha` composited over `base`: opaque, for text and for
     /// surfaces that must hide what is behind them.
     static func inkSolid(_ alpha: Double) -> Color {
-        composite(foregroundRGB, alpha, over: baseRGB)
+        inkSolid(dark: alpha, light: alpha)
     }
 
     // MARK: Surfaces
 
     static let windowBackground = base
-    /// The sidebar rail: `base` darkened by 10%, #131317.
-    static let railBackground = composite((0, 0, 0), 0.10, over: baseRGB)
+    /// The sidebar rail: `base` darkened by 10%, #131317. Light rails are base.
+    static let railBackground = adaptive(dark: blend((0, 0, 0), 0.10, over: baseRGB), light: lightBaseRGB)
 
     // MARK: Fills (translucent)
 
@@ -47,12 +56,12 @@ enum HerdrTheme {
     static let fieldFill = inkFill(0.04)
     /// Inset blocks inside cards (NOW, hunk bars) and hovered rows.
     static let insetFill = inkFill(0.05)
-    static let hoverFill = inkFill(0.05)
+    static let hoverFill = inkFill(dark: 0.05, light: 0.04)
     static let codeFill = inkFill(0.06)
     /// Inline code chips and document chips.
     static let chipFill = inkFill(0.08)
     /// Selected rows, tabs and pills, and the user's message bubble.
-    static let selectedFill = inkFill(0.10)
+    static let selectedFill = inkFill(dark: 0.10, light: 0.06)
 
     // MARK: Lines (translucent)
 
@@ -67,29 +76,30 @@ enum HerdrTheme {
     // MARK: Text (opaque)
 
     static let primaryText = foreground
-    /// Rendered prose: 78%.
-    static let proseText = inkSolid(0.78)
-    /// Labels and secondary copy: 70%.
-    static let secondaryText = inkSolid(0.70)
-    /// Metadata, timestamps and placeholders: 64%, the lowest text level.
-    static let tertiaryText = inkSolid(0.64)
-    /// Glyph-only icons: 50%. Never use for words.
-    static let iconTint = inkSolid(0.50)
+    /// Rendered prose: 78% (light 88%).
+    static let proseText = inkSolid(dark: 0.78, light: 0.88)
+    /// Labels and secondary copy: 70% (light 82%).
+    static let secondaryText = inkSolid(dark: 0.70, light: 0.82)
+    /// Metadata, timestamps and placeholders: 64% (light 76%), the lowest text level.
+    static let tertiaryText = inkSolid(dark: 0.64, light: 0.76)
+    /// Glyph-only icons: 50% (light 62%). Never use for words.
+    static let iconTint = inkSolid(dark: 0.50, light: 0.62)
 
     // MARK: Accent and actions
 
-    static let accent = color(0xAAA6F4)
-    /// Custom primary buttons (send, Agent view): lavender with a dark label.
+    static let accent = adaptive(dark: 0xAAA6F4, light: 0x6152B3)
+    /// Custom primary buttons (send, Agent view): lavender with a dark label
+    /// (deep lavender with a white label in light).
     static let primaryAction = accent
-    static let onPrimary = base
+    static let onPrimary = adaptive(dark: baseRGB, light: (255, 255, 255))
     static let primaryDisabled = accent.opacity(0.28)
-    static let onPrimaryDisabled = base.opacity(0.55)
+    static let onPrimaryDisabled = adaptive(dark: baseRGB, light: (255, 255, 255), darkAlpha: 0.55, lightAlpha: 0.85)
     // Native filled controls retain white labels on macOS, so their lavender
     // fill is deeper than the accent used for links and custom ink-label CTAs.
-    static let controlAccent = color(0x5E59A8)
+    static let controlAccent = adaptive(dark: 0x5E59A8, light: 0x6152B3)
     /// Count badges (Git sections): lavender at 85% with a dark label.
     static let badgeFill = accent.opacity(0.85)
-    static let onBadge = base
+    static let onBadge = onPrimary
     /// The First Mate row's attention badge.
     static let attentionBadge = color(0xFF9F0A)
     static let onAttentionBadge = color(0x1A1A1A)
@@ -98,13 +108,13 @@ enum HerdrTheme {
     /// The first bar of the brand mark and the blue note color.
     static let brandBlue = color(0xA6BAFF)
 
-    // MARK: Status (Herdr's pastels, unchanged)
+    // MARK: Status (Herdr's pastels; light uses First Mate's deepened hues)
 
-    static let signal = color(0x9CCDB9)
-    static let success = color(0xA3CBA7)
-    static let working = color(0xE4C386)
-    static let alert = color(0xE2A7B6)
-    static let warning = color(0xDFB38E)
+    static let signal = adaptive(dark: 0x9CCDB9, light: 0x1F6649)
+    static let success = adaptive(dark: 0xA3CBA7, light: 0x1C6B56)
+    static let working = adaptive(dark: 0xE4C386, light: 0x805300)
+    static let alert = adaptive(dark: 0xE2A7B6, light: 0xA62143)
+    static let warning = adaptive(dark: 0xDFB38E, light: 0x7A4E0E)
 
     // MARK: Diff (MonoCode's source-control colors, Tailwind 4.3.3)
 
@@ -215,6 +225,20 @@ enum HerdrTheme {
 
     private static let baseRGB = hslComponents(240, 8, 9)
     private static let foregroundRGB = hslComponents(240, 8, 92)
+    private static let lightBaseRGB = hslComponents(240, 8, 97)
+    private static let lightForegroundRGB = hslComponents(240, 8, 18)
+
+    /// `color` as sRGB under a given appearance. Views resolve roles from
+    /// their color scheme; code outside a view (web themes, tests) uses this
+    /// so the result never depends on the system appearance.
+    static func resolved(_ color: Color, scheme: ColorScheme = .dark) -> NSColor {
+        let appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua) ?? NSAppearance.currentDrawing()
+        var result = NSColor.black
+        appearance.performAsCurrentDrawingAppearance {
+            result = NSColor(color).usingColorSpace(.sRGB) ?? .black
+        }
+        return result
+    }
 
     /// CSS `hsl()` rounded to whole sRGB channels, as MonoCode's generator does.
     private static func hslComponents(_ hue: Double, _ saturation: Double, _ lightness: Double) -> RGB {
@@ -228,16 +252,49 @@ enum HerdrTheme {
         return (channel(0), channel(8), channel(4))
     }
 
-    private static func hsl(_ hue: Double, _ saturation: Double, _ lightness: Double) -> Color {
-        rgbColor(hslComponents(hue, saturation, lightness))
-    }
-
-    private static func composite(_ top: RGB, _ alpha: Double, over bottom: RGB) -> Color {
-        rgbColor((
+    private static func blend(_ top: RGB, _ alpha: Double, over bottom: RGB) -> RGB {
+        (
             (top.0 * alpha + bottom.0 * (1 - alpha)).rounded(),
             (top.1 * alpha + bottom.1 * (1 - alpha)).rounded(),
             (top.2 * alpha + bottom.2 * (1 - alpha)).rounded()
-        ))
+        )
+    }
+
+    private static func composite(_ top: RGB, _ alpha: Double, over bottom: RGB) -> Color {
+        rgbColor(blend(top, alpha, over: bottom))
+    }
+
+    /// Ink composited over base, at its own alpha in each scheme.
+    private static func inkSolid(dark: Double, light: Double) -> Color {
+        adaptive(dark: blend(foregroundRGB, dark, over: baseRGB),
+                 light: blend(lightForegroundRGB, light, over: lightBaseRGB))
+    }
+
+    /// Translucent ink at its own alpha in each scheme.
+    private static func inkFill(dark: Double, light: Double) -> Color {
+        adaptive(dark: foregroundRGB, light: lightForegroundRGB, darkAlpha: dark, lightAlpha: light)
+    }
+
+    private static func adaptive(dark: UInt32, light: UInt32) -> Color {
+        adaptive(dark: components(dark), light: components(light))
+    }
+
+    /// A role that follows the resolving appearance: light for Aqua, dark for
+    /// everything else (Dark Aqua and the vibrant and high-contrast variants).
+    private static func adaptive(dark: RGB, light: RGB, darkAlpha: Double = 1, lightAlpha: Double = 1) -> Color {
+        let darkColor = nsColor(dark, alpha: darkAlpha)
+        let lightColor = nsColor(light, alpha: lightAlpha)
+        return Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua ? lightColor : darkColor
+        })
+    }
+
+    private static func nsColor(_ rgb: RGB, alpha: Double) -> NSColor {
+        NSColor(srgbRed: rgb.0 / 255, green: rgb.1 / 255, blue: rgb.2 / 255, alpha: alpha)
+    }
+
+    private static func components(_ rgb: UInt32) -> RGB {
+        (Double((rgb >> 16) & 0xff), Double((rgb >> 8) & 0xff), Double(rgb & 0xff))
     }
 
     private static func rgbColor(_ rgb: RGB) -> Color {
@@ -245,13 +302,7 @@ enum HerdrTheme {
     }
 
     private static func color(_ rgb: UInt32) -> Color {
-        Color(
-            .sRGB,
-            red: Double((rgb >> 16) & 0xff) / 255,
-            green: Double((rgb >> 8) & 0xff) / 255,
-            blue: Double(rgb & 0xff) / 255,
-            opacity: 1
-        )
+        rgbColor(components(rgb))
     }
 
     /// The smallest square a pointer control may occupy.

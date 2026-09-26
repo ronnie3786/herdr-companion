@@ -98,6 +98,23 @@ class AgentDocsTests(unittest.TestCase):
                 self.assertTrue(links)
                 self.assertTrue(all((root / name).is_file() for name in links))
 
+    def test_first_mate_reference_covers_scoped_gate_verification(self):
+        text = agent_docs.topic_path("first-mate").read_text(encoding="utf-8")
+        # The installed reference must name the typed recorder and the exact
+        # selection fields an agent has to use.
+        for required in ("fm_record_verification", "verification_run_ids",
+                         "fm_complete_stage", "fm_outcome"):
+            self.assertIn(required, text)
+        # The partial-verification rule is stated, not implied.
+        self.assertIn("Partially verified", text)
+        self.assertIn("changed package", text)
+        self.assertIn("aggregate test count", text)
+        # Inventories are worker-reported discovery claims, absent evidence is
+        # conservative, and no claim treats reported discovery as proof.
+        self.assertIn("worker-reported", text)
+        self.assertIn("not independent proof", text)
+        self.assertIn("Verification unavailable", text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -92,6 +92,26 @@ class FirstMateBoardStoreTests(BoardFixture, unittest.TestCase):
         self.assertEqual((empty["journal"], empty["journal_total"]), ([], len(snapshot["events"])))
         self.assertEqual(len(self.store.board(self.id)["messages"]), len(chat))
 
+    def test_board_exposes_the_additive_scope_verdict_without_private_paths(self):
+        visit = self.stage()
+        self.running(visit)
+        direction = self.store.append_human_message(self.id, "Are we done?", "park-question")
+        claimed = self.store.claim_message(self.id, "coordinator")
+        self.assertEqual(claimed["id"], direction["id"])
+        assessment = {
+            "status": "partially_verified", "label": "Partially verified", "evidence_present": True,
+            "feature_revision": 1, "gate_set": [{"label": "pkg/app/SuiteOne", "outcome": "passed",
+                                                   "run_id": "fmvr_one", "tested_revision": "a" * 40, "fresh": True}],
+            "missing_suites": [{"label": "pkg/app/SuiteTwo"}], "previously_green_missing": [],
+            "failing_suites": [], "stale_evidence": [], "coverage_reasons": ["missing"]}
+        before = self.store.board(self.id)["version"]
+        self.store.finish_message(claimed["id"], "coordinator", reply="Parked.", verification=assessment)
+        board = self.store.board(self.id)
+        self.assertNotEqual(board["version"], before)
+        self.assertEqual(board["feature"]["verification"]["status"], "partially_verified")
+        self.assertEqual(board["feature"]["verification"]["missing_suites"], [{"label": "pkg/app/SuiteTwo"}])
+        self.assertNotIn("/tmp/synthetic", json.dumps(board["feature"]["verification"]))
+
     def test_assignments_are_trimmed_and_visit_ids_match_the_full_snapshot(self):
         visit = self.stage()
         kept = self.running(visit, "keep")

@@ -201,6 +201,24 @@ class FirstMateRuntimeTests(unittest.TestCase):
     def feature(self, goal='Plan the synthetic feature'):
         return self.store.create_feature({'title':'Synthetic feature','goal':goal,'cwd':str(self.cwd),'request_id':'create'})
 
+    def test_coordinator_state_exposes_scoped_verification_and_run_references(self):
+        snapshot = {
+            "feature": {"id": "fmf_synthetic", "title": "T", "goal": "G", "status": "running",
+                        "revision": 1,
+                        "verification": {"status": "partially_verified",
+                                         "missing_suites": [{"label": "pkg/app/SuiteTwo"}]}},
+            "visits": [], "memberships": [], "assignments": [], "documents": [], "links": [],
+            "verification_runs": [{
+                "id": "fmvr_one", "run_status": "completed", "tested_revision": "a" * 40,
+                "gates": [{"suite": {"package": "pkg/app", "suite": "SuiteOne", "configuration": ""}}],
+            }],
+        }
+        state = _coordinator_state(snapshot)
+        self.assertEqual(state["verification"]["status"], "partially_verified")
+        self.assertEqual([run["id"] for run in state["verification_runs"]], ["fmvr_one"])
+        self.assertEqual(state["verification_runs"][0]["gate_set"], ["pkg/app/SuiteOne"])
+        self.assertEqual(state["verification_runs"][0]["tested_revision"], "a" * 40)
+
     def test_archived_nonterminal_feature_remains_in_internal_reconciliation(self):
         feature = self.feature()
         self.store.set_archived(feature['id'], True, {'request_id': 'archive-running'})

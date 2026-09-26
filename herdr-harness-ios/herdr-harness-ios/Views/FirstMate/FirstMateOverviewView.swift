@@ -25,6 +25,14 @@ struct FirstMateOverviewView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(FirstMatePalette(scheme: scheme).surface, in: .rect(cornerRadius: 20))
 
+            FirstMateVerificationSummaryView(
+                verification: snapshot.feature.verification,
+                isLastReported: !store.isDemo && store.error != nil
+            )
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(FirstMatePalette(scheme: scheme).surface, in: .rect(cornerRadius: 20))
+
             FirstMateUsageSummaryView(usage: snapshot.feature.usage, title: "Full task usage")
                 .padding(20)
                 .frame(maxWidth: .infinity, alignment: .leading)

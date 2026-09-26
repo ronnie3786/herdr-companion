@@ -307,6 +307,14 @@ final class FirstMateStore {
                 than: existing.feature.updatedAt
             )
             if feature.usage == nil { feature.usage = existing.feature.usage }
+            feature.verification = Self.retainedVerification(
+                incoming: feature.verification,
+                includesField: feature.includesVerification,
+                cached: existing.feature.verification,
+                incomingIsStale: hasStaleIdentityMetadata,
+                authoritative: false
+            )
+            feature.includesVerification = feature.includesVerification || existing.feature.includesVerification
             if hasStaleIdentityMetadata {
                 feature.updatedAt = existing.feature.updatedAt
                 feature.nativeSessionID = existing.feature.nativeSessionID
@@ -331,6 +339,23 @@ final class FirstMateStore {
             snapshots[value.feature.id] = existing
         } else {
             var incoming = value
+            if let existing = snapshots[incoming.feature.id] {
+                // A delayed full snapshot can carry an older assessment than
+                // the one already cached. Keep the newer verdict so a stale
+                // verified state cannot be resurrected.
+                incoming.feature.verification = Self.retainedVerification(
+                    incoming: incoming.feature.verification,
+                    includesField: incoming.feature.includesVerification,
+                    cached: existing.feature.verification,
+                    incomingIsStale: Self.isStrictlyOlderTimestamp(
+                        incoming.feature.updatedAt,
+                        than: existing.feature.updatedAt
+                    ),
+                    authoritative: true
+                )
+                incoming.feature.includesVerification = incoming.feature.includesVerification
+                    || existing.feature.includesVerification
+            }
             if !incoming.includesLinks, let existing = snapshots[incoming.feature.id] {
                 // A server without the additive links field is not evidence
                 // that previously cached links were removed.
@@ -397,6 +422,14 @@ final class FirstMateStore {
                 }
                 var refreshed = feature
                 if refreshed.usage == nil { refreshed.usage = cached.usage }
+                refreshed.verification = Self.retainedVerification(
+                    incoming: refreshed.verification,
+                    includesField: refreshed.includesVerification,
+                    cached: cached.verification,
+                    incomingIsStale: Self.isStrictlyOlderTimestamp(refreshed.updatedAt, than: cached.updatedAt),
+                    authoritative: true
+                )
+                refreshed.includesVerification = refreshed.includesVerification || cached.includesVerification
                 return refreshed
             }
             reconcileSelection()
@@ -1339,6 +1372,46 @@ final class FirstMateStore {
         guard let candidateDate = HerdrTimestamp.date(from: candidate),
               let existingDate = HerdrTimestamp.date(from: existing) else { return false }
         return candidateDate < existingDate
+    }
+
+    /// Conservative verification merge for partial acknowledgements and
+    /// delayed full snapshots.
+    ///
+    /// - A partial acknowledgement (mutation response) that omits the field
+    ///   inherits the cached assessment.
+    /// - An authoritative full snapshot that omits, nulls, or malforms the
+    ///   field reports unavailable evidence: the cached verdict is downgraded
+    ///   so an old green never remains current.
+    /// - An explicit empty assessment never erases retained evidence for a
+    ///   partial acknowledgement.
+    /// - A strictly older feature timestamp keeps the cached assessment.
+    /// - Otherwise the assessment with the newer feature revision and
+    ///   computation timestamp wins, so a delayed verified response cannot
+    ///   overwrite a newer partial or failed verdict.
+    private static func retainedVerification(
+        incoming: FirstMateVerification?,
+        includesField: Bool,
+        cached: FirstMateVerification?,
+        incomingIsStale: Bool,
+        authoritative: Bool
+    ) -> FirstMateVerification? {
+        if incomingIsStale { return cached }
+        guard let cached else { return includesField ? incoming : nil }
+        guard includesField, let incoming else {
+            // An omitted or malformed field is evidence of absence only in an
+            // authoritative full snapshot; a mutation acknowledgement merely
+            // did not carry the assessment.
+            return authoritative ? Self.unavailableVerification() : cached
+        }
+        return incoming.isAtLeastAsFresh(as: cached) ? incoming : cached
+    }
+
+    private static func unavailableVerification() -> FirstMateVerification {
+        FirstMateVerification(
+            status: .unavailable,
+            coverageReasons: ["The companion did not report structured suite evidence for this feature."],
+            evidencePresent: true
+        )
     }
 
     private func resetSessionPagination() {

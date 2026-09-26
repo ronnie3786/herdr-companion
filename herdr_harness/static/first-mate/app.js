@@ -83,6 +83,50 @@
     const cache=(nonnegative(usage.cache_read_tokens)&&usage.cache_read_tokens>0)||(nonnegative(usage.cache_write_tokens)&&usage.cache_write_tokens>0)?`<p>Cache · ${escape(number(usage.cache_read_tokens))} read · ${escape(number(usage.cache_write_tokens))} write</p>`:'';
     return `<section class="usage-panel" aria-label="${escape(title)}" title="${escape(usageDescription(usage))}"><div class="usage-heading"><h2>${escape(title)}</h2><strong class="usage-total">${escape(compactCost(usage))}</strong></div><p>Pi-reported estimated USD. Not a provider invoice; subscription providers may report $0.00.</p><p><strong>${escape(number(usage.total_tokens))}</strong> total tokens · ${escape(number(usage.input_tokens))} input · ${escape(number(usage.output_tokens))} output</p>${cache}<p>${escape(coverage(usage))}</p>${warning}${models?`<div class="usage-models">${models}</div>`:''}</section>`;
   }
+  const verificationStatusLabel = value => ({verified:'Verified',partially_verified:'Partially verified',failed:'Failed'}[value]||'Verification unavailable');
+  const verificationTone = value => value==='verified'?'verified':value==='partially_verified'?'partial':value==='failed'?'failed':'unavailable';
+  const verificationOutcome = outcome => ({passed:'Passed',failed:'Failed',error:'Error',skipped:'Skipped'}[outcome]||(outcome?String(outcome).replaceAll('_',' '):''));
+  const shortRevision = value => { const text=String(value||''); return text.length>12?`${text.slice(0,12)}…`:text; };
+  const verificationSuite = entry => {
+    if(typeof entry==='string')return {label:entry.trim()||'Unnamed suite',outcome:''};
+    if(!entry||typeof entry!=='object')return {label:'Unnamed suite',outcome:''};
+    const label=typeof entry.label==='string'&&entry.label.trim()?entry.label.trim():[entry.package,entry.suite].filter(value=>typeof value==='string'&&value.trim()).join('/')||'Unnamed suite';
+    const configuration=typeof entry.configuration==='string'&&entry.configuration.trim()&&!label.includes(`(${entry.configuration})`)?` (${entry.configuration})`:'';
+    return {label:`${label}${configuration}`,outcome:typeof entry.outcome==='string'?entry.outcome.trim():''};
+  };
+  function verificationSection(title, suites, limit=4) {
+    const rows=suites.map(({label,outcome})=>`<li><span>${escape(label)}</span>${outcome?`<small>${escape(verificationOutcome(outcome))}</small>`:''}</li>`);
+    if(!rows.length)return '';
+    const more=rows.length>limit?`<details class="verification-more"><summary>Show the remaining ${rows.length-limit} of ${rows.length}</summary><ul>${rows.slice(limit).join('')}</ul></details>`:'';
+    return `<div class="verification-section"><h3>${escape(title)}</h3><ul>${rows.slice(0,limit).join('')}</ul>${more}</div>`;
+  }
+  const verificationSuiteList = entries => (Array.isArray(entries) ? entries : []).map(verificationSuite);
+  function verificationPanel(verification, lastReported=false) {
+    const value=verification&&typeof verification==='object'?verification:null;
+    const status=typeof value?.status==='string'?value.status.trim():'';
+    const reasons=(Array.isArray(value?.coverage_reasons)?value.coverage_reasons:[]).filter(text=>typeof text==='string'&&text.trim());
+    const gateSet=verificationSuiteList(value?.gate_set);
+    const missing=verificationSuiteList(value?.missing_suites);
+    const dropped=verificationSuiteList(value?.previously_green_missing);
+    const failing=verificationSuiteList(value?.failing_suites);
+    const stale=(Array.isArray(value?.stale_evidence)?value.stale_evidence:[]).filter(item=>item&&typeof item==='object');
+    const revisions=[...new Set([
+      ...(Array.isArray(value?.source_revisions)?value.source_revisions:[]),
+      ...(Array.isArray(value?.gate_set)?value.gate_set:[]).map(entry=>entry?.tested_revision),
+    ].filter(text=>typeof text==='string'&&text.trim()))];
+    // A verified verdict must ship its exact gate set and tested revision.
+    // Structurally incomplete payloads degrade to unavailable, never green.
+    const downgraded=status==='verified'&&(gateSet.length===0||revisions.length===0);
+    const effectiveStatus=downgraded?'unavailable':status;
+    const tone=verificationTone(effectiveStatus);
+    const hasEvidence=!!value&&(value.evidence_present===true||gateSet.length||missing.length||dropped.length||failing.length||stale.length||reasons.length||revisions.length);
+    const revisionText=revisions.length?`<p>Tested revision${revisions.length===1?'':'s'} ${revisions.map(revision=>`<code>${escape(shortRevision(revision))}</code>`).join(' ')}</p>`:'';
+    const downgradeWarning=downgraded?'<p class="verification-warning">⚠ The companion reported Verified without the required gate set and tested revision; it is not treated as verified.</p>':'';
+    const unknown=status&&!['verified','partially_verified','failed','unavailable'].includes(status)?'<p class="verification-warning">⚠ This companion reported an unrecognized verification status; it is not treated as verified.</p>':'';
+    const staleHtml=stale.length?`<div class="verification-section"><h3>Stale evidence</h3><ul>${stale.map(item=>`<li><span>${escape(shortRevision(item.tested_revision)||'unknown revision')}</span><small>${escape(item.reason||'no longer current')}</small></li>`).join('')}</ul></div>`:'';
+    const evidence=hasEvidence?`${reasons.length?`<div class="verification-section"><h3>Coverage</h3><ul>${reasons.map(reason=>`<li><span>${escape(reason)}</span></li>`).join('')}</ul></div>`:''}${verificationSection(`Gate set (${gateSet.length})`,gateSet)}${verificationSection(`Missing suites (${missing.length})`,missing)}${verificationSection(`Previously passing suites dropped from the gate set (${dropped.length})`,dropped)}${verificationSection(`Failing suites (${failing.length})`,failing)}${staleHtml}`:'<p class="verification-warning">No structured suite evidence is reported. A green workflow status cannot be tied to a gate set until the companion reports one.</p>';
+    return `<section class="verification-panel ${tone}" aria-label="Verification"><div class="verification-heading"><h2>Verification</h2>${lastReported?'<span class="verification-last-reported">Last reported</span>':''}</div><p class="verification-status"><span class="verification-dot" aria-hidden="true"></span><strong>${escape(verificationStatusLabel(effectiveStatus))}</strong></p><p class="verification-note">This evidence is separate from the feature's workflow status.</p>${revisionText}${downgradeWarning}${lastReported?'<p class="verification-warning">⚠ Showing the last reported evidence. The companion connection is unavailable, so newer runs may not appear here.</p>':''}${unknown}${evidence}</section>`;
+  }
   const sessionKind = session => session?.kind==='advisor'?'Advisor':session?.kind==='coordinator'||(!session?.kind&&session?.role==='first_mate')?'First Mate coordinator':'Worker';
   const selectionText = (selection, full=false) => {
     if(!selection)return '';
@@ -144,7 +188,9 @@
   async function refresh() {
     const generation=state.generation, sequence=++state.refreshSequence;
     const current=()=>generation===state.generation && sequence>=state.appliedRefresh;
+    const wasOffline=!!state.error;
     try {
+      state.error=null;
       const list=await api(`features${state.showArchived?'?view=all':''}`); if(!current())return;
       state.features=list.features||[];
       if(!state.selected) state.selected=state.features[0]?.id||null;
@@ -156,13 +202,15 @@
         state.detail={visits:[],assignments:[],documents:[],messages:[],events:[],sessions:[],...detail};
         const signature=JSON.stringify(detail);
         if(signature!==state.lastSignature){state.lastSignature=signature;renderDetail();}
+        else if(wasOffline)renderDetail();
       } else renderDetail();
       state.appliedRefresh=sequence;
-      state.error=null;$('#connection').textContent='Connected';$('#connection').title=`Updated ${new Date().toLocaleTimeString()}`;
+      $('#connection').textContent='Connected';$('#connection').title=`Updated ${new Date().toLocaleTimeString()}`;
     } catch(error) {
       if(!current())return;
       state.error=error.message;$('#connection').textContent=state.detail?'Offline · saved view':'Connection needed';$('#connection').title=error.message;
       if(!state.detail){$('#workspace').innerHTML=empty('Connect to your companion',error.message);$('#chat-status').textContent=error.message;}
+      else if(state.tab==='Overview')renderWorkspace();
     }
     updateComposer();
   }
@@ -191,7 +239,7 @@
   function renderWorkspace(){
     const d=state.detail;if(!d)return;let html='';
     if(state.tab==='Overview'){
-      html=`<p class="eyebrow">The goal</p><p class="goal">${escape(d.feature.goal)}</p>${usagePanel(d.feature.usage,'Full task usage')}`;
+      html=`<p class="eyebrow">The goal</p><p class="goal">${escape(d.feature.goal)}</p>${usagePanel(d.feature.usage,'Full task usage')}${verificationPanel(d.feature.verification, !!state.error)}`;
       if(d.feature.status==='awaiting_direction')html+='<section class="checkpoint"><h3>Ready for your next direction</h3><p>Work is waiting at a human checkpoint. Review the latest request, then tell First Mate how you want to continue.</p></section>';
       html+=`<div class="section-title"><h2>Working on this feature</h2><small>${d.assignments.length} assignments</small></div>${agentRows([...d.assignments.filter(a=>['running','queued','dispatching','handoff_pending'].includes(a.status)),...d.assignments.filter(a=>!['running','queued','dispatching','handoff_pending'].includes(a.status)).slice(-4)].slice(0,4))}`;
       html+='<div class="section-title"><h2>Feature journal</h2></div>'+d.events.slice(-12).reverse().map(e=>`<article class="event"><time>${escape(date(e.created_at))}</time>${escape(e.summary||label(e.type))}</article>`).join('');

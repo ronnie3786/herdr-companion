@@ -6,7 +6,7 @@ struct AttentionView: View {
 
     var body: some View {
         ZStack {
-            HerdrBackground()
+            HerdrBackground(followsGlass: true)
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 20) {

@@ -62,8 +62,8 @@ struct ComposerAuxiliaryBar: View {
 
     private func controls(showsTitles: Bool) -> some View {
         let layout = isVertical
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
-            : AnyLayout(HStackLayout(spacing: 2))
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0))
+            : AnyLayout(HStackLayout(spacing: 4))
         return layout {
             if showsAttach {
                 auxiliaryButton(
@@ -129,29 +129,12 @@ struct ComposerAuxiliaryBar: View {
             hapticPulse.fire(.selection)
             action()
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: systemImage)
-                    .herdrFont(.caption)
-
-                if showsTitle {
-                    Text(title)
-                        .herdrFont(.caption)
-                        .lineLimit(1)
-                }
-            }
-            .foregroundStyle(hoveredControl == identity ? HerdrTheme.text : HerdrTheme.mist)
-            .frame(maxWidth: isVertical ? .infinity : nil, minHeight: HerdrTheme.minHitTarget, alignment: .leading)
-            .padding(.horizontal, isVertical ? 10 : 6)
-            .background(isVertical || hoveredControl == identity ? HerdrTheme.elevated : .clear)
-            .overlay {
-                RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                    .strokeBorder(
-                        isVertical ? HerdrTheme.subtleSeparator : .clear,
-                        lineWidth: 1
-                    )
-            }
-            .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
-            .contentShape(.rect)
+            controlLabel(
+                systemImage: systemImage,
+                title: title,
+                showsTitle: showsTitle,
+                isHovered: hoveredControl == identity
+            )
         }
         .buttonStyle(.plain)
         .onHover { isHovering in
@@ -161,34 +144,84 @@ struct ComposerAuxiliaryBar: View {
         .accessibilityLabel(accessibilityLabel)
     }
 
-    private func voiceButton(showsTitle: Bool) -> some View {
-        HStack(spacing: 6) {
-            if voicePhase == .transcribing {
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(HerdrTheme.mist)
-                    .frame(width: 14, height: 14)
-            } else {
-                Image(systemName: voicePhase == .locked ? "lock.fill" : "mic")
-                    .herdrFont(.caption)
-            }
-
-            if showsTitle {
-                Text("Voice")
-                    .herdrFont(.caption)
+    /// MonoCode's ghost icon button (26pt, 50% ink, 10% wash on hover) in the
+    /// toolbar, or a 32pt popover row (16pt icon, 13pt title, 5% hover).
+    @ViewBuilder
+    private func controlLabel(
+        systemImage: String,
+        title: LocalizedStringKey,
+        showsTitle: Bool,
+        isHovered: Bool
+    ) -> some View {
+        if isVertical {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .herdrFont(size: 15)
+                    .foregroundStyle(HerdrTheme.iconTint)
+                    .frame(width: 18)
+                Text(title)
+                    .herdrFont(size: HerdrTheme.TextSize.body)
+                    .foregroundStyle(isHovered ? HerdrTheme.primaryText : HerdrTheme.secondaryText)
                     .lineLimit(1)
             }
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: HerdrTheme.ControlHeight.row, alignment: .leading)
+            .background(isHovered ? HerdrTheme.hoverFill : .clear, in: .rect(cornerRadius: HerdrTheme.Radius.composer))
+            .contentShape(.rect)
+        } else {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .herdrFont(size: HerdrTheme.TextSize.reading)
+                if showsTitle {
+                    Text(title)
+                        .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
+                        .lineLimit(1)
+                }
+            }
+            .foregroundStyle(isHovered ? HerdrTheme.primaryText : HerdrTheme.iconTint)
+            .padding(.horizontal, showsTitle ? 6 : 0)
+            .frame(minWidth: HerdrTheme.ControlHeight.regular, minHeight: HerdrTheme.ControlHeight.regular)
+            .background(isHovered ? HerdrTheme.selectedFill : .clear, in: .rect(cornerRadius: HerdrTheme.Radius.control))
+            .frame(minWidth: HerdrTheme.minHitTarget, minHeight: HerdrTheme.minHitTarget)
+            .contentShape(.rect)
         }
-        .foregroundStyle(voiceForeground)
-        .frame(maxWidth: isVertical ? .infinity : nil, minHeight: HerdrTheme.minHitTarget, alignment: .leading)
-        .padding(.horizontal, isVertical ? 10 : 6)
-        .background(voiceBackground)
-        .overlay {
-            RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                .strokeBorder(voiceBorder, lineWidth: 1)
+    }
+
+    private func voiceButton(showsTitle: Bool) -> some View {
+        Group {
+            if isRecordingOrLocked || voicePhase == .transcribing {
+                HStack(spacing: 6) {
+                    if voicePhase == .transcribing {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(HerdrTheme.iconTint)
+                            .frame(width: 14, height: 14)
+                    } else {
+                        Image(systemName: voicePhase == .locked ? "lock.fill" : "mic.fill")
+                            .herdrFont(size: HerdrTheme.TextSize.reading)
+                    }
+                    if showsTitle {
+                        Text("Voice")
+                            .herdrFont(size: isVertical ? HerdrTheme.TextSize.body : HerdrTheme.TextSize.caption, weight: .medium)
+                            .lineLimit(1)
+                    }
+                }
+                .foregroundStyle(voiceForeground)
+                .padding(.horizontal, showsTitle ? 8 : 0)
+                .frame(maxWidth: isVertical ? .infinity : nil, minHeight: HerdrTheme.ControlHeight.regular, alignment: isVertical ? .leading : .center)
+                .frame(minWidth: HerdrTheme.ControlHeight.regular)
+                .background(voiceBackground, in: .rect(cornerRadius: HerdrTheme.Radius.control))
+                .frame(minWidth: HerdrTheme.minHitTarget, minHeight: HerdrTheme.minHitTarget)
+                .contentShape(.rect)
+            } else {
+                controlLabel(
+                    systemImage: "mic",
+                    title: "Voice",
+                    showsTitle: showsTitle,
+                    isHovered: hoveredControl == Self.voiceControl
+                )
+            }
         }
-        .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
-        .contentShape(.rect)
         .scaleEffect(voicePhase == .locked && isLockPulsing && !reduceMotion ? 1.035 : 1)
         .opacity(voicePhase == .locked && isLockPulsing && !reduceMotion ? 0.86 : 1)
         .animation(
@@ -237,17 +270,11 @@ struct ComposerAuxiliaryBar: View {
     }
 
     private var voiceForeground: Color {
-        if isRecordingOrLocked { return HerdrTheme.ink }
-        return hoveredControl == Self.voiceControl ? HerdrTheme.text : HerdrTheme.mist
+        isRecordingOrLocked ? HerdrTheme.onPrimary : HerdrTheme.iconTint
     }
 
     private var voiceBackground: Color {
-        isRecordingOrLocked ? HerdrTheme.alert : (isVertical || hoveredControl == Self.voiceControl ? HerdrTheme.elevated : .clear)
-    }
-
-    private var voiceBorder: Color {
-        if isRecordingOrLocked { return HerdrTheme.alert }
-        return isVertical ? HerdrTheme.subtleSeparator : .clear
+        isRecordingOrLocked ? HerdrTheme.alert : .clear
     }
 
     /// The one place the hold-to-dictate gesture is spelled out for a pointer.

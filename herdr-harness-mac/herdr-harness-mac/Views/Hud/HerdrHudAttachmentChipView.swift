@@ -13,17 +13,17 @@ struct HerdrHudAttachmentChipView: View {
             thumbnail
             VStack(alignment: .leading, spacing: 0) {
                 Text(attachment.quote?.comment ?? attachment.filename)
-                    .herdrFont(.caption2)
-                    .foregroundStyle(HerdrTheme.mist)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(HerdrTheme.secondaryText)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(Int64(attachment.byteCount).formatted(.byteCount(style: .file)))
-                    .herdrFont(.caption2)
-                    .foregroundStyle(HerdrTheme.muted)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(HerdrTheme.tertiaryText)
             }
             Button(action: remove) {
                 Image(systemName: "xmark")
-                    .foregroundStyle(HerdrTheme.muted)
+                    .foregroundStyle(HerdrTheme.tertiaryText)
                     .herdrHitTarget()
             }
             .buttonStyle(.plain)
@@ -62,8 +62,8 @@ struct HerdrHudAttachmentChipView: View {
                     ? "photo"
                     : Self.symbolName(forExtension: URL(fileURLWithPath: attachment.filename).pathExtension)
             )
-                .herdrFont(.caption)
-                .foregroundStyle(HerdrTheme.muted)
+                .herdrFont(size: HerdrTheme.TextSize.caption)
+                .foregroundStyle(HerdrTheme.tertiaryText)
                 .frame(width: 28, height: 28)
                 .background(HerdrTheme.surface, in: .rect(cornerRadius: HerdrTheme.compactRadius))
         }

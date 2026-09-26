@@ -1,5 +1,7 @@
 import SwiftUI
 
+/// MonoCode's section label: 10/600 uppercase, tracked, tertiary, with an
+/// optional detail at 11 on the right.
 struct HerdrSectionLabel: View {
     let title: String
     var detail: String?
@@ -7,16 +9,16 @@ struct HerdrSectionLabel: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(title)
-                .fontWeight(.medium)
+            Text(title.uppercased())
+                .herdrFont(size: HerdrTheme.TextSize.micro, monospaced: monospaced, weight: .semibold)
+                .tracking(0.6)
             Spacer(minLength: 12)
             if let detail {
                 Text(detail)
-                    .foregroundStyle(HerdrTheme.mist)
+                    .herdrFont(size: HerdrTheme.TextSize.caption, monospaced: monospaced)
             }
         }
-        .herdrFont(.subheadline, monospaced: monospaced)
-        .foregroundStyle(HerdrTheme.mist)
+        .foregroundStyle(HerdrTheme.tertiaryText)
         .accessibilityElement(children: .combine)
     }
 }

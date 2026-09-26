@@ -1,56 +1,29 @@
 import SwiftUI
 
-/// A compact, always-visible meter for the active model's context usage.
+/// The composer context line's usage meter: a 14pt ring and "25% · $1.87".
 /// Hides itself when the bridge predates context reporting or when Pi has
 /// not produced a reading yet (for example right after compaction).
-struct PiContextMeterView: View {
+struct PiContextRing: View {
     let usage: PiContextUsage?
     let cost: PiSessionCost?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.herdrFontScale) private var fontScale
 
     var body: some View {
         if usage?.fraction != nil || cost?.summary != nil {
-            HStack(spacing: 10) {
-                if let usage, let fraction = usage.fraction {
-                    GeometryReader { proxy in
-                        ZStack(alignment: .leading) {
-                            Capsule()
-                                .fill(HerdrTheme.subtleSeparator)
-                            Capsule()
-                                .fill(barColor.opacity(0.7))
-                                .frame(width: max(6, proxy.size.width * fraction))
-                        }
-                    }
-                    .frame(height: 2)
-                    .help(usage.summary ?? "Context usage")
-
-                    Text(usage.percentText ?? "…")
-                        .herdrFont(.caption2, weight: .medium, monospacedDigit: true)
-                        .foregroundStyle(barColor)
-                        .lineLimit(1)
-
-                    if let costText = cost?.summary {
-                        Text("·")
-                            .herdrFont(.caption2)
-                            .foregroundStyle(HerdrTheme.muted)
-                        Text(costText)
-                            .herdrFont(.caption2, monospacedDigit: true)
-                            .foregroundStyle(HerdrTheme.mist)
-                            .lineLimit(1)
-                            .accessibilityIdentifier("pi-session-cost")
-                    }
-                } else if let costText = cost?.summary {
-                    Spacer()
-                    Text(costText)
-                        .herdrFont(.caption2, monospacedDigit: true)
-                        .foregroundStyle(HerdrTheme.mist)
-                        .lineLimit(1)
-                        .accessibilityIdentifier("pi-session-cost")
+            HStack(spacing: 6) {
+                if let fraction = usage?.fraction {
+                    HerdrProgressRing(fraction: fraction, color: meterColor)
+                        .help(usage?.summary ?? "Context usage")
                 }
+                Text(label)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(meterColor)
+                    .lineLimit(1)
+                    .accessibilityIdentifier("pi-session-cost")
             }
-            .padding(.horizontal, HerdrTheme.pagePadding)
-            .padding(.vertical, 3)
-            .background(HerdrTheme.graphite)
+            .fixedSize()
             .help(accessibilityLabel)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: usage?.fraction)
             .accessibilityElement(children: .ignore)
@@ -59,15 +32,19 @@ struct PiContextMeterView: View {
         }
     }
 
-    private var barColor: Color {
-        guard let fraction = usage?.fraction else { return HerdrTheme.accent }
+    private var label: String {
+        [usage?.fraction != nil ? (usage?.percentText ?? "…") : nil, cost?.summary]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+    }
+
+    /// Quiet until the window is filling up.
+    private var meterColor: Color {
+        guard let fraction = usage?.fraction else { return HerdrTheme.tertiaryText }
         switch fraction {
-        case ..<0.6:
-            return HerdrTheme.accent
-        case ..<0.85:
-            return HerdrTheme.working
-        default:
-            return HerdrTheme.alert
+        case ..<0.6: return HerdrTheme.tertiaryText
+        case ..<0.85: return HerdrTheme.working
+        default: return HerdrTheme.alert
         }
     }
 
@@ -90,5 +67,29 @@ struct PiContextMeterView: View {
             return "Session cost \(costSummary)"
         }
         return ""
+    }
+}
+
+/// MonoCode's 14pt progress ring: a 25% track and a rounded arc. A static
+/// shape with no repeating animation, so it is cheap in a streaming chat.
+struct HerdrProgressRing: View {
+    let fraction: Double
+    var color: Color = HerdrTheme.tertiaryText
+    @Environment(\.herdrFontScale) private var fontScale
+
+    var body: some View {
+        let size = 14 * fontScale.rawValue
+        let lineWidth = 1.75 * fontScale.rawValue
+        ZStack {
+            Circle()
+                .stroke(color.opacity(0.25), lineWidth: lineWidth)
+            Circle()
+                .trim(from: 0, to: min(max(fraction, 0), 1))
+                .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: size * 0.75, height: size * 0.75)
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
     }
 }

@@ -5,15 +5,19 @@ struct AgentStatusBadge: View {
     var compact = false
 
     var body: some View {
-        Label(compact ? status.compactTitle : status.title, systemImage: status.symbol)
-            .herdrFont(.caption, weight: .bold)
-            .foregroundStyle(status.labelColor)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(status.color.opacity(0.11), in: Capsule())
-            .overlay {
-                Capsule().strokeBorder(status.color.opacity(0.28), lineWidth: 1)
-            }
+        HStack(spacing: 5) {
+            Image(systemName: status.symbol)
+                .herdrFont(size: 9, weight: .semibold)
+                .accessibilityHidden(true)
+            Text(compact ? status.compactTitle : status.title)
+                .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
+                .lineLimit(1)
+        }
+        .foregroundStyle(status.labelColor)
+        .padding(.horizontal, 6)
+        .frame(minHeight: 20)
+        .background(status.color.opacity(0.12), in: .rect(cornerRadius: 4))
+        .fixedSize()
             .accessibilityLabel("Agent status: \(status.title)")
     }
 }

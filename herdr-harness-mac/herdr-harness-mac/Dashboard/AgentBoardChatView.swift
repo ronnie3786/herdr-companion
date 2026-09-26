@@ -11,20 +11,21 @@ struct AgentBoardChatView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
+                LazyVStack(alignment: .leading, spacing: 10) {
                     if content.earlierMessageCount > 0 {
                         Button(action: openFullView) {
                             Text("\(content.earlierMessageCount) earlier message\(content.earlierMessageCount == 1 ? "" : "s") · Open full conversation")
-                                .herdrFont(.subheadline)
+                                .herdrFont(size: HerdrTheme.TextSize.caption)
                                 .foregroundStyle(HerdrTheme.accent)
-                                .frame(maxWidth: .infinity)
+                                .frame(maxWidth: .infinity, minHeight: HerdrTheme.minHitTarget)
+                                .contentShape(.rect)
                         }
                         .buttonStyle(.plain)
                     }
                     if content.timeline.isEmpty {
                         Text("No messages yet. Give First Mate your direction below.")
-                            .herdrFont(.callout)
-                            .foregroundStyle(HerdrTheme.muted)
+                            .herdrFont(size: HerdrTheme.TextSize.small)
+                            .foregroundStyle(HerdrTheme.tertiaryText)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     ForEach(content.timeline) { message in
@@ -32,8 +33,9 @@ struct AgentBoardChatView: View {
                     }
                     Color.clear.frame(height: 1).id(Self.endID)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+                .padding(.bottom, 12)
             }
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .onScrollGeometryChange(for: Bool.self) { geometry in
@@ -50,12 +52,19 @@ struct AgentBoardChatView: View {
                         followsLatest = true
                         proxy.scrollTo(Self.endID, anchor: .bottom)
                     } label: {
+                        // Opaque, no blur or shadow: it floats over a scrolling list.
                         Label("Latest", systemImage: "arrow.down")
-                            .herdrFont(.subheadline)
-                            .foregroundStyle(HerdrTheme.text)
-                            .padding(.horizontal, 10).padding(.vertical, 4)
-                            .background(HerdrTheme.surface, in: .capsule)
-                            .overlay { Capsule().stroke(HerdrTheme.separator) }
+                            .labelStyle(DashboardInlineLabelStyle(spacing: 4))
+                            .herdrFont(size: HerdrTheme.TextSize.small)
+                            .foregroundStyle(HerdrTheme.secondaryText)
+                            .padding(.horizontal, 9)
+                            .frame(height: HerdrTheme.ControlHeight.small)
+                            .background(HerdrTheme.inkSolid(0.13), in: .rect(cornerRadius: HerdrTheme.Radius.control))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: HerdrTheme.Radius.control).strokeBorder(HerdrTheme.strongOutline)
+                            }
+                            .frame(minHeight: HerdrTheme.minHitTarget)
+                            .contentShape(.rect)
                     }
                     .buttonStyle(.plain)
                     .padding(10)

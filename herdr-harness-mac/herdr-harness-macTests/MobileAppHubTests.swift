@@ -184,7 +184,7 @@ struct MobileAppHubRenderTests {
         let card = try await HerdrRenderHarness.render("dashboard-builds.png", size: CGSize(width: 1100, height: 260)) {
             DashboardBuildsSection(dashboard: dashboard, query: query)
                 .padding(.vertical, 20)
-                .background(HerdrTheme.graphite)
+                .background(HerdrTheme.windowBackground)
                 .foregroundStyle(HerdrTheme.text)
         }
         card.expectSubstantial()

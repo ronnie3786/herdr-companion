@@ -7,36 +7,36 @@ struct FirstMateUsageSummaryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title)
-                .font(.headline)
+                .summaryFont(.headline)
                 .accessibilityAddTraits(.isHeader)
             if let usage {
                 HStack(alignment: .firstTextBaseline) {
                     Text(FirstMateUsageFormatting.compactCost(usage))
-                        .font(.title3)
+                        .summaryFont(.title3)
                         .bold()
                         .monospacedDigit()
                     Spacer(minLength: 12)
                     Text(usage.status.replacingOccurrences(of: "_", with: " ").capitalized)
-                        .font(.caption)
+                        .summaryFont(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Text("Pi-reported estimated USD. This is not a provider invoice; subscription providers may report $0.00.")
-                    .font(.footnote)
+                    .summaryFont(.footnote)
                     .foregroundStyle(.secondary)
                 Text("\(FirstMateUsageFormatting.tokens(usage.totalTokens)) total tokens · \(FirstMateUsageFormatting.tokens(usage.inputTokens)) input · \(FirstMateUsageFormatting.tokens(usage.outputTokens)) output")
-                    .font(.subheadline)
+                    .summaryFont(.subheadline)
                 if usage.cacheReadTokens > 0 || usage.cacheWriteTokens > 0 {
                     Text("Cache · \(FirstMateUsageFormatting.tokens(usage.cacheReadTokens)) read · \(FirstMateUsageFormatting.tokens(usage.cacheWriteTokens)) write")
-                        .font(.footnote)
+                        .summaryFont(.footnote)
                         .foregroundStyle(.secondary)
                 }
                 Text(FirstMateUsageFormatting.coverage(usage))
-                    .font(.footnote)
+                    .summaryFont(.footnote)
                     .foregroundStyle(.secondary)
                 if usage.status == "partial" || usage.stale == true {
                     Label(usage.stale == true ? "Showing the last reported total; the usage source is temporarily unreadable." : "Some retained usage or cost records are unavailable.", systemImage: "exclamationmark.triangle")
-                        .font(.footnote)
-                        .foregroundStyle(.orange)
+                        .summaryFont(.footnote)
+                        .foregroundStyle(summaryWarning)
                 }
                 if !usage.models.isEmpty {
                     Divider()
@@ -44,24 +44,24 @@ struct FirstMateUsageSummaryView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(alignment: .firstTextBaseline) {
                                 Text(FirstMateUsageFormatting.modelName(provider: model.provider, model: model.model))
-                                    .font(.subheadline)
+                                    .summaryFont(.subheadline)
                                     .bold()
                                     .textSelection(.enabled)
                                     .fixedSize(horizontal: false, vertical: true)
                                     .layoutPriority(1)
                                 Spacer(minLength: 12)
                                 Text(FirstMateUsageFormatting.cost(model.costUSD, currencyCode: usage.currency))
-                                    .font(.subheadline)
+                                    .summaryFont(.subheadline)
                                     .monospacedDigit()
                                     .fixedSize(horizontal: true, vertical: false)
                             }
                             Text("\(FirstMateUsageFormatting.tokens(model.totalTokens)) tokens · \(model.usageRecords) usage records")
-                                .font(.footnote)
+                                .summaryFont(.footnote)
                                 .foregroundStyle(.secondary)
                             if model.status == "partial" || model.missingCostRecords > 0 {
                                 Text("Partial model coverage")
-                                    .font(.footnote)
-                                    .foregroundStyle(.orange)
+                                    .summaryFont(.footnote)
+                                    .foregroundStyle(summaryWarning)
                             }
                         }
                         .accessibilityElement(children: .combine)
@@ -69,9 +69,9 @@ struct FirstMateUsageSummaryView: View {
                 }
             } else {
                 Label("Usage unavailable", systemImage: "questionmark.circle")
-                    .font(.subheadline)
+                    .summaryFont(.subheadline)
                 Text("This companion did not report usage. Update the companion server to inspect Pi-reported estimates.")
-                    .font(.footnote)
+                    .summaryFont(.footnote)
                     .foregroundStyle(.secondary)
             }
         }
@@ -81,3 +81,27 @@ struct FirstMateUsageSummaryView: View {
         .accessibilityIdentifier("first-mate-usage-summary")
     }
 }
+
+/// Mono sizes on the Mac (through the font-scale preference); iOS keeps its
+/// text styles.
+private extension View {
+    func summaryFont(_ style: Font.TextStyle, weight: Font.Weight? = nil) -> some View {
+        #if os(macOS)
+        let size: CGFloat = switch style {
+        case .title3: 14
+        case .headline: 13
+        case .subheadline: 12
+        default: 11
+        }
+        return herdrFont(size: size, weight: weight ?? (style == .headline ? .semibold : nil))
+        #else
+        return font(weight.map { Font.system(style).weight($0) } ?? Font.system(style))
+        #endif
+    }
+}
+
+#if os(macOS)
+private let summaryWarning = HerdrTheme.warning
+#else
+private let summaryWarning = Color.orange
+#endif

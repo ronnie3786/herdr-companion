@@ -7,24 +7,24 @@ struct PanePathButton: View {
 
     var body: some View {
         Button(action: openInFinder) {
-            HStack(spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "folder")
+                    .herdrFont(size: 13)
+                    .foregroundStyle(HerdrTheme.iconTint)
+                    .accessibilityHidden(true)
                 Text(path)
+                    .herdrFont(size: HerdrTheme.TextSize.small, monospaced: true)
                     .lineLimit(1)
                     .truncationMode(.middle)
-
-                Image(systemName: "folder")
-                    .opacity(isHovering ? 1 : 0)
-                    .accessibilityHidden(true)
             }
-            .herdrFont(.caption, monospaced: true)
-            .foregroundStyle(isHovering ? HerdrTheme.text : HerdrTheme.mist)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
+            .foregroundStyle(isHovering ? HerdrTheme.primaryText : HerdrTheme.tertiaryText)
+            .padding(.horizontal, 6)
+            .frame(minHeight: HerdrTheme.ControlHeight.small)
             .background(
-                isHovering ? HerdrTheme.elevated.opacity(0.72) : .clear,
-                in: RoundedRectangle(cornerRadius: 5)
+                isHovering ? HerdrTheme.selectedFill : .clear,
+                in: RoundedRectangle(cornerRadius: HerdrTheme.Radius.control)
             )
-            .contentShape(.rect)
+            .herdrHitTarget(minWidth: 0)
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }

@@ -45,7 +45,7 @@ struct PiChatTimelineView: View {
             artifacts: resultArtifacts, turns: store.turns,
             machineID: artifactMachineID, sessionID: store.sessionID
         )
-        ZStack(alignment: .bottomTrailing) {
+        ZStack(alignment: .bottom) {
             ScrollView {
                 // An EAGER stack, deliberately. A `LazyVStack` here, under a
                 // bottom-anchored scroll view whose rows change height while
@@ -71,7 +71,7 @@ struct PiChatTimelineView: View {
                             .id("pi-session-boundary")
                     }
                     if let error = store.historyError {
-                        Text(error).herdrFont(.caption).foregroundStyle(HerdrTheme.alert)
+                        Text(error).herdrFont(size: HerdrTheme.TextSize.small).foregroundStyle(HerdrTheme.alert)
                     }
                     transcriptHeader
                         .padding(.bottom, HerdrProse.turnSpacing)
@@ -119,10 +119,12 @@ struct PiChatTimelineView: View {
 
                 }
                 .scrollTargetLayout()
-                .frame(maxWidth: HerdrTheme.readingWidth, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 28)
-                .padding(.top, 20)
+                // MonoCode's centered 896pt column, rows inset 16pt inside it.
+                .padding(.horizontal, 16)
+                .frame(maxWidth: HerdrTheme.transcriptWidth, alignment: .leading)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
                 .padding(.bottom, 20)
                 .animation(
                     revealState.phase == .revealed
@@ -213,18 +215,25 @@ struct PiChatTimelineView: View {
 
             Group {
                 if !isNearBottom {
-                    Button("Jump to latest", systemImage: "arrow.down") {
+                    Button {
                         withAnimation(PiChatMotion.structuralAnimation(reduceMotion: reduceMotion)) {
                             scrollPosition.scrollTo(edge: .bottom)
                         }
+                    } label: {
+                        Label("Jump to latest", systemImage: "arrow.down")
+                            .herdrFont(size: HerdrTheme.TextSize.small)
+                            .foregroundStyle(HerdrTheme.secondaryText)
+                            .padding(.horizontal, 9)
+                            .frame(height: HerdrTheme.ControlHeight.small)
+                            // Opaque base under the 10% wash: no material or
+                            // blur over the transcript.
+                            .background(HerdrTheme.base.opacity(0.92), in: .rect(cornerRadius: HerdrTheme.Radius.control))
+                            .herdrCard(radius: HerdrTheme.Radius.control, fill: HerdrTheme.selectedFill, outline: HerdrTheme.strongOutline)
+                            .herdrHitTarget(minWidth: 0)
                     }
-                    .buttonStyle(PiChatButtonStyle(tint: HerdrTheme.text, emphasis: .text))
-                    .herdrFont(.caption, weight: .semibold)
-                    .padding(.horizontal, 12)
-                    .frame(minHeight: PiChatChrome.controlHeight)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .overlay { Capsule().stroke(HerdrTheme.accent.opacity(0.25), lineWidth: 1) }
-                    .padding(14)
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.bottom, 12)
                     .transition(PiChatMotion.jumpToLatestTransition(reduceMotion: reduceMotion))
                     .accessibilityIdentifier("pi-chat-jump-latest")
                 }
@@ -258,8 +267,8 @@ struct PiChatTimelineView: View {
     private var transcriptHeader: some View {
         if store.isTruncated {
             Label("Older context was omitted by Pi", systemImage: "ellipsis.circle")
-                .herdrFont(.caption)
-                .foregroundStyle(HerdrTheme.muted)
+                .herdrFont(size: HerdrTheme.TextSize.small)
+                .foregroundStyle(HerdrTheme.tertiaryText)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .accessibilityLabel("The beginning of this Pi transcript is not available")
         }
@@ -273,9 +282,9 @@ struct PiChatTimelineView: View {
                 "Show \(hiddenCount) earlier \(hiddenCount == 1 ? "row" : "rows")",
                 systemImage: "arrow.up.to.line"
             )
+            .herdrFont(size: HerdrTheme.TextSize.small)
         }
-        .buttonStyle(PiChatButtonStyle(tint: HerdrTheme.mist, emphasis: .soft))
-        .herdrFont(.caption, weight: .semibold)
+        .buttonStyle(PiChatButtonStyle(tint: HerdrTheme.secondaryText, emphasis: .soft))
         .frame(maxWidth: .infinity, alignment: .center)
         .padding(.bottom, HerdrProse.turnSpacing)
         .accessibilityIdentifier("pi-chat-show-earlier")

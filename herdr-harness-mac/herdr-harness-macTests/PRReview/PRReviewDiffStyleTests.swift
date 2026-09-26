@@ -4,13 +4,15 @@ import Testing
 
 @Suite("PR Review shared diff inputs")
 struct PRReviewDiffStyleTests {
-    @Test("Embedded Git supplies surfaces, not a second renderer theme") @MainActor
+    @Test("Embedded Git and PR Review share the Mac's Mono diff variables") @MainActor
     func embeddedGitUsesSharedRendererVariables() {
         let css = HerdrWebTheme.css
         #expect(css.contains("--herdr-diff-background"))
         #expect(css.contains("--herdr-diff-gutter-background"))
-        #expect(!css.contains("--diffs-line-height:"))
-        #expect(!css.contains("--diffs-bg-addition-override:"))
+        // One renderer, one Mac palette: the same `diffs-container` values
+        // restyle Git pages and the bundled PR Review document.
+        #expect(css.contains("--diffs-line-height:"))
+        #expect(css.contains("--diffs-bg-addition-override:"))
     }
 
     @Test("Structured hunks produce valid headers, including partial and legacy snapshots")

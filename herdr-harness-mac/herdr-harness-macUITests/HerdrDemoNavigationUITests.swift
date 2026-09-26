@@ -155,7 +155,7 @@ final class HerdrDemoNavigationUITests: HerdrUITestCase {
         XCTAssertTrue(diffButton.waitForExistence(timeout: 3))
         diffButton.click()
         XCTAssertTrue(
-            app.text(containing: "diff --git").waitForExistence(timeout: 5),
+            app.text(containing: "@@ -42,6 +42,9 @@").waitForExistence(timeout: 5),
             "The persistent diff inspector should render the demo patch"
         )
         saveScreenshot("04-git-diff", app: app, directory: screenshotDirectory)
@@ -169,6 +169,8 @@ final class HerdrDemoNavigationUITests: HerdrUITestCase {
         saveScreenshot("05-skills", app: app, directory: screenshotDirectory)
 
         try selectPaneMode(.terminal, in: app)
+        // Workspace file and Jira tools live in the composer's More popover.
+        app.control(identifier: "composer-more-tools").click()
         let fileTool = app.buttons["Insert a workspace file path"]
         XCTAssertTrue(fileTool.waitForExistence(timeout: 3))
         fileTool.click()
@@ -195,6 +197,7 @@ final class HerdrDemoNavigationUITests: HerdrUITestCase {
         saveScreenshot("06-file-search", app: app, directory: screenshotDirectory)
         app.typeKey(.escape, modifierFlags: [])
 
+        app.control(identifier: "composer-more-tools").click()
         let jiraTool = app.buttons["Insert Jira ticket context"]
         XCTAssertTrue(jiraTool.waitForExistence(timeout: 5))
         jiraTool.click()
@@ -257,21 +260,30 @@ final class HerdrDemoNavigationUITests: HerdrUITestCase {
             "The window should refuse to shrink under the shell's minimum height"
         )
 
-        // No latch to open — the tools ride the always-visible row, and the fit
-        // ladder drops their titles rather than the buttons themselves.
-        for label in [
-            "Attach a file",
-            "Record a voice note",
-            "Insert a workspace file path",
-            "Insert Jira ticket context",
-        ] {
+        // The tool row keeps +, voice and More on screen; the fit ladder
+        // stacks the row rather than dropping controls.
+        for identifier in ["composer-add-menu", "composer-more-tools"] {
+            let control = app.control(identifier: identifier)
+            XCTAssertTrue(control.waitForExistence(timeout: 3), "\(identifier) should survive the squeeze")
+            XCTAssertTrue(control.isHittable, "\(identifier) should still be clickable")
+        }
+        let voice = app.control(named: "Record a voice note")
+        XCTAssertTrue(voice.waitForExistence(timeout: 3), "Voice should survive the squeeze")
+        XCTAssertTrue(voice.isHittable, "Voice should still be clickable")
+
+        // Attach sits behind +, and the context tools behind More.
+        app.control(identifier: "composer-add-menu").click()
+        let attach = app.control(named: "Attach a file")
+        XCTAssertTrue(attach.waitForExistence(timeout: 3), "Attach should be one click away")
+        XCTAssertTrue(attach.isHittable, "Attach should be clickable at the minimum size")
+        app.typeKey(.escape, modifierFlags: [])
+        app.control(identifier: "composer-more-tools").click()
+        for label in ["Insert a workspace file path", "Insert Jira ticket context"] {
             let control = app.control(named: label)
-            XCTAssertTrue(
-                control.waitForExistence(timeout: 3),
-                "\(label) should survive the squeeze"
-            )
+            XCTAssertTrue(control.waitForExistence(timeout: 3), "\(label) should be one click away")
             XCTAssertTrue(control.isHittable, "\(label) should still be clickable")
         }
+        app.typeKey(.escape, modifierFlags: [])
 
         XCTAssertTrue(app.control(identifier: "prompt-composer").isHittable)
         XCTAssertTrue(app.control(identifier: "prompt-send").isHittable)

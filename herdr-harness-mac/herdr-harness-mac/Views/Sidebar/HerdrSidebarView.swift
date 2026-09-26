@@ -14,6 +14,9 @@ struct HerdrSidebarView: View {
     /// Features waiting on a human across every configured host. The Chat
     /// navigator badges First Mate with this count; zero keeps the entry plain.
     var firstMateAttentionCount: Int = 0
+    /// The main window draws the rail's 40pt header itself (traffic lights and
+    /// the sidebar toggle); standalone hosts keep the brand header here.
+    var showsHeader = true
     @State private var query = ""
     @State private var selectedColor: ChatTabColor?
     @State private var isPresentingCreateWorkspace = false
@@ -225,49 +228,56 @@ struct HerdrSidebarView: View {
             recency: model.sidebarRecency
         )
         let snapshot = resolvedSnapshot(fingerprint: fingerprint)
-        VStack(alignment: .leading, spacing: 8) {
-            header
-            if let openDashboard {
-                Button("Dashboard", systemImage: "square.grid.2x2", action: openDashboard)
-                    .buttonStyle(.plain)
-                    .herdrFont(.headline)
-                    .foregroundStyle(HerdrTheme.accent)
-                    .padding(.vertical, 10)
-                    .help("Dashboard (Shift-Command-D)")
-                    .accessibilityIdentifier("sidebar-dashboard")
-            }
-            if let openFirstMate {
-                FirstMateNavigationButton(
-                    attentionCount: firstMateAttentionCount,
-                    action: openFirstMate
-                )
-            }
-            if let openPRReview {
-                Button("PR Review", systemImage: "arrow.triangle.pull", action: openPRReview)
-                    .buttonStyle(.plain)
-                    .font(.headline)
-                    .foregroundStyle(HerdrTheme.accent)
-                    .padding(.vertical, 10)
-                    .accessibilityIdentifier("open-pr-review")
+        VStack(alignment: .leading, spacing: 0) {
+            if showsHeader { header }
+            recencyTabs
+            if openDashboard != nil || openFirstMate != nil || openPRReview != nil {
+                VStack(spacing: 0) {
+                    if let openDashboard {
+                        SidebarNavRow(title: "Dashboard", systemImage: "square.grid.2x2", action: openDashboard)
+                            .help("Dashboard (Shift-Command-D)")
+                            .accessibilityIdentifier("sidebar-dashboard")
+                    }
+                    if let openFirstMate {
+                        FirstMateNavigationButton(
+                            attentionCount: firstMateAttentionCount,
+                            action: openFirstMate
+                        )
+                    }
+                    if let openPRReview {
+                        SidebarNavRow(title: "PR Review", systemImage: "arrow.triangle.pull", action: openPRReview)
+                            .accessibilityIdentifier("open-pr-review")
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .herdrHairline(.bottom)
             }
 
             machinePicker
 
             WorkspaceSearchField(text: $query, placeholder: "Filter chats")
-            colorLegend(snapshot)
-            creationControls
+                .herdrHairline(.bottom)
 
-            sidebarSectionLabel("Chats", detail: sidebarCountDetail(snapshot.paneCount))
+            VStack(alignment: .leading, spacing: 0) {
+                creationControls
+                colorLegend(snapshot)
+                sidebarSectionLabel("Chats", detail: sidebarCountDetail(snapshot.paneCount))
+            }
+            .padding(.horizontal, SidebarMetrics.containerLeadingPadding)
+            .padding(.top, 6)
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 2) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
                         recentsSection(snapshot)
                         unreadSection(snapshot)
                         starredSection(snapshot)
                         staleSection(snapshot)
                         workspaceContent(snapshot)
                     }
+                    .padding(.horizontal, SidebarMetrics.containerLeadingPadding)
+                    .padding(.bottom, 6)
                     // The same pane IDs appear in both layouts. Rebuild the lazy
                     // rows when switching modes so Recents content isn't reused
                     // inside the grouped workspace tree (or vice versa).
@@ -296,12 +306,8 @@ struct HerdrSidebarView: View {
 
             connectionFooter
         }
-        .padding(.leading, SidebarMetrics.containerLeadingPadding)
-        .padding(.trailing, SidebarMetrics.containerTrailingPadding)
-        .padding(.top, 8)
-        .padding(.bottom, 4)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(HerdrTheme.ink)
+        .herdrPaneBackground(HerdrTheme.railBackground, ignoresSafeAreaEdges: [])
         .sheet(isPresented: $isPresentingCreateWorkspace) {
             CreateWorkspaceView { label, cwd in
                 let created = await model.createWorkspace(
@@ -395,31 +401,35 @@ struct HerdrSidebarView: View {
         return rebuilt
     }
 
+    /// Standalone brand header (the main window draws its own).
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                HerdrBrandMark(size: 24)
-                Text("herdr")
-                    .herdrFont(.headline, weight: .semibold)
-                    .foregroundStyle(HerdrTheme.text)
-                Spacer(minLength: 0)
-            }
-
-            Picker("Chat range", selection: $model.sidebarRecency) {
-                ForEach(SidebarRecency.pickerCases) { recency in
-                    Text(recency.title)
-                        .tag(recency)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .frame(maxWidth: .infinity)
-            .accessibilityIdentifier("sidebar-recent-filter")
-            .accessibilityLabel("Chat range, \(model.sidebarRecency.title)")
-            .help("Show chats from \(model.sidebarRecency.title.lowercased())")
+        HStack(spacing: 7) {
+            HerdrBrandMark(size: 17)
+            Text("herdr")
+                .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
+                .foregroundStyle(HerdrTheme.text)
+            Spacer(minLength: 0)
         }
+        .padding(.horizontal, 13)
+        .frame(height: SidebarMetrics.headerHeight)
+        .herdrHairline(.bottom)
+    }
+
+    /// All / Today / Recents as MonoCode's equal 24pt tabs in a 36pt band.
+    private var recencyTabs: some View {
+        HerdrTabs(
+            selection: $model.sidebarRecency,
+            tabs: SidebarRecency.pickerCases.map {
+                .init(value: $0, title: $0.title, accessibilityIdentifier: "sidebar-recent-\($0.title.lowercased())")
+            },
+            style: .segments,
+            accessibilityLabel: "Chat range, \(model.sidebarRecency.title)"
+        )
         .padding(.horizontal, 8)
-        .padding(.bottom, 2)
+        .frame(height: SidebarMetrics.bandHeight)
+        .herdrHairline(.bottom)
+        .accessibilityIdentifier("sidebar-recent-filter")
+        .help("Show chats from \(model.sidebarRecency.title.lowercased())")
     }
 
     @ViewBuilder
@@ -436,23 +446,20 @@ struct HerdrSidebarView: View {
 
     private var segmentedMachinePicker: some View {
         let segments = SidebarMachineSegmentPresentation.segments(for: model.machines)
-        return Picker("Machine", selection: machineScopeBinding) {
-            Text("All")
-                .tag(MachineScope.all)
-                .help("All machines")
-                .accessibilityLabel("All machines")
-            ForEach(segments) { segment in
-                Text(segment.title)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .tag(MachineScope.machine(segment.id))
-                    .help(segment.name)
-                    .accessibilityLabel(segment.title)
-            }
-        }
-        .labelsHidden()
-        .pickerStyle(.segmented)
-        .frame(maxWidth: .infinity)
+        return HerdrTabs(
+            selection: machineScopeBinding,
+            tabs: [.init(value: MachineScope.all, title: "All", accessibilityIdentifier: "sidebar-machine-all",
+                         help: "All machines", accessibilityLabel: "All machines")]
+                + segments.map {
+                    .init(value: MachineScope.machine($0.id), title: $0.title,
+                          accessibilityIdentifier: "sidebar-machine-\($0.id)-tab", help: $0.name)
+                },
+            style: .segments,
+            accessibilityLabel: "Machine"
+        )
+        .padding(.horizontal, 8)
+        .frame(height: SidebarMetrics.bandHeight)
+        .herdrHairline(.bottom)
         .accessibilityIdentifier("sidebar-machine-picker")
         .accessibilityValue(segmentedScopeTitle(segments))
     }
@@ -476,21 +483,28 @@ struct HerdrSidebarView: View {
                 }
             }
         } label: {
-            HStack(spacing: 7) {
+            HStack(spacing: 6) {
+                Image(systemName: "desktopcomputer")
+                    .herdrFont(size: 14)
+                    .foregroundStyle(HerdrTheme.iconTint)
                 Text(scopeTitle)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                Spacer()
                 Image(systemName: "chevron.down")
-                    .herdrFont(size: 8, weight: .semibold, relativeTo: .caption)
+                    .herdrFont(size: 10, weight: .semibold, relativeTo: .caption)
+                    .foregroundStyle(HerdrTheme.iconTint)
+                Spacer(minLength: 0)
             }
-            .herdrFont(size: 12, weight: .medium, relativeTo: .caption)
-            .foregroundStyle(HerdrTheme.mist)
-            .padding(.horizontal, 8)
+            .herdrFont(size: HerdrTheme.TextSize.small, relativeTo: .caption)
+            .foregroundStyle(HerdrTheme.secondaryText)
+            .padding(.horizontal, 6)
             .frame(minHeight: HerdrTheme.minHitTarget)
             .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .piChipMenu()
+        .padding(.horizontal, 8)
+        .frame(height: SidebarMetrics.bandHeight)
+        .herdrHairline(.bottom)
         .accessibilityIdentifier("sidebar-machine-picker")
         .accessibilityLabel("Machine, \(scopeTitle)")
         .help(scopeTitle)
@@ -531,9 +545,7 @@ struct HerdrSidebarView: View {
                             .disabled(!model.canControl(machineID: machine.id))
                     }
                 } label: {
-                    Label("New workspace", systemImage: "folder.badge.plus")
-                        .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
-                        .contentShape(.rect)
+                    SidebarNavRowLabel(title: "New workspace", systemImage: "folder.badge.plus")
                 }
                 .menuIndicator(.hidden)
                 .buttonStyle(.plain)
@@ -553,90 +565,60 @@ struct HerdrSidebarView: View {
                 )
                 .accessibilityIdentifier("sidebar-new-pi-session")
 
-                Button("New workspace", systemImage: "folder.badge.plus") {
+                Button {
                     presentCreateWorkspace(for: scopedMachineID)
+                } label: {
+                    SidebarNavRowLabel(title: "New workspace", systemImage: "folder.badge.plus")
                 }
                 .buttonStyle(.plain)
                 .disabled(!(scopedMachineID.map { model.canControl(machineID: $0) } ?? false))
-                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
-                .contentShape(.rect)
                 .help("New workspace")
                 .accessibilityIdentifier("sidebar-new-workspace")
             }
         }
-        .herdrFont(size: 12, relativeTo: .caption)
-        .foregroundStyle(HerdrTheme.muted)
-        .padding(.horizontal, 4)
     }
 
     @ViewBuilder
     private func quickPiActionLabel(machineID: String?) -> some View {
         let isCreating = machineID.map { model.isCreatingQuickPiSession(machineID: $0) }
             ?? !model.quickPiSessionMachineIDs.isEmpty
-        HStack(spacing: 7) {
-            if isCreating {
-                ProgressView()
-                    .controlSize(.small)
-            } else {
-                Image(systemName: "plus")
-            }
-            Text(isCreating ? "Starting session…" : "New session")
-        }
-        .herdrFont(size: 12, weight: .semibold, relativeTo: .subheadline)
-        .foregroundStyle(HerdrTheme.accent)
-        .frame(minHeight: 30, alignment: .leading)
-        .contentShape(.rect)
+        SidebarNavRowLabel(
+            title: isCreating ? "Starting session…" : "New session",
+            systemImage: "plus",
+            tint: HerdrTheme.accent,
+            isBusy: isCreating
+        )
     }
 
     @ViewBuilder
     private func unreadSection(_ snapshot: SidebarSnapshot) -> some View {
         if !snapshot.unreadGroups.isEmpty {
-            sidebarSectionLabel("Unread", detail: "\(snapshot.unreadCount)")
-                .padding(.top, 4)
+            sidebarSectionLabel("Unread", detail: "\(snapshot.unreadCount)", isSubsection: true)
                 .accessibilityIdentifier("sidebar-unread-section")
                 .accessibilityLabel("Unread chats")
                 .accessibilityValue("\(snapshot.unreadCount)")
             ForEach(snapshot.unreadGroups) { group in
-                Text(priorityGroupTitle(group.workspace, showsMachineChrome: snapshot.showsMachineChrome))
-                    .contextMenu { workspaceMenu(group.workspace) }
-                    .herdrFont(
-                        size: SidebarMetrics.projectLabelSize,
-                        weight: .semibold,
-                        relativeTo: .caption
-                    )
-                    .foregroundStyle(HerdrTheme.muted)
-                    .lineLimit(1)
-                    .padding(.leading, SidebarMetrics.chatRowLeadingPadding)
-                    .padding(.top, 6)
-                ForEach(group.chats) { chatRow($0) }
+                ForEach(group.chats) {
+                    chatRow($0, style: .full(location: cardLocation(group.workspace)))
+                        .padding(.bottom, 2)
+                }
             }
-            Color.clear.frame(height: 6)
         }
     }
 
     @ViewBuilder
     private func starredSection(_ snapshot: SidebarSnapshot) -> some View {
         if !snapshot.starredGroups.isEmpty {
-            sidebarSectionLabel("Starred", detail: "\(snapshot.starredCount)")
-                .padding(.top, 4)
+            sidebarSectionLabel("Starred", detail: "\(snapshot.starredCount)", isSubsection: true)
                 .accessibilityIdentifier("sidebar-starred-section")
                 .accessibilityLabel("Starred chats")
                 .accessibilityValue("\(snapshot.starredCount)")
             ForEach(snapshot.starredGroups) { group in
-                Text(priorityGroupTitle(group.workspace, showsMachineChrome: snapshot.showsMachineChrome))
-                    .contextMenu { workspaceMenu(group.workspace) }
-                    .herdrFont(
-                        size: SidebarMetrics.projectLabelSize,
-                        weight: .semibold,
-                        relativeTo: .caption
-                    )
-                    .foregroundStyle(HerdrTheme.muted)
-                    .lineLimit(1)
-                    .padding(.leading, SidebarMetrics.chatRowLeadingPadding)
-                    .padding(.top, 6)
-                ForEach(group.chats) { chatRow($0) }
+                ForEach(group.chats) {
+                    chatRow($0, style: .full(location: cardLocation(group.workspace)))
+                        .padding(.bottom, 2)
+                }
             }
-            Color.clear.frame(height: 6)
         }
     }
 
@@ -644,65 +626,59 @@ struct HerdrSidebarView: View {
     private func staleSection(_ snapshot: SidebarSnapshot) -> some View {
         if !snapshot.staleGroups.isEmpty {
             ForEach(snapshot.staleGroups) { group in
-                HStack(spacing: 7) {
-                    Label(
-                        snapshot.showsMachineChrome
-                            ? "\(group.machine.name.lowercased()) stale"
-                            : "stale chats",
-                        systemImage: "archivebox"
-                    )
-                    .herdrFont(.caption, weight: .semibold)
-                    .foregroundStyle(HerdrTheme.mist)
+                HStack(spacing: 8) {
+                    Image(systemName: "archivebox")
+                        .herdrFont(size: 13)
+                        .foregroundStyle(HerdrTheme.iconTint)
+                        .accessibilityHidden(true)
+                    Text(snapshot.showsMachineChrome
+                        ? "\(group.machine.name.lowercased()) stale"
+                        : "stale chats")
+                        .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
+                        .foregroundStyle(HerdrTheme.secondaryText)
+                        .lineLimit(1)
 
                     Text("\(group.chats.count)")
-                        .herdrFont(.caption2, weight: .semibold, monospacedDigit: true)
-                        .foregroundStyle(HerdrTheme.muted)
+                        .herdrFont(size: SidebarMetrics.metaLabelSize)
+                        .monospacedDigit()
+                        .foregroundStyle(HerdrTheme.tertiaryText)
 
                     Spacer()
 
-                    Button("review stale") {
+                    Button {
                         presentStaleCleanup(group)
+                    } label: {
+                        Text("review stale")
+                            .herdrFont(size: SidebarMetrics.metaLabelSize, weight: .medium)
+                            .foregroundStyle(HerdrTheme.accent)
+                            .frame(minHeight: HerdrTheme.minHitTarget)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .herdrFont(.caption, weight: .semibold)
-                    .foregroundStyle(HerdrTheme.accent)
                     .disabled(!model.canControl(machineID: group.machine.id))
                     .accessibilityIdentifier("sidebar-review-stale-\(group.machine.id)")
                 }
-                .padding(.leading, SidebarMetrics.containerLeadingPadding)
-                .padding(.trailing, SidebarMetrics.containerTrailingPadding)
-                .padding(.top, 6)
-                .frame(minHeight: 28)
+                .padding(.horizontal, 8)
+                .padding(.top, 2)
+                .frame(minHeight: SidebarMetrics.staleRowHeight)
                 .accessibilityElement(children: .contain)
 
                 ForEach(group.chats) { chatRow($0) }
             }
-            Color.clear.frame(height: 6)
+            Color.clear.frame(height: 4)
         }
     }
 
     @ViewBuilder
     private func recentsSection(_ snapshot: SidebarSnapshot) -> some View {
         if !snapshot.recentChats.isEmpty {
-            HStack(spacing: 7) {
-                Label("recents", systemImage: "clock.arrow.circlepath")
-                    .herdrFont(.caption, weight: .semibold)
-                    .foregroundStyle(HerdrTheme.mist)
+            sidebarSectionLabel("Recents", detail: "\(snapshot.recentChats.count)", isSubsection: true)
 
-                Text("\(snapshot.recentChats.count)")
-                    .herdrFont(.caption2, weight: .semibold, monospacedDigit: true)
-                    .foregroundStyle(HerdrTheme.muted)
-
-                Spacer()
+            ForEach(snapshot.recentChats) {
+                chatRow($0, showingLastActivity: true)
+                    .padding(.bottom, 2)
             }
-            .padding(.leading, SidebarMetrics.containerLeadingPadding)
-            .padding(.trailing, SidebarMetrics.containerTrailingPadding)
-            .padding(.top, 6)
-            .frame(minHeight: 28)
-            .accessibilityElement(children: .contain)
-
-            ForEach(snapshot.recentChats) { chatRow($0, showingLastActivity: true) }
-            Color.clear.frame(height: 6)
+            Color.clear.frame(height: 4)
         }
     }
 
@@ -725,8 +701,8 @@ struct HerdrSidebarView: View {
         } else if snapshot.isRecentsMode {
             if snapshot.recentChats.isEmpty {
                 Text("no recent chats")
-                    .herdrFont(.caption)
-                    .foregroundStyle(HerdrTheme.muted)
+                    .herdrFont(size: HerdrTheme.TextSize.small)
+                    .foregroundStyle(HerdrTheme.tertiaryText)
                     .frame(maxWidth: .infinity)
                     .padding(.top, 42)
             }
@@ -748,8 +724,8 @@ struct HerdrSidebarView: View {
                 if group.isExpanded {
                     if group.entries.isEmpty {
                         Text("no workspaces yet")
-                            .herdrFont(.caption)
-                            .foregroundStyle(HerdrTheme.muted)
+                            .herdrFont(size: HerdrTheme.TextSize.small)
+                            .foregroundStyle(HerdrTheme.tertiaryText)
                             .padding(.leading, SidebarMetrics.chatRowLeadingPadding)
                             .frame(minHeight: 24)
                     } else {
@@ -809,21 +785,26 @@ struct HerdrSidebarView: View {
                     )
                         .contextMenu { tabMenu(section.tab, in: entry.workspace) }
                     if section.isExpanded {
-                        ForEach(section.rows) { chatRow($0.pane, hierarchy: $0) }
+                        ForEach(section.rows) { folderChatRow(chatRow($0.pane, hierarchy: $0)) }
                     }
                 }
 
-                ForEach(entry.looseRows) { chatRow($0.pane, hierarchy: $0) }
+                ForEach(entry.looseRows) { folderChatRow(chatRow($0.pane, hierarchy: $0)) }
 
                 if entry.sections.isEmpty && entry.looseChats.isEmpty {
                     Text("no panes yet")
-                        .herdrFont(.caption)
-                        .foregroundStyle(HerdrTheme.muted)
+                        .herdrFont(size: HerdrTheme.TextSize.small)
+                        .foregroundStyle(HerdrTheme.tertiaryText)
                         .padding(.leading, SidebarMetrics.chatRowLeadingPadding)
-                        .frame(minHeight: 24)
+                        .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+                        .sidebarFolderStrip(.middle)
                 }
+                // Closes the folder group's 3% block with its rounded corners.
+                Color.clear
+                    .frame(maxWidth: .infinity, minHeight: 4, maxHeight: 4)
+                    .sidebarFolderStrip(.bottom)
             }
-            Color.clear.frame(height: 6)
+            Color.clear.frame(height: 4)
         }
     }
 
@@ -1019,27 +1000,30 @@ struct HerdrSidebarView: View {
         return newestMatchingAlert
     }
 
-    private func sidebarSectionLabel(_ title: String, detail: String) -> some View {
-        HStack {
+    /// MonoCode's `.sec` label: sentence case, 12pt (11pt for sub-sections)
+    /// in tertiary ink, with its count at the trailing edge.
+    private func sidebarSectionLabel(_ title: String, detail: String, isSubsection: Bool = false) -> some View {
+        HStack(alignment: .firstTextBaseline) {
             Text(title)
-                .fontWeight(.semibold)
+                .herdrFont(size: isSubsection ? HerdrTheme.TextSize.caption : HerdrTheme.TextSize.small)
             Spacer(minLength: 8)
             Text(detail)
-                .herdrFont(.caption2, monospacedDigit: true)
+                .herdrFont(size: HerdrTheme.TextSize.caption)
+                .monospacedDigit()
         }
-        .herdrFont(size: 11, relativeTo: .caption)
-        .foregroundStyle(HerdrTheme.muted)
+        .foregroundStyle(HerdrTheme.tertiaryText)
         .padding(.horizontal, 8)
-        .padding(.vertical, 3)
+        .padding(.top, isSubsection ? 6 : 10)
+        .padding(.bottom, 5)
         .accessibilityElement(children: .combine)
     }
 
     private var machineSeparator: some View {
         Rectangle()
-            .fill(HerdrTheme.subtleSeparator)
+            .fill(HerdrTheme.hairline)
             .frame(height: 1)
             .padding(.horizontal, 4)
-            .padding(.vertical, 9)
+            .padding(.vertical, 6)
     }
 
     private var connectionFooter: some View {
@@ -1047,31 +1031,26 @@ struct HerdrSidebarView: View {
             let state = model.connectionState(forMachine: $0.id)
             return state == .live || state == .demo
         }.count
-        return HStack(spacing: 7) {
+        return HStack(spacing: 8) {
             Circle()
-                .fill(connectedCount > 0 ? HerdrTheme.signal : HerdrTheme.muted)
-                .frame(width: 5, height: 5)
+                .fill(connectedCount > 0 ? HerdrTheme.signal : HerdrTheme.tertiaryText)
+                .frame(width: 6, height: 6)
                 .accessibilityHidden(true)
             Text("\(connectedCount) \(connectedCount == 1 ? "machine" : "machines") connected")
-                .herdrFont(.caption2)
-                .foregroundStyle(HerdrTheme.muted)
+                .herdrFont(size: HerdrTheme.TextSize.small)
+                .foregroundStyle(HerdrTheme.tertiaryText)
+                .lineLimit(1)
             Spacer(minLength: 0)
-            Button("Manage machines", systemImage: "slider.horizontal.3") {
+            Button("Manage machines", systemImage: "gearshape") {
                 isPresentingMachines = true
             }
-            .labelStyle(.iconOnly)
-            .buttonStyle(.plain)
-            .foregroundStyle(HerdrTheme.muted)
-            .frame(width: 28, height: 28)
+            .buttonStyle(HerdrIconButtonStyle())
             .help("Manage machines")
         }
-        .padding(.horizontal, 8)
-        .padding(.top, 5)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(HerdrTheme.subtleSeparator)
-                .frame(height: 1)
-        }
+        .padding(.leading, 16)
+        .padding(.trailing, 8)
+        .frame(minHeight: SidebarMetrics.bandHeight + 4)
+        .herdrHairline(.top)
     }
 
     private var showsMachineChrome: Bool {
@@ -1159,13 +1138,34 @@ struct HerdrSidebarView: View {
         )
     }
 
+    /// A compact card inside a workspace's folder group: inset 4pt on the
+    /// group's 3% block.
+    private func folderChatRow(_ row: some View) -> some View {
+        row
+            .padding(.horizontal, SidebarMetrics.folderCardInset)
+            .padding(.bottom, 1)
+            .sidebarFolderStrip(.middle)
+    }
+
+    /// "machine · workspace" for a full card, the way the grouped titles above
+    /// Unread and Starred used to read.
+    private func cardLocation(_ workspace: HerdrWorkspace) -> String {
+        let machine = model.machines.first { $0.id == workspace.machineID }?.name
+        guard let machine else { return workspace.label.lowercased() }
+        return "\(machine) · \(workspace.label.lowercased())"
+    }
+
     private func chatRow(
-        _ pane: HerdrPane, showingLastActivity: Bool = false, hierarchy: PiSessionTree.Row? = nil
+        _ pane: HerdrPane,
+        showingLastActivity: Bool = false,
+        hierarchy: PiSessionTree.Row? = nil,
+        style: SidebarChatRow.CardStyle = .compact
     ) -> some View {
         SidebarLiveChatRow(model: model, paneID: pane.id) { pane in
             SidebarChatRow(
                 pane: pane,
                 recentContext: showingLastActivity ? recentContext(for: pane) : nil,
+                style: style,
                 tabColor: model.chatTabColors.color(for: pane.scopedTabID),
                 colorLabel: model.chatTabColors.color(for: pane.scopedTabID).map { model.chatTabColors.label(for: $0) },
                 isSelected: pane.id == model.selectedPaneID,
@@ -1185,7 +1185,7 @@ struct HerdrSidebarView: View {
             )
         }
         .contextMenu {
-            if let workspace = model.workspace(containing: pane), showingLastActivity || hierarchy?.workspaceLabel != nil {
+            if let workspace = model.workspace(containing: pane), showingLastActivity || hierarchy?.workspaceLabel != nil || style != .compact {
                 Button("Open \(workspace.label) workspace", systemImage: "folder") {
                     openWorkspace(workspace)
                 }
@@ -1275,14 +1275,6 @@ struct HerdrSidebarView: View {
             $0.machineID == pane.machineID && $0.piSemantic?.sessionID == parentID
         }
         return parent.map { "Child of \($0.displayTitle)" } ?? "Parent session unavailable"
-    }
-
-    private func priorityGroupTitle(_ workspace: HerdrWorkspace, showsMachineChrome: Bool) -> String {
-        guard showsMachineChrome,
-              let machineID = MachineScopedID.split(workspace.id)?.machineID,
-              let machine = model.machines.first(where: { $0.id == machineID })
-        else { return workspace.label.lowercased() }
-        return "\(machine.name.lowercased()) · \(workspace.label.lowercased())"
     }
 
     private static func paneCount(in entries: [SidebarTree.ProjectEntry]) -> Int {
@@ -1389,5 +1381,55 @@ struct HerdrSidebarView: View {
 
     private func open(_ pane: HerdrPane) {
         openPane(pane)
+    }
+}
+
+/// MonoCode's `.nav` row: a 32pt row with a 16pt glyph and 13pt medium label.
+struct SidebarNavRowLabel: View {
+    let title: String
+    let systemImage: String
+    var tint: Color = HerdrTheme.secondaryText
+    var isBusy = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Group {
+                if isBusy {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: systemImage)
+                        .herdrFont(size: 15)
+                        .opacity(tint == HerdrTheme.accent ? 1 : 0.8)
+                }
+            }
+            .herdrIconSlot(width: 18)
+            .accessibilityHidden(true)
+            Text(title)
+                .herdrFont(size: HerdrTheme.TextSize.body, weight: .medium)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity, minHeight: SidebarMetrics.navRowHeight, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+}
+
+struct SidebarNavRow: View {
+    let title: String
+    let systemImage: String
+    var tint: Color = HerdrTheme.secondaryText
+    let action: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            SidebarNavRowLabel(title: title, systemImage: systemImage, tint: tint)
+                .herdrRowBackground(selected: false, hovered: isHovering)
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .accessibilityLabel(title)
     }
 }

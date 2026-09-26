@@ -3,6 +3,7 @@ import SwiftUI
 struct PiMarkdownTableView: View {
     let table: PiMarkdownTable
     @Environment(\.herdrFontScale) private var fontScale
+    @Environment(\.chatProsePalette) private var palette
     @State private var viewportWidth: CGFloat = 0
 
     var body: some View {
@@ -33,11 +34,11 @@ struct PiMarkdownTableView: View {
         }
         .scrollIndicators(.visible)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(HerdrTheme.graphite, in: Rectangle())
-        .clipShape(Rectangle())
+        .background(palette.blockFill, in: .rect(cornerRadius: 10))
+        .clipShape(.rect(cornerRadius: 10))
         .overlay {
-            Rectangle()
-                .strokeBorder(HerdrTheme.separator, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(palette.blockOutline, lineWidth: 1)
         }
         .onGeometryChange(for: CGFloat.self) { geometry in
             geometry.size.width
@@ -48,7 +49,6 @@ struct PiMarkdownTableView: View {
         .accessibilityLabel(
             "Table with \(table.headers.count) columns and \(table.rows.count) rows"
         )
-        .environment(\.chatProsePalette, .chat)
     }
 
     private func tableRow(
@@ -64,16 +64,20 @@ struct PiMarkdownTableView: View {
                     cells[columnIndex],
                     font: HerdrProse.font(role, scale: fontScale),
                     inlineCodeFont: HerdrProse.inlineCodeFont(role, scale: fontScale),
-                    inlineCodeColor: HerdrProse.inlineCodeColor
+                    inlineCodeColor: palette.code,
+                    inlineCodeBackground: palette.codeFill,
+                    strongColor: palette.strong
                 )
+                .lineSpacing(HerdrProse.lineSpacing(role, scale: fontScale))
+                .environment(\.chatProsePalette, rowIndex == nil ? headerPalette : palette)
                 .multilineTextAlignment(textAlignment(for: columnIndex))
-                .padding(.horizontal, 12)
-                .padding(.vertical, rowIndex == nil ? 10 : 9)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
                 .frame(width: columnWidth, alignment: frameAlignment(for: columnIndex))
                 .overlay(alignment: .trailing) {
                     if columnIndex < cells.count - 1 {
                         Rectangle()
-                            .fill(HerdrTheme.subtleSeparator)
+                            .fill(palette.blockOutline.opacity(0.5))
                             .frame(width: 1)
                     }
                 }
@@ -96,17 +100,19 @@ struct PiMarkdownTableView: View {
         }
     }
 
+    /// Header cells read in full ink; body cells in prose ink.
+    private var headerPalette: ChatProsePalette {
+        var header = palette
+        header.text = palette.strong
+        return header
+    }
+
     private func rowBackground(rowIndex: Int?) -> Color {
-        guard let rowIndex else { return HerdrTheme.elevated }
-        return rowIndex.isMultiple(of: 2)
-            ? HerdrTheme.graphite
-            : HerdrTheme.elevated.opacity(0.35)
+        rowIndex == nil ? palette.codeFill.opacity(0.4) : .clear
     }
 
     private func rowDivider(rowIndex: Int?) -> Color {
-        rowIndex == nil
-            ? HerdrTheme.separator
-            : HerdrTheme.subtleSeparator
+        rowIndex == nil ? palette.blockOutline : palette.blockOutline.opacity(0.5)
     }
 
     private func frameAlignment(for column: Int) -> Alignment {

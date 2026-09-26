@@ -37,6 +37,8 @@ struct HerdPulseMenuBarScene: Scene {
         @Bindable var pulse = pulse
         MenuBarExtra(isInserted: $pulse.isMenuBarInserted) {
             HerdPulseMenuBarCard(pulse: pulse, model: model, shell: shell, hudController: hudController)
+                // Dark like every other Herdr window, whatever the system appearance.
+                .preferredColorScheme(.dark)
         } label: {
             HerdPulseMenuBarLabel(state: pulse.contentState)
         }

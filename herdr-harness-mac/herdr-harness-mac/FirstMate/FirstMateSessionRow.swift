@@ -11,17 +11,17 @@ struct FirstMateSessionRow: View {
                 Image(systemName: "bubble.left.and.bubble.right").accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 5) {
                     Text("\(session.kindDisplayName) · generation \(session.generation)")
-                        .herdrFont(.subheadline, weight: .medium)
+                        .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
                     Text("\(session.ownershipStatus.capitalized) · \(session.createdAt.prefix(10))")
-                        .herdrFont(.caption).foregroundStyle(.secondary)
+                        .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
                     if let selection = session.modelSelection {
                         Label(selection.compactDisplayName, systemImage: "cpu")
-                            .herdrFont(.caption).foregroundStyle(.secondary)
+                            .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
                             .help(selection.fullDisplayName)
                             .accessibilityLabel(selection.fullDisplayName)
                     }
                     Text(FirstMateUsageFormatting.inlineSummary(session.usage))
-                        .herdrFont(.caption).foregroundStyle(.secondary)
+                        .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
                 }
                 Spacer()
                 FirstMateStatusLabel(status: session.status)

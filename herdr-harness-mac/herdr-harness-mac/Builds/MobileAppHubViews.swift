@@ -6,7 +6,7 @@ struct MobileAppHubIcon: View {
     let url: URL?
     let name: String
     let size: CGFloat
-    var tint = HerdrTheme.primaryAction
+    var tint = HerdrTheme.accent
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: size * 0.225, style: .continuous)
@@ -23,7 +23,7 @@ struct MobileAppHubIcon: View {
         }
         .frame(width: size, height: size)
         .clipShape(shape)
-        .overlay { shape.stroke(.primary.opacity(0.08), lineWidth: 0.5) }
+        .overlay { shape.strokeBorder(HerdrTheme.outline, lineWidth: 0.5) }
         .accessibilityHidden(true)
     }
 }
@@ -91,8 +91,8 @@ struct DashboardBuildsSection: View {
     private func content(_ query: MobileAppHubFeed.Query) -> some View {
         let rows = MobileAppHubPresentation.dashboardRows(
             feed.builds, query: dashboard.search, focusMode: dashboard.focusMode)
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
                 DashboardSectionHeading(
                     title: MobileAppHubPresentation.dashboardTitle(feed.builds), identifier: "dashboard-builds"
                 ) {
@@ -101,7 +101,7 @@ struct DashboardBuildsSection: View {
                 Spacer(minLength: 8)
                 if let error = feed.error {
                     Label("Couldn't refresh", systemImage: "exclamationmark.triangle")
-                        .herdrFont(.subheadline).foregroundStyle(HerdrTheme.warning)
+                        .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.warning)
                         .help(error)
                 }
             }
@@ -110,7 +110,7 @@ struct DashboardBuildsSection: View {
             } else if rows.isEmpty {
                 Label(dashboard.focusMode ? "No builds from the last day." : "No builds match your search.",
                       systemImage: "iphone")
-                    .herdrFont(.callout).foregroundStyle(HerdrTheme.muted)
+                    .herdrFont(size: HerdrTheme.TextSize.small).foregroundStyle(HerdrTheme.tertiaryText)
                     .padding(.vertical, 10)
             } else {
                 VStack(spacing: 0) {
@@ -118,10 +118,10 @@ struct DashboardBuildsSection: View {
                         DashboardBuildRow(build: build) { openURL(build.urls.page) }
                     }
                 }
-                .overlay(alignment: .top) { Rectangle().fill(HerdrTheme.subtleSeparator).frame(height: 1) }
+                .herdrHairline(.top)
             }
         }
-        .padding(.horizontal, HerdrTheme.pagePadding)
+        .padding(.horizontal, DashboardMetrics.pagePadding)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("dashboard-builds-section")
     }
@@ -137,31 +137,32 @@ struct DashboardBuildRow: View {
             HStack(spacing: 10) {
                 MobileAppHubIcon(url: build.urls.icon, name: build.app.name, size: 22)
                 if let ticket = build.label.ticket {
-                    MobileAppHubTicket(ticket: ticket, tint: HerdrTheme.primaryAction)
+                    MobileAppHubTicket(ticket: ticket, tint: HerdrTheme.accent)
                 }
                 Text(build.title)
-                    .herdrFont(.body)
-                    .foregroundStyle(HerdrTheme.text)
+                    .herdrFont(size: HerdrTheme.TextSize.body)
+                    .foregroundStyle(HerdrTheme.primaryText)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if build.isSigningExpired() {
-                    Text("Signing expired").herdrFont(.subheadline).foregroundStyle(HerdrTheme.alert)
+                    Text("Signing expired").herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.alert)
                 }
                 Text([build.versionLabel, build.source.machine].compactMap { $0 }.joined(separator: " · "))
-                    .herdrFont(.subheadline, monospacedDigit: true).foregroundStyle(HerdrTheme.muted)
+                    .herdrFont(size: HerdrTheme.TextSize.caption).monospacedDigit().foregroundStyle(HerdrTheme.tertiaryText)
                     .lineLimit(1).truncationMode(.middle)
                     .frame(maxWidth: 260, alignment: .trailing)
                 Text("000d")
                     .hidden()
                     .overlay(alignment: .trailing) { DashboardAgeText(date: build.date) }
-                    .herdrFont(.subheadline, monospacedDigit: true)
-                    .foregroundStyle(MobileAppHubPresentation.isFresh(build) ? HerdrTheme.success : HerdrTheme.muted)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(MobileAppHubPresentation.isFresh(build) ? HerdrTheme.success : HerdrTheme.tertiaryText)
                     .lineLimit(1)
             }
-            .padding(.horizontal, 6)
-            .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
-            .background(isHovered ? HerdrTheme.elevated : .clear, in: .rect(cornerRadius: 6))
-            .overlay(alignment: .bottom) { Rectangle().fill(HerdrTheme.subtleSeparator).frame(height: 1) }
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: HerdrTheme.ControlHeight.row, alignment: .leading)
+            .background(isHovered ? HerdrTheme.hoverFill : .clear, in: .rect(cornerRadius: HerdrTheme.Radius.control))
+            .herdrHairline(.bottom, color: HerdrTheme.rowDivider)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -198,25 +199,39 @@ struct FirstMateBuildsSection: View {
         let palette = FirstMatePalette(scheme: scheme)
         let builds = feed.builds
         let shown = showsAll ? builds : Array(builds.prefix(Self.collapsedCount))
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "iphone").foregroundStyle(palette.accent)
-                Text("Builds").herdrFont(.subheadline, weight: .semibold)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "iphone")
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(palette.accent)
+                    .accessibilityHidden(true)
+                Text("BUILDS")
+                    .herdrFont(size: HerdrTheme.TextSize.micro, weight: .semibold)
+                    .tracking(0.6)
+                    .foregroundStyle(palette.tertiaryText)
+                    .accessibilityLabel("Builds")
+                    .accessibilityAddTraits(.isHeader)
                 Text("\(builds.count)")
-                    .herdrFont(.caption2, weight: .semibold)
-                    .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(palette.accent.opacity(0.16), in: .capsule)
+                    .herdrFont(size: 9, weight: .semibold)
+                    .monospacedDigit()
+                    .foregroundStyle(palette.secondaryText)
+                    .padding(.horizontal, 5)
+                    .frame(minWidth: 16, minHeight: 16)
+                    .background(palette.selectedFill, in: .capsule)
                     .accessibilityIdentifier("first-mate-builds-count")
                 Spacer()
                 if feed.error != nil {
                     Image(systemName: "exclamationmark.triangle")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(palette.iconTint)
                         .help(feed.error ?? "")
                         .accessibilityLabel("Couldn't refresh builds")
                 }
                 Button("Open Mobile App Hub") { openURL(MobileAppHubPresentation.seeAllURL(builds, hubURL: query.hubURL)) }
-                    .buttonStyle(.plain).herdrFont(.caption)
+                    .buttonStyle(.plain)
+                    .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                     .foregroundStyle(palette.accent)
+                    .frame(minHeight: HerdrTheme.minHitTarget)
+                    .contentShape(.rect)
             }
             ForEach(shown) { build in
                 FirstMateBuildRow(
@@ -227,18 +242,18 @@ struct FirstMateBuildsSection: View {
             }
             if builds.count > Self.collapsedCount {
                 Button(showsAll ? "Show fewer" : "Show \(builds.count - Self.collapsedCount) more") { showsAll.toggle() }
-                    .buttonStyle(.plain).herdrFont(.caption)
+                    .buttonStyle(.plain)
+                    .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                     .foregroundStyle(palette.accent)
+                    .frame(minHeight: HerdrTheme.minHitTarget)
+                    .contentShape(.rect)
             }
         }
-        .padding(14)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(palette.surface, in: .rect(cornerRadius: 10))
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(palette.accent)
-                .frame(width: 3)
-                .padding(.vertical, 10)
+        .background(palette.cardFill, in: .rect(cornerRadius: HerdrTheme.Radius.card))
+        .overlay {
+            RoundedRectangle(cornerRadius: HerdrTheme.Radius.card).strokeBorder(palette.line)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("first-mate-builds-section")
@@ -250,6 +265,7 @@ private struct FirstMateBuildRow: View {
     let madeBy: [String]
     let palette: FirstMatePalette
     let open: () -> Void
+    @Environment(\.colorScheme) private var scheme
     @State private var isHovered = false
 
     private var detail: String {
@@ -266,12 +282,20 @@ private struct FirstMateBuildRow: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         if let ticket = build.label.ticket { MobileAppHubTicket(ticket: ticket, tint: palette.accent) }
-                        Text(build.title).herdrFont(.subheadline, weight: .semibold).lineLimit(2)
+                        Text(build.title)
+                            .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
+                            .foregroundStyle(palette.text)
+                            .lineLimit(2)
                     }
-                    Text(detail).herdrFont(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                    Text(detail)
+                        .herdrFont(size: HerdrTheme.TextSize.caption)
+                        .foregroundStyle(palette.tertiaryText)
+                        .lineLimit(2)
                     if build.isSigningExpired() {
+                        // The light scheme needs the darker blocked red (6.7:1).
                         Text("Signing expired: this build no longer installs")
-                            .herdrFont(.caption2).foregroundStyle(HerdrTheme.alert)
+                            .herdrFont(size: HerdrTheme.TextSize.caption)
+                            .foregroundStyle(FirstMateStatusColors.color(for: .blocked, scheme: scheme))
                     }
                 }
                 Spacer(minLength: 8)
@@ -280,13 +304,14 @@ private struct FirstMateBuildRow: View {
                         Circle().fill(HerdrTheme.success).frame(width: 6, height: 6).accessibilityHidden(true)
                     }
                     DashboardAgeText(date: build.date)
-                        .herdrFont(.caption, monospacedDigit: true)
-                        .foregroundStyle(.secondary)
+                        .herdrFont(size: HerdrTheme.TextSize.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(palette.tertiaryText)
                 }
                 .padding(.top, 2)
             }
             .padding(.vertical, 6).padding(.horizontal, 6)
-            .background(isHovered ? palette.text.opacity(0.05) : .clear, in: .rect(cornerRadius: 6))
+            .background(isHovered ? palette.hoverFill : .clear, in: .rect(cornerRadius: HerdrTheme.Radius.control))
             .contentShape(.rect)
         }
         .buttonStyle(.plain)

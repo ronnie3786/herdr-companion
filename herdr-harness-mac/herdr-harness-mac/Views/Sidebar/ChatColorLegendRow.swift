@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct ChatColorLegendRow: View {
-    static let rowHeight: CGFloat = 56 * 0.9
-    static let titleSize: CGFloat = 14
+    static let rowHeight: CGFloat = SidebarMetrics.navRowHeight
+    static let titleSize: CGFloat = HerdrTheme.TextSize.body
     static let titleLineLimit: ClosedRange<Int> = 1...2
 
     let model: HerdrAppModel
@@ -62,11 +62,7 @@ struct ChatColorLegendRow: View {
                 .accessibilityIdentifier("chat-color-label-\(color.rawValue)")
 
                 Button("Rename color label", systemImage: "pencil", action: edit)
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(HerdrTheme.mist)
-                    .frame(width: HerdrTheme.minHitTarget, height: Self.rowHeight)
-                    .contentShape(.rect)
+                    .buttonStyle(HerdrIconButtonStyle(visualSize: HerdrTheme.ControlHeight.small))
                     .help("Edit \(store.label(for: color)) inline")
                     .accessibilityIdentifier("chat-color-rename-\(color.rawValue)")
             }
@@ -79,10 +75,10 @@ struct ChatColorLegendRow: View {
         .foregroundStyle(HerdrTheme.text)
         .padding(.horizontal, 8)
         .frame(minHeight: Self.rowHeight)
-        .background(color.rowBackground(selected: isSelected), in: .rect(cornerRadius: 6))
+        .background(color.rowBackground(selected: isSelected), in: .rect(cornerRadius: HerdrTheme.Radius.control))
         .overlay {
             if isSelected {
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: HerdrTheme.Radius.control)
                     .strokeBorder(color.swatch.opacity(0.65), lineWidth: 1)
                     .allowsHitTesting(false)
             }

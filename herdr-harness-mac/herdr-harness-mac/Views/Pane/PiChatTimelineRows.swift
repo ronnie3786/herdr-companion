@@ -118,7 +118,7 @@ struct PiTimelineWindow: Equatable {
 }
 
 enum PiTimelineMetrics {
-    static let itemSpacing: CGFloat = 13
+    static let itemSpacing: CGFloat = 12
 }
 
 /// A single timeline row. Content uses the full reading width; spacing alone
@@ -157,13 +157,13 @@ struct PiTimelineRowView: View, Equatable {
                 PiResponseArtifactsView(model: artifactModel, artifacts: artifacts)
             }
         case .starting:
-            HStack(spacing: 9) {
+            HStack(spacing: 6) {
                 ProgressView()
-                    .controlSize(.small)
-                    .tint(HerdrTheme.mauve)
+                    .controlSize(.mini)
+                    .tint(HerdrTheme.iconTint)
                 Text("Pi is starting…")
-                    .herdrFont(.callout)
-                    .foregroundStyle(HerdrTheme.mist)
+                    .herdrFont(size: HerdrTheme.TextSize.reading)
+                    .foregroundStyle(HerdrTheme.tertiaryText)
             }
         }
     }

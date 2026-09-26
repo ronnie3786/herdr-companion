@@ -16,16 +16,19 @@ struct AgentBoardMessageView: View {
         VStack(alignment: .trailing, spacing: 4) {
             VStack(alignment: .leading, spacing: 6) {
                 if !message.blocks.isEmpty {
-                    AgentBoardProseView(blocks: message.blocks)
+                    AgentBoardProseView(blocks: message.blocks, textColor: HerdrTheme.primaryText)
                 }
                 ForEach(message.attachments) { attachment in
                     Button(action: openFullView) {
                         Label(attachment.filename, systemImage: "paperclip")
-                            .herdrFont(.subheadline)
+                            .herdrFont(size: HerdrTheme.TextSize.caption)
                             .lineLimit(1)
                             .truncationMode(.middle)
-                            .padding(.horizontal, 9).padding(.vertical, 4)
-                            .overlay { RoundedRectangle(cornerRadius: 7).stroke(HerdrTheme.selection) }
+                            .padding(.horizontal, 8)
+                            .frame(minHeight: 22)
+                            .background(HerdrTheme.chipFill, in: .rect(cornerRadius: HerdrTheme.Radius.control))
+                            .frame(minHeight: HerdrTheme.minHitTarget)
+                            .contentShape(.rect)
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(HerdrTheme.accent)
@@ -33,15 +36,14 @@ struct AgentBoardMessageView: View {
                     .accessibilityLabel("Attachment \(attachment.filename), open full First Mate view")
                 }
             }
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(HerdrTheme.surface, in: .rect(cornerRadius: HerdrTheme.bubbleRadius))
-            .overlay { RoundedRectangle(cornerRadius: HerdrTheme.bubbleRadius).stroke(HerdrTheme.accent.opacity(0.16)) }
+            .padding(.horizontal, 11).padding(.vertical, 7)
+            .background(HerdrTheme.selectedFill, in: .rect(cornerRadius: HerdrTheme.bubbleRadius))
             if message.isQueued {
-                Text("Queued").herdrFont(.subheadline).foregroundStyle(HerdrTheme.muted)
+                Text("Queued").herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText)
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
-        .padding(.leading, 36)
+        .padding(.leading, 40)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("You: \(plainText)")
     }
@@ -53,12 +55,13 @@ struct AgentBoardMessageView: View {
             if characterCount > Self.foldCharacterBudget {
                 Button(isExpanded ? "Show less" : "Show more") { isExpanded.toggle() }
                     .buttonStyle(.plain)
-                    .herdrFont(.subheadline)
+                    .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                     .foregroundStyle(HerdrTheme.accent)
+                    .frame(minHeight: HerdrTheme.minHitTarget)
+                    .contentShape(.rect)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.trailing, 12)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("First Mate: \(plainText)")
     }
@@ -94,44 +97,51 @@ struct AgentBoardMessageView: View {
 struct AgentBoardProseView: View {
     let blocks: [AgentBoardProseBlock]
     var codeLineLimit: Int? = 14
+    /// Replies read in prose ink; the person's own bubble in full ink.
+    var textColor: Color = HerdrTheme.proseText
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(blocks) { block in
                 switch block {
                 case .paragraph(_, let text):
-                    Text(text).herdrFont(.body).lineSpacing(3)
+                    Text(text).herdrFont(size: HerdrTheme.TextSize.body).lineSpacing(4)
                 case .heading(_, let text):
-                    Text(text).herdrFont(.body, weight: .semibold).padding(.top, 2)
+                    Text(text).herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
+                        .foregroundStyle(HerdrTheme.primaryText)
+                        .padding(.top, 2)
                 case .quote(_, let text):
-                    Text(text).herdrFont(.body).lineSpacing(3)
-                        .foregroundStyle(HerdrTheme.mist)
+                    Text(text).herdrFont(size: HerdrTheme.TextSize.body).lineSpacing(4)
+                        .foregroundStyle(HerdrTheme.secondaryText)
                         .padding(.leading, 10)
                         .overlay(alignment: .leading) {
-                            Rectangle().fill(HerdrTheme.separator).frame(width: 2)
+                            Rectangle().fill(HerdrTheme.outline).frame(width: 2)
                         }
                 case .listItem(_, let marker, let depth, let text):
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(marker).foregroundStyle(HerdrTheme.muted).monospacedDigit()
+                        Text(marker).foregroundStyle(HerdrTheme.tertiaryText).monospacedDigit()
                             .frame(minWidth: 12, alignment: .trailing)
-                        Text(text).lineSpacing(3)
+                        Text(text).lineSpacing(4)
                     }
-                    .herdrFont(.body)
+                    .herdrFont(size: HerdrTheme.TextSize.body)
                     .padding(.leading, CGFloat(min(depth, 4)) * 14)
                 case .code(_, let code):
                     Text(code)
-                        .herdrFont(.callout, monospaced: true)
-                        .foregroundStyle(HerdrTheme.code)
+                        .herdrFont(size: HerdrTheme.TextSize.small, monospaced: true)
+                        .foregroundStyle(HerdrTheme.primaryText)
                         .lineLimit(codeLineLimit)
                         .padding(.horizontal, 10).padding(.vertical, 8)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(HerdrTheme.graphite, in: .rect(cornerRadius: 6))
+                        .background(HerdrTheme.codeFill, in: .rect(cornerRadius: HerdrTheme.Radius.composer))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: HerdrTheme.Radius.composer).strokeBorder(HerdrTheme.outline)
+                        }
                 case .notice(_, let text):
-                    Text(text).herdrFont(.subheadline).foregroundStyle(HerdrTheme.muted)
+                    Text(text).herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText)
                 }
             }
         }
-        .foregroundStyle(HerdrTheme.text)
+        .foregroundStyle(textColor)
         .frame(maxWidth: .infinity, alignment: .leading)
         .textSelection(.enabled)
     }

@@ -1,59 +1,55 @@
 import SwiftUI
 
+/// The composer's context line (MonoCode's `.ctxline`): a 14pt ring, one
+/// line of tertiary text, and an info button for the full measurement.
 struct FirstMateCoordinatorContextView: View {
     let feature: FirstMateFeature
     let capabilityAvailable: Bool
 
-    @Environment(\.colorScheme) private var scheme
     @State private var showsDetails = false
 
-    private var palette: FirstMatePalette { FirstMatePalette(scheme: scheme) }
     private var presentation: FirstMateCoordinatorContextPresentation {
         .init(feature: feature, capabilityAvailable: capabilityAvailable)
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: "gauge.with.dots.needle.67percent")
-                .foregroundStyle(palette.accent)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(presentation.summary)
-                    .herdrFont(.caption, weight: .medium)
-                    .foregroundStyle(palette.text)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let pressure = presentation.pressure {
-                    Text(pressure)
-                        .herdrFont(.caption)
-                        .foregroundStyle(pressure.contains("reached") ? .orange : palette.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
+        let presentation = presentation
+        HStack(spacing: 10) {
+            HerdrProgressRing(fraction: presentation.fraction ?? 0, color: HerdrTheme.iconTint)
+            Text(presentation.compactLine)
+                .herdrFont(size: HerdrTheme.TextSize.small)
+                .foregroundStyle(presentation.pressureReached ? HerdrTheme.warning : HerdrTheme.tertiaryText)
+                .lineLimit(1)
+                .help([presentation.summary, presentation.pressure].compactMap { $0 }.joined(separator: "\n"))
             Spacer(minLength: 4)
             Button("Context details", systemImage: "info.circle") {
                 showsDetails.toggle()
             }
             .labelStyle(.iconOnly)
-            .buttonStyle(.plain)
-            .foregroundStyle(palette.accent)
+            .buttonStyle(HerdrIconButtonStyle(visualSize: HerdrTheme.ControlHeight.mini))
             .help("How First Mate measures context and performs managed handoff")
             .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Coordinator context")
-                        .herdrFont(.headline)
+                        .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
+                        .foregroundStyle(HerdrTheme.primaryText)
                     Text(presentation.summary)
-                        .herdrFont(.callout)
+                        .herdrFont(size: HerdrTheme.TextSize.small)
+                        .foregroundStyle(HerdrTheme.secondaryText)
                     if let pressure = presentation.pressure {
-                        Text(pressure).herdrFont(.callout)
+                        Text(pressure)
+                            .herdrFont(size: HerdrTheme.TextSize.small)
+                            .foregroundStyle(presentation.pressureReached ? HerdrTheme.warning : HerdrTheme.secondaryText)
                     }
                     if let measurement = presentation.measurement {
                         Text(measurement)
-                            .herdrFont(.caption)
-                            .foregroundStyle(.secondary)
+                            .herdrFont(size: HerdrTheme.TextSize.caption)
+                            .foregroundStyle(HerdrTheme.tertiaryText)
                     }
-                    Divider()
+                    Rectangle().fill(HerdrTheme.hairline).frame(height: 1)
                     Text(presentation.policy)
-                        .herdrFont(.caption)
+                        .herdrFont(size: HerdrTheme.TextSize.caption)
+                        .foregroundStyle(HerdrTheme.tertiaryText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(14)

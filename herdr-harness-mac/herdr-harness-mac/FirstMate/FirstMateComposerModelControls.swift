@@ -17,14 +17,13 @@ struct FirstMateComposerModelControls: View {
 
     private var proposal: FirstMateModelSettingsProposal? { proposalState.proposal }
 
+    /// Sits in the composer's tool row: the model + effort pill, then "Use
+    /// host default". Narrow composers drop the labels before the pill.
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            controls(stacked: false)
-            controls(stacked: true)
+            controls(compact: false)
+            controls(compact: true)
         }
-        .padding(7)
-        .background(HerdrTheme.graphite, in: .rect(cornerRadius: 8))
-        .environment(\.colorScheme, .dark)
         .task(id: context) { await loadCatalog() }
         .onChange(of: store.operationContext) { invalidateProposalIfNeeded() }
         .onChange(of: feature.nativeSessionID) { invalidateProposalIfNeeded() }
@@ -49,61 +48,87 @@ struct FirstMateComposerModelControls: View {
     }
 
     @ViewBuilder
-    private func controls(stacked: Bool) -> some View {
-        let layout = stacked
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 5))
-            : AnyLayout(HStackLayout(alignment: .center, spacing: 9))
-        layout {
-            PiModelPickerChip(
-                currentModel: displayedModel,
-                availableModels: availableModels,
-                isLoading: isLoading,
-                isSetting: isSaving,
-                isEnabled: controlsEnabled,
-                isInteractive: supportsSettings,
-                errorMessage: error,
-                selectModel: selectModel,
-                retry: {
-                    if proposalState.needsConfirmation {
-                        showsConfirmation = true
-                    } else if proposal != nil {
-                        Task { await saveProposal() }
-                    } else {
-                        Task { await loadCatalog() }
-                    }
-                },
-                modelFavorites: modelFavorites
-            )
-            PiThinkingLevelChip(
-                currentLevel: displayedThinking,
-                isSetting: isSaving,
-                isEnabled: controlsEnabled,
-                isInteractive: supportsSettings,
-                selectLevel: selectThinking
-            )
-            if configuredDiffersFromActual {
-                Text("Next: \(feature.modelDisplayName)\(configuredThinkingSuffix)")
-                    .herdrFont(.caption)
-                    .foregroundStyle(HerdrTheme.mist)
-                    .lineLimit(stacked ? 2 : 1)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .help("Configured for the next coordinator turn; the current session is unchanged until the server applies it safely")
+    private func controls(compact: Bool) -> some View {
+        HStack(spacing: 6) {
+            PiModelEffortPill {
+                PiModelPickerChip(
+                    currentModel: displayedModel,
+                    availableModels: availableModels,
+                    isLoading: isLoading,
+                    isSetting: isSaving,
+                    isEnabled: controlsEnabled,
+                    isInteractive: supportsSettings,
+                    errorMessage: error,
+                    selectModel: selectModel,
+                    retry: {
+                        if proposalState.needsConfirmation {
+                            showsConfirmation = true
+                        } else if proposal != nil {
+                            Task { await saveProposal() }
+                        } else {
+                            Task { await loadCatalog() }
+                        }
+                    },
+                    modelFavorites: modelFavorites,
+                    style: .segment
+                )
+            } effort: {
+                PiThinkingLevelChip(
+                    currentLevel: displayedThinking,
+                    isSetting: isSaving,
+                    isEnabled: controlsEnabled,
+                    isInteractive: supportsSettings,
+                    selectLevel: selectThinking,
+                    style: .segment
+                )
             }
-            if !stacked { Spacer(minLength: 4) }
+            if configuredDiffersFromActual {
+                let next = "Next: \(feature.modelDisplayName)\(configuredThinkingSuffix)"
+                Group {
+                    if compact {
+                        // Narrow composers keep the pending change as a glyph.
+                        Image(systemName: "clock.arrow.circlepath")
+                            .herdrFont(size: 12)
+                            .foregroundStyle(HerdrTheme.iconTint)
+                            .frame(minWidth: HerdrTheme.minHitTarget, minHeight: HerdrTheme.minHitTarget)
+                            .contentShape(.rect)
+                    } else {
+                        Text(next)
+                            .herdrFont(size: HerdrTheme.TextSize.caption)
+                            .foregroundStyle(HerdrTheme.tertiaryText)
+                            .lineLimit(1)
+                    }
+                }
+                .help("\(next). Configured for the next coordinator turn; the current session is unchanged until the server applies it safely")
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(next)
+            }
             if supportsSettings {
                 Button("Use host default", systemImage: "arrow.uturn.backward", action: selectHostDefault)
-                    .buttonStyle(.plain)
-                    .herdrFont(.caption)
-                    .foregroundStyle(HerdrTheme.mist)
+                    .labelStyle(HostDefaultLabelStyle(compact: compact))
+                    .buttonStyle(HerdrButtonStyle(kind: .ghost, height: HerdrTheme.ControlHeight.regular))
+                    .help("Use host default")
                     .disabled(!controlsEnabled)
             } else {
-                Label("Update server for safe model changes", systemImage: "arrow.down.circle")
-                    .herdrFont(.caption)
-                    .foregroundStyle(HerdrTheme.mist)
-                    .fixedSize(horizontal: false, vertical: true)
+                Label(compact ? "Update server" : "Update server for safe model changes", systemImage: "arrow.down.circle")
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(HerdrTheme.tertiaryText)
+                    .lineLimit(1)
+                    .help("Update this feature's companion server for safe model changes")
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private struct HostDefaultLabelStyle: LabelStyle {
+        let compact: Bool
+
+        func makeBody(configuration: Configuration) -> some View {
+            HStack(spacing: 5) {
+                configuration.icon
+                if !compact { configuration.title }
+            }
+        }
     }
 
     private var controlsEnabled: Bool {

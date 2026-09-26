@@ -558,7 +558,8 @@ struct PRReviewRenderTests {
         #expect(Double(values["scale"] as? String ?? "") == fontScale.rawValue)
         #expect(abs((values["fontSize"] as? Double ?? 0) - 12 * fontScale.rawValue) < 0.1)
         #expect((values["rowHeight"] as? Double ?? 0) >= 20 * fontScale.rawValue)
-        #expect(values["lineHeight"] as? String == "1.85")
+        // Mono × Herdr: 20px rows at the 12px code size, set by the Mac theme.
+        #expect(values["lineHeight"] as? String == HerdrWebTheme.diffLineHeight)
         #expect((values["changed"] as? Int ?? 0) > 0)
         #expect((values["emphasis"] as? Int ?? 0) > 0)
     }

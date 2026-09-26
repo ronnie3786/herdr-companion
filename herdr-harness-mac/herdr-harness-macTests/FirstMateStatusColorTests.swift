@@ -155,7 +155,7 @@ private struct StatusColorRGB {
 }
 
 private func rgb(_ color: Color) throws -> StatusColorRGB {
-    let converted = try #require(NSColor(color).usingColorSpace(.sRGB))
+    let converted = HerdrTheme.resolved(color)
     return StatusColorRGB(red: converted.redComponent, green: converted.greenComponent, blue: converted.blueComponent)
 }
 
@@ -175,7 +175,7 @@ private func channelDistance(_ first: StatusColorRGB, _ second: StatusColorRGB) 
 }
 
 private func hue(_ color: Color) throws -> Double {
-    let converted = try #require(NSColor(color).usingColorSpace(.sRGB))
+    let converted = HerdrTheme.resolved(color)
     var value: CGFloat = 0
     var saturation: CGFloat = 0
     var brightness: CGFloat = 0

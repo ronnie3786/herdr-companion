@@ -12,9 +12,11 @@ struct FirstMateSessionTranscriptView: View {
     @Environment(\.herdrFontScale) private var fontScale
 
     private var palette: FirstMatePalette { .init(scheme: scheme) }
-    private var prosePalette: ChatProsePalette {
-        .init(text: palette.text, secondaryText: palette.secondaryText,
-              accent: palette.accent, separator: palette.line)
+    private var prosePalette: ChatProsePalette { .firstMate(palette) }
+    private var bubblePalette: ChatProsePalette {
+        var bubble = prosePalette
+        bubble.text = palette.text
+        return bubble
     }
 
     var body: some View {
@@ -31,7 +33,7 @@ struct FirstMateSessionTranscriptView: View {
                 }
             } else {
                 // Older companions may supply only a plain-text preview.
-                Text(fallbackText).herdrFont(.body).lineSpacing(6).textSelection(.enabled)
+                Text(fallbackText).herdrFont(size: HerdrTheme.TextSize.body).lineSpacing(6).textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -45,47 +47,68 @@ struct FirstMateSessionTranscriptView: View {
     private func row(_ message: FirstMateSessionMessage, index: Int) -> some View {
         switch message.role {
         case "user", "human":
-            PiMarkdownText(message.text, font: HerdrProse.font(.body, scale: fontScale))
-                .lineSpacing(HerdrProse.lineSpacing(.body, scale: fontScale))
-                .padding(.horizontal, 18)
-                .padding(.vertical, 14)
-                .background(palette.surface, in: RoundedRectangle(cornerRadius: HerdrTheme.cardRadius))
-                .overlay {
-                    RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
-                        .stroke(palette.line)
-                }
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .padding(.leading, 42)
+            PiMarkdownText(message.text, font: HerdrProse.font(.userBubble, scale: fontScale))
+                .lineSpacing(HerdrProse.lineSpacing(.userBubble, scale: fontScale))
+                .environment(\.chatProsePalette, bubblePalette)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    palette.bubbleFill,
+                    in: HerdrBubbleShape(singleLineHeight: (HerdrProse.Role.userBubble.lineHeight + 16) * fontScale.rawValue)
+                )
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("You: \(message.text)")
-                .piCopyAffordance(message.text, label: "Copy prompt", identifier: "first-mate-session-copy-\(index)")
+                .piCopyAffordance(message.text, label: "Copy prompt", identifier: "first-mate-session-copy-\(index)",
+                                  alignment: .topLeading, offset: CGSize(width: -28, height: 4))
+                .frame(maxWidth: 576 * fontScale.rawValue, alignment: .trailing)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.leading, 48)
         case "assistant":
             VStack(alignment: .leading, spacing: 8) {
-                Label("Agent", systemImage: "sparkle")
-                    .herdrFont(.caption, weight: .semibold)
-                    .foregroundStyle(palette.accent)
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkle")
+                        .herdrFont(size: 12)
+                        .foregroundStyle(palette.accent)
+                        .accessibilityHidden(true)
+                    Text("Agent")
+                        .herdrFont(size: HerdrTheme.TextSize.caption, weight: .semibold)
+                        .foregroundStyle(palette.secondaryText)
+                }
                 PiMarkdownMessageView(source: message.text, isStreaming: false,
                                       id: "first-mate-session-\(sessionID)-\(index)", detectsPaneLinks: false)
                     .piCopyAffordance(message.text, label: "Copy response", identifier: "first-mate-session-copy-\(index)")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         case "toolResult":
-            DisclosureGroup {
-                Text(message.text.isEmpty ? "No text output" : message.text)
-                    .herdrFont(.body, monospaced: true)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, 8)
-            } label: {
-                Label("Tool result", systemImage: "wrench.and.screwdriver")
-                    .herdrFont(.caption)
-            }
-            .padding(12)
-            .background(palette.surface, in: .rect(cornerRadius: 9))
-            .overlay(RoundedRectangle(cornerRadius: 9).stroke(palette.line))
+            FirstMateToolResultCard(text: message.text, palette: palette)
         default:
-            Text(message.text).herdrFont(.body).textSelection(.enabled)
+            Text(message.text).herdrFont(size: HerdrTheme.TextSize.body).textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+}
+
+/// A saved tool result, folded (MonoCode's code-block recipe). A plain chevron
+/// card: DisclosureGroup is too costly inside transcript rows.
+private struct FirstMateToolResultCard: View {
+    let text: String
+    let palette: FirstMatePalette
+    @State private var isExpanded = false
+
+    var body: some View {
+        PiDisclosureCard(isExpanded: $isExpanded, chevronColor: palette.iconTint) {
+            Text(text.isEmpty ? "No text output" : text)
+                .herdrFont(size: HerdrTheme.TextSize.small, monospaced: true)
+                .foregroundStyle(palette.text)
+                .textSelection(.enabled)
+                .padding(.bottom, 10)
+        } label: {
+            Label("Tool result", systemImage: "wrench.and.screwdriver")
+                .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
+                .foregroundStyle(palette.secondaryText)
+        }
+        .padding(.horizontal, 12)
+        .background(palette.text.opacity(0.06), in: .rect(cornerRadius: 10))
+        .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(palette.line) }
     }
 }

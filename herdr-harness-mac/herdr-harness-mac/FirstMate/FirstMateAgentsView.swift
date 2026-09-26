@@ -4,10 +4,10 @@ struct FirstMateAgentsView: View {
     @Bindable var store: FirstMateStore
     let snapshot: FirstMateSnapshot
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("Your crew").herdrFont(.title2, weight: .semibold)
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Your crew").herdrFont(size: 15, weight: .semibold)
             Text("\(snapshot.assignments.count) assignments, each with its own session and evidence.")
-                .herdrFont(.subheadline).foregroundStyle(.secondary)
+                .herdrFont(size: HerdrTheme.TextSize.small).foregroundStyle(HerdrTheme.tertiaryText)
             if !snapshot.coordinatorSessions.isEmpty {
                 DisclosureGroup("First Mate coordinator · \(snapshot.coordinatorSessions.count) saved sessions") {
                     ForEach(snapshot.coordinatorSessions) { session in
@@ -15,7 +15,7 @@ struct FirstMateAgentsView: View {
                     }
                 }
                 .accessibilityIdentifier("first-mate-coordinator-history")
-                Divider()
+                Rectangle().fill(HerdrTheme.hairline).frame(height: 1)
             }
             if !snapshot.advisorSessions.isEmpty {
                 DisclosureGroup("Advisors · \(snapshot.advisorSessions.count) saved sessions") {
@@ -24,29 +24,29 @@ struct FirstMateAgentsView: View {
                     }
                 }
                 .accessibilityIdentifier("first-mate-advisor-history")
-                Divider()
+                Rectangle().fill(HerdrTheme.hairline).frame(height: 1)
             }
             ForEach(snapshot.visits.filter { !snapshot.agents(for: $0.id).isEmpty }) { visit in
                 DisclosureGroup {
-                    VStack(spacing: 8) {
+                    VStack(spacing: 0) {
                         ForEach(snapshot.agents(for: visit.id)) { agent in FirstMateAgentRow(store: store, agent: agent) }
-                    }.padding(.top, 12)
+                    }.padding(.top, 4)
                 } label: {
                     HStack {
-                        Text(visit.title).herdrFont(.headline)
+                        Text(visit.title).herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
                         Spacer()
-                        Text("\(snapshot.agents(for: visit.id).count) agents").herdrFont(.caption).foregroundStyle(.secondary)
+                        Text("\(snapshot.agents(for: visit.id).count) agents").herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText)
                     }
                 }
                 .accessibilityIdentifier("first-mate-agent-group-\(visit.id)")
-                Divider()
+                Rectangle().fill(HerdrTheme.hairline).frame(height: 1)
             }
             if snapshot.assignments.isEmpty {
                 ContentUnavailableView("No agents assigned yet", systemImage: "person.2", description: Text("Discuss the plan in the feature conversation to get started."))
             }
             if snapshot.sessionsTruncated {
                 Text("Showing the newest \(snapshot.sessions.count) saved sessions. Earlier sessions remain retained on the companion.")
-                    .herdrFont(.caption).foregroundStyle(.secondary)
+                    .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
             }
         }
     }

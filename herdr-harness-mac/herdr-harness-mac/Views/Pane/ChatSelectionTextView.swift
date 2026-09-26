@@ -46,8 +46,9 @@ final class ChatSelectionTextView: NSTextView {
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView:
             Button("Quote & comment…", systemImage: "quote.bubble") { [weak self] in self?.editQuote() }
-                .buttonStyle(.plain).herdrFont(.callout).padding(10)
-                .foregroundStyle(HerdrTheme.text).background(HerdrTheme.graphite)
+                .buttonStyle(.plain).herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .foregroundStyle(HerdrTheme.text).background(HerdrTheme.windowBackground)
                 .environment(\.herdrFontScale, quoteFontScale)
                 .preferredColorScheme(.dark)
         )

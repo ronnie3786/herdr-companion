@@ -29,11 +29,14 @@ final class PRReviewDiffTextView: WKWebView, WKScriptMessageHandler, WKNavigatio
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         super.init(frame: .zero, configuration: configuration)
         configuration.userContentController.add(self, name: Self.bridgeName)
+        // The bundled renderer keeps its shipped colors; the Mac's Mono diff
+        // variables (`HerdrWebTheme`) restyle it the same way as embedded Git.
+        configuration.userContentController.addUserScript(HerdrWebTheme.userScript())
         navigationDelegate = self
         setAccessibilityIdentifier("pr-review-diff-text")
         allowsBackForwardNavigationGestures = false
         allowsLinkPreview = false
-        underPageBackgroundColor = NSColor(HerdrTheme.graphite)
+        underPageBackgroundColor = HerdrTheme.resolved(HerdrTheme.windowBackground)
         loadBundledRenderer()
     }
 
@@ -131,11 +134,24 @@ final class PRReviewDiffTextView: WKWebView, WKScriptMessageHandler, WKNavigatio
         guard let url = bundles.lazy.compactMap({
             $0.url(forResource: "PRReviewDiffRenderer", withExtension: "html")
         }).first else {
-            loadHTMLString("<html><body style='background:#20212c;color:#e8eaed'>Diff renderer unavailable.</body></html>", baseURL: nil)
+            loadHTMLString(
+                "<html><body style='background:\(Self.cssHex(HerdrTheme.windowBackground));color:\(Self.cssHex(HerdrTheme.primaryText))'>Diff renderer unavailable.</body></html>",
+                baseURL: nil
+            )
             return
         }
         rendererURL = url
         loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+    }
+
+    private static func cssHex(_ color: Color) -> String {
+        let value = HerdrTheme.resolved(color)
+        return String(
+            format: "#%02x%02x%02x",
+            Int((value.redComponent * 255).rounded()),
+            Int((value.greenComponent * 255).rounded()),
+            Int((value.blueComponent * 255).rounded())
+        )
     }
 
     private func send(_ payload: PRReviewDiffRenderer.Payload) {

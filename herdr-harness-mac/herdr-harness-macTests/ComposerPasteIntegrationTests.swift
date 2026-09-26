@@ -31,12 +31,19 @@ struct ComposerPasteIntegrationTests {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
         board.setString("  let value = 1\n", forType: .string)
+        // Popovers from earlier cases can outlive their windows; only one
+        // opened by this case's composer counts.
+        let earlierWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
         let host = NSHostingView(rootView: Group {
             if isHud {
+                // Paste code lives in the `+` popover here too.
                 HerdrHudComposerView(model: model, controller: HerdrHudController(userDefaults: defaults), session: session, codePasteboard: board)
+                    .environment(\.composerAddMenuInitiallyPresented, route.contains("button"))
             } else {
+                // Paste code lives in the composer's `+` popover.
                 PromptComposerView(model: model, pane: pane, workspace: workspace, draft: $editable.draft,
                                    attachments: .constant([]), focusRequest: 0, modelFavorites: ModelFavoritesStore(userDefaults: defaults), codePasteboard: board)
+                    .environment(\.composerAddMenuInitiallyPresented, route.contains("button"))
             }
         }.frame(width: 540))
         let window: NSWindow = isHud
@@ -61,15 +68,35 @@ struct ComposerPasteIntegrationTests {
             #expect(window.makeFirstResponder(other))
         }
         if route.contains("button") {
-            let location = try pasteButtonLocation(in: host)
+            // Both composers show Paste code in the `+` popover's window.
+            let (target, targetView) = try await popoverWindow(for: window, excluding: earlierWindows)
+            // The popover fades in; wait until its Paste row has drawn.
+            var found: NSPoint?
+            for _ in 0..<20 where found == nil {
+                found = try? pasteButtonLocation(in: targetView, recordsIssue: false)
+                if found == nil { try await Task.sleep(for: .milliseconds(50)) }
+            }
+            let location = try found ?? pasteButtonLocation(in: targetView)
             let down = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: location, modifierFlags: [], timestamp: 0,
-                windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+                windowNumber: target.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
             let up = try #require(NSEvent.mouseEvent(with: .leftMouseUp, location: location, modifierFlags: [], timestamp: 0.1,
-                windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0))
-            NSApp.postEvent(up, atStart: true)
-            window.sendEvent(down)
-            if let pendingUp = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
-                window.sendEvent(pendingUp)
+                windowNumber: target.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0))
+            if isHud {
+                // The HUD panel's popover takes key once it is clicked, and
+                // a click on a popover that is not key yet only activates it.
+                // Make it key first, then deliver the click through the event
+                // queue the way a real one arrives.
+                target.makeKey()
+                try await Task.sleep(for: .milliseconds(50))
+                NSApp.postEvent(down, atStart: false)
+                NSApp.postEvent(up, atStart: false)
+                try await Task.sleep(for: .milliseconds(150))
+            } else {
+                NSApp.postEvent(up, atStart: true)
+                target.sendEvent(down)
+                if let pendingUp = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) {
+                    target.sendEvent(pendingUp)
+                }
             }
         } else {
             let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command, .shift], timestamp: 0,
@@ -94,11 +121,27 @@ struct ComposerPasteIntegrationTests {
         #expect(editor.string == expected)
     }
 
+    /// The `+` popover opened by `composerAddMenuInitiallyPresented`.
+    private func popoverWindow(for owner: NSWindow, excluding earlier: Set<ObjectIdentifier>) async throws -> (NSWindow, NSView) {
+        for _ in 0..<40 {
+            if let popover = NSApp.windows.first(where: {
+                $0 !== owner && $0.isVisible && !earlier.contains(ObjectIdentifier($0))
+                    && String(describing: type(of: $0)).contains("Popover")
+            }), let content = popover.contentView {
+                content.layoutSubtreeIfNeeded()
+                return (popover, content)
+            }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        Issue.record("The composer's + popover did not open")
+        throw CancellationError()
+    }
+
     private func descendants(_ view: NSView) -> [NSView] {
         view.subviews.flatMap { [$0] + descendants($0) }
     }
 
-    private func pasteButtonLocation(in host: NSView) throws -> NSPoint {
+    private func pasteButtonLocation(in host: NSView, recordsIssue: Bool = true) throws -> NSPoint {
         // Find the rendered CTA rather than assuming font-dependent coordinates.
         // SwiftUI does not expose its AX children in this hosted unit-test process.
         host.layoutSubtreeIfNeeded()
@@ -112,7 +155,9 @@ struct ComposerPasteIntegrationTests {
         request.recognitionLevel = .accurate
         request.minimumTextHeight = 0.005
         try HerdrOCR.perform(request, image: image)
-        let label = try #require(request.results?.first { $0.topCandidates(1).first?.string.lowercased().contains("paste") == true })
+        let match = request.results?.first { $0.topCandidates(1).first?.string.lowercased().contains("paste") == true }
+        guard recordsIssue || match != nil else { throw CancellationError() }
+        let label = try #require(match)
         let text = try #require(label.topCandidates(1).first)
         let range = try #require(text.string.lowercased().range(of: "paste"))
         let box = try #require(try text.boundingBox(for: range)).boundingBox

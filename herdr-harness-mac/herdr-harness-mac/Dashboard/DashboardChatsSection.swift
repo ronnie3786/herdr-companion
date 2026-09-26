@@ -28,7 +28,7 @@ struct DashboardChatsSection: View {
             query: dashboard.search, focusMode: dashboard.focusMode)
         let shown = showsAll ? rows : Array(rows.prefix(Self.collapsedCount))
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 DashboardSectionHeading(title: "Recent chats", identifier: "dashboard-recent-chats") {
                     shell.show(.session, model: model)
                 }
@@ -42,18 +42,20 @@ struct DashboardChatsSection: View {
                         .pickerStyle(.inline)
                     } label: {
                         Text(model.machines.first { $0.id == dashboard.recentMachineID }?.name ?? "All machines")
-                            .herdrFont(.subheadline)
-                            .foregroundStyle(HerdrTheme.mist)
+                            .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
+                            .foregroundStyle(HerdrTheme.accent)
                     }
                     .menuStyle(.borderlessButton)
+                    .tint(HerdrTheme.accent)
                     .fixedSize()
+                    .frame(minHeight: HerdrTheme.minHitTarget)
                     .accessibilityIdentifier("dashboard-chat-machine")
                 }
             }
             if rows.isEmpty {
                 Label(dashboard.focusMode ? "No chats are waiting for you." : dashboard.search.isEmpty ? "No recent chats." : "No chats match your search.",
                       systemImage: "bubble.left.and.bubble.right")
-                    .herdrFont(.callout).foregroundStyle(HerdrTheme.muted)
+                    .herdrFont(size: HerdrTheme.TextSize.small).foregroundStyle(HerdrTheme.tertiaryText)
                     .padding(.vertical, 10)
             } else {
                 VStack(spacing: 0) {
@@ -65,13 +67,15 @@ struct DashboardChatsSection: View {
                         }
                     }
                 }
-                .overlay(alignment: .top) { Rectangle().fill(HerdrTheme.subtleSeparator).frame(height: 1) }
+                .herdrHairline(.top)
                 if rows.count > Self.collapsedCount {
                     Button(showsAll ? "Show fewer" : "Show \(rows.count - Self.collapsedCount) more") { showsAll.toggle() }
                         .buttonStyle(.plain)
-                        .herdrFont(.subheadline)
+                        .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
                         .foregroundStyle(HerdrTheme.accent)
-                        .padding(.leading, 6)
+                        .frame(minHeight: HerdrTheme.minHitTarget)
+                        .contentShape(.rect)
+                        .padding(.leading, 8)
                 }
             }
         }
@@ -106,15 +110,15 @@ struct DashboardChatRow: View {
                     else { Color.clear }
                 }
                 .imageScale(.small)
-                .frame(width: 14)
+                .herdrIconSlot(width: 12)
                 .accessibilityHidden(true)
                 Text(title)
-                    .herdrFont(.body, weight: needsAttention ? .semibold : .regular)
-                    .foregroundStyle(needsAttention ? HerdrTheme.attention : HerdrTheme.text)
+                    .herdrFont(size: HerdrTheme.TextSize.body)
+                    .foregroundStyle(needsAttention ? HerdrTheme.attention : HerdrTheme.primaryText)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text("\(workspaceName) · \(machineName)")
-                    .herdrFont(.subheadline).foregroundStyle(HerdrTheme.muted)
+                    .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText)
                     .lineLimit(1).truncationMode(.middle)
                     .frame(maxWidth: 220, alignment: .trailing)
                 // A hidden template keeps the age column aligned and sized to the
@@ -126,14 +130,15 @@ struct DashboardChatRow: View {
                             DashboardAgeText(date: date)
                         }
                     }
-                    .herdrFont(.subheadline, monospacedDigit: true)
-                    .foregroundStyle(HerdrTheme.muted)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(HerdrTheme.tertiaryText)
                     .lineLimit(1)
             }
-            .padding(.horizontal, 6)
-            .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
-            .background(isHovered ? HerdrTheme.elevated : .clear, in: .rect(cornerRadius: 6))
-            .overlay(alignment: .bottom) { Rectangle().fill(HerdrTheme.subtleSeparator).frame(height: 1) }
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: HerdrTheme.ControlHeight.row, alignment: .leading)
+            .background(isHovered ? HerdrTheme.hoverFill : .clear, in: .rect(cornerRadius: HerdrTheme.Radius.control))
+            .herdrHairline(.bottom, color: HerdrTheme.rowDivider)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)

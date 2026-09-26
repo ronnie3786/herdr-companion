@@ -231,10 +231,10 @@ struct FirstMateFeedbackEditor: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Response feedback", systemImage: "hand.thumbsdown")
-                .herdrFont(.title3, weight: .semibold)
+                .herdrFont(size: HerdrTheme.TextSize.reading, weight: .semibold)
             Text(target.responseText)
-                .herdrFont(.caption)
-                .foregroundStyle(.secondary)
+                .herdrFont(size: HerdrTheme.TextSize.caption)
+                .foregroundStyle(HerdrTheme.secondaryText)
                 .lineLimit(3)
                 .textSelection(.enabled)
                 .accessibilityIdentifier("first-mate-feedback-context")
@@ -244,10 +244,10 @@ struct FirstMateFeedbackEditor: View {
     private func reasonsSection(state: FirstMateFeedbackEditorState) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Why was this response not helpful?")
-                .herdrFont(.subheadline, weight: .semibold)
+                .herdrFont(size: HerdrTheme.TextSize.small, weight: .semibold)
             Text("Optional. Select any that apply, then add your own if needed.")
-                .herdrFont(.caption)
-                .foregroundStyle(.secondary)
+                .herdrFont(size: HerdrTheme.TextSize.caption)
+                .foregroundStyle(HerdrTheme.secondaryText)
 
             if !state.isFeedbackLoaded {
                 HStack(spacing: 6) {
@@ -255,8 +255,8 @@ struct FirstMateFeedbackEditor: View {
                         ProgressView().controlSize(.small)
                     }
                     Text(state.ratingErrorMessage ?? "Loading the saved rating…")
-                        .herdrFont(.caption)
-                        .foregroundStyle(.secondary)
+                        .herdrFont(size: HerdrTheme.TextSize.caption)
+                        .foregroundStyle(HerdrTheme.secondaryText)
                     if state.ratingErrorMessage != nil {
                         Button("Try again") {
                             Task { await store.loadFeedback(expectedContext: target.expectedContext) }
@@ -282,8 +282,8 @@ struct FirstMateFeedbackEditor: View {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
                     Text("Loading reasons…")
-                        .herdrFont(.caption)
-                        .foregroundStyle(.secondary)
+                        .herdrFont(size: HerdrTheme.TextSize.caption)
+                        .foregroundStyle(HerdrTheme.secondaryText)
                 }
                 .accessibilityIdentifier("first-mate-feedback-categories-loading")
             }
@@ -293,8 +293,8 @@ struct FirstMateFeedbackEditor: View {
             if !state.isCategoriesLoaded, !state.isLoadingCategories {
                 HStack(spacing: 8) {
                     Text("The full reason list has not loaded yet.")
-                        .herdrFont(.caption)
-                        .foregroundStyle(.secondary)
+                        .herdrFont(size: HerdrTheme.TextSize.caption)
+                        .foregroundStyle(HerdrTheme.secondaryText)
                     Button("Reload reasons") {
                         Task { await store.loadFeedbackCategories(expectedContext: target.expectedContext) }
                     }
@@ -316,7 +316,7 @@ struct FirstMateFeedbackEditor: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(selected ? palette.accent : Color.secondary)
+                    .foregroundStyle(selected ? palette.accent : HerdrTheme.iconTint)
                 Text(category.label)
                     .foregroundStyle(palette.text)
                 Spacer(minLength: 0)
@@ -354,25 +354,25 @@ struct FirstMateFeedbackEditor: View {
     private func commentSection(state: FirstMateFeedbackEditorState) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Notes")
-                .herdrFont(.subheadline, weight: .semibold)
+                .herdrFont(size: HerdrTheme.TextSize.small, weight: .semibold)
             Text("Optional. Saved exactly as typed, up to \(FirstMateFeedbackCommentLimit.maximumScalars) characters.")
-                .herdrFont(.caption)
-                .foregroundStyle(.secondary)
+                .herdrFont(size: HerdrTheme.TextSize.caption)
+                .foregroundStyle(HerdrTheme.secondaryText)
             ZStack(alignment: .topLeading) {
                 TextEditor(text: commentBinding)
-                    .herdrFont(.body)
+                    .herdrFont(size: HerdrTheme.TextSize.body)
                     .scrollContentBackground(.hidden)
                     .padding(2)
                     .frame(minHeight: 74, maxHeight: 130)
-                    .background(palette.surface, in: .rect(cornerRadius: 8))
-                    .overlay { RoundedRectangle(cornerRadius: 8).stroke(palette.line) }
+                    .background(HerdrTheme.fieldFill, in: .rect(cornerRadius: 8))
+                    .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(HerdrTheme.outline) }
                     .accessibilityIdentifier("first-mate-feedback-comment")
                     .accessibilityLabel("Personal reason")
                     .disabled(!state.isEditable)
                 if state.draft.comment.isEmpty {
                     Text("Add your own reason…")
-                        .herdrFont(.body)
-                        .foregroundStyle(.tertiary)
+                        .herdrFont(size: HerdrTheme.TextSize.body)
+                        .foregroundStyle(HerdrTheme.tertiaryText)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 8)
                         .allowsHitTesting(false)
@@ -381,8 +381,8 @@ struct FirstMateFeedbackEditor: View {
             HStack {
                 Spacer()
                 Text("\(FirstMateFeedbackCommentLimit.count(state.draft.comment)) / \(FirstMateFeedbackCommentLimit.maximumScalars)")
-                    .herdrFont(.caption2)
-                    .foregroundStyle(.secondary)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(HerdrTheme.secondaryText)
                     .accessibilityIdentifier("first-mate-feedback-comment-count")
             }
         }
@@ -428,8 +428,8 @@ struct FirstMateFeedbackEditor: View {
             "This response is no longer selected. Reopen its rating from the response.",
             systemImage: "arrow.uturn.backward"
         )
-        .herdrFont(.subheadline)
-        .foregroundStyle(.secondary)
+        .herdrFont(size: HerdrTheme.TextSize.small)
+        .foregroundStyle(HerdrTheme.secondaryText)
         .accessibilityIdentifier("first-mate-feedback-stale")
     }
 
@@ -438,8 +438,8 @@ struct FirstMateFeedbackEditor: View {
             "Update this feature's companion server to rate responses.",
             systemImage: "arrow.down.circle"
         )
-        .herdrFont(.subheadline)
-        .foregroundStyle(.secondary)
+        .herdrFont(size: HerdrTheme.TextSize.small)
+        .foregroundStyle(HerdrTheme.secondaryText)
         .accessibilityIdentifier("first-mate-feedback-editor-upgrade")
     }
 
@@ -453,8 +453,8 @@ struct FirstMateFeedbackEditor: View {
                 "This feature's companion isn't reachable right now. Your draft stays here; retry when the connection returns.",
                 systemImage: "wifi.exclamationmark"
             )
-            .herdrFont(.caption)
-            .foregroundStyle(.secondary)
+            .herdrFont(size: HerdrTheme.TextSize.caption)
+            .foregroundStyle(HerdrTheme.secondaryText)
             Button("Retry connection") {
                 Task { await store.refresh() }
             }
@@ -466,8 +466,8 @@ struct FirstMateFeedbackEditor: View {
 
     private func errorLabel(_ message: String, identifier: String) -> some View {
         Label(message, systemImage: "exclamationmark.triangle")
-            .herdrFont(.caption)
-            .foregroundStyle(.orange)
+            .herdrFont(size: HerdrTheme.TextSize.caption)
+            .foregroundStyle(HerdrTheme.warning)
             .accessibilityIdentifier(identifier)
     }
 

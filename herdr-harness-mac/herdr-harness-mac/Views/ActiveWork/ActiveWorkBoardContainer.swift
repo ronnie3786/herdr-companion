@@ -33,7 +33,7 @@ struct ActiveWorkBoardContainer: NSViewRepresentable {
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = false
         webView.allowsLinkPreview = false
-        webView.underPageBackgroundColor = NSColor(HerdrTheme.graphite)
+        webView.underPageBackgroundColor = HerdrTheme.resolved(HerdrTheme.windowBackground)
         context.coordinator.load(document, in: webView)
         return webView
     }

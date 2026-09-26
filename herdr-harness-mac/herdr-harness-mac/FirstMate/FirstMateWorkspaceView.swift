@@ -37,31 +37,23 @@ struct FirstMateWorkspaceView: View {
     @State private var selectedGitTargetIdentity: String?
     @State private var controlLease = FirstMateWorkspaceControlLease()
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.herdrHostsTitleBar) private var hostsTitleBar
+
+    private var palette: FirstMatePalette { FirstMatePalette(scheme: scheme) }
 
     var body: some View {
         let controlTarget = FirstMateWorkspaceControlTarget(store: store, canControl: canControl)
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                if let owningMachineName {
-                    Label(owningMachineName, systemImage: "desktopcomputer")
-                        .herdrFont(.caption, weight: .semibold)
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("first-mate-owning-machine")
+            if !hostsTitleBar {
+                HStack(spacing: 8) {
+                    titleBarLeading
+                    Spacer(minLength: 8)
+                    titleBarTrailing
                 }
-                Spacer()
-                Picker("First Mate view", selection: $mode) {
-                    ForEach(FirstMateWorkspaceMode.allCases) { value in
-                        Text(value.rawValue).tag(value)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 180)
-                .accessibilityIdentifier("first-mate-chat-git-picker")
+                .padding(.leading, 16)
+                .padding(.trailing, 8)
+                .herdrBar()
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .background(FirstMatePalette(scheme: scheme).surface)
-            .overlay(alignment: .bottom) { Divider() }
 
             Group {
                 if let snapshot = store.snapshot {
@@ -100,7 +92,7 @@ struct FirstMateWorkspaceView: View {
                             )
                                 .frame(minWidth: 330, idealWidth: 480, maxWidth: .infinity)
                             FirstMateInspectorView(store: store, snapshot: snapshot)
-                                .frame(minWidth: 340, idealWidth: 465, maxWidth: .infinity)
+                                .frame(minWidth: 340, idealWidth: 420, maxWidth: .infinity)
                         }
                     }
                 } else {
@@ -117,9 +109,16 @@ struct FirstMateWorkspaceView: View {
                 }
             }
         }
-        .background(FirstMatePalette(scheme: scheme).background)
-        .foregroundStyle(.primary)
-        .tint(FirstMatePalette(scheme: scheme).accent)
+        .herdrTitleBar {
+            if hostsTitleBar { titleBarLeading }
+        } trailing: {
+            if hostsTitleBar { titleBarTrailing }
+        }
+        .herdrPaneBackground(palette.background)
+        // Hierarchical `.secondary` / `.tertiary` resolve to palette tokens
+        // that clear 4.5:1 in both appearances.
+        .foregroundStyle(palette.text, palette.secondaryText, palette.tertiaryText)
+        .tint(palette.accent)
         .task(id: FirstMateWorkspaceObservationID(store: store)) { await observe() }
         .onChange(of: gitTargetIdentity, initial: true) { _, target in
             guard let target else { return }
@@ -142,6 +141,78 @@ struct FirstMateWorkspaceView: View {
             controlLease.release(storeID: controlTarget.storeID, lifecycleIdentity: controlTarget.lifecycle)
         }
         .accessibilityIdentifier("first-mate-workspace")
+    }
+
+    // MARK: Title bar
+
+    /// The feature, its ticket and the status menu (MonoCode's `.tbar`).
+    @ViewBuilder
+    private var titleBarLeading: some View {
+        if let snapshot = store.snapshot {
+            let feature = snapshot.feature
+            let closed = ["completed", "cancelled"].contains(feature.status)
+            HStack(spacing: 8) {
+                Text(feature.title)
+                    .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
+                    .foregroundStyle(palette.text)
+                    .lineLimit(1)
+                    .help(feature.title)
+                    .accessibilityAddTraits(.isHeader)
+                if let workItemID = feature.workItemID {
+                    Text(workItemID)
+                        .herdrFont(size: HerdrTheme.TextSize.caption)
+                        .foregroundStyle(palette.tertiaryText)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+                Menu {
+                    Button("Pause feature", systemImage: "pause") {
+                        let context = store.operationContext
+                        Task { await store.perform("pause", expectedContext: context) }
+                    }
+                    Button("Resume feature", systemImage: "play") {
+                        let context = store.operationContext
+                        Task { await store.perform("resume", expectedContext: context) }
+                    }
+                } label: {
+                    FirstMateStatusLabel(status: store.executionDisplayStatus(for: feature), style: .pill)
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .disabled(!canControl || store.isSending || closed)
+                .help("Pause or resume feature")
+            }
+        } else {
+            Text("First Mate")
+                .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
+                .foregroundStyle(palette.text)
+                .accessibilityAddTraits(.isHeader)
+        }
+    }
+
+    /// The owning machine and Chat | Git.
+    private var titleBarTrailing: some View {
+        HStack(spacing: 10) {
+            if let owningMachineName {
+                Label(owningMachineName, systemImage: "desktopcomputer")
+                    .labelStyle(DashboardInlineLabelStyle(spacing: 5))
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(palette.tertiaryText)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .accessibilityIdentifier("first-mate-owning-machine")
+            }
+            HerdrTabs(
+                selection: $mode,
+                tabs: FirstMateWorkspaceMode.allCases.map { .init(value: $0, title: $0.rawValue) },
+                style: .compactSegments,
+                accessibilityLabel: "First Mate view"
+            )
+            .fixedSize()
+            .accessibilityIdentifier("first-mate-chat-git-picker")
+        }
     }
 
     private var gitTargetIdentity: String? {

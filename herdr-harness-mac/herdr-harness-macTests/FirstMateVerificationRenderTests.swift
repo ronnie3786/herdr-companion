@@ -175,7 +175,7 @@ private struct VerificationRenderRGB: Equatable, CustomStringConvertible {
 }
 
 private func rgb(_ color: Color) throws -> VerificationRenderRGB {
-    let converted = try #require(NSColor(color).usingColorSpace(.sRGB))
+    let converted = HerdrTheme.resolved(color)
     return VerificationRenderRGB(
         red: converted.redComponent,
         green: converted.greenComponent,

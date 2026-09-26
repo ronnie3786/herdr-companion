@@ -1,25 +1,28 @@
 import SwiftUI
 
+/// An execution warning strip above the composer: warning text on a warning
+/// wash, under a hairline.
 struct FirstMateExecutionNotice: View {
     let text: String
     var lastSuccessAt: String? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             Label(text, systemImage: "exclamationmark.triangle")
-                .herdrFont(.caption)
+                .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
+                .foregroundStyle(HerdrTheme.warning)
             if let lastSuccessAt {
                 Text("Last successful monitoring pass: \(lastSuccessAt)")
-                    .herdrFont(.caption2)
-                    .foregroundStyle(.secondary)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(HerdrTheme.tertiaryText)
             }
         }
         .textSelection(.enabled)
-        .foregroundStyle(.orange)
-        .padding(.horizontal, 20)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.orange.opacity(0.05))
+        .background(HerdrTheme.warning.opacity(0.08))
+        .herdrHairline(.top)
         .accessibilityIdentifier("first-mate-execution-notice")
     }
 }

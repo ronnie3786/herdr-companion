@@ -16,7 +16,9 @@ struct PiMarkdownBlockView: View {
                 text,
                 font: HerdrProse.font(.body, scale: fontScale),
                 inlineCodeFont: HerdrProse.inlineCodeFont(.body, scale: fontScale),
-                inlineCodeColor: palette.accent
+                inlineCodeColor: palette.code,
+                inlineCodeBackground: palette.codeFill,
+                strongColor: palette.strong
             )
                 .lineSpacing(HerdrProse.lineSpacing(.body, scale: fontScale))
         case let .heading(_, level, text):
@@ -24,9 +26,11 @@ struct PiMarkdownBlockView: View {
                 text,
                 font: headingFont(level),
                 inlineCodeFont: HerdrProse.inlineCodeFont(headingRole(level), scale: fontScale),
-                inlineCodeColor: palette.accent
+                inlineCodeColor: palette.code,
+                inlineCodeBackground: palette.codeFill
             )
-                .lineSpacing(2)
+                .lineSpacing(HerdrProse.lineSpacing(headingRole(level), scale: fontScale))
+                .environment(\.chatProsePalette, headingPalette)
                 .accessibilityAddTraits(.isHeader)
                 .padding(.top, isFirst ? 0 : HerdrProse.headingTopSpacing(level))
         case let .code(_, language, code):
@@ -38,16 +42,18 @@ struct PiMarkdownBlockView: View {
                 text,
                 font: HerdrProse.font(.quote, scale: fontScale),
                 inlineCodeFont: HerdrProse.inlineCodeFont(.quote, scale: fontScale),
-                inlineCodeColor: palette.accent
+                inlineCodeColor: palette.code,
+                inlineCodeBackground: palette.codeFill,
+                strongColor: palette.strong
             )
                 .lineSpacing(HerdrProse.lineSpacing(.quote, scale: fontScale))
-                .foregroundStyle(palette.secondaryText)
-                .padding(.leading, 14)
+                .environment(\.chatProsePalette, quotePalette)
+                .padding(.leading, 16)
                 .overlay(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(palette.accent.opacity(0.5))
-                    .frame(width: 2)
-                    .accessibilityHidden(true)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(palette.marker.opacity(0.45))
+                        .frame(width: 3)
+                        .accessibilityHidden(true)
                 }
         case let .table(_, table):
             PiMarkdownTableView(table: table)
@@ -55,9 +61,22 @@ struct PiMarkdownBlockView: View {
             Rectangle()
                 .fill(palette.separator)
                 .frame(height: 1)
-                .padding(.vertical, 10)
+                .padding(.vertical, 8)
                 .accessibilityHidden(true)
         }
+    }
+
+    /// Headings read in full ink; the running prose stays at 78%.
+    private var headingPalette: ChatProsePalette {
+        var heading = palette
+        heading.text = palette.strong
+        return heading
+    }
+
+    private var quotePalette: ChatProsePalette {
+        var quote = palette
+        quote.text = palette.secondaryText
+        return quote
     }
 
     private func headingFont(_ level: Int) -> Font {

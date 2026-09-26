@@ -173,12 +173,77 @@ struct PRReviewDiffTextTests {
         let values = try #require(result as? [String: Any])
         #expect((values["lines"] as? Int ?? 0) > 0)
         #expect((values["tokens"] as? Int ?? 0) > 0)
-        #expect(values["lineHeight"] as? String == "1.85")
+        #expect(values["lineHeight"] as? String == HerdrWebTheme.diffLineHeight)
         #expect(values["networkScripts"] as? Int == 0)
         #expect(values["bodyMargin"] as? String == "0px", "The bundled stylesheet must load under the document CSP")
         #expect((values["rowHeight"] as? Double ?? 0) >= 20)
-        #expect(values["addition"] as? String == "rgba(46, 160, 67, 0.30)")
-        #expect(values["deletion"] as? String == "rgba(248, 81, 73, 0.30)")
+        // The Mac's Mono diff theme is injected into the bundled renderer.
+        let base = HerdrTheme.windowBackground
+        #expect(values["addition"] as? String == HerdrWebTheme.labMixTarget(
+            result: HerdrWebTheme.over(HerdrTheme.diffAddRow, base), base: base, basePercent: 0.80
+        ))
+        #expect(values["deletion"] as? String == HerdrWebTheme.labMixTarget(
+            result: HerdrWebTheme.over(HerdrTheme.diffRemoveRow, base), base: base, basePercent: 0.80
+        ))
+    }
+
+    @Test("Bundled renderer draws Mono rows, numbers and syntax colors") @MainActor
+    func bundledRendererUsesMonoColors() async throws {
+        let mounted = mount(file: PRReviewDemo.diff().files[0])
+        defer { mounted.view.tearDown(); mounted.window.close() }
+        let ready = await waitUntil { mounted.view.isRendererReady && mounted.view.renderedIdentity != nil }
+        try #require(ready)
+
+        var measured: [String: Any] = [:]
+        for _ in 0..<100 {
+            let result = try? await mounted.view.evaluateJavaScript("""
+            (() => {
+              const toRGB = (color) => {
+                const canvas = document.createElement('canvas');
+                canvas.width = 1; canvas.height = 1;
+                const context = canvas.getContext('2d');
+                context.fillStyle = color;
+                context.fillRect(0, 0, 1, 1);
+                return [...context.getImageData(0, 0, 1, 1).data].slice(0, 3);
+              };
+              const root = document.querySelector('diffs-container')?.shadowRoot;
+              const added = root?.querySelector('[data-line][data-line-type="change-addition"]');
+              const removed = root?.querySelector('[data-line][data-line-type="change-deletion"]');
+              const number = root?.querySelector('[data-column-number][data-line-type="change-addition"]');
+              if (!added || !removed || !number) return null;
+              const spans = [...root.querySelectorAll('[data-line] span')].map(span => getComputedStyle(span).color);
+              return {
+                added: toRGB(getComputedStyle(added).backgroundColor),
+                removed: toRGB(getComputedStyle(removed).backgroundColor),
+                page: toRGB(getComputedStyle(document.body).backgroundColor),
+                number: getComputedStyle(number).color,
+                spans: [...new Set(spans)]
+              };
+            })()
+            """) as? [String: Any]
+            if let result, (result["spans"] as? [String])?.contains("rgb(255, 143, 253)") == true {
+                measured = result
+                break
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let base = HerdrTheme.windowBackground
+        func channels(_ color: Color) -> [Double] {
+            let value = HerdrTheme.resolved(color)
+            return [value.redComponent, value.greenComponent, value.blueComponent].map { Double($0) * 255 }
+        }
+        func close(_ key: String, _ color: Color) {
+            let actual = (measured[key] as? [NSNumber])?.map(\.doubleValue) ?? []
+            let expected = channels(color)
+            #expect(actual.count == 3 && zip(actual, expected).allSatisfy { abs($0 - $1) <= 3 },
+                    "\(key) was \(actual), expected \(expected)")
+        }
+        close("added", HerdrWebTheme.over(HerdrTheme.diffAddRow, base))
+        close("removed", HerdrWebTheme.over(HerdrTheme.diffRemoveRow, base))
+        close("page", base)
+        #expect(measured["number"] as? String == "rgb(94, 233, 181)")
+        #expect((measured["spans"] as? [String])?.contains("rgb(255, 143, 253)") == true,
+                "Swift keywords use MonoCode's keyword color")
     }
 
     @Test("Select All reaches code inside WebKit's shadow tree") @MainActor

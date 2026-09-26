@@ -29,23 +29,15 @@ struct HerdrHudWorkingFolderPicker: View {
                 }
             }
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: session.selectedWorkingFolder.isHome ? "house" : "folder")
-                    .accessibilityHidden(true)
-                Text(selectedPath)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: 180)
-                Image(systemName: "chevron.down")
-                    .herdrFont(.caption2, weight: .bold)
-                    .accessibilityHidden(true)
-            }
-            .herdrFont(.caption)
-            .foregroundStyle(HerdrTheme.mist)
-            .frame(minHeight: HerdrTheme.minHitTarget)
-            .contentShape(Rectangle())
+            HerdrHudChip(
+                systemImage: session.selectedWorkingFolder.isHome ? "house" : "folder",
+                title: selectedPath,
+                maxTitleWidth: 150
+            )
         }
-        .menuStyle(.borderlessButton)
+        .piChipMenu()
+        // Shrinks and truncates with the machine chip when the header is tight.
+        .fixedSize(horizontal: false, vertical: true)
         .disabled(!session.canEditWorkingFolder)
         .help(
             session.canEditWorkingFolder

@@ -13,6 +13,9 @@ struct PiChatView: View {
     let interactionResponder: PiInteractionResponder
     let modelFavorites: ModelFavoritesStore
     var quotes: Binding<[ChatQuote]> = .constant([])
+    /// The pane's brief state, so its toggle can sit in the window title bar.
+    /// Nil keeps the brief's own strip (standalone hosts and render tests).
+    var briefPresentation: ResponseBriefPresentation? = nil
     @State private var hapticPulse = HerdrHapticPulse()
     @State private var responseAudioPlayer = ResponseAudioPlayer()
 
@@ -22,7 +25,8 @@ struct PiChatView: View {
             coordinator: model.responseBriefs,
             transport: model.responseBriefTransport(),
             chat: responseBriefChat,
-            latestSource: briefSource
+            latestSource: briefSource,
+            presentation: briefPresentation
         ) {
             VStack(spacing: 0) {
             PiConnectionBanner(
@@ -35,17 +39,17 @@ struct PiChatView: View {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text("Starting a new Pi chat — keeping this conversation in history…")
-                        .herdrFont(.caption)
+                        .herdrFont(size: HerdrTheme.TextSize.small)
                 }
-                .foregroundStyle(HerdrTheme.mist).padding(10)
+                .foregroundStyle(HerdrTheme.secondaryText)
+                .padding(.horizontal, 16).padding(.vertical, 8)
                 .accessibilityIdentifier("pi-new-session-progress")
             }
             if let error = store.newSessionError {
                 Label(error, systemImage: "exclamationmark.triangle")
-                    .herdrFont(.caption).foregroundStyle(HerdrTheme.alert).padding(10)
+                    .herdrFont(size: HerdrTheme.TextSize.small).foregroundStyle(HerdrTheme.alert)
+                    .padding(.horizontal, 16).padding(.vertical, 8)
             }
-
-            PiContextMeterView(usage: store.contextUsage, cost: store.sessionCost)
 
             PiChatTimelineView(
                 store: store,
@@ -71,9 +75,9 @@ struct PiChatView: View {
 
             if let notice = store.commandNotice {
                 Text(notice)
-                    .herdrFont(.caption)
+                    .herdrFont(size: HerdrTheme.TextSize.small)
                     .foregroundStyle(HerdrTheme.signal)
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, 16)
                     .padding(.top, 6)
                     .transition(.opacity)
                     .task(id: notice) {
@@ -97,17 +101,16 @@ struct PiChatView: View {
             )
             .equatable()
             .id(paneID)
-            .padding(.horizontal, 17)
-            .padding(.top, 8)
-            .padding(.bottom, 10)
-            .background(HerdrTheme.graphite)
-            .overlay(alignment: .top) {
-                Rectangle()
-                    .fill(HerdrTheme.separator)
-                    .frame(height: 1)
-            }
+            // MonoCode's dock: the composer sits in the pane, centered on the
+            // transcript column, with no band or rule of its own.
+            .frame(maxWidth: HerdrTheme.transcriptWidth)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 6)
+            .padding(.bottom, 6)
         }
-        .background(HerdrTheme.graphite)
+        // MonoCode's Haze: one static dusk band behind the top of the chat.
+        .background(alignment: .top) { HerdrHazeBand() }
+        .herdrPaneBackground()
         // Read acknowledgement belongs to explicit session navigation and
         // interaction in PaneSessionView. A mounted chat, incoming document,
         // or completed response alone does not mean the user has read it.
@@ -215,7 +218,9 @@ struct PiChatView: View {
                 let succeeded = await store.setThinkingLevel(level, model: model, pane: composerPane)
                 if succeeded { hapticPulse.fire(.selection) }
                 return succeeded
-            }
+            },
+            contextUsage: store.contextUsage,
+            sessionCost: store.sessionCost
         )
     }
 
@@ -255,5 +260,6 @@ extension PiChatView: Equatable {
             && lhs.focusRequest == rhs.focusRequest
             && lhs.interactionResponder === rhs.interactionResponder
             && lhs.modelFavorites === rhs.modelFavorites
+            && lhs.briefPresentation === rhs.briefPresentation
     }
 }

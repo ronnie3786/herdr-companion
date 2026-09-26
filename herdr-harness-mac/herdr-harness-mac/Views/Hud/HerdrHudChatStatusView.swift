@@ -13,7 +13,7 @@ struct HerdrHudChatStatusView: View {
     var body: some View {
         let status = HerdrHudChatBubblePresentation.status(for: session)
         Label(status.label, systemImage: status.symbol)
-            .herdrFont(.caption2)
+            .herdrFont(size: HerdrTheme.TextSize.caption)
             .foregroundStyle(status.color)
             .lineLimit(1)
             .minimumScaleFactor(0.75)

@@ -9,17 +9,17 @@ struct HerdrHudTranscriptErrorsView: View {
         VStack(alignment: .leading, spacing: 6) {
             if let errorMessage, !errorMessage.isEmpty {
                 Text(errorMessage)
-                    .herdrFont(.caption)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
                     .foregroundStyle(HerdrTheme.alert)
             }
             if let promoteErrorMessage, !promoteErrorMessage.isEmpty {
                 Text(promoteErrorMessage)
-                    .herdrFont(.caption)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
                     .foregroundStyle(HerdrTheme.alert)
             }
             if let audioErrorMessage, !audioErrorMessage.isEmpty {
                 Text(audioErrorMessage)
-                    .herdrFont(.caption)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
                     .foregroundStyle(HerdrTheme.alert)
             }
         }

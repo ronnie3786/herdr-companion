@@ -8,12 +8,12 @@ struct WorkspaceHeroView: View {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(workspace.label)
-                        .herdrFont(.title, weight: .semibold)
+                        .herdrFont(size: HerdrTheme.TextSize.title, weight: .semibold)
                     if !workspace.displayPath.isEmpty {
                         Text(workspace.displayPath)
-                            .herdrFont(.footnote)
+                            .herdrFont(size: HerdrTheme.TextSize.caption)
                             .fontDesign(.monospaced)
-                            .foregroundStyle(HerdrTheme.mist)
+                            .foregroundStyle(HerdrTheme.tertiaryText)
                             .lineLimit(2)
                             .truncationMode(.middle)
                     }
@@ -25,7 +25,7 @@ struct WorkspaceHeroView: View {
             PaneTopologyView(layout: workspace.layouts.first)
                 .frame(height: 94)
                 .padding(10)
-                .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.compactRadius))
+                .background(HerdrTheme.insetFill, in: .rect(cornerRadius: HerdrTheme.Radius.composer))
 
             HStack(spacing: 14) {
                 Label("^[\(workspace.tabCount) tab](inflect: true)", systemImage: "folder")
@@ -35,15 +35,10 @@ struct WorkspaceHeroView: View {
                         .lineLimit(1)
                 }
             }
-            .herdrFont(.caption)
-            .foregroundStyle(HerdrTheme.mist)
+            .herdrFont(size: HerdrTheme.TextSize.caption)
+            .foregroundStyle(HerdrTheme.tertiaryText)
         }
-        .padding(HerdrTheme.cardPadding)
-        .background(HerdrTheme.elevated)
-        .clipShape(.rect(cornerRadius: HerdrTheme.cardRadius))
-        .overlay {
-            RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
-                .strokeBorder(HerdrTheme.separator, lineWidth: 1)
-        }
+        .padding(14)
+        .herdrCard()
     }
 }

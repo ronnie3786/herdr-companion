@@ -15,7 +15,7 @@ struct HerdrHudWorkingGroupView: View {
     var body: some View {
         PiDisclosureCard(
             isExpanded: $isExpanded,
-            chevronColor: HerdrTheme.mist
+            chevronColor: HerdrTheme.iconTint
         ) {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(steps) { step in
@@ -31,21 +31,17 @@ struct HerdrHudWorkingGroupView: View {
                 }
                 if exchange.stepsTruncated {
                     Text("first 200 steps shown")
-                        .herdrFont(.caption)
-                        .foregroundStyle(HerdrTheme.muted)
+                        .herdrFont(size: HerdrTheme.TextSize.caption)
+                        .foregroundStyle(HerdrTheme.tertiaryText)
                 }
             }
             .padding(.top, 10)
         } label: {
             label
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 2)
-        .background(HerdrTheme.elevated.opacity(0.2), in: RoundedRectangle(cornerRadius: HerdrTheme.compactRadius))
-        .overlay {
-            RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                .strokeBorder(HerdrTheme.subtleSeparator, lineWidth: 1)
-        }
+        // Unboxed, like the main chat's activity group.
+        .padding(.horizontal, 4)
+        .padding(.top, 8)
         .animation(PiChatMotion.disclosureAnimation(reduceMotion: reduceMotion), value: isExpanded)
         .animation(PiChatMotion.stateAnimation(reduceMotion: reduceMotion), value: isLive)
         .onChange(of: isExpanded) { _, expanded in
@@ -66,29 +62,30 @@ struct HerdrHudWorkingGroupView: View {
                         .transition(PiChatMotion.stateTransition(reduceMotion: reduceMotion))
                 } else {
                     Image(systemName: "terminal")
-                        .foregroundStyle(HerdrProse.dimmed(HerdrTheme.muted))
+                        .herdrFont(size: 13)
+                        .foregroundStyle(HerdrTheme.iconTint)
                         .transition(PiChatMotion.stateTransition(reduceMotion: reduceMotion))
                 }
             }
-            .frame(width: 18, height: 18)
+            .herdrIconSlot(width: 16, height: 16)
             .accessibilityHidden(true)
 
             Text(isLive ? "Clanking…" : "Clanking")
-                .herdrFont(.caption, weight: .medium)
-                .foregroundStyle(HerdrProse.dimmed(HerdrTheme.mist))
+                .herdrFont(size: HerdrTheme.TextSize.body, weight: .medium)
+                .foregroundStyle(HerdrTheme.secondaryText)
                 .contentTransition(.opacity)
 
             Text(stepSummary)
-                .herdrFont(.caption)
-                .foregroundStyle(HerdrProse.dimmed(HerdrTheme.muted))
+                .herdrFont(size: HerdrTheme.TextSize.caption)
+                .foregroundStyle(HerdrProse.dimmed(HerdrTheme.tertiaryText))
                 .lineLimit(1)
                 .layoutPriority(1)
                 .contentTransition(.opacity)
 
             if let latestStepTitle = steps.last?.title {
                 Text("· \(latestStepTitle)")
-                    .herdrFont(.caption)
-                    .foregroundStyle(HerdrProse.dimmed(HerdrTheme.muted))
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(HerdrProse.dimmed(HerdrTheme.tertiaryText))
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .contentTransition(.opacity)
@@ -96,7 +93,7 @@ struct HerdrHudWorkingGroupView: View {
 
             if let failureSummary {
                 Text("· \(failureSummary)")
-                    .herdrFont(.caption)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
                     .foregroundStyle(HerdrTheme.alert)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
@@ -136,14 +133,15 @@ private struct HerdrHudWorkingStepRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Label(step.title, systemImage: step.symbol)
-                .herdrFont(.caption, weight: .semibold)
+                .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
+                .foregroundStyle(step.isFailure ? HerdrTheme.alert : HerdrTheme.secondaryText)
             if !step.detail.isEmpty {
                 Text(step.detail)
-                    .herdrFont(.caption, monospaced: true)
+                    .herdrFont(size: HerdrTheme.TextSize.small, monospaced: true)
+                    .foregroundStyle(step.isFailure ? HerdrTheme.alert : HerdrTheme.tertiaryText)
                     .textSelection(.enabled)
             }
         }
-        .foregroundStyle(step.isFailure ? HerdrTheme.alert : HerdrTheme.mist)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

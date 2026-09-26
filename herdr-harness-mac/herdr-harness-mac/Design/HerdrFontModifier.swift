@@ -42,7 +42,7 @@ private struct HerdrTextStyleFontModifier: ViewModifier {
     @Environment(\.herdrFontScale) private var fontScale
 
     func body(content: Content) -> some View {
-        var font = HerdrTheme.scaled(
+        var font = HerdrTheme.rampScaled(
             style,
             scale: fontScale,
             monospaced: monospaced,

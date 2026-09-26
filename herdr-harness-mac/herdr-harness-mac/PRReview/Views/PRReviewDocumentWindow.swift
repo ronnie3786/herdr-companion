@@ -38,6 +38,8 @@ final class PRReviewDocumentWindow: NSWindowController, NSWindowDelegate {
         )
         window.title = title
         window.isReleasedWhenClosed = false
+        // Dark like every other Herdr window; theme roles follow the appearance.
+        window.appearance = NSAppearance(named: .darkAqua)
         window.contentView = NSHostingView(rootView: AnyView(rootView))
         super.init(window: window)
         window.delegate = self

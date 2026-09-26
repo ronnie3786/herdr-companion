@@ -17,8 +17,7 @@ struct HerdPulseButton: View {
         ) {
             Task { await pulse.toggle() }
         }
-        .labelStyle(.iconOnly)
-        .foregroundStyle(pulse.isRunning ? HerdrTheme.signal : HerdrTheme.mist)
+        .buttonStyle(HerdrIconButtonStyle(tint: pulse.isRunning ? HerdrTheme.signal : HerdrTheme.iconTint))
         .disabled(pulse.isBusy)
         .help(pulse.isRunning ? "Stop Herd Pulse" : "Start Herd Pulse")
         .accessibilityValue(pulse.statusText)

@@ -12,35 +12,35 @@ struct FirstMateReliabilityView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Stability & recovery", systemImage: "heart.text.clipboard")
-                .herdrFont(.headline)
+                .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
             if let enabled = health?.automaticRecovery {
                 Text(enabled ? "Automatic recovery is enabled within the current authorized stage." : "Automatic recovery is disabled on this companion.")
-                    .herdrFont(.caption)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
                 if let guardianAlive = health?.guardianAlive {
                     Label(guardianAlive ? "Scheduler guardian active" : "Scheduler guardian is not running",
                           systemImage: guardianAlive ? "checkmark.shield" : "exclamationmark.shield")
-                        .herdrFont(.caption)
+                        .herdrFont(size: HerdrTheme.TextSize.caption)
                 }
                 if let seconds = health?.sweepIntervalSeconds {
                     Text("Stale-progress check every \(seconds / 60) minutes. A live process alone is not proof of progress.")
-                        .herdrFont(.caption).foregroundStyle(.secondary)
+                        .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
                 }
                 if let last = health?.lastSweepAt {
-                    Text("Last sweep: \(last)").herdrFont(.caption2).foregroundStyle(.secondary)
+                    Text("Last sweep: \(last)").herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
                 }
                 if enabled, let next = health?.nextSweepAt {
-                    Text("Next sweep: \(next)").herdrFont(.caption2).foregroundStyle(.secondary)
+                    Text("Next sweep: \(next)").herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
                 }
             } else {
                 Text("Update the companion server and Pi package for automatic stability checks.")
-                    .herdrFont(.caption).foregroundStyle(.secondary)
+                    .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
             }
             ForEach(snapshot.assignments.filter { $0.metadata?.progress != nil }) { assignment in
                 if let progress = assignment.metadata?.progress {
                     DisclosureGroup("Progress checkpoint · \(assignment.title)") {
                         FirstMateProgressView(progress: progress).padding(.top, 8)
                     }
-                    .herdrFont(.subheadline)
+                    .herdrFont(size: HerdrTheme.TextSize.small)
                 }
             }
             if !history.isEmpty {
@@ -48,17 +48,17 @@ struct FirstMateReliabilityView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(history.prefix(30)) { event in
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(event.summary).herdrFont(.subheadline)
-                                Text(event.createdAt).herdrFont(.caption2).foregroundStyle(.secondary)
+                                Text(event.summary).herdrFont(size: HerdrTheme.TextSize.small)
+                                Text(event.createdAt).herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
                             }
                         }
                         if history.count > 30 {
                             Text("Showing the latest 30 actions; earlier events remain in the server journal.")
-                                .herdrFont(.caption).foregroundStyle(.secondary)
+                                .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
                         }
                     }.padding(.top, 8)
                 }
-                .herdrFont(.subheadline)
+                .herdrFont(size: HerdrTheme.TextSize.small)
             }
         }
         .textSelection(.enabled)

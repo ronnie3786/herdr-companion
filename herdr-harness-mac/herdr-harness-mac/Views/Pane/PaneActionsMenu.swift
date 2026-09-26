@@ -54,13 +54,15 @@ struct PaneActionsMenu: View {
     }
 
     private var paneActionsMenu: some View {
-        Menu("Pane actions", systemImage: "ellipsis.circle") {
+        Menu("Pane actions", systemImage: "ellipsis") {
             viewModeSection
             Section("Focus and control") { focusActions }
             Section("Pi session") { piSessionActions }
             Section("Pane") { paneManagementActions }
             Section("Close") { closeAction }
         }
+        .herdrIconMenu()
+        .help("Pane actions")
     }
 
     private var viewModeSection: some View {

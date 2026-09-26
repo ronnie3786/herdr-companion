@@ -18,9 +18,9 @@ struct ChatQuoteEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Quote & comment", systemImage: "quote.bubble")
-                .herdrFont(.headline)
+                .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
             ScrollView {
-                Text(text).herdrFont(.callout).textSelection(.enabled)
+                Text(text).herdrFont(size: HerdrTheme.TextSize.body).lineSpacing(4).textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.leading, 10)
                     .overlay(alignment: .leading) { Rectangle().fill(HerdrTheme.accent).frame(width: 2) }
@@ -30,14 +30,16 @@ struct ChatQuoteEditor: View {
             TextField("Add a comment…", text: $comment, axis: .vertical)
                 .lineLimit(3...6)
                 .textFieldStyle(.plain)
-                .padding(10)
-                .background(HerdrTheme.elevated, in: .rect(cornerRadius: 8))
+                .herdrFont(size: HerdrTheme.TextSize.body)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .herdrField(focused: focused)
                 .focused($focused)
                 .accessibilityIdentifier("chat-quote-comment")
-            if let error { Text(error).herdrFont(.caption).foregroundStyle(HerdrTheme.alert) }
+            if let error { Text(error).herdrFont(size: HerdrTheme.TextSize.small).foregroundStyle(HerdrTheme.alert) }
             HStack {
                 Text("Adds to your next message. Not sent yet.")
-                    .herdrFont(.caption2).foregroundStyle(HerdrTheme.muted)
+                    .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText)
                 Spacer()
                 Button("Cancel", action: dismiss).keyboardShortcut(.cancelAction).disabled(isSaving)
                 Button(isSaving ? "Saving…" : "Save") {
@@ -58,7 +60,7 @@ struct ChatQuoteEditor: View {
             }
         }
         .padding(16).frame(width: 400)
-        .foregroundStyle(HerdrTheme.text).background(HerdrTheme.graphite)
+        .foregroundStyle(HerdrTheme.text).background(HerdrTheme.windowBackground)
         .preferredColorScheme(.dark)
         .onAppear { focused = true }
     }

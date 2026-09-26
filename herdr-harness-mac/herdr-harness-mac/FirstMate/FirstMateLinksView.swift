@@ -12,29 +12,35 @@ struct FirstMatePullRequestsSection: View {
     private var pullRequests: [FirstMateLink] { snapshot.pullRequestLinks }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
+        let palette = FirstMatePalette(scheme: scheme)
+        // A section label over `.prlink` cards; no outer card and no accent
+        // ornament (issue #70).
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
                 Image(systemName: "arrow.triangle.pull")
-                    .foregroundStyle(FirstMatePalette(scheme: scheme).accent)
-                Text("Pull requests").herdrFont(.subheadline, weight: .semibold)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(palette.iconTint)
+                    .accessibilityHidden(true)
+                HerdrMicroLabel(text: "Pull requests")
                 if !pullRequests.isEmpty {
-                    Text("\(pullRequests.count)")
-                        .herdrFont(.caption2, weight: .semibold)
-                        .padding(.horizontal, 7).padding(.vertical, 2)
-                        .background(FirstMatePalette(scheme: scheme).accent.opacity(0.16), in: .capsule)
+                    HerdrCountBadge(count: pullRequests.count, style: .quiet)
                         .accessibilityIdentifier("first-mate-pr-count-\(surface.accessibilitySuffix)")
                 }
                 Spacer()
                 if surface == .overview {
                     Button("Manage links") { store.showLinksCollection() }
-                        .buttonStyle(.plain).herdrFont(.caption)
-                        .foregroundStyle(FirstMatePalette(scheme: scheme).accent)
+                        .buttonStyle(.plain)
+                        .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
+                        .foregroundStyle(palette.accent)
+                        .frame(minHeight: HerdrTheme.minHitTarget)
+                        .contentShape(.rect)
                         .accessibilityIdentifier("first-mate-pr-manage-links")
                 }
             }
             if pullRequests.isEmpty {
                 Text("No pull request links yet. Save one from Documents → Links.")
-                    .herdrFont(.caption).foregroundStyle(.secondary)
+                    .herdrFont(size: HerdrTheme.TextSize.small)
+                    .foregroundStyle(palette.tertiaryText)
                     .accessibilityIdentifier("first-mate-pr-empty-\(surface.accessibilitySuffix)")
             } else {
                 ForEach(pullRequests) { link in
@@ -42,19 +48,14 @@ struct FirstMatePullRequestsSection: View {
                 }
             }
         }
-        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(FirstMatePalette(scheme: scheme).surface, in: .rect(cornerRadius: 10))
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(FirstMatePalette(scheme: scheme).accent)
-                .frame(width: 3)
-                .padding(.vertical, 10)
-        }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("first-mate-pr-section-\(surface.accessibilitySuffix)")
     }
 }
 
+/// MonoCode's `.prlink`: a small card with a signal pull glyph, the title and
+/// one line of "host · path".
 private struct FirstMateProminentLinkRow: View {
     @Bindable var store: FirstMateStore
     let link: FirstMateLink
@@ -63,25 +64,47 @@ private struct FirstMateProminentLinkRow: View {
     @State private var copied = false
 
     var body: some View {
+        let palette = FirstMatePalette(scheme: scheme)
         HStack(alignment: .top, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
+            Image(systemName: "arrow.triangle.pull")
+                .herdrFont(size: 13)
+                .foregroundStyle(FirstMateStatusColors.color(for: .awaitingDirection, scheme: scheme))
+                .padding(.top, 2)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
                 Text(link.title.isEmpty ? link.url : link.title)
-                    .herdrFont(.subheadline, weight: .semibold)
+                    .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
+                    .foregroundStyle(palette.text)
+                    .lineLimit(2)
                     .accessibilityIdentifier("first-mate-pr-\(surface.accessibilitySuffix)-title-\(link.id)")
-                if let host = link.hostLabel {
-                    Label(host, systemImage: "globe").herdrFont(.caption2).foregroundStyle(.secondary)
-                }
-                Text(link.url).herdrFont(.caption2).foregroundStyle(.secondary)
-                    .lineLimit(2).textSelection(.enabled)
+                Text(FirstMateLinkMeta.line(for: link))
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(palette.tertiaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(link.url)
                 if let provenance = link.provenanceSummary {
-                    Text(provenance).herdrFont(.caption2).foregroundStyle(.tertiary)
+                    Text(provenance)
+                        .herdrFont(size: HerdrTheme.TextSize.caption)
+                        .foregroundStyle(palette.tertiaryText)
                 }
             }
-            Spacer(minLength: 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
             FirstMateLinkActionsView(link: link, actionPrefix: "first-mate-pr-\(surface.accessibilitySuffix)-", copied: $copied)
         }
-        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .herdrCard(radius: HerdrTheme.Radius.composer)
         .accessibilityIdentifier("first-mate-pr-\(surface.accessibilitySuffix)-\(link.id)")
+    }
+}
+
+/// "host · path" for a link card.
+enum FirstMateLinkMeta {
+    static func line(for link: FirstMateLink) -> String {
+        guard let url = URL(string: link.url), let host = url.host() else { return link.hostLabel ?? link.url }
+        let path = url.path().trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return path.isEmpty ? (link.hostLabel ?? host) : "\(link.hostLabel ?? host) · \(path)"
     }
 }
 
@@ -115,29 +138,40 @@ struct FirstMateLinksView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 16) {
             addForm
             linkGroup(title: "Pull requests", links: snapshot.pullRequestLinks, empty: "No pull request links yet.", prefix: "first-mate-link-pr-")
             linkGroup(title: "Other links", links: snapshot.otherLinks, empty: "No other links saved yet.", prefix: "first-mate-link-other-")
             if showHidden {
                 linkGroup(title: "Hidden links", links: snapshot.hiddenLinks, empty: "No hidden links.", prefix: "first-mate-link-hidden-")
             }
-            Toggle("Show hidden", isOn: $showHidden)
-                .toggleStyle(.switch)
-                .herdrFont(.caption)
-                .accessibilityIdentifier("first-mate-links-show-hidden")
+            Toggle(isOn: $showHidden) {
+                Text("Show hidden")
+                    .herdrFont(size: HerdrTheme.TextSize.small)
+                    .foregroundStyle(HerdrTheme.secondaryText)
+            }
+            .toggleStyle(.switch)
+            .accessibilityIdentifier("first-mate-links-show-hidden")
         }
         .onChange(of: store.lifecycle) { drafts = FirstMateLinkDraftBox() }
     }
 
     private var addForm: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("ADD A LINK").herdrFont(.caption, weight: .semibold).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            HerdrMicroLabel(text: "Add a link")
             TextField("https://…", text: urlText)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.plain)
+                .herdrFont(size: HerdrTheme.TextSize.small)
+                .padding(.horizontal, 8)
+                .frame(height: HerdrTheme.ControlHeight.large)
+                .herdrField()
                 .accessibilityIdentifier("first-mate-link-add-url")
             TextField("Optional title", text: titleText)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.plain)
+                .herdrFont(size: HerdrTheme.TextSize.small)
+                .padding(.horizontal, 8)
+                .frame(height: HerdrTheme.ControlHeight.large)
+                .herdrField()
                 .accessibilityIdentifier("first-mate-link-add-title")
             Picker("Classification", selection: classification) {
                 ForEach(FirstMateLinkClassification.allCases) { value in
@@ -145,11 +179,13 @@ struct FirstMateLinksView: View {
                 }
             }
             .pickerStyle(.menu)
+            .controlSize(.small)
+            .herdrFont(size: HerdrTheme.TextSize.small)
             .frame(maxWidth: 240, alignment: .leading)
             .accessibilityIdentifier("first-mate-link-add-kind")
             HStack(spacing: 10) {
                 Button("Add link") { save() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(HerdrButtonStyle(kind: .primary))
                     .disabled(store.isSavingLink || draftState.draft.isEmpty || !store.canManageLinks || !store.canMutateLinks)
                     .accessibilityIdentifier("first-mate-link-add-submit")
                 if store.isSavingLink {
@@ -159,30 +195,30 @@ struct FirstMateLinksView: View {
             }
             if let failure = store.linkMutationError {
                 Text(failure)
-                    .herdrFont(.caption2).foregroundStyle(.orange)
+                    .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.warning)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("first-mate-link-error")
             } else if !store.canManageLinks {
                 Text(FirstMateStore.linksUpgradeMessage)
-                    .herdrFont(.caption2).foregroundStyle(.secondary)
+                    .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("first-mate-link-unsupported")
             }
         }
-        .padding(14)
-        .background(FirstMatePalette(scheme: scheme).surface, in: .rect(cornerRadius: 10))
+        .padding(12)
+        .herdrCard()
     }
 
     @ViewBuilder
     private func linkGroup(title: String, links: [FirstMateLink], empty: String, prefix: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title.uppercased()).herdrFont(.caption, weight: .semibold).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 4) {
+            HerdrMicroLabel(text: title, count: links.isEmpty ? nil : links.count)
             if links.isEmpty {
-                Text(empty).herdrFont(.caption).foregroundStyle(.secondary)
+                Text(empty).herdrFont(size: HerdrTheme.TextSize.small).foregroundStyle(HerdrTheme.tertiaryText)
             } else {
                 ForEach(links) { link in
                     FirstMateLinkRow(store: store, link: link, actionPrefix: prefix)
-                    Divider()
+                        .herdrHairline(.bottom, color: HerdrTheme.rowDivider)
                 }
             }
         }
@@ -214,23 +250,27 @@ private struct FirstMateLinkRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: link.isPullRequest ? "arrow.triangle.pull" : "link")
-                .foregroundStyle(FirstMatePalette(scheme: scheme).accent)
-            VStack(alignment: .leading, spacing: 4) {
+                .herdrFont(size: 13)
+                .foregroundStyle(HerdrTheme.iconTint)
+                .padding(.top, 2)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
                 Text(link.title.isEmpty ? link.url : link.title)
-                    .herdrFont(.subheadline, weight: .medium)
+                    .herdrFont(size: HerdrTheme.TextSize.body, weight: .medium)
+                    .foregroundStyle(HerdrTheme.primaryText)
                     .accessibilityIdentifier("\(actionPrefix)title-\(link.id)")
                 if let host = link.hostLabel {
-                    Text(host).herdrFont(.caption2).foregroundStyle(.secondary)
+                    Text(host).herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText)
                 }
-                Text(link.url).herdrFont(.caption2).foregroundStyle(.secondary)
+                Text(link.url).herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText)
                     .lineLimit(2).textSelection(.enabled)
                 HStack(spacing: 8) {
                     if let provenance = link.provenanceSummary {
-                        Text(provenance).herdrFont(.caption2).foregroundStyle(.tertiary)
+                        Text(provenance).herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText)
                     }
                     if link.hidden {
                         Label("Hidden", systemImage: "eye.slash")
-                            .herdrFont(.caption2).foregroundStyle(.secondary)
+                            .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText)
                     }
                 }
             }
@@ -253,8 +293,7 @@ private struct FirstMateLinkRow: View {
                 .help(link.hidden ? "Restore \(link.title)" : "Hide \(link.title)")
                 .accessibilityIdentifier("\(actionPrefix)\(link.hidden ? "restore" : "hide")-\(link.id)")
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .buttonStyle(HerdrButtonStyle(kind: .outline, height: HerdrTheme.ControlHeight.small))
         }
         .padding(.vertical, 8)
         .accessibilityIdentifier("\(actionPrefix)row-\(link.id)")
@@ -276,7 +315,6 @@ private struct FirstMateLinkActionsView: View {
                 .help("Copy \(link.url)")
                 .accessibilityIdentifier("\(actionPrefix)copy-\(link.id)")
         }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
+        .buttonStyle(HerdrButtonStyle(kind: .outline, height: HerdrTheme.ControlHeight.small))
     }
 }

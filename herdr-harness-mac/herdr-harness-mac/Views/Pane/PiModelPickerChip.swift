@@ -11,6 +11,9 @@ struct PiModelPickerChip: View {
     let selectModel: (PiAvailableModel) -> Void
     let retry: () -> Void
     let modelFavorites: ModelFavoritesStore
+    /// `.standalone` draws its own 26pt pill; `.segment` is the model half of
+    /// `PiModelEffortPill`.
+    var style: ComposerChipStyle = .standalone
 
     var body: some View {
         if isInteractive {
@@ -39,7 +42,6 @@ struct PiModelPickerChip: View {
             .accessibilityLabel("Model: \(currentModel?.displayName ?? "unknown")")
         } else if currentModel != nil {
             chipLabel
-                .opacity(0.6)
                 .accessibilityIdentifier("pi-chat-model")
                 .accessibilityLabel("Model: \(currentModel?.displayName ?? "unknown")")
         }
@@ -47,32 +49,27 @@ struct PiModelPickerChip: View {
 
     @ViewBuilder
     private var chipLabel: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             if isSetting {
                 ProgressView()
-                    .controlSize(.small)
+                    .controlSize(.mini)
             } else {
                 Image(systemName: "bolt")
+                    .herdrFont(size: 12)
                     .accessibilityHidden(true)
             }
             Text(currentModel?.displayName ?? "model")
+                .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                 .lineLimit(1)
                 .truncationMode(.middle)
-            if isInteractive {
+            if isInteractive, style == .standalone {
                 Image(systemName: "chevron.down")
-                    .herdrFont(.caption2)
+                    .herdrFont(size: 10, weight: .semibold)
+                    .foregroundStyle(HerdrTheme.iconTint)
             }
         }
-        .herdrFont(.caption, weight: .medium)
-        .foregroundStyle(isInteractive ? HerdrTheme.accent : HerdrTheme.muted)
-        .padding(.horizontal, 8)
-        .frame(minHeight: HerdrTheme.minHitTarget)
-        .background(HerdrTheme.elevated, in: .rect(cornerRadius: 6))
-        .overlay {
-            RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(HerdrTheme.separator, lineWidth: 1)
-        }
-        .contentShape(.rect(cornerRadius: 6))
+        .foregroundStyle(isInteractive ? HerdrTheme.primaryText : HerdrTheme.secondaryText)
+        .composerChip(style)
         .opacity(isInteractive && !isEnabled ? 0.45 : 1)
     }
 
@@ -111,4 +108,48 @@ struct PiModelPickerChip: View {
     .padding(.horizontal, 12)
     .frame(width: 375)
     .background(HerdrTheme.ink)
+}
+
+/// How a composer chip draws itself: its own 26pt pill, or one half of the
+/// shared model + effort pill.
+enum ComposerChipStyle: Equatable {
+    case standalone, segment
+}
+
+extension View {
+    /// A 26pt pill on a 10% ink wash, with a 28pt hit area; segments leave
+    /// the pill to their container.
+    func composerChip(_ style: ComposerChipStyle) -> some View {
+        padding(.horizontal, style == .standalone ? 6 : 3)
+            .frame(minHeight: HerdrTheme.minHitTarget)
+            .background {
+                if style == .standalone {
+                    RoundedRectangle(cornerRadius: HerdrTheme.Radius.control)
+                        .fill(HerdrTheme.selectedFill)
+                        .frame(height: HerdrTheme.ControlHeight.regular)
+                }
+            }
+            .contentShape(Rectangle())
+    }
+}
+
+/// MonoCode's model + effort pill: "⚡ Claude Opus 5 High ⌄" as one 26pt
+/// pill with two menus, so each keeps its own identifier and confirmation.
+struct PiModelEffortPill<Model: View, Effort: View>: View {
+    @ViewBuilder let model: () -> Model
+    @ViewBuilder let effort: () -> Effort
+
+    var body: some View {
+        HStack(spacing: 0) {
+            model()
+            effort()
+        }
+        .padding(.horizontal, 3)
+        .background {
+            RoundedRectangle(cornerRadius: HerdrTheme.Radius.control)
+                .fill(HerdrTheme.selectedFill)
+                .frame(height: HerdrTheme.ControlHeight.regular)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
 }

@@ -12,7 +12,7 @@ struct WorkspacePaneListView: View {
     var body: some View {
         @Bindable var cleanupPresenter = model.cleanupPresenter
         ZStack {
-            HerdrBackground()
+            HerdrBackground(followsGlass: true)
 
             ScrollViewReader { proxy in
                 ScrollView {
@@ -44,9 +44,13 @@ struct WorkspacePaneListView: View {
             }
         }
         .navigationTitle(workspace.label)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Menu("Workspace actions", systemImage: "ellipsis.circle") {
+        .herdrTitleBar {
+            Text(workspace.label)
+                .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
+                .lineLimit(1)
+        } trailing: {
+            Group {
+                Menu("Workspace actions", systemImage: "ellipsis") {
                     Button("Focus on Mac", systemImage: "scope") {
                         Task { await model.focus(workspace) }
                     }
@@ -76,6 +80,8 @@ struct WorkspacePaneListView: View {
                         isConfirmingWorkspaceClose = true
                     }
                 }
+                .herdrIconMenu()
+                .help("Workspace actions")
                 .disabled(!model.canControl)
             }
         }
@@ -122,11 +128,11 @@ struct WorkspacePaneListView: View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label(tab.label, systemImage: "folder")
-                    .herdrFont(.headline, weight: .semibold)
+                    .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
                 Spacer()
                 Text("^[\(panes.count) pane](inflect: true)")
-                    .herdrFont(.caption)
-                    .foregroundStyle(HerdrTheme.mist)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(HerdrTheme.tertiaryText)
             }
             .contextMenu { ChatTabColorMenu(store: model.chatTabColors, tabID: tab.id) }
             if panes.count == 1, let pane = panes.first, pane.reservedShell {
@@ -144,7 +150,7 @@ struct WorkspacePaneListView: View {
         .overlay {
             if highlightedTabID == tab.id {
                 RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
-                    .strokeBorder(HerdrTheme.accent.opacity(0.7), lineWidth: 1)
+                    .strokeBorder(HerdrTheme.accent.opacity(0.45), lineWidth: 1)
             }
         }
         .id(tab.id)

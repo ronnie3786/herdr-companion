@@ -7,17 +7,17 @@ struct HerdrUpdateBanner: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "arrow.down.circle.fill")
-                .herdrFont(.title2)
+                .herdrFont(size: HerdrTheme.TextSize.reading)
                 .foregroundStyle(HerdrTheme.accent)
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("Herdr \(version) is available")
-                    .herdrFont(.subheadline, weight: .semibold)
+                    .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
                     .foregroundStyle(HerdrTheme.text)
                 Text("Review what’s new and choose when to install.")
-                    .herdrFont(.caption)
-                    .foregroundStyle(HerdrTheme.mist)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(HerdrTheme.secondaryText)
             }
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityElement(children: .combine)
@@ -27,26 +27,21 @@ struct HerdrUpdateBanner: View {
             Button("Later") {
                 updates.dismissBanner()
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(HerdrButtonStyle(kind: .outline))
             .accessibilityLabel("Dismiss update banner")
             .accessibilityIdentifier("update-banner-later")
 
             Button("Review update…") {
                 updates.checkForUpdates()
             }
-            .herdrProminentButton()
+            .buttonStyle(HerdrButtonStyle(kind: .primary))
             .disabled(!updates.canCheckForUpdates)
             .accessibilityIdentifier("update-banner-review")
         }
-        .padding(.horizontal, HerdrTheme.pagePadding)
-        .padding(.vertical, 12)
-        .background(HerdrTheme.graphite)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(HerdrTheme.surface)
-                .frame(height: 1)
-                .accessibilityHidden(true)
-        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(HerdrTheme.cardFill)
+        .herdrHairline(.bottom)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("update-banner")
     }

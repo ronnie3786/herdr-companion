@@ -3,23 +3,18 @@ import SwiftUI
 struct PiToolCardView: View {
     let tool: PiToolInvocation
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.herdrFontScale) private var fontScale
     @State private var isExpanded = false
     @State private var hapticPulse = HerdrHapticPulse()
 
     var body: some View {
         let presentation = PiToolPresentation(tool: tool)
-        PiDisclosureCard(isExpanded: $isExpanded, chevronColor: presentation.tint) {
+        // MonoCode's unboxed tool row: failure reads through the title color
+        // and the "Failed" status, not a box.
+        PiDisclosureCard(isExpanded: $isExpanded, chevronColor: HerdrTheme.iconTint) {
             detail
         } label: {
             label(presentation)
-        }
-        // This padding sits outside the header button, so that band is deliberately not clickable.
-        .padding(.horizontal, 12)
-        .padding(.vertical, 2)
-        .background(HerdrTheme.elevated.opacity(0.35), in: RoundedRectangle(cornerRadius: HerdrTheme.compactRadius))
-        .overlay {
-            RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                .stroke(tool.status == .failed ? HerdrTheme.alert.opacity(0.45) : HerdrTheme.subtleSeparator, lineWidth: 1)
         }
         .animation(PiChatMotion.disclosureAnimation(reduceMotion: reduceMotion), value: isExpanded)
         .animation(PiChatMotion.stateAnimation(reduceMotion: reduceMotion), value: tool.status)
@@ -31,20 +26,21 @@ struct PiToolCardView: View {
     }
 
     private func label(_ presentation: PiToolPresentation) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 6) {
             Image(systemName: presentation.symbol)
-                .frame(width: 18)
-                .foregroundStyle(HerdrProse.dimmed(presentation.tint))
+                .herdrFont(size: HerdrTheme.TextSize.reading)
+                .herdrIconSlot(width: 16)
+                .foregroundStyle(isFailed ? HerdrTheme.alert : HerdrTheme.iconTint)
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(presentation.title)
-                    .herdrFont(.caption, weight: .semibold)
-                    .foregroundStyle(HerdrProse.dimmed(HerdrTheme.text))
+                    .herdrFont(size: HerdrTheme.TextSize.reading)
+                    .foregroundStyle(isFailed ? HerdrTheme.alert : HerdrTheme.tertiaryText)
                 if let subtitle = presentation.subtitle {
                     Text(subtitle)
-                        .herdrFont(.caption, monospaced: true)
-                        .foregroundStyle(HerdrProse.dimmed(HerdrTheme.mist))
+                        .herdrFont(size: HerdrTheme.TextSize.body, monospaced: true)
+                        .foregroundStyle(HerdrTheme.secondaryText)
                         .lineLimit(presentation.command == nil ? 1 : 3)
                 }
             }
@@ -52,13 +48,14 @@ struct PiToolCardView: View {
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 2) {
                 statusLabel
-                    .herdrFont(.caption, weight: .semibold)
+                    .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                     .id(statusMotionKey)
                     .transition(PiChatMotion.stateTransition(reduceMotion: reduceMotion))
                 if let elapsedDuration {
                     Text(elapsedDuration)
-                        .herdrFont(.caption, monospacedDigit: true)
-                        .foregroundStyle(HerdrProse.dimmed(HerdrTheme.muted))
+                        .herdrFont(size: HerdrTheme.TextSize.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(HerdrTheme.tertiaryText)
                 }
             }
             .accessibilityElement(children: .combine)
@@ -82,12 +79,13 @@ struct PiToolCardView: View {
             }
             if tool.arguments == nil, tool.result == nil {
                 Text("Waiting for tool details…")
-                    .herdrFont(.caption)
-                    .foregroundStyle(HerdrTheme.muted)
+                    .herdrFont(size: HerdrTheme.TextSize.small)
+                    .foregroundStyle(HerdrTheme.tertiaryText)
                     .transition(.opacity)
             }
         }
-        .padding(.top, 10)
+        .padding(.top, 4)
+        .padding(.leading, 22)
         .animation(
             PiChatMotion.structuralAnimation(reduceMotion: reduceMotion),
             value: detailStructure
@@ -96,12 +94,11 @@ struct PiToolCardView: View {
 
     private func toolSection(_ label: String, text: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(label)
-                .herdrFont(.caption, weight: .bold)
-                .foregroundStyle(HerdrTheme.muted)
+            HerdrMicroLabel(text: label)
             Text(text)
-                .herdrFont(.caption, monospaced: true)
-                .foregroundStyle(HerdrTheme.mist)
+                .herdrFont(size: HerdrTheme.TextSize.small, monospaced: true)
+                .lineSpacing(HerdrProse.lineSpacing(size: HerdrTheme.TextSize.small, lineHeight: 20, scale: fontScale, monospaced: true))
+                .foregroundStyle(label == "Error" ? HerdrTheme.alert : HerdrTheme.secondaryText)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -112,21 +109,23 @@ struct PiToolCardView: View {
         switch tool.status {
         case .waiting:
             Text("Queued")
-                .foregroundStyle(HerdrProse.dimmed(HerdrTheme.muted))
+                .foregroundStyle(HerdrTheme.tertiaryText)
         case .running:
             HStack(spacing: 5) {
                 ProgressView().controlSize(.mini)
                 Text("Running")
             }
-            .foregroundStyle(HerdrProse.dimmed(HerdrTheme.working))
+            .foregroundStyle(HerdrTheme.working)
         case .succeeded:
             Label("Done", systemImage: "checkmark")
-                .foregroundStyle(HerdrProse.dimmed(HerdrTheme.success))
+                .foregroundStyle(HerdrTheme.success)
         case .failed:
             Label("Failed", systemImage: "exclamationmark")
-                .foregroundStyle(HerdrProse.dimmed(HerdrTheme.alert))
+                .foregroundStyle(HerdrTheme.alert)
         }
     }
+
+    private var isFailed: Bool { tool.status == .failed }
 
     private var elapsedDuration: String? {
         guard let startedAt = tool.startedAt else { return nil }

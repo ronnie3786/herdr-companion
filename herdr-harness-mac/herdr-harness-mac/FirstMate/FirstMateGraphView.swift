@@ -12,8 +12,8 @@ struct FirstMateGraphView: View {
                     HStack {
                         Spacer()
                         VStack(spacing: 0) {
-                            Rectangle().fill(FirstMatePalette(scheme: scheme).accent.opacity(0.35)).frame(width: 1, height: spacing - 8)
-                            Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(.secondary)
+                            Rectangle().fill(HerdrTheme.outline).frame(width: 1, height: spacing - 8)
+                            Image(systemName: "chevron.down").herdrFont(size: 8, weight: .semibold).foregroundStyle(HerdrTheme.iconTint)
                         }
                         Spacer()
                     }.accessibilityHidden(true)
@@ -23,25 +23,28 @@ struct FirstMateGraphView: View {
                         store.selectedVisitID = visit.id
                     } label: {
                         HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: visit.stageKey.contains("review") ? "person.2.wave.2" : "square.stack.3d.up")
+                            Image(systemName: visit.stageKey.contains("review") ? "person.2.wave.2" : "square.3.layers.3d")
+                                .foregroundStyle(HerdrTheme.accent)
                             VStack(alignment: .leading, spacing: 5) {
-                                Text(visit.title).herdrFont(.headline)
-                                Text("Revision \(visit.revision)").herdrFont(.caption2).foregroundStyle(.secondary)
+                                Text(visit.title).herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
+                                Text("Revision \(visit.revision)").herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
                             }
                             Spacer()
                             FirstMateStatusLabel(status: visit.status)
                         }.contentShape(.rect)
                     }.buttonStyle(.plain)
-                    Divider()
+                    Rectangle().fill(HerdrTheme.hairline).frame(height: 1)
                     FirstMateResourceButtons(store: store, snapshot: snapshot, visit: visit)
                 }
-                .padding(15)
-                .background(visit.id == snapshot.feature.currentVisitID ? FirstMatePalette(scheme: scheme).accent.opacity(0.10) : FirstMatePalette(scheme: scheme).surface, in: .rect(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(visit.id == (store.selectedVisitID ?? snapshot.feature.currentVisitID) ? FirstMatePalette(scheme: scheme).accent : FirstMatePalette(scheme: scheme).line, lineWidth: 1))
+                .padding(12)
+                .herdrCard(
+                    fill: visit.id == snapshot.feature.currentVisitID ? HerdrTheme.selectedFill : HerdrTheme.cardFill,
+                    outline: visit.id == (store.selectedVisitID ?? snapshot.feature.currentVisitID) ? HerdrTheme.accent : HerdrTheme.outline
+                )
                 .accessibilityIdentifier("first-mate-graph-node-\(visit.id)")
             }
             Text("Recorded visit order. Each node opens its own agents and documents.")
-                .herdrFont(.caption2).foregroundStyle(.secondary).padding(.top, 16)
+                .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText).padding(.top, 16)
         }
         .accessibilityIdentifier("first-mate-graph")
     }

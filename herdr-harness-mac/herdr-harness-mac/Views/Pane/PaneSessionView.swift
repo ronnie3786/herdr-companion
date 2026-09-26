@@ -77,24 +77,13 @@ struct PaneSessionView: View {
     @State private var composerFocusRequest = 0
     @State private var gitAvailability: PaneGitAvailability = .checking
     @State private var piSessionSummaryRequest: PiSessionSummaryRequest?
+    @State private var briefPresentation = ResponseBriefPresentation()
 
     var body: some View {
         ZStack {
-            HerdrBackground()
+            HerdrBackground(followsGlass: true)
 
-            VStack(spacing: 0) {
-                PaneSessionHeader(
-                    model: model,
-                    pane: currentPane,
-                    store: piConversationStore,
-                    showsPiSessionSummary: summaryRequest != nil,
-                    summarizePiSession: presentPiSessionSummary
-                )
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 10)
-
-                modeContent
-            }
+            modeContent
             .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: selectedMode)
         }
         .contentShape(Rectangle())
@@ -110,18 +99,25 @@ struct PaneSessionView: View {
                 paneID: pane.id
             )
         }
-        .toolbar {
-            if selectedMode == .git {
-                ToolbarItem(placement: .primaryAction) {
+        .herdrTitleBar {
+            PaneSessionTitle(model: model, pane: currentPane, store: piConversationStore)
+        } trailing: {
+            HStack(spacing: 2) {
+                PaneSessionActions(
+                    model: model,
+                    pane: currentPane,
+                    showsPiSessionSummary: summaryRequest != nil,
+                    summarizePiSession: presentPiSessionSummary,
+                    briefPresentation: selectedMode == .chat && currentPane.supportsPiSemanticChat ? briefPresentation : nil
+                )
+                if selectedMode == .git {
                     Button("Open Git in New Window", systemImage: "rectangle.on.rectangle") {
                         openGitWindow()
                     }
-                    .labelStyle(.iconOnly)
+                    .buttonStyle(HerdrIconButtonStyle())
                     .help("Open Git in a separate window")
                     .accessibilityIdentifier("pane-git-open-window")
                 }
-            }
-            ToolbarItem(placement: .primaryAction) {
                 PaneActionsMenu(
                     model: model,
                     pane: currentPane,
@@ -134,6 +130,9 @@ struct PaneSessionView: View {
                     }
                 )
             }
+            // The title bar outlives this view; keying its controls by pane
+            // drops a rename or close confirmation left open for another pane.
+            .id(currentPane.id)
         }
         .task(id: followTaskID) {
             guard !currentPane.reservedShell else { return }
@@ -228,10 +227,10 @@ struct PaneSessionView: View {
         .overlay(alignment: .top) {
             if let outputError {
                 Label(outputError, systemImage: "exclamationmark.triangle.fill")
-                    .herdrFont(.caption, weight: .bold)
-                    .foregroundStyle(HerdrTheme.ink)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
+                    .herdrFont(size: HerdrTheme.TextSize.small, weight: .semibold)
+                    .foregroundStyle(HerdrTheme.onPrimary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
                     .background(HerdrTheme.alert, in: Capsule())
                     .padding(.top, 8)
                     .accessibilityLabel("Terminal error: \(outputError)")
@@ -280,7 +279,8 @@ struct PaneSessionView: View {
                     focusRequest: composerFocusRequest,
                     interactionResponder: piInteractionResponder,
                     modelFavorites: modelFavorites,
-                    quotes: $composerQuotes
+                    quotes: $composerQuotes,
+                    briefPresentation: briefPresentation
                 )
                     .equatable()
                     .transition(.opacity)
@@ -319,8 +319,8 @@ struct PaneSessionView: View {
                     ProgressView()
                         .controlSize(.small)
                     Text("Checking this pane for Git…")
-                        .herdrFont(.caption, monospaced: true, weight: .medium)
-                        .foregroundStyle(HerdrTheme.mist)
+                        .herdrFont(size: HerdrTheme.TextSize.small, monospaced: true)
+                        .foregroundStyle(HerdrTheme.secondaryText)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -382,9 +382,9 @@ struct PaneSessionView: View {
                 )
                 .equatable()
                 .id(currentPane.id)
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
-                .padding(.bottom, 10)
+                .padding(.horizontal, 6)
+                .padding(.top, 6)
+                .padding(.bottom, 6)
             }
         }
     }

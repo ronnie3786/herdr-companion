@@ -17,14 +17,14 @@ struct FirstMateChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
-
             if let error = store.error {
                 Label(error, systemImage: "exclamationmark.triangle")
-                    .herdrFont(.caption)
-                    .foregroundStyle(.orange)
-                    .padding(12)
+                    .herdrFont(size: HerdrTheme.TextSize.small)
+                    .foregroundStyle(HerdrTheme.warning)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .herdrHairline(.bottom)
                     .textSelection(.enabled)
             }
 
@@ -32,52 +32,27 @@ struct FirstMateChatView: View {
             featureStatus
             feedbackNotices
 
-            if featureIsClosed {
-                EmptyView()
-            } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    FirstMateCoordinatorContextView(
-                        feature: snapshot.feature,
-                        capabilityAvailable: store.contextSupported
-                    )
-                    if !store.attachmentsSupported {
-                        Label("Update this feature's companion server to attach files.", systemImage: "arrow.down.circle")
-                            .herdrFont(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    FirstMateComposerModelControls(
-                        store: store,
-                        feature: featureWithCurrentSessionSelection,
-                        context: store.operationContext,
-                        canControl: canControl,
-                        hasQueuedWork: snapshot.messages.contains { $0.status == "queued" },
-                        modelFavorites: modelFavorites
-                    )
-                    PromptComposerView(
-                        model: model,
-                        destination: composerDestination,
-                        draft: draftBinding,
-                        attachments: attachmentBinding,
-                        quotes: quoteBinding,
-                        containsDictation: dictationBinding,
-                        modelFavorites: modelFavorites
-                    )
-                    .equatable()
-                    .padding(8)
-                    .background(HerdrTheme.graphite, in: .rect(cornerRadius: 10))
-                    .environment(\.colorScheme, .dark)
-                    .id(composerDestination.id)
-                }
-                .padding(16)
-                .background(FirstMatePalette(scheme: scheme).surface, in: .rect(cornerRadius: 13))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 13)
-                        .stroke(FirstMatePalette(scheme: scheme).line)
-                }
-                .padding(16)
+            if !featureIsClosed {
+                // The shared composer, in either appearance: the coordinator
+                // context line on top, the model pill in its tool row.
+                PromptComposerView(
+                    model: model,
+                    destination: composerDestination,
+                    draft: draftBinding,
+                    attachments: attachmentBinding,
+                    quotes: quoteBinding,
+                    containsDictation: dictationBinding,
+                    modelFavorites: modelFavorites,
+                    contextAccessory: contextAccessory,
+                    toolbarAccessory: modelAccessory
+                )
+                .equatable()
+                .id(composerDestination.id)
+                .padding(.horizontal, 6)
+                .padding(.bottom, 6)
             }
         }
-        .background(FirstMatePalette(scheme: scheme).background)
+        .herdrPaneBackground(FirstMatePalette(scheme: scheme).background)
         .task(id: feedbackLoadID) { await loadFeedback() }
         .onChange(of: store.operationContext) { _, _ in feedbackEditor = nil }
         .sheet(item: $feedbackEditor) { target in
@@ -121,11 +96,12 @@ struct FirstMateChatView: View {
                     }
                 }
             }
-            .herdrFont(.caption)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 20)
+            .herdrFont(size: HerdrTheme.TextSize.small)
+            .foregroundStyle(HerdrTheme.tertiaryText)
+            .padding(.horizontal, 16)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .herdrHairline(.top)
         }
     }
 
@@ -168,33 +144,55 @@ struct FirstMateChatView: View {
         )
     }
 
-    private var header: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text("First Mate").herdrFont(.title2, weight: .semibold)
-                Text(snapshot.feature.title)
-                    .herdrFont(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-            Spacer(minLength: 8)
-            Menu {
-                Button("Pause feature", systemImage: "pause") {
-                    let context = store.operationContext
-                    Task { await store.perform("pause", expectedContext: context) }
+    private struct ContextKey: Equatable {
+        let presentation: FirstMateCoordinatorContextPresentation
+        let attachmentsSupported: Bool
+    }
+
+    private struct ModelKey: Equatable {
+        let feature: FirstMateFeature
+        let context: FirstMateStore.OperationContext
+        let canControl: Bool
+        let hasQueuedWork: Bool
+    }
+
+    private var contextAccessory: ComposerAccessory {
+        let feature = snapshot.feature
+        let capability = store.contextSupported
+        let attachmentsSupported = store.attachmentsSupported
+        let key = ContextKey(
+            presentation: .init(feature: feature, capabilityAvailable: capability),
+            attachmentsSupported: attachmentsSupported
+        )
+        return ComposerAccessory(key: ComposerAccessoryKey(value: key)) {
+            VStack(alignment: .leading, spacing: 4) {
+                FirstMateCoordinatorContextView(feature: feature, capabilityAvailable: capability)
+                if !attachmentsSupported {
+                    Label("Update this feature's companion server to attach files.", systemImage: "arrow.down.circle")
+                        .herdrFont(size: HerdrTheme.TextSize.caption)
+                        .foregroundStyle(HerdrTheme.tertiaryText)
                 }
-                Button("Resume feature", systemImage: "play") {
-                    let context = store.operationContext
-                    Task { await store.perform("resume", expectedContext: context) }
-                }
-            } label: {
-                FirstMateStatusLabel(status: store.executionDisplayStatus(for: snapshot.feature))
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .disabled(!canControl || store.isSending || featureIsClosed)
         }
-        .padding(22)
+    }
+
+    private var modelAccessory: ComposerAccessory {
+        let key = ModelKey(
+            feature: featureWithCurrentSessionSelection,
+            context: store.operationContext,
+            canControl: canControl,
+            hasQueuedWork: snapshot.messages.contains { $0.status == "queued" }
+        )
+        return ComposerAccessory(key: ComposerAccessoryKey(value: key)) { [store, modelFavorites] in
+            FirstMateComposerModelControls(
+                store: store,
+                feature: key.feature,
+                context: key.context,
+                canControl: key.canControl,
+                hasQueuedWork: key.hasQueuedWork,
+                modelFavorites: modelFavorites
+            )
+        }
     }
 
     private var transcript: some View {
@@ -205,7 +203,7 @@ struct FirstMateChatView: View {
         let feedbackWritable = store.controlAvailable
         return ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 24) {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(snapshot.messages.filter(\.isConversation)) { message in
                         let feedback = FirstMateResponseFeedbackPresentation.make(
                             message: message,
@@ -291,7 +289,10 @@ struct FirstMateChatView: View {
                     }
                     Color.clear.frame(height: 1).id("first-mate-chat-end")
                 }
-                .padding(22)
+                // Rows carry their own 16pt gutters.
+                .padding(.top, 6)
+                .frame(maxWidth: HerdrTheme.transcriptWidth)
+                .frame(maxWidth: .infinity)
             }
             .defaultScrollAnchor(.bottom)
             .onScrollGeometryChange(for: Bool.self) { geometry in
@@ -310,10 +311,10 @@ struct FirstMateChatView: View {
     @ViewBuilder
     private var featureStatus: some View {
         if featureIsClosed {
-            Label("This feature is closed. Its conversation and evidence remain available.", systemImage: "archivebox")
-                .herdrFont(.caption)
-                .foregroundStyle(.secondary)
-                .padding(16)
+            FirstMateChatNote(
+                text: "This feature is closed. Its conversation and evidence remain available.",
+                systemImage: "archivebox"
+            )
         } else if let warning = store.runtimeHealth?.warning {
             FirstMateExecutionNotice(text: warning, lastSuccessAt: store.runtimeHealth?.lastSuccessAt)
         } else if store.error != nil {
@@ -325,24 +326,20 @@ struct FirstMateChatView: View {
                 ? "Checking retained work for a safe automatic continuation. Uncertain effects or human checkpoints will stop recovery and ask for your direction. See Stability & recovery in Workflow."
                 : "Execution was interrupted and needs your direction. Inspect the retained work and latest handoff in Workflow, then ask First Mate to recover the assignment after verifying uncertain effects.")
         } else if snapshot.feature.status == "awaiting_direction" {
-            Label(
-                snapshot.currentVisit?.status == "completed"
+            FirstMateChatNote(
+                text: snapshot.currentVisit?.status == "completed"
                     ? "Stage complete. Waiting for your direction."
                     : "Waiting for your direction before work continues.",
-                systemImage: "hand.raised"
+                systemImage: "hand.raised",
+                tone: FirstMateStatusColors.color(for: .awaitingDirection, scheme: scheme)
             )
-            .herdrFont(.caption)
-            .foregroundStyle(.orange)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.orange.opacity(0.05))
         } else if ["running", "coordinating"].contains(snapshot.feature.status) {
-            Label(store.runtimeHealth == nil ? "Last reported as active. This companion does not report execution health." : "Background monitoring is active. You can talk here.", systemImage: "waveform.path")
-                .herdrFont(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
+            FirstMateChatNote(
+                text: store.runtimeHealth == nil
+                    ? "Last reported as active. This companion does not report execution health."
+                    : "Background monitoring is active. You can talk here.",
+                systemImage: "waveform.path.ecg"
+            )
         }
     }
 
@@ -477,5 +474,32 @@ struct FirstMateChatView: View {
         var values = store.composerDrafts.quotes(for: featureID)
         values.append(quote)
         store.composerDrafts.setQuotes(values, for: featureID)
+    }
+}
+
+/// A one-line note between the transcript and the composer (MonoCode's
+/// `.fm-note`): 12pt text under a hairline, tinted only when it asks for you.
+private struct FirstMateChatNote: View {
+    let text: String
+    let systemImage: String
+    var tone: Color? = nil
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: systemImage)
+                .herdrFont(size: 12)
+                .foregroundStyle(tone ?? HerdrTheme.iconTint)
+                .accessibilityHidden(true)
+            Text(text)
+                .herdrFont(size: HerdrTheme.TextSize.small)
+                .foregroundStyle(tone ?? HerdrTheme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tone?.opacity(0.06) ?? .clear)
+        .herdrHairline(.top)
+        .accessibilityElement(children: .combine)
     }
 }

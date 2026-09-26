@@ -16,14 +16,14 @@ struct HerdrHudTranscriptView: View {
         } else {
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: HerdrTheme.rowSpacing) {
+                    LazyVStack(alignment: .leading, spacing: 14) {
                         ForEach(session.exchanges.indices, id: \.self) { index in
                             let exchange = session.exchanges[index]
                             if index > session.exchanges.startIndex,
                                session.exchanges[index - 1].machineID != exchange.machineID {
                                 Text("New thread · \(machineName(for: exchange.machineID))")
-                                    .herdrFont(.caption2, monospaced: true)
-                                    .foregroundStyle(HerdrTheme.muted)
+                                    .herdrFont(size: HerdrTheme.TextSize.caption, monospaced: true)
+                                    .foregroundStyle(HerdrTheme.tertiaryText)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             HerdrHudTranscriptRowView(
@@ -51,7 +51,8 @@ struct HerdrHudTranscriptView: View {
                             audioErrorMessage: session.audioErrorMessage
                         )
                     }
-                    .padding(HerdrTheme.cardPadding)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
                 }
                 .scrollIndicators(.hidden)
                 .onChange(of: session.exchanges.last) { _, _ in

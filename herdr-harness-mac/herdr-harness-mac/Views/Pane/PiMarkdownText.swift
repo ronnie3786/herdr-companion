@@ -11,6 +11,10 @@ struct PiMarkdownText: View {
     let cacheRenderedText: Bool
     var inlineCodeFont: Font? = nil
     var inlineCodeColor: Color? = nil
+    /// The chip behind inline code (ink 8%); nil leaves code unboxed.
+    var inlineCodeBackground: Color? = nil
+    /// Bold runs: semibold in full ink, like MonoCode's `.md b`.
+    var strongColor: Color? = nil
     let id: String?
     let cacheKeyLength: Int?
 
@@ -20,6 +24,8 @@ struct PiMarkdownText: View {
         cacheRenderedText: Bool = true,
         inlineCodeFont: Font? = nil,
         inlineCodeColor: Color? = nil,
+        inlineCodeBackground: Color? = nil,
+        strongColor: Color? = nil,
         id: String? = nil,
         cacheKeyLength: Int? = nil
     ) {
@@ -28,6 +34,8 @@ struct PiMarkdownText: View {
         self.cacheRenderedText = cacheRenderedText
         self.inlineCodeFont = inlineCodeFont
         self.inlineCodeColor = inlineCodeColor
+        self.inlineCodeBackground = inlineCodeBackground
+        self.strongColor = strongColor
         self.id = id
         self.cacheKeyLength = cacheKeyLength
     }
@@ -46,16 +54,27 @@ struct PiMarkdownText: View {
 
         let styled: AttributedString
         if let inlineCodeFont, let inlineCodeColor {
+            let strongFont = strongColor == nil ? nil : font.weight(.semibold)
             styled = cacheRenderedText
                 ? PiMarkdownInlineCache.shared.styled(
                     rendered,
                     source: source,
                     font: inlineCodeFont,
                     color: inlineCodeColor,
+                    background: inlineCodeBackground,
+                    strongFont: strongFont,
+                    strongColor: strongColor,
                     id: id,
                     cacheKeyLength: cacheKeyLength
                 )
-                : Self.applyingInlineCodeStyle(rendered, font: inlineCodeFont, color: inlineCodeColor)
+                : Self.applyingInlineCodeStyle(
+                    rendered,
+                    font: inlineCodeFont,
+                    color: inlineCodeColor,
+                    background: inlineCodeBackground,
+                    strongFont: strongFont,
+                    strongColor: strongColor
+                )
         } else {
             styled = rendered
         }
@@ -68,7 +87,7 @@ struct PiMarkdownText: View {
         }
         return Group {
             if saveQuote != nil {
-                ChatSelectableText(text: linked, font: font)
+                ChatSelectableText(text: linked, font: font, lineSpacing: nil)
             } else {
                 Text(linked)
                     .font(font)
@@ -83,16 +102,35 @@ struct PiMarkdownText: View {
         PiMarkdownInlineCache.render(source)
     }
 
-    static func applyingInlineCodeStyle(_ source: AttributedString, font: Font, color: Color) -> AttributedString {
+    static func applyingInlineCodeStyle(
+        _ source: AttributedString,
+        font: Font,
+        color: Color,
+        background: Color? = nil,
+        strongFont: Font? = nil,
+        strongColor: Color? = nil
+    ) -> AttributedString {
         var result = source
         var codeRanges: [Range<AttributedString.Index>] = []
+        var strongRanges: [Range<AttributedString.Index>] = []
         for run in result.runs {
-            guard let intent = run.inlinePresentationIntent, intent.contains(.code) else { continue }
-            codeRanges.append(run.range)
+            guard let intent = run.inlinePresentationIntent else { continue }
+            if intent.contains(.code) {
+                codeRanges.append(run.range)
+            } else if intent.contains(.stronglyEmphasized) {
+                strongRanges.append(run.range)
+            }
         }
         for range in codeRanges {
             result[range].font = font
             result[range].foregroundColor = color
+            if let background { result[range].backgroundColor = background }
+        }
+        if let strongColor {
+            for range in strongRanges {
+                if let strongFont { result[range].font = strongFont }
+                result[range].foregroundColor = strongColor
+            }
         }
         return result
     }
@@ -153,6 +191,9 @@ final class PiMarkdownInlineCache: @unchecked Sendable {
         source: String,
         font: Font,
         color: Color,
+        background: Color? = nil,
+        strongFont: Font? = nil,
+        strongColor: Color? = nil,
         id: String? = nil,
         cacheKeyLength: Int? = nil
     ) -> AttributedString {
@@ -160,6 +201,9 @@ final class PiMarkdownInlineCache: @unchecked Sendable {
             for: source,
             font: font,
             color: color,
+            background: background,
+            strongFont: strongFont,
+            strongColor: strongColor,
             id: id,
             cacheKeyLength: cacheKeyLength
         )
@@ -167,7 +211,14 @@ final class PiMarkdownInlineCache: @unchecked Sendable {
             recordStyledStreamingKey(key, id: id, cacheKeyLength: cacheKeyLength ?? source.utf8.count)
             return cached.value
         }
-        let value = PiMarkdownText.applyingInlineCodeStyle(rendered, font: font, color: color)
+        let value = PiMarkdownText.applyingInlineCodeStyle(
+            rendered,
+            font: font,
+            color: color,
+            background: background,
+            strongFont: strongFont,
+            strongColor: strongColor
+        )
         styledCache.setObject(Entry(value: value), forKey: key as NSString, cost: source.utf8.count)
         recordStyledStreamingKey(key, id: id, cacheKeyLength: cacheKeyLength ?? source.utf8.count)
         return value
@@ -231,12 +282,18 @@ final class PiMarkdownInlineCache: @unchecked Sendable {
         for source: String,
         font: Font,
         color: Color,
+        background: Color? = nil,
+        strongFont: Font? = nil,
+        strongColor: Color? = nil,
         id: String?,
         cacheKeyLength: Int?
     ) -> String {
         var hasher = Hasher()
         hasher.combine(font)
         hasher.combine(color)
+        hasher.combine(background)
+        hasher.combine(strongFont)
+        hasher.combine(strongColor)
         let baseKey: String
         if let id {
             baseKey = identityKey(id: id, length: cacheKeyLength ?? source.utf8.count)

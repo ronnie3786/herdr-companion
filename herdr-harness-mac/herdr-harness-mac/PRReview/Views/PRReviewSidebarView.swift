@@ -73,7 +73,7 @@ struct PRReviewSidebarView: View {
             }
         }
         .padding(HerdrTheme.cardPadding)
-        .background(HerdrTheme.ink)
+        .herdrPaneBackground(HerdrTheme.railBackground)
         .foregroundStyle(HerdrTheme.text)
         .accessibilityIdentifier("pr-review-sidebar")
     }

@@ -7,8 +7,10 @@ struct FirstMateMarkdownContentView: View {
         blocks = PiMarkdownDocumentCache.shared.blocks(for: source)
     }
 
+    @Environment(\.firstMateMarkdownDensity) private var density
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: density == .compact ? 8 : HerdrProse.blockSpacing) {
             ForEach(blocks) { block in
                 FirstMateMarkdownBlockView(block: block)
             }

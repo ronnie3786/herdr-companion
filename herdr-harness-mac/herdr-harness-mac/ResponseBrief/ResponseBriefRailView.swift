@@ -191,7 +191,7 @@ struct ResponseBriefRailView: View {
         }
         .padding(18)
         .foregroundStyle(HerdrTheme.text)
-        .background(HerdrTheme.ink)
+        .herdrPaneBackground(HerdrTheme.railBackground)
         .task {
             await coordinator.load()
             if let chat {

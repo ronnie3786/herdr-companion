@@ -14,8 +14,8 @@ struct HerdrHudCardView: View {
             if let chat = controller.chats?.selectedChat {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(chat.displayTitle)
-                        .herdrFont(.subheadline, weight: .semibold)
-                        .foregroundStyle(HerdrTheme.text)
+                        .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
+                        .foregroundStyle(HerdrTheme.primaryText)
                         .lineLimit(2)
                     HStack {
                         HerdrHudChatStatusView(session: session)
@@ -24,10 +24,10 @@ struct HerdrHudCardView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, HerdrTheme.cardPadding)
-                .padding(.bottom, 10)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .herdrHairline(.bottom)
             }
-            Divider().overlay { HerdrTheme.separator }
             HerdrHudTranscriptView(
                 model: model,
                 session: session,
@@ -39,19 +39,20 @@ struct HerdrHudCardView: View {
             if HerdrHudAppShotNotice.notice(for: controller.appShotStatus) != nil {
                 HerdrHudAppShotStatusView(controller: controller, showsFullTitle: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, HerdrTheme.cardPadding)
+                    .padding(.horizontal, 14)
                     .padding(.top, 8)
             }
-            Divider().overlay { HerdrTheme.separator }
             if session.exchanges.contains(where: { $0.promotedPaneID != nil }) {
                 VStack(spacing: 8) {
                     Text("This chat now continues in its workspace. Open the terminal session above to reply.")
-                        .herdrFont(.caption)
-                        .foregroundStyle(HerdrTheme.mist)
+                        .herdrFont(size: HerdrTheme.TextSize.small)
+                        .foregroundStyle(HerdrTheme.secondaryText)
                     Button("New HUD chat", systemImage: "square.and.pencil", action: controller.summon)
-                        .buttonStyle(.bordered)
+                        .buttonStyle(HerdrButtonStyle(kind: .outline))
                 }
-                .padding(HerdrTheme.cardPadding)
+                .padding(14)
+                .frame(maxWidth: .infinity)
+                .herdrHairline(.top)
             } else {
                 HerdrHudComposerView(model: model, controller: controller, session: session)
                     .disabled(session.isEnding)
@@ -60,23 +61,29 @@ struct HerdrHudCardView: View {
                 HerdrHudChatResizeHandle(controller: controller)
                 Spacer()
             }
+            .padding(.horizontal, 6)
+            .padding(.bottom, 2)
         }
         .frame(width: controller.chatCardSize.width, height: controller.chatCardSize.height)
-        .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.cardRadius))
+        // Legible glass at 78% (opaque base under Reduce Transparency).
+        .background {
+            HerdrGlassBackground(level: HerdrTheme.Glass.hud, cornerRadius: HerdrTheme.Radius.panel, material: .hudWindow)
+        }
         .overlay {
-            RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
-                .strokeBorder(HerdrTheme.separator, lineWidth: 1)
+            RoundedRectangle(cornerRadius: HerdrTheme.Radius.panel)
+                .strokeBorder(HerdrTheme.outline, lineWidth: 1)
+                .allowsHitTesting(false)
         }
         .overlay {
             if isDropTargeted {
-                RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
+                RoundedRectangle(cornerRadius: HerdrTheme.Radius.panel)
                     .strokeBorder(HerdrTheme.accent, lineWidth: 2)
             }
         }
         // A light ambient shadow plus a close contact shadow gives separation
         // without the dense, wide halo of a single high-opacity shadow.
-        .shadow(color: HerdrTheme.ink.opacity(0.16), radius: 18, y: 6)
-        .shadow(color: HerdrTheme.ink.opacity(0.10), radius: 3, y: 2)
+        .shadow(color: Color.black.opacity(0.35), radius: 18, y: 6)
+        .shadow(color: Color.black.opacity(0.2), radius: 3, y: 2)
         // The AppKit target is the HUD's single drop destination. It accepts
         // files, raw image data, and the system screenshot preview's file
         // promise, and it wins over the nested editor so a drop anywhere on the

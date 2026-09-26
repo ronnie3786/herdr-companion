@@ -9,6 +9,8 @@ struct HerdrHudRootView: View {
     let fontScale: HerdrFontScaleStore
 
     @State private var voiceReply = HerdrHudVoiceReply()
+    @AppStorage(HerdrAppearancePreferences.glassEnabledKey) private var glassEnabled = HerdrAppearancePreferences.defaultGlassEnabled
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     private var sessionChips: (
         chips: [HerdrHudSessionChips.Chip],
@@ -213,6 +215,8 @@ struct HerdrHudRootView: View {
         .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: controller.isExpanded)
         .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: controller.isUltraCompactResting)
         .environment(\.herdrFontScale, fontScale.scale)
+        // The HUD is always dark, so only the setting and Reduce Transparency decide.
+        .environment(\.herdrGlassActive, HerdrGlass.isActive(enabled: glassEnabled, reduceTransparency: reduceTransparency, colorScheme: .dark))
         .preferredColorScheme(.dark)
         .tint(HerdrTheme.accent)
     }

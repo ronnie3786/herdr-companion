@@ -41,6 +41,7 @@ struct HerdrHarnessMacApp: App {
     @State private var hudNotes: HerdrHudNotesState
 
     init() {
+        HerdrTheme.followAccessibilityContrast()
         let settings = AgentModelSettingsStore()
         let prompts = HerdrPromptSettingsStore()
         let favorites = ModelFavoritesStore()
@@ -72,18 +73,15 @@ struct HerdrHarnessMacApp: App {
                 agentControl: agentControl,
                 updates: updates
             )
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    if updates.isBannerVisible, let version = updates.availableVersion {
-                        HerdrUpdateBanner(version: version, updates: updates)
-                    }
-                }
+                .modifier(HerdrMainWindowChromeModifier(
+                    background: shell.detailScope == .firstMate ? FirstMatePalette(scheme: shell.firstMate.colorScheme).background : HerdrTheme.windowBackground
+                ))
                 .task { updates.start() }
                 .environment(herdPulse)
                 // Apple documents `dynamicTypeSize` as not affecting text size
                 // on macOS, so Herdr uses this custom scale environment instead.
                 .environment(\.herdrFontScale, fontScale.scale)
                 .frame(minWidth: 1000, minHeight: 680)
-                .background(shell.detailScope == .firstMate ? FirstMatePalette(scheme: shell.firstMate.colorScheme).background : HerdrTheme.ink)
                 .foregroundStyle(shell.detailScope == .firstMate ? FirstMatePalette(scheme: shell.firstMate.colorScheme).text : HerdrTheme.text)
                 .preferredColorScheme(shell.detailScope == .firstMate ? shell.firstMate.colorScheme : .dark)
                 .tint(shell.detailScope == .firstMate ? FirstMatePalette(scheme: shell.firstMate.colorScheme).accent : HerdrTheme.accent)
@@ -92,8 +90,8 @@ struct HerdrHarnessMacApp: App {
         // before delivering the URL to AppRootView's onOpenURL handler.
         .handlesExternalEvents(matching: HerdrExternalEvent.paneRoutes)
         .defaultSize(width: 1240, height: 820)
-        // The ink background bleeds into the title bar; the detail toolbar
-        // supplies the only chrome the window needs.
+        // Content runs under a transparent 40pt title bar (`HerdrWindowChrome`);
+        // the shell draws its own bars around the traffic lights.
         .windowStyle(.hiddenTitleBar)
         .commands {
             HerdrMacCommands(
@@ -111,7 +109,7 @@ struct HerdrHarnessMacApp: App {
             ActiveWorkBoardWindowRoot(model: model, shell: shell)
                 .environment(\.herdrFontScale, fontScale.scale)
                 .frame(minWidth: 900, minHeight: 640)
-                .background(HerdrTheme.ink)
+                .background(HerdrTheme.windowBackground)
                 .foregroundStyle(HerdrTheme.text)
                 .preferredColorScheme(.dark)
                 .tint(HerdrTheme.accent)
@@ -130,7 +128,7 @@ struct HerdrHarnessMacApp: App {
                     description: Text("Open Git from a workspace session.")
                 )
                 .frame(minWidth: 720, minHeight: 520)
-                .background(HerdrTheme.ink)
+                .background(HerdrTheme.windowBackground)
                 .foregroundStyle(HerdrTheme.text)
                 .preferredColorScheme(.dark)
             }
@@ -143,6 +141,7 @@ struct HerdrHarnessMacApp: App {
                 FirstMateGitWindowRoot(model: model, driver: connectionDriver, target: target)
                     .environment(herdPulse)
                     .environment(\.herdrFontScale, fontScale.scale)
+                    .preferredColorScheme(.dark)
             } else {
                 ContentUnavailableView(
                     "First Mate Git unavailable",
@@ -150,6 +149,9 @@ struct HerdrHarnessMacApp: App {
                     description: Text("Open Git from a selected First Mate feature.")
                 )
                 .frame(minWidth: 720, minHeight: 520)
+                .background(HerdrTheme.windowBackground)
+                .foregroundStyle(HerdrTheme.text)
+                .preferredColorScheme(.dark)
             }
         }
         .defaultSize(width: 1120, height: 760)
@@ -169,7 +171,7 @@ struct HerdrHarnessMacApp: App {
                     description: Text("Open PR Review from the navigator and choose a review to pop out.")
                 )
                 .frame(minWidth: 720, minHeight: 520)
-                .background(HerdrTheme.graphite)
+                .background(HerdrTheme.windowBackground)
                 .foregroundStyle(HerdrTheme.text)
                 .preferredColorScheme(.dark)
             }
@@ -192,7 +194,7 @@ struct HerdrHarnessMacApp: App {
             )
                 .environment(\.herdrFontScale, fontScale.scale)
                 .frame(minWidth: 860, idealWidth: 920, minHeight: 600, idealHeight: 680)
-                .background(HerdrTheme.ink)
+                .background(HerdrTheme.windowBackground)
                 .foregroundStyle(HerdrTheme.text)
                 .preferredColorScheme(.dark)
                 .tint(HerdrTheme.accent)
@@ -256,7 +258,17 @@ struct HerdrMacCommands: Commands {
             .accessibilityIdentifier("menu-capture-frontmost-window")
         }
 
-        // View menu, after the system's own "Toggle Sidebar" item.
+        // The shell draws its own rail, so it supplies the sidebar command.
+        CommandGroup(replacing: .sidebar) {
+            Button("Toggle Sidebar") {
+                shell.requestSidebarToggle()
+                openWindow(id: HerdrWindowID.main)
+            }
+            .keyboardShortcut("s", modifiers: [.command, .control])
+            .disabled(!model.hasCompletedSetup)
+        }
+
+        // View menu, after the sidebar command.
         CommandGroup(after: .sidebar) {
             Divider()
 

@@ -20,7 +20,8 @@ struct PaneGitWebContainer: NSViewRepresentable {
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = false
         webView.allowsLinkPreview = false
-        webView.underPageBackgroundColor = NSColor(HerdrTheme.graphite)
+        // Opaque: the embedded page is themed for `base`, never for glass.
+        webView.underPageBackgroundColor = HerdrTheme.resolved(HerdrTheme.windowBackground)
         context.coordinator.load(document, in: webView)
         return webView
     }

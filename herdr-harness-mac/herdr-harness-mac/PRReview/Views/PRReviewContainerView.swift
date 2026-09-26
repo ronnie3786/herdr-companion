@@ -34,7 +34,7 @@ struct PRReviewContainerView: View {
 
     var body: some View {
         ZStack {
-            HerdrBackground()
+            HerdrBackground(followsGlass: true)
             VStack(spacing: 0) {
                 if let review = store.snapshot?.review ?? store.selectedReview {
                     header(review)

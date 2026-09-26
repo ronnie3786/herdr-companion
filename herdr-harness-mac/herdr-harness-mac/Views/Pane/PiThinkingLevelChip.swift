@@ -6,6 +6,7 @@ struct PiThinkingLevelChip: View {
     let isEnabled: Bool
     let isInteractive: Bool
     let selectLevel: (PiThinkingLevel) -> Void
+    var style: ComposerChipStyle = .standalone
 
     var body: some View {
         if isInteractive {
@@ -29,7 +30,6 @@ struct PiThinkingLevelChip: View {
             .accessibilityLabel("Thinking level: \(displayText)")
         } else if currentLevel != nil {
             chipLabel
-                .opacity(0.6)
                 .accessibilityIdentifier("pi-chat-thinking")
                 .accessibilityLabel("Thinking level: \(displayText)")
         }
@@ -37,24 +37,23 @@ struct PiThinkingLevelChip: View {
 
     @ViewBuilder
     private var chipLabel: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             if isSetting {
                 ProgressView()
-                    .controlSize(.small)
+                    .controlSize(.mini)
             }
             Text(displayText)
+                .herdrFont(size: HerdrTheme.TextSize.caption)
+                .foregroundStyle(HerdrTheme.tertiaryText)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
             if isInteractive {
                 Image(systemName: "chevron.down")
-                    .herdrFont(.caption2)
+                    .herdrFont(size: 10, weight: .semibold)
+                    .foregroundStyle(HerdrTheme.iconTint)
             }
         }
-        .herdrFont(.caption, weight: .medium)
-        .foregroundStyle(isInteractive ? HerdrTheme.mist : HerdrTheme.muted)
-        .padding(.horizontal, 4)
-        .frame(minHeight: HerdrTheme.minHitTarget)
-        .contentShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+        .composerChip(style)
         .opacity(isInteractive && !isEnabled ? 0.45 : 1)
     }
 

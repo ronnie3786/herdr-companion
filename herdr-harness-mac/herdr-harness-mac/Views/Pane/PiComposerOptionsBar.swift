@@ -1,13 +1,12 @@
 import SwiftUI
 
+/// The composer toolbar's model + effort pill.
 struct PiComposerOptionsBar: View {
     let configuration: PiPromptComposerConfiguration
-    let responseAudioPlayer: ResponseAudioPlayer?
-    let activateResponseAudio: ((ResponseAudioAction) -> Void)?
     let modelFavorites: ModelFavoritesStore
 
     var body: some View {
-        HStack(spacing: 9) {
+        PiModelEffortPill {
             PiModelPickerChip(
                 currentModel: configuration.currentModel,
                 availableModels: configuration.availableModels,
@@ -22,8 +21,10 @@ struct PiComposerOptionsBar: View {
                 retry: {
                     Task { await configuration.retryLoadModels() }
                 },
-                modelFavorites: modelFavorites
+                modelFavorites: modelFavorites,
+                style: .segment
             )
+        } effort: {
             PiThinkingLevelChip(
                 currentLevel: configuration.thinkingLevel,
                 isSetting: configuration.isSettingThinkingLevel,
@@ -31,16 +32,9 @@ struct PiComposerOptionsBar: View {
                 isInteractive: configuration.supportsThinkingMenu,
                 selectLevel: { level in
                     Task { _ = await configuration.selectThinkingLevel(level) }
-                }
+                },
+                style: .segment
             )
-            Spacer(minLength: 4)
-            if let responseAudioPlayer, let activateResponseAudio {
-                ResponseAudioControlsView(
-                    player: responseAudioPlayer,
-                    showsTitles: true,
-                    activate: activateResponseAudio
-                )
-            }
         }
     }
 }

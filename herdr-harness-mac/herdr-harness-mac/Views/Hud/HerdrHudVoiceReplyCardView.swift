@@ -26,7 +26,7 @@ struct HerdrHudVoiceReplyCardView: View {
             height: HerdrHudPlacement.voiceReplyCardSize.height,
             alignment: .top
         )
-        .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.cardRadius))
+        .background(HerdrTheme.windowBackground, in: .rect(cornerRadius: HerdrTheme.cardRadius))
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
                 .strokeBorder(HerdrTheme.surface, lineWidth: 1)
@@ -44,18 +44,18 @@ struct HerdrHudVoiceReplyCardView: View {
     private var header: some View {
         HStack(spacing: 6) {
             Image(systemName: "mic.fill")
-                .herdrFont(.caption2, weight: .bold)
+                .herdrFont(size: HerdrTheme.TextSize.caption, weight: .bold)
                 .foregroundStyle(HerdrTheme.accent)
             Text(voiceReply.paneTitle.isEmpty ? "Voice reply" : voiceReply.paneTitle)
-                .herdrFont(.caption, weight: .semibold)
+                .herdrFont(size: HerdrTheme.TextSize.caption, weight: .semibold)
                 .foregroundStyle(HerdrTheme.text)
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 0)
             Button(action: dismiss) {
                 Image(systemName: "xmark")
-                    .herdrFont(.caption2, weight: .bold)
-                    .foregroundStyle(HerdrTheme.mist)
+                    .herdrFont(size: HerdrTheme.TextSize.caption, weight: .bold)
+                    .foregroundStyle(HerdrTheme.secondaryText)
                     .herdrHitTarget(minWidth: 0)
             }
             .buttonStyle(.plain)
@@ -82,7 +82,7 @@ struct HerdrHudVoiceReplyCardView: View {
         VStack(alignment: .leading, spacing: 8) {
             TextField("Your reply", text: $voiceReply.draft, axis: .vertical)
                 .textFieldStyle(.plain)
-                .herdrFont(.caption)
+                .herdrFont(size: HerdrTheme.TextSize.caption)
                 .foregroundStyle(HerdrTheme.text)
                 .focused($isDraftFocused)
                 .lineLimit(3...5)
@@ -98,14 +98,14 @@ struct HerdrHudVoiceReplyCardView: View {
             HStack(spacing: 8) {
                 if voiceReply.usedFallback {
                     Text("Apple Speech")
-                        .herdrFont(.caption2)
-                        .foregroundStyle(HerdrTheme.muted)
+                        .herdrFont(size: HerdrTheme.TextSize.caption)
+                        .foregroundStyle(HerdrTheme.tertiaryText)
                 }
                 Spacer(minLength: 0)
                 Button(action: send) {
                     Label("Send", systemImage: "arrow.up.circle.fill")
-                        .herdrFont(.caption, weight: .semibold)
-                        .foregroundStyle(voiceReply.canSend ? HerdrTheme.accent : HerdrTheme.muted)
+                        .herdrFont(size: HerdrTheme.TextSize.caption, weight: .semibold)
+                        .foregroundStyle(voiceReply.canSend ? HerdrTheme.accent : HerdrTheme.tertiaryText)
                         .herdrHitTarget(minWidth: 0)
                 }
                 .buttonStyle(.plain)
@@ -123,8 +123,8 @@ struct HerdrHudVoiceReplyCardView: View {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(HerdrTheme.success)
             }
             Text(title)
-                .herdrFont(.caption)
-                .foregroundStyle(HerdrTheme.mist)
+                .herdrFont(size: HerdrTheme.TextSize.caption)
+                .foregroundStyle(HerdrTheme.secondaryText)
             Spacer(minLength: 0)
         }
         .frame(maxHeight: .infinity, alignment: .top)
@@ -133,14 +133,14 @@ struct HerdrHudVoiceReplyCardView: View {
     private func failure(_ message: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(message)
-                .herdrFont(.caption)
+                .herdrFont(size: HerdrTheme.TextSize.caption)
                 .foregroundStyle(HerdrTheme.alert)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 10) {
                 Spacer(minLength: 0)
                 Button("Try again") { voiceReply.start() }
                     .buttonStyle(.plain)
-                    .herdrFont(.caption2, weight: .semibold)
+                    .herdrFont(size: HerdrTheme.TextSize.caption, weight: .semibold)
                     .foregroundStyle(HerdrTheme.accent)
             }
         }

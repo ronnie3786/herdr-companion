@@ -32,12 +32,12 @@ struct FirstMateModelSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("First Mate model").herdrFont(.title3, weight: .semibold)
+            Text("First Mate model").herdrFont(size: HerdrTheme.TextSize.reading, weight: .semibold)
             Text("Saved for this feature and applied to the next First Mate turn. Host planning, execution, and architect routes are configured separately.")
-                .herdrFont(.caption).foregroundStyle(.secondary)
+                .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
             if feature.modelSettingsRevision == nil {
                 Label("Update this companion server to 0.12.0b3 or later to configure models here. You can keep chatting with its current model.", systemImage: "arrow.down.circle")
-                    .herdrFont(.callout)
+                    .herdrFont(size: HerdrTheme.TextSize.small)
                 Button("Done") { dismiss() }.frame(maxWidth: .infinity, alignment: .trailing)
             } else {
                 modelRow(id: "", name: "Host default", subtitle: catalog?.defaultModel.isEmpty == false ? catalog!.defaultModel : "Pi's configured model")
@@ -55,7 +55,7 @@ struct FirstMateModelSettingsView: View {
                         if loading { ProgressView("Loading host models…").padding() }
                         else if catalog != nil, models.isEmpty {
                             Text(search.isEmpty ? "No configured models found. Check Pi's provider setup on this host." : "No matching models.")
-                                .herdrFont(.caption).foregroundStyle(.secondary).padding()
+                                .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText).padding()
                         }
                     }
                 }.frame(height: 165)
@@ -67,23 +67,23 @@ struct FirstMateModelSettingsView: View {
                     }
                 }.accessibilityIdentifier("first-mate-thinking-effort")
                 Text("Automatic uses the configured host coordinator effort. When that is unset, Pi keeps the saved session effort or its default. Pi adjusts levels to what the model supports.")
-                    .herdrFont(.caption2).foregroundStyle(.secondary)
+                    .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
                 if let routing = catalog?.routing {
                     Divider()
-                    Text("Host routing defaults").herdrFont(.subheadline, weight: .semibold)
+                    Text("Host routing defaults").herdrFont(size: HerdrTheme.TextSize.small, weight: .semibold)
                     routingRow("Coordinator", value: routing.coordinator)
                     routingRow("Planning", value: routing.planning)
                     routingRow("Execution", value: routing.execution)
                     if let architect = routing.architect {
                         routingRow("Architect", value: architect, emptyModelLabel: architect.pinnedDisplayName)
                         Text("Architect is a host-only pin from the private [first_mate] configuration. Change architect_model and architect_thinking there; this feature's model choice never overrides it.")
-                            .herdrFont(.caption2).foregroundStyle(.secondary)
+                            .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
                     }
                     Text("Host routing applies to new dispatches, retries, continuations, and handoffs. Already-started sessions keep their recorded selection.")
-                        .herdrFont(.caption2).foregroundStyle(.secondary)
+                        .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
                 }
                 if let error {
-                    Text(error).herdrFont(.caption).foregroundStyle(.orange).textSelection(.enabled)
+                    Text(error).herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.warning).textSelection(.enabled)
                 }
                 HStack {
                     Button("Reload") { Task { await reload() } }.disabled(loading || saving)
@@ -104,8 +104,8 @@ struct FirstMateModelSettingsView: View {
         Button { model = id } label: {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(name).herdrFont(.callout, weight: .medium).lineLimit(1)
-                    Text(subtitle).herdrFont(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    Text(name).herdrFont(size: HerdrTheme.TextSize.small, weight: .medium).lineLimit(1)
+                    Text(subtitle).herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText).lineLimit(1)
                 }
                 Spacer(minLength: 4)
                 if model == id { Image(systemName: "checkmark").foregroundStyle(.tint) }
@@ -120,9 +120,9 @@ struct FirstMateModelSettingsView: View {
         let fallbackDisplayName = emptyModelLabel ?? value.compactDisplayName
         let displayName = value.configuredDisplayName ?? fallbackDisplayName
         return HStack {
-            Text(title).herdrFont(.caption).foregroundStyle(.secondary)
+            Text(title).herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
             Spacer()
-            Text(displayName).herdrFont(.caption, weight: .medium)
+            Text(displayName).herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                 .lineLimit(1).truncationMode(.middle)
                 .help(value.configuredDisplayName == nil ? fallbackDisplayName : [value.model, value.thinking].filter { !$0.isEmpty }.joined(separator: " · "))
         }

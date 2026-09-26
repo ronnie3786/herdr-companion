@@ -9,6 +9,8 @@ struct PiPromptComposerStatusBar: View {
     let selectDisposition: (PiPromptDisposition) -> Void
     let stop: () -> Void
     var showsStatusLabel = true
+    /// The composer's primary button takes over Stop; other hosts keep this one.
+    var showsStop = true
 
     var body: some View {
         HStack(spacing: 8) {
@@ -33,24 +35,29 @@ struct PiPromptComposerStatusBar: View {
                     }
                 }
             } label: {
-                Label(disposition.shortLabel, systemImage: disposition.symbol)
-                    .herdrFont(.caption, weight: .semibold)
-                    .foregroundStyle(HerdrTheme.mist)
-                    .padding(.horizontal, 4)
-                    .frame(minHeight: HerdrTheme.minHitTarget)
-                    .contentShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+                // MonoCode's Steer pill: symbol and short label, no chevron.
+                HStack(spacing: 4) {
+                    Image(systemName: disposition.symbol)
+                        .herdrFont(size: 12)
+                    Text(disposition.shortLabel)
+                        .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
+                }
+                .foregroundStyle(HerdrTheme.primaryText)
+                .composerChip(.standalone)
             }
             .piChipMenu()
             .disabled(!canSelectDisposition || availableDispositions.isEmpty)
             .accessibilityLabel("Prompt mode: \(disposition.label)")
             .accessibilityIdentifier("pi-chat-disposition")
 
-            Button("Stop", systemImage: "stop.fill", role: .destructive, action: stop)
-                .buttonStyle(PiChatButtonStyle(tint: HerdrTheme.alert, emphasis: .text))
-                .herdrFont(.caption, weight: .semibold)
-                .frame(minHeight: PiChatChrome.controlHeight)
-                .disabled(!canAbort)
-                .accessibilityIdentifier("pi-chat-stop")
+            if showsStop {
+                Button("Stop", systemImage: "stop.fill", role: .destructive, action: stop)
+                    .buttonStyle(PiChatButtonStyle(tint: HerdrTheme.alert, emphasis: .text))
+                    .herdrFont(size: HerdrTheme.TextSize.small, weight: .semibold)
+                    .frame(minHeight: PiChatChrome.controlHeight)
+                    .disabled(!canAbort)
+                    .accessibilityIdentifier("pi-chat-stop")
+            }
         }
         .padding(.horizontal, showsStatusLabel ? 4 : 0)
         .accessibilityElement(children: .contain)
@@ -75,12 +82,12 @@ struct PiCompactionStatusBar: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(presentation.title)
-                    .herdrFont(.caption, weight: .semibold)
+                    .herdrFont(size: HerdrTheme.TextSize.small, weight: .semibold)
                     .foregroundStyle(titleColor)
                 if let detail = presentation.detail {
                     Text(detail)
-                        .herdrFont(.caption2)
-                        .foregroundStyle(HerdrTheme.mist)
+                        .herdrFont(size: HerdrTheme.TextSize.caption)
+                        .foregroundStyle(HerdrTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

@@ -10,7 +10,7 @@ struct WorkspaceScopePicker: View {
     @FocusState private var isFocused: Bool
 
     var body: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 1) {
             ForEach(HerdrDetailScope.pickerCases(includingGit: includesGit)) { scope in
                 WorkspaceScopeSegment(
                     scope: scope,
@@ -20,13 +20,7 @@ struct WorkspaceScopePicker: View {
                 )
             }
         }
-        .padding(2)
-        .background(HerdrTheme.graphite, in: .rect(cornerRadius: 7))
-        .overlay {
-            RoundedRectangle(cornerRadius: 7)
-                .strokeBorder(HerdrTheme.subtleSeparator, lineWidth: 1)
-        }
-        .contentShape(.rect(cornerRadius: 7))
+        .contentShape(.rect(cornerRadius: HerdrTheme.Radius.control))
         // One keyboard stop, like a native segmented picker. Pointer selection
         // does not move focus out of the prompt; Tab opts into arrow navigation.
         .focusable(interactions: .activate)

@@ -74,7 +74,7 @@ struct HerdrWebThemeTests {
                       getComputedStyle(shadow.querySelector('p')).backgroundColor];
             })();
             """) as? [String]
-        #expect(values == ["rgb(32, 33, 44)", "rgb(228, 229, 237)", "rgb(32, 33, 44)"])
+        #expect(values == ["rgb(21, 21, 25)", "rgb(233, 233, 236)", "rgb(21, 21, 25)"])
 
         let fileStyles = try await view.evaluateJavaScript("""
             (() => {

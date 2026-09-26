@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Quiet, equal-weight accents over the existing charcoal/lavender surfaces.
+/// Quiet, equal-weight accents over the sidebar rail.
 /// Stable raw values are persisted locally; changing a display name is safe.
 enum ChatTabColor: String, CaseIterable, Codable, Identifiable, Sendable {
     case lavender, iris, rose, clay, sage, slate
@@ -32,7 +32,7 @@ enum ChatTabColor: String, CaseIterable, Codable, Identifiable, Sendable {
     var swatch: Color { blended(over: rgb, amount: 0) }
 
     func rowBackground(selected: Bool = false, hovering: Bool = false) -> Color {
-        blended(over: 0x191A23, amount: selected ? 0.20 : hovering ? 0.18 : 0.16)
+        blended(over: 0x131317, amount: selected ? 0.20 : hovering ? 0.18 : 0.16)
     }
 
     /// Opaque fills keep contrast predictable regardless of the hosting view.

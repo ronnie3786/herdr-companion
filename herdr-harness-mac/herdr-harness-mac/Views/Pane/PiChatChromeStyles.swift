@@ -10,9 +10,9 @@ import SwiftUI
 /// so the iOS look survives the port. Behaviour, roles, animation and
 /// accessibility identifiers are untouched — only the chrome is redrawn.
 enum PiChatChrome {
-    /// Mac replacement for the iOS 44pt touch target on Pi *controls*.
-    /// Activity cards use a compact header on the Mac.
-    static let controlHeight = 30.0
+    /// Mac replacement for the iOS 44pt touch target on Pi *controls*:
+    /// MonoCode's 28pt control, which is also `HerdrTheme.minHitTarget`.
+    static let controlHeight = 28.0
 
     /// Hover cross-fade. Deliberately faster than `PiChatMotion.stateAnimation`
     /// so pointer feedback feels instant next to the chat's own motion.
@@ -74,9 +74,9 @@ struct PiDisclosureCard<Label: View, Content: View>: View {
 /// macOS push button, with pointer hover and press feedback.
 struct PiChatButtonStyle: ButtonStyle {
     enum Emphasis {
-        /// Tinted wash + hairline, matching iOS `.bordered` with a tint.
+        /// Tinted label on a 10% ink wash.
         case soft
-        /// Solid tint with ink text, matching iOS `.borderedProminent`.
+        /// Solid tint with a dark label (lavender primary by default).
         case prominent
         /// Bare label — the caller owns padding and background.
         case text
@@ -100,8 +100,7 @@ private struct PiChatButtonBody: View {
     var body: some View {
         configuration.label
             .foregroundStyle(foreground)
-            .padding(.horizontal, emphasis == .text ? 0 : 14)
-            .padding(.vertical, emphasis == .text ? 0 : 7)
+            .padding(.horizontal, emphasis == .text ? 0 : 10)
             .frame(minHeight: PiChatChrome.controlHeight)
             .background(fill, in: shape)
             .overlay { shape.stroke(stroke, lineWidth: 1) }
@@ -112,19 +111,19 @@ private struct PiChatButtonBody: View {
     }
 
     private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+        RoundedRectangle(cornerRadius: HerdrTheme.Radius.control)
     }
 
     private var foreground: Color {
         switch emphasis {
         case .soft, .text: tint
-        case .prominent: HerdrTheme.ink
+        case .prominent: HerdrTheme.onPrimary
         }
     }
 
     private var fill: Color {
         switch emphasis {
-        case .soft: tint.opacity(isHovering && isEnabled ? 0.16 : 0.08)
+        case .soft: isHovering && isEnabled ? HerdrTheme.strongOutline : HerdrTheme.selectedFill
         case .prominent: tint.opacity(isHovering && isEnabled ? 1 : 0.9)
         case .text: .clear
         }
@@ -132,8 +131,7 @@ private struct PiChatButtonBody: View {
 
     private var stroke: Color {
         switch emphasis {
-        case .soft: HerdrTheme.separator
-        case .prominent, .text: .clear
+        case .soft, .prominent, .text: .clear
         }
     }
 

@@ -4,13 +4,14 @@ import SwiftUI
 /// everything else is a glyph plus a word in a quiet tone.
 extension HerdrTheme {
     static let attention = warning
-    /// `warning` at 10% over `elevated`; body text on it stays above 9:1.
-    static let attentionSurface = Color(.sRGB, red: 0x3B / 255, green: 0x39 / 255, blue: 0x42 / 255, opacity: 1)
-    static let attentionEdge = warning.opacity(0.4)
-    static let pillRadius = 6.0
-    static let nowRadius = 9.0
-    static let bubbleRadius = 14.0
-    static let composerRadius = 11.0
+    /// `warning` at 8% over a card (`elevated`), #2B2728; body text on it stays above 9:1.
+    static let attentionSurface = Color(.sRGB, red: 0x2B / 255, green: 0x27 / 255, blue: 0x28 / 255, opacity: 1)
+    static let attentionEdge = warning.opacity(0.22)
+    /// Status pills are 20pt tall with a 4pt radius.
+    static let pillRadius = 4.0
+    static let nowRadius = Radius.composer
+    static let bubbleRadius = Radius.card
+    static let composerRadius = Radius.composer
 }
 
 /// The single mapping from a First Mate status to what the person sees.

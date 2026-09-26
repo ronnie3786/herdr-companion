@@ -46,40 +46,42 @@ enum HerdrWebTheme {
         )
     }
 
+    /// `#rrggbb` for opaque tokens, `rgb(r g b / a)` for Mono's translucent fills and lines.
     private static func hex(_ color: Color) -> String {
         let value = NSColor(color).usingColorSpace(.sRGB)!
-        return String(
-            format: "#%02x%02x%02x",
-            Int((value.redComponent * 255).rounded()),
-            Int((value.greenComponent * 255).rounded()),
-            Int((value.blueComponent * 255).rounded())
-        )
+        let red = Int((value.redComponent * 255).rounded())
+        let green = Int((value.greenComponent * 255).rounded())
+        let blue = Int((value.blueComponent * 255).rounded())
+        if value.alphaComponent < 0.999 {
+            return String(format: "rgb(%d %d %d / %.3f)", red, green, blue, value.alphaComponent)
+        }
+        return String(format: "#%02x%02x%02x", red, green, blue)
     }
 
     static var css: String {
         """
         :root, :root[data-theme] {
           color-scheme: dark;
-          --bg: \(hex(HerdrTheme.graphite));
-          --bg-sidebar-top: \(hex(HerdrTheme.ink));
-          --bg-sidebar-bottom: \(hex(HerdrTheme.ink));
-          --bg-detail-top: \(hex(HerdrTheme.graphite));
-          --bg-detail-bottom: \(hex(HerdrTheme.graphite));
+          --bg: \(hex(HerdrTheme.windowBackground));
+          --bg-sidebar-top: \(hex(HerdrTheme.railBackground));
+          --bg-sidebar-bottom: \(hex(HerdrTheme.railBackground));
+          --bg-detail-top: \(hex(HerdrTheme.windowBackground));
+          --bg-detail-bottom: \(hex(HerdrTheme.windowBackground));
           --panel: \(hex(HerdrTheme.elevated));
           --panel-strong: \(hex(HerdrTheme.input));
           --surface: \(hex(HerdrTheme.elevated));
-          --raised: \(hex(HerdrTheme.input));
-          --hover: \(hex(HerdrTheme.selection));
-          --line: \(hex(HerdrTheme.separator));
-          --line-strong: \(hex(HerdrTheme.surface));
-          --text: \(hex(HerdrTheme.text));
-          --soft: \(hex(HerdrTheme.mist));
-          --muted: \(hex(HerdrTheme.mist));
-          --muted-dim: \(hex(HerdrTheme.muted));
-          --dim: \(hex(HerdrTheme.mist));
-          --faint: \(hex(HerdrTheme.muted));
+          --raised: \(hex(HerdrTheme.surface));
+          --hover: \(hex(HerdrTheme.hoverFill));
+          --line: \(hex(HerdrTheme.hairline));
+          --line-strong: \(hex(HerdrTheme.outline));
+          --text: \(hex(HerdrTheme.primaryText));
+          --soft: \(hex(HerdrTheme.proseText));
+          --muted: \(hex(HerdrTheme.secondaryText));
+          --muted-dim: \(hex(HerdrTheme.tertiaryText));
+          --dim: \(hex(HerdrTheme.secondaryText));
+          --faint: \(hex(HerdrTheme.tertiaryText));
           --accent: \(hex(HerdrTheme.accent));
-          --accent-bg: \(hex(HerdrTheme.selection));
+          --accent-bg: \(hex(HerdrTheme.selectedFill));
           --green: \(hex(HerdrTheme.success));
           --success: \(hex(HerdrTheme.success));
           --orange: \(hex(HerdrTheme.working));
@@ -90,13 +92,47 @@ enum HerdrWebTheme {
           --working-border: rgb(156 205 185 / 0.24);
           --working-bg: rgb(156 205 185 / 0.08);
           --watch-ring: rgb(156 205 185 / 0.16);
-          --region: rgb(41 43 57 / 0.5);
+          --region: \(hex(HerdrTheme.cardFill));
           --minimap-bg: \(hex(HerdrTheme.elevated));
           --overlay: \(hex(HerdrTheme.elevated));
-          --grid: \(hex(HerdrTheme.separator));
-          --gate-pink: \(hex(HerdrTheme.mauve));
+          --grid: \(hex(HerdrTheme.hairline));
+          --gate-pink: \(hex(HerdrTheme.folder));
           --font: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
           --radius: 12px;
+          /* Mono × Herdr tokens for pages that adopt them directly. */
+          --mono-base: \(hex(HerdrTheme.base));
+          --mono-ink: \(hex(HerdrTheme.foreground));
+          --mono-rail: \(hex(HerdrTheme.railBackground));
+          --mono-card: \(hex(HerdrTheme.cardFill));
+          --mono-field: \(hex(HerdrTheme.fieldFill));
+          --mono-inset: \(hex(HerdrTheme.insetFill));
+          --mono-chip: \(hex(HerdrTheme.chipFill));
+          --mono-selected: \(hex(HerdrTheme.selectedFill));
+          --mono-hairline: \(hex(HerdrTheme.hairline));
+          --mono-outline: \(hex(HerdrTheme.outline));
+          --mono-row-divider: \(hex(HerdrTheme.rowDivider));
+          --mono-prose: \(hex(HerdrTheme.proseText));
+          --mono-secondary: \(hex(HerdrTheme.secondaryText));
+          --mono-tertiary: \(hex(HerdrTheme.tertiaryText));
+          --mono-icon: \(hex(HerdrTheme.iconTint));
+          --mono-primary: \(hex(HerdrTheme.primaryAction));
+          --mono-on-primary: \(hex(HerdrTheme.onPrimary));
+          --mono-diff-add-row: \(hex(HerdrTheme.diffAddRow));
+          --mono-diff-add-gutter: \(hex(HerdrTheme.diffAddGutter));
+          --mono-diff-add-number: \(hex(HerdrTheme.diffAddNumber));
+          --mono-diff-remove-row: \(hex(HerdrTheme.diffRemoveRow));
+          --mono-diff-remove-gutter: \(hex(HerdrTheme.diffRemoveGutter));
+          --mono-diff-remove-number: \(hex(HerdrTheme.diffRemoveNumber));
+          --mono-diff-add: \(hex(HerdrTheme.diffAdd));
+          --mono-diff-remove: \(hex(HerdrTheme.diffRemove));
+          --mono-diff-modified: \(hex(HerdrTheme.diffModified));
+          --mono-diff-untracked: \(hex(HerdrTheme.diffUntracked));
+          --mono-syntax-keyword: \(hex(HerdrTheme.Syntax.keyword));
+          --mono-syntax-callable: \(hex(HerdrTheme.Syntax.callable));
+          --mono-syntax-string: \(hex(HerdrTheme.Syntax.string));
+          --mono-syntax-type: \(hex(HerdrTheme.Syntax.type));
+          --mono-syntax-comment: \(hex(HerdrTheme.Syntax.comment));
+          --mono-syntax-property: \(hex(HerdrTheme.Syntax.property));
         }
         .hz-git-workbench, .hz-diff-inspector { background: var(--bg); }
         .hz-git-navigator { background: var(--bg-sidebar-top); }

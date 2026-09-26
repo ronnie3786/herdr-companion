@@ -12,7 +12,7 @@ enum HerdrNoteColor: String, Codable, CaseIterable, Identifiable, Sendable {
         case .peach: Color(red: 0.8745, green: 0.7020, blue: 0.6078)
         case .pink: Color(red: 0.8471, green: 0.6980, blue: 0.7922)
         case .green: HerdrTheme.signal
-        case .blue: HerdrTheme.primaryAction
+        case .blue: HerdrTheme.brandBlue
         case .lavender: Color(red: 0.7333, green: 0.7059, blue: 0.8941)
         }
     }

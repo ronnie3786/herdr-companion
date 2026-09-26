@@ -3,6 +3,10 @@ import SwiftUI
 struct FirstMateFeatureCard: View {
     let feature: FirstMateFeature
     let snapshot: FirstMateSnapshot?
+    /// The owning machine's display name in a combined All Machines list.
+    /// `nil` when every visible feature belongs to the same host.
+    var machineName: String? = nil
+    var machineAccessibilityIdentifier: String? = nil
     @Environment(\.colorScheme) private var scheme
     private var palette: FirstMatePalette { FirstMatePalette(scheme: scheme) }
 
@@ -23,6 +27,13 @@ struct FirstMateFeatureCard: View {
                 Text(feature.title).font(.headline).foregroundStyle(palette.text)
                 Text(feature.goal).font(.subheadline).foregroundStyle(palette.secondaryText).lineLimit(2)
             }
+            if let machineName {
+                Label(machineName, systemImage: "desktopcomputer")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(palette.secondaryText)
+                    .lineLimit(1)
+                    .accessibilityIdentifier(machineAccessibilityIdentifier ?? "first-mate-feature-owner")
+            }
             HStack(spacing: 6) {
                 Image(systemName: "point.3.connected.trianglepath.dotted").accessibilityHidden(true)
                 Text(snapshot?.currentVisit?.title ?? (feature.currentVisitID == nil ? "Ready to shape the plan" : "Open feature"))
@@ -38,6 +49,14 @@ struct FirstMateFeatureCard: View {
         .background(palette.surface, in: .rect(cornerRadius: 20))
         .overlay(RoundedRectangle(cornerRadius: 20).stroke(palette.line, lineWidth: 0.5))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(feature.title), \(feature.workItemID ?? "Idea"), status \(feature.status.replacingOccurrences(of: "_", with: " ")). Goal: \(feature.goal). \(FirstMateUsageFormatting.taskAccessibilityDescription(feature.usage))")
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var accessibilityLabel: String {
+        var label = "\(feature.title), \(feature.workItemID ?? "Idea"), status \(feature.status.replacingOccurrences(of: "_", with: " ")). Goal: \(feature.goal). \(FirstMateUsageFormatting.taskAccessibilityDescription(feature.usage))"
+        if let machineName {
+            label += " On \(machineName)."
+        }
+        return label
     }
 }

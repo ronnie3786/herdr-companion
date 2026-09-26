@@ -64,6 +64,14 @@ final class HerdrFirstMateUITests: XCTestCase {
     func testCreateAFeatureAndSendItsFirstDirection() throws {
         let app = launchDemo(appearance: "light")
         app.buttons["first-mate-new-feature"].tap()
+        // Choose the creation host before typing so the destination menu opens
+        // without a keyboard covering the form.
+        let destination = app.buttons["first-mate-create-machine"]
+        XCTAssertTrue(destination.waitForExistence(timeout: 4))
+        destination.tap()
+        let desktopOption = app.buttons["desktop"]
+        XCTAssertTrue(desktopOption.waitForExistence(timeout: 4))
+        desktopOption.tap()
         let title = app.descendants(matching: .any)["first-mate-create-title"]
         XCTAssertTrue(title.waitForExistence(timeout: 4))
         title.tap()
@@ -109,15 +117,15 @@ final class HerdrFirstMateUITests: XCTestCase {
     @MainActor
     private func launchDemo(appearance: String, extraArguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-HerdrFirstMateDemo", "-herdr.firstMate.appearance", appearance, "-herdr.smartAlerts", "NO"] + extraArguments
+        app.launchArguments = ["-HerdrFirstMateDemo", "-HerdrResetFirstMateScope", "-herdr.firstMate.appearance", appearance, "-herdr.smartAlerts", "NO"] + extraArguments
         app.launch()
-        XCTAssertTrue(app.buttons["first-mate-feature-demo-session-continuity"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["first-mate-feature-demo1-demo-session-continuity"].waitForExistence(timeout: 10))
         return app
     }
 
     @MainActor
     private func openFeature(_ app: XCUIApplication) {
-        let feature = app.buttons["first-mate-feature-demo-session-continuity"]
+        let feature = app.buttons["first-mate-feature-demo1-demo-session-continuity"]
         scrollTo(feature, app: app)
         feature.tap()
     }

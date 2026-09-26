@@ -91,7 +91,7 @@ struct AppRootView: View {
 
     private var firstMateObservation: FirstMateObservationContext {
         FirstMateObservationContext(
-            machineID: model.firstMateMachineID,
+            machineIDs: model.machines.map(\.id),
             generation: model.connectionGeneration,
             isDemo: model.isDemoMode,
             isActive: model.hasCompletedSetup && model.selectedTab == .firstMate && scenePhase == .active
@@ -114,7 +114,7 @@ struct AppRootView: View {
     private var appTabs: some View {
         TabView(selection: $model.selectedTab) {
             Tab("First Mate", systemImage: "sailboat", value: .firstMate) {
-                FirstMateWorkspaceView(model: model, store: model.firstMate)
+                FirstMateWorkspaceView(model: model, fleet: model.firstMateFleet)
             }
 
 

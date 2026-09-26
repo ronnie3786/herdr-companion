@@ -1,5 +1,14 @@
 # iOS next (unreleased)
 
+## All Machines in First Mate
+
+- The **First Mate** tab opens on **All Machines**, combining the features of every configured host with items waiting for your direction first. Each combined card names its owning host, while the host menu now offers **All Machines** plus every machine individually.
+- Choosing one machine filters the list to it; choosing **All Machines** restores the combined view. An explicit choice is remembered across launches, and a saved host that leaves the roster resolves to All Machines instead of another machine.
+- Refresh, search, and **Show archived** apply across the hosts in scope. An offline, unsupported, or empty host shows its own notice, and cached features stay readable without hiding a healthy host's features.
+- Creating a feature from All Machines requires choosing its destination host before a repository folder is accepted. A single-machine scope preselects that host, recent folders come only from the chosen destination, and changing the destination clears the previous folder.
+- Opening a feature, sending direction, archiving, and reading documents or saved sessions always use the exact owning host, even when two machines share a feature ID. Detail navigation and open sheets are cleared when an owner is removed or a connection is replaced, never redirected to another machine.
+- The versioned scope preference leaves the legacy `herdr.firstMate.machine` value untouched; an upgrade with only that value opens on All Machines.
+
 ## Compaction completion in Pi chats
 
 - After Pi confirms context compaction, the composer status area replaces its compacting spinner with a checkmark and **Context compacted** beside a readiness line.
@@ -14,8 +23,12 @@
 No companion server, Mac app, Car mode, Pi extension, authentication, navigation,
 or API contract change is required. The existing `session_compact` events and
 compaction entries are sufficient; a server that provides neither simply shows
-no completion cue. The signed Mac update feed installs only the Mac app, so the
-iPhone/iPad build ships separately through its own pipeline.
+no completion cue. The All Machines First Mate behavior needs only the existing
+`first-mate-v1` listing, capability, detail, resource, and mutation APIs; an
+older companion keeps its own notice and does not block a healthy host. The
+signed Mac update feed installs only the Mac app, so both the iPhone/iPad build
+with All Machines and the existing compaction cue ship separately through the
+iOS pipeline; publishing a Mac release does not install either on a phone.
 
 The iOS unit suites cover the reducer, store recovery, composer configuration,
 timeline placement, submission guards, and unsent-draft preservation, plus

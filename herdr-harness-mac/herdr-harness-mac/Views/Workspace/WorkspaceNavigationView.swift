@@ -350,6 +350,7 @@ struct WorkspaceNavigationView: View {
             }
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .environment(\.herdrHostsTitleBar, true)
         }
         .background(detailBackground)
         .overlayPreferenceValue(HerdrTitleBarItemsKey.self, alignment: .top) { items in

@@ -13,10 +13,10 @@ struct WorkspaceSearchField: View {
                 .foregroundStyle(isFocused ? HerdrTheme.accent : HerdrTheme.iconTint)
                 .accessibilityHidden(true)
 
-            // An explicit prompt color: the system placeholder falls below 4.5:1.
-            TextField(placeholder, text: $text, prompt: Text(placeholder).foregroundStyle(HerdrTheme.tertiaryText))
+            TextField(placeholder, text: $text, prompt: Text(""))
                 // Plain style, or AppKit draws its own bezel inside our chrome.
                 .textFieldStyle(.plain)
+                .herdrPlaceholder(placeholder, isVisible: text.isEmpty)
                 .herdrFont(size: HerdrTheme.TextSize.small, relativeTo: .subheadline)
                 .foregroundStyle(HerdrTheme.text)
                 .autocorrectionDisabled()

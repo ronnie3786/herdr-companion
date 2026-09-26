@@ -10,36 +10,56 @@ struct AgentBoardAgentsView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 Text("\(content.agents.count) agent\(content.agents.count == 1 ? "" : "s") · \(content.runningCount) running")
-                    .herdrFont(.subheadline, monospacedDigit: true)
-                    .foregroundStyle(HerdrTheme.muted)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(HerdrTheme.tertiaryText)
                     .padding(.bottom, 6)
                 if content.agents.isEmpty {
                     Text("No agents assigned yet. First Mate adds them as the plan takes shape.")
-                        .herdrFont(.callout).foregroundStyle(HerdrTheme.muted)
+                        .herdrFont(size: HerdrTheme.TextSize.small).foregroundStyle(HerdrTheme.tertiaryText)
                 }
                 ForEach(content.agents) { agent in
                     AgentBoardAgentRow(agent: agent, open: { openAgent(agent) })
                 }
                 if !content.coordinatorSessions.isEmpty {
-                    DisclosureGroup(isExpanded: $showsSessions) {
+                    // A plain chevron button: DisclosureGroup is off limits in
+                    // scrolling lists (plan §4).
+                    Button {
+                        showsSessions.toggle()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "chevron.right")
+                                .herdrFont(size: HerdrTheme.TextSize.micro, weight: .semibold)
+                                .foregroundStyle(HerdrTheme.iconTint)
+                                .rotationEffect(.degrees(showsSessions ? 90 : 0))
+                                .accessibilityHidden(true)
+                            Text("First Mate sessions (\(content.coordinatorSessions.count))")
+                                .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
+                                .foregroundStyle(HerdrTheme.secondaryText)
+                            Spacer(minLength: 0)
+                        }
+                        .frame(minHeight: HerdrTheme.minHitTarget)
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityValue(showsSessions ? "Expanded" : "Collapsed")
+                    .padding(.top, 12)
+                    if showsSessions {
                         ForEach(content.coordinatorSessions) { session in
                             AgentBoardSessionRow(session: session) { openSession(session) }
                         }
-                    } label: {
-                        Text("First Mate sessions (\(content.coordinatorSessions.count))")
-                            .herdrFont(.callout, weight: .medium)
-                            .foregroundStyle(HerdrTheme.mist)
+                        .padding(.leading, 16)
                     }
-                    .padding(.top, 12)
                 }
                 if content.sessionsTruncated {
                     Text("Earlier sessions are in the full First Mate view.")
-                        .herdrFont(.subheadline).foregroundStyle(HerdrTheme.muted)
+                        .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText)
                         .padding(.top, 8)
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -57,7 +77,7 @@ struct AgentBoardAgentRow: View {
         case .running: ("circle.lefthalf.filled", HerdrTheme.signal)
         case .finished: ("checkmark.circle", HerdrTheme.success)
         case .failed: ("xmark.circle", HerdrTheme.attention)
-        case .waiting, .other: ("circle", HerdrTheme.muted)
+        case .waiting, .other: ("circle", HerdrTheme.tertiaryText)
         }
     }
 
@@ -74,13 +94,13 @@ struct AgentBoardAgentRow: View {
                     .frame(width: 16)
                     .accessibilityHidden(true)
                 Text(agent.title)
-                    .herdrFont(.callout, weight: .medium)
-                    .foregroundStyle(HerdrTheme.text)
+                    .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
+                    .foregroundStyle(HerdrTheme.primaryText)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text(agent.statusTitle)
-                    .herdrFont(.subheadline)
-                    .foregroundStyle(HerdrTheme.muted)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(HerdrTheme.tertiaryText)
                     .fixedSize()
                 Image(systemName: "arrow.up.right")
                     .imageScale(.small)
@@ -88,10 +108,10 @@ struct AgentBoardAgentRow: View {
                     .opacity(isHovered && agent.canOpen ? 1 : 0)
                     .accessibilityHidden(true)
             }
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 2)
             .frame(minHeight: 30)
-            .background(isHovered && agent.canOpen ? HerdrTheme.surface.opacity(0.5) : .clear, in: .rect(cornerRadius: 6))
-            .overlay(alignment: .bottom) { Rectangle().fill(HerdrTheme.subtleSeparator).frame(height: 1) }
+            .background(isHovered && agent.canOpen ? HerdrTheme.hoverFill : .clear, in: .rect(cornerRadius: HerdrTheme.Radius.control))
+            .herdrHairline(.bottom, color: HerdrTheme.rowDivider)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -114,12 +134,14 @@ private struct AgentBoardSessionRow: View {
                 Image(systemName: "sailboat").imageScale(.small).foregroundStyle(HerdrTheme.accent)
                     .accessibilityHidden(true)
                 Text(AgentBoardProse.decodeEntities(session.title))
-                    .herdrFont(.callout)
+                    .herdrFont(size: HerdrTheme.TextSize.small)
+                    .foregroundStyle(HerdrTheme.primaryText)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text("Generation \(session.generation)")
-                    .herdrFont(.subheadline, monospacedDigit: true)
-                    .foregroundStyle(HerdrTheme.muted)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(HerdrTheme.tertiaryText)
             }
             .frame(minHeight: 28)
             .contentShape(.rect)

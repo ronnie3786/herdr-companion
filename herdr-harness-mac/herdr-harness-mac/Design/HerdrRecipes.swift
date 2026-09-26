@@ -29,6 +29,21 @@ extension View {
     }
 
     /// A 1pt hairline along one edge (title bars, sidebar edges, section rules).
+    /// A text field's placeholder in tertiary ink. AppKit draws a SwiftUI
+    /// prompt in the field's own foreground color, so it would read like typed
+    /// text; pass `prompt: Text("")` and draw it here instead.
+    func herdrPlaceholder(_ text: String, isVisible: Bool, alignment: Alignment = .leading) -> some View {
+        overlay(alignment: alignment) {
+            if isVisible {
+                Text(text)
+                    .foregroundStyle(HerdrTheme.tertiaryText)
+                    .lineLimit(1)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+
     func herdrHairline(_ edge: Edge, color: Color = HerdrTheme.hairline) -> some View {
         overlay(alignment: edge.herdrAlignment) {
             Rectangle()

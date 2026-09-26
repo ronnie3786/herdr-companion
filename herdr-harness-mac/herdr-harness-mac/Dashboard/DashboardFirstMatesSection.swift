@@ -14,7 +14,7 @@ struct DashboardFirstMatesSection: View {
     /// very wide ones), so the strip always reads as scrollable when it is.
     static func cardWidth(for width: CGFloat) -> CGFloat {
         let slots: CGFloat = width < 1100 ? 2 : width < 2200 ? 3 : 4
-        let available = width - HerdrTheme.pagePadding * 2 - slots * 16 - 64
+        let available = width - DashboardMetrics.pagePadding * 2 - slots * DashboardMetrics.cardGap - 64
         return min(max(available / slots, 300), 560)
     }
 
@@ -25,36 +25,37 @@ struct DashboardFirstMatesSection: View {
     var body: some View {
         let visible = visible
         let cardWidth = Self.cardWidth(for: width)
-        let overflows = CGFloat(visible.count) * (cardWidth + 16) + 150 > width - HerdrTheme.pagePadding * 2
-        VStack(alignment: .leading, spacing: 12) {
+        let overflows = CGFloat(visible.count) * (cardWidth + DashboardMetrics.cardGap) + 150 > width - DashboardMetrics.pagePadding * 2
+        VStack(alignment: .leading, spacing: 8) {
             header(visible: visible, overflows: overflows)
-                .padding(.horizontal, HerdrTheme.pagePadding)
+                .padding(.horizontal, DashboardMetrics.pagePadding)
             hostProblems
             if isLoading {
-                HStack(spacing: 16) {
+                HStack(spacing: DashboardMetrics.cardGap) {
                     ForEach(0..<3, id: \.self) { _ in DashboardFeatureCardSkeleton(width: cardWidth) }
                 }
-                .padding(.horizontal, HerdrTheme.pagePadding)
+                .padding(.horizontal, DashboardMetrics.pagePadding)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Loading First Mates")
             } else if entries.isEmpty, !shell.dashboard.focusMode, shell.dashboard.search.isEmpty {
                 HStack(spacing: 12) {
                     Text(model.isDemoMode || !model.machines.isEmpty ? "No First Mates yet." : "Connect a companion in Settings → Machines to start a First Mate.")
-                        .herdrFont(.callout).foregroundStyle(HerdrTheme.muted)
+                        .herdrFont(size: HerdrTheme.TextSize.small).foregroundStyle(HerdrTheme.tertiaryText)
                     DashboardCreateFeatureMenu(model: model, shell: shell) {
                         Label("New feature", systemImage: "plus")
-                            .herdrFont(.callout).foregroundStyle(HerdrTheme.accent)
+                            .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium).foregroundStyle(HerdrTheme.accent)
+                            .frame(minHeight: HerdrTheme.minHitTarget)
                             .contentShape(.rect)
                     }
                 }
-                .padding(.horizontal, HerdrTheme.pagePadding)
+                .padding(.horizontal, DashboardMetrics.pagePadding)
             } else if visible.isEmpty, !entries.isEmpty || shell.dashboard.focusMode || !shell.dashboard.search.isEmpty {
                 Text(shell.dashboard.search.isEmpty ? "No First Mates are waiting for you." : "No First Mates match your search.")
-                    .herdrFont(.callout).foregroundStyle(HerdrTheme.muted)
-                    .padding(.horizontal, HerdrTheme.pagePadding)
+                    .herdrFont(size: HerdrTheme.TextSize.small).foregroundStyle(HerdrTheme.tertiaryText)
+                    .padding(.horizontal, DashboardMetrics.pagePadding)
             } else {
                 ScrollView(.horizontal) {
-                    HStack(alignment: .top, spacing: 16) {
+                    HStack(alignment: .top, spacing: DashboardMetrics.cardGap) {
                         ForEach(visible) { entry in
                             DashboardFeatureCard(entry: entry, width: cardWidth) {
                                 shell.showFirstMate(machineID: entry.machineID, featureID: entry.feature.id,
@@ -71,7 +72,7 @@ struct DashboardFirstMatesSection: View {
                 .scrollPosition($position)
                 .scrollTargetBehavior(.viewAligned)
                 .scrollIndicators(.hidden)
-                .contentMargins(.horizontal, HerdrTheme.pagePadding, for: .scrollContent)
+                .contentMargins(.horizontal, DashboardMetrics.pagePadding, for: .scrollContent)
                 .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.9) { visibleIDs = $0 }
             }
         }
@@ -83,13 +84,14 @@ struct DashboardFirstMatesSection: View {
 
     private func header(visible: [DashboardFeatureEntry], overflows: Bool) -> some View {
         let attention = entries.filter(\.needsAttention).count
-        return HStack(spacing: 12) {
+        return HStack(spacing: 8) {
             DashboardSectionHeading(title: "First Mates", identifier: "dashboard-first-mates") {
                 shell.show(.firstMate, model: model)
             }
             Text(entries.isEmpty ? "None active" : "\(entries.count) active · \(attention) \(attention == 1 ? "needs" : "need") you")
-                .herdrFont(.subheadline, monospacedDigit: true)
-                .foregroundStyle(HerdrTheme.muted)
+                .herdrFont(size: HerdrTheme.TextSize.caption)
+                .monospacedDigit()
+                .foregroundStyle(HerdrTheme.tertiaryText)
             Spacer(minLength: 8)
             if overflows {
                 DashboardIconButton(title: "Previous First Mate", systemImage: "chevron.left") { move(-1, ids: visible.map(\.id)) }
@@ -99,13 +101,8 @@ struct DashboardFirstMatesSection: View {
                 shell.show(.agentBoard, model: model)
             } label: {
                 Label("Agent view", systemImage: "rectangle.split.3x1")
-                    .herdrFont(.callout, weight: .semibold)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12).frame(height: 28)
-                    .background(HerdrTheme.controlAccent, in: .rect(cornerRadius: HerdrTheme.compactRadius))
-                    .contentShape(.rect)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(HerdrButtonStyle(kind: .primary))
             .help("Open every First Mate side by side (Shift-Command-A)")
             .accessibilityIdentifier("dashboard-open-agent-view")
         }
@@ -122,12 +119,14 @@ struct DashboardFirstMatesSection: View {
                     if !host.unsupported {
                         Button("Retry") { Task { await shell.firstMateFleet.refresh() } }
                             .buttonStyle(.plain).foregroundStyle(HerdrTheme.accent)
+                            .frame(minHeight: HerdrTheme.minHitTarget)
+                            .contentShape(.rect)
                     }
                 }
-                .herdrFont(.subheadline)
+                .herdrFont(size: HerdrTheme.TextSize.caption)
                 .foregroundStyle(HerdrTheme.attention)
                 .help(host.error ?? "")
-                .padding(.horizontal, HerdrTheme.pagePadding)
+                .padding(.horizontal, DashboardMetrics.pagePadding)
             }
         }
     }
@@ -158,31 +157,33 @@ struct DashboardFeatureCard: View {
                 HStack(spacing: 8) {
                     DashboardStatusPill(status: entry.feature.status, awaitingTurn: entry.awaitingTurn)
                     Spacer(minLength: 6)
-                    Text(meta).herdrFont(.subheadline).foregroundStyle(HerdrTheme.muted).lineLimit(1)
+                    Text(meta).herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText).lineLimit(1)
                 }
+                .padding(.bottom, -2)
                 Text(entry.title)
-                    .herdrFont(.title3, weight: .medium)
-                    .foregroundStyle(HerdrTheme.text)
-                    .lineLimit(2, reservesSpace: true)
+                    .herdrFont(size: HerdrTheme.TextSize.reading, weight: .semibold)
+                    .foregroundStyle(HerdrTheme.primaryText)
+                    .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 DashboardNowBlock(stageTitle: entry.summary?.currentStageTitle, stageIndex: entry.summary?.currentStageIndex)
                 Text(entry.preview ?? "No replies yet")
-                    .herdrFont(.callout)
-                    .foregroundStyle(entry.preview == nil ? HerdrTheme.muted : HerdrTheme.mist)
+                    .herdrFont(size: HerdrTheme.TextSize.small)
+                    .foregroundStyle(entry.preview == nil ? HerdrTheme.tertiaryText : HerdrTheme.secondaryText)
+                    .lineSpacing(3)
                     .lineLimit(2, reservesSpace: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Spacer(minLength: 0)
                 footer
             }
-            .padding(.horizontal, HerdrTheme.cardPadding)
-            .padding(.vertical, 14)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
             .frame(width: width, alignment: .topLeading)
             .frame(maxHeight: .infinity, alignment: .top)
-            .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.cardRadius))
+            .background(HerdrTheme.cardFill, in: .rect(cornerRadius: HerdrTheme.cardRadius))
             .overlay {
                 RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
-                    .stroke(isFocused ? HerdrTheme.accent : isHovered ? HerdrTheme.selection : HerdrTheme.separator,
-                            lineWidth: isFocused ? 2 : 1)
+                    .strokeBorder(isFocused ? HerdrTheme.accent : isHovered ? HerdrTheme.focusOutline : HerdrTheme.outline,
+                                  lineWidth: isFocused ? 2 : 1)
             }
             .contentShape(.rect(cornerRadius: HerdrTheme.cardRadius))
         }
@@ -204,15 +205,16 @@ struct DashboardFeatureCard: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             if entry.needsAttention {
                 // A parked turn's prompt is its latest reply, already shown above.
-                Text("→ \(footerPrompt)")
-                    .herdrFont(.callout, weight: .semibold)
-                    .foregroundStyle(HerdrTheme.attention)
+                Label(footerPrompt, systemImage: "arrow.right")
+                    .labelStyle(DashboardInlineLabelStyle(spacing: 5))
+                    .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
+                    .foregroundStyle(HerdrTheme.accent)
                     .lineLimit(1)
                     .help(entry.attentionPrompt ?? "")
             } else if let running = entry.summary?.runningAssignmentCount, running > 0 {
                 Label("\(running) agent\(running == 1 ? "" : "s") running", systemImage: "circle.lefthalf.filled")
-                    .herdrFont(.subheadline)
-                    .foregroundStyle(HerdrTheme.mist)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(HerdrTheme.secondaryText)
             }
             Spacer(minLength: 0)
             if entry.hostError != nil, let seen = entry.lastUpdated {
@@ -220,13 +222,14 @@ struct DashboardFeatureCard: View {
                     Text("Last seen")
                     DashboardAgeText(date: seen)
                 }
-                .herdrFont(.subheadline)
+                .herdrFont(size: HerdrTheme.TextSize.caption)
                 .foregroundStyle(HerdrTheme.attention)
                 .fixedSize()
             } else if let date = entry.activityDate {
                 DashboardAgeText(date: date)
-                    .herdrFont(.subheadline, monospacedDigit: true)
-                    .foregroundStyle(HerdrTheme.muted)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(HerdrTheme.tertiaryText)
                     .fixedSize()
             }
         }
@@ -255,14 +258,15 @@ private struct DashboardFeatureCardSkeleton: View {
         VStack(alignment: .leading, spacing: 12) {
             DashboardSkeletonBar(width: 90, height: 14)
             DashboardSkeletonBar(width: width * 0.7, height: 14)
-            RoundedRectangle(cornerRadius: HerdrTheme.nowRadius).fill(HerdrTheme.surface.opacity(0.6)).frame(height: 52)
+            RoundedRectangle(cornerRadius: HerdrTheme.nowRadius).fill(HerdrTheme.chipFill).frame(height: 52)
             DashboardSkeletonBar(width: width * 0.8)
             DashboardSkeletonBar(width: width * 0.55)
         }
-        .padding(16)
-        .frame(width: width, height: 210, alignment: .topLeading)
-        .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.cardRadius))
-        .overlay { RoundedRectangle(cornerRadius: HerdrTheme.cardRadius).stroke(HerdrTheme.separator) }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(width: width, height: 212, alignment: .topLeading)
+        .background(HerdrTheme.cardFill, in: .rect(cornerRadius: HerdrTheme.cardRadius))
+        .overlay { RoundedRectangle(cornerRadius: HerdrTheme.cardRadius).strokeBorder(HerdrTheme.outline) }
     }
 }
 
@@ -274,8 +278,8 @@ private struct DashboardNewFeatureTile: View {
     var body: some View {
         DashboardCreateFeatureMenu(model: model, shell: shell) {
             Label("New feature", systemImage: "plus")
-                .herdrFont(.callout)
-                .foregroundStyle(isHovered ? HerdrTheme.text : HerdrTheme.muted)
+                .herdrFont(size: HerdrTheme.TextSize.small)
+                .foregroundStyle(isHovered ? HerdrTheme.primaryText : HerdrTheme.tertiaryText)
                 .frame(width: 150)
                 .frame(maxHeight: .infinity)
                 .contentShape(.rect)
@@ -285,7 +289,7 @@ private struct DashboardNewFeatureTile: View {
         .frame(maxHeight: .infinity)
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
-                .strokeBorder(isHovered ? HerdrTheme.selection : HerdrTheme.separator, style: StrokeStyle(lineWidth: 1, dash: [5, 5]))
+                .strokeBorder(isHovered ? HerdrTheme.focusOutline : HerdrTheme.outline, style: StrokeStyle(lineWidth: 1, dash: [5, 5]))
         }
         .onHover { isHovered = $0 }
         .accessibilityIdentifier("dashboard-new-feature")

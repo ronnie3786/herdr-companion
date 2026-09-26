@@ -14,6 +14,12 @@ extension HerdrTheme {
     static let composerRadius = Radius.composer
 }
 
+/// Page metrics for Dashboard and Builds (MonoCode's 20pt page gutter).
+enum DashboardMetrics {
+    static let pagePadding: CGFloat = 20
+    static let cardGap: CGFloat = 12
+}
+
 /// The single mapping from a First Mate status to what the person sees.
 struct FeatureStatusPresentation: Equatable {
     enum Tone: Equatable { case blocked, awaiting, working, quiet, done }
@@ -67,9 +73,10 @@ struct DashboardStatusPill: View {
         let presentation = FeatureStatusPresentation(status: status, awaitingTurn: awaitingTurn)
         Label(presentation.label, systemImage: presentation.symbol)
             .labelStyle(PillLabelStyle())
-            .herdrFont(.subheadline, weight: .semibold)
+            .herdrFont(size: HerdrTheme.TextSize.caption, weight: .semibold)
             .foregroundStyle(presentation.color)
-            .padding(.horizontal, 7).padding(.vertical, 2)
+            .padding(.horizontal, 6)
+            .frame(minHeight: 20)
             .background(presentation.color.opacity(0.12), in: .rect(cornerRadius: HerdrTheme.pillRadius))
             .fixedSize()
             .accessibilityElement(children: .ignore)
@@ -86,6 +93,18 @@ struct DashboardStatusPill: View {
     }
 }
 
+/// Icon and title on one baseline with a set gap (`.ft .acc`, row labels).
+struct DashboardInlineLabelStyle: LabelStyle {
+    var spacing: CGFloat = 6
+
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: spacing) {
+            configuration.icon
+            configuration.title
+        }
+    }
+}
+
 /// Current focus: the one thing each feature is doing right now.
 struct DashboardNowBlock: View {
     enum Style { case card, column }
@@ -95,30 +114,31 @@ struct DashboardNowBlock: View {
     var style: Style = .card
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 8) {
                 Text("NOW")
-                    .herdrFont(size: 10, weight: .bold)
+                    .herdrFont(size: HerdrTheme.TextSize.micro, weight: .semibold)
                     .tracking(0.8)
                     .foregroundStyle(HerdrTheme.accent)
                 Spacer(minLength: 4)
                 if let stageIndex, stageIndex > 0 {
                     Text("Stage \(stageIndex)")
-                        .herdrFont(.subheadline, monospacedDigit: true)
-                        .foregroundStyle(HerdrTheme.muted)
+                        .herdrFont(size: HerdrTheme.TextSize.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(HerdrTheme.tertiaryText)
                 }
             }
             Text(stageTitle.map(AgentBoardProse.decodeEntities) ?? "No active stage")
-                .herdrFont(.body, weight: .medium)
-                .foregroundStyle(stageTitle == nil ? HerdrTheme.muted : HerdrTheme.text)
-                // Columns keep one line so their tab bars line up and never move.
-                .lineLimit(style == .card ? 2 : 1, reservesSpace: true)
+                .herdrFont(size: HerdrTheme.TextSize.body, weight: .medium)
+                .foregroundStyle(stageTitle == nil ? HerdrTheme.tertiaryText : HerdrTheme.primaryText)
+                // One line everywhere, so card and column tab bars line up.
+                .lineLimit(1, reservesSpace: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .help(stageTitle ?? "")
         }
-        .padding(.horizontal, style == .card ? 12 : 10)
+        .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(HerdrTheme.surface, in: .rect(cornerRadius: HerdrTheme.nowRadius))
+        .background(HerdrTheme.insetFill, in: .rect(cornerRadius: HerdrTheme.nowRadius))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Now: \(stageTitle ?? "No active stage")\(stageIndex.map { ", stage \($0)" } ?? "")")
     }
@@ -139,30 +159,31 @@ struct DashboardSegmented<Value: Hashable>: View {
     let accessibilityLabel: String
 
     var body: some View {
-        HStack(spacing: 2) {
+        // MonoCode's `.tabs6`: 24pt tabs, the selected one on a 10% wash.
+        HStack(spacing: 1) {
             ForEach(segments) { segment in
                 let selected = segment.value == selection
                 Button { selection = segment.value } label: {
-                    HStack(spacing: 5) {
+                    HStack(spacing: 6) {
                         Text(segment.title)
+                            .foregroundStyle(selected ? HerdrTheme.primaryText : HerdrTheme.tertiaryText)
                         if let count = segment.count {
                             Text("\(count)").monospacedDigit()
-                                .foregroundStyle(selected ? HerdrTheme.mist : HerdrTheme.muted)
+                                .herdrFont(size: HerdrTheme.TextSize.caption)
+                                .foregroundStyle(HerdrTheme.tertiaryText)
                         }
                     }
-                    .herdrFont(.callout, weight: selected ? .semibold : .regular)
-                    .foregroundStyle(selected ? HerdrTheme.text : HerdrTheme.mist)
-                    .padding(.horizontal, 10).padding(.vertical, 4)
-                    .background(selected ? HerdrTheme.surface : .clear, in: .rect(cornerRadius: HerdrTheme.pillRadius))
+                    .herdrFont(size: HerdrTheme.TextSize.small)
+                    .padding(.horizontal, 10)
+                    .frame(height: HerdrTheme.ControlHeight.small)
+                    .background(selected ? HerdrTheme.selectedFill : .clear, in: .rect(cornerRadius: HerdrTheme.Radius.control))
+                    .frame(minHeight: HerdrTheme.minHitTarget)
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }
-        .padding(2)
-        .background(HerdrTheme.input, in: .rect(cornerRadius: HerdrTheme.compactRadius))
-        .overlay { RoundedRectangle(cornerRadius: HerdrTheme.compactRadius).stroke(HerdrTheme.separator) }
         .fixedSize()
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityLabel)
@@ -176,7 +197,7 @@ struct DashboardSkeletonBar: View {
 
     var body: some View {
         RoundedRectangle(cornerRadius: 4)
-            .fill(HerdrTheme.surface.opacity(0.6))
+            .fill(HerdrTheme.chipFill)
             .frame(width: width, height: height)
             .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
             .accessibilityHidden(true)
@@ -189,9 +210,9 @@ struct DashboardMicroLabel: View {
 
     var body: some View {
         Text(text.uppercased())
-            .herdrFont(size: 10, weight: .bold)
-            .tracking(0.8)
-            .foregroundStyle(HerdrTheme.muted)
+            .herdrFont(size: HerdrTheme.TextSize.micro, weight: .semibold)
+            .tracking(0.6)
+            .foregroundStyle(HerdrTheme.tertiaryText)
             .accessibilityAddTraits(.isHeader)
     }
 }
@@ -202,16 +223,10 @@ struct DashboardIconButton: View {
     let systemImage: String
     var help: String? = nil
     let action: () -> Void
-    @State private var isHovered = false
 
     var body: some View {
         Button(title, systemImage: systemImage, action: action)
-            .labelStyle(.iconOnly)
-            .buttonStyle(.plain)
-            .foregroundStyle(isHovered ? HerdrTheme.text : HerdrTheme.muted)
-            .frame(width: HerdrTheme.minHitTarget, height: HerdrTheme.minHitTarget)
-            .contentShape(.rect)
-            .onHover { isHovered = $0 }
+            .buttonStyle(HerdrIconButtonStyle())
             .help(help ?? title)
     }
 }

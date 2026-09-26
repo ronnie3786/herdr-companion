@@ -38,6 +38,13 @@ extension View {
     }
 }
 
+extension EnvironmentValues {
+    /// True inside the main window's detail column, where screens put their
+    /// title and controls in the window title bar (`herdrTitleBar`) instead of
+    /// drawing a bar of their own. Standalone hosts keep their own 40pt bar.
+    @Entry var herdrHostsTitleBar = false
+}
+
 /// The 40pt bar recipe shared by the window title bar and the sidebar header:
 /// horizontal padding, a 7% bottom hairline, and window dragging from any
 /// empty part of the bar.

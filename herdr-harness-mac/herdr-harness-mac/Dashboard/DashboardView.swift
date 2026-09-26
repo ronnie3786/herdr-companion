@@ -6,27 +6,36 @@ struct DashboardView: View {
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(MobileAppHubSettings.hubURLKey) private var buildsHubURL = ""
     @AppStorage(MobileAppHubSettings.dashboardBundleIDsKey) private var buildsBundleIDs = ""
+    @Environment(\.herdrHostsTitleBar) private var hostsTitleBar
 
     var body: some View {
         let entries = shell.dashboard.entries(shell: shell, isDemo: model.isDemoMode)
         let buildsQuery = MobileAppHubSettings.dashboardQuery(hubURLText: buildsHubURL, bundleIDsText: buildsBundleIDs)
         VStack(spacing: 0) {
-            DashboardHeaderBar(dashboard: shell.dashboard)
+            if !hostsTitleBar {
+                DashboardHeaderBar(dashboard: shell.dashboard)
+                    .herdrBar()
+            }
             GeometryReader { geometry in
                 ScrollView(.vertical) {
-                    VStack(alignment: .leading, spacing: 28) {
+                    VStack(alignment: .leading, spacing: 26) {
                         DashboardFirstMatesSection(model: model, shell: shell, entries: entries, width: geometry.size.width)
                         DashboardBuildsSection(dashboard: shell.dashboard, query: buildsQuery)
                         DashboardLowerRegion(model: model, shell: shell, width: geometry.size.width)
                     }
-                    .padding(.top, 20)
+                    .padding(.top, 16)
                     .padding(.bottom, 24)
                 }
                 .scrollIndicators(.automatic)
             }
         }
-        .background(HerdrTheme.graphite)
-        .foregroundStyle(HerdrTheme.text)
+        .herdrTitleBar {
+            if hostsTitleBar { DashboardHeaderBar.Leading(dashboard: shell.dashboard) }
+        } trailing: {
+            if hostsTitleBar { DashboardHeaderBar.Trailing(dashboard: shell.dashboard) }
+        }
+        .background(HerdrTheme.windowBackground)
+        .foregroundStyle(HerdrTheme.primaryText)
         .tint(HerdrTheme.accent)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("dashboard")
@@ -56,55 +65,92 @@ struct DashboardView: View {
     }
 }
 
-/// Search and Focus mode: the only controls the home screen needs.
+/// Search and Focus mode: the only controls the home screen needs. In the
+/// main window they sit in the title bar; standalone hosts draw them as a bar.
 private struct DashboardHeaderBar: View {
     @Bindable var dashboard: DashboardState
-    @FocusState private var searchFocused: Bool
 
     var body: some View {
-        HStack(spacing: 16) {
-            HStack(spacing: 7) {
+        HStack(spacing: 0) {
+            Leading(dashboard: dashboard)
+            Spacer(minLength: 12)
+            Trailing(dashboard: dashboard)
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 8)
+    }
+
+    /// "Dashboard" and the search field (`.tbar .field`).
+    struct Leading: View {
+        @Bindable var dashboard: DashboardState
+        @FocusState private var searchFocused: Bool
+
+        var body: some View {
+            HStack(spacing: 14) {
+                Text("Dashboard")
+                    .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
+                    .foregroundStyle(HerdrTheme.primaryText)
+                    .fixedSize()
+                    .accessibilityAddTraits(.isHeader)
+                searchField
+            }
+            .background {
+                // ⌘F reaches search without a visible button.
+                Button("Search Dashboard") { searchFocused = true }
+                    .keyboardShortcut("f", modifiers: .command)
+                    .opacity(0).accessibilityHidden(true)
+            }
+        }
+
+        private var searchField: some View {
+            HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundStyle(HerdrTheme.muted)
+                    .herdrFont(size: HerdrTheme.TextSize.small)
+                    .foregroundStyle(HerdrTheme.iconTint)
                     .accessibilityHidden(true)
-                TextField("Search First Mates, reviews, and chats", text: $dashboard.search)
-                    .textFieldStyle(.plain)
-                    .herdrFont(.callout)
-                    .focused($searchFocused)
-                    .onExitCommand { dashboard.search = ""; searchFocused = false }
-                    .accessibilityIdentifier("dashboard-search")
+                TextField("Search First Mates, reviews, and chats", text: $dashboard.search, prompt: Text(""))
+                .textFieldStyle(.plain)
+                .herdrPlaceholder("Search First Mates, reviews, and chats", isVisible: dashboard.search.isEmpty)
+                .herdrFont(size: HerdrTheme.TextSize.small)
+                .focused($searchFocused)
+                .onExitCommand { dashboard.search = ""; searchFocused = false }
+                .accessibilityIdentifier("dashboard-search")
                 if !dashboard.search.isEmpty {
                     Button("Clear search", systemImage: "xmark.circle.fill") { dashboard.search = "" }
-                        .labelStyle(.iconOnly).buttonStyle(.plain)
-                        .foregroundStyle(HerdrTheme.muted)
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(HerdrIconButtonStyle(visualSize: HerdrTheme.ControlHeight.mini))
                 }
             }
-            .padding(.horizontal, 10)
-            .frame(height: 28)
-            .frame(minWidth: 200, idealWidth: 320, maxWidth: 340)
-            .background(HerdrTheme.input, in: .rect(cornerRadius: HerdrTheme.compactRadius))
+            .padding(.leading, 10)
+            .padding(.trailing, dashboard.search.isEmpty ? 10 : 0)
+            .frame(height: HerdrTheme.ControlHeight.large)
+            .frame(minWidth: 200, idealWidth: 300, maxWidth: 300)
+            .background(HerdrTheme.fieldFill, in: .rect(cornerRadius: HerdrTheme.Radius.control))
             .overlay {
-                RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                    .stroke(searchFocused ? HerdrTheme.accent : HerdrTheme.separator)
+                // An ink focus ring would be 1.7:1 on base; the accent reads.
+                RoundedRectangle(cornerRadius: HerdrTheme.Radius.control)
+                    .strokeBorder(searchFocused ? HerdrTheme.accent : HerdrTheme.outline)
             }
-            Spacer(minLength: 12)
-            Toggle("Focus mode", isOn: $dashboard.focusMode)
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .herdrFont(.callout)
-                .tint(HerdrTheme.controlAccent)
-                .fixedSize()
-                .help("Show only the First Mates, reviews, and chats waiting for you")
-                .accessibilityIdentifier("dashboard-focus-mode")
         }
-        .padding(.horizontal, HerdrTheme.pagePadding)
-        .frame(height: 48)
-        .overlay(alignment: .bottom) { Rectangle().fill(HerdrTheme.subtleSeparator).frame(height: 1) }
-        .background {
-            // ⌘F reaches search without a visible button.
-            Button("Search Dashboard") { searchFocused = true }
-                .keyboardShortcut("f", modifiers: .command)
-                .opacity(0).accessibilityHidden(true)
+    }
+
+    /// The native Focus mode switch (`.tgl`).
+    struct Trailing: View {
+        @Bindable var dashboard: DashboardState
+
+        var body: some View {
+            Toggle(isOn: $dashboard.focusMode) {
+                Text("Focus mode")
+                    .herdrFont(size: HerdrTheme.TextSize.small)
+                    .foregroundStyle(HerdrTheme.secondaryText)
+            }
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .tint(HerdrTheme.controlAccent)
+            .fixedSize()
+            .frame(minHeight: HerdrTheme.minHitTarget)
+            .help("Show only the First Mates, reviews, and chats waiting for you")
+            .accessibilityIdentifier("dashboard-focus-mode")
         }
     }
 }
@@ -126,21 +172,21 @@ private struct DashboardLowerRegion: View {
     var body: some View {
         let hasReviews = reviewsHaveContent
         Group {
-            if width >= 1100, hasReviews {
-                HStack(alignment: .top, spacing: 40) {
+            if width >= 1000, hasReviews {
+                HStack(alignment: .top, spacing: 28) {
                     DashboardReviewsSection(model: model, shell: shell, compact: false)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                     DashboardChatsSection(model: model, shell: shell)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
             } else {
-                VStack(alignment: .leading, spacing: 28) {
+                VStack(alignment: .leading, spacing: 26) {
                     DashboardReviewsSection(model: model, shell: shell, compact: !hasReviews)
                     DashboardChatsSection(model: model, shell: shell)
                 }
             }
         }
-        .padding(.horizontal, HerdrTheme.pagePadding)
+        .padding(.horizontal, DashboardMetrics.pagePadding)
     }
 }
 
@@ -153,14 +199,15 @@ struct DashboardSectionHeading: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 5) {
-                Text(title).herdrFont(.title3, weight: .semibold)
-                    .foregroundStyle(HerdrTheme.text)
+            HStack(spacing: 4) {
+                Text(title).herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
+                    .foregroundStyle(HerdrTheme.primaryText)
                 Image(systemName: "chevron.right")
-                    .herdrFont(.subheadline, weight: .semibold)
-                    .foregroundStyle(isHovered ? HerdrTheme.text : HerdrTheme.accent)
+                    .herdrFont(size: HerdrTheme.TextSize.caption, weight: .semibold)
+                    .foregroundStyle(isHovered ? HerdrTheme.primaryText : HerdrTheme.iconTint)
                     .accessibilityHidden(true)
             }
+            .frame(minHeight: HerdrTheme.minHitTarget)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)

@@ -3,6 +3,7 @@ import SwiftUI
 struct AgentBoardView: View {
     @Bindable var model: HerdrAppModel
     @Bindable var shell: HerdrShellState
+    @Environment(\.herdrHostsTitleBar) private var hostsTitleBar
 
     /// Columns fill the window when they fit; otherwise whole columns show with
     /// the next one peeking in, so the board always reads as scrollable.
@@ -21,7 +22,10 @@ struct AgentBoardView: View {
         let board = shell.agentBoard
         let visible = board.entries(entries, focusMode: false)
         VStack(spacing: 0) {
-            AgentBoardHeaderBar(model: model, shell: shell, entries: entries)
+            if !hostsTitleBar {
+                AgentBoardHeaderBar(model: model, shell: shell, entries: entries)
+                    .herdrBar()
+            }
             if visible.isEmpty {
                 emptyState(hasEntries: !entries.isEmpty)
             } else {
@@ -42,12 +46,12 @@ struct AgentBoardView: View {
                                                             inspector: .overview, model: model)
                                     }
                                 )
-                                .frame(width: width, height: max(320, geometry.size.height - 32))
+                                .frame(width: width, height: max(320, geometry.size.height - 24))
                                 .id(entry.id)
                             }
                         }
                         .scrollTargetLayout()
-                        .padding(.vertical, 16)
+                        .padding(.vertical, 12)
                     }
                     .contentMargins(.horizontal, 16, for: .scrollContent)
                     .scrollTargetBehavior(.viewAligned)
@@ -56,8 +60,13 @@ struct AgentBoardView: View {
                 }
             }
         }
-        .background(HerdrTheme.graphite)
-        .foregroundStyle(HerdrTheme.text)
+        .herdrTitleBar {
+            if hostsTitleBar { AgentBoardHeaderBar.Leading(shell: shell, entries: entries) }
+        } trailing: {
+            if hostsTitleBar { AgentBoardHeaderBar.Trailing(model: model, shell: shell) }
+        }
+        .background(HerdrTheme.windowBackground)
+        .foregroundStyle(HerdrTheme.primaryText)
         .tint(HerdrTheme.accent)
         .onChange(of: entries.map(\.id)) { _, ids in board.prune(keeping: Set(ids)) }
         // The next visit starts in priority order; while here, polls never
@@ -80,14 +89,19 @@ struct AgentBoardView: View {
                 .accessibilityLabel("Loading First Mates")
             } else if hasEntries {
                 Text(shell.agentBoard.filter == .needsYou ? "No First Mates need you right now." : "No First Mates are working right now.")
-                    .herdrFont(.body).foregroundStyle(HerdrTheme.mist)
+                    .herdrFont(size: HerdrTheme.TextSize.body).foregroundStyle(HerdrTheme.secondaryText)
                 Button("Show all") { shell.agentBoard.filter = .all }
                     .buttonStyle(.plain).foregroundStyle(HerdrTheme.accent)
+                    .frame(minHeight: HerdrTheme.minHitTarget)
+                    .contentShape(.rect)
             } else {
                 Text(model.isDemoMode || !model.machines.isEmpty ? "No First Mates yet." : "Connect a companion in Settings → Machines.")
-                    .herdrFont(.body).foregroundStyle(HerdrTheme.mist)
+                    .herdrFont(size: HerdrTheme.TextSize.body).foregroundStyle(HerdrTheme.secondaryText)
                 DashboardCreateFeatureMenu(model: model, shell: shell) {
-                    Label("New feature", systemImage: "plus").herdrFont(.callout).foregroundStyle(HerdrTheme.accent)
+                    Label("New feature", systemImage: "plus")
+                        .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium).foregroundStyle(HerdrTheme.accent)
+                        .frame(minHeight: HerdrTheme.minHitTarget)
+                        .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
             }
@@ -106,37 +120,72 @@ struct AgentBoardView: View {
     }
 }
 
+/// "Agents", the filter tabs and New feature. In the main window they sit in
+/// the title bar; standalone hosts draw them as a bar.
 private struct AgentBoardHeaderBar: View {
     let model: HerdrAppModel
     @Bindable var shell: HerdrShellState
     let entries: [DashboardFeatureEntry]
 
     var body: some View {
-        @Bindable var board = shell.agentBoard
-        HStack(spacing: 16) {
-            DashboardSegmented(
-                selection: $board.filter,
-                segments: AgentBoardFilter.allCases.map { filter in
-                    .init(value: filter, title: filter.rawValue, count: entries.filter { filter.includes($0) }.count)
-                },
-                accessibilityLabel: "First Mate filter"
-            )
-            .accessibilityIdentifier("agent-board-filter")
+        HStack(spacing: 0) {
+            Leading(shell: shell, entries: entries)
             Spacer(minLength: 12)
+            Trailing(model: model, shell: shell)
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 8)
+    }
+
+    struct Leading: View {
+        @Bindable var shell: HerdrShellState
+        let entries: [DashboardFeatureEntry]
+
+        var body: some View {
+            @Bindable var board = shell.agentBoard
+            HStack(spacing: 8) {
+                Text("Agents")
+                    .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
+                    .foregroundStyle(HerdrTheme.primaryText)
+                    .fixedSize()
+                    .accessibilityAddTraits(.isHeader)
+                DashboardSegmented(
+                    selection: $board.filter,
+                    segments: AgentBoardFilter.allCases.map { filter in
+                        .init(value: filter, title: filter.rawValue, count: entries.filter { filter.includes($0) }.count)
+                    },
+                    accessibilityLabel: "First Mate filter"
+                )
+                .accessibilityIdentifier("agent-board-filter")
+            }
+        }
+    }
+
+    /// New feature (`.btn-out`).
+    struct Trailing: View {
+        let model: HerdrAppModel
+        let shell: HerdrShellState
+        @State private var isHovered = false
+
+        var body: some View {
             DashboardCreateFeatureMenu(model: model, shell: shell) {
                 Label("New feature", systemImage: "plus")
-                    .herdrFont(.callout)
-                    .foregroundStyle(HerdrTheme.text)
-                    .padding(.horizontal, 10).frame(height: 28)
-                    .background(HerdrTheme.surface, in: .rect(cornerRadius: HerdrTheme.compactRadius))
+                    .labelStyle(DashboardInlineLabelStyle(spacing: 6))
+                    .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
+                    .foregroundStyle(isHovered ? HerdrTheme.primaryText : HerdrTheme.secondaryText)
+                    .padding(.horizontal, 10)
+                    .frame(height: HerdrTheme.ControlHeight.large)
+                    .background(isHovered ? HerdrTheme.hoverFill : .clear, in: .rect(cornerRadius: HerdrTheme.Radius.control))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: HerdrTheme.Radius.control)
+                            .strokeBorder(isHovered ? HerdrTheme.focusOutline : HerdrTheme.outline)
+                    }
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)
+            .onHover { isHovered = $0 }
             .accessibilityIdentifier("agent-board-new-feature")
         }
-        .padding(.horizontal, 16)
-        .frame(height: 48)
-        .overlay(alignment: .bottom) { Rectangle().fill(HerdrTheme.subtleSeparator).frame(height: 1) }
     }
 }
 
@@ -145,16 +194,16 @@ private struct AgentBoardColumnSkeleton: View {
         VStack(alignment: .leading, spacing: 12) {
             DashboardSkeletonBar(width: 90, height: 14)
             DashboardSkeletonBar(width: 220, height: 14)
-            RoundedRectangle(cornerRadius: HerdrTheme.nowRadius).fill(HerdrTheme.surface.opacity(0.6)).frame(height: 52)
+            RoundedRectangle(cornerRadius: HerdrTheme.nowRadius).fill(HerdrTheme.chipFill).frame(height: 52)
             DashboardSkeletonBar(width: 260)
             DashboardSkeletonBar(width: 200)
             DashboardSkeletonBar(width: 240)
             Spacer()
         }
-        .padding(14)
+        .padding(12)
         .frame(width: 380)
         .frame(maxHeight: .infinity)
-        .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.cardRadius))
-        .overlay { RoundedRectangle(cornerRadius: HerdrTheme.cardRadius).stroke(HerdrTheme.separator) }
+        .background(HerdrTheme.cardFill, in: .rect(cornerRadius: HerdrTheme.cardRadius))
+        .overlay { RoundedRectangle(cornerRadius: HerdrTheme.cardRadius).strokeBorder(HerdrTheme.outline) }
     }
 }

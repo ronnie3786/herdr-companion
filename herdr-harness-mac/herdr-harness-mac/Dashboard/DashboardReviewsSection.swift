@@ -19,14 +19,14 @@ struct DashboardReviewsSection: View {
 
     var body: some View {
         let reviews = reviews
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 6) {
             header(count: reviews.count)
             if !compact { content(reviews) }
         }
     }
 
     private func header(count: Int) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             DashboardSectionHeading(title: "PR Reviews", identifier: "dashboard-pr-reviews") {
                 shell.show(.prReview, model: model)
             }
@@ -38,8 +38,9 @@ struct DashboardReviewsSection: View {
                 note(shell.dashboard.focusMode ? "None waiting on you" : shell.dashboard.search.isEmpty ? "No active reviews" : "No matches")
             } else {
                 Text(shell.dashboard.focusMode ? "\(count) waiting on you" : "\(count) active")
-                    .herdrFont(.subheadline, monospacedDigit: true)
-                    .foregroundStyle(HerdrTheme.muted)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(HerdrTheme.tertiaryText)
             }
             Spacer(minLength: 4)
             if !shell.prReview.unconfigured {
@@ -65,11 +66,12 @@ struct DashboardReviewsSection: View {
             if model.machines.isEmpty { Text("Connect a machine in Settings → Machines") }
         } label: {
             Text("Choose a review host")
-                .herdrFont(.subheadline)
+                .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                 .foregroundStyle(HerdrTheme.accent)
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
+        .frame(minHeight: HerdrTheme.minHitTarget)
         .help("The machine that runs PR Reviews. Also in Settings → Machines.")
         .accessibilityIdentifier("dashboard-pr-review-host")
     }
@@ -108,7 +110,7 @@ struct DashboardReviewsSection: View {
                         }
                     }
                 }
-                .overlay(alignment: .top) { Rectangle().fill(HerdrTheme.subtleSeparator).frame(height: 1) }
+                .herdrHairline(.top)
             }
         }
     }
@@ -122,12 +124,12 @@ struct DashboardReviewsSection: View {
     }
 
     private func note(_ text: String) -> some View {
-        Text(text).herdrFont(.subheadline).foregroundStyle(HerdrTheme.muted).lineLimit(1)
+        Text(text).herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText).lineLimit(1)
     }
 
     private func notice(_ title: String, symbol: String) -> some View {
         Label(title, systemImage: symbol)
-            .herdrFont(.callout).foregroundStyle(HerdrTheme.muted)
+            .herdrFont(size: HerdrTheme.TextSize.small).foregroundStyle(HerdrTheme.tertiaryText)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 10)
     }
@@ -146,7 +148,7 @@ private struct DashboardReviewsFreshness: View {
                     Text("Updated")
                     Text(HerdrTimestamp.compactAge(since: lastUpdated, now: context.date))
                 }
-                .herdrFont(.subheadline).foregroundStyle(HerdrTheme.muted).lineLimit(1).fixedSize()
+                .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText).lineLimit(1).fixedSize()
                 .accessibilityLabel("Updated \(HerdrTimestamp.spokenAge(since: lastUpdated, now: context.date))")
             }
         }
@@ -161,43 +163,43 @@ struct DashboardReviewRow: View {
 
     var body: some View {
         Button(action: open) {
-            HStack(spacing: 10) {
-                RoundedRectangle(cornerRadius: 1).fill(HerdrTheme.mauve).frame(width: 2)
+            HStack(spacing: 9) {
+                RoundedRectangle(cornerRadius: 2).fill(HerdrTheme.accent).frame(width: 2)
                     .padding(.vertical, 2)
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 3) {
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
                         Text(review.title)
-                            .herdrFont(.body, weight: state.needsAttention ? .semibold : .regular)
-                            .foregroundStyle(HerdrTheme.text)
+                            .herdrFont(size: HerdrTheme.TextSize.body, weight: state.needsAttention ? .semibold : .medium)
+                            .foregroundStyle(HerdrTheme.primaryText)
                             .lineLimit(1)
                             .help(review.title)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         Label(state.label, systemImage: state.symbol)
-                            .herdrFont(.subheadline, weight: state.needsAttention ? .semibold : .regular)
-                            .foregroundStyle(state.needsAttention ? HerdrTheme.attention : HerdrTheme.muted)
+                            .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
+                            .foregroundStyle(state.needsAttention ? HerdrTheme.attention : HerdrTheme.secondaryText)
                             .lineLimit(1).fixedSize()
                         if state.error != nil {
-                            Image(systemName: "exclamationmark.triangle").foregroundStyle(HerdrTheme.muted)
+                            Image(systemName: "exclamationmark.triangle").foregroundStyle(HerdrTheme.iconTint)
                                 .help("Last known review state. GitHub refresh failed.")
                         }
                     }
                     HStack(alignment: .firstTextBaseline, spacing: 0) {
-                        Text("\(review.owner)/\(review.repo) #\(review.number)").foregroundStyle(HerdrTheme.mauve)
-                        Text(" · \(review.author)").foregroundStyle(HerdrTheme.muted)
+                        Text("\(review.owner)/\(review.repo) #\(review.number)").foregroundStyle(HerdrTheme.accent)
+                        Text(" · \(review.author)").foregroundStyle(HerdrTheme.tertiaryText)
                         Spacer(minLength: 12)
-                        Text(skillLabel).foregroundStyle(HerdrTheme.muted).truncationMode(.middle)
+                        Text(skillLabel).foregroundStyle(HerdrTheme.tertiaryText).truncationMode(.middle)
                             .help(skillLabel)
                     }
-                    .herdrFont(.subheadline)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
                     .lineLimit(1)
                 }
             }
             // The accent rule takes the row's height, never the section's.
             .fixedSize(horizontal: false, vertical: true)
-            .padding(.vertical, 9).padding(.horizontal, 6)
+            .padding(.vertical, 8).padding(.leading, 5).padding(.trailing, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isHovered ? HerdrTheme.elevated : .clear, in: .rect(cornerRadius: 6))
-            .overlay(alignment: .bottom) { Rectangle().fill(HerdrTheme.subtleSeparator).frame(height: 1) }
+            .background(isHovered ? HerdrTheme.hoverFill : .clear, in: .rect(cornerRadius: HerdrTheme.Radius.control))
+            .herdrHairline(.bottom, color: HerdrTheme.rowDivider)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)

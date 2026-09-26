@@ -55,9 +55,9 @@ struct AgentBoardColumnView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             composer
         }
-        .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.cardRadius))
+        .background(HerdrTheme.cardFill, in: .rect(cornerRadius: HerdrTheme.cardRadius))
         .clipShape(.rect(cornerRadius: HerdrTheme.cardRadius))
-        .overlay { RoundedRectangle(cornerRadius: HerdrTheme.cardRadius).stroke(HerdrTheme.separator) }
+        .overlay { RoundedRectangle(cornerRadius: HerdrTheme.cardRadius).strokeBorder(HerdrTheme.outline) }
         .onScrollVisibilityChange(threshold: 0.01) { isVisible = $0 }
         .task(id: observationID) { await observe() }
         .onChange(of: demoSnapshot) { _, snapshot in
@@ -77,12 +77,12 @@ struct AgentBoardColumnView: View {
     // MARK: - Header
 
     private func headerView(_ header: Header) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 DashboardStatusPill(status: header.status, awaitingTurn: header.awaitingTurn)
                 Text([entry.machineName, entry.feature.workItemID].compactMap { $0 }.joined(separator: " · "))
-                    .herdrFont(.subheadline)
-                    .foregroundStyle(HerdrTheme.muted)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(HerdrTheme.tertiaryText)
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 if isOffline, let seen = [state.lastContact, entry.lastUpdated].compactMap({ $0 }).max() {
@@ -90,7 +90,7 @@ struct AgentBoardColumnView: View {
                         Text("Last seen")
                         DashboardAgeText(date: seen)
                     }
-                    .herdrFont(.subheadline)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
                     .foregroundStyle(HerdrTheme.attention)
                     .fixedSize()
                     .help(state.loadError ?? entry.hostError ?? "")
@@ -98,21 +98,24 @@ struct AgentBoardColumnView: View {
                 DashboardIconButton(title: "Open in First Mate", systemImage: "arrow.up.left.and.arrow.down.right",
                                     help: "Open \(header.title) in First Mate", action: openFullView)
             }
+            .frame(minHeight: HerdrTheme.ControlHeight.titleBar)
             Text(header.title)
-                .herdrFont(.title3, weight: .medium)
-                .lineLimit(2, reservesSpace: true)
+                .herdrFont(size: HerdrTheme.TextSize.reading, weight: .semibold)
+                .foregroundStyle(HerdrTheme.primaryText)
+                .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .help(header.title)
                 .accessibilityAddTraits(.isHeader)
             DashboardNowBlock(stageTitle: header.stageTitle, stageIndex: header.stageIndex, style: .column)
+                .padding(.top, 10)
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 12)
+        .padding(.horizontal, 12)
         .padding(.bottom, 10)
     }
 
     private var tabs: some View {
-        HStack(spacing: 2) {
+        // MonoCode's `.atabs`: 12pt labels, the selected one ink with an ink underline.
+        HStack(spacing: 0) {
             ForEach(AgentBoardTab.allCases) { tab in
                 let selected = state.tab == tab
                 Button {
@@ -121,16 +124,16 @@ struct AgentBoardColumnView: View {
                     HStack(spacing: 4) {
                         Text(tab.rawValue)
                         if tab == .agents, let count = state.content?.agents.count, count > 0 {
-                            Text("\(count)").monospacedDigit().foregroundStyle(HerdrTheme.muted)
+                            Text("\(count)").monospacedDigit()
                         }
                     }
-                    .herdrFont(.callout, weight: selected ? .semibold : .regular)
-                    .foregroundStyle(selected ? HerdrTheme.text : HerdrTheme.muted)
-                    .padding(.horizontal, 10)
-                    .frame(height: 30)
+                    .herdrFont(size: HerdrTheme.TextSize.small)
+                    .foregroundStyle(selected ? HerdrTheme.primaryText : HerdrTheme.tertiaryText)
+                    .frame(maxHeight: .infinity)
                     .overlay(alignment: .bottom) {
-                        Rectangle().fill(selected ? HerdrTheme.accent : .clear).frame(height: 2)
+                        Rectangle().fill(selected ? HerdrTheme.primaryText : .clear).frame(height: 2)
                     }
+                    .padding(.horizontal, 8)
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
@@ -139,8 +142,10 @@ struct AgentBoardColumnView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 4)
-        .overlay(alignment: .bottom) { Rectangle().fill(HerdrTheme.separator).frame(height: 1) }
+        .padding(.leading, 4)
+        .frame(minHeight: HerdrTheme.ControlHeight.row)
+        .fixedSize(horizontal: false, vertical: true)
+        .herdrHairline(.bottom)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Views for \(header.title)")
     }
@@ -148,13 +153,14 @@ struct AgentBoardColumnView: View {
     private func banner(_ prompt: String, status: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: status == "blocked" ? "exclamationmark.triangle.fill" : "diamond.fill")
-                .imageScale(.small)
+                .herdrFont(size: HerdrTheme.TextSize.micro)
                 .foregroundStyle(HerdrTheme.attention)
-                .padding(.top, 2)
+                .padding(.top, 3)
                 .accessibilityHidden(true)
             Text(prompt)
-                .herdrFont(.callout, weight: .semibold)
-                .foregroundStyle(HerdrTheme.text)
+                .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
+                .foregroundStyle(HerdrTheme.primaryText)
+                .lineSpacing(3)
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .help(prompt)
@@ -163,14 +169,15 @@ struct AgentBoardColumnView: View {
                 composerFocused = true
             }
                 .buttonStyle(.plain)
-                .herdrFont(.callout, weight: .semibold)
+                .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
                 .foregroundStyle(HerdrTheme.accent)
+                .contentShape(.rect.inset(by: -6))
                 .disabled(!canSend)
                 .accessibilityLabel("Reply to \(header.title)")
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(HerdrTheme.attentionSurface, in: .rect(cornerRadius: HerdrTheme.nowRadius))
-        .overlay { RoundedRectangle(cornerRadius: HerdrTheme.nowRadius).stroke(HerdrTheme.attentionEdge) }
+        .background(HerdrTheme.attentionSurface, in: .rect(cornerRadius: HerdrTheme.Radius.control))
+        .overlay { RoundedRectangle(cornerRadius: HerdrTheme.Radius.control).strokeBorder(HerdrTheme.attentionEdge) }
         .padding(.horizontal, 12)
         .padding(.top, 10)
     }
@@ -193,9 +200,9 @@ struct AgentBoardColumnView: View {
         } else if let error = state.loadError ?? entry.hostError {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Couldn't load this conversation.", systemImage: "wifi.slash")
-                    .herdrFont(.callout, weight: .medium)
-                    .foregroundStyle(HerdrTheme.mist)
-                Text(error).herdrFont(.subheadline).foregroundStyle(HerdrTheme.muted).lineLimit(3)
+                    .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
+                    .foregroundStyle(HerdrTheme.secondaryText)
+                Text(error).herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText).lineLimit(3)
                 Button("Try again") {
                     Task {
                         let capabilities = await capabilities()
@@ -203,17 +210,19 @@ struct AgentBoardColumnView: View {
                     }
                 }
                 .buttonStyle(.plain).foregroundStyle(HerdrTheme.accent)
+                .frame(minHeight: HerdrTheme.minHitTarget)
+                .contentShape(.rect)
             }
-            .padding(14)
+            .padding(12)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 DashboardSkeletonBar(width: 240)
                 DashboardSkeletonBar(width: 180)
                 DashboardSkeletonBar(width: 210)
-                Text("Loading conversation…").herdrFont(.subheadline).foregroundStyle(HerdrTheme.muted)
+                Text("Loading conversation…").herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText)
             }
-            .padding(14)
+            .padding(12)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Loading conversation")
@@ -230,43 +239,43 @@ struct AgentBoardColumnView: View {
                         .lineLimit(2)
                         .textSelection(.enabled)
                     Button("Retry", action: send).buttonStyle(.plain).foregroundStyle(HerdrTheme.accent)
+                        .frame(minHeight: HerdrTheme.minHitTarget)
+                        .contentShape(.rect)
                 }
-                .herdrFont(.subheadline)
+                .herdrFont(size: HerdrTheme.TextSize.caption)
                 .foregroundStyle(HerdrTheme.attention)
             }
             HStack(alignment: .bottom, spacing: 8) {
-                TextField(placeholder, text: $state.draft, axis: .vertical)
+                TextField(placeholder, text: $state.draft, prompt: Text(""), axis: .vertical)
                     .textFieldStyle(.plain)
-                    .herdrFont(.body)
+                    .herdrPlaceholder(placeholder, isVisible: state.draft.isEmpty, alignment: .topLeading)
+                    .herdrFont(size: HerdrTheme.TextSize.body)
                     .lineLimit(1...5)
                     .focused($composerFocused)
                     .onSubmit(send)
                     .onExitCommand { composerFocused = false }
-                    .padding(.vertical, 4)
+                    .padding(.vertical, 6)
                     .accessibilityLabel("Message to \(header.title)")
                     .accessibilityIdentifier("agent-board-composer-\(entry.id)")
                 Button(action: send) {
                     Image(systemName: state.isSending ? "ellipsis" : "arrow.up")
-                        .herdrFont(.callout, weight: .bold)
-                        .foregroundStyle(sendEnabled ? .white : HerdrTheme.muted)
-                        .frame(width: 26, height: 26)
-                        .background(sendEnabled ? HerdrTheme.controlAccent : HerdrTheme.surface, in: .circle)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(HerdrPrimarySquareButtonStyle())
                 .disabled(!sendEnabled)
                 .accessibilityLabel(state.isSending ? "Sending to \(header.title)" : "Send to \(header.title)")
                 .help(canSend ? "Send direction to this First Mate" : sendUnavailableReason)
             }
-            .padding(.leading, 12).padding(.trailing, 7).padding(.vertical, 7)
-            .background(HerdrTheme.input, in: .rect(cornerRadius: HerdrTheme.composerRadius))
+            .padding(.leading, 12).padding(.trailing, 4).padding(.vertical, 4)
+            .frame(minHeight: HerdrTheme.ControlHeight.bar)
+            .background(HerdrTheme.cardFill, in: .rect(cornerRadius: HerdrTheme.composerRadius))
             .overlay {
                 RoundedRectangle(cornerRadius: HerdrTheme.composerRadius)
-                    .stroke(composerFocused ? HerdrTheme.accent : HerdrTheme.separator)
+                    .strokeBorder(composerFocused ? HerdrTheme.focusOutline : HerdrTheme.outline)
             }
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)
-        .padding(.bottom, 12)
+        .padding(.bottom, 10)
     }
 
     private var sendEnabled: Bool {

@@ -151,7 +151,6 @@ struct FirstMateLinksView: View {
                     .foregroundStyle(HerdrTheme.secondaryText)
             }
             .toggleStyle(.switch)
-            .controlSize(.mini)
             .accessibilityIdentifier("first-mate-links-show-hidden")
         }
         .onChange(of: store.lifecycle) { drafts = FirstMateLinkDraftBox() }

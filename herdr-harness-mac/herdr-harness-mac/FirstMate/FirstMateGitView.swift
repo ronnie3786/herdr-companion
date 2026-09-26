@@ -166,11 +166,15 @@ struct FirstMateGitView: View {
                     unstageFile: { file in try await model.unstageGitFile(file, in: workspace) }
                 )
                 .id(selectedWorkspace.id)
+                // Git keeps the dark code palette in either appearance, so its
+                // surfaces and text resolve dark beside it.
+                .environment(\.colorScheme, .dark)
             } else if let configuration {
                 // A healthy authenticated API is sufficient. First Mate Git
                 // does not depend on a live terminal-pane connection.
                 PaneGitWebView(configuration: configuration, firstMateTarget: target)
                     .id("\(target.id)|\(configurationRevision)|\(configuration.baseURL.absoluteString)")
+                    .environment(\.colorScheme, .dark)
             } else {
                 unavailable(
                     "Machine unavailable",

@@ -236,6 +236,16 @@ struct FirstMateActionButtonStyle: ButtonStyle {
     var isSelected = false
 
     func makeBody(configuration: Configuration) -> some View {
+        FirstMateActionButtonBody(configuration: configuration, isSelected: isSelected)
+    }
+}
+
+private struct FirstMateActionButtonBody: View {
+    let configuration: ButtonStyle.Configuration
+    let isSelected: Bool
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
         configuration.label
             .herdrFont(size: 13)
             .foregroundStyle(isSelected ? HerdrTheme.primaryText : HerdrTheme.iconTint)
@@ -244,6 +254,8 @@ struct FirstMateActionButtonStyle: ButtonStyle {
                 isSelected || configuration.isPressed ? HerdrTheme.selectedFill : .clear,
                 in: .rect(cornerRadius: HerdrTheme.Radius.control)
             )
+            // A selected rating stays legible when it cannot be changed.
+            .opacity(isEnabled || isSelected ? 1 : 0.42)
             .frame(minWidth: HerdrTheme.minHitTarget, minHeight: HerdrTheme.minHitTarget)
             .contentShape(.rect)
     }

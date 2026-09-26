@@ -97,11 +97,14 @@ struct HerdrHudHeaderView: View {
         } label: {
             HerdrHudChip(
                 title: selectedMachine?.name ?? "Choose machine",
-                tint: selectedMachine == nil ? HerdrTheme.alert : HerdrTheme.secondaryText
+                tint: selectedMachine == nil ? HerdrTheme.alert : HerdrTheme.secondaryText,
+                maxTitleWidth: 120
             )
         }
         .piChipMenu()
-        .fixedSize()
+        // The machine and folder chips share the header's spare width and
+        // truncate together, so the header always fits a 420pt card.
+        .fixedSize(horizontal: false, vertical: true)
         .accessibilityLabel(selectedMachine.map { "HUD machine: \($0.name)" } ?? "HUD machine: choose a machine")
         .accessibilityIdentifier("hud-machine-picker")
     }

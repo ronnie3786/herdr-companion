@@ -24,12 +24,8 @@ struct PiClosedSessionView: View {
             }
             HStack(spacing: 8) {
                 Text(session.id).herdrFont(size: HerdrTheme.TextSize.caption, monospaced: true).textSelection(.enabled)
-                Button("Copy session ID", systemImage: "doc.on.doc") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(session.id, forType: .string)
-                }
-                .buttonStyle(HerdrIconButtonStyle(visualSize: HerdrTheme.ControlHeight.small))
-                .help("Copy closed Pi session ID")
+                // Hover-free: this sits in the transcript.
+                PiCopyButton(text: session.id, label: "Copy closed Pi session ID")
             }.foregroundStyle(HerdrTheme.tertiaryText)
             if isExpanded {
                 if session.wasTruncated {

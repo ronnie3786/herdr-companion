@@ -90,10 +90,17 @@ struct WorkspaceNavigationView: View {
                     .frame(width: sidebarWidth)
                     .background { HerdrGlassBackground(level: HerdrTheme.Glass.sidebar, base: railBackground) }
                     .herdrHairline(.trailing, color: chromeHairline)
-                    .overlay(alignment: .trailing) { sidebarResizeHandle }
                     .transition(.move(edge: .leading).combined(with: .opacity))
             }
             detailColumn
+        }
+        // Above both columns, so the whole 6pt strip across the rail's edge
+        // can be grabbed (the detail column would otherwise take half of it).
+        .overlay(alignment: .leading) {
+            if isSidebarVisible {
+                sidebarResizeHandle
+                    .offset(x: sidebarWidth - 3)
+            }
         }
         .ignoresSafeArea(.container, edges: .top)
         // Our 40pt bars end in a hairline; the system's toolbar blur under the
@@ -329,9 +336,7 @@ struct WorkspaceNavigationView: View {
         Color.clear
             .frame(width: 6)
             .contentShape(Rectangle())
-            .onHover { inside in
-                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
-            }
+            .pointerStyle(.columnResize)
             .gesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in
@@ -343,8 +348,17 @@ struct WorkspaceNavigationView: View {
                         liveSidebarWidth = nil
                     }
             )
-            .offset(x: 3)
-            .accessibilityHidden(true)
+            // VoiceOver and keyboard users resize the rail too, as they could
+            // the system split view's divider.
+            .accessibilityElement()
+            .accessibilityLabel("Sidebar width")
+            .accessibilityValue("\(Int(sidebarWidth)) points")
+            .accessibilityAdjustableAction { direction in
+                let step: Double = direction == .increment ? 20 : direction == .decrement ? -20 : 0
+                storedSidebarWidth = min(max(storedSidebarWidth + step, Self.sidebarWidthRange.lowerBound),
+                                         Self.sidebarWidthRange.upperBound)
+            }
+            .accessibilityIdentifier("sidebar-resize-handle")
     }
 
     private var detailColumn: some View {

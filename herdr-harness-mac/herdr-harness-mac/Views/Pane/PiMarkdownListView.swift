@@ -6,13 +6,14 @@ struct PiMarkdownListView: View {
     @Environment(\.chatProsePalette) private var palette
 
     var body: some View {
+        let slotWidth = markerSlotWidth
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 // `.top`, not baselines: the quotable NSTextView path has no
                 // SwiftUI baseline, and both paths start their first line at 0.
                 HStack(alignment: .top, spacing: 8) {
                     marker(for: item.marker)
-                        .herdrIconSlot(width: 16, alignment: .trailing)
+                        .herdrIconSlot(width: slotWidth, alignment: .trailing)
                         .accessibilityHidden(true)
                     PiMarkdownText(
                         item.text,
@@ -32,6 +33,16 @@ struct PiMarkdownListView: View {
         }
     }
 
+    /// Wide enough for the longest number in this list ("10." needs more
+    /// than "1."), so every item keeps the same text column.
+    private var markerSlotWidth: CGFloat {
+        let digits = items.compactMap { item -> Int? in
+            if case let .number(number) = item.marker { return number.count }
+            return nil
+        }.max() ?? 0
+        return digits <= 1 ? 16 : CGFloat(digits) * 9 + 7
+    }
+
     @ViewBuilder
     private func marker(for marker: PiMarkdownListItem.Marker) -> some View {
         switch marker {
@@ -43,6 +54,8 @@ struct PiMarkdownListView: View {
             Text("\(number).")
                 .herdrFont(size: HerdrTheme.TextSize.reading)
                 .monospacedDigit()
+                .lineLimit(1)
+                .fixedSize()
                 .foregroundStyle(palette.marker)
         case let .task(isCompleted):
             Image(systemName: isCompleted ? "checkmark.square.fill" : "square")

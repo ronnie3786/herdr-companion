@@ -145,7 +145,7 @@ private struct DashboardHeaderBar: View {
                     .foregroundStyle(HerdrTheme.secondaryText)
             }
             .toggleStyle(.switch)
-            .controlSize(.mini)
+            .controlSize(.small)
             .tint(HerdrTheme.controlAccent)
             .fixedSize()
             .frame(minHeight: HerdrTheme.minHitTarget)

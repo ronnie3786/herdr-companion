@@ -32,11 +32,12 @@ struct HerdrHudWorkingFolderPicker: View {
             HerdrHudChip(
                 systemImage: session.selectedWorkingFolder.isHome ? "house" : "folder",
                 title: selectedPath,
-                maxTitleWidth: 180
+                maxTitleWidth: 150
             )
         }
         .piChipMenu()
-        .fixedSize()
+        // Shrinks and truncates with the machine chip when the header is tight.
+        .fixedSize(horizontal: false, vertical: true)
         .disabled(!session.canEditWorkingFolder)
         .help(
             session.canEditWorkingFolder

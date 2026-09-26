@@ -172,6 +172,10 @@ struct HerdrTabs<Value: Hashable>: View {
         let title: String
         var count: Int?
         var accessibilityIdentifier: String?
+        /// A tooltip, e.g. a machine's full name behind a short title.
+        var help: String?
+        /// VoiceOver's name when the visible title is abbreviated.
+        var accessibilityLabel: String?
         var id: Value { value }
     }
 
@@ -197,6 +201,8 @@ struct HerdrTabs<Value: Hashable>: View {
             label(for: tab, selected: selected)
         }
         .buttonStyle(.plain)
+        .modifier(HerdrOptionalHelp(text: tab.help))
+        .accessibilityLabel(tab.accessibilityLabel ?? tab.count.map { "\(tab.title), \($0)" } ?? tab.title)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier(tab.accessibilityIdentifier ?? "")
     }
@@ -458,5 +464,15 @@ private struct HerdrIconSlot: ViewModifier {
             height: height.map { $0 * fontScale.rawValue },
             alignment: alignment
         )
+    }
+}
+
+/// `.help` only when there is text, so a tab without its own tooltip keeps
+/// its container's.
+private struct HerdrOptionalHelp: ViewModifier {
+    let text: String?
+
+    func body(content: Content) -> some View {
+        if let text { content.help(text) } else { content }
     }
 }

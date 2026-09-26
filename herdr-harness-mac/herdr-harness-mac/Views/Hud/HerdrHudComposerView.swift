@@ -192,6 +192,9 @@ struct HerdrHudComposerView: View {
                 attachIdentifier: "hud-attach-file",
                 pasteIdentifier: "hud-code-block-paste"
             )
+            // The HUD is a non-activating panel: the row must act on the
+            // click that also makes its popover key, not need a second one.
+            .allowsWindowActivationEvents(true)
         }
     }
 

@@ -36,7 +36,7 @@ final class PRReviewDiffTextView: WKWebView, WKScriptMessageHandler, WKNavigatio
         setAccessibilityIdentifier("pr-review-diff-text")
         allowsBackForwardNavigationGestures = false
         allowsLinkPreview = false
-        underPageBackgroundColor = NSColor(HerdrTheme.windowBackground)
+        underPageBackgroundColor = HerdrTheme.resolved(HerdrTheme.windowBackground)
         loadBundledRenderer()
     }
 

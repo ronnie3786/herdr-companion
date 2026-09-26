@@ -114,6 +114,8 @@ struct ResponseBriefChatLayout<Content: View>: View {
             rail(close: closeSheet)
                 .frame(width: railWidth)
                 .frame(minHeight: 640)
+                // A sheet is its own opaque window; never pane glass.
+                .environment(\.herdrGlassActive, false)
         }
     }
 

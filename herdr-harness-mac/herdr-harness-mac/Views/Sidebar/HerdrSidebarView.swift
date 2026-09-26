@@ -448,8 +448,12 @@ struct HerdrSidebarView: View {
         let segments = SidebarMachineSegmentPresentation.segments(for: model.machines)
         return HerdrTabs(
             selection: machineScopeBinding,
-            tabs: [.init(value: MachineScope.all, title: "All", accessibilityIdentifier: "sidebar-machine-all")]
-                + segments.map { .init(value: MachineScope.machine($0.id), title: $0.title, accessibilityIdentifier: "sidebar-machine-\($0.id)-tab") },
+            tabs: [.init(value: MachineScope.all, title: "All", accessibilityIdentifier: "sidebar-machine-all",
+                         help: "All machines", accessibilityLabel: "All machines")]
+                + segments.map {
+                    .init(value: MachineScope.machine($0.id), title: $0.title,
+                          accessibilityIdentifier: "sidebar-machine-\($0.id)-tab", help: $0.name)
+                },
             style: .segments,
             accessibilityLabel: "Machine"
         )

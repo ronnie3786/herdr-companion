@@ -64,7 +64,6 @@ struct FirstMateSidebarView: View {
                     .foregroundStyle(palette.secondaryText)
             }
             .toggleStyle(.switch)
-            .controlSize(.mini)
             .onChange(of: store.showArchived) { _, _ in Task { await store.refresh() } }
             .disabled(!store.archiveSupported)
             .help(store.archiveSupported ? "Include archived features" : "Update the companion server to manage archived features")

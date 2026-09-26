@@ -556,6 +556,16 @@ struct PromptComposerView: View {
                             .disabled(!piConfiguration.canAbort)
                             .help("Stop Pi's current turn")
                             .accessibilityIdentifier("pi-chat-stop")
+                    } else if primaryMode != .stopTurn {
+                        // While dictation or a submission owns the primary button,
+                        // Stop turn is spelled out so it never reads as "stop
+                        // recording".
+                        Button("Stop turn", systemImage: "stop.fill", action: stopPi)
+                            .labelStyle(DashboardInlineLabelStyle(spacing: 4))
+                            .buttonStyle(HerdrButtonStyle(kind: .outline, height: HerdrTheme.ControlHeight.small))
+                            .disabled(!piConfiguration.canAbort)
+                            .help("Stop Pi's current turn")
+                            .accessibilityIdentifier("pi-chat-stop")
                     }
                 }
                 primaryButton
@@ -826,16 +836,23 @@ struct PromptComposerView: View {
     private enum PrimaryMode { case stopCapture, transcribing, submitting, stopTurn, send }
 
     /// MonoCode's rule: while Pi works and the prompt is empty, the primary
-    /// button is Stop. A typed draft turns it back into Send.
+    /// button is Stop. Any draft content (text, attachments, quotes or staged
+    /// references) keeps it Send, even while that draft cannot send yet, so
+    /// the Send position never aborts a turn by surprise.
     private var primaryMode: PrimaryMode {
         if isCTALockedCapture { return .stopCapture }
         if isCTATranscribing { return .transcribing }
         if isSubmitting { return .submitting }
         if let piConfiguration, piConfiguration.phase == .working,
-           piConfiguration.compactionActivity == nil, !canSend {
+           piConfiguration.compactionActivity == nil, !hasDraftContent {
             return .stopTurn
         }
         return .send
+    }
+
+    private var hasDraftContent: Bool {
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !attachments.isEmpty || !quotes.isEmpty || !stagedConversationReferences.isEmpty
     }
 
     @ViewBuilder

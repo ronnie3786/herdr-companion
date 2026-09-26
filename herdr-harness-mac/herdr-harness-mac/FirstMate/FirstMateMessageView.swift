@@ -119,7 +119,7 @@ struct FirstMateMessageView: View {
             identifier: "first-mate-copy-\(message.id)",
             inset: 0,
             offset: CGSize(width: -8, height: 0),
-            isEnabled: feedback == nil
+            showsButton: feedback == nil
         )
     }
 }

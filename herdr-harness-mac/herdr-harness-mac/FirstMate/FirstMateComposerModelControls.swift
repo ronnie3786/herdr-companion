@@ -82,12 +82,26 @@ struct FirstMateComposerModelControls: View {
                     style: .segment
                 )
             }
-            if configuredDiffersFromActual, !compact {
-                Text("Next: \(feature.modelDisplayName)\(configuredThinkingSuffix)")
-                    .herdrFont(size: HerdrTheme.TextSize.caption)
-                    .foregroundStyle(HerdrTheme.tertiaryText)
-                    .lineLimit(1)
-                    .help("Configured for the next coordinator turn; the current session is unchanged until the server applies it safely")
+            if configuredDiffersFromActual {
+                let next = "Next: \(feature.modelDisplayName)\(configuredThinkingSuffix)"
+                Group {
+                    if compact {
+                        // Narrow composers keep the pending change as a glyph.
+                        Image(systemName: "clock.arrow.circlepath")
+                            .herdrFont(size: 12)
+                            .foregroundStyle(HerdrTheme.iconTint)
+                            .frame(minWidth: HerdrTheme.minHitTarget, minHeight: HerdrTheme.minHitTarget)
+                            .contentShape(.rect)
+                    } else {
+                        Text(next)
+                            .herdrFont(size: HerdrTheme.TextSize.caption)
+                            .foregroundStyle(HerdrTheme.tertiaryText)
+                            .lineLimit(1)
+                    }
+                }
+                .help("\(next). Configured for the next coordinator turn; the current session is unchanged until the server applies it safely")
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(next)
             }
             if supportsSettings {
                 Button("Use host default", systemImage: "arrow.uturn.backward", action: selectHostDefault)

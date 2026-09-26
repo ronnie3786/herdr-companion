@@ -57,10 +57,13 @@ extension View {
         alignment: Alignment = .topTrailing,
         inset: CGFloat = 6,
         offset: CGSize = .zero,
-        isEnabled: Bool = true
+        isEnabled: Bool = true,
+        showsButton: Bool? = nil
     ) -> some View {
+        // `showsButton` hides only the floating control (a row that already
+        // has its own copy button); the context menu keeps Copy.
         overlay(alignment: alignment) {
-            if isEnabled {
+            if showsButton ?? isEnabled {
                 PiCopyButton(text: text, label: label, accessibilityIdentifier: identifier)
                     .padding(inset)
                     .offset(offset)

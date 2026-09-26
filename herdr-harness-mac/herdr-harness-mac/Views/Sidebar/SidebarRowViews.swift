@@ -67,6 +67,8 @@ private struct SidebarCardStatus: View {
     let since: Date?
     var describesLastActivity = false
     var isManuallyUnread = false
+    /// Quiet text lifts to secondary on a selected card (see `metaColor`).
+    var isSelected = false
 
     var body: some View {
         HStack(spacing: 5) {
@@ -91,7 +93,9 @@ private struct SidebarCardStatus: View {
     }
 
     private var statusColor: Color {
-        status.needsAttention || status == .working ? status.color : HerdrTheme.tertiaryText
+        status.needsAttention || status == .working
+            ? status.color
+            : (isSelected ? HerdrTheme.secondaryText : HerdrTheme.tertiaryText)
     }
 }
 
@@ -451,7 +455,8 @@ struct SidebarChatRow: View {
             status: pane.agentStatus,
             since: since,
             describesLastActivity: describesLastActivity,
-            isManuallyUnread: isManuallyUnread
+            isManuallyUnread: isManuallyUnread,
+            isSelected: isSelected
         )
     }
 
@@ -611,7 +616,12 @@ struct SidebarChatRow: View {
 
     private var accessibilityLabel: String {
         var identity = "\(pane.displayTitle), \(pane.displayAgentName), \(pane.agentStatus.title)"
-        if let recentContext { identity += ", \(recentContext.accessibilityLabel)" }
+        if let recentContext {
+            identity += ", \(recentContext.accessibilityLabel)"
+        } else if case let .full(location) = style {
+            // Unread and Starred cards name their place on the card itself.
+            identity += ", \(location)"
+        }
         if let tabColor { identity += ", color group: \(colorLabel ?? tabColor.defaultLabel) (\(tabColor.defaultLabel))" }
         if let hierarchy {
             if hierarchy.depth > 0 { identity += ", child session, level \(hierarchy.depth)" }

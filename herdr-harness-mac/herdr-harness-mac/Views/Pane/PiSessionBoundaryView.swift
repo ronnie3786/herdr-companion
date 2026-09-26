@@ -14,12 +14,8 @@ struct PiSessionBoundaryView: View {
                 Text(previousSessionID)
                     .herdrFont(size: HerdrTheme.TextSize.caption, monospaced: true).textSelection(.enabled)
                     .foregroundStyle(HerdrTheme.tertiaryText)
-                Button("Copy previous session ID", systemImage: "doc.on.doc") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(previousSessionID, forType: .string)
-                }
-                .buttonStyle(HerdrIconButtonStyle())
-                .help("Copy the session ID of the chat just closed")
+                // Hover-free: this sits in the transcript.
+                PiCopyButton(text: previousSessionID, label: "Copy the session ID of the chat just closed")
             }
             HStack(spacing: 10) {
                 Rectangle().fill(HerdrTheme.inkFill(0.12)).frame(height: 1)

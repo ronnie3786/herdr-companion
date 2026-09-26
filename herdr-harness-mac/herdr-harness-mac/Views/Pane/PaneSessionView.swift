@@ -130,6 +130,9 @@ struct PaneSessionView: View {
                     }
                 )
             }
+            // The title bar outlives this view; keying its controls by pane
+            // drops a rename or close confirmation left open for another pane.
+            .id(currentPane.id)
         }
         .task(id: followTaskID) {
             guard !currentPane.reservedShell else { return }

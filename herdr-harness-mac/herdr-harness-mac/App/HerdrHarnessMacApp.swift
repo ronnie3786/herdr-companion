@@ -141,6 +141,7 @@ struct HerdrHarnessMacApp: App {
                 FirstMateGitWindowRoot(model: model, driver: connectionDriver, target: target)
                     .environment(herdPulse)
                     .environment(\.herdrFontScale, fontScale.scale)
+                    .preferredColorScheme(.dark)
             } else {
                 ContentUnavailableView(
                     "First Mate Git unavailable",
@@ -148,6 +149,9 @@ struct HerdrHarnessMacApp: App {
                     description: Text("Open Git from a selected First Mate feature.")
                 )
                 .frame(minWidth: 720, minHeight: 520)
+                .background(HerdrTheme.windowBackground)
+                .foregroundStyle(HerdrTheme.text)
+                .preferredColorScheme(.dark)
             }
         }
         .defaultSize(width: 1120, height: 760)

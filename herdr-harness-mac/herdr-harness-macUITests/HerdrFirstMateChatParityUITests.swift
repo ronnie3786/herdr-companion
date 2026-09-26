@@ -20,8 +20,7 @@ final class HerdrFirstMateChatParityUITests: HerdrUITestCase {
         )
 
         for (identifier, name) in [
-            ("composer-attach-file", "Attach"),
-            ("composer-code-block-paste", "Paste code"),
+            ("composer-add-menu", "Add (+)"),
             ("composer-record-voice", "Voice"),
             ("composer-more-tools", "More"),
             ("prompt-send", "Send"),
@@ -31,6 +30,19 @@ final class HerdrFirstMateChatParityUITests: HerdrUITestCase {
                 "First Mate should expose the shared \(name) affordance"
             )
         }
+
+        // Attach and Paste code live in the shared composer's + popover.
+        app.control(identifier: "composer-add-menu").click()
+        for (identifier, name) in [
+            ("composer-attach-file", "Attach"),
+            ("composer-code-block-paste", "Paste code"),
+        ] {
+            XCTAssertTrue(
+                app.control(identifier: identifier).waitForExistence(timeout: 5),
+                "First Mate's + menu should offer the shared \(name) affordance"
+            )
+        }
+        app.typeKey(.escape, modifierFlags: [])
 
         XCTAssertFalse(app.control(identifier: "composer-terminal-keys-toggle").exists)
         XCTAssertEqual(

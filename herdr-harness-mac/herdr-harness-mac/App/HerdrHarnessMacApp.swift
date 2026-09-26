@@ -41,6 +41,7 @@ struct HerdrHarnessMacApp: App {
     @State private var hudNotes: HerdrHudNotesState
 
     init() {
+        HerdrTheme.followAccessibilityContrast()
         let settings = AgentModelSettingsStore()
         let prompts = HerdrPromptSettingsStore()
         let favorites = ModelFavoritesStore()
@@ -72,14 +73,15 @@ struct HerdrHarnessMacApp: App {
                 agentControl: agentControl,
                 updates: updates
             )
-                .modifier(HerdrMainWindowChromeModifier())
+                .modifier(HerdrMainWindowChromeModifier(
+                    background: shell.detailScope == .firstMate ? FirstMatePalette(scheme: shell.firstMate.colorScheme).background : HerdrTheme.windowBackground
+                ))
                 .task { updates.start() }
                 .environment(herdPulse)
                 // Apple documents `dynamicTypeSize` as not affecting text size
                 // on macOS, so Herdr uses this custom scale environment instead.
                 .environment(\.herdrFontScale, fontScale.scale)
                 .frame(minWidth: 1000, minHeight: 680)
-                .background(shell.detailScope == .firstMate ? FirstMatePalette(scheme: shell.firstMate.colorScheme).background : HerdrTheme.windowBackground)
                 .foregroundStyle(shell.detailScope == .firstMate ? FirstMatePalette(scheme: shell.firstMate.colorScheme).text : HerdrTheme.text)
                 .preferredColorScheme(shell.detailScope == .firstMate ? shell.firstMate.colorScheme : .dark)
                 .tint(shell.detailScope == .firstMate ? FirstMatePalette(scheme: shell.firstMate.colorScheme).accent : HerdrTheme.accent)

@@ -467,7 +467,7 @@ struct SidebarChatRow: View {
                         .lineLimit(1)
                 }
                 .herdrFont(size: SidebarMetrics.metaLabelSize)
-                .foregroundStyle(HerdrTheme.tertiaryText)
+                .foregroundStyle(metaColor)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 if showsStatus { cardStatus }
             }
@@ -483,9 +483,15 @@ struct SidebarChatRow: View {
                     .accessibilityLabel(recentContext?.accessibilityLabel ?? location)
             }
             .herdrFont(size: SidebarMetrics.metaLabelSize)
-            .foregroundStyle(HerdrTheme.tertiaryText)
+            .foregroundStyle(metaColor)
             contextLines
         }
+    }
+
+    /// Meta text lifts to secondary on a selected row: over sidebar glass,
+    /// tertiary on the 10% selection falls under 4.5:1 on bright desktops.
+    private var metaColor: Color {
+        isSelected ? HerdrTheme.secondaryText : HerdrTheme.tertiaryText
     }
 
     private var compactCard: some View {
@@ -509,7 +515,7 @@ struct SidebarChatRow: View {
                 Text("\(hierarchy.childCount)")
                     .herdrFont(size: SidebarMetrics.metaLabelSize)
                     .monospacedDigit()
-                    .foregroundStyle(HerdrTheme.tertiaryText)
+                    .foregroundStyle(metaColor)
                     .help("\(hierarchy.childCount) child sessions")
                     .fixedSize()
             }
@@ -528,14 +534,14 @@ struct SidebarChatRow: View {
         if let workspaceLabel = hierarchy?.workspaceLabel {
             Label(workspaceLabel, systemImage: "folder")
                 .herdrFont(size: SidebarMetrics.metaLabelSize)
-                .foregroundStyle(HerdrTheme.tertiaryText)
+                .foregroundStyle(metaColor)
                 .lineLimit(1)
                 .help("Workspace: \(workspaceLabel)\n\(pane.displayPath)")
         }
         if let parentContext {
             Text(parentContext)
                 .herdrFont(size: SidebarMetrics.metaLabelSize)
-                .foregroundStyle(HerdrTheme.tertiaryText)
+                .foregroundStyle(metaColor)
                 .lineLimit(1)
         }
     }

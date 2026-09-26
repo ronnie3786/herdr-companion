@@ -81,7 +81,7 @@ struct PaneSessionView: View {
 
     var body: some View {
         ZStack {
-            HerdrBackground()
+            HerdrBackground(followsGlass: true)
 
             modeContent
             .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: selectedMode)

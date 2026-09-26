@@ -114,7 +114,7 @@ struct FirstMateWorkspaceView: View {
         } trailing: {
             if hostsTitleBar { titleBarTrailing }
         }
-        .background(palette.background)
+        .herdrPaneBackground(palette.background)
         // Hierarchical `.secondary` / `.tertiary` resolve to palette tokens
         // that clear 4.5:1 in both appearances.
         .foregroundStyle(palette.text, palette.secondaryText, palette.tertiaryText)

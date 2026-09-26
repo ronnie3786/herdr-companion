@@ -131,7 +131,8 @@ struct MonoScreenRenderTests {
         let name = scheme == .dark ? "dark" : "light"
 
         let result = try await HerdrRenderHarness.renderWindow("mono-first-mate-\(name).png", size: Self.window) {
-            MonoRenderFixtures.window(model: model, shell: shell)
+            // First Mate's light appearance stays opaque.
+            MonoRenderFixtures.window(model: model, shell: shell, glass: scheme == .dark)
                 .background(FirstMatePalette(scheme: scheme).background)
                 .environment(\.colorScheme, scheme)
                 .preferredColorScheme(scheme)
@@ -172,6 +173,8 @@ struct MonoScreenRenderTests {
                 MonoRenderFixtures.desktop
                 HerdrHudCardView(model: model, controller: HerdrHudController(), session: session)
                     .frame(width: 420, height: 580)
+                    .environment(\.herdrGlassActive, true)
+                    .environment(\.herdrGlassDrawsBlur, false)
                     .padding(.top, 60)
                     .padding(.trailing, 40)
             }
@@ -193,16 +196,25 @@ enum MonoRenderFixtures {
     }
 
     /// The production window shell: `WorkspaceNavigationView` with its rail,
-    /// title bar and routed (or injected) detail.
-    static func window(model: HerdrAppModel, shell: HerdrShellState, detail: AnyView? = nil) -> some View {
-        WorkspaceNavigationView(
-            model: model,
-            shell: shell,
-            activeWorkStore: ActiveWorkStore(),
-            modelFavorites: ModelFavoritesStore(),
-            updates: HerdrUpdateController(defaults: UserDefaults(suiteName: "MonoRender.updates.\(UUID().uuidString)")!),
-            detailOverride: detail
-        )
+    /// title bar and routed (or injected) detail. With `glass`, the dusk
+    /// desktop sits behind the window the way the blurred desktop does in the
+    /// app (offscreen captures never include behind-window blur, so the base
+    /// shows at its Legible level over the unblurred gradient).
+    static func window(model: HerdrAppModel, shell: HerdrShellState, detail: AnyView? = nil, glass: Bool = true) -> some View {
+        ZStack {
+            if glass { desktop }
+            WorkspaceNavigationView(
+                model: model,
+                shell: shell,
+                activeWorkStore: ActiveWorkStore(),
+                modelFavorites: ModelFavoritesStore(),
+                updates: HerdrUpdateController(defaults: UserDefaults(suiteName: "MonoRender.updates.\(UUID().uuidString)")!),
+                detailOverride: detail
+            )
+        }
+        .environment(\.herdrGlassActive, glass)
+        .environment(\.herdrHazeActive, glass)
+        .environment(\.herdrGlassDrawsBlur, false)
         .environment(HerdPulseCoordinator(defaults: UserDefaults(suiteName: "MonoRender.pulse")!))
         .environment(\.herdrFontScale, .medium)
     }

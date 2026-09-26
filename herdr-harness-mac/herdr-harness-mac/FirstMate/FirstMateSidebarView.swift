@@ -41,7 +41,7 @@ struct FirstMateSidebarView: View {
             }
             footer
         }
-        .background(palette.sidebar)
+        .herdrPaneBackground(palette.sidebar)
         .foregroundStyle(palette.text, palette.secondaryText, palette.tertiaryText)
         .herdrRailHeaderActions {
             Button("New feature", systemImage: "plus") { store.isCreating = true }
@@ -197,7 +197,7 @@ struct FirstMateFeatureCard: View {
                 Text(detail)
                     .herdrFont(size: HerdrTheme.TextSize.caption)
                     .monospacedDigit()
-                    .foregroundStyle(HerdrTheme.tertiaryText)
+                    .foregroundStyle(isSelected ? HerdrTheme.secondaryText : HerdrTheme.tertiaryText)
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 FirstMateStatusLabel(status: status)

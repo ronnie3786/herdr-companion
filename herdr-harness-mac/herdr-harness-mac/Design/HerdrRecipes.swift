@@ -400,3 +400,38 @@ private struct HerdrRowButtonBody: View {
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }
+
+/// A select trigger for a `Menu` (Settings model choices): a 26pt field-like
+/// control with an icon, the current value and an up-down chevron.
+struct HerdrSelectTrigger: View {
+    let title: String
+    var systemImage: String?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let systemImage {
+                Image(systemName: systemImage)
+                    .herdrFont(size: 12)
+                    .foregroundStyle(HerdrTheme.iconTint)
+                    .accessibilityHidden(true)
+            }
+            Text(title)
+                .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
+                .foregroundStyle(HerdrTheme.primaryText)
+                .lineLimit(1)
+            Image(systemName: "chevron.up.chevron.down")
+                .herdrFont(size: HerdrTheme.TextSize.micro, weight: .semibold)
+                .foregroundStyle(HerdrTheme.iconTint)
+                .accessibilityHidden(true)
+        }
+        .padding(.horizontal, 8)
+        .frame(minHeight: HerdrTheme.ControlHeight.regular)
+        .background(HerdrTheme.insetFill, in: .rect(cornerRadius: HerdrTheme.Radius.control))
+        .overlay {
+            RoundedRectangle(cornerRadius: HerdrTheme.Radius.control)
+                .strokeBorder(HerdrTheme.outline, lineWidth: 1)
+        }
+        .frame(minHeight: HerdrTheme.minHitTarget)
+        .contentShape(Rectangle())
+    }
+}

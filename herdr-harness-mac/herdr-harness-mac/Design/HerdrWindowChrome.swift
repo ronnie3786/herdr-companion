@@ -16,9 +16,12 @@ struct HerdrWindowChrome: NSViewRepresentable {
     static let trafficLightInset: CGFloat = 80
 
     @Binding var isFullScreen: Bool
+    /// A transparent window lets the sidebar and pane glass blur the desktop.
+    var isGlass = false
 
     func makeNSView(context: Context) -> ChromeView {
         let view = ChromeView()
+        view.isGlass = isGlass
         view.onFullScreenChange = { value in
             if isFullScreen != value { isFullScreen = value }
         }
@@ -29,12 +32,14 @@ struct HerdrWindowChrome: NSViewRepresentable {
         view.onFullScreenChange = { value in
             if isFullScreen != value { isFullScreen = value }
         }
+        view.isGlass = isGlass
         view.applyChrome()
     }
 
     final class ChromeView: NSView {
         static let toolbarIdentifier = NSToolbar.Identifier("herdr.main.chrome")
         var onFullScreenChange: ((Bool) -> Void)?
+        var isGlass = false
         private var observers: [NSObjectProtocol] = []
 
         override func viewDidMoveToWindow() {
@@ -66,6 +71,10 @@ struct HerdrWindowChrome: NSViewRepresentable {
                 window.toolbar = toolbar
             }
             if window.toolbarStyle != .unifiedCompact { window.toolbarStyle = .unifiedCompact }
+            if window.isOpaque == isGlass {
+                window.isOpaque = !isGlass
+                window.backgroundColor = isGlass ? .clear : .windowBackgroundColor
+            }
         }
 
         private func reportFullScreen() {
@@ -91,14 +100,24 @@ extension EnvironmentValues {
 /// Installs `HerdrWindowChrome` on the main window and publishes whether it is
 /// in full screen to every bar below it.
 struct HerdrMainWindowChromeModifier: ViewModifier {
+    /// The window's opaque background while glass is off.
+    var background: Color = HerdrTheme.windowBackground
     @State private var isFullScreen = false
+    @AppStorage(HerdrAppearancePreferences.glassEnabledKey) private var glassEnabled = HerdrAppearancePreferences.defaultGlassEnabled
+    @AppStorage(HerdrAppearancePreferences.hazeEnabledKey) private var hazeEnabled = HerdrAppearancePreferences.defaultHazeEnabled
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
 
     func body(content: Content) -> some View {
+        let glass = HerdrGlass.isActive(enabled: glassEnabled, reduceTransparency: reduceTransparency, colorScheme: colorScheme)
         content
             // The shell draws its own 40pt bars at the top edge; nothing below
             // them should treat the transparent title bar as a safe area.
             .ignoresSafeArea(.container, edges: .top)
             .environment(\.herdrWindowIsFullScreen, isFullScreen)
-            .background { HerdrWindowChrome(isFullScreen: $isFullScreen) }
+            .environment(\.herdrGlassActive, glass)
+            .environment(\.herdrHazeActive, glass && hazeEnabled)
+            .background(glass ? Color.clear : background)
+            .background { HerdrWindowChrome(isFullScreen: $isFullScreen, isGlass: glass) }
     }
 }

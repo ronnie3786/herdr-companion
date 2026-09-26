@@ -64,7 +64,7 @@ struct WorkspaceGitView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(HerdrTheme.windowBackground)
+        .herdrPaneBackground()
         .task(id: workspace.id) { await refresh() }
         .herdrHaptic(trigger: hapticPulse)
     }

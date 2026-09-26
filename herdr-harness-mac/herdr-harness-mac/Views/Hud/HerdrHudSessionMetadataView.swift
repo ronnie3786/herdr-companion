@@ -21,14 +21,15 @@ struct HerdrHudSessionMetadataView: View {
         ZStack(alignment: .trailing) {
             if let label = metadata.label(showsModel: showsModel) {
                 Text(label)
-                    .herdrFont(.caption2)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .monospacedDigit()
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .id(label)
                     .transition(.opacity)
             }
         }
-        .foregroundStyle(HerdrTheme.mist)
+        .foregroundStyle(HerdrTheme.secondaryText)
         .frame(maxWidth: .infinity, alignment: .trailing)
         .clipped()
         .help(metadata.accessibilitySummary)

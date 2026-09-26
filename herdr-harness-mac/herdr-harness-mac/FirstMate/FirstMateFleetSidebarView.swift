@@ -102,7 +102,7 @@ struct FirstMateFleetSidebarView: View {
             .padding(8)
             .herdrHairline(.top, color: palette.hairline)
         }
-        .background(palette.sidebar)
+        .herdrPaneBackground(palette.sidebar)
         .foregroundStyle(palette.text, palette.secondaryText, palette.tertiaryText)
         .herdrRailHeaderActions {
             Menu {

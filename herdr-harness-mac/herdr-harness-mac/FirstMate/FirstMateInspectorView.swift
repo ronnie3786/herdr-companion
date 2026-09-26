@@ -58,7 +58,7 @@ struct FirstMateInspectorView: View {
             .frame(minHeight: HerdrTheme.ControlHeight.row)
             .herdrHairline(.top, color: palette.hairline)
         }
-        .background(palette.background)
+        .herdrPaneBackground(palette.background)
         .herdrHairline(.leading, color: palette.hairline)
     }
 }

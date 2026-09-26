@@ -65,7 +65,7 @@ struct AgentBoardView: View {
         } trailing: {
             if hostsTitleBar { AgentBoardHeaderBar.Trailing(model: model, shell: shell) }
         }
-        .background(HerdrTheme.windowBackground)
+        .herdrPaneBackground()
         .foregroundStyle(HerdrTheme.primaryText)
         .tint(HerdrTheme.accent)
         .onChange(of: entries.map(\.id)) { _, ids in board.prune(keeping: Set(ids)) }

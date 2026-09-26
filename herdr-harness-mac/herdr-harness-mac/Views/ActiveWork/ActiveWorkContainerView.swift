@@ -47,7 +47,7 @@ struct ActiveWorkContainerView: View {
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            HerdrBackground()
+            HerdrBackground(followsGlass: true)
 
             VStack(spacing: 0) {
                 header
@@ -160,7 +160,7 @@ struct ActiveWorkContainerView: View {
             .padding(.bottom, 14)
             .frame(maxWidth: .infinity)
         }
-        .background(HerdrTheme.graphite)
+        .herdrPaneBackground()
     }
 
     private var headerTitle: some View {

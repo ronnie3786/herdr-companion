@@ -62,17 +62,20 @@ struct SettingsView: View {
         _smartRenameCatalogMachineID = State(initialValue: initialSmartRenameCatalogMachineID)
     }
 
+    @State private var hoveredPane: SettingsPane?
+    @AppStorage(HerdrAppearancePreferences.glassEnabledKey) private var glassEnabled = HerdrAppearancePreferences.defaultGlassEnabled
+    @AppStorage(HerdrAppearancePreferences.hazeEnabledKey) private var hazeEnabled = HerdrAppearancePreferences.defaultHazeEnabled
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
     var body: some View {
         HStack(spacing: 0) {
             settingsRail
-
-            Divider()
-                .overlay(HerdrTheme.separator)
+                .herdrHairline(.trailing)
 
             settingsDetail
         }
         .navigationTitle("Settings")
-        .foregroundStyle(HerdrTheme.text)
+        .foregroundStyle(HerdrTheme.primaryText)
         .sheet(isPresented: $isPresentingMachines) {
             MachinesView(model: model)
                 .frame(minWidth: 460, minHeight: 420)
@@ -95,34 +98,38 @@ struct SettingsView: View {
         ScrollView {
             VStack(spacing: 2) {
                 ForEach(SettingsPane.allCases) { pane in
+                    let selected = selectedPane == pane
                     Button {
                         selectedPane = pane
                     } label: {
-                        Label(pane.title, systemImage: pane.systemImage)
-                            .foregroundStyle(HerdrTheme.text)
-                            .frame(
-                                maxWidth: .infinity,
-                                minHeight: HerdrTheme.minHitTarget,
-                                alignment: .leading
-                            )
-                            .padding(.horizontal, 10)
-                            .background(
-                                selectedPane == pane ? HerdrTheme.elevated : .clear,
-                                in: RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                            )
-                            .contentShape(Rectangle())
+                        // MonoCode's `.nav` row: 32pt, 13/500.
+                        HStack(spacing: 8) {
+                            Image(systemName: pane.systemImage)
+                                .herdrFont(size: 14)
+                                .foregroundStyle(HerdrTheme.iconTint)
+                                .frame(width: 18)
+                            Text(pane.title)
+                                .herdrFont(size: HerdrTheme.TextSize.body, weight: .medium)
+                                .foregroundStyle(selected ? HerdrTheme.primaryText : HerdrTheme.secondaryText)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: HerdrTheme.ControlHeight.row, alignment: .leading)
+                        .padding(.horizontal, 8)
+                        .herdrRowBackground(selected: selected, hovered: hoveredPane == pane)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .onHover { hoveredPane = $0 ? pane : (hoveredPane == pane ? nil : hoveredPane) }
+                    .accessibilityLabel(pane.title)
                     .accessibilityIdentifier(pane.accessibilityIdentifier)
-                    .accessibilityAddTraits(selectedPane == pane ? .isSelected : [])
+                    .accessibilityAddTraits(selected ? .isSelected : [])
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(8)
+            .padding(6)
         }
         .frame(width: 215)
         .frame(maxHeight: .infinity)
-        .background(HerdrTheme.ink)
+        .background(HerdrTheme.railBackground)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("settings-sidebar")
     }
@@ -137,6 +144,7 @@ struct SettingsView: View {
                 paneSections(for: selectedPane)
             }
             .formStyle(.grouped)
+            .herdrFont(size: HerdrTheme.TextSize.body)
             .scrollContentBackground(.hidden)
             .background(HerdrBackground())
         }
@@ -147,6 +155,7 @@ struct SettingsView: View {
         switch pane {
         case .general:
             textSizeSection
+            appearanceSection
             feedbackSection
             chatSection
             buildsSection
@@ -195,7 +204,9 @@ struct SettingsView: View {
                 }
             }
         } header: {
-            Label("Connection", systemImage: "bolt.horizontal.circle")
+            SettingsSectionHeader {
+                Label("Connection", systemImage: "bolt.horizontal.circle")
+            }
         }
     }
 
@@ -243,9 +254,13 @@ struct SettingsView: View {
                 Button("Use demo data", systemImage: "sparkles", action: model.useDemo)
             }
         } header: {
-            Label("Machines", systemImage: "server.rack")
+            SettingsSectionHeader {
+                Label("Machines", systemImage: "server.rack")
+            }
         } footer: {
-            Text("Use the private HTTPS address created by Tailscale Serve. Each bearer token is stored in Keychain and sent only to its machine.")
+            SettingsSectionFooter {
+                Text("Use the private HTTPS address created by Tailscale Serve. Each bearer token is stored in Keychain and sent only to its machine.")
+            }
         }
     }
 
@@ -273,9 +288,13 @@ struct SettingsView: View {
             }
             .disabled(!model.smartAlertsEnabled)
         } header: {
-            Text("Attention")
+            SettingsSectionHeader {
+                Text("Attention")
+            }
         } footer: {
-            Text("Herdr alerts only on meaningful transitions: an agent is blocked or background work is ready to review. This Mac stays connected to the event stream, so alerts are delivered locally.")
+            SettingsSectionFooter {
+                Text("Herdr alerts only on meaningful transitions: an agent is blocked or background work is ready to review. This Mac stays connected to the event stream, so alerts are delivered locally.")
+            }
         }
     }
 
@@ -294,9 +313,13 @@ struct SettingsView: View {
 
             LabeledContent("Fallback", value: "Apple Speech")
         } header: {
-            Text("Voice to prompt")
+            SettingsSectionHeader {
+                Text("Voice to prompt")
+            }
         } footer: {
-            Text("Parakeet audio travels only through your authenticated Herdr server and configured transcription provider. If it is unavailable, Herdr transcribes with Apple Speech. Transcripts remain editable and are never sent automatically.")
+            SettingsSectionFooter {
+                Text("Parakeet audio travels only through your authenticated Herdr server and configured transcription provider. If it is unavailable, Herdr transcribes with Apple Speech. Transcripts remain editable and are never sent automatically.")
+            }
         }
     }
 
@@ -323,9 +346,13 @@ struct SettingsView: View {
 
             LabeledContent("Summon", value: "⌃⌥Space")
         } header: {
-            Text("HUD")
+            SettingsSectionHeader {
+                Text("HUD")
+            }
         } footer: {
-            Text("Show 4 agents by default; additional agents are grouped under +N. Choose Show all to keep every agent in the scrollable list. The HUD can run real commands on the selected machine.")
+            SettingsSectionFooter {
+                Text("Show 4 agents by default; additional agents are grouped under +N. Choose Show all to keep every agent in the scrollable list. The HUD can run real commands on the selected machine.")
+            }
         }
     }
 
@@ -392,9 +419,13 @@ struct SettingsView: View {
             }
             .accessibilityIdentifier("settings-app-shots-test-capture")
         } header: {
-            Label("App Shots", systemImage: "viewfinder")
+            SettingsSectionHeader {
+                Label("App Shots", systemImage: "viewfinder")
+            }
         } footer: {
-            Text("Press the left and right Command keys together to capture the frontmost app window into a new HUD chat. Herdr reads each Command key independently; if the readout never changes while you hold one, grant keyboard access. ⌃⌥C and File ▸ Capture Frontmost Window always work and need no extra permission. Capturing requires Screen Recording, and nothing is ever sent automatically.")
+            SettingsSectionFooter {
+                Text("Press the left and right Command keys together to capture the frontmost app window into a new HUD chat. Herdr reads each Command key independently; if the readout never changes while you hold one, grant keyboard access. ⌃⌥C and File ▸ Capture Frontmost Window always work and need no extra permission. Capturing requires Screen Recording, and nothing is ever sent automatically.")
+            }
         }
     }
 
@@ -419,9 +450,13 @@ struct SettingsView: View {
             .tint(HerdrTheme.controlAccent)
             .accessibilityIdentifier("settings-group-all-clanking-activity")
         } header: {
-            Text("Chat")
+            SettingsSectionHeader {
+                Text("Chat")
+            }
         } footer: {
-            Text("Keep thinking, tool use, and interim Pi commentary in one collapsed Clanking group for each turn. The final answer appears when the turn finishes.")
+            SettingsSectionFooter {
+                Text("Keep thinking, tool use, and interim Pi commentary in one collapsed Clanking group for each turn. The final answer appears when the turn finishes.")
+            }
         }
     }
 
@@ -438,9 +473,13 @@ struct SettingsView: View {
                 .autocorrectionDisabled()
                 .accessibilityIdentifier("settings-builds-dashboard-apps")
         } header: {
-            Text("Builds")
+            SettingsSectionHeader {
+                Text("Builds")
+            }
         } footer: {
-            Text("Each First Mate's Overview lists the builds its agents published to Mobile App Hub. The Dashboard shows the newest builds of the apps listed here, by bundle ID, separated by commas. Leave the address empty to hide builds.")
+            SettingsSectionFooter {
+                Text("Each First Mate's Overview lists the builds its agents published to Mobile App Hub. The Dashboard shows the newest builds of the apps listed here, by bundle ID, separated by commas. Leave the address empty to hide builds.")
+            }
         }
     }
 
@@ -456,13 +495,41 @@ struct SettingsView: View {
             .accessibilityIdentifier("settings-text-size-picker")
 
             Text("the quick agent jumps over the lazy herd")
-                .font(HerdrTheme.scaled(.caption, scale: fontScale.scale, monospaced: true))
-                .foregroundStyle(HerdrTheme.mist)
+                .herdrFont(size: HerdrTheme.TextSize.small, monospaced: true)
+                .environment(\.herdrFontScale, fontScale.scale)
+                .foregroundStyle(HerdrTheme.secondaryText)
                 .accessibilityIdentifier("settings-text-size-preview")
         } header: {
-            HerdrSectionLabel(title: "text size")
+            SettingsSectionHeader {
+                HerdrSectionLabel(title: "text size")
+            }
         } footer: {
-            Text("Applies across Herdr's windows and menu bar.")
+            SettingsSectionFooter {
+                Text("Applies across Herdr's windows and menu bar.")
+            }
+        }
+    }
+
+    private var appearanceSection: some View {
+        Section {
+            Toggle("Glass", systemImage: "square.on.square.dashed", isOn: $glassEnabled)
+                .tint(HerdrTheme.controlAccent)
+                .disabled(reduceTransparency)
+                .accessibilityIdentifier("settings-appearance-glass")
+            Toggle("Haze behind the chat", systemImage: "sun.haze", isOn: $hazeEnabled)
+                .tint(HerdrTheme.controlAccent)
+                .disabled(reduceTransparency || !glassEnabled)
+                .accessibilityIdentifier("settings-appearance-haze")
+        } header: {
+            SettingsSectionHeader {
+                Text("Appearance")
+            }
+        } footer: {
+            SettingsSectionFooter {
+                Text(reduceTransparency
+                     ? "Reduce Transparency is on in System Settings, so Herdr draws opaque surfaces."
+                     : "Glass lets the desktop show softly through the sidebar, panes and HUD. Haze adds a dusk band behind the chat.")
+            }
         }
     }
 
@@ -544,9 +611,13 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings-agent-model-stale")
             }
         } header: {
-            Text("Agent models")
+            SettingsSectionHeader {
+                Text("Agent models")
+            }
         } footer: {
-            Text("The HUD (⌃⌥Space) starts each new chat on its machine's declared default model, with an in-composer override. This legacy HUD model applies only when you continue an existing HUD conversation. The Agent sheet (⌘⌥A) carries its own model and thinking level. \"Machine default\" uses whatever pi is configured to use on that machine. Images are rerouted to the vision model only for existing conversations; a new chat asks for a compatible model instead. This list comes from the primary machine's pi installation, so it updates without a new Herdr build. Notes use their own model for tidying and smart actions; leave it on Same as legacy HUD model to follow it.")
+            SettingsSectionFooter {
+                Text("The HUD (⌃⌥Space) starts each new chat on its machine's declared default model, with an in-composer override. This legacy HUD model applies only when you continue an existing HUD conversation. The Agent sheet (⌘⌥A) carries its own model and thinking level. \"Machine default\" uses whatever pi is configured to use on that machine. Images are rerouted to the vision model only for existing conversations; a new chat asks for a compatible model instead. This list comes from the primary machine's pi installation, so it updates without a new Herdr build. Notes use their own model for tidying and smart actions; leave it on Same as legacy HUD model to follow it.")
+            }
         }
     }
 
@@ -606,9 +677,13 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings-smart-rename-warning")
             }
         } header: {
-            Text("Smart Rename")
+            SettingsSectionHeader {
+                Text("Smart Rename")
+            }
         } footer: {
-            Text(SmartRenameSettingsPresentation.sectionFooter)
+            SettingsSectionFooter {
+                Text(SmartRenameSettingsPresentation.sectionFooter)
+            }
         }
         .task(id: smartRenameCatalogSourceID) {
             await loadSmartRenameModels(sourceID: smartRenameCatalogSourceID)
@@ -699,22 +774,17 @@ struct SettingsView: View {
                 )
             }
         } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "cpu")
-                Text(agentModelMenuSelectionLabel(
+            HerdrSelectTrigger(
+                title: agentModelMenuSelectionLabel(
                     for: selection.wrappedValue,
                     defaultTitle: effectiveDefaultTitle,
                     catalog: catalog
-                ))
-                    .lineLimit(1)
-                Image(systemName: "chevron.up.chevron.down")
-                    .herdrFont(.caption2)
-            }
-            .herdrFont(.caption, weight: .semibold)
-            .foregroundStyle(HerdrTheme.accent)
-            .frame(minHeight: HerdrTheme.minHitTarget)
-            .contentShape(Rectangle())
+                ),
+                systemImage: "cpu"
+            )
         }
+        .piChipMenu()
+        .fixedSize()
         .accessibilityIdentifier(identifier)
     }
 
@@ -796,18 +866,10 @@ struct SettingsView: View {
                             .accessibilityIdentifier("settings-cleanup-model-retry")
                     }
                 } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "cpu")
-                        Text(selectedCleanupModelDisplayName)
-                            .lineLimit(1)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .herdrFont(.caption2)
-                    }
-                    .herdrFont(.caption, weight: .semibold)
-                    .foregroundStyle(HerdrTheme.accent)
-                    .frame(minHeight: HerdrTheme.minHitTarget)
-                    .contentShape(Rectangle())
+                    HerdrSelectTrigger(title: selectedCleanupModelDisplayName, systemImage: "cpu")
                 }
+                .piChipMenu()
+                .fixedSize()
                 .accessibilityIdentifier("settings-cleanup-model-picker")
             }
 
@@ -826,13 +888,17 @@ struct SettingsView: View {
             )
             .accessibilityIdentifier("settings-cleanup-cost-threshold")
         } header: {
-            Text("Smart Cleanup")
+            SettingsSectionHeader {
+                Text("Smart Cleanup")
+            }
         } footer: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Sessions at or above this reported cost are flagged in cleanup reports. Pane content is sent to whichever judge model you pick, a cloud model uploads pane text to that provider. Configure a local provider to keep processing on your own machines.")
-                Text("Smart Cleanup \(CleanupFeature.version)")
-                    .herdrFont(.caption2)
-                    .foregroundStyle(HerdrTheme.muted)
+            SettingsSectionFooter {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Sessions at or above this reported cost are flagged in cleanup reports. Pane content is sent to whichever judge model you pick, a cloud model uploads pane text to that provider. Configure a local provider to keep processing on your own machines.")
+                    Text("Smart Cleanup \(CleanupFeature.version)")
+                        .herdrFont(.caption2)
+                        .foregroundStyle(HerdrTheme.muted)
+                }
             }
         }
     }
@@ -909,9 +975,13 @@ struct SettingsView: View {
                     .textSelection(.enabled)
             }
         } header: {
-            Label("Agent control", systemImage: "network.badge.shield.half.filled")
+            SettingsSectionHeader {
+                Label("Agent control", systemImage: "network.badge.shield.half.filled")
+            }
         } footer: {
-            Text("Off by default. When enabled, authenticated companion servers may invoke the listed native actions without a second Mac confirmation. Normal manual confirmations and workflow checkpoints are unchanged. Receiver secrets stay in Keychain.")
+            SettingsSectionFooter {
+                Text("Off by default. When enabled, authenticated companion servers may invoke the listed native actions without a second Mac confirmation. Normal manual confirmations and workflow checkpoints are unchanged. Receiver secrets stay in Keychain.")
+            }
         }
     }
 
@@ -964,9 +1034,13 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings-chat-tab-colors-error")
             }
         } header: {
-            Label("Tab colors", systemImage: "paintpalette")
+            SettingsSectionHeader {
+                Label("Tab colors", systemImage: "paintpalette")
+            }
         } footer: {
-            Text("Off by default and separate from Allow agent control. When enabled, this Mac publishes each known tab's color and its label to the companions above so agents can list and group chats by color or label. Colors never sync between clients, other clients' colors are never imported here, and agents cannot change them.")
+            SettingsSectionFooter {
+                Text("Off by default and separate from Allow agent control. When enabled, this Mac publishes each known tab's color and its label to the companions above so agents can list and group chats by color or label. Colors never sync between clients, other clients' colors are never imported here, and agents cannot change them.")
+            }
         }
     }
 
@@ -987,11 +1061,14 @@ struct SettingsView: View {
                 model.setShowSessionTitles(newValue)
             }
         } header: {
-            Text("Private by design")
+            SettingsSectionHeader {
+                Text("Private by design")
+            }
         } footer: {
-            Text("The menu bar is visible in screen shares, recordings, and screenshots.")
+            SettingsSectionFooter {
+                Text("The menu bar is visible in screen shares, recordings, and screenshots.")
+            }
         }
-        .herdrFont(.subheadline)
     }
 
     private var updatesSection: some View {
@@ -1044,13 +1121,17 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings-updates-status")
             }
         } header: {
-            Label("App updates", systemImage: "arrow.down.circle")
+            SettingsSectionHeader {
+                Label("App updates", systemImage: "arrow.down.circle")
+            }
         } footer: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Updates come from GitHub Releases. You review an update before choosing to install it. Preview builds include changes that are still being tested. A newer release also appears in the window’s top bar, and stays there after you dismiss the banner with Later.")
-                if updates.isUpdateSessionInProgress {
-                    Text("Finish or skip the current update before changing release channels.")
-                        .accessibilityIdentifier("settings-updates-channel-session-notice")
+            SettingsSectionFooter {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Updates come from GitHub Releases. You review an update before choosing to install it. Preview builds include changes that are still being tested. A newer release also appears in the window’s top bar, and stays there after you dismiss the banner with Later.")
+                    if updates.isUpdateSessionInProgress {
+                        Text("Finish or skip the current update before changing release channels.")
+                            .accessibilityIdentifier("settings-updates-channel-session-notice")
+                    }
                 }
             }
         }
@@ -1068,9 +1149,13 @@ struct SettingsView: View {
             .disabled(!model.hasCompletedSetup)
             .accessibilityIdentifier("settings-report-issue")
         } header: {
-            Label("Feedback", systemImage: "bubble.left.and.exclamationmark.bubble.right")
+            SettingsSectionHeader {
+                Label("Feedback", systemImage: "bubble.left.and.exclamationmark.bubble.right")
+            }
         } footer: {
-            Text("Files a public GitHub issue with your note and attachments through the companion server. Also in the Help menu (⌘⌥F).")
+            SettingsSectionFooter {
+                Text("Files a public GitHub issue with your note and attachments through the companion server. Also in the Help menu (⌘⌥F).")
+            }
         }
     }
 
@@ -1127,5 +1212,43 @@ enum SmartRenameSettingsPresentation {
         } catch {
             return nil
         }
+    }
+}
+
+/// A Settings section header on MonoCode's ramp: 10/600 uppercase tertiary,
+/// with any icon at 11 in the icon tint.
+struct SettingsSectionHeader<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
+            .labelStyle(SettingsHeaderLabelStyle())
+            .herdrFont(size: HerdrTheme.TextSize.micro, weight: .semibold)
+            .textCase(.uppercase)
+            .tracking(0.6)
+            .foregroundStyle(HerdrTheme.tertiaryText)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
+private struct SettingsHeaderLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 6) {
+            configuration.icon
+                .herdrFont(size: HerdrTheme.TextSize.caption)
+                .foregroundStyle(HerdrTheme.iconTint)
+            configuration.title
+        }
+    }
+}
+
+/// A Settings section footer: 12pt tertiary.
+struct SettingsSectionFooter<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        content()
+            .herdrFont(size: HerdrTheme.TextSize.small)
+            .foregroundStyle(HerdrTheme.tertiaryText)
     }
 }

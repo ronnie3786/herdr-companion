@@ -88,7 +88,7 @@ struct WorkspaceNavigationView: View {
             if isSidebarVisible {
                 sidebarColumn
                     .frame(width: sidebarWidth)
-                    .background(railBackground)
+                    .background { HerdrGlassBackground(level: HerdrTheme.Glass.sidebar, base: railBackground) }
                     .herdrHairline(.trailing, color: chromeHairline)
                     .overlay(alignment: .trailing) { sidebarResizeHandle }
                     .transition(.move(edge: .leading).combined(with: .opacity))
@@ -357,7 +357,7 @@ struct WorkspaceNavigationView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .environment(\.herdrHostsTitleBar, true)
         }
-        .background(detailBackground)
+        .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane, base: detailBackground) }
         .overlayPreferenceValue(HerdrTitleBarItemsKey.self, alignment: .top) { items in
             titleBar(items)
         }

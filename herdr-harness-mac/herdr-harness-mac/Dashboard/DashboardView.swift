@@ -34,7 +34,7 @@ struct DashboardView: View {
         } trailing: {
             if hostsTitleBar { DashboardHeaderBar.Trailing(dashboard: shell.dashboard) }
         }
-        .background(HerdrTheme.windowBackground)
+        .herdrPaneBackground()
         .foregroundStyle(HerdrTheme.primaryText)
         .tint(HerdrTheme.accent)
         .accessibilityElement(children: .contain)

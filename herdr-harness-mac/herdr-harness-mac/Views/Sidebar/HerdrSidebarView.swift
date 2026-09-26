@@ -307,7 +307,7 @@ struct HerdrSidebarView: View {
             connectionFooter
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(HerdrTheme.railBackground, ignoresSafeAreaEdges: [])
+        .herdrPaneBackground(HerdrTheme.railBackground, ignoresSafeAreaEdges: [])
         .sheet(isPresented: $isPresentingCreateWorkspace) {
             CreateWorkspaceView { label, cwd in
                 let created = await model.createWorkspace(

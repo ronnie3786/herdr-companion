@@ -79,9 +79,13 @@ struct PromptSettingsSectionView: View {
                 .accessibilityIdentifier("settings-prompt-\(id.rawValue)")
             }
         } header: {
-            Text("Prompts")
+            SettingsSectionHeader {
+                Text("Prompts")
+            }
         } footer: {
-            Text("These are the exact instructions Herdr sends to Pi. Edit them here to tune behaviour without a new build; Reset restores the built-in text. {{note}} and {{action}} are filled in when a prompt runs. Rows marked ‘harness’ apply on machines running an updated harness.")
+            SettingsSectionFooter {
+                Text("These are the exact instructions Herdr sends to Pi. Edit them here to tune behaviour without a new build; Reset restores the built-in text. {{note}} and {{action}} are filled in when a prompt runs. Rows marked ‘harness’ apply on machines running an updated harness.")
+            }
         }
     }
 }

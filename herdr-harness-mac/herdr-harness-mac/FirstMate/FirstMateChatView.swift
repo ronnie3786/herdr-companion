@@ -52,7 +52,7 @@ struct FirstMateChatView: View {
                 .padding(.bottom, 6)
             }
         }
-        .background(FirstMatePalette(scheme: scheme).background)
+        .herdrPaneBackground(FirstMatePalette(scheme: scheme).background)
         .task(id: feedbackLoadID) { await loadFeedback() }
         .onChange(of: store.operationContext) { _, _ in feedbackEditor = nil }
         .sheet(item: $feedbackEditor) { target in

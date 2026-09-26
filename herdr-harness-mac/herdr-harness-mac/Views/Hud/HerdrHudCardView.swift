@@ -65,7 +65,15 @@ struct HerdrHudCardView: View {
             .padding(.bottom, 2)
         }
         .frame(width: controller.chatCardSize.width, height: controller.chatCardSize.height)
-        .herdrPanel()
+        // Legible glass at 78% (opaque base under Reduce Transparency).
+        .background {
+            HerdrGlassBackground(level: HerdrTheme.Glass.hud, cornerRadius: HerdrTheme.Radius.panel, material: .hudWindow)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: HerdrTheme.Radius.panel)
+                .strokeBorder(HerdrTheme.outline, lineWidth: 1)
+                .allowsHitTesting(false)
+        }
         .overlay {
             if isDropTargeted {
                 RoundedRectangle(cornerRadius: HerdrTheme.Radius.panel)

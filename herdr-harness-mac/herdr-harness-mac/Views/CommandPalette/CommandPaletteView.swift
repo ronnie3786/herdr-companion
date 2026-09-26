@@ -32,7 +32,7 @@ struct CommandPaletteView: View {
             }
                 .buttonStyle(.plain)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(HerdrTheme.ink.opacity(0.74))
+                .background(Color.black.opacity(0.4))
                 .contentShape(.rect)
                 .focusEffectDisabled()
                 .accessibilityHidden(true)
@@ -40,22 +40,21 @@ struct CommandPaletteView: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 10) {
                     Label("Open chat", systemImage: "sparkle.magnifyingglass")
-                        .herdrFont(.headline, weight: .semibold)
-                        .foregroundStyle(HerdrTheme.text)
+                        .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
+                        .foregroundStyle(HerdrTheme.primaryText)
 
                     Spacer(minLength: 12)
 
                     Text("⌘K")
-                        .herdrFont(.caption, monospaced: true, weight: .bold)
-                        .foregroundStyle(HerdrTheme.mist)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 4)
-                        .background(HerdrTheme.elevated, in: .rect(cornerRadius: 6))
+                        .herdrFont(size: HerdrTheme.TextSize.caption, monospaced: true, weight: .medium)
+                        .foregroundStyle(HerdrTheme.tertiaryText)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(HerdrTheme.chipFill, in: .rect(cornerRadius: 4))
                         .accessibilityHidden(true)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
-                .padding(.bottom, 10)
+                .padding(.horizontal, 14)
+                .frame(minHeight: HerdrTheme.ControlHeight.titleBar)
 
                 HStack(spacing: 10) {
                     Image(systemName: "magnifyingglass")
@@ -101,19 +100,19 @@ struct CommandPaletteView: View {
                             .accessibilityIdentifier("command-palette-clear")
                     }
                 }
-                .padding(.horizontal, 14)
-                .frame(minHeight: 50)
-                .background(HerdrTheme.input)
+                .padding(.horizontal, 12)
+                .frame(minHeight: HerdrTheme.ControlHeight.bar)
+                .background(HerdrTheme.fieldFill)
                 .overlay {
-                    RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                        .strokeBorder(isSearchFocused ? HerdrTheme.accent : HerdrTheme.surface, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: HerdrTheme.Radius.control)
+                        .strokeBorder(isSearchFocused ? HerdrTheme.accent.opacity(0.45) : HerdrTheme.outline, lineWidth: 1)
                 }
-                .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
+                .clipShape(.rect(cornerRadius: HerdrTheme.Radius.control))
                 .padding(.horizontal, 14)
                 .padding(.bottom, 12)
 
                 Rectangle()
-                    .fill(HerdrTheme.separator)
+                    .fill(HerdrTheme.hairline)
                     .frame(height: 1)
                     .accessibilityHidden(true)
 
@@ -154,7 +153,7 @@ struct CommandPaletteView: View {
                 }
 
                 Rectangle()
-                    .fill(HerdrTheme.separator)
+                    .fill(HerdrTheme.hairline)
                     .frame(height: 1)
                     .accessibilityHidden(true)
 
@@ -163,20 +162,17 @@ struct CommandPaletteView: View {
                     Spacer(minLength: 12)
                     Text("↑↓ move   ↩ open   esc close")
                 }
-                .herdrFont(.caption, monospaced: true)
-                .foregroundStyle(HerdrTheme.mist)
+                .herdrFont(size: HerdrTheme.TextSize.caption, monospaced: true)
+                .foregroundStyle(HerdrTheme.tertiaryText)
                 .lineLimit(1)
                 .padding(.horizontal, 14)
-                .padding(.vertical, 9)
+                .frame(minHeight: HerdrTheme.ControlHeight.row)
                 .accessibilityHidden(true)
             }
             .frame(width: 640)
-            .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.cardRadius))
-            .overlay {
-                RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
-                    .strokeBorder(HerdrTheme.separator, lineWidth: 1)
-            }
-            .shadow(color: HerdrTheme.ink.opacity(0.7), radius: 28, y: 12)
+            .herdrPanel()
+            .clipShape(.rect(cornerRadius: HerdrTheme.Radius.panel))
+            .shadow(color: Color.black.opacity(0.25), radius: 25, y: 25)
             .padding(.top, 72)
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Open chat command palette")

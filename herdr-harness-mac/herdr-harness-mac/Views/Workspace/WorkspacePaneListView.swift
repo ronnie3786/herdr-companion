@@ -12,7 +12,7 @@ struct WorkspacePaneListView: View {
     var body: some View {
         @Bindable var cleanupPresenter = model.cleanupPresenter
         ZStack {
-            HerdrBackground()
+            HerdrBackground(followsGlass: true)
 
             ScrollViewReader { proxy in
                 ScrollView {

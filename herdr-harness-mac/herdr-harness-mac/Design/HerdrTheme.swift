@@ -65,11 +65,12 @@ enum HerdrTheme {
 
     // MARK: Lines (translucent)
 
-    /// Title bar, sidebar and section rules.
-    static let hairline = inkFill(0.07)
-    static let rowDivider = inkFill(0.05)
+    /// Title bar, sidebar and section rules. Increase Contrast draws every
+    /// rule at 16%.
+    static let hairline = line(0.07)
+    static let rowDivider = line(0.05)
     /// Card, field and composer outlines.
-    static let outline = inkFill(0.10)
+    static let outline = line(0.10)
     static let strongOutline = inkFill(0.15)
     static let focusOutline = inkFill(0.20)
 
@@ -80,8 +81,9 @@ enum HerdrTheme {
     static let proseText = inkSolid(dark: 0.78, light: 0.88)
     /// Labels and secondary copy: 70% (light 82%).
     static let secondaryText = inkSolid(dark: 0.70, light: 0.82)
-    /// Metadata, timestamps and placeholders: 64% (light 76%), the lowest text level.
-    static let tertiaryText = inkSolid(dark: 0.64, light: 0.76)
+    /// Metadata, timestamps and placeholders: 64% (light 76%), the lowest text
+    /// level. Increase Contrast lifts it to the secondary level.
+    static let tertiaryText = inkSolid(dark: 0.64, light: 0.76, highContrastDark: 0.70, highContrastLight: 0.82)
     /// Glyph-only icons: 50% (light 62%). Never use for words.
     static let iconTint = inkSolid(dark: 0.50, light: 0.62)
 
@@ -228,6 +230,24 @@ enum HerdrTheme {
     private static let lightBaseRGB = hslComponents(240, 8, 97)
     private static let lightForegroundRGB = hslComponents(240, 8, 18)
 
+    /// Mirrors System Settings → Accessibility → Increase Contrast, read by
+    /// the roles' providers wherever they resolve.
+    fileprivate static let increasedContrast = OSAllocatedUnfairLock(initialState: false)
+    @MainActor private static var contrastObserver: NSObjectProtocol?
+
+    /// Starts following Increase Contrast. Called once at launch.
+    @MainActor static func followAccessibilityContrast() {
+        guard contrastObserver == nil else { return }
+        let update = { @MainActor in
+            let value = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+            increasedContrast.withLock { $0 = value }
+        }
+        update()
+        contrastObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main
+        ) { _ in MainActor.assumeIsolated { update() } }
+    }
+
     /// `color` as sRGB under a given appearance. Views resolve roles from
     /// their color scheme; code outside a view (web themes, tests) uses this
     /// so the result never depends on the system appearance.
@@ -264,10 +284,52 @@ enum HerdrTheme {
         rgbColor(blend(top, alpha, over: bottom))
     }
 
-    /// Ink composited over base, at its own alpha in each scheme.
-    private static func inkSolid(dark: Double, light: Double) -> Color {
-        adaptive(dark: blend(foregroundRGB, dark, over: baseRGB),
-                 light: blend(lightForegroundRGB, light, over: lightBaseRGB))
+    /// Ink composited over base, at its own alpha in each scheme (and,
+    /// optionally, a higher alpha under Increase Contrast).
+    private static func inkSolid(dark: Double, light: Double, highContrastDark: Double? = nil, highContrastLight: Double? = nil) -> Color {
+        let darkColor = nsColor(blend(foregroundRGB, dark, over: baseRGB), alpha: 1)
+        let lightColor = nsColor(blend(lightForegroundRGB, light, over: lightBaseRGB), alpha: 1)
+        let darkContrast = nsColor(blend(foregroundRGB, highContrastDark ?? dark, over: baseRGB), alpha: 1)
+        let lightContrast = nsColor(blend(lightForegroundRGB, highContrastLight ?? light, over: lightBaseRGB), alpha: 1)
+        return variant { $0.pick(dark: darkColor, light: lightColor, darkContrast: darkContrast, lightContrast: lightContrast) }
+    }
+
+    /// A translucent rule: ink at `alpha`, or 16% under Increase Contrast.
+    private static func line(_ alpha: Double) -> Color {
+        let dark = nsColor(foregroundRGB, alpha: alpha), light = nsColor(lightForegroundRGB, alpha: alpha)
+        let darkContrast = nsColor(foregroundRGB, alpha: 0.16), lightContrast = nsColor(lightForegroundRGB, alpha: 0.16)
+        return variant { $0.pick(dark: dark, light: light, darkContrast: darkContrast, lightContrast: lightContrast) }
+    }
+
+    /// The appearance a role resolves under.
+    private enum Variant: Sendable {
+        case dark, light, darkContrast, lightContrast
+
+        init(_ appearance: NSAppearance) {
+            let match = appearance.bestMatch(from: [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua])
+            let light = match == .aqua || match == .accessibilityHighContrastAqua
+            let contrast = match == .accessibilityHighContrastAqua || match == .accessibilityHighContrastDarkAqua
+                || HerdrTheme.increasedContrast.withLock { $0 }
+            switch (light, contrast) {
+            case (true, false): self = .light
+            case (true, true): self = .lightContrast
+            case (false, true): self = .darkContrast
+            case (false, false): self = .dark
+            }
+        }
+
+        func pick(dark: NSColor, light: NSColor, darkContrast: NSColor, lightContrast: NSColor) -> NSColor {
+            switch self {
+            case .dark: dark
+            case .light: light
+            case .darkContrast: darkContrast
+            case .lightContrast: lightContrast
+            }
+        }
+    }
+
+    private static func variant(_ provider: @escaping @Sendable (Variant) -> NSColor) -> Color {
+        Color(nsColor: NSColor(name: nil) { provider(Variant($0)) })
     }
 
     /// Translucent ink at its own alpha in each scheme.
@@ -284,9 +346,7 @@ enum HerdrTheme {
     private static func adaptive(dark: RGB, light: RGB, darkAlpha: Double = 1, lightAlpha: Double = 1) -> Color {
         let darkColor = nsColor(dark, alpha: darkAlpha)
         let lightColor = nsColor(light, alpha: lightAlpha)
-        return Color(nsColor: NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua ? lightColor : darkColor
-        })
+        return variant { $0 == .light || $0 == .lightContrast ? lightColor : darkColor }
     }
 
     private static func nsColor(_ rgb: RGB, alpha: Double) -> NSColor {
@@ -322,6 +382,43 @@ extension HerdrTheme {
     }
 
     private static let scaledFontCache = OSAllocatedUnfairLock<[ScaledFontKey: Font]>(initialState: [:])
+
+    /// A text style on MonoCode's ramp, scaled by the user's text size. Views
+    /// use this through `herdrFont(_:)`: meta text (caption, footnote) reads
+    /// at 11 rather than AppKit's 10, which MonoCode keeps for uppercase
+    /// micro labels. The terminal keeps AppKit's sizes through `scaled`.
+    static func rampScaled(
+        _ style: Font.TextStyle,
+        scale: HerdrFontScale,
+        monospaced: Bool = false,
+        weight: Font.Weight? = nil
+    ) -> Font {
+        let key = ScaledFontKey(style: style, scale: -scale.rawValue, monospaced: monospaced, weight: weight)
+        if let cached = scaledFontCache.withLock({ $0[key] }) {
+            return cached
+        }
+        let (size, defaultWeight) = rampSize(style)
+        let font: Font = .system(
+            size: size * scale.rawValue,
+            weight: weight ?? defaultWeight,
+            design: monospaced ? .monospaced : .default
+        )
+        scaledFontCache.withLock { $0[key] = font }
+        return font
+    }
+
+    /// MonoCode's size for a text style at 100%.
+    static func rampSize(_ style: Font.TextStyle) -> (CGFloat, Font.Weight) {
+        switch style {
+        case .largeTitle: (22, .semibold)
+        case .title, .title2: (TextSize.title, .semibold)
+        case .title3: (TextSize.reading, .regular)
+        case .headline: (TextSize.body, .semibold)
+        case .body: (TextSize.body, .regular)
+        case .callout, .subheadline: (TextSize.small, .regular)
+        default: (TextSize.caption, .regular)
+        }
+    }
 
     /// Fallback font scaling: Apple documents `dynamicTypeSize` as having no
     /// effect on text size on macOS. Read AppKit's preferred point size and

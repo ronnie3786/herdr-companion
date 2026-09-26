@@ -108,7 +108,9 @@ struct PiChatView: View {
             .padding(.horizontal, 6)
             .padding(.bottom, 6)
         }
-        .background(HerdrTheme.windowBackground)
+        // MonoCode's Haze: one static dusk band behind the top of the chat.
+        .background(alignment: .top) { HerdrHazeBand() }
+        .herdrPaneBackground()
         // Read acknowledgement belongs to explicit session navigation and
         // interaction in PaneSessionView. A mounted chat, incoming document,
         // or completed response alone does not mean the user has read it.

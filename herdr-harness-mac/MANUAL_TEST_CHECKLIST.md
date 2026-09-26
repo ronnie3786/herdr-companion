@@ -2,6 +2,19 @@
 
 Use your configured Herdr Mac build with sample sessions. Check off each item after trying it.
 
+## Mono × Herdr look (0.51)
+
+- [ ] **Window frame:** The traffic lights sit centered in a 40pt title bar. The sidebar is 260pt wide; drag its edge between 240 and 480 and relaunch: the width sticks. **View → Toggle Sidebar** (⌃⌘S) and the title-bar sidebar button both hide and show it. Double-click empty title-bar space to zoom.
+- [ ] **Glass:** On a colorful desktop picture, the sidebar, the pane and the HUD show a soft blur of what is behind the window. Move the window over a white document: every label stays readable. Turn **Settings → General → Appearance → Glass** off: all three surfaces become opaque immediately.
+- [ ] **Haze:** With Glass on, a faint dusk band sits at the top of a chat. **Haze behind the chat** turns it off, and it is disabled while Glass is off. Scrolling a long transcript stays smooth with Haze on.
+- [ ] **Reduce Transparency:** Turn on **System Settings → Accessibility → Display → Reduce transparency**. Herdr's glass and haze disappear, both Appearance toggles are disabled, and their footer explains why.
+- [ ] **Increase Contrast:** Turn on **Increase contrast**. Rules and card outlines get noticeably stronger and timestamps and other tertiary text brighten to the secondary level.
+- [ ] **Text size:** At **Settings → General → Text size** 100% and 160%, check the Dashboard, a chat with its composer, First Mate, the HUD and Settings. Nothing clips; title-bar items stay on one row or shrink gracefully.
+- [ ] **Title bar per screen:** Dashboard shows its title, search (⌘F) and Focus mode; Agent view shows its filter tabs and **New feature**; a chat shows its title, status, Summarize and pane actions; First Mate shows the feature, its ticket, a status menu (Pause / Resume) and Chat | Git.
+- [ ] **First Mate light:** Switch First Mate to light with the sun button in its sidebar footer. The whole window turns light, including the composer, the model pill and the title-bar items; no dark islands remain. Switch back to dark.
+- [ ] **First Mate replies:** Replies have no box, only a small First Mate label. Thumbs up/down and copy sit in a row under each completed reply; quoting a reply's text (issue #73) still stages a quote in the composer.
+- [ ] **Composer:** In a Pi chat, **+** opens Attach files and Paste code block; the model + effort pill opens both menus; Send is a lavender square that becomes Stop while the agent works. The HUD composer offers the same controls.
+
 ## First Mate archive
 
 - [ ] Right-click an inactive feature in the First Mate sidebar and choose **Archive…**. Leave the reason at **No reason** and confirm. The dialog must say records are retained; the feature leaves the default list without changing its workflow status.

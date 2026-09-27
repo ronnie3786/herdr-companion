@@ -49,6 +49,19 @@ struct AgentBoardMessageView: View {
     }
 
     private var assistant: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SkimPendingLabel(skim: message.skim)
+            // A ready skim replaces the folded prose; Full reply unfolds it.
+            SkimmableReply(messageID: message.id, reply: message.source, skim: message.skim, style: .column) {
+                foldedProse
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("First Mate")
+    }
+
+    private var foldedProse: some View {
         let folds = !isExpanded && characterCount > Self.foldCharacterBudget
         return VStack(alignment: .leading, spacing: 6) {
             AgentBoardProseView(blocks: folds ? foldedBlocks : message.blocks, codeLineLimit: isExpanded ? nil : 14)
@@ -61,7 +74,6 @@ struct AgentBoardMessageView: View {
                     .contentShape(.rect)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("First Mate: \(plainText)")
     }

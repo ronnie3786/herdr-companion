@@ -15,6 +15,21 @@ Use your configured Herdr Mac build with sample sessions. Check off each item af
 - [ ] **First Mate replies:** Replies have no box, only a small First Mate label. Thumbs up/down and copy sit in a row under each completed reply; quoting a reply's text (issue #73) still stages a quote in the composer.
 - [ ] **Composer:** In a Pi chat, **+** opens Attach files and Paste code block; the model + effort pill opens both menus; Send is a lavender square that becomes Stop while the agent works. The HUD composer offers the same controls.
 
+## Skims (0.52)
+
+Use a synthetic feature on a companion advertising `first-mate-skim-v1` with a fast `skim_model`.
+
+- [ ] **Skim lands:** Ask a question with a long answer (80+ words). The reply appears in full with a quiet **Skimming…** by the First Mate label, then within a few seconds the skim replaces it without animation: one sentence with dotted phrases, a rose caveat only for a failure or risk, a dashed **Rest of the original** chip, and the next step as a question after an amber dot on the last line. A short reply never shows **Skimming…**.
+- [ ] **No swap mid-read:** While a skim is pending, keep the pointer over the reply (or select some of its text, or open a card). The skim waits; move away and it swaps in.
+- [ ] **Hover preview:** Hover a dotted phrase: after a short delay a preview shows its kind, line range, and a snippet; a code phrase shows the language, line count, up to eight lines faded at the right edge, and "N more lines". The preview never takes clicks and disappears when the pointer leaves.
+- [ ] **Card:** Click a phrase. A card opens under it (above it near the bottom of the window), 560pt wide or 760pt for code and tables, with **Original**, **Lines a–b**, **Copy**, **Show in reply**, and ×. Its text matches the reply exactly; **Copy** puts that exact text on the clipboard. Code is highlighted, never wraps, scrolls sideways, and **Copy code** copies it without fences. Escape, ×, or a click outside closes it; opening another card closes the first.
+- [ ] **Show in reply:** Click **Show in reply**. The message switches to **Full reply**, scrolled to the linked lines with a lavender highlight. **Skim** returns to the skim.
+- [ ] **Keyboard and VoiceOver:** Tab into the skim sentence: each Tab moves to the next phrase and shows its preview; Return opens the card. VoiceOver reads the phrases as links and offers one action per phrase ("…, opens original, lines a–b").
+- [ ] **Full reply stays authoritative:** Copy on the reply, quoting text (issue #73), and thumbs up/down all act on the full reply, in both modes.
+- [ ] **Agent view and HUD:** The same skim appears in an Agent view column and on a long HUD chat answer, where **Full reply** unfolds the usual text.
+- [ ] **Text size and appearance:** At 100% and 160% text size, and in First Mate light, nothing clips and the caveat, chip, and next step stay readable.
+- [ ] **Off and older companions:** With `skim = false`, or connected to a companion without `first-mate-skim-v1`, every reply shows in full with no skim controls.
+
 ## First Mate archive
 
 - [ ] Right-click an inactive feature in the First Mate sidebar and choose **Archive…**. Leave the reason at **No reason** and confirm. The dialog must say records are retained; the feature leaves the default list without changing its workflow status.

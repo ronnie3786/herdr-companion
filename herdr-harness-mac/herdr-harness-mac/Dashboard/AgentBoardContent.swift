@@ -17,12 +17,14 @@ struct AgentBoardContent: Equatable, Sendable {
         let attachments: [AgentBoardMessageContent.Attachment]
         /// The message text the blocks were built from.
         let source: String
+        /// A skim of a long reply, when the companion made one.
+        var skim: FirstMateSkim? = nil
 
         /// Blocks and attachments derive from `source`, so comparing it is
         /// exact and costs a string compare instead of walking every styled run.
         static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.id == rhs.id && lhs.isQueued == rhs.isQueued && lhs.date == rhs.date
-                && lhs.isHuman == rhs.isHuman && lhs.source == rhs.source
+                && lhs.isHuman == rhs.isHuman && lhs.source == rhs.source && lhs.skim == rhs.skim
         }
     }
 
@@ -166,7 +168,8 @@ extension AgentBoardContent {
             date: HerdrTimestamp.date(from: message.createdAt),
             blocks: isHuman ? AgentBoardProse.plain(content.text) : AgentBoardProse.blocks(from: message.text),
             attachments: isHuman ? content.attachments : [],
-            source: message.text
+            source: message.text,
+            skim: isHuman ? nil : message.skim
         )
     }
 

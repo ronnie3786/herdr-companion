@@ -19,6 +19,10 @@ their previous behavior.
 | Escalation | A worker asked for a human checkpoint, or recovery was exhausted, and First Mate explained what it needs. Each assignment's decision gets its own message, even when several arrive together. |
 | Stranded stage | A background turn ended with nothing running and nothing queued, so only you can move the stage. First Mate's closing message is delivered. If the turn itself failed, the chat says First Mate stopped and asks you to send a message to continue. |
 
+Any of these replies that runs 80 words or more also gets a **skim**: one short
+linked sentence, the rest of the original, and the suggested next step, with the
+full reply one click away. See [skims](skim.md) (`first-mate-skim-v1`).
+
 ## Not in the chat
 
 Worker outcomes, authorized follow-ups, and stability sweeps are **background

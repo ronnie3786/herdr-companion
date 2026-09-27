@@ -76,16 +76,22 @@ struct FirstMateMessageView: View {
                         .herdrFont(size: HerdrTheme.TextSize.caption)
                         .foregroundStyle(palette.tertiaryText)
                 }
+                SkimPendingLabel(skim: message.skim)
+                    .environment(\.chatProsePalette, prosePalette)
             }
             .padding(.top, 2)
             .padding(.horizontal, 16)
 
-            PiMarkdownMessageView(
-                source: message.text,
-                isStreaming: false,
-                id: "first-mate-\(message.featureID)-\(message.id)",
-                detectsPaneLinks: false
-            )
+            // A long reply shows its skim when one is ready; the full reply is
+            // one click away and stays what Copy, quotes, and feedback act on.
+            SkimmableReply(messageID: message.id, reply: message.text, skim: message.skim) {
+                PiMarkdownMessageView(
+                    source: message.text,
+                    isStreaming: false,
+                    id: "first-mate-\(message.featureID)-\(message.id)",
+                    detectsPaneLinks: false
+                )
+            }
             // Issue #73: quoting stays on the rendered reply only.
             .environment(\.saveChatQuote, canQuote ? saveQuote : nil)
             .environment(\.chatQuoteSource, quoteSource)

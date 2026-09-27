@@ -5,6 +5,7 @@ struct AgentBoardChatView: View {
     let openFullView: () -> Void
     /// Local so scrolling never invalidates the rest of the column.
     @State private var followsLatest = true
+    @State private var skimState = SkimDisplayState()
 
     private static let endID = "agent-board-chat-end"
 
@@ -33,6 +34,8 @@ struct AgentBoardChatView: View {
                     }
                     Color.clear.frame(height: 1).id(Self.endID)
                 }
+                .environment(\.skimDisplayState, skimState)
+                .environment(\.skimScrollTo) { id in proxy.scrollTo(id, anchor: .center) }
                 .padding(.horizontal, 12)
                 .padding(.top, 10)
                 .padding(.bottom, 12)

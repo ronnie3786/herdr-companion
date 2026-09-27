@@ -16,6 +16,8 @@ struct PiCodeBlockView: View {
     @Environment(\.saveChatQuote) private var saveQuote
     @Environment(\.herdrFontScale) private var fontScale
     @Environment(\.chatProsePalette) private var palette
+    @Environment(\.piCodeBlockStyle) private var style
+    @Environment(\.colorScheme) private var scheme
 
     private static let codeSize: CGFloat = 12
     private static let numberSize: CGFloat = 10
@@ -24,9 +26,19 @@ struct PiCodeBlockView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text((language ?? "code").lowercased())
-                    .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
-                    .foregroundStyle(palette.secondaryText)
+                if style == .excerpt {
+                    // Skim excerpts name the language and size, like the lab's code blocks.
+                    Text(SkimCodeLanguage.label(language, code: code))
+                        .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
+                        .foregroundStyle(palette.secondaryText)
+                    Text("\(lineCount) line\(lineCount == 1 ? "" : "s")")
+                        .herdrFont(size: HerdrTheme.TextSize.small)
+                        .foregroundStyle(palette.marker)
+                } else {
+                    Text((language ?? "code").lowercased())
+                        .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
+                        .foregroundStyle(palette.secondaryText)
+                }
                 Spacer()
                 Button {
                     copyCode()
@@ -36,10 +48,20 @@ struct PiCodeBlockView: View {
                         copied = false
                     }
                 } label: {
-                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                        .herdrFont(size: 13)
-                        .foregroundStyle(copied ? HerdrTheme.success : HerdrTheme.iconTint)
-                        .herdrCompactHitTarget(visual: HerdrTheme.ControlHeight.small)
+                    if style == .excerpt {
+                        Label(copied ? "Copied" : "Copy code", systemImage: copied ? "checkmark" : "doc.on.doc")
+                            .labelStyle(.titleAndIcon)
+                            .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
+                            .foregroundStyle(copied ? HerdrTheme.success : palette.secondaryText)
+                            .padding(.horizontal, 6)
+                            .frame(minHeight: HerdrTheme.minHitTarget)
+                            .contentShape(.rect)
+                    } else {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                            .herdrFont(size: 13)
+                            .foregroundStyle(copied ? HerdrTheme.success : HerdrTheme.iconTint)
+                            .herdrCompactHitTarget(visual: HerdrTheme.ControlHeight.small)
+                    }
                 }
                 .buttonStyle(.plain)
                 .animation(PiChatChrome.hoverAnimation, value: copied)
@@ -62,6 +84,15 @@ struct PiCodeBlockView: View {
                         if saveQuote != nil {
                             ChatSelectableText(
                                 text: AttributedString(code),
+                                font: .system(size: Self.codeSize * fontScale.rawValue, design: .monospaced),
+                                lineSpacing: codeLineSpacing
+                            )
+                            .frame(width: codeWidth)
+                            .environment(\.chatProsePalette, codePalette)
+                        } else if style == .excerpt {
+                            // The chat's own TextKit metrics keep line numbers aligned.
+                            ChatSelectableText(
+                                text: SkimCodeStyling.highlighted(code, language: language, palette: codePalette, scheme: scheme),
                                 font: .system(size: Self.codeSize * fontScale.rawValue, design: .monospaced),
                                 lineSpacing: codeLineSpacing
                             )
@@ -103,6 +134,8 @@ struct PiCodeBlockView: View {
             .accessibilityHidden(true)
     }
 
+    private var lineCount: Int { max(1, code.components(separatedBy: .newlines).count) }
+
     /// Code reads in full ink, not prose ink.
     private var codePalette: ChatProsePalette {
         var code = palette
@@ -127,4 +160,14 @@ struct PiCodeBlockView: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(code, forType: .string)
     }
+}
+
+/// Where a code block is shown. Skim excerpts add the language name, line
+/// count, a labeled Copy code, and syntax colors.
+enum PiCodeBlockStyle: Equatable, Sendable {
+    case chat, excerpt
+}
+
+extension EnvironmentValues {
+    @Entry var piCodeBlockStyle: PiCodeBlockStyle = .chat
 }

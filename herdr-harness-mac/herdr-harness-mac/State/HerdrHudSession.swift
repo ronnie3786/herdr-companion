@@ -801,8 +801,10 @@ final class HerdrHudSession {
         while !Task.isCancelled {
             guard thread != nil, !isEnding, !hasEnded else { return }
             _ = await refreshSavedHistory(model: model, kind: .passive, submissionOwnerID: nil)
+            // A skim being written lands a few seconds after its answer.
+            let waitsForSkim = exchanges.contains { $0.skim?.status == .pending }
             do {
-                try await Task.sleep(for: interval)
+                try await Task.sleep(for: waitsForSkim ? min(interval, .seconds(2)) : interval)
             } catch {
                 return
             }

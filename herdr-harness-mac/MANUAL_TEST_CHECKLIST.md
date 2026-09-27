@@ -27,6 +27,7 @@ Use a synthetic feature on a companion advertising `first-mate-skim-v1` with a f
 - [ ] **Keyboard and VoiceOver:** Tab into the skim sentence: each Tab moves to the next phrase and shows its preview; Return opens the card. VoiceOver reads the phrases as links and offers one action per phrase ("…, opens original, lines a–b").
 - [ ] **Full reply stays authoritative:** Copy on the reply, quoting text (issue #73), and thumbs up/down all act on the full reply, in both modes.
 - [ ] **Agent view and HUD:** The same skim appears in an Agent view column and on a long HUD chat answer, where **Full reply** unfolds the usual text.
+- [ ] **HUD skim lands:** Keep a HUD chat open while a long answer finishes. **Skimming…** gives way to the skim within a few seconds, and the header keeps showing **Done** the whole time, never flickering to **Loading…**.
 - [ ] **Text size and appearance:** At 100% and 160% text size, and in First Mate light, nothing clips and the caveat, chip, and next step stay readable.
 - [ ] **Off and older companions:** With `skim = false`, or connected to a companion without `first-mate-skim-v1`, every reply shows in full with no skim controls.
 

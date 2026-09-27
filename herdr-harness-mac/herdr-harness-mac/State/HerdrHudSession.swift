@@ -191,6 +191,12 @@ final class HerdrHudSession {
     /// loading re-establish it within the owning session.
     @ObservationIgnored private(set) var acceptedSubmissionIDsByHistoryIdentity: [String: String] = [:]
     private(set) var isLoadingHistory = false
+    /// Counts history loads, so a background check that finishes after a
+    /// newer load started never applies its older page.
+    @ObservationIgnored private var historyLoadSerial = 0
+    /// A background check is in flight. It stays invisible (no Loading…)
+    /// unless it finds a change to apply.
+    @ObservationIgnored private var isCheckingHistory = false
     private(set) var needsHistoryRefresh = false
     private(set) var isEnding = false
     private(set) var hasEnded = false
@@ -801,14 +807,42 @@ final class HerdrHudSession {
         while !Task.isCancelled {
             guard thread != nil, !isEnding, !hasEnded else { return }
             _ = await refreshSavedHistory(model: model, kind: .passive, submissionOwnerID: nil)
-            // A skim being written lands a few seconds after its answer.
-            let waitsForSkim = exchanges.contains { $0.skim?.status == .pending }
+            // A skim being written lands a few seconds after its answer: check
+            // just those turns more often, without reloading the history.
+            var waited = Duration.zero
+            let skimInterval = min(interval, .seconds(2))
             do {
-                try await Task.sleep(for: waitsForSkim ? min(interval, .seconds(2)) : interval)
+                while waited + skimInterval < interval, exchanges.contains(where: { $0.skim?.status == .pending }) {
+                    try await Task.sleep(for: skimInterval)
+                    waited += skimInterval
+                    await refreshPendingSkims(model: model)
+                }
+                try await Task.sleep(for: interval - waited)
             } catch {
                 return
             }
         }
+    }
+
+    /// Updates the skim of each turn still waiting for one, in place. Only
+    /// those runs are fetched: the history, its metadata and the visible
+    /// loading state are untouched.
+    func refreshPendingSkims(model: HerdrAppModel) async {
+        guard !hasEnded, !isEnding, !model.isDemoMode, let thread,
+              let client = try? model.hudChatClient(machineID: thread.machineID) else { return }
+        let waiting = exchanges.filter { $0.machineID == thread.machineID && $0.skim?.status == .pending }.map(\.id)
+        var changed = false
+        for id in waiting {
+            guard let run = try? await client.fetchHeadlessAgent(id: id).run,
+                  !Task.isCancelled, !hasEnded,
+                  let index = exchanges.firstIndex(where: { $0.id == id }),
+                  exchanges[index].skim != run.skim else { continue }
+            exchanges[index].skim = run.skim
+            changed = true
+        }
+        guard changed else { return }
+        markExchangesChanged()
+        await schedulePersistenceSave()
     }
 
     func markSeen() {
@@ -2080,7 +2114,24 @@ final class HerdrHudSession {
     ) async throws {
         let ownsSubmission = ownerID != nil && ownerID == submissionOwnerID
         guard !hasEnded, (!isRunning || ownsSubmission), !isLoadingHistory,
-              promotingExchangeIDs.isEmpty else { return }
+              promotingExchangeIDs.isEmpty, kind == .forced || !isCheckingHistory else { return }
+        historyLoadSerial += 1
+        let serial = historyLoadSerial
+        let client = try model.hudChatClient(machineID: machineID)
+        var prefetched: HudChatHistory?
+        if kind == .passive {
+            // A background check shows nothing (no Loading…, no disabled
+            // controls) unless the chat changed; polling every few seconds
+            // made a settled chat flicker. Anything that started meanwhile wins.
+            isCheckingHistory = true
+            defer { isCheckingHistory = false }
+            let page = try await client.hudChat(id: id)
+            try Task.checkCancellation()
+            guard serial == historyLoadSerial, !hasEnded, (!isRunning || ownsSubmission), !isLoadingHistory,
+                  promotingExchangeIDs.isEmpty,
+                  !historyResponseIsUnchanged(page, machineID: machineID, rootRunID: id) else { return }
+            prefetched = page
+        }
         // Loading saved history into a previously unused session is a legacy
         // conversation: its model keeps following the shared HUD preference
         // exactly as existing conversations did. A new-scheme session that
@@ -2091,11 +2142,12 @@ final class HerdrHudSession {
         isLoadingHistory = true
         defer { isLoadingHistory = false }
 
-        let client = try model.hudChatClient(machineID: machineID)
-        var page = try await client.hudChat(id: id)
-        try Task.checkCancellation()
-        if kind == .passive, historyResponseIsUnchanged(page, machineID: machineID, rootRunID: id) {
-            return
+        var page: HudChatHistory
+        if let prefetched {
+            page = prefetched
+        } else {
+            page = try await client.hudChat(id: id)
+            try Task.checkCancellation()
         }
 
         try await saveHistory(model: model)
@@ -2287,6 +2339,12 @@ final class HerdrHudSession {
             && remoteLatest.error == localLatest.error
             && remoteLatest.promotedPaneID == localLatest.promotedPaneID
         else { return false }
+        // A skim lands after its answer, and on earlier turns too when the
+        // companion skims older replies, so every turn's skim is compared.
+        let localSkims = Dictionary(exchanges.map { ($0.id, $0.skim) }, uniquingKeysWith: { first, _ in first })
+        guard page.turns.allSatisfy({ turn in localSkims[turn.id].map { $0 == turn.skim } ?? false }) else {
+            return false
+        }
         // A terminal report is not immutable: the server marks a cancelled run
         // terminal before its stdout consumer drains, so an earlier turn's cost
         // can be revised without the latest run changing. Reconcile the

@@ -80,6 +80,7 @@ struct SkimTextView: NSViewRepresentable {
 
     static func dismantleNSView(_ view: SkimTextLayoutView, coordinator: Coordinator) {
         view.textView.endHover()
+        view.textView.interaction?.hidePreview()
         view.textView.delegate = nil
         coordinator.interaction?.unregister(view.textView)
     }
@@ -173,7 +174,6 @@ final class SkimAnchorTextView: NSTextView {
     var reduceMotion = false
     private(set) var hoveredAnchor: String?
     private(set) var focusedAnchor: String?
-    private var hoverTimer: Timer?
     private var tracking: NSTrackingArea?
 
     override func updateTrackingAreas() {
@@ -196,7 +196,6 @@ final class SkimAnchorTextView: NSTextView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        hoverTimer?.invalidate()
         interaction?.hidePreview()
         super.mouseDown(with: event)
     }
@@ -261,8 +260,6 @@ final class SkimAnchorTextView: NSTextView {
     }
 
     func endHover() {
-        hoverTimer?.invalidate()
-        hoverTimer = nil
         if hoveredAnchor != nil {
             hoveredAnchor = nil
             refreshAnchorStyles()
@@ -273,7 +270,6 @@ final class SkimAnchorTextView: NSTextView {
         guard id != hoveredAnchor else { return }
         hoveredAnchor = id
         refreshAnchorStyles()
-        hoverTimer?.invalidate()
         guard let id, let rect = rect(for: id) else {
             interaction?.hidePreview()
             return

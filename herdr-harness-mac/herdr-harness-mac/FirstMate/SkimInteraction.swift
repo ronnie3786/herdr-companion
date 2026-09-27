@@ -95,6 +95,7 @@ final class SkimInteraction {
                 self.reveal(refs)
             }
         )
+        guard view.window != nil else { return }
         openAnchorID = anchorID
         refreshStyles()
         openStateChanged(true)
@@ -135,6 +136,18 @@ final class SkimPopoverCenter: NSObject, NSPopoverDelegate {
     private var excerptPopover: NSPopover?
     private var excerptOwner: ObjectIdentifier?
     private var onExcerptClose: (() -> Void)?
+
+    override init() {
+        super.init()
+        // A preview never outlives the app's focus (tracking areas stop firing).
+        NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil,
+                                               queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.pendingPreview?.cancel()
+                self?.dismissPreview()
+            }
+        }
+    }
 
     func isOpen(owner: SkimInteraction) -> Bool {
         excerptOwner == ObjectIdentifier(owner) && excerptPopover?.isShown == true

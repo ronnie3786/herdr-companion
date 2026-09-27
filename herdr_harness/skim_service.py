@@ -309,6 +309,8 @@ class SkimService:
         if key is None:
             return
         outcome = self._infer(source["question"], source["text"], key)
+        if outcome is None:
+            return  # Shutting down: the pending skim resumes once after restart.
         feature_id = store.finish_skim(message_id, **outcome)
         _LOG.info("Skim %s for message %s in %s ms", outcome["status"], message_id, outcome.get("duration_ms"))
         if feature_id:
@@ -337,6 +339,8 @@ class SkimService:
             outcome = {"status": "failed", "error": "ineligible"}
         else:
             outcome = self._infer(run.get("prompt"), run["response"], state)
+        if outcome is None:
+            return  # Shutting down: the pending skim resumes once after restart.
         with manager._lock:
             try:
                 manager._read(run_id)
@@ -349,8 +353,11 @@ class SkimService:
             _write_state(run_dir, current)
         _LOG.info("Skim %s for HUD turn %s in %s ms", outcome["status"], run_id, outcome.get("duration_ms"))
 
-    def _infer(self, question: Optional[str], reply: str, key: Mapping[str, Any]) -> dict:
-        """One tool-free Pi inference, normalized. Never raises for model problems."""
+    def _infer(self, question: Optional[str], reply: str, key: Mapping[str, Any]) -> Optional[dict]:
+        """One tool-free Pi inference, normalized. Never raises for model problems.
+
+        Returns None when the companion is stopping, so the skim stays pending.
+        """
         prompt = skim.prompt_for(_question(question), reply, format=key["format"], version=key["prompt_version"])
         if len(prompt.user) > MAX_USER_MESSAGE_CHARS:
             return {"status": "failed", "error": "reply_too_long"}
@@ -367,6 +374,8 @@ class SkimService:
         run_id = envelope["run"]["id"]
         run = self._wait(manager, run_id)
         duration_ms = int((time.monotonic() - started) * 1000)
+        if self._stop.is_set() and (run is None or run.get("status") != "completed"):
+            return None
         try:
             manager.delete(run_id)  # The skim row keeps what matters; drop the copy.
         except AgentRunError:

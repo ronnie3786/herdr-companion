@@ -259,6 +259,18 @@ class PipelineTests(SkimFixture, unittest.TestCase):
         self.assertEqual(row["status"], "ready")
         self.assertEqual(row["attempts"], 2)
 
+    def test_a_skim_cut_short_by_shutdown_stays_pending_for_one_resume(self):
+        manager = self.manager(FAKE_AGENT_MODE="hang")
+        service = self.service(manager)
+        service.start()
+        reply = self.reply()
+        wait_until(lambda: self.skim_row(reply["id"])["attempts"] == 1 and manager._processes)
+        service.stop()
+        manager.stop()  # Cancels the in-flight run, as a companion shutdown does.
+        time.sleep(1)
+        row = self.skim_row(reply["id"])
+        self.assertEqual((row["status"], row["attempts"]), ("pending", 1))
+
     def test_backfill_queues_recent_unskimmed_replies_once(self):
         reply = self.reply()  # Posted before skims were attached.
         manager = self.manager()

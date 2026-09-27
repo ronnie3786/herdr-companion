@@ -484,6 +484,34 @@ class IssueReportDraftRuntimeTests(unittest.TestCase):
             finally:
                 manager.stop()
 
+    def test_a_cancel_before_the_process_is_registered_still_stops_it(self):
+        with tempfile.TemporaryDirectory() as raw_directory:
+            directory = Path(raw_directory)
+            manager = _manager(directory, FAKE_AGENT_MODE="hang")
+            prepare = manager._prepare_issue_draft_workspace
+            prepared = []
+
+            def prepare_then_cancel(run_id, *args):
+                # The cancel lands after the workspace exists but before Pi's
+                # process is registered, so it has no process to stop.
+                workspace = prepare(run_id, *args)
+                prepared.append(workspace)
+                manager.cancel(run_id)
+                return workspace
+
+            try:
+                with patch.object(manager, "_prepare_issue_draft_workspace", side_effect=prepare_then_cancel):
+                    started = start(manager, request=_request("bug"), cwd=str(directory / "home"))
+                    run_id = started["run"]["id"]
+                    deadline = time.monotonic() + 10
+                    while (not prepared or prepared[0].exists()) and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                self.assertEqual(len(prepared), 1)
+                self.assertFalse(prepared[0].exists())
+                self.assertEqual(manager.get(run_id)["run"]["status"], "cancelled")
+            finally:
+                manager.stop()
+
     def test_restart_recovery_removes_a_stale_draft_workspace(self):
         with tempfile.TemporaryDirectory() as raw_directory:
             directory = Path(raw_directory)

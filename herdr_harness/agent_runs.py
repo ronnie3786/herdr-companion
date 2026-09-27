@@ -1497,6 +1497,7 @@ class AgentRunManager:
                 return
             with self._lock:
                 self._processes[run_id] = process
+                cancelled_before_start = run_id in self._cancel_requested
             stderr_parts: list[str] = []
             stdin_thread = threading.Thread(
                 target=self._feed_stdin,
@@ -1516,6 +1517,11 @@ class AgentRunManager:
             stdin_thread.start()
             stdout_thread.start()
             stderr_thread.start()
+            if cancelled_before_start:
+                # A cancel that arrived before the process was registered had
+                # nothing to stop; stop it now instead of letting it run to
+                # its timeout.
+                self._terminate_process(process)
             timed_out = False
             try:
                 process.wait(timeout=run_timeout)

@@ -38,7 +38,9 @@ struct FirstMateGraphView: View {
                 }
                 .padding(12)
                 .herdrCard(
-                    fill: visit.id == snapshot.feature.currentVisitID ? HerdrTheme.selectedFill : HerdrTheme.cardFill,
+                    // Inset, not selected, under the current visit: its resource
+                    // chips keep 4.5:1 over the dusk.
+                    fill: visit.id == snapshot.feature.currentVisitID ? HerdrTheme.insetFill : HerdrTheme.cardFill,
                     outline: visit.id == (store.selectedVisitID ?? snapshot.feature.currentVisitID) ? HerdrTheme.accent : HerdrTheme.outline
                 )
                 .accessibilityIdentifier("first-mate-graph-node-\(visit.id)")

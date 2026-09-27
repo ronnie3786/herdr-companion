@@ -26,7 +26,12 @@ struct AgentBoardMessageView: View {
                             .truncationMode(.middle)
                             .padding(.horizontal, 8)
                             .frame(minHeight: 22)
-                            .background(HerdrTheme.chipFill, in: .rect(cornerRadius: HerdrTheme.Radius.control))
+                            // Outlined, not filled: a third fill inside the bubble
+                            // and column would drop the name under 4.5:1 over the dusk.
+                            .overlay {
+                                RoundedRectangle(cornerRadius: HerdrTheme.Radius.control)
+                                    .strokeBorder(HerdrTheme.outline, lineWidth: 1)
+                            }
                             .frame(minHeight: HerdrTheme.minHitTarget)
                             .contentShape(.rect)
                     }

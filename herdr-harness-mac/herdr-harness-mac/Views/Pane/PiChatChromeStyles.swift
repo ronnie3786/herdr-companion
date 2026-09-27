@@ -123,7 +123,9 @@ private struct PiChatButtonBody: View {
 
     private var fill: Color {
         switch emphasis {
-        case .soft: isHovering && isEnabled ? HerdrTheme.strongOutline : HerdrTheme.selectedFill
+        // Chip-weight fill, so a soft button inside a card under the chat's
+        // haze keeps 4.5:1 over the dusk; hover adds a rule, not more fill.
+        case .soft: HerdrTheme.chipFill
         case .prominent: tint.opacity(isHovering && isEnabled ? 1 : 0.9)
         case .text: .clear
         }
@@ -131,7 +133,8 @@ private struct PiChatButtonBody: View {
 
     private var stroke: Color {
         switch emphasis {
-        case .soft, .prominent, .text: .clear
+        case .soft: isHovering && isEnabled ? HerdrTheme.strongOutline : .clear
+        case .prominent, .text: .clear
         }
     }
 

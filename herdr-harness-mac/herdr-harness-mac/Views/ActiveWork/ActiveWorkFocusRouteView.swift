@@ -662,7 +662,7 @@ private struct ActiveWorkFocusTrackStage: View {
                 }
             }
             .herdrFont(size: 8, monospaced: true, weight: .semibold, relativeTo: .caption2)
-            .foregroundStyle(isCurrent ? HerdrTheme.text : (progress == .complete ? HerdrTheme.mist : HerdrTheme.muted))
+            .foregroundStyle(isCurrent ? HerdrTheme.text : (progress == .complete ? HerdrTheme.proseText : HerdrTheme.muted))
             .frame(maxWidth: .infinity)
             .padding(.top, 7)
         }

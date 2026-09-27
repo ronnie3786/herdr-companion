@@ -51,10 +51,10 @@ struct PaneSessionHeader: View {
         return date.formatted(.dateTime.month(.abbreviated).day())
     }
 
-    /// Goes quiet for a fresh chat and warms up once it has been sitting for a
-    /// day, so staleness is scannable without reading the label.
+    /// A step brighter while a chat is fresh, quieter once it has been sitting
+    /// for a day, so staleness is scannable without reading the label.
     static func stalenessColor(since date: Date, now: Date = Date()) -> Color {
-        now.timeIntervalSince(date) >= 86_400 ? HerdrTheme.tertiaryText : HerdrTheme.secondaryText
+        now.timeIntervalSince(date) >= 86_400 ? HerdrTheme.tertiaryText : HerdrTheme.proseText
     }
 }
 

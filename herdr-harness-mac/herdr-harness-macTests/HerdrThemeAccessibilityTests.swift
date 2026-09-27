@@ -64,17 +64,23 @@ struct HerdrThemeAccessibilityTests {
         let base = try rgb(HerdrTheme.base)
         let rail = try rgb(HerdrTheme.railBackground)
         let pane = mix(base, HerdrTheme.Glass.pane, over: dusk)
-        // Cards, NOW blocks, chips and selected rows sit on every glass
-        // surface, up to a selected row inside a card.
+        let highlight = HerdrTheme.accent.opacity(WorkspacePaneListView.highlightWash)
+        // Cards, NOW blocks, chips, hover and selected rows sit on every glass
+        // surface: up to a selected row (or an Agent view bubble) inside a
+        // card, chips on the First Mate graph's current visit (inset), and
+        // cards inside a highlighted tab's wash.
         let glassFills: [[Color]] = [
-            [], [HerdrTheme.cardFill], [HerdrTheme.insetFill], [HerdrTheme.chipFill], [HerdrTheme.selectedFill],
-            [HerdrTheme.cardFill, HerdrTheme.insetFill], [HerdrTheme.cardFill, HerdrTheme.chipFill],
-            [HerdrTheme.cardFill, HerdrTheme.selectedFill],
+            [], [HerdrTheme.cardFill], [HerdrTheme.insetFill], [HerdrTheme.chipFill], [HerdrTheme.hoverFill],
+            [HerdrTheme.selectedFill], [HerdrTheme.cardFill, HerdrTheme.insetFill],
+            [HerdrTheme.cardFill, HerdrTheme.chipFill], [HerdrTheme.cardFill, HerdrTheme.hoverFill],
+            [HerdrTheme.cardFill, HerdrTheme.selectedFill], [HerdrTheme.insetFill, HerdrTheme.chipFill],
+            [highlight, HerdrTheme.cardFill],
         ]
-        // Under the chat's haze band: transcript text, code, chips and bubbles.
+        // Under the chat's haze band: transcript text, code, chips, bubbles,
+        // and soft buttons (chip weight) inside interaction cards.
         let chatFills: [[Color]] = [
             [], [HerdrTheme.cardFill], [HerdrTheme.insetFill], [HerdrTheme.chipFill], [HerdrTheme.selectedFill],
-            [HerdrTheme.cardFill, HerdrTheme.insetFill],
+            [HerdrTheme.cardFill, HerdrTheme.insetFill], [HerdrTheme.cardFill, HerdrTheme.chipFill],
         ]
         let surfaces: [(String, RGB, [[Color]])] = [
             ("sidebar", mix(rail, HerdrTheme.Glass.sidebar, over: dusk), glassFills),
@@ -97,6 +103,18 @@ struct HerdrThemeAccessibilityTests {
                 for (textName, color) in text {
                     let contrast = ratio(try rgb(color), background)
                     #expect(contrast >= 4.5, "\(textName) on \(surfaceName) with \(stack.count) fill(s) was \(contrast):1")
+                }
+            }
+        }
+        // Status badges: each label on its own 12% wash, on a card, alone or
+        // inside a highlighted tab.
+        for status in AgentStatus.allCases {
+            for (surfaceName, surface) in [("pane", pane), ("sidebar", surfaces[0].1)] {
+                for stack in [[HerdrTheme.cardFill], [highlight, HerdrTheme.cardFill]] {
+                    var background = surface
+                    for fill in stack + [status.color.opacity(0.12)] { background = try over(fill, background) }
+                    let contrast = ratio(try rgb(status.labelColor), background)
+                    #expect(contrast >= 4.5, "\(status) badge on \(surfaceName) with \(stack.count) fill(s) was \(contrast):1")
                 }
             }
         }

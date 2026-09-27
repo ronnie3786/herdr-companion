@@ -1,6 +1,9 @@
 import SwiftUI
 
 struct WorkspacePaneListView: View {
+    /// The highlighted tab's accent wash, measured by the dusk contrast test.
+    static let highlightWash = 0.06
+
     @Bindable var model: HerdrAppModel
     let workspace: HerdrWorkspace
     var highlightedTabID: String? = nil
@@ -144,7 +147,9 @@ struct WorkspacePaneListView: View {
         }
         .padding(highlightedTabID == tab.id ? 12 : 0)
         .background(
-            highlightedTabID == tab.id ? HerdrTheme.accent.opacity(0.12) : .clear,
+            // A light wash (the accent outline carries the highlight) so status
+            // badges on the cards inside keep 4.5:1 over the dusk.
+            highlightedTabID == tab.id ? HerdrTheme.accent.opacity(Self.highlightWash) : .clear,
             in: .rect(cornerRadius: HerdrTheme.cardRadius)
         )
         .overlay {

@@ -321,20 +321,27 @@ private struct HerdrButtonBody: View {
             .overlay {
                 if kind == .outline {
                     RoundedRectangle(cornerRadius: HerdrTheme.Radius.control)
-                        .strokeBorder(isHovering ? HerdrTheme.focusOutline : HerdrTheme.outline, lineWidth: 1)
+                        .strokeBorder(isHovering && isEnabled ? HerdrTheme.focusOutline : HerdrTheme.outline, lineWidth: 1)
                 }
             }
             .frame(minHeight: HerdrTheme.minHitTarget)
             .contentShape(Rectangle())
-            .opacity(configuration.isPressed ? 0.8 : 1)
+            .opacity(opacity)
             .onHover { isHovering = $0 }
     }
 
     private var foreground: Color {
         switch kind {
         case .primary: isEnabled ? HerdrTheme.onPrimary : HerdrTheme.onPrimaryDisabled
-        case .outline, .ghost: isEnabled ? (isHovering ? HerdrTheme.primaryText : HerdrTheme.secondaryText) : HerdrTheme.tertiaryText
+        case .outline, .ghost: isEnabled && isHovering ? HerdrTheme.primaryText : HerdrTheme.secondaryText
         }
+    }
+
+    /// Disabled outline and ghost buttons dim to 42%, like icon buttons
+    /// (disabled controls are exempt from the 4.5:1 text rule).
+    private var opacity: Double {
+        if kind != .primary, !isEnabled { return 0.42 }
+        return configuration.isPressed ? 0.8 : 1
     }
 
     private var fill: Color {
@@ -396,7 +403,7 @@ private struct HerdrRowButtonBody: View {
     var body: some View {
         configuration.label
             .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
-            .foregroundStyle(isEnabled ? tint : HerdrTheme.tertiaryText)
+            .foregroundStyle(tint)
             .padding(.horizontal, 8)
             .frame(minHeight: HerdrTheme.ControlHeight.small)
             .overlay {
@@ -405,7 +412,8 @@ private struct HerdrRowButtonBody: View {
             }
             .frame(minHeight: HerdrTheme.minHitTarget)
             .contentShape(Rectangle())
-            .opacity(configuration.isPressed ? 0.7 : 1)
+            // Disabled dims to 42%, like icon buttons.
+            .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.42)
     }
 }
 

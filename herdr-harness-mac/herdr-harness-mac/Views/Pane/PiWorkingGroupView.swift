@@ -98,7 +98,7 @@ struct PiWorkingGroupView: View {
         .accessibilityHint("Shows Pi's thinking, commentary, and tool activity")
     }
 
-    // MonoCode's unboxed tool row: icons at 50% ink, words at 64%.
+    // MonoCode's unboxed tool row: icons at `iconTint`, words at `tertiaryText`.
     var chevronColor: Color { HerdrTheme.iconTint }
     var borderColor: Color { .clear }
     var iconColor: Color { HerdrTheme.iconTint }

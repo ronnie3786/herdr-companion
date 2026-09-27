@@ -181,9 +181,9 @@ enum HerdrDusk {
 /// a built-in gradient that is blurred with Core Image and cached. It is one
 /// static image behind the transcript, never a per-row or live blur.
 struct HerdrHazeBand: View {
-    /// 10%, not the study's 24%: the band now sits over the dusk, and its
+    /// 6%, not the study's 24%: the band now sits over the dusk, and its
     /// violet lands on the dusk's own. The contrast tests hold it to 4.5:1.
-    static let opacity = 0.10
+    static let opacity = 0.06
     var height: CGFloat = 280
     @Environment(\.herdrHazeActive) private var isActive
 

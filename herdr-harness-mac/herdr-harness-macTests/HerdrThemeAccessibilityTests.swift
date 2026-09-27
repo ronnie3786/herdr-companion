@@ -112,6 +112,9 @@ struct HerdrThemeAccessibilityTests {
         // ink), a skim link's hover and open tint on a column card, and a
         // build ticket on a hovered row.
         let washes: [(String, RGB, [Color], Color)] = [
+            ("pressed primary", pane, [HerdrTheme.primaryAction.opacity(0.85)], HerdrTheme.onPrimary),
+            ("pressed primary in HUD", hud, [HerdrTheme.primaryAction.opacity(0.85)], HerdrTheme.onPrimary),
+            ("app icon letter", pane, [HerdrTheme.cardFill, HerdrTheme.hoverFill, HerdrTheme.accent.opacity(0.10)], HerdrTheme.accent),
             ("selection", pane, [HerdrTheme.accent.opacity(0.3)], HerdrTheme.primaryText),
             ("selection in code", chat, [HerdrTheme.codeFill, HerdrTheme.accent.opacity(0.3)], HerdrTheme.primaryText),
             ("selection in HUD", hud, [HerdrTheme.accent.opacity(0.3)], HerdrTheme.primaryText),

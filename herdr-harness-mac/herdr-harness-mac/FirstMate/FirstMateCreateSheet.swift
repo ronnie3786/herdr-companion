@@ -21,7 +21,7 @@ struct FirstMateCreateSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
-                Button("Create feature", action: create).buttonStyle(.borderedProminent)
+                Button("Create feature", action: create).herdrProminentButton()
                     .disabled(store.isSending || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || cwd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("first-mate-create-submit")
             }

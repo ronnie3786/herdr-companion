@@ -81,6 +81,19 @@ struct PaneResponseLinkTests {
         #expect(targets == ["desktop|w3:p9", "laptop|w3:p9"])
     }
 
+    @Test("A linked pane ID in inline code loses its code chip")
+    func linkedInlineCodeHasNoChip() throws {
+        let styled = PiMarkdownText.applyingInlineCodeStyle(
+            PiMarkdownText.render("Open `laptop|w3:p9` or `plain code`."),
+            font: .body, color: .primary, background: HerdrTheme.chipFill
+        )
+        let result = PaneResponseLinker.link(styled, catalog: try catalog())
+        let code = result.runs.filter { $0.inlinePresentationIntent?.contains(.code) == true }
+        #expect(code.contains { $0.link != nil && $0.backgroundColor == nil })
+        #expect(code.contains { $0.link == nil && $0.backgroundColor != nil })
+        #expect(!code.contains { $0.link != nil && $0.backgroundColor != nil })
+    }
+
     @Test("IDs embedded in paths, URLs, larger tokens and examples are not partially linked")
     func tokenBoundaries() throws {
         let source = AttributedString("xw3:p9 /tmp/w3:p9 w3:p9.swift x-w3:p9 w3:p9-more foo|w3:p9 https://else.example.invalid/?pane=w3:p9 ftp://else.example.invalid/?pane=w3:p9")

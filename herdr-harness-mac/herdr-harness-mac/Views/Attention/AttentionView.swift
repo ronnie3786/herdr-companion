@@ -21,7 +21,9 @@ struct AttentionView: View {
                                     Task { await model.markAllAlertsRead() }
                                 }
                                 .herdrFont(.caption, monospaced: true, weight: .bold)
-                                .foregroundStyle(HerdrTheme.accent)
+                                // A bare accent label: the system bezel washes it in
+                                // its own tint, under 4.5:1 over the dusk glass.
+                                .buttonStyle(PiChatButtonStyle(tint: HerdrTheme.accent, emphasis: .text))
                                 .accessibilityIdentifier("attention-mark-all-read")
                             }
                             Text("\(model.unreadAlertCount)")

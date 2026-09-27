@@ -338,17 +338,19 @@ private struct HerdrButtonBody: View {
     }
 
     /// Disabled outline and ghost buttons dim to 42%, like icon buttons
-    /// (disabled controls are exempt from the 4.5:1 text rule).
+    /// (disabled controls are exempt from the 4.5:1 text rule). A press shows
+    /// in the fill, never by fading the label, which would drop it under
+    /// 4.5:1 over the dusk glass.
     private var opacity: Double {
-        if kind != .primary, !isEnabled { return 0.42 }
-        return configuration.isPressed ? 0.8 : 1
+        kind != .primary && !isEnabled ? 0.42 : 1
     }
 
     private var fill: Color {
         switch kind {
-        case .primary: isEnabled ? HerdrTheme.primaryAction : HerdrTheme.primaryDisabled
-        case .outline: isHovering && isEnabled ? HerdrTheme.hoverFill : .clear
-        case .ghost: isHovering && isEnabled ? HerdrTheme.selectedFill : .clear
+        case .primary:
+            isEnabled ? HerdrTheme.primaryAction.opacity(configuration.isPressed ? 0.85 : 1) : HerdrTheme.primaryDisabled
+        case .outline: (isHovering || configuration.isPressed) && isEnabled ? HerdrTheme.hoverFill : .clear
+        case .ghost: (isHovering || configuration.isPressed) && isEnabled ? HerdrTheme.selectedFill : .clear
         }
     }
 }

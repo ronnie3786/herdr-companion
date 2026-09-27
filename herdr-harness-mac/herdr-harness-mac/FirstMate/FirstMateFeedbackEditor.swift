@@ -402,7 +402,7 @@ struct FirstMateFeedbackEditor: View {
                 .accessibilityIdentifier("first-mate-feedback-cancel")
             Button(state.saveErrorMessage == nil ? "Save feedback" : "Retry save") { save() }
                 .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
+                .herdrProminentButton()
                 .disabled(!state.canSave)
                 .accessibilityIdentifier("first-mate-feedback-save")
         }

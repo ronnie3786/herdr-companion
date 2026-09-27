@@ -90,7 +90,7 @@ struct FirstMateModelSettingsView: View {
                     Spacer()
                     Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                     Button(saving ? "Saving…" : "Save") { Task { await save() } }
-                        .buttonStyle(.borderedProminent)
+                        .herdrProminentButton()
                         .disabled(loading || saving || store.isSending || context != store.operationContext)
                         .accessibilityIdentifier("first-mate-model-save")
                 }

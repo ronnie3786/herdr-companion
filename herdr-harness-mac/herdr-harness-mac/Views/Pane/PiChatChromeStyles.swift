@@ -74,7 +74,7 @@ struct PiDisclosureCard<Label: View, Content: View>: View {
 /// macOS push button, with pointer hover and press feedback.
 struct PiChatButtonStyle: ButtonStyle {
     enum Emphasis {
-        /// Tinted label on a 10% ink wash.
+        /// Tinted label on a chip-weight (8%) ink wash.
         case soft
         /// Solid tint with a dark label (lavender primary by default).
         case prominent

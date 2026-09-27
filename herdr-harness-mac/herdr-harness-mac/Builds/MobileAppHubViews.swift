@@ -18,7 +18,8 @@ struct MobileAppHubIcon: View {
                     .font(.system(size: size * 0.45, weight: .semibold, design: .rounded))
                     .foregroundStyle(tint)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(tint.opacity(0.16))
+                    // 10%, like the ticket: the letter keeps 4.5:1 on a hovered row.
+                    .background(tint.opacity(0.10))
             }
         }
         .frame(width: size, height: size)

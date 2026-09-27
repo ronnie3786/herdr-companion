@@ -7,8 +7,34 @@ on:
   pull_request:
 permissions:
   contents: read
+  # ci-plan.py looks up earlier runs of this workflow for the same commit.
+  actions: read
 jobs:
+  plan:
+    # Skips every test job when this exact commit is already verified, and
+    # decides whether the iOS target must build (see scripts/ci-plan.py).
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.plan.outputs.run }}
+      ios: ${{ steps.plan.outputs.ios }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_FILE: verify.yml
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: python3 scripts/ci-plan.py
   portable:
+    needs: plan
+    if: needs.plan.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -43,48 +69,9 @@ jobs:
           echo '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tar.gz' | sha256sum --check
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
           /tmp/gitleaks git --redact --no-banner .
-  changes:
-    # Decide whether the iOS target must build. Shared Swift sources and this
-    # workflow always trigger it; Mac-only, server, and docs changes skip it.
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      ios: ${{ steps.filter.outputs.ios }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - id: filter
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_REF: ${{ github.base_ref }}
-          BEFORE: ${{ github.event.before }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          set -eu
-          range=""
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            git fetch --quiet origin "$BASE_REF"
-            range="origin/$BASE_REF...HEAD"
-          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            range="$BEFORE..HEAD"
-          elif [ "$EVENT_NAME" = "push" ] && [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then
-            # First push of a new branch: compare against the default branch.
-            git fetch --quiet origin "$DEFAULT_BRANCH"
-            range="origin/$DEFAULT_BRANCH...HEAD"
-          fi
-          ios=true
-          if [ -n "$range" ]; then
-            if git diff --name-only "$range" | grep -qE '^(herdr-harness-ios/|HerdrFirstMateShared/|HerdrFirstMateSharedTests/|\.github/workflows/verify\.yml$)'; then
-              ios=true
-            else
-              ios=false
-            fi
-          fi
-          echo "iOS job required: $ios (range: ${range:-full run})"
-          echo "ios=$ios" >> "$GITHUB_OUTPUT"
   mac:
+    needs: plan
+    if: needs.plan.outputs.run == 'true'
     runs-on: macos-26
     timeout-minutes: 30
     steps:
@@ -100,11 +87,13 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m unittest discover -s herdr-harness-mac/Scripts -p 'test_*.py'
+      # One pass; a failure reruns only the failed tests, not every suite
+      # (see scripts/ci-xcode-test.py).
       - name: Mac unit tests
-        run: xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' -derivedDataPath /tmp/herdr-mac-derived CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO test -only-testing:herdr-harness-macTests -retry-tests-on-failure -test-iterations 3
+        run: python scripts/ci-xcode-test.py --result-dir /tmp/herdr-mac-results -- -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' -derivedDataPath /tmp/herdr-mac-derived CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO -only-testing:herdr-harness-macTests
   ios:
-    needs: changes
-    if: needs.changes.outputs.ios == 'true'
+    needs: plan
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.ios == 'true'
     runs-on: macos-26
     timeout-minutes: 30
     steps:
@@ -112,8 +101,8 @@ jobs:
         with:
           persist-credentials: false
       # Serial execution keeps simulator clones from starving suites that carry
-      # one-minute time limits; failed tests are retried before the job is red.
+      # one-minute time limits; only failed tests are retried before the job is red.
       - name: iOS unit tests
         run: |
           DEVICE_ID=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for runtime,devices in d["devices"].items() if "iOS-26" in runtime for x in devices if "iPhone" in x["name"]))')
-          xcodebuild -project herdr-harness-ios/herdr-harness-ios.xcodeproj -scheme herdr-harness-ios -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath /tmp/herdr-ios-derived CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO test -only-testing:herdr-harness-iosTests -parallel-testing-enabled NO -retry-tests-on-failure -test-iterations 3
+          python3 scripts/ci-xcode-test.py --result-dir /tmp/herdr-ios-results -- -project herdr-harness-ios/herdr-harness-ios.xcodeproj -scheme herdr-harness-ios -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath /tmp/herdr-ios-derived CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO -only-testing:herdr-harness-iosTests -parallel-testing-enabled NO

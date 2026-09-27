@@ -154,9 +154,34 @@ gh run list --workflow Verify --commit "$(git rev-parse HEAD)" \
   --limit 1 --json headSha,status,conclusion
 ```
 
-A successful run on a previous commit is insufficient. Both preparation and
-publication enforce this check. A failing test or privacy check must be repaired
-before publishing.
+A successful run on a previous commit is insufficient. Preparation may start as
+soon as Verify has started for the exact commit, because it builds, signs, and
+checks locally and publishes nothing; it refuses a commit Verify has not seen or
+whose latest run failed. Publication requires the latest run for that exact commit
+to have passed, and `publish --wait-for-ci MINUTES` waits for a run still in
+progress. A failing test or privacy check must be repaired before publishing.
+
+Verify tests each commit once. A pull request from a branch of this repository
+leaves the tests to the push run of the same commit, which tests exactly that
+commit, and a commit that already passed on a push is not tested again. When a
+test fails, only the failed tests run again (up to ten, against the same build),
+and a pass on retry leaves a **Flaky tests** warning on the run.
+
+### Land a pull request without testing it twice
+
+A merge commit is a new revision, so the release would wait for Verify to test the
+same code again. Land a verified pull request by fast-forwarding `main` to its
+exact head instead:
+
+```sh
+.venv/bin/python scripts/land-pr.py 123 --delete-branch
+```
+
+The branch must already contain `main` (merge `origin/main` into it and push
+first), and the latest push run of Verify for its head must have passed. GitHub
+marks the pull request merged, the push to `main` skips its tests because that
+commit already passed, and preparation can start right away. The Code Factory
+keeps its own merge flow.
 
 ## Prepare and review the artifacts
 

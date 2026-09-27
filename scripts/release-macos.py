@@ -217,10 +217,36 @@ def source_revision():
     return run(["git", "rev-parse", "HEAD"], cwd=ROOT).stdout.decode().strip()
 
 
-def require_green_ci(source):
+def latest_verify_run(source):
     runs = json.loads(gh("run", "list", "--repo", REPOSITORY, "--commit", source, "--workflow", "Verify", "--json", "headSha,status,conclusion", "--limit", "20"))
-    if not runs or runs[0].get("headSha") != source or runs[0].get("status") != "completed" or runs[0].get("conclusion") != "success":
+    return runs[0] if runs and runs[0].get("headSha") == source else None
+
+
+def require_green_ci(source):
+    run = latest_verify_run(source)
+    if not run or run.get("status") != "completed" or run.get("conclusion") != "success":
         raise ReleaseError("The latest Verify run for this exact source revision must have passed")
+
+
+def require_ci_not_failed(source):
+    """Preparation may overlap Verify: it builds and signs locally and publishes
+    nothing, and publication still requires the latest run to have passed. A
+    revision Verify has not seen, or whose latest run failed, is not prepared."""
+    run = latest_verify_run(source)
+    if not run:
+        raise ReleaseError("Push this exact source revision and let Verify start before preparing")
+    if run.get("status") == "completed" and run.get("conclusion") != "success":
+        raise ReleaseError("The latest Verify run for this exact source revision failed")
+
+
+def wait_for_ci(source, minutes, *, sleep=time.sleep, clock=time.monotonic):
+    """Wait up to `minutes` for the latest Verify run to finish; the caller then requires success."""
+    deadline = clock() + minutes * 60
+    while clock() < deadline:
+        run = latest_verify_run(source)
+        if run and run.get("status") == "completed":
+            return
+        sleep(30)
 
 
 def read_feed():
@@ -437,7 +463,7 @@ def prepare(args):
     version = validate_version(json.loads(VERSION_FILE.read_text()))
     settings = release_settings(args); validate_signing_settings(settings)
     tools = tools_path(args, settings); signing_preflight(settings, tools)
-    source = source_revision(); require_green_ci(source)
+    source = source_revision(); require_ci_not_failed(source)
     output = args.output.expanduser().resolve()
     if output.exists(): raise ReleaseError("Preparation output already exists; select a fresh directory")
     notes = args.notes.read_bytes(); privacy_check(args.notes, settings)
@@ -614,6 +640,8 @@ def publish(args):
     settings = release_settings(args); validate_signing_settings(settings)
     tools = tools_path(args, settings); signing_preflight(settings, tools)
     path = args.manifest.expanduser().resolve(); manifest = verify_prepared(path, tools, settings)
+    if getattr(args, "wait_for_ci", 0):
+        wait_for_ci(manifest["source"], args.wait_for_ci)
     require_green_ci(manifest["source"])
     # A remote Git ref serializes publishers across machines. Never steal a lock.
     api("git/refs", method="POST", payload={"ref": "refs/" + LOCK_REF, "sha": manifest["source"]})
@@ -683,6 +711,8 @@ def main(argv=None):
             sub.add_argument("--output", type=Path, required=True)
         else:
             sub.add_argument("manifest", type=Path)
+            sub.add_argument("--wait-for-ci", type=int, default=0, metavar="MINUTES",
+                             help="Wait up to MINUTES for the latest Verify run to finish; it must still pass")
             sub.add_argument("--restore-missing-feed", action="store_true",
                              help="After inspection, restore a missing feed only from an exactly matching published version")
     args = parser.parse_args(argv)

@@ -271,7 +271,7 @@ class PreparationBoundaryTests(unittest.TestCase):
                 return subprocess.CompletedProcess(argv, 0, b"", b"")
             settings = {"signing_identity": "Developer ID Application: Example (ABCDEFGHIJ)", "notary_profile": "synthetic-profile"}
             args = SimpleNamespace(output=root / "out", notes=notes)
-            with patch.object(release, "release_settings", return_value=settings), patch.object(release, "tools_path", return_value=Path("/tools")), patch.object(release, "signing_preflight"), patch.object(release, "source_revision", return_value=SOURCE), patch.object(release, "require_green_ci"), patch.object(release, "privacy_check"), patch.object(release, "read_feed", return_value=None), patch.object(release, "export_source"), patch.object(release, "run", side_effect=execute), patch.object(release, "audit_app", side_effect=release.ReleaseError("privacy rejected")) as audit:
+            with patch.object(release, "release_settings", return_value=settings), patch.object(release, "tools_path", return_value=Path("/tools")), patch.object(release, "signing_preflight"), patch.object(release, "source_revision", return_value=SOURCE), patch.object(release, "require_ci_not_failed"), patch.object(release, "privacy_check"), patch.object(release, "read_feed", return_value=None), patch.object(release, "export_source"), patch.object(release, "run", side_effect=execute), patch.object(release, "audit_app", side_effect=release.ReleaseError("privacy rejected")) as audit:
                 with self.assertRaisesRegex(release.ReleaseError, "privacy rejected"):
                     release.prepare(args)
             self.assertEqual(audit.call_args.kwargs, {"notarized": False})

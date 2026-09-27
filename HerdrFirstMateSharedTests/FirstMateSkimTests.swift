@@ -95,6 +95,10 @@ struct FirstMateSkimTests {
         """)
         #expect(malformed.skim?.document == nil)
         #expect(FirstMateSkimReader(skim: malformed.skim, reply: malformed.text) == nil)
+        let notAnObject = try FirstMateSkimFixtures.message("""
+        {"id":"m3","feature_id":"f","role":"assistant","text":"Hi","status":"done","created_at":"2026-09-26T00:00:00Z","skim":"ready"}
+        """)
+        #expect(notAnObject.skim?.status == .unknown)
         let snapshot = try JSONDecoder().decode(FirstMateSnapshot.self, from: Data("""
         {"ok":true,"feature":{"id":"fmf_synthetic","title":"Synthetic","goal":"Synthetic","cwd":"/tmp/synthetic","status":"running",
          "revision":1,"created_at":"2026-09-26T00:00:00Z","updated_at":"2026-09-26T00:00:00Z"},

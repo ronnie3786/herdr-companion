@@ -94,7 +94,9 @@ struct HudChatSkimDecodingTests {
         let history = try JSONDecoder().decode(HudChatHistory.self, from: JSONSerialization.data(withJSONObject: page))
 
         #expect(history.turns.map(\.id) == ["agr_one", "agr_two"])
-        #expect(history.turns[0].skim == nil)
+        // A skim of the wrong shape decodes as unusable, so the turn shows in full.
+        #expect(history.turns[0].skim?.status == .unknown)
+        #expect(FirstMateSkimReader(skim: history.turns[0].skim, reply: SkimFixture.uploadReply) == nil)
         #expect(history.turns[1].skim?.status == .ready)
     }
 

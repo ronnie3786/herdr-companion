@@ -43,10 +43,14 @@ struct FirstMateSkim: Codable, Equatable, Sendable {
         self.replySHA256 = replySHA256
     }
 
-    /// A malformed document or segment table makes the skim unusable, never
-    /// the message: readers fall back to the full reply.
+    /// A malformed skim (even one that isn't an object) makes the skim
+    /// unusable, never the message or run that carries it: readers fall back
+    /// to the full reply.
     init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let c = try? decoder.container(keyedBy: CodingKeys.self) else {
+            status = .unknown
+            return
+        }
         status = (try? c.decode(Status.self, forKey: .status)) ?? .unknown
         format = try? c.decodeIfPresent(String.self, forKey: .format)
         promptVersion = try? c.decodeIfPresent(String.self, forKey: .promptVersion)

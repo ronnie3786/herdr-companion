@@ -46,7 +46,9 @@ struct ActiveWorkBoardView: View {
                             setup: setupJira,
                             openURL: openURL
                         )
-                        .opacity(0.82)
+                        // Full strength: the section label marks candidates as
+                        // untracked, and dimming the card would drop its text
+                        // and Set up button under 4.5:1 over the dusk glass.
                     }
                 }
             }

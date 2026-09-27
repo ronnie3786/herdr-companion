@@ -28,7 +28,7 @@ struct MachinesView: View {
                             .frame(minHeight: HerdrTheme.minHitTarget)
                             .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.herdrPlain)
                         .accessibilityIdentifier("machine-row-\(machine.id)")
                     }
                 }
@@ -63,7 +63,7 @@ struct MachinesView: View {
                             }
                             .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.herdrPlain)
                     .accessibilityIdentifier("machines-add-machine")
                 }
                 .listRowBackground(Color.clear)

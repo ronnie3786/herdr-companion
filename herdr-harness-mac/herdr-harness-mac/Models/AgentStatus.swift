@@ -61,7 +61,8 @@ enum AgentStatus: String, Codable, CaseIterable, Hashable, Sendable {
     }
 
     var labelColor: Color {
-        self == .unknown ? HerdrTheme.mist : color
+        // One step above its muted wash, so the badge reads at 4.5:1 over the dusk.
+        self == .unknown ? HerdrTheme.proseText : color
     }
 
     var attentionRank: Int {

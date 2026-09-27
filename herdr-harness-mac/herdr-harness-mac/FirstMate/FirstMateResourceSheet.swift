@@ -34,7 +34,7 @@ struct FirstMateResourceSheet: View {
                         if let author = store.snapshot?.author(of: document), author.nativeSessionID == document.nativeSessionID {
                             Button("Produced by \(author.title)", systemImage: "person.crop.circle") {
                                 Task { await store.open(.session(author)) }
-                            }.buttonStyle(.plain).herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(FirstMatePalette(scheme: scheme).accent)
+                            }.buttonStyle(.herdrPlain).herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(FirstMatePalette(scheme: scheme).accent)
                             .accessibilityIdentifier("first-mate-document-author")
                         }
                     }

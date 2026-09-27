@@ -79,7 +79,7 @@ struct SkimExcerptView: View {
                     .frame(width: 20, height: 20)
                     .contentShape(.rect)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .foregroundStyle(palette.secondaryText)
             .keyboardShortcut(.cancelAction)
             .accessibilityLabel("Close")

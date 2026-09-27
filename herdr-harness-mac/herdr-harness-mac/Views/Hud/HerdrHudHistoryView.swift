@@ -44,7 +44,7 @@ struct HerdrHudHistoryView: View {
                             .padding(10)
                             .background(HerdrTheme.elevated, in: .rect(cornerRadius: 8))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.herdrPlain)
                         .disabled(isOpening)
                         .contextMenu {
                             if let id = chat.sessionId {

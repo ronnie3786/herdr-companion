@@ -58,7 +58,7 @@ struct HerdrHudVoiceReplyCardView: View {
                     .foregroundStyle(HerdrTheme.secondaryText)
                     .herdrHitTarget(minWidth: 0)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .accessibilityLabel("Discard voice reply")
             .accessibilityIdentifier("hud-voice-reply-close")
         }
@@ -108,7 +108,7 @@ struct HerdrHudVoiceReplyCardView: View {
                         .foregroundStyle(voiceReply.canSend ? HerdrTheme.accent : HerdrTheme.tertiaryText)
                         .herdrHitTarget(minWidth: 0)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .disabled(!voiceReply.canSend)
                 .accessibilityIdentifier("hud-voice-reply-send")
             }
@@ -139,7 +139,7 @@ struct HerdrHudVoiceReplyCardView: View {
             HStack(spacing: 10) {
                 Spacer(minLength: 0)
                 Button("Try again") { voiceReply.start() }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.herdrPlain)
                     .herdrFont(size: HerdrTheme.TextSize.caption, weight: .semibold)
                     .foregroundStyle(HerdrTheme.accent)
             }

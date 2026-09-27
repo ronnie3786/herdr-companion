@@ -158,7 +158,7 @@ struct HerdrVoiceNoteRecorderSheet: View {
             }
             .clipShape(.rect(cornerRadius: HerdrTheme.cardRadius))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .help(recorder.isRecording ? "Stop recording" : "Start recording")
         .accessibilityLabel(recorder.isRecording ? "Stop recording" : "Start recording")
     }
@@ -179,7 +179,7 @@ struct HerdrVoiceNoteRecorderSheet: View {
                     .background(HerdrTheme.accent)
                     .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .accessibilityLabel(recorder.isPlaying ? "Pause preview" : "Play preview")
 
             VStack(alignment: .leading, spacing: 6) {

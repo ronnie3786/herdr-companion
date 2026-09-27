@@ -12,7 +12,7 @@ struct ActivityFeedRow: View {
                 Button(action: action) {
                     content
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
             } else {
                 content
             }

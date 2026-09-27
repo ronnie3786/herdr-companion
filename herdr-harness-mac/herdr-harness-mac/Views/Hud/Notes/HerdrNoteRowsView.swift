@@ -34,7 +34,7 @@ struct HerdrNoteRowsView: View {
                     )
                     .background(HerdrNoteColor.yellow.fill, in: .capsule)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .accessibilityIdentifier("hud-note-new")
 
             if visibleRowCount > 0 {
@@ -98,7 +98,7 @@ struct HerdrNoteRowView: View {
             .shadow(color: HerdrTheme.ink.opacity(0.3), radius: 2, y: 1)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .contextMenu {
             Menu("Color") {
                 ForEach(HerdrNoteColor.allCases) { color in

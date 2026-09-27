@@ -15,7 +15,7 @@ struct ToastView: View {
                 // One floating toast may carry a shadow; lists never do.
                 .shadow(color: .black.opacity(0.26), radius: 16, y: 8)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .task {
             try? await Task.sleep(for: .seconds(2.2))
             guard !Task.isCancelled else { return }

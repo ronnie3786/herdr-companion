@@ -68,7 +68,7 @@ struct ConversationContextChip: View {
                     .frame(width: 30, height: 30)
                     .contentShape(.rect)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .foregroundStyle(HerdrTheme.mist)
             .accessibilityLabel(reference.removeAccessibilityLabel)
             .accessibilityIdentifier(reference.removeAccessibilityIdentifier)
@@ -123,7 +123,7 @@ private struct ComposerAttachmentChip: View {
                     .frame(width: 30, height: 30)
                     .contentShape(.rect)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .foregroundStyle(HerdrTheme.mist)
             .accessibilityLabel("Remove \(attachment.displayName)")
         }
@@ -161,7 +161,7 @@ private struct ComposerAttachmentChip: View {
                     .frame(width: 30, height: 30)
                     .contentShape(.rect)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .foregroundStyle(HerdrTheme.alert)
             .accessibilityLabel("Retry \(attachment.displayName)")
         }

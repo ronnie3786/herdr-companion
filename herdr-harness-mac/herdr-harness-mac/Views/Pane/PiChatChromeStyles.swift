@@ -60,7 +60,7 @@ struct PiDisclosureCard<Label: View, Content: View>: View {
                 .frame(minHeight: PiChatChrome.controlHeight)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
 
             if isExpanded {
                 content()
@@ -74,7 +74,7 @@ struct PiDisclosureCard<Label: View, Content: View>: View {
 /// macOS push button, with pointer hover and press feedback.
 struct PiChatButtonStyle: ButtonStyle {
     enum Emphasis {
-        /// Tinted label on a 10% ink wash.
+        /// Tinted label on a chip-weight (8%) ink wash.
         case soft
         /// Solid tint with a dark label (lavender primary by default).
         case prominent
@@ -123,22 +123,26 @@ private struct PiChatButtonBody: View {
 
     private var fill: Color {
         switch emphasis {
-        case .soft: isHovering && isEnabled ? HerdrTheme.strongOutline : HerdrTheme.selectedFill
-        case .prominent: tint.opacity(isHovering && isEnabled ? 1 : 0.9)
+        // Chip-weight fill, so a soft button inside a card under the chat's
+        // haze keeps 4.5:1 over the dusk; hover adds a rule, not more fill.
+        case .soft: HerdrTheme.chipFill
+        case .prominent: tint.opacity(configuration.isPressed ? 0.8 : (isHovering && isEnabled ? 1 : 0.9))
         case .text: .clear
         }
     }
 
     private var stroke: Color {
         switch emphasis {
-        case .soft, .prominent, .text: .clear
+        case .soft: (isHovering || configuration.isPressed) && isEnabled ? HerdrTheme.strongOutline : .clear
+        case .prominent, .text: .clear
         }
     }
 
+    /// Presses show in the fill or rule, never by dimming the label, which
+    /// would drop it under 4.5:1 over the dusk glass.
     private var opacity: Double {
         guard isEnabled else { return 0.42 }
-        if configuration.isPressed { return 0.7 }
-        return emphasis == .text && !isHovering ? 0.84 : 1
+        return emphasis == .text && !isHovering && !configuration.isPressed ? 0.84 : 1
     }
 }
 
@@ -148,7 +152,7 @@ extension View {
     /// indicator next to the chip's own `chevron.up.chevron.down`.
     func piChipMenu() -> some View {
         menuStyle(.button)
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .menuIndicator(.hidden)
     }
 }

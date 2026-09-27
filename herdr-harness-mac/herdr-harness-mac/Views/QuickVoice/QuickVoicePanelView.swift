@@ -18,7 +18,7 @@ struct QuickVoicePanelView: View {
         .background(session.phase == .recording ? HerdrTheme.alert : HerdrTheme.elevated, in: .circle)
         .overlay { Circle().strokeBorder(HerdrTheme.graphite, lineWidth: 3) }
         .contentShape(.circle)
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .disabled(session.phase == .transcribing || session.phase == .submitting)
         .help(session.phase == .recording ? "Stop and send to your agents" : "Speak a request to start agents (⌃⌘V)")
         .accessibilityIdentifier("quick-voice-microphone")

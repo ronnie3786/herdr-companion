@@ -27,7 +27,7 @@ struct QuickVoiceNoteView: View {
                     if session.playingMessageID == note.id + ":report" { session.stopAudio() }
                     else { session.play(note: note, message: report) }
                 }
-                .buttonStyle(.plain).foregroundStyle(HerdrTheme.accent)
+                .buttonStyle(.herdrPlain).foregroundStyle(HerdrTheme.accent)
                 .disabled(report.audioStatus != "ready")
                 if report.audioStatus == "failed" {
                     Text("Audio unavailable. Your report is saved above.").herdrFont(.callout).foregroundStyle(HerdrTheme.mist)
@@ -37,7 +37,7 @@ struct QuickVoiceNoteView: View {
                         Button(model.showSessionTitles ? task.title : "Agent", systemImage: task.statusSymbol) {
                             session.openAgent(task, in: note)
                         }
-                        .buttonStyle(.plain).disabled(task.paneID == nil)
+                        .buttonStyle(.herdrPlain).disabled(task.paneID == nil)
                         .padding(.vertical, 4)
                     }
                 }

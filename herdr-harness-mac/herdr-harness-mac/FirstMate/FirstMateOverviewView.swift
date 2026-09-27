@@ -64,7 +64,7 @@ struct FirstMateOverviewView: View {
                     HerdrMicroLabel(text: "Agents")
                     Spacer()
                     Button("View all \(snapshot.assignments.count)") { store.inspector = .agents }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.herdrPlain)
                         .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                         .foregroundStyle(palette.accent)
                         .frame(minHeight: HerdrTheme.minHitTarget)
@@ -107,7 +107,7 @@ struct FirstMateOverviewView: View {
                 }
                 Button("Open workflow", systemImage: "arrow.right") { store.inspector = .workflow }
                     .labelStyle(DashboardInlineLabelStyle(spacing: 5))
-                    .buttonStyle(.plain)
+                    .buttonStyle(.herdrPlain)
                     .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                     .foregroundStyle(palette.accent)
                     .frame(minHeight: HerdrTheme.minHitTarget)

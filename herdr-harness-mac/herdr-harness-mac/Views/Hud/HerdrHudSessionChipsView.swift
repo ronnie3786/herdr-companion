@@ -148,7 +148,7 @@ struct HerdrHudSessionChipsView: View {
                 }
                 .contentShape(.circle)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .help("Show \(overflow) more session\(overflow == 1 ? "" : "s")")
         .accessibilityIdentifier("hud-session-chip-overflow")
         .accessibilityLabel("\(overflow) more sessions")
@@ -186,7 +186,7 @@ struct HerdrHudSessionChipsView: View {
             }
             .contentShape(.circle)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .disabled(isTranscribing)
         .help(isRecording ? "Stop recording" : "Reply to this session by voice")
         .accessibilityLabel(isRecording ? "Stop recording" : "Reply by voice")
@@ -220,7 +220,7 @@ struct HerdrHudSessionChipsView: View {
             }
             .contentShape(.circle)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .help("Play a spoken summary of this session's last answer")
         .accessibilityIdentifier("hud-session-chip-speak-\(chip.id)")
         .accessibilityLabel("Listen to a summary of \(chip.title)")
@@ -242,7 +242,7 @@ struct HerdrHudSessionChipsView: View {
         } label: {
             HerdrHudSessionBubbleLabel(chip: chip, model: model)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .contextMenu {
             if let pane = model.pane(id: chip.id) {
                 SmartRenamePaneButton(model: model, pane: pane)

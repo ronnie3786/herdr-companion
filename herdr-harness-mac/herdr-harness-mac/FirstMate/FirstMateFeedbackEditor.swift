@@ -324,7 +324,7 @@ struct FirstMateFeedbackEditor: View {
             .padding(.vertical, 3)
             .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .disabled(!editorState.isEditable)
         .accessibilityIdentifier("first-mate-feedback-category-\(category.id)")
         .accessibilityLabel(category.label)
@@ -402,7 +402,7 @@ struct FirstMateFeedbackEditor: View {
                 .accessibilityIdentifier("first-mate-feedback-cancel")
             Button(state.saveErrorMessage == nil ? "Save feedback" : "Retry save") { save() }
                 .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
+                .herdrProminentButton()
                 .disabled(!state.canSave)
                 .accessibilityIdentifier("first-mate-feedback-save")
         }

@@ -74,7 +74,7 @@ struct HerdrHudOrbResultRow: View {
         }
         .scaleEffect(0.625 * HerdrHudPlacement.orbControlScale)
         .contentShape(.circle)
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .offset(y: -4)
         .help(
             controller.isUltraCompactEnabled
@@ -96,7 +96,7 @@ struct HerdrHudOrbResultRow: View {
         .overlay { Circle().strokeBorder(HerdrTheme.graphite, lineWidth: 3) }
         .scaleEffect(0.625 * HerdrHudPlacement.orbControlScale)
         .contentShape(.circle)
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .offset(y: -4)
         .help("Hide HUD. Restore it with Show HUD in the Herdr menu bar.")
         .accessibilityIdentifier("hud-quick-hide")

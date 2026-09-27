@@ -103,7 +103,7 @@ struct JiraTicketPickerSheet: View {
                     .background(HerdrTheme.accent)
                     .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .disabled(!canLookUp)
                 .opacity(canLookUp ? 1 : 0.48)
                 .accessibilityLabel("Look up Jira ticket")
@@ -310,7 +310,7 @@ private struct JiraTicketContextRow: View {
                         .frame(width: 44, height: 44)
                         .contentShape(.rect)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .foregroundStyle(HerdrTheme.mist)
                 .accessibilityLabel("Open \(ticket.key) in Jira")
 
@@ -320,7 +320,7 @@ private struct JiraTicketContextRow: View {
                         .frame(width: 44, height: 44)
                         .contentShape(.rect)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .foregroundStyle(HerdrTheme.signal)
                 .accessibilityLabel("Insert \(ticket.key) context")
             }

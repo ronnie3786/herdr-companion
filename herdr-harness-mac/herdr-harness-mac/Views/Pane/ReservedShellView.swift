@@ -24,7 +24,7 @@ struct ReservedShellView: View {
         } actions: {
             VStack(spacing: 12) {
                 Button("New Pi chat", systemImage: "plus.bubble", action: startPi)
-                    .buttonStyle(.borderedProminent)
+                    .herdrProminentButton()
                     .accessibilityIdentifier("reserved-shell-new-pi")
                 Button("Open shell", systemImage: "terminal", action: openShell)
                     .buttonStyle(.bordered)

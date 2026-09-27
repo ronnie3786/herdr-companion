@@ -68,7 +68,7 @@ struct HerdrHudResultArtifactNodeView: View {
                 }
                 .contentShape(.capsule)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .focused($isFocused)
         .disabled(phase.isBusyOrOpened)
         .contextMenu {

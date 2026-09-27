@@ -159,6 +159,32 @@ struct HerdrCountBadge: View {
     }
 }
 
+/// SwiftUI's `.plain` without its press fade. On macOS `.plain` draws the
+/// whole label, fills included, at 75% while the mouse is down and while a
+/// menu is open, which drops text under 4.5:1 over the dusk glass. Disabled
+/// labels still dim, to 42% like the other Herdr styles (disabled controls
+/// are exempt from 4.5:1). Hit testing, focus and accessibility are
+/// unchanged; rows show hover and selection in their own fills.
+struct HerdrPlainButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HerdrPlainButtonBody(label: configuration.label)
+    }
+}
+
+private struct HerdrPlainButtonBody<Label: View>: View {
+    let label: Label
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        label.opacity(isEnabled ? 1 : 0.42)
+    }
+}
+
+extension ButtonStyle where Self == HerdrPlainButtonStyle {
+    /// `.plain` without the press fade; use it instead of `.plain`.
+    static var herdrPlain: HerdrPlainButtonStyle { HerdrPlainButtonStyle() }
+}
+
 /// MonoCode's tab strips.
 ///
 /// `.segments`: equal-width 24pt tabs in a row, the selected one on a 10%
@@ -200,7 +226,7 @@ struct HerdrTabs<Value: Hashable>: View {
         Button { selection = tab.value } label: {
             label(for: tab, selected: selected)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .modifier(HerdrOptionalHelp(text: tab.help))
         .accessibilityLabel(tab.accessibilityLabel ?? tab.count.map { "\(tab.title), \($0)" } ?? tab.title)
         .accessibilityAddTraits(selected ? .isSelected : [])
@@ -321,27 +347,36 @@ private struct HerdrButtonBody: View {
             .overlay {
                 if kind == .outline {
                     RoundedRectangle(cornerRadius: HerdrTheme.Radius.control)
-                        .strokeBorder(isHovering ? HerdrTheme.focusOutline : HerdrTheme.outline, lineWidth: 1)
+                        .strokeBorder(isHovering && isEnabled ? HerdrTheme.focusOutline : HerdrTheme.outline, lineWidth: 1)
                 }
             }
             .frame(minHeight: HerdrTheme.minHitTarget)
             .contentShape(Rectangle())
-            .opacity(configuration.isPressed ? 0.8 : 1)
+            .opacity(opacity)
             .onHover { isHovering = $0 }
     }
 
     private var foreground: Color {
         switch kind {
         case .primary: isEnabled ? HerdrTheme.onPrimary : HerdrTheme.onPrimaryDisabled
-        case .outline, .ghost: isEnabled ? (isHovering ? HerdrTheme.primaryText : HerdrTheme.secondaryText) : HerdrTheme.tertiaryText
+        case .outline, .ghost: isEnabled && isHovering ? HerdrTheme.primaryText : HerdrTheme.secondaryText
         }
+    }
+
+    /// Disabled outline and ghost buttons dim to 42%, like icon buttons
+    /// (disabled controls are exempt from the 4.5:1 text rule). A press shows
+    /// in the fill, never by fading the label, which would drop it under
+    /// 4.5:1 over the dusk glass.
+    private var opacity: Double {
+        kind != .primary && !isEnabled ? 0.42 : 1
     }
 
     private var fill: Color {
         switch kind {
-        case .primary: isEnabled ? HerdrTheme.primaryAction : HerdrTheme.primaryDisabled
-        case .outline: isHovering && isEnabled ? HerdrTheme.hoverFill : .clear
-        case .ghost: isHovering && isEnabled ? HerdrTheme.selectedFill : .clear
+        case .primary:
+            isEnabled ? HerdrTheme.primaryAction.opacity(configuration.isPressed ? 0.85 : 1) : HerdrTheme.primaryDisabled
+        case .outline: (isHovering || configuration.isPressed) && isEnabled ? HerdrTheme.hoverFill : .clear
+        case .ghost: (isHovering || configuration.isPressed) && isEnabled ? HerdrTheme.selectedFill : .clear
         }
     }
 }
@@ -396,16 +431,20 @@ private struct HerdrRowButtonBody: View {
     var body: some View {
         configuration.label
             .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
-            .foregroundStyle(isEnabled ? tint : HerdrTheme.tertiaryText)
+            .foregroundStyle(tint)
             .padding(.horizontal, 8)
             .frame(minHeight: HerdrTheme.ControlHeight.small)
+            // Pressed shows a hover-weight fill rather than dimming the label,
+            // which would drop it under 4.5:1 over the dusk glass.
+            .background(configuration.isPressed ? HerdrTheme.hoverFill : .clear, in: .rect(cornerRadius: HerdrTheme.Radius.control))
             .overlay {
                 RoundedRectangle(cornerRadius: HerdrTheme.Radius.control)
                     .strokeBorder(HerdrTheme.outline, lineWidth: 1)
             }
             .frame(minHeight: HerdrTheme.minHitTarget)
             .contentShape(Rectangle())
-            .opacity(configuration.isPressed ? 0.7 : 1)
+            // Disabled dims to 42%, like icon buttons.
+            .opacity(isEnabled ? 1 : 0.42)
     }
 }
 

@@ -55,7 +55,7 @@ struct ChatColorLegendRow: View {
                     .frame(minHeight: Self.rowHeight)
                     .contentShape(.rect)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .help("\(store.label(for: color)) · \(color.defaultLabel)\nClick to filter; click again to show all colors. Use the pencil to edit, or right-click for Smart Rename.")
                 .accessibilityLabel("Filter by \(store.label(for: color)), \(color.defaultLabel)")
                 .accessibilityValue(isSelected ? "Selected" : "Not selected")

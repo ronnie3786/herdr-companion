@@ -34,7 +34,7 @@ struct SidebarWorkInboxView: View {
                     Image(systemName: "arrow.clockwise")
                         .herdrHitTarget()
                 }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.herdrPlain)
                     .foregroundStyle(HerdrTheme.mist)
                     .disabled(store.isRefreshing)
                     .help("Refresh GitHub review requests and Jira tickets")

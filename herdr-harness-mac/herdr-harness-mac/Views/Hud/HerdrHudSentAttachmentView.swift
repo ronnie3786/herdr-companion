@@ -28,7 +28,7 @@ struct HerdrHudSentAttachmentView: View {
             .padding(8)
             .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.compactRadius))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .chatQuotePreview(attachment.quote)
         .accessibilityLabel("Open attachment: \(attachment.filename)")
         .task(id: attachment.id) { await loadThumbnail() }

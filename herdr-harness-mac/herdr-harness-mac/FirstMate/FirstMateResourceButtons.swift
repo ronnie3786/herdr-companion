@@ -35,7 +35,7 @@ struct FirstMateResourceButtons: View {
             .accessibilityIdentifier("first-mate-visit-documents-\(visit.id)")
         }
         .menuStyle(.button)
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .menuIndicator(.hidden)
         .fixedSize()
     }

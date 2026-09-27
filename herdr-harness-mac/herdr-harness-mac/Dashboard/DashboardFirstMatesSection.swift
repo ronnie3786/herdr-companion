@@ -118,7 +118,7 @@ struct DashboardFirstMatesSection: View {
                     Text(host.unsupported ? "\(host.machineName) needs a companion update" : "\(host.machineName) is offline · showing last known work")
                     if !host.unsupported {
                         Button("Retry") { Task { await shell.firstMateFleet.refresh() } }
-                            .buttonStyle(.plain).foregroundStyle(HerdrTheme.accent)
+                            .buttonStyle(.herdrPlain).foregroundStyle(HerdrTheme.accent)
                             .frame(minHeight: HerdrTheme.minHitTarget)
                             .contentShape(.rect)
                     }
@@ -187,7 +187,7 @@ struct DashboardFeatureCard: View {
             }
             .contentShape(.rect(cornerRadius: HerdrTheme.cardRadius))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
@@ -284,7 +284,7 @@ private struct DashboardNewFeatureTile: View {
                 .frame(maxHeight: .infinity)
                 .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .frame(width: 150)
         .frame(maxHeight: .infinity)
         .overlay {

@@ -43,7 +43,7 @@ struct PaneResultArtifactView: View {
                 .herdrCard(radius: HerdrTheme.Radius.composer)
                 .contentShape(.rect)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .disabled(isBusy)
             .help("Open \(artifact.displayTitle)")
             .accessibilityIdentifier("pane-result-artifact-\(artifact.id)")

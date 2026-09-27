@@ -82,7 +82,7 @@ struct FirstMateNavigationButton: View {
             .contentShape(.rect)
             .herdrRowBackground(selected: false, hovered: isHovering)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .onHover { isHovering = $0 }
         .accessibilityLabel("First Mate")
         .accessibilityIdentifier("open-first-mate")

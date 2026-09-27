@@ -357,8 +357,9 @@ struct PromptComposerView: View {
         }
         .overlay {
             if isFileDropTargeted || isConversationDropTargeted {
+                // A rule only: a wash over the composer would drop the model
+                // pill's text under 4.5:1 over the dusk glass.
                 RoundedRectangle(cornerRadius: HerdrTheme.Radius.composer)
-                    .fill(HerdrTheme.accent.opacity(0.08))
                     .strokeBorder(HerdrTheme.accent.opacity(0.6), lineWidth: 1)
                     .allowsHitTesting(false)
             }

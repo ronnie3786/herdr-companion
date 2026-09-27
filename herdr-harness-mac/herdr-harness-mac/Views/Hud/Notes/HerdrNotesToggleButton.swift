@@ -12,7 +12,7 @@ struct HerdrNotesToggleButton: View {
                 .background(HerdrTheme.elevated, in: .circle)
                 .contentShape(.circle)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .help(notes.isListExpanded ? "Minimize notes" : "Show notes")
         .accessibilityLabel("Notes")
         .accessibilityValue("\(notes.notes.count) notes, \(notes.isListExpanded ? "expanded" : "collapsed")")

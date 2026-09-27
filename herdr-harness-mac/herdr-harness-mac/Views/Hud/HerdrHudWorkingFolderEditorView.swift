@@ -64,7 +64,7 @@ struct HerdrHudWorkingFolderEditorView: View {
                         .accessibilityIdentifier("hud-working-folder-choose")
                 }
                 Button("Add", systemImage: "plus", action: addPath)
-                    .buttonStyle(.borderedProminent)
+                    .herdrProminentButton()
                     .controlSize(.regular)
                     .disabled(path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("hud-working-folder-add")
@@ -116,7 +116,7 @@ struct HerdrHudWorkingFolderEditorView: View {
                                     remove(folder)
                                 })
                                 .labelStyle(.iconOnly)
-                                .buttonStyle(.plain)
+                                .buttonStyle(.herdrPlain)
                                 .foregroundStyle(HerdrTheme.tertiaryText)
                                 .help("Remove this saved folder")
                                 .accessibilityLabel("Remove \(folder.displayPath(for: machine))")

@@ -51,7 +51,7 @@ struct SidebarReviewRequestRow: View {
             }
             .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .disabled(request.browserURL == nil)
         .onHover { isHovering = $0 }
         .accessibilityIdentifier("sidebar-github-review-\(request.number)")

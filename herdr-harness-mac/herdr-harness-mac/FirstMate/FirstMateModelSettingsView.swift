@@ -90,7 +90,7 @@ struct FirstMateModelSettingsView: View {
                     Spacer()
                     Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                     Button(saving ? "Saving…" : "Save") { Task { await save() } }
-                        .buttonStyle(.borderedProminent)
+                        .herdrProminentButton()
                         .disabled(loading || saving || store.isSending || context != store.operationContext)
                         .accessibilityIdentifier("first-mate-model-save")
                 }
@@ -113,7 +113,7 @@ struct FirstMateModelSettingsView: View {
             .padding(9).frame(maxWidth: .infinity, alignment: .leading)
             .background(model == id ? Color.accentColor.opacity(0.10) : Color.clear, in: .rect(cornerRadius: 7))
             .contentShape(.rect)
-        }.buttonStyle(.plain).help(id.isEmpty ? "Use this host's default First Mate model" : id)
+        }.buttonStyle(.herdrPlain).help(id.isEmpty ? "Use this host's default First Mate model" : id)
     }
 
     private func routingRow(_ title: String, value: FirstMateRoutingDefault, emptyModelLabel: String? = nil) -> some View {

@@ -18,7 +18,8 @@ struct MobileAppHubIcon: View {
                     .font(.system(size: size * 0.45, weight: .semibold, design: .rounded))
                     .foregroundStyle(tint)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(tint.opacity(0.16))
+                    // 10%, like the ticket: the letter keeps 4.5:1 on a hovered row.
+                    .background(tint.opacity(0.10))
             }
         }
         .frame(width: size, height: size)
@@ -37,7 +38,8 @@ private struct MobileAppHubTicket: View {
             .herdrFont(.caption, weight: .semibold, monospacedDigit: true)
             .foregroundStyle(tint)
             .padding(.horizontal, 6).padding(.vertical, 1)
-            .background(tint.opacity(0.16), in: .rect(cornerRadius: 4))
+            // 10%: the ticket stays at 4.5:1 on a hovered row over the dusk glass.
+            .background(tint.opacity(0.10), in: .rect(cornerRadius: 4))
             .fixedSize()
     }
 }
@@ -165,7 +167,7 @@ struct DashboardBuildRow: View {
             .herdrHairline(.bottom, color: HerdrTheme.rowDivider)
             .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .onHover { isHovered = $0 }
         .help("Open \(build.app.name) \(build.versionLabel) in Mobile App Hub")
         .accessibilityElement(children: .combine)
@@ -227,7 +229,7 @@ struct FirstMateBuildsSection: View {
                         .accessibilityLabel("Couldn't refresh builds")
                 }
                 Button("Open Mobile App Hub") { openURL(MobileAppHubPresentation.seeAllURL(builds, hubURL: query.hubURL)) }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.herdrPlain)
                     .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                     .foregroundStyle(palette.accent)
                     .frame(minHeight: HerdrTheme.minHitTarget)
@@ -242,7 +244,7 @@ struct FirstMateBuildsSection: View {
             }
             if builds.count > Self.collapsedCount {
                 Button(showsAll ? "Show fewer" : "Show \(builds.count - Self.collapsedCount) more") { showsAll.toggle() }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.herdrPlain)
                     .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                     .foregroundStyle(palette.accent)
                     .frame(minHeight: HerdrTheme.minHitTarget)
@@ -314,7 +316,7 @@ private struct FirstMateBuildRow: View {
             .background(isHovered ? palette.hoverFill : .clear, in: .rect(cornerRadius: HerdrTheme.Radius.control))
             .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .onHover { isHovered = $0 }
         .help("Open \(build.app.name) \(build.versionLabel) in Mobile App Hub")
         .accessibilityElement(children: .combine)

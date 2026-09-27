@@ -25,7 +25,7 @@ struct FirstMateAgentRow: View {
             case .detailed: detailed
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .disabled(agent.nativeSessionID == nil && store.snapshot?.sessions(for: agent.id).isEmpty != false)
         .help(agent.nativeSessionID.map { "Open saved session \($0)" } ?? "The agent has not registered a saved session yet")
         .accessibilityIdentifier("first-mate-agent-\(agent.id)")

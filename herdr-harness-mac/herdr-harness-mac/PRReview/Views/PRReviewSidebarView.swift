@@ -18,7 +18,7 @@ struct PRReviewSidebarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: HerdrTheme.rowSpacing) {
             Button("All sessions", systemImage: "chevron.left", action: back)
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .herdrFont(.caption)
                 .foregroundStyle(HerdrTheme.mist)
                 .accessibilityIdentifier("pr-review-back")
@@ -50,6 +50,7 @@ struct PRReviewSidebarView: View {
                 Text("Archived").tag(true)
             }
             .pickerStyle(.segmented)
+            .tint(HerdrTheme.controlAccent)
             .accessibilityIdentifier("pr-review-filter")
 
             TextField("Search reviews", text: $store.search)
@@ -108,7 +109,7 @@ struct PRReviewSidebarView: View {
             .background(store.selectedReviewID == review.id ? HerdrTheme.selection : .clear,
                         in: .rect(cornerRadius: HerdrTheme.compactRadius))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .accessibilityIdentifier("pr-review-review-\(review.id)")
         .accessibilityAddTraits(store.selectedReviewID == review.id ? .isSelected : [])
         .contextMenu {

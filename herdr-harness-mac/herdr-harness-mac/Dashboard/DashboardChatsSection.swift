@@ -70,7 +70,7 @@ struct DashboardChatsSection: View {
                 .herdrHairline(.top)
                 if rows.count > Self.collapsedCount {
                     Button(showsAll ? "Show fewer" : "Show \(rows.count - Self.collapsedCount) more") { showsAll.toggle() }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.herdrPlain)
                         .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
                         .foregroundStyle(HerdrTheme.accent)
                         .frame(minHeight: HerdrTheme.minHitTarget)
@@ -141,7 +141,7 @@ struct DashboardChatRow: View {
             .herdrHairline(.bottom, color: HerdrTheme.rowDivider)
             .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .onHover { isHovered = $0 }
         .help(pane.displayTitle)
         .accessibilityElement(children: .combine)

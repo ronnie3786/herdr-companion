@@ -63,7 +63,7 @@ struct PiCodeBlockView: View {
                             .herdrCompactHitTarget(visual: HerdrTheme.ControlHeight.small)
                     }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .animation(PiChatChrome.hoverAnimation, value: copied)
                 .help(copied ? "Copied" : "Copy code")
                 .accessibilityLabel(copied ? "Code copied" : "Copy code")

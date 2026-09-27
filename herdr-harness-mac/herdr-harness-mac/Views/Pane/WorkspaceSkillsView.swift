@@ -59,7 +59,7 @@ struct WorkspaceSkillsView: View {
                     Image(systemName: "arrow.clockwise")
                         .herdrHitTarget(minWidth: 44, minHeight: 44)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .foregroundStyle(HerdrTheme.accent)
                 .disabled(isLoading)
                 .symbolEffect(.rotate, options: .repeating, isActive: isLoading)
@@ -148,7 +148,7 @@ struct WorkspaceSkillsView: View {
             Button("Try again", systemImage: "arrow.clockwise") {
                 Task { await refresh() }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .herdrFont(.subheadline, weight: .semibold)
             .foregroundStyle(HerdrTheme.accent)
             .frame(minHeight: 44)
@@ -296,7 +296,7 @@ private struct SkillMenuRow: View {
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .accessibilityLabel("Insert \(skill.name) skill")
         .accessibilityHint("Choose a terminal invocation style")
     }

@@ -93,7 +93,7 @@ struct IssueReportAttachmentChip: View {
                     .foregroundStyle(HerdrTheme.muted)
                     .herdrHitTarget()
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .accessibilityLabel("Remove \(attachment.filename)")
             .accessibilityIdentifier("issue-report-remove-\(attachment.filename)")
         }

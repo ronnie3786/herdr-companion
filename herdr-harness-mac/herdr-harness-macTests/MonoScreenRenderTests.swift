@@ -225,7 +225,6 @@ struct MonoScreenRenderTests {
                 HerdrHudCardView(model: model, controller: HerdrHudController(), session: session)
                     .frame(width: 420, height: 580)
                     .environment(\.herdrGlassActive, true)
-                    .environment(\.herdrGlassDrawsBlur, false)
                     .padding(.top, 60)
                     .padding(.trailing, 40)
             }
@@ -247,14 +246,13 @@ enum MonoRenderFixtures {
     }
 
     /// The production window shell: `WorkspaceNavigationView` with its rail,
-    /// title bar and routed (or injected) detail. With `glass`, the dusk
-    /// desktop sits behind the window the way the blurred desktop does in the
-    /// app (offscreen captures never include behind-window blur, so the base
-    /// shows at its Legible level over the unblurred gradient).
+    /// title bar and routed (or injected) detail. With `glass`, the app's own
+    /// dusk backdrop sits behind both columns exactly as the main window
+    /// draws it, so these renders show the real glass.
     static func window(model: HerdrAppModel, shell: HerdrShellState, detail: AnyView? = nil, glass: Bool = true,
                        scale: HerdrFontScale = .medium) -> some View {
         ZStack {
-            if glass { desktop }
+            if glass { HerdrDuskBackdrop() }
             WorkspaceNavigationView(
                 model: model,
                 shell: shell,
@@ -266,23 +264,15 @@ enum MonoRenderFixtures {
         }
         .environment(\.herdrGlassActive, glass)
         .environment(\.herdrHazeActive, glass)
-        .environment(\.herdrGlassDrawsBlur, false)
         .environment(HerdPulseCoordinator(defaults: UserDefaults(suiteName: "MonoRender.pulse")!))
         .environment(\.herdrFontScale, scale)
     }
 
-    /// A Herdr-owned dusk gradient standing in for a desktop picture.
+    /// A desktop picture behind the floating HUD. The HUD draws its own dusk,
+    /// so a plain blue-gray wallpaper shows it does not depend on this one.
     static var desktop: some View {
-        ZStack {
-            LinearGradient(colors: [Color(red: 0.16, green: 0.11, blue: 0.29), Color(red: 0.06, green: 0.07, blue: 0.15)],
-                           startPoint: .top, endPoint: .bottom)
-            RadialGradient(colors: [Color(red: 0.52, green: 0.38, blue: 0.87).opacity(0.9), .clear],
-                           center: UnitPoint(x: 0.12, y: 0.08), startRadius: 0, endRadius: 520)
-            RadialGradient(colors: [Color(red: 0.84, green: 0.47, blue: 0.70).opacity(0.55), .clear],
-                           center: UnitPoint(x: 0.88, y: 0.06), startRadius: 0, endRadius: 420)
-            RadialGradient(colors: [Color(red: 0.20, green: 0.27, blue: 0.66).opacity(0.75), .clear],
-                           center: UnitPoint(x: 0.7, y: 1), startRadius: 0, endRadius: 560)
-        }
+        LinearGradient(colors: [Color(red: 0.36, green: 0.45, blue: 0.55), Color(red: 0.13, green: 0.17, blue: 0.23)],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 
     /// Five synthetic First Mate features with the Dashboard's status mix.

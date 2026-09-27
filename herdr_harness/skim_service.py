@@ -43,8 +43,6 @@ CAPABILITY = "first-mate-skim-v1"
 HUD_PROFILE = "hud-chat-v1"
 SKIM_FILE = "skim.json"
 MAX_ATTEMPTS = 2
-# A pending skim older than this lost its job; clients read it as failed.
-STALE_SECONDS = 300
 MAX_USER_MESSAGE_CHARS = 131072
 SWEEP_SECONDS = 300
 _NEW, _BACKFILL = 0, 1
@@ -53,16 +51,6 @@ _LOG = logging.getLogger(__name__)
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _age_seconds(value: Any) -> float:
-    try:
-        stamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return 0.0
-    if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=timezone.utc)
-    return (datetime.now(timezone.utc) - stamp).total_seconds()
 
 
 def _flag(environ: Mapping[str, str], key: str, default: bool) -> bool:
@@ -154,25 +142,12 @@ def _write_state(run_dir: Path, state: dict) -> None:
             pass
 
 
-def projection(state: Mapping[str, Any]) -> dict:
-    """The client shape shared by First Mate messages and HUD chat turns."""
-    status = state.get("status")
-    if status == "pending" and _age_seconds(state.get("updated_at")) > STALE_SECONDS:
-        status = "failed"
-    result = {key: state.get(key) for key in ("format", "prompt_version", "segmenter_version", "skim_version")}
-    result["status"] = status
-    if status == "ready":
-        result.update(document=state.get("document"), segments=state.get("segments"),
-                      reply_sha256=state.get("reply_sha256"))
-    return result
-
-
 def public_run_skim(run_dir: Path) -> Optional[dict]:
     """The skim a HUD chat turn exposes, or None when it has none."""
     state = _read_state(run_dir)
     if state is None or state.get("status") not in {"pending", "ready", "failed", "rejected"}:
         return None
-    return projection(state)
+    return skim.served(state)
 
 
 class SkimService:
@@ -186,7 +161,10 @@ class SkimService:
         self._store: Any = None
         self._runs: Any = None
         self._queue: "queue.PriorityQueue[tuple[int, int, tuple[str, str]]]" = queue.PriorityQueue()
+        # Queued and running jobs: recovery and sweeps never start a second
+        # inference for a skim that is already waiting or in progress.
         self._queued: set[tuple[str, str]] = set()
+        self._active: set[tuple[str, str]] = set()
         self._order = itertools.count()
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -249,13 +227,13 @@ class SkimService:
 
     def _enqueue(self, job: tuple[str, str], priority: int) -> None:
         with self._lock:
-            if job in self._queued:
+            if job in self._queued or job in self._active:
                 return
             self._queued.add(job)
         self._queue.put((priority, next(self._order), job))
 
     def _on_reply(self, feature_id: str, message_id: str) -> None:
-        # The pending row committed with the reply when it qualifies.
+        # Called only for replies whose pending skim committed with them.
         self._enqueue(("message", message_id), _NEW)
 
     def _on_run_completed(self, run: dict) -> None:
@@ -282,6 +260,9 @@ class SkimService:
                 continue
             with self._lock:
                 self._queued.discard(job)
+                if job in self._active:
+                    continue
+                self._active.add(job)
             try:
                 if job[0] == "message":
                     self._skim_message(job[1])
@@ -289,6 +270,27 @@ class SkimService:
                     self._skim_run(job[1])
             except Exception as exc:  # A skim is optional; never take the worker down.
                 _LOG.warning("Skim job for %s failed unexpectedly: %s", job[1], type(exc).__name__)
+                self._settle_after_error(job)
+            finally:
+                with self._lock:
+                    self._active.discard(job)
+
+    def _settle_after_error(self, job: tuple[str, str]) -> None:
+        """Never leave a reader on "Skimming" because a job broke midway."""
+        try:
+            if job[0] == "message" and self._store is not None:
+                feature_id = self._store.finish_skim(job[1], "failed", error="internal")
+                if feature_id:
+                    self._changed(feature_id)
+            elif job[0] == "run" and self._runs is not None:
+                manager = self._runs
+                with manager._lock:
+                    run_dir = manager._run_dir(job[1])
+                    state = _read_state(run_dir)
+                    if state is not None and state.get("status") == "pending":
+                        _write_state(run_dir, {**state, "status": "failed", "error": "internal", "updated_at": _now()})
+        except Exception:
+            pass
 
     def _changed(self, feature_id: str) -> None:
         if self._publish is not None:
@@ -387,6 +389,9 @@ class SkimService:
             document, normalized, _ = skim.skim_from_output(reply=reply, output=output, format=key["format"])
         except skim.SkimRejected as exc:
             return {"status": "rejected", "output": output, "error": str(exc), "duration_ms": duration_ms}
+        if not skim.has_content(normalized):
+            return {"status": "rejected", "output": output, "error": "The skim had no sentence or next step.",
+                    "duration_ms": duration_ms}
         return {"status": "ready", "output": output, "document": normalized,
                 "segments": skim.segment_table(document), "warnings": normalized["warnings"],
                 "duration_ms": duration_ms}
@@ -440,12 +445,24 @@ class SkimService:
         since_text = since.isoformat().replace("+00:00", "Z")
         store = self._store
         if store is not None and self.settings.backfill_hours:
-            for message_id in store.unskimmed_replies(since_text, limit=40,
-                                                      minimum_characters=self.settings.min_words * 2):
-                source = store.skim_source(message_id)
-                key = self.settings.key(source["text"]) if source else None
-                if key is not None and store.queue_skim(message_id, key):
-                    self._enqueue(("message", message_id), _BACKFILL)
+            # Short replies never get a row, so page past them instead of
+            # letting them fill the window on every sweep.
+            queued = offset = 0
+            while queued < 40 and offset < 2000:
+                page = store.unskimmed_replies(since_text, limit=100, offset=offset,
+                                               minimum_characters=self.settings.min_words * 2)
+                for message_id in page:
+                    if queued >= 40:
+                        break
+                    source = store.skim_source(message_id)
+                    key = self.settings.key(source["text"]) if source else None
+                    if key is not None and store.queue_skim(message_id, key):
+                        self._enqueue(("message", message_id), _BACKFILL)
+                        queued += 1
+                        offset -= 1  # A queued reply leaves the unskimmed set.
+                if len(page) < 100:
+                    break
+                offset += 100
         manager = self._runs
         if manager is None or not self.settings.hud_chats:
             return

@@ -123,12 +123,14 @@ class HookSelectionTests(SkimFixture, unittest.TestCase):
         self.assertEqual(self.skim_row(reply["id"])["status"], "failed")
         self.assertEqual(self.skim_row(reply["id"])["error"], "interrupted")
 
-    def test_reply_listeners_run_after_commit_only(self):
+    def test_reply_listeners_run_after_commit_only_for_pending_skims(self):
         seen = []
         self.store.reply_listeners.append(lambda feature_id, message_id: seen.append(
             (feature_id, self.store.get_skim(message_id) is not None)))
         self.service(self.manager())
         self.reply()
+        self.store.append_human_message(self.feature_id, "And briefly?", "brief")
+        self.reply("Short answer.", request="brief")
         self.assertEqual(seen, [(self.feature_id, True)])
 
 
@@ -158,6 +160,12 @@ class ProjectionTests(SkimFixture, unittest.TestCase):
         self.assertNotIn("output", served)
         snapshot_message = next(m for m in self.store.snapshot(self.feature_id)["messages"] if m["id"] == reply["id"])
         self.assertEqual(snapshot_message["skim"], served)
+        # A changed row is served fresh, not from the parsed-document cache.
+        with self.store._transaction():
+            self.store._db.execute("UPDATE fm_message_skims SET document_json='{\"version\":1,\"changed\":true}',"
+                                   "updated_at='2099-01-01T00:00:00Z' WHERE message_id=?", (reply["id"],))
+        changed = next(m for m in self.store.board(self.feature_id)["messages"] if m["id"] == reply["id"])["skim"]
+        self.assertEqual(changed["document"], {"version": 1, "changed": True})
         self.assertEqual(snapshot_message["text"], REPLY)  # Message text is never changed.
 
     def test_failed_and_stale_skims_serve_only_their_status(self):
@@ -271,6 +279,51 @@ class PipelineTests(SkimFixture, unittest.TestCase):
         row = self.skim_row(reply["id"])
         self.assertEqual((row["status"], row["attempts"]), ("pending", 1))
 
+    def test_recovery_never_starts_a_second_inference_for_a_running_skim(self):
+        manager = self.manager(FAKE_AGENT_MODE="hang")
+        service = self.service(manager)
+        service.start()
+        reply = self.reply()
+        wait_until(lambda: self.skim_row(reply["id"])["attempts"] == 1 and manager._processes)
+        service._recover()  # A restart-recovery pass while the job is running.
+        service.sweep()
+        self.assertEqual(service._queue.qsize(), 0)
+        self.assertEqual(self.skim_row(reply["id"])["attempts"], 1)
+
+    def test_an_unexpected_error_settles_the_skim_as_failed(self):
+        manager = self.manager()
+        service = self.service(manager)
+
+        def broken(*_arguments):
+            raise RuntimeError("synthetic failure")
+
+        service._infer = broken
+        service.start()
+        reply = self.reply()
+        row = wait_until(lambda: (lambda value: value if value and value["status"] != "pending" else None)(
+            self.skim_row(reply["id"])))
+        self.assertEqual((row["status"], row["error"]), ("failed", "internal"))
+
+    def test_a_skim_with_nothing_to_show_is_rejected(self):
+        manager = self.manager(FAKE_AGENT_RESPONSE="status: done\nask:")
+        self.service(manager).start()
+        reply = self.reply()
+        row = wait_until(lambda: (lambda value: value if value and value["status"] != "pending" else None)(
+            self.skim_row(reply["id"])))
+        self.assertEqual(row["status"], "rejected")
+        self.assertIn("no sentence or next step", row["error"])
+
+    def test_skim_runs_skip_the_start_time_prune(self):
+        manager = self.manager()
+        calls = []
+        original = manager.prune
+        manager.prune = lambda: (calls.append(1), original())[1]
+        service = self.service(manager)
+        service.start()
+        reply = self.reply()
+        wait_until(lambda: self.skim_row(reply["id"])["status"] == "ready")
+        self.assertEqual(calls, [])
+
     def test_backfill_queues_recent_unskimmed_replies_once(self):
         reply = self.reply()  # Posted before skims were attached.
         manager = self.manager()
@@ -280,6 +333,16 @@ class PipelineTests(SkimFixture, unittest.TestCase):
         self.assertEqual(self.skim_row(reply["id"])["status"], "pending")
         service.sweep()
         self.assertEqual(service._queue.qsize(), 1)
+
+    def test_backfill_pages_past_replies_too_short_to_skim(self):
+        long_reply = self.reply()
+        medium = " ".join(["Synthetic medium reply with plenty of characters but few words."] * 3)
+        for index in range(45):
+            self.store.append_human_message(self.feature_id, f"Question {index}", f"q-{index}")
+            self.reply(medium, request=f"r-{index}")
+        service = self.service(self.manager())
+        service.sweep()
+        self.assertEqual(self.skim_row(long_reply["id"])["status"], "pending")
 
     def test_turning_skims_off_fails_pending_rows(self):
         self.service(self.manager())

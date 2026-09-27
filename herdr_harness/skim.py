@@ -15,11 +15,12 @@ NSString ranges and never need a segmenter of their own.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from importlib import resources
 import json
 import math
 import re
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 SEGMENTER_VERSION = 1
 SKIM_VERSION = 1
@@ -938,6 +939,50 @@ def skim_from_output(*, reply: str, output: str, voice: str = "buddy", format: s
     document = segment(reply)
     parsed, syntax, notes = read_model_output(output)
     return document, normalize(parsed, document, voice=voice, notes=notes, format=format), syntax
+
+
+# ---------------------------------------------------------------- serving
+
+# A pending skim older than this lost its job; clients read it as failed.
+STALE_PENDING_SECONDS = 300
+_SENTENCE_BLOCKS = frozenset({"say", "list", "what", "why"})
+_NEXT_STEP_BLOCKS = frozenset({"ask", "next"})
+
+
+def has_content(document: Mapping[str, Any]) -> bool:
+    """Whether a normalized skim has a sentence or a next step to show.
+
+    One that doesn't would hide the whole reply behind Rest of the original,
+    so the companion rejects it and readers keep the full reply.
+    """
+    blocks = document.get("blocks") or []
+    return bool(document.get("headline")) or any(
+        block.get("kind") in _SENTENCE_BLOCKS | _NEXT_STEP_BLOCKS for block in blocks if isinstance(block, Mapping))
+
+
+def _age_seconds(value: Any, now: datetime) -> float:
+    try:
+        stamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return (now - stamp).total_seconds()
+
+
+def served(state: Mapping[str, Any], *, now: datetime | None = None) -> dict:
+    """What clients read for a skim, for First Mate messages and HUD turns alike.
+
+    Only a ready skim carries its document, segment table, and reply hash.
+    """
+    status = state.get("status")
+    if status == "pending" and _age_seconds(state.get("updated_at"), now or datetime.now(timezone.utc)) > STALE_PENDING_SECONDS:
+        status = "failed"  # Never leave a reader on "Skimming" after a lost job.
+    result = {"status": status, **{key: state.get(key) for key in ("format", "prompt_version", "segmenter_version", "skim_version")}}
+    if status == "ready":
+        result.update(document=state.get("document"), segments=state.get("segments"),
+                      reply_sha256=state.get("reply_sha256"))
+    return result
 
 
 # ---------------------------------------------------------------- packaged prompt

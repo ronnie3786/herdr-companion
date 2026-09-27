@@ -960,7 +960,10 @@ class AgentRunManager:
                 code="invalid_agent_topology",
                 status=500,
             )
-        self.prune()
+        if not (_assistant is not None and _assistant.get("profile") == SKIM_PROFILE):
+            # A skim is deleted as soon as it settles; its frequent starts must
+            # not scan the whole run store (the reaper still prunes on schedule).
+            self.prune()
         run_id = f"agr_{uuid.uuid4().hex[:12]}"
         run_dir = self._run_dir(run_id)
         thread_root_run_id = run_id

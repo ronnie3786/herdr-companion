@@ -123,6 +123,21 @@ struct FirstMateSkimTests {
         #expect(FirstMateSkimReader(skim: dangling, reply: message.text) == nil)
     }
 
+    @Test("A skim with no sentence or next step is refused, and readers are built once")
+    func emptyAndCached() throws {
+        let message = try FirstMateSkimFixtures.message(FirstMateSkimFixtures.txnJSON)
+        var empty = try #require(message.skim)
+        empty.document?.blocks = []
+        empty.document?.headline = []
+        empty.document?.anchors = []
+        #expect(FirstMateSkimReader(skim: empty, reply: message.text) == nil)
+        let first = FirstMateSkimReader.cached(skim: message.skim, reply: message.text, owner: message.id)
+        let second = FirstMateSkimReader.cached(skim: message.skim, reply: message.text, owner: message.id)
+        #expect(first != nil && first == second)
+        #expect(FirstMateSkimReader.cached(skim: message.skim, reply: message.text + " edited", owner: message.id) == nil)
+        #expect(FirstMateSkimReader.cached(skim: FirstMateSkim(status: .pending), reply: message.text, owner: message.id) == nil)
+    }
+
     @Test("CRLF replies slice by their canonical LF text")
     func crlfReplies() throws {
         let message = try FirstMateSkimFixtures.message(FirstMateSkimFixtures.txnJSON)

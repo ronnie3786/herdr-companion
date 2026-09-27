@@ -22,7 +22,7 @@ struct HudChatTurnView: View {
             .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
 
             if let response = turn.response, !response.isEmpty {
-                let reader = Self.skimReader(skim: turn.skim, response: response)
+                let reader = Self.skimReader(skim: turn.skim, response: response, owner: turn.id)
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text("AGENT")
@@ -71,8 +71,8 @@ struct HudChatTurnView: View {
     }
 
     /// A ready skim that is valid for this exact response, or nil (full response).
-    private static func skimReader(skim: FirstMateSkim?, response: String) -> FirstMateSkimReader? {
-        guard let reader = FirstMateSkimReader(skim: skim, reply: response) else { return nil }
+    private static func skimReader(skim: FirstMateSkim?, response: String, owner: String) -> FirstMateSkimReader? {
+        guard let reader = FirstMateSkimReader.cached(skim: skim, reply: response, owner: owner) else { return nil }
         return SkimDisplay.hasContent(reader) ? reader : nil
     }
 }

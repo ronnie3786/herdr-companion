@@ -225,9 +225,9 @@ struct SkimPresentationTests {
     func emptySkim() throws {
         let skim = FirstMateSkim(status: .ready, document: SkimDocument(blocks: [], anchors: []),
                                  segments: SkimFixture.segments(SkimFixture.checkoutBlocks))
-        let reader = try #require(FirstMateSkimReader(skim: skim, reply: SkimFixture.checkoutReply))
-        #expect(!SkimDisplay.hasContent(reader))
-        #expect(SkimDisplay.reader(live: reader, presented: nil) == nil)
+        // The shared reader refuses a skim with no sentence or next step outright.
+        #expect(FirstMateSkimReader(skim: skim, reply: SkimFixture.checkoutReply) == nil)
+        #expect(SkimDisplay.reader(live: nil, presented: nil) == nil)
         #expect(FirstMateSkimReader(skim: SkimFixture.checkoutSkim(.pending), reply: SkimFixture.checkoutReply) == nil)
         #expect(FirstMateSkimReader(skim: SkimFixture.checkoutSkim(), reply: SkimFixture.checkoutReply + " edited") == nil)
         #expect(FirstMateSkimReader(skim: SkimFixture.checkoutSkim(hashed: false), reply: SkimFixture.checkoutReply) != nil)

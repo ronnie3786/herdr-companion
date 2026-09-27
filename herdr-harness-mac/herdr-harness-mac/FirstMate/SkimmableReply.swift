@@ -32,7 +32,7 @@ struct SkimmableReply<FullReply: View>: View {
     private var state: SkimDisplayState { sharedState ?? localState }
 
     var body: some View {
-        let reader = FirstMateSkimReader(skim: skim, reply: reply)
+        let reader = FirstMateSkimReader.cached(skim: skim, reply: reply, owner: messageID)
         let usable = reader != nil && (showsSkim ?? true)
         VStack(alignment: .leading, spacing: 0) {
             if let reader, usable, !state.showsFullReply(messageID) {

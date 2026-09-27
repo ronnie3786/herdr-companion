@@ -46,7 +46,38 @@ struct FirstMateSkimReader: Equatable, Sendable {
         self.canonicalText = canonical
         self.texts = texts
         self.index = index
+        // A skim with no sentence and no next step would hide the reply.
+        guard !sentence.isEmpty || !nextSteps.isEmpty else { return nil }
     }
+
+    /// The reader for one reply, built once: views re-render often, and
+    /// validation hashes and slices the whole reply. `owner` is the message
+    /// or HUD turn id; a ready skim never changes for the same reply.
+    static func cached(skim: FirstMateSkim?, reply: String, owner: String) -> FirstMateSkimReader? {
+        guard let skim, skim.status == .ready else { return nil }
+        let parts: [String] = [
+            owner, skim.replySHA256 ?? "", skim.promptVersion ?? "",
+            String(skim.segments?.count ?? 0), String(skim.document?.anchors.count ?? 0),
+            String(reply.utf16.count), String(reply.hashValue),
+        ]
+        let key = NSString(string: parts.joined(separator: "\u{0}"))
+        if let entry = readerCache.object(forKey: key) { return entry.reader }
+        let reader = FirstMateSkimReader(skim: skim, reply: reply)
+        readerCache.setObject(CachedReader(reader), forKey: key)
+        return reader
+    }
+
+    private final class CachedReader: @unchecked Sendable {
+        let reader: FirstMateSkimReader?
+        init(_ reader: FirstMateSkimReader?) { self.reader = reader }
+    }
+
+    // NSCache is thread-safe.
+    nonisolated(unsafe) private static let readerCache: NSCache<NSString, CachedReader> = {
+        let cache = NSCache<NSString, CachedReader>()
+        cache.countLimit = 256
+        return cache
+    }()
 
     static func canonicalize(_ text: String) -> String {
         text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")

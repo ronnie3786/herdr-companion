@@ -11,7 +11,7 @@ struct FirstMateMessageView: View {
 
     /// A ready skim that is valid for this exact reply, or nil (full reply).
     private var skimReader: FirstMateSkimReader? {
-        guard !human, let reader = FirstMateSkimReader(skim: message.skim, reply: message.text) else { return nil }
+        guard !human, let reader = FirstMateSkimReader.cached(skim: message.skim, reply: message.text, owner: message.id) else { return nil }
         return SkimDisplay.hasContent(reader) ? reader : nil
     }
 

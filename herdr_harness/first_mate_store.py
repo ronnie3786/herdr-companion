@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from . import skim as skim_format
 from .first_mate_links import (
     LinkValidationError,
     normalize_link,
@@ -42,16 +43,6 @@ class FirstMateError(RuntimeError):
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _age_seconds(value: str) -> float:
-    try:
-        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except (AttributeError, ValueError):
-        return 0.0
-    if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=timezone.utc)
-    return (datetime.now(timezone.utc) - stamp).total_seconds()
 
 
 def _id(prefix: str) -> str:
@@ -157,8 +148,8 @@ _BOARD_VERSION_SQL = f"""SELECT f.*,
 # skim_service.py). Rows hold ids, offsets, and the normalized document only;
 # excerpts are always sliced from the stored message text.
 SKIM_STATUSES = ("pending", "ready", "failed", "rejected")
-# A pending skim older than this lost its job; clients read it as failed.
-SKIM_STALE_SECONDS = 300
+_SKIM_SUMMARY_COLUMNS = "message_id,status,format,prompt_version,segmenter_version,skim_version,reply_sha256,updated_at"
+_SKIM_CACHE_LIMIT = 512
 _SKIM_SCHEMA = """
 CREATE TABLE IF NOT EXISTS fm_message_skims(
  message_id TEXT PRIMARY KEY REFERENCES fm_messages(id),
@@ -312,9 +303,12 @@ class FirstMateStore:
             os.chmod(self.path, 0o600)
         self._lock = threading.RLock()
         # Called with (feature_id, message_id) after a transaction that posted a
-        # finished assistant reply commits. Listeners must not block or raise.
+        # finished reply with a pending skim commits. Listeners must not block or raise.
         self.reply_listeners: list[Callable[[str, str], None]] = []
         self._committed_replies: list[tuple[str, str]] = []
+        # Parsed ready-skim documents by message id and row version: board and
+        # snapshot polls must not re-parse every document each time.
+        self._skim_documents: dict[str, tuple[str, dict, list]] = {}
         # Given a reply's text, returns the skim key (format, versions, model,
         # thinking, reply_sha256) when it should be skimmed, else None. The
         # pending row then commits with the reply, so clients see "Skimming".
@@ -654,16 +648,14 @@ class FirstMateStore:
         self._db.execute("INSERT INTO fm_messages(id,feature_id,role,text,status,metadata_json,created_at,updated_at,visibility) VALUES(?,?,?,?,?,?,?,?,?)",
                          (message_id, feature_id, role, _text(text, "text"), status, _json(metadata or {}), now, now, visibility))
         message = self._one("fm_messages", message_id)
-        if role == "assistant" and status == "done" and visibility == CONVERSATION:
-            self._committed_replies.append((feature_id, message_id))
-            policy = self.skim_policy
-            if policy is not None:
-                try:
-                    key = policy(message["text"])
-                    if key is not None:
-                        self._insert_pending_skim(message_id, feature_id, key)
-                except (sqlite3.Error, TypeError, ValueError, KeyError):
-                    pass  # A skim is optional; it never costs a reply.
+        policy = self.skim_policy
+        if role == "assistant" and status == "done" and visibility == CONVERSATION and policy is not None:
+            try:
+                key = policy(message["text"])
+                if key is not None and self._insert_pending_skim(message_id, feature_id, key):
+                    self._committed_replies.append((feature_id, message_id))
+            except (sqlite3.Error, TypeError, ValueError, KeyError):
+                pass  # A skim is optional; it never costs a reply.
         if role == "assistant" and status == "done":
             # Provenance is written once, with the response, and never inferred later.
             source = dict(source or {})
@@ -2617,35 +2609,42 @@ class FirstMateStore:
 
     # -- skims ------------------------------------------------------------------
 
-    @staticmethod
-    def _skim_projection(row: Mapping[str, Any]) -> dict:
-        """What clients read. Only a ready skim carries its document and segments."""
-        status = row["status"]
-        if status == "pending" and _age_seconds(row["updated_at"]) > SKIM_STALE_SECONDS:
-            status = "failed"  # Never leave a reader on "Skimming" after a lost job.
-        projection = {
-            "status": status, "format": row["format"], "prompt_version": row["prompt_version"],
-            "segmenter_version": row["segmenter_version"], "skim_version": row["skim_version"],
-        }
-        if status == "ready":
-            projection.update(document=json.loads(row["document_json"]),
-                              segments=json.loads(row["segments_json"]),
-                              reply_sha256=row["reply_sha256"])
-        return projection
-
     def _with_skims(self, messages: list[dict], *, feature_id: str | None = None) -> list[dict]:
+        """Attach each reply's skim in the shape clients read (skim.served).
+
+        Summary columns are read every time; a ready skim's document and
+        segment table are parsed once per row version and then reused.
+        """
         identities = [message["id"] for message in messages if message.get("role") == "assistant"]
         if not identities:
             return messages
         if feature_id is not None:
-            rows = self._db.execute("SELECT * FROM fm_message_skims WHERE feature_id=?", (feature_id,)).fetchall()
+            rows = self._db.execute(f"SELECT {_SKIM_SUMMARY_COLUMNS} FROM fm_message_skims WHERE feature_id=?",
+                                    (feature_id,)).fetchall()
         else:
             marks = ",".join("?" for _ in identities)
-            rows = self._db.execute(f"SELECT * FROM fm_message_skims WHERE message_id IN ({marks})", identities).fetchall()
-        skims = {row["message_id"]: self._skim_projection(row) for row in rows}
+            rows = self._db.execute(f"SELECT {_SKIM_SUMMARY_COLUMNS} FROM fm_message_skims WHERE message_id IN ({marks})",
+                                    identities).fetchall()
+        wanted = {message["id"] for message in messages}
+        states = {row["message_id"]: dict(row) for row in rows if row["message_id"] in wanted}
+        missing = [identity for identity, state in states.items() if state["status"] == "ready"
+                   and self._skim_documents.get(identity, ("",))[0] != state["updated_at"]]
+        for start in range(0, len(missing), 500):
+            chunk = missing[start:start + 500]
+            marks = ",".join("?" for _ in chunk)
+            for row in self._db.execute(f"SELECT message_id,updated_at,document_json,segments_json FROM fm_message_skims "
+                                        f"WHERE message_id IN ({marks})", chunk):
+                if len(self._skim_documents) >= _SKIM_CACHE_LIMIT:
+                    self._skim_documents.pop(next(iter(self._skim_documents)))
+                self._skim_documents[row["message_id"]] = (row["updated_at"], json.loads(row["document_json"]),
+                                                           json.loads(row["segments_json"]))
         for message in messages:
-            if message["id"] in skims:
-                message["skim"] = skims[message["id"]]
+            state = states.get(message["id"])
+            if state is None:
+                continue
+            if state["status"] == "ready" and message["id"] in self._skim_documents:
+                _, state["document"], state["segments"] = self._skim_documents[message["id"]]
+            message["skim"] = skim_format.served(state)
         return messages
 
     def _insert_pending_skim(self, message_id: str, feature_id: str, key: Mapping[str, Any]) -> bool:
@@ -2736,14 +2735,15 @@ class FirstMateStore:
                              (reason[:200], _now()))
             return features
 
-    def unskimmed_replies(self, since: str, *, limit: int = 50, minimum_characters: int = 0) -> list[str]:
+    def unskimmed_replies(self, since: str, *, limit: int = 50, offset: int = 0,
+                          minimum_characters: int = 0) -> list[str]:
         """Recent finished conversation replies that have no skim row, newest first."""
         with self._lock:
             return [row[0] for row in self._db.execute(
                 "SELECT m.id FROM fm_messages m LEFT JOIN fm_message_skims k ON k.message_id=m.id "
                 "WHERE k.message_id IS NULL AND m.role='assistant' AND m.status='done' AND m.visibility=? "
-                "AND m.created_at>=? AND length(m.text)>=? ORDER BY m.created_at DESC,m.id DESC LIMIT ?",
-                (CONVERSATION, since, minimum_characters, limit))]
+                "AND m.created_at>=? AND length(m.text)>=? ORDER BY m.created_at DESC,m.id DESC LIMIT ? OFFSET ?",
+                (CONVERSATION, since, minimum_characters, limit, max(0, offset)))]
 
     def get_skim(self, message_id: str) -> dict | None:
         with self._lock:

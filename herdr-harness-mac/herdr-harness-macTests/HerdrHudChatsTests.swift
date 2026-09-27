@@ -1859,6 +1859,91 @@ struct HerdrHudChatsTests {
         #expect(session.bubbleMetadata.modelName == "Claude Sonnet 4.5")
     }
 
+    private static func skimJSON(_ status: String) -> String {
+        #"{"status":"\#(status)","format":"breath_tight","prompt_version":"skim-v2","segmenter_version":1,"skim_version":1}"#
+    }
+
+    @Test("A skim that lands after its answer replaces Skimming… without reloading the history")
+    func pendingSkimLandsInPlace() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let turn = HudChatsURLProtocol.appendExternal(root: "agr_skimlands", prompt: "Explain the synthetic plan")
+        HudChatsURLProtocol.setSkim(turn, Self.skimJSON("pending"))
+        let chatID = try await fixture.chats.openHistory(id: "agr_skimlands", machineID: "synthetic", model: fixture.model)
+        let chat = try #require(fixture.chats.chats.first { $0.id == chatID })
+        #expect(chat.session.exchanges.last?.skim?.status == .pending)
+
+        let historyRequests = HudChatsURLProtocol.state.withLock { $0.historyRequestCount }
+        HudChatsURLProtocol.setSkim(turn, Self.skimJSON("ready"))
+        await chat.session.refreshPendingSkims(model: fixture.model)
+        #expect(chat.session.exchanges.last?.skim?.status == .ready)
+        #expect(HudChatsURLProtocol.state.withLock { $0.historyRequestCount } == historyRequests)
+        #expect(!chat.session.isLoadingHistory)
+    }
+
+    @Test("A passive refresh applies skims that changed while every answer stayed the same")
+    func passiveRefreshAppliesChangedSkims() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let first = HudChatsURLProtocol.appendExternal(root: "agr_skimrefresh", prompt: "First synthetic question")
+        let second = HudChatsURLProtocol.appendExternal(root: "agr_skimrefresh", prompt: "Second synthetic question")
+        HudChatsURLProtocol.setSkim(second, Self.skimJSON("pending"))
+        let chatID = try await fixture.chats.openHistory(id: "agr_skimrefresh", machineID: "synthetic", model: fixture.model)
+        let chat = try #require(fixture.chats.chats.first { $0.id == chatID })
+
+        // The latest turn's skim lands, and an earlier turn is skimmed later.
+        HudChatsURLProtocol.setSkim(second, Self.skimJSON("ready"))
+        HudChatsURLProtocol.setSkim(first, Self.skimJSON("ready"))
+        #expect(await chat.session.refreshSavedHistoryPassivelyForTesting(model: fixture.model))
+        #expect(chat.session.exchanges.map { $0.skim?.status } == [.ready, .ready])
+
+        let revision = chat.session.exchangesRevision
+        #expect(await chat.session.refreshSavedHistoryPassivelyForTesting(model: fixture.model))
+        #expect(chat.session.exchangesRevision == revision)
+    }
+
+    @Test("A background history check shows no Loading… while it finds nothing new")
+    func quietPassiveCheck() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        HudChatsURLProtocol.appendExternal(root: "agr_quietcheck", prompt: "Settled synthetic question")
+        let chatID = try await fixture.chats.openHistory(id: "agr_quietcheck", machineID: "synthetic", model: fixture.model)
+        let chat = try #require(fixture.chats.chats.first { $0.id == chatID })
+        let requests = HudChatsURLProtocol.state.withLock { $0.historyRequestCount }
+
+        HudChatsURLProtocol.state.withLock { $0.delayNextHistory = true }
+        let check = Task { await chat.session.refreshSavedHistoryPassivelyForTesting(model: fixture.model) }
+        try await wait { HudChatsURLProtocol.state.withLock { $0.historyRequestCount == requests + 1 } }
+        #expect(!chat.session.isLoadingHistory)
+        #expect(HerdrHudChatBubblePresentation.status(for: chat.session).label == "Done")
+        HudChatsURLProtocol.releaseHistory()
+        #expect(await check.value)
+        #expect(!chat.session.isLoadingHistory)
+    }
+
+    @Test("A chat opened during a background check keeps its own history")
+    func forcedOpenWinsOverBackgroundCheck() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        HudChatsURLProtocol.appendExternal(root: "agr_checkedchat", prompt: "Checked synthetic question")
+        HudChatsURLProtocol.appendExternal(root: "agr_openedchat", prompt: "Opened synthetic question")
+        let chatID = try await fixture.chats.openHistory(id: "agr_checkedchat", machineID: "synthetic", model: fixture.model)
+        let session = try #require(fixture.chats.chats.first { $0.id == chatID }).session
+        let requests = HudChatsURLProtocol.state.withLock { $0.historyRequestCount }
+        // The checked chat changes, so its delayed page would otherwise apply.
+        HudChatsURLProtocol.appendExternal(root: "agr_checkedchat", prompt: "Later synthetic question")
+
+        HudChatsURLProtocol.state.withLock { $0.delayNextHistory = true }
+        let check = Task { await session.refreshSavedHistoryPassivelyForTesting(model: fixture.model) }
+        try await wait { HudChatsURLProtocol.state.withLock { $0.historyRequestCount == requests + 1 } }
+        try await session.openHistory(id: "agr_openedchat", machineID: "synthetic", model: fixture.model)
+        #expect(session.thread?.rootRunID == "agr_openedchat")
+        HudChatsURLProtocol.releaseHistory()
+        _ = await check.value
+        #expect(session.thread?.rootRunID == "agr_openedchat")
+        #expect(session.exchanges.map(\.prompt) == ["Opened synthetic question"])
+    }
+
     @Test("A passive refresh reconciles metadata for a latest run on a later page")
     func passiveRefreshReconcilesPaginatedLatestMetadata() async throws {
         let fixture = try Fixture()
@@ -2055,6 +2140,8 @@ private final class HudChatsURLProtocol: URLProtocol, @unchecked Sendable {
         /// prove the bounded reconciliation window stays bounded.
         var runRequestCounts: [String: Int] = [:]
         var runModels: [String: String] = [:]
+        /// Each run's served skim as JSON text (the state must stay Sendable).
+        var runSkims: [String: String] = [:]
         var deleteCount = 0
         var cancellationCount = 0
         var rejectNextCancellation = false
@@ -2123,6 +2210,9 @@ private final class HudChatsURLProtocol: URLProtocol, @unchecked Sendable {
         state.withLock { state in
             if let model { state.runModels[id] = model } else { state.runModels[id] = nil }
         }
+    }
+    static func setSkim(_ id: String, _ json: String?) {
+        state.withLock { state in state.runSkims[id] = json }
     }
     @discardableResult
     static func appendExternal(root: String, prompt: String, cwd: String? = nil) -> String {
@@ -2275,6 +2365,8 @@ private final class HudChatsURLProtocol: URLProtocol, @unchecked Sendable {
             run["costUSD"] = state.runCosts[start.id] ?? 0
         }
         if let model = state.runModels[start.id] { run["model"] = model }
+        if let skim = state.runSkims[start.id],
+           let object = try? JSONSerialization.jsonObject(with: Data(skim.utf8)) { run["skim"] = object }
         if let cwd = start.cwd { run["cwd"] = cwd }
         if state.statuses[start.id] == "completed" { run["response"] = "Answer for \(start.prompt)" }
         return run

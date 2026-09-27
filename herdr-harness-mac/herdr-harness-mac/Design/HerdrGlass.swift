@@ -3,7 +3,7 @@ import CoreImage
 import SwiftUI
 
 /// Legible glass: Herdr's dusk backdrop shows softly through the sidebar
-/// (base at 80%), the pane (75%) and the HUD (78%). The backdrop is one
+/// and the pane (base at 80%) and the HUD (78%). The backdrop is one
 /// Herdr-owned image drawn once and stretched, not the desktop: the system's
 /// behind-window materials flatten any wallpaper to gray, and a true desktop
 /// blur needs private window APIs. No live blur runs anywhere.
@@ -72,6 +72,9 @@ private struct HerdrPaneBackgroundModifier: ViewModifier {
 /// The dusk backdrop under Legible glass: violet from the top left, rose at
 /// the top right, indigo along the bottom. One cached image, stretched to the
 /// surface like the study's percentage-based gradients.
+///
+/// Its brightest point sets the text floor: `HerdrThemeAccessibilityTests`
+/// checks every text level on the pane's fills over it.
 struct HerdrDuskBackdrop: View {
     enum Region {
         /// The whole scene, for the main window.
@@ -95,6 +98,8 @@ struct HerdrDuskBackdrop: View {
 enum HerdrDusk {
     /// The study's desktop art (`DESK` in theme-study-v2), blurred the way
     /// the study blurs it (24pt across a 1336pt window) and saturated 110%.
+    /// The violet glow is at 80% rather than the study's 95%, so tertiary text
+    /// on a selected card at its center still reads at 4.5:1.
     @MainActor static let image: NSImage = render(size: CGSize(width: 640, height: 400))
     @MainActor static let trailingHalf: NSImage = {
         let size = image.size
@@ -122,7 +127,7 @@ enum HerdrDusk {
         Glow(center: CGPoint(x: 0.88, y: 0.06), radii: CGSize(width: 0.55, height: 0.50), stop: 0.60,
              red: 214, green: 120, blue: 178, alpha: 0.60),
         Glow(center: CGPoint(x: 0.12, y: 0.08), radii: CGSize(width: 0.70, height: 0.60), stop: 0.62,
-             red: 132, green: 98, blue: 222, alpha: 0.95),
+             red: 132, green: 98, blue: 222, alpha: 0.80),
     ]
 
     private static func render(size: CGSize) -> NSImage {
@@ -176,6 +181,9 @@ enum HerdrDusk {
 /// a built-in gradient that is blurred with Core Image and cached. It is one
 /// static image behind the transcript, never a per-row or live blur.
 struct HerdrHazeBand: View {
+    /// 10%, not the study's 24%: the band now sits over the dusk, and its
+    /// violet lands on the dusk's own. The contrast tests hold it to 4.5:1.
+    static let opacity = 0.10
     var height: CGFloat = 280
     @Environment(\.herdrHazeActive) private var isActive
 
@@ -186,7 +194,7 @@ struct HerdrHazeBand: View {
                 .interpolation(.medium)
                 .frame(height: height)
                 .frame(maxWidth: .infinity)
-                .opacity(0.24)
+                .opacity(Self.opacity)
                 .mask {
                     LinearGradient(colors: [.white, .white.opacity(0)], startPoint: .top, endPoint: .bottom)
                 }

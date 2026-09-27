@@ -12,9 +12,15 @@ the purple from the design previews never appeared.
   rose at the top and indigo at the bottom.
 - The backdrop is one image drawn once and stretched. Nothing blurs live, and
   the window no longer asks macOS to blur the desktop behind it.
-- Text stays at 4.5:1 contrast or better over the brightest part of the dusk.
+- Every text color stays at 4.5:1 contrast or better over the dusk's brightest
+  point, including on cards, chips and selected rows. To get there, the pane's
+  glass matches the sidebar at 80%, the Haze band behind the chat is softer,
+  and tertiary text (timestamps, counts, metadata) is as bright as secondary
+  text in dark mode.
+- The Git workbench draws on solid base again, so diff colors keep their
+  contrast.
 - **Settings → General → Appearance → Glass** turns it off, and **Reduce
-  transparency** still draws opaque surfaces. Haze behind the chat is unchanged.
+  transparency** still draws opaque surfaces.
 
 This build also includes everything in 0.52.0-beta.1, including skims.
 

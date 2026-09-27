@@ -40,7 +40,7 @@ struct SkimTextView: NSViewRepresentable {
         let size = fontSize * fontScale.rawValue
         let font = NSFont.systemFont(ofSize: size)
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineSpacing = max(0, (lineHeight * fontScale.rawValue - NSLayoutManager().defaultLineHeight(for: font)).rounded())
+        paragraph.lineSpacing = HerdrProse.lineSpacing(size: fontSize, lineHeight: lineHeight, scale: fontScale)
         let result = NSMutableAttributedString()
         var anchors: [String: NSRange] = [:]
         func append(_ token: SkimToken, anchorID: String?) {

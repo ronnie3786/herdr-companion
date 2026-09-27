@@ -1,0 +1,237 @@
+{
+  "name": "repairs",
+  "about": "Model mistakes the normalizer must repair the same way everywhere.",
+  "segmenterVersion": 1,
+  "skimVersion": 1,
+  "input": {
+    "reply": "First point.\n\nSecond point with detail.\n\n```\nlog line\n```\n\nShould I keep going?",
+    "modelOutput": "```\nstatus: Maybe\n**All good** mostly [s1].\nsay: Checked [ghost](s12) and [the log](s3-s1),\nwhich looked fine ([details](s2)).\ndrawer: Nothing | log | s40 | none\ndrawer: Log | weird | s3 | one line\n```",
+    "voice": "crisp",
+    "format": "notes"
+  },
+  "expected": {
+    "segments": [
+      {
+        "id": "s1",
+        "n": 1,
+        "kind": "paragraph",
+        "startLine": 1,
+        "endLine": 1,
+        "start": 0,
+        "end": 12,
+        "words": 2,
+        "section": null
+      },
+      {
+        "id": "s2",
+        "n": 2,
+        "kind": "paragraph",
+        "startLine": 3,
+        "endLine": 3,
+        "start": 14,
+        "end": 39,
+        "words": 4,
+        "section": null
+      },
+      {
+        "id": "s3",
+        "n": 3,
+        "kind": "code",
+        "startLine": 5,
+        "endLine": 7,
+        "start": 41,
+        "end": 57,
+        "words": 4,
+        "section": null,
+        "lang": "",
+        "codeLines": 1
+      },
+      {
+        "id": "s4",
+        "n": 4,
+        "kind": "paragraph",
+        "startLine": 9,
+        "endLine": 9,
+        "start": 59,
+        "end": 79,
+        "words": 4,
+        "section": null
+      }
+    ],
+    "promptView": "[s1 para]\nFirst point.\n\n[s2 para]\nSecond point with detail.\n\n[s3 code, 1 lines]\n```\nlog line\n```\n\n[s4 para]\nShould I keep going?",
+    "document": {
+      "version": 1,
+      "format": "notes",
+      "status": "answer",
+      "statusLabel": "Answer",
+      "headline": [
+        {
+          "t": "text",
+          "v": "All good mostly."
+        }
+      ],
+      "blocks": [
+        {
+          "kind": "say",
+          "tokens": [
+            {
+              "t": "text",
+              "v": "Checked "
+            },
+            {
+              "t": "text",
+              "v": "ghost"
+            },
+            {
+              "t": "text",
+              "v": " and "
+            },
+            {
+              "t": "anchor",
+              "id": "a1",
+              "label": [
+                {
+                  "t": "text",
+                  "v": "the log"
+                }
+              ],
+              "refs": [
+                "s1",
+                "s2",
+                "s3"
+              ]
+            },
+            {
+              "t": "text",
+              "v": ", which looked fine ("
+            },
+            {
+              "t": "anchor",
+              "id": "a2",
+              "label": [
+                {
+                  "t": "text",
+                  "v": "details"
+                }
+              ],
+              "refs": [
+                "s2"
+              ]
+            },
+            {
+              "t": "text",
+              "v": ")."
+            }
+          ]
+        }
+      ],
+      "drawers": [
+        {
+          "id": "d1",
+          "title": "Log",
+          "kind": "code",
+          "peek": "one line",
+          "refs": [
+            "s3"
+          ]
+        }
+      ],
+      "rest": {
+        "refs": [
+          "s4"
+        ]
+      },
+      "anchors": [
+        {
+          "id": "a1",
+          "label": "the log",
+          "refs": [
+            "s1",
+            "s2",
+            "s3"
+          ],
+          "where": "block 1",
+          "kind": "code"
+        },
+        {
+          "id": "a2",
+          "label": "details",
+          "refs": [
+            "s2"
+          ],
+          "where": "block 1",
+          "kind": "text"
+        }
+      ],
+      "stats": {
+        "sourceWords": 14,
+        "skimWords": 12,
+        "budget": {
+          "max": 24,
+          "target": 24
+        },
+        "links": 2,
+        "coveredWords": 10,
+        "totalWords": 14,
+        "coverage": 0.7142857142857143
+      },
+      "warnings": [
+        {
+          "level": "info",
+          "code": "continuation",
+          "message": "Joined a wrapped line onto the line before it."
+        },
+        {
+          "level": "warn",
+          "code": "unlabeled_line",
+          "message": "Treated an unlabeled line as prose."
+        },
+        {
+          "level": "info",
+          "code": "status",
+          "message": "Unknown status \"maybe\"; showing \"Answer\"."
+        },
+        {
+          "level": "info",
+          "code": "emphasis",
+          "message": "headline: removed bold/italic markers."
+        },
+        {
+          "level": "warn",
+          "code": "bare_ref",
+          "message": "headline: removed block ids written outside a link."
+        },
+        {
+          "level": "info",
+          "code": "tacked_link",
+          "message": "block 1: a link label was tacked on in parentheses instead of linking the sentence."
+        },
+        {
+          "level": "warn",
+          "code": "bad_ref",
+          "message": "Link \"ghost\": dropped 1 reference(s) outside s1–s4."
+        },
+        {
+          "level": "warn",
+          "code": "dead_link",
+          "message": "Link \"ghost\" had no valid blocks and became plain text."
+        },
+        {
+          "level": "warn",
+          "code": "bad_ref",
+          "message": "Drawer \"Nothing\": dropped 1 reference(s) outside s1–s4."
+        },
+        {
+          "level": "warn",
+          "code": "drawer_empty",
+          "message": "Skipped drawer 1: no valid blocks."
+        },
+        {
+          "level": "info",
+          "code": "missed_question",
+          "message": "The reply asks something in s4, but the skim has no ask block."
+        }
+      ]
+    }
+  }
+}

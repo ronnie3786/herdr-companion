@@ -7,6 +7,8 @@ struct FirstMateChatView: View {
     let openInspector: (FirstMateInspector) -> Void
     @Environment(\.colorScheme) private var scheme
     @State private var followsLatest = true
+    /// Skim or Full reply per message, for as long as this chat is open.
+    @State private var skimState = SkimReadingState()
     private var palette: FirstMatePalette { FirstMatePalette(scheme: scheme) }
     private var featureIsClosed: Bool { ["completed", "cancelled"].contains(snapshot.feature.status) }
     private var messages: [FirstMateMessage] { snapshot.messages.filter(\.isConversation) }
@@ -24,7 +26,7 @@ struct FirstMateChatView: View {
                         if messages.isEmpty {
                             FirstMateNoticeView(title: "Your First Mate is here", message: "Share the outcome you want and any constraints. We'll shape the plan together.", symbol: "sailboat")
                         }
-                        ForEach(messages) { message in FirstMateMessageView(message: message) }
+                        ForEach(messages) { message in FirstMateMessageView(message: message, skimState: skimState) }
                         Color.clear.frame(height: 1).id("first-mate-chat-end")
                     }
                     .padding(20)
@@ -37,6 +39,11 @@ struct FirstMateChatView: View {
                 } action: { _, nearBottom in followsLatest = nearBottom }
                 .onChange(of: messages.last?.id) { _, _ in
                     if followsLatest { proxy.scrollTo("first-mate-chat-end", anchor: .bottom) }
+                }
+                .onChange(of: skimState.scrollRequest) { _, request in
+                    guard let request else { return }
+                    followsLatest = false
+                    proxy.revealSkimTarget(request)
                 }
                 .accessibilityIdentifier("first-mate-conversation")
                 .safeAreaInset(edge: .bottom, spacing: 0) {

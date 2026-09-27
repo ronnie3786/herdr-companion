@@ -65,6 +65,9 @@ struct HeadlessAgentRun: Codable, Equatable, Identifiable, Sendable {
     let steps: [HeadlessAgentStep]?
     let stepsTruncated: Bool?
     let threadRootRunId: String?
+    /// A HUD chat turn's skim (`first-mate-skim-v1`). Older companions omit
+    /// it, and a malformed one decodes as nil: the response shows in full.
+    var skim: FirstMateSkim? = nil
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -89,6 +92,39 @@ struct HeadlessAgentRun: Codable, Equatable, Identifiable, Sendable {
         case steps
         case stepsTruncated
         case threadRootRunId
+        case skim
+    }
+}
+
+extension HeadlessAgentRun {
+    /// Matches the synthesized decoder for every other field. Only `skim` is
+    /// lenient: it is optional presentation data, so a value of the wrong
+    /// shape must never fail the run (and with it the whole poll).
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        status = try container.decode(HeadlessAgentRunStatus.self, forKey: .status)
+        mode = try container.decodeIfPresent(HeadlessAgentRunMode.self, forKey: .mode)
+        profile = try container.decodeIfPresent(String.self, forKey: .profile)
+        model = try container.decodeIfPresent(String.self, forKey: .model)
+        thinkingLevel = try container.decodeIfPresent(String.self, forKey: .thinkingLevel)
+        prompt = try container.decode(String.self, forKey: .prompt)
+        cwd = try container.decodeIfPresent(String.self, forKey: .cwd)
+        response = try container.decodeIfPresent(String.self, forKey: .response)
+        error = try container.decodeIfPresent(String.self, forKey: .error)
+        createdAt = try container.decode(String.self, forKey: .createdAt)
+        startedAt = try container.decodeIfPresent(String.self, forKey: .startedAt)
+        finishedAt = try container.decodeIfPresent(String.self, forKey: .finishedAt)
+        sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
+        sessionFile = try container.decodeIfPresent(String.self, forKey: .sessionFile)
+        costUSD = try container.decodeIfPresent(Double.self, forKey: .costUSD)
+        promotedWorkspaceID = try container.decodeIfPresent(String.self, forKey: .promotedWorkspaceID)
+        promotedPaneID = try container.decodeIfPresent(String.self, forKey: .promotedPaneID)
+        attachments = try container.decodeIfPresent([String].self, forKey: .attachments)
+        steps = try container.decodeIfPresent([HeadlessAgentStep].self, forKey: .steps)
+        stepsTruncated = try container.decodeIfPresent(Bool.self, forKey: .stepsTruncated)
+        threadRootRunId = try container.decodeIfPresent(String.self, forKey: .threadRootRunId)
+        skim = try? container.decodeIfPresent(FirstMateSkim.self, forKey: .skim)
     }
 }
 

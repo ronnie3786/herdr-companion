@@ -5,6 +5,8 @@ struct HerdrHudTranscriptView: View {
     @Bindable var session: HerdrHudSession
     let openPaneInMainWindow: (String) -> Void
     let collapse: () -> Void
+    /// Skim or Full reply per answer while this HUD chat is open.
+    @State private var skimState = SkimDisplayState()
 
     var body: some View {
         if session.exchanges.isEmpty && !session.isRunning {
@@ -53,6 +55,8 @@ struct HerdrHudTranscriptView: View {
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
+                    .environment(\.skimDisplayState, skimState)
+                    .environment(\.skimScrollTo) { id in proxy.scrollTo(id, anchor: .center) }
                 }
                 .scrollIndicators(.hidden)
                 .onChange(of: session.exchanges.last) { _, _ in

@@ -10,6 +10,8 @@ struct FirstMateChatView: View {
     @Environment(\.colorScheme) private var scheme
     @State private var followsLatest = true
     @State private var feedbackEditor: FirstMateFeedbackEditorTarget?
+    /// Skim or Full reply per message, kept while this chat is open.
+    @State private var skimState = SkimDisplayState()
 
     private var featureIsClosed: Bool {
         ["completed", "cancelled"].contains(snapshot.feature.status)
@@ -288,6 +290,10 @@ struct FirstMateChatView: View {
                         )
                     }
                     Color.clear.frame(height: 1).id("first-mate-chat-end")
+                }
+                .environment(\.skimDisplayState, skimState)
+                .environment(\.skimScrollTo) { id in
+                    withAnimation(nil) { proxy.scrollTo(id, anchor: .center) }
                 }
                 // Rows carry their own 16pt gutters.
                 .padding(.top, 6)

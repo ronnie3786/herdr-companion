@@ -1,0 +1,682 @@
+{
+  "name": "tinyshop-cent",
+  "about": "A real DeepSeek reply from the synthetic sandbox and a real skim of it.",
+  "segmenterVersion": 1,
+  "skimVersion": 1,
+  "input": {
+    "reply": "## Short answer\n\nThe cent never comes from the tax or the cart math themselves — it comes from `applyDiscount()` in `src/pricing.js`, which **truncates** percent discounts (`Math.floor`) instead of rounding, after bouncing the amount through floating‑point dollars. Any cart where a percent discount lands on a half‑cent gets shorted by one cent.\n\n## The path a total takes\n\n1. `Cart.total()` (`src/cart.js:36`)\n   ```js\n   const discounted = applyDiscounts(this.subtotal(), this.discounts);\n   return discounted + tax(discounted, this.region);\n   ```\n2. `applyDiscounts` folds the discounts in order (`src/pricing.js:17`).\n3. The percent branch (`src/pricing.js:5`) does:\n   ```js\n   const dollars = subtotalCents / 100;          // integer cents -> float dollars\n   const discounted = dollars * (1 - discount.value / 100);\n   return Math.floor(discounted * 100);          // truncate, not round\n   ```\n4. `tax()` then does `Math.round(cents * rate)` on that already‑truncated amount.\n\n## Why it's off by one\n\nConcrete case, already written up in `test/cart.test.js:17`:\n\n- Lamp = `1015` cents, 10% off.\n- Correct: `1015 * 0.90 = 913.5` cents → should round to **914**.\n- What the code does: `Math.floor(913.5) = ` **913**.\n\nSo the customer is charged a cent less (or, if you expect floor semantics elsewhere, the total disagrees with the receipt/ledger by a cent). The test `\"percent discount on awkward price\"` expects `914` and currently fails.\n\nThere's a secondary, sneakier contribution: `subtotalCents / 100` then `* 100` is a float round‑trip. `10.15 * 0.9 * 100` can evaluate to something like `913.4999999999999`, so even if you swapped `floor` → `round`, you're still one representation error away from a bad cent. The fix is to stay in integers.\n\n## Why it's inconsistent (the real smell)\n\nThree different rounding policies in one money path:\n\n| Place | Policy |\n|---|---|\n| `money.toCents` (`src/money.js:1`) | `Math.round` |\n| `tax` (`src/pricing.js:24`) | `Math.round` (half‑up) |\n| percent discount (`src/pricing.js:9`) | `Math.floor` |\n\nAnd `applyDiscounts` rounds/truncates **at every step**, so with two stacked percentages the result depends on discount order — that's the \"sometimes\" in \"sometimes off by a cent.\"\n\n## The related failure next to it\n\nThe `fixed` branch (`src/pricing.js:12`) has no floor at zero:\n\n```js\nreturn subtotalCents - discount.cents;   // 300 - 500 = -200\n```\n\n`test/cart.test.js:24` expects `0` and fails. That negative propagates into `tax()` (negative tax base) and then into `checkout()` (`src/checkout.js:9`), where `charge()` rejects `amountCents <= 0` (`src/payments.js:6`) — **after** the stock reservations were already made, so the reservations leak because nothing releases them on throw.\n\n## The fix\n\nInteger math + round, and clamp the fixed discount:\n\n```js\nif (discount.type === \"percent\") {\n  return Math.round((subtotalCents * (100 - discount.value)) / 100);\n}\nif (discount.type === \"fixed\") {\n  return Math.max(0, subtotalCents - discount.cents);\n}\n```\n\nThat makes `1015 @ 10%` → `(1015 * 90) / 100 = 913.5` → `914`, and `300 − 500` → `0`, matching both failing tests.\n\nWant me to apply this patch (and add the missing `checkout` reservation-release on charge failure)?",
+    "modelOutput": "status: answer\nheadline: The cent comes from `applyDiscount()` [truncating percent discounts](s6) instead of rounding.\nsay: In `src/pricing.js`, it converts cents to float dollars and uses [Math.floor](s6), so any half-cent gets shorted.\n- `1015` at 10% off becomes [913 instead of 914](s10-s12).\n- It also [rounds at every discount step](s18), so stacked percentages get order-dependent.\n- The `fixed` branch has [no floor at zero](s20-s21), which can throw in `charge()` and leak reservations.\nask: Want me to [apply this patch](s24-s26) and add the reservation-release fix?\nheads_up: The float cents-to-dollars round-trip means [swapping floor for round](s14) alone isn't enough; stay in integers.\ndrawer: Failing tests | code | s10-s13 | `cart.test.js:17` expects 914, `cart.test.js:24` expects 0\ndrawer: The patch | code | s25-s26 | Integer percent math and clamped fixed discount",
+    "voice": "buddy",
+    "format": "notes"
+  },
+  "expected": {
+    "segments": [
+      {
+        "id": "s1",
+        "n": 1,
+        "kind": "heading",
+        "startLine": 1,
+        "endLine": 1,
+        "start": 0,
+        "end": 15,
+        "words": 3,
+        "section": "s1",
+        "level": 2,
+        "title": "Short answer"
+      },
+      {
+        "id": "s2",
+        "n": 2,
+        "kind": "paragraph",
+        "startLine": 3,
+        "endLine": 3,
+        "start": 17,
+        "end": 346,
+        "words": 49,
+        "section": "s1"
+      },
+      {
+        "id": "s3",
+        "n": 3,
+        "kind": "heading",
+        "startLine": 5,
+        "endLine": 5,
+        "start": 348,
+        "end": 373,
+        "words": 6,
+        "section": "s3",
+        "level": 2,
+        "title": "The path a total takes"
+      },
+      {
+        "id": "s4",
+        "n": 4,
+        "kind": "item",
+        "startLine": 7,
+        "endLine": 11,
+        "start": 375,
+        "end": 551,
+        "words": 15,
+        "section": "s3",
+        "ordered": true
+      },
+      {
+        "id": "s5",
+        "n": 5,
+        "kind": "item",
+        "startLine": 12,
+        "endLine": 12,
+        "start": 552,
+        "end": 623,
+        "words": 8,
+        "section": "s3",
+        "ordered": true
+      },
+      {
+        "id": "s6",
+        "n": 6,
+        "kind": "item",
+        "startLine": 13,
+        "endLine": 18,
+        "start": 624,
+        "end": 903,
+        "words": 38,
+        "section": "s3",
+        "ordered": true
+      },
+      {
+        "id": "s7",
+        "n": 7,
+        "kind": "item",
+        "startLine": 19,
+        "endLine": 19,
+        "start": 904,
+        "end": 985,
+        "words": 11,
+        "section": "s3",
+        "ordered": true
+      },
+      {
+        "id": "s8",
+        "n": 8,
+        "kind": "heading",
+        "startLine": 21,
+        "endLine": 21,
+        "start": 987,
+        "end": 1009,
+        "words": 6,
+        "section": "s8",
+        "level": 2,
+        "title": "Why it's off by one"
+      },
+      {
+        "id": "s9",
+        "n": 9,
+        "kind": "paragraph",
+        "startLine": 23,
+        "endLine": 23,
+        "start": 1011,
+        "end": 1071,
+        "words": 7,
+        "section": "s8"
+      },
+      {
+        "id": "s10",
+        "n": 10,
+        "kind": "item",
+        "startLine": 25,
+        "endLine": 25,
+        "start": 1073,
+        "end": 1104,
+        "words": 7,
+        "section": "s8",
+        "ordered": false
+      },
+      {
+        "id": "s11",
+        "n": 11,
+        "kind": "item",
+        "startLine": 26,
+        "endLine": 26,
+        "start": 1105,
+        "end": 1170,
+        "words": 13,
+        "section": "s8",
+        "ordered": false
+      },
+      {
+        "id": "s12",
+        "n": 12,
+        "kind": "item",
+        "startLine": 27,
+        "endLine": 27,
+        "start": 1171,
+        "end": 1224,
+        "words": 9,
+        "section": "s8",
+        "ordered": false
+      },
+      {
+        "id": "s13",
+        "n": 13,
+        "kind": "paragraph",
+        "startLine": 29,
+        "endLine": 29,
+        "start": 1226,
+        "end": 1448,
+        "words": 36,
+        "section": "s8"
+      },
+      {
+        "id": "s14",
+        "n": 14,
+        "kind": "paragraph",
+        "startLine": 31,
+        "endLine": 31,
+        "start": 1450,
+        "end": 1757,
+        "words": 51,
+        "section": "s8"
+      },
+      {
+        "id": "s15",
+        "n": 15,
+        "kind": "heading",
+        "startLine": 33,
+        "endLine": 33,
+        "start": 1759,
+        "end": 1800,
+        "words": 7,
+        "section": "s15",
+        "level": 2,
+        "title": "Why it's inconsistent (the real smell)"
+      },
+      {
+        "id": "s16",
+        "n": 16,
+        "kind": "paragraph",
+        "startLine": 35,
+        "endLine": 35,
+        "start": 1802,
+        "end": 1854,
+        "words": 8,
+        "section": "s15"
+      },
+      {
+        "id": "s17",
+        "n": 17,
+        "kind": "table",
+        "startLine": 37,
+        "endLine": 41,
+        "start": 1856,
+        "end": 2052,
+        "words": 26,
+        "section": "s15",
+        "rows": 3
+      },
+      {
+        "id": "s18",
+        "n": 18,
+        "kind": "paragraph",
+        "startLine": 43,
+        "endLine": 43,
+        "start": 2054,
+        "end": 2234,
+        "words": 27,
+        "section": "s15"
+      },
+      {
+        "id": "s19",
+        "n": 19,
+        "kind": "heading",
+        "startLine": 45,
+        "endLine": 45,
+        "start": 2236,
+        "end": 2269,
+        "words": 7,
+        "section": "s19",
+        "level": 2,
+        "title": "The related failure next to it"
+      },
+      {
+        "id": "s20",
+        "n": 20,
+        "kind": "paragraph",
+        "startLine": 47,
+        "endLine": 47,
+        "start": 2271,
+        "end": 2333,
+        "words": 9,
+        "section": "s19"
+      },
+      {
+        "id": "s21",
+        "n": 21,
+        "kind": "code",
+        "startLine": 49,
+        "endLine": 51,
+        "start": 2335,
+        "end": 2405,
+        "words": 12,
+        "section": "s19",
+        "lang": "js",
+        "codeLines": 1
+      },
+      {
+        "id": "s22",
+        "n": 22,
+        "kind": "paragraph",
+        "startLine": 53,
+        "endLine": 53,
+        "start": 2407,
+        "end": 2745,
+        "words": 43,
+        "section": "s19"
+      },
+      {
+        "id": "s23",
+        "n": 23,
+        "kind": "heading",
+        "startLine": 55,
+        "endLine": 55,
+        "start": 2747,
+        "end": 2757,
+        "words": 3,
+        "section": "s23",
+        "level": 2,
+        "title": "The fix"
+      },
+      {
+        "id": "s24",
+        "n": 24,
+        "kind": "paragraph",
+        "startLine": 57,
+        "endLine": 57,
+        "start": 2759,
+        "end": 2810,
+        "words": 9,
+        "section": "s23"
+      },
+      {
+        "id": "s25",
+        "n": 25,
+        "kind": "code",
+        "startLine": 59,
+        "endLine": 66,
+        "start": 2812,
+        "end": 3016,
+        "words": 27,
+        "section": "s23",
+        "lang": "js",
+        "codeLines": 6
+      },
+      {
+        "id": "s26",
+        "n": 26,
+        "kind": "paragraph",
+        "startLine": 68,
+        "endLine": 68,
+        "start": 3018,
+        "end": 3132,
+        "words": 25,
+        "section": "s23"
+      },
+      {
+        "id": "s27",
+        "n": 27,
+        "kind": "paragraph",
+        "startLine": 70,
+        "endLine": 70,
+        "start": 3134,
+        "end": 3233,
+        "words": 15,
+        "section": "s23"
+      }
+    ],
+    "promptView": "[s1 heading]\n## Short answer\n\n[s2 para]\nThe cent never comes from the tax or the cart math themselves — it comes from `applyDiscount()` in `src/pricing.js`, which **truncates** percent discounts (`Math.floor`) instead of rounding, after bouncing the amount through floating‑point dollars. Any cart where a percent discount lands on a half‑cent gets shorted by one cent.\n\n[s3 heading]\n## The path a total takes\n\n[s4 item]\n1. `Cart.total()` (`src/cart.js:36`)\n   ```js\n   const discounted = applyDiscounts(this.subtotal(), this.discounts);\n   return discounted + tax(discounted, this.region);\n   ```\n\n[s5 item]\n2. `applyDiscounts` folds the discounts in order (`src/pricing.js:17`).\n\n[s6 item]\n3. The percent branch (`src/pricing.js:5`) does:\n   ```js\n   const dollars = subtotalCents / 100;          // integer cents -> float dollars\n   const discounted = dollars * (1 - discount.value / 100);\n   return Math.floor(discounted * 100);          // truncate, not round\n   ```\n\n[s7 item]\n4. `tax()` then does `Math.round(cents * rate)` on that already‑truncated amount.\n\n[s8 heading]\n## Why it's off by one\n\n[s9 para]\nConcrete case, already written up in `test/cart.test.js:17`:\n\n[s10 item]\n- Lamp = `1015` cents, 10% off.\n\n[s11 item]\n- Correct: `1015 * 0.90 = 913.5` cents → should round to **914**.\n\n[s12 item]\n- What the code does: `Math.floor(913.5) = ` **913**.\n\n[s13 para]\nSo the customer is charged a cent less (or, if you expect floor semantics elsewhere, the total disagrees with the receipt/ledger by a cent). The test `\"percent discount on awkward price\"` expects `914` and currently fails.\n\n[s14 para]\nThere's a secondary, sneakier contribution: `subtotalCents / 100` then `* 100` is a float round‑trip. `10.15 * 0.9 * 100` can evaluate to something like `913.4999999999999`, so even if you swapped `floor` → `round`, you're still one representation error away from a bad cent. The fix is to stay in integers.\n\n[s15 heading]\n## Why it's inconsistent (the real smell)\n\n[s16 para]\nThree different rounding policies in one money path:\n\n[s17 table, 3 rows]\n| Place | Policy |\n|---|---|\n| `money.toCents` (`src/money.js:1`) | `Math.round` |\n| `tax` (`src/pricing.js:24`) | `Math.round` (half‑up) |\n| percent discount (`src/pricing.js:9`) | `Math.floor` |\n\n[s18 para]\nAnd `applyDiscounts` rounds/truncates **at every step**, so with two stacked percentages the result depends on discount order — that's the \"sometimes\" in \"sometimes off by a cent.\"\n\n[s19 heading]\n## The related failure next to it\n\n[s20 para]\nThe `fixed` branch (`src/pricing.js:12`) has no floor at zero:\n\n[s21 code js, 1 lines]\n```js\nreturn subtotalCents - discount.cents;   // 300 - 500 = -200\n```\n\n[s22 para]\n`test/cart.test.js:24` expects `0` and fails. That negative propagates into `tax()` (negative tax base) and then into `checkout()` (`src/checkout.js:9`), where `charge()` rejects `amountCents <= 0` (`src/payments.js:6`) — **after** the stock reservations were already made, so the reservations leak because nothing releases them on throw.\n\n[s23 heading]\n## The fix\n\n[s24 para]\nInteger math + round, and clamp the fixed discount:\n\n[s25 code js, 6 lines]\n```js\nif (discount.type === \"percent\") {\n  return Math.round((subtotalCents * (100 - discount.value)) / 100);\n}\nif (discount.type === \"fixed\") {\n  return Math.max(0, subtotalCents - discount.cents);\n}\n```\n\n[s26 para]\nThat makes `1015 @ 10%` → `(1015 * 90) / 100 = 913.5` → `914`, and `300 − 500` → `0`, matching both failing tests.\n\n[s27 para]\nWant me to apply this patch (and add the missing `checkout` reservation-release on charge failure)?",
+    "document": {
+      "version": 1,
+      "format": "notes",
+      "status": "answer",
+      "statusLabel": "Answer",
+      "headline": [
+        {
+          "t": "text",
+          "v": "The cent comes from "
+        },
+        {
+          "t": "code",
+          "v": "applyDiscount()"
+        },
+        {
+          "t": "text",
+          "v": " "
+        },
+        {
+          "t": "anchor",
+          "id": "a1",
+          "label": [
+            {
+              "t": "text",
+              "v": "truncating percent discounts"
+            }
+          ],
+          "refs": [
+            "s6"
+          ]
+        },
+        {
+          "t": "text",
+          "v": " instead of rounding."
+        }
+      ],
+      "blocks": [
+        {
+          "kind": "say",
+          "tokens": [
+            {
+              "t": "text",
+              "v": "In "
+            },
+            {
+              "t": "code",
+              "v": "src/pricing.js"
+            },
+            {
+              "t": "text",
+              "v": ", it converts cents to float dollars and uses "
+            },
+            {
+              "t": "anchor",
+              "id": "a2",
+              "label": [
+                {
+                  "t": "text",
+                  "v": "Math.floor"
+                }
+              ],
+              "refs": [
+                "s6"
+              ]
+            },
+            {
+              "t": "text",
+              "v": ", so any half-cent gets shorted."
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "items": [
+            [
+              {
+                "t": "code",
+                "v": "1015"
+              },
+              {
+                "t": "text",
+                "v": " at 10% off becomes "
+              },
+              {
+                "t": "anchor",
+                "id": "a3",
+                "label": [
+                  {
+                    "t": "text",
+                    "v": "913 instead of 914"
+                  }
+                ],
+                "refs": [
+                  "s10",
+                  "s11",
+                  "s12"
+                ]
+              },
+              {
+                "t": "text",
+                "v": "."
+              }
+            ],
+            [
+              {
+                "t": "text",
+                "v": "It also "
+              },
+              {
+                "t": "anchor",
+                "id": "a4",
+                "label": [
+                  {
+                    "t": "text",
+                    "v": "rounds at every discount step"
+                  }
+                ],
+                "refs": [
+                  "s18"
+                ]
+              },
+              {
+                "t": "text",
+                "v": ", so stacked percentages get order-dependent."
+              }
+            ],
+            [
+              {
+                "t": "text",
+                "v": "The "
+              },
+              {
+                "t": "code",
+                "v": "fixed"
+              },
+              {
+                "t": "text",
+                "v": " branch has "
+              },
+              {
+                "t": "anchor",
+                "id": "a5",
+                "label": [
+                  {
+                    "t": "text",
+                    "v": "no floor at zero"
+                  }
+                ],
+                "refs": [
+                  "s20",
+                  "s21"
+                ]
+              },
+              {
+                "t": "text",
+                "v": ", which can throw in "
+              },
+              {
+                "t": "code",
+                "v": "charge()"
+              },
+              {
+                "t": "text",
+                "v": " and leak reservations."
+              }
+            ]
+          ]
+        },
+        {
+          "kind": "ask",
+          "tokens": [
+            {
+              "t": "text",
+              "v": "Want me to "
+            },
+            {
+              "t": "anchor",
+              "id": "a6",
+              "label": [
+                {
+                  "t": "text",
+                  "v": "apply this patch"
+                }
+              ],
+              "refs": [
+                "s24",
+                "s25",
+                "s26"
+              ]
+            },
+            {
+              "t": "text",
+              "v": " and add the reservation-release fix?"
+            }
+          ]
+        },
+        {
+          "kind": "heads_up",
+          "tokens": [
+            {
+              "t": "text",
+              "v": "The float cents-to-dollars round-trip means "
+            },
+            {
+              "t": "anchor",
+              "id": "a7",
+              "label": [
+                {
+                  "t": "text",
+                  "v": "swapping floor for round"
+                }
+              ],
+              "refs": [
+                "s14"
+              ]
+            },
+            {
+              "t": "text",
+              "v": " alone isn't enough; stay in integers."
+            }
+          ]
+        }
+      ],
+      "drawers": [
+        {
+          "id": "d1",
+          "title": "Failing tests",
+          "kind": "code",
+          "peek": "cart.test.js:17 expects 914, cart.test.js:24 expects 0",
+          "refs": [
+            "s10",
+            "s11",
+            "s12",
+            "s13"
+          ]
+        },
+        {
+          "id": "d2",
+          "title": "The patch",
+          "kind": "code",
+          "peek": "Integer percent math and clamped fixed discount",
+          "refs": [
+            "s25",
+            "s26"
+          ]
+        }
+      ],
+      "rest": {
+        "refs": [
+          "s2",
+          "s4",
+          "s5",
+          "s7",
+          "s9",
+          "s16",
+          "s17",
+          "s22",
+          "s27"
+        ]
+      },
+      "anchors": [
+        {
+          "id": "a1",
+          "label": "truncating percent discounts",
+          "refs": [
+            "s6"
+          ],
+          "where": "headline",
+          "kind": "text"
+        },
+        {
+          "id": "a2",
+          "label": "Math.floor",
+          "refs": [
+            "s6"
+          ],
+          "where": "block 1",
+          "kind": "text"
+        },
+        {
+          "id": "a3",
+          "label": "913 instead of 914",
+          "refs": [
+            "s10",
+            "s11",
+            "s12"
+          ],
+          "where": "block 2 item 1",
+          "kind": "text"
+        },
+        {
+          "id": "a4",
+          "label": "rounds at every discount step",
+          "refs": [
+            "s18"
+          ],
+          "where": "block 2 item 2",
+          "kind": "text"
+        },
+        {
+          "id": "a5",
+          "label": "no floor at zero",
+          "refs": [
+            "s20",
+            "s21"
+          ],
+          "where": "block 2 item 3",
+          "kind": "code"
+        },
+        {
+          "id": "a6",
+          "label": "apply this patch",
+          "refs": [
+            "s24",
+            "s25",
+            "s26"
+          ],
+          "where": "block 3",
+          "kind": "code"
+        },
+        {
+          "id": "a7",
+          "label": "swapping floor for round",
+          "refs": [
+            "s14"
+          ],
+          "where": "block 4",
+          "kind": "text"
+        }
+      ],
+      "stats": {
+        "sourceWords": 477,
+        "skimWords": 90,
+        "budget": {
+          "max": 86,
+          "target": 60
+        },
+        "links": 7,
+        "coveredWords": 263,
+        "totalWords": 445,
+        "coverage": 0.5910112359550562
+      },
+      "warnings": []
+    }
+  }
+}

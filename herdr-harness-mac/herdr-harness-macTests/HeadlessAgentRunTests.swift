@@ -4,6 +4,23 @@ import Testing
 
 @Suite("Headless Agent contract")
 struct HeadlessAgentRunTests {
+    @Test("A HUD turn's skim decodes when present and never fails the run", arguments: [
+        #"{"status":"ready","format":"breath_tight","document":{"version":1}}"#,
+        #"{"status":"pending","format":"breath_tight"}"#,
+        #""ready""#,
+        "42",
+    ])
+    func skimIsOptionalAndLenient(skim: String) throws {
+        let json = #"{"ok":true,"run":{"id":"run-1","status":"completed","prompt":"Why?","response":"Because.","createdAt":"2026-09-26T12:00:00Z","skim":"#
+            + skim + "}}"
+        let run = try JSONDecoder().decode(HeadlessAgentRunEnvelope.self, from: Data(json.utf8)).run
+        #expect(run.response == "Because.")
+        #expect(run.skim != nil)
+        #expect(FirstMateSkimReader(skim: run.skim, reply: run.response ?? "") == nil)
+        let older = try JSONDecoder().decode(HeadlessAgentRun.self, from: Data(#"{"id":"run-2","status":"completed","prompt":"Why?","createdAt":"2026-09-26T12:00:00Z"}"#.utf8))
+        #expect(older.skim == nil)
+    }
+
     @Test("Decodes the asynchronous run envelope and promotion route")
     func decodesRunEnvelope() throws {
         let data = Data(#"""

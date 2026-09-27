@@ -20,6 +20,9 @@ enum HerdrTheme {
     static let success = color(0xA3CBA7)
     static let working = color(0xE4C386)
     static let alert = color(0xE2A7B6)
+    /// First Mate's "needs you" orange (the Mac's `attentionBadge`): reserved
+    /// for what the user acts on, such as a skim's suggested next step.
+    static let attention = color(0xFF9F0A)
     static let diffAdd = color(0x83BC91)
     static let diffRemove = color(0xD997A2)
     static let diffHunk = color(0xA6BAFF)

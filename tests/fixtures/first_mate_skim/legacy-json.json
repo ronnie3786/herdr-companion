@@ -1,0 +1,188 @@
+{
+  "name": "legacy-json",
+  "about": "The first-generation JSON output shape, including a multi-key block.",
+  "segmenterVersion": 1,
+  "skimVersion": 1,
+  "input": {
+    "reply": "Tests pass.\n\n- fixed rounding\n- fixed the race\n\nAll 7 green.",
+    "modelOutput": "{\"skim\":1,\"status\":\"done\",\"headline\":\"[All 7 tests pass](s4).\",\"blocks\":[{\"say\":\"Two fixes.\",\"list\":[\"[rounding](s2)\",\"[the race](s3)\"]}],\"drawers\":[]}",
+    "voice": "terse",
+    "format": "notes"
+  },
+  "expected": {
+    "segments": [
+      {
+        "id": "s1",
+        "n": 1,
+        "kind": "paragraph",
+        "startLine": 1,
+        "endLine": 1,
+        "start": 0,
+        "end": 11,
+        "words": 2,
+        "section": null
+      },
+      {
+        "id": "s2",
+        "n": 2,
+        "kind": "item",
+        "startLine": 3,
+        "endLine": 3,
+        "start": 13,
+        "end": 29,
+        "words": 3,
+        "section": null,
+        "ordered": false
+      },
+      {
+        "id": "s3",
+        "n": 3,
+        "kind": "item",
+        "startLine": 4,
+        "endLine": 4,
+        "start": 30,
+        "end": 46,
+        "words": 4,
+        "section": null,
+        "ordered": false
+      },
+      {
+        "id": "s4",
+        "n": 4,
+        "kind": "paragraph",
+        "startLine": 6,
+        "endLine": 6,
+        "start": 48,
+        "end": 60,
+        "words": 3,
+        "section": null
+      }
+    ],
+    "promptView": "[s1 para]\nTests pass.\n\n[s2 item]\n- fixed rounding\n\n[s3 item]\n- fixed the race\n\n[s4 para]\nAll 7 green.",
+    "document": {
+      "version": 1,
+      "format": "notes",
+      "status": "done",
+      "statusLabel": "Done",
+      "headline": [
+        {
+          "t": "anchor",
+          "id": "a1",
+          "label": [
+            {
+              "t": "text",
+              "v": "All 7 tests pass"
+            }
+          ],
+          "refs": [
+            "s4"
+          ]
+        },
+        {
+          "t": "text",
+          "v": "."
+        }
+      ],
+      "blocks": [
+        {
+          "kind": "say",
+          "tokens": [
+            {
+              "t": "text",
+              "v": "Two fixes."
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "items": [
+            [
+              {
+                "t": "anchor",
+                "id": "a2",
+                "label": [
+                  {
+                    "t": "text",
+                    "v": "rounding"
+                  }
+                ],
+                "refs": [
+                  "s2"
+                ]
+              }
+            ],
+            [
+              {
+                "t": "anchor",
+                "id": "a3",
+                "label": [
+                  {
+                    "t": "text",
+                    "v": "the race"
+                  }
+                ],
+                "refs": [
+                  "s3"
+                ]
+              }
+            ]
+          ]
+        }
+      ],
+      "drawers": [],
+      "rest": {
+        "refs": [
+          "s1"
+        ]
+      },
+      "anchors": [
+        {
+          "id": "a1",
+          "label": "All 7 tests pass",
+          "refs": [
+            "s4"
+          ],
+          "where": "headline",
+          "kind": "text"
+        },
+        {
+          "id": "a2",
+          "label": "rounding",
+          "refs": [
+            "s2"
+          ],
+          "where": "block 2 item 1",
+          "kind": "text"
+        },
+        {
+          "id": "a3",
+          "label": "the race",
+          "refs": [
+            "s3"
+          ],
+          "where": "block 2 item 2",
+          "kind": "text"
+        }
+      ],
+      "stats": {
+        "sourceWords": 12,
+        "skimWords": 9,
+        "budget": {
+          "max": 14,
+          "target": 14
+        },
+        "links": 3,
+        "coveredWords": 10,
+        "totalWords": 12,
+        "coverage": 0.8333333333333334
+      },
+      "warnings": [
+        {
+          "level": "info",
+          "code": "block_split",
+          "message": "Split a block with 2 keys (say, list) into separate blocks."
+        }
+      ]
+    }
+  }
+}

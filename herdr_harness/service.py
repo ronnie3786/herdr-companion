@@ -213,6 +213,7 @@ class HerdrService:
         self._first_mate_store = first_mate_store
         self._first_mate_runtime = first_mate_runtime
         self._first_mate_notifications = None
+        self._skims = None
         self._pr_review_store = pr_review_store
         self._pr_review_runtime = pr_review_runtime
         self._owns_pr_review_store = pr_review_store is None
@@ -528,14 +529,21 @@ class HerdrService:
         # The service resumes recorded First Mate work independently of any
         # client opening the feature screen or the coordinator being active.
         if self._first_mate_execution_enabled:
+            # Skims attach before the runtime can post a reply.
+            self.skims.attach_store(self.first_mate_store)
+            if self._agent_runs is not None:
+                self.skims.attach_agent_runs(self._agent_runs)
             self.first_mate.start()
             self.first_mate_notifications.start()
+            self.skims.start()
         if self._pr_review_execution_enabled:
             self.pr_review.start()
         if self._quick_voice_recovery_enabled:
             self.quick_voice.recover()
 
     def stop(self) -> None:
+        if self._skims is not None:
+            self._skims.stop()
         if self._first_mate_notifications is not None:
             self._first_mate_notifications.stop()
         if self._first_mate_runtime is not None:
@@ -693,7 +701,20 @@ class HerdrService:
                     herdr_session=self.client.session,
                     profile_snapshot=self.agent_profiles.snapshot,
                 )
+                if self._skims is not None:
+                    self._skims.attach_agent_runs(self._agent_runs)
             return self._agent_runs
+
+    @property
+    def skims(self):
+        """First Mate and HUD chat skims (see skim_service.py)."""
+        from .skim_service import SkimService, SkimSettings
+        with self._lock:
+            if self._skims is None:
+                self._skims = SkimService(SkimSettings.from_environ(self.environ),
+                                          agent_runs=lambda: self.agent_runs,
+                                          publish=self.broker.publish)
+            return self._skims
 
     def _dispatch_pi_event(self, envelope: dict) -> None:
         self._publish_pi_event(envelope)

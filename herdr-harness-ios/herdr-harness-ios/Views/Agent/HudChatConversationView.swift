@@ -5,32 +5,39 @@ struct HudChatConversationView: View {
     @Bindable var store: HudChatStore
     @Binding var thinkingLevel: PiThinkingLevel
     let openPromotedPane: () -> Void
+    /// Skim or Full reply per turn, for as long as this conversation is open.
+    @State private var skimState = SkimReadingState()
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: HerdrTheme.rowSpacing) {
-                    contextCard
-                    errorBanner
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: HerdrTheme.rowSpacing) {
+                        contextCard
+                        errorBanner
 
-                    if store.isLoadingHistory, store.turns.isEmpty, !store.isNewChat {
-                        ProgressView("Loading the full transcript…")
-                            .frame(maxWidth: .infinity, minHeight: 160)
-                            .tint(HerdrTheme.accent)
-                    } else if store.isNewChat {
-                        newChatHelp
-                    } else {
-                        ForEach(store.turns) { turn in
-                            HudChatTurnView(turn: turn)
+                        if store.isLoadingHistory, store.turns.isEmpty, !store.isNewChat {
+                            ProgressView("Loading the full transcript…")
+                                .frame(maxWidth: .infinity, minHeight: 160)
+                                .tint(HerdrTheme.accent)
+                        } else if store.isNewChat {
+                            newChatHelp
+                        } else {
+                            ForEach(store.turns) { turn in
+                                HudChatTurnView(turn: turn, skimState: skimState)
+                            }
                         }
                     }
+                    .padding(.horizontal, HerdrTheme.pagePadding)
+                    .padding(.vertical, 16)
                 }
-                .padding(.horizontal, HerdrTheme.pagePadding)
-                .padding(.vertical, 16)
-            }
-            .scrollIndicators(.hidden)
-            .refreshable {
-                await store.refreshConversation(transport: model)
+                .scrollIndicators(.hidden)
+                .refreshable {
+                    await store.refreshConversation(transport: model)
+                }
+                .onChange(of: skimState.scrollRequest) { _, request in
+                    if let request { proxy.revealSkimTarget(request) }
+                }
             }
 
             if store.promotedPaneID == nil {

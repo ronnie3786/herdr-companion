@@ -125,12 +125,18 @@ struct HerdrHudTranscriptRowView: View {
             .herdrCard(radius: HerdrTheme.Radius.composer)
             .padding(.top, 12)
         } else if let response = exchange.response, !response.isEmpty {
-            // Bubble-less prose, as in the main chat.
-            PiMarkdownMessageView(source: response, isStreaming: false, id: "hud-\(exchange.id)")
-                .textSelection(.enabled)
-                .padding(.horizontal, 4)
-                .padding(.top, 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            // Bubble-less prose, as in the main chat; a long answer shows its
+            // skim once the companion writes one.
+            VStack(alignment: .leading, spacing: 6) {
+                SkimPendingLabel(skim: exchange.skim)
+                SkimmableReply(messageID: exchange.id, reply: response, skim: exchange.skim, style: .hud) {
+                    PiMarkdownMessageView(source: response, isStreaming: false, id: "hud-\(exchange.id)")
+                        .textSelection(.enabled)
+                }
+            }
+            .padding(.horizontal, 4)
+            .padding(.top, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
         } else if exchange.status.isTerminal {
             Text("No response")
                 .herdrFont(size: HerdrTheme.TextSize.body)

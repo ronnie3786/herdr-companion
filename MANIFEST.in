@@ -5,4 +5,5 @@ recursive-include pi-semantic-bridge/agent-docs *.md
 include pi-semantic-bridge/package.json
 recursive-include herdr_harness/static *
 recursive-include herdr_harness/workflows *.json
+recursive-include herdr_harness/skim_prompts *.md
 global-exclude config.local.toml Local.xcconfig Local.entitlements HerdrBootstrap.plist

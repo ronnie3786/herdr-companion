@@ -46,6 +46,8 @@ struct HerdrHudExchange: Identifiable, Equatable, Sendable {
     var modelLabelIsProven = false
     var steps: [HerdrHudStep] = []
     var stepsTruncated = false
+    /// The companion's skim of `response`, when it made one.
+    var skim: FirstMateSkim?
 
     init(
         id: String,
@@ -65,7 +67,8 @@ struct HerdrHudExchange: Identifiable, Equatable, Sendable {
         modelLabel: String = "default",
         modelLabelIsProven: Bool = false,
         steps: [HerdrHudStep] = [],
-        stepsTruncated: Bool = false
+        stepsTruncated: Bool = false,
+        skim: FirstMateSkim? = nil
     ) {
         self.id = id
         self.machineID = machineID
@@ -86,6 +89,7 @@ struct HerdrHudExchange: Identifiable, Equatable, Sendable {
         self.modelLabelIsProven = modelLabelIsProven
         self.steps = steps
         self.stepsTruncated = stepsTruncated
+        self.skim = skim
     }
 }
 
@@ -797,8 +801,10 @@ final class HerdrHudSession {
         while !Task.isCancelled {
             guard thread != nil, !isEnding, !hasEnded else { return }
             _ = await refreshSavedHistory(model: model, kind: .passive, submissionOwnerID: nil)
+            // A skim being written lands a few seconds after its answer.
+            let waitsForSkim = exchanges.contains { $0.skim?.status == .pending }
             do {
-                try await Task.sleep(for: interval)
+                try await Task.sleep(for: waitsForSkim ? min(interval, .seconds(2)) : interval)
             } catch {
                 return
             }
@@ -1238,7 +1244,8 @@ final class HerdrHudSession {
             modelLabel: label,
             modelLabelIsProven: metadataModelName != nil,
             steps: Self.hudSteps(from: run.steps ?? []),
-            stepsTruncated: run.stepsTruncated == true
+            stepsTruncated: run.stepsTruncated == true,
+            skim: run.skim
         )
         selectedWorkingFolder = HerdrHudWorkingFolder(path: resolvedWorkingFolderPath)
         markExchangesChanged()
@@ -1991,7 +1998,8 @@ final class HerdrHudSession {
                 modelLabel: label,
                 modelLabelIsProven: metadataModelName != nil,
                 steps: Self.hudSteps(from: run.steps ?? []),
-                stepsTruncated: run.stepsTruncated == true
+                stepsTruncated: run.stepsTruncated == true,
+                skim: run.skim
             )
         )
         selectedWorkingFolder = HerdrHudWorkingFolder(path: resolvedWorkingFolderPath)
@@ -2146,7 +2154,8 @@ final class HerdrHudSession {
                 modelLabel: restoredModelName ?? "default",
                 modelLabelIsProven: restoredModelName != nil,
                 steps: Self.hudSteps(from: run.steps ?? []),
-                stepsTruncated: run.stepsTruncated == true
+                stepsTruncated: run.stepsTruncated == true,
+                skim: run.skim
             )
         } + localPlaceholders
         mutateChatMetadata { metadata in

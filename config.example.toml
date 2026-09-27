@@ -148,6 +148,16 @@ minimum_free_mb = 1024 # Admission reserve on both state and workspace volumes.
 # message_hub_token_file = "~/.config/herdr-companion/secrets/message-hub-token"
 # app_url = "https://desktop.example.invalid/first-mate/"
 # Stage completion and unrecoverable stability failures notify when configured.
+# Skims: a short, linked rewrite of each long First Mate reply and HUD chat
+# turn, made by one tool-free model call after the reply is saved. See
+# docs/first-mate/skim.md. Use a fast model; the key it needs goes in the
+# private config's [environment] table (servers under launchd have no login shell).
+skim = true
+# skim_model = "your-provider/your-fast-model" # Omit to use Pi's configured default.
+skim_thinking = "low" # Never "off" with small thinking models: it can run away.
+skim_min_words = 80 # Shorter replies are shown as they are.
+# skim_hud_chats = true # Also skim HUD chat replies.
+# skim_backfill_hours = 24 # Skim recent earlier replies once; 0 skims only new ones.
 # Ambiguous delivery is logged, without an automatic duplicate phone alert.
 
 [remote_activity]
@@ -255,6 +265,7 @@ apns_environment = "development"
 # Escape hatch for any documented environment setting. Values are data, not shell.
 # Headless agent runs (including HUD chat) default to one hour; range 1–86400 seconds.
 # HERDR_HARNESS_AGENT_TIMEOUT_SECONDS = "7200"
+# YOUR_PROVIDER_API_KEY = { file = "~/.config/herdr-companion/secrets/provider-api-key" } # For skim_model.
 # HERDR_HARNESS_ACTIVE_WORK_STORE_PATH = "~/.local/share/herdr-companion/active-work.sqlite3"
 # GH_HOST = "github.com"
 # PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"

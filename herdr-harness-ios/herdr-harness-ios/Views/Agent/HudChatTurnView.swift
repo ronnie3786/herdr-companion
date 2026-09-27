@@ -2,6 +2,8 @@ import SwiftUI
 
 struct HudChatTurnView: View {
     let turn: HeadlessAgentRun
+    /// The conversation's skim choices: Skim or Full reply per turn, and "Show in reply".
+    let skimState: SkimReadingState
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -20,12 +22,23 @@ struct HudChatTurnView: View {
             .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
 
             if let response = turn.response, !response.isEmpty {
+                let reader = Self.skimReader(skim: turn.skim, response: response, owner: turn.id)
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("AGENT")
-                        .font(.subheadline.monospaced().bold())
-                        .foregroundStyle(HerdrTheme.accent)
-                    PiMarkdownMessageView(source: response, isStreaming: false)
-                        .textSelection(.enabled)
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("AGENT")
+                            .font(.subheadline.monospaced().bold())
+                            .foregroundStyle(HerdrTheme.accent)
+                        if reader == nil, turn.skim?.status == .pending {
+                            Text("Skimming…")
+                                .font(.caption)
+                                .foregroundStyle(HerdrTheme.muted)
+                                .composerLayoutMeasurement(id: "skim-pending", label: "Skimming…")
+                        }
+                    }
+                    SkimmableReply(messageID: turn.id, reader: reader, style: .hud, state: skimState) {
+                        PiMarkdownMessageView(source: response, isStreaming: false)
+                            .textSelection(.enabled)
+                    }
                 }
                 .padding(HerdrTheme.cardPadding)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -55,5 +68,11 @@ struct HudChatTurnView: View {
             }
         }
         .accessibilityIdentifier("hud-chat-turn-\(turn.id)")
+    }
+
+    /// A ready skim that is valid for this exact response, or nil (full response).
+    private static func skimReader(skim: FirstMateSkim?, response: String, owner: String) -> FirstMateSkimReader? {
+        guard let reader = FirstMateSkimReader.cached(skim: skim, reply: response, owner: owner) else { return nil }
+        return SkimDisplay.hasContent(reader) ? reader : nil
     }
 }

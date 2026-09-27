@@ -1,0 +1,348 @@
+{
+  "name": "blocks-and-links",
+  "about": "Every block kind, a nested list, a fenced block inside an item, CRLF input, and a clean skim.",
+  "segmenterVersion": 1,
+  "skimVersion": 1,
+  "input": {
+    "reply": "## What I found\r\nThe export loads every row before writing.\r\nThat is why memory climbs.\r\n\r\n- `fetchAll()` returns 1.2M rows\r\n- Peak memory hit 3.1 GB\r\n  - measured with `--inspect`\r\n\r\n1. Switch to a cursor:\r\n\r\n   ```js\r\n   for await (const row of cursor) write(row);\r\n   ```\r\n2. Add an index on `updated_at`\r\n\r\n| Option | Time |\r\n|---|---|\r\n| cursor | 40s |\r\n| batch | 55s |\r\n\r\n> Note: numbers are from staging.\r\n\r\n---\r\n**Next steps**\r\nWant me to try the cursor version?",
+    "modelOutput": "status: plan\nheadline: The export is slow because it [loads every row first](s2).\nsay: [Memory peaks at 3.1 GB](s3-s4); I haven't changed anything yet.\n- [A cursor](s5) should fix it.\n- [An index](s6) helps the filter.\nask: Want me to [try the cursor version](s11)?\ndrawer: Timing comparison | table | s7 | cursor 40s vs batch 55s",
+    "voice": "buddy",
+    "format": "notes"
+  },
+  "expected": {
+    "segments": [
+      {
+        "id": "s1",
+        "n": 1,
+        "kind": "heading",
+        "startLine": 1,
+        "endLine": 1,
+        "start": 0,
+        "end": 15,
+        "words": 4,
+        "section": "s1",
+        "level": 2,
+        "title": "What I found"
+      },
+      {
+        "id": "s2",
+        "n": 2,
+        "kind": "paragraph",
+        "startLine": 2,
+        "endLine": 3,
+        "start": 16,
+        "end": 85,
+        "words": 12,
+        "section": "s1"
+      },
+      {
+        "id": "s3",
+        "n": 3,
+        "kind": "item",
+        "startLine": 5,
+        "endLine": 5,
+        "start": 87,
+        "end": 119,
+        "words": 5,
+        "section": "s1",
+        "ordered": false
+      },
+      {
+        "id": "s4",
+        "n": 4,
+        "kind": "item",
+        "startLine": 6,
+        "endLine": 7,
+        "start": 120,
+        "end": 174,
+        "words": 10,
+        "section": "s1",
+        "ordered": false
+      },
+      {
+        "id": "s5",
+        "n": 5,
+        "kind": "item",
+        "startLine": 9,
+        "endLine": 13,
+        "start": 176,
+        "end": 262,
+        "words": 14,
+        "section": "s1",
+        "ordered": true
+      },
+      {
+        "id": "s6",
+        "n": 6,
+        "kind": "item",
+        "startLine": 14,
+        "endLine": 14,
+        "start": 263,
+        "end": 294,
+        "words": 6,
+        "section": "s1",
+        "ordered": true
+      },
+      {
+        "id": "s7",
+        "n": 7,
+        "kind": "table",
+        "startLine": 16,
+        "endLine": 19,
+        "start": 296,
+        "end": 356,
+        "words": 16,
+        "section": "s1",
+        "rows": 2
+      },
+      {
+        "id": "s8",
+        "n": 8,
+        "kind": "quote",
+        "startLine": 21,
+        "endLine": 21,
+        "start": 358,
+        "end": 391,
+        "words": 6,
+        "section": "s1"
+      },
+      {
+        "id": "s9",
+        "n": 9,
+        "kind": "rule",
+        "startLine": 23,
+        "endLine": 23,
+        "start": 393,
+        "end": 396,
+        "words": 1,
+        "section": "s1"
+      },
+      {
+        "id": "s10",
+        "n": 10,
+        "kind": "heading",
+        "startLine": 24,
+        "endLine": 24,
+        "start": 397,
+        "end": 411,
+        "words": 2,
+        "section": "s10",
+        "level": 4,
+        "title": "Next steps",
+        "pseudo": true
+      },
+      {
+        "id": "s11",
+        "n": 11,
+        "kind": "paragraph",
+        "startLine": 25,
+        "endLine": 25,
+        "start": 412,
+        "end": 446,
+        "words": 7,
+        "section": "s10"
+      }
+    ],
+    "promptView": "[s1 heading]\n## What I found\n\n[s2 para]\nThe export loads every row before writing.\nThat is why memory climbs.\n\n[s3 item]\n- `fetchAll()` returns 1.2M rows\n\n[s4 item]\n- Peak memory hit 3.1 GB\n  - measured with `--inspect`\n\n[s5 item]\n1. Switch to a cursor:\n\n   ```js\n   for await (const row of cursor) write(row);\n   ```\n\n[s6 item]\n2. Add an index on `updated_at`\n\n[s7 table, 2 rows]\n| Option | Time |\n|---|---|\n| cursor | 40s |\n| batch | 55s |\n\n[s8 quote]\n> Note: numbers are from staging.\n\n[s10 heading]\n**Next steps**\n\n[s11 para]\nWant me to try the cursor version?",
+    "document": {
+      "version": 1,
+      "format": "notes",
+      "status": "plan",
+      "statusLabel": "Plan, needs your go-ahead",
+      "headline": [
+        {
+          "t": "text",
+          "v": "The export is slow because it "
+        },
+        {
+          "t": "anchor",
+          "id": "a1",
+          "label": [
+            {
+              "t": "text",
+              "v": "loads every row first"
+            }
+          ],
+          "refs": [
+            "s2"
+          ]
+        },
+        {
+          "t": "text",
+          "v": "."
+        }
+      ],
+      "blocks": [
+        {
+          "kind": "say",
+          "tokens": [
+            {
+              "t": "anchor",
+              "id": "a2",
+              "label": [
+                {
+                  "t": "text",
+                  "v": "Memory peaks at 3.1 GB"
+                }
+              ],
+              "refs": [
+                "s3",
+                "s4"
+              ]
+            },
+            {
+              "t": "text",
+              "v": "; I haven't changed anything yet."
+            }
+          ]
+        },
+        {
+          "kind": "list",
+          "items": [
+            [
+              {
+                "t": "anchor",
+                "id": "a3",
+                "label": [
+                  {
+                    "t": "text",
+                    "v": "A cursor"
+                  }
+                ],
+                "refs": [
+                  "s5"
+                ]
+              },
+              {
+                "t": "text",
+                "v": " should fix it."
+              }
+            ],
+            [
+              {
+                "t": "anchor",
+                "id": "a4",
+                "label": [
+                  {
+                    "t": "text",
+                    "v": "An index"
+                  }
+                ],
+                "refs": [
+                  "s6"
+                ]
+              },
+              {
+                "t": "text",
+                "v": " helps the filter."
+              }
+            ]
+          ]
+        },
+        {
+          "kind": "ask",
+          "tokens": [
+            {
+              "t": "text",
+              "v": "Want me to "
+            },
+            {
+              "t": "anchor",
+              "id": "a5",
+              "label": [
+                {
+                  "t": "text",
+                  "v": "try the cursor version"
+                }
+              ],
+              "refs": [
+                "s11"
+              ]
+            },
+            {
+              "t": "text",
+              "v": "?"
+            }
+          ]
+        }
+      ],
+      "drawers": [
+        {
+          "id": "d1",
+          "title": "Timing comparison",
+          "kind": "table",
+          "peek": "cursor 40s vs batch 55s",
+          "refs": [
+            "s7"
+          ]
+        }
+      ],
+      "rest": {
+        "refs": [
+          "s8"
+        ]
+      },
+      "anchors": [
+        {
+          "id": "a1",
+          "label": "loads every row first",
+          "refs": [
+            "s2"
+          ],
+          "where": "headline",
+          "kind": "text"
+        },
+        {
+          "id": "a2",
+          "label": "Memory peaks at 3.1 GB",
+          "refs": [
+            "s3",
+            "s4"
+          ],
+          "where": "block 1",
+          "kind": "text"
+        },
+        {
+          "id": "a3",
+          "label": "A cursor",
+          "refs": [
+            "s5"
+          ],
+          "where": "block 2 item 1",
+          "kind": "text"
+        },
+        {
+          "id": "a4",
+          "label": "An index",
+          "refs": [
+            "s6"
+          ],
+          "where": "block 2 item 2",
+          "kind": "text"
+        },
+        {
+          "id": "a5",
+          "label": "try the cursor version",
+          "refs": [
+            "s11"
+          ],
+          "where": "block 3",
+          "kind": "text"
+        }
+      ],
+      "stats": {
+        "sourceWords": 83,
+        "skimWords": 37,
+        "budget": {
+          "max": 30,
+          "target": 30
+        },
+        "links": 5,
+        "coveredWords": 70,
+        "totalWords": 76,
+        "coverage": 0.9210526315789473
+      },
+      "warnings": []
+    }
+  }
+}

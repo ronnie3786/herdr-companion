@@ -10,10 +10,37 @@ struct FirstMateMessage: Codable, Equatable, Identifiable, Sendable {
     /// `conversation` or `background`. Companions before
     /// `first-mate-quiet-chat-v1` omit it; their messages all count as chat.
     var visibility: String? = nil
+    /// A skim of a long reply (`first-mate-skim-v1`). Older companions omit it,
+    /// and a malformed one decodes as nil: the reply shows in full either way.
+    var skim: FirstMateSkim? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, role, text, status, visibility
+        case id, role, text, status, visibility, skim
         case featureID = "feature_id", createdAt = "created_at"
+    }
+
+    init(id: String, featureID: String, role: String, text: String, status: String, createdAt: String,
+         visibility: String? = nil, skim: FirstMateSkim? = nil) {
+        self.id = id
+        self.featureID = featureID
+        self.role = role
+        self.text = text
+        self.status = status
+        self.createdAt = createdAt
+        self.visibility = visibility
+        self.skim = skim
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        featureID = try c.decode(String.self, forKey: .featureID)
+        role = try c.decode(String.self, forKey: .role)
+        text = try c.decode(String.self, forKey: .text)
+        status = try c.decode(String.self, forKey: .status)
+        createdAt = try c.decode(String.self, forKey: .createdAt)
+        visibility = try c.decodeIfPresent(String.self, forKey: .visibility)
+        skim = try? c.decodeIfPresent(FirstMateSkim.self, forKey: .skim)
     }
 
     /// Whether this row belongs in the human's conversation with First Mate.

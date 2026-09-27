@@ -30,6 +30,9 @@ enum PaneResponseLinker {
             guard let target = catalog.target(for: candidate),
                   let range = attributedRange(NSRange(location: match.range.location, length: (candidate as NSString).length), plain: plain, text: result) else { continue }
             result[range].link = target.url
+            // No inline-code chip under a link: the accent label on a chip
+            // drops under 4.5:1 in table headers over the dusk glass.
+            result[range].backgroundColor = nil
         }
         return result
     }

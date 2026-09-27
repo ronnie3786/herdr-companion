@@ -367,7 +367,7 @@ private struct FleetMachineCard: View {
             .frame(maxWidth: .infinity, minHeight: 188, maxHeight: 214)
             .contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .onHover(perform: setHovering)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: isHovered)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: isSelected)
@@ -525,7 +525,7 @@ private struct FleetInventoryControls: View {
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.herdrPlain)
                     .foregroundStyle(HerdrTheme.muted)
                     .accessibilityLabel("Clear inventory search")
                 }
@@ -791,7 +791,7 @@ private struct FleetMachineInventoryCell: View {
             Image(systemName: action.symbol)
                 .herdrHitTarget(minWidth: 28, minHeight: 28)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .foregroundStyle(enabled ? color(for: action) : HerdrTheme.muted.opacity(0.45))
         .disabled(!enabled)
         .help(action.label)

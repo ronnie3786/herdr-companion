@@ -46,7 +46,7 @@ struct FirstMateDocumentsView: View {
                         Spacer()
                         Image(systemName: "arrow.up.right").herdrFont(size: 12).foregroundStyle(HerdrTheme.iconTint)
                     }.padding(.vertical, 8).frame(minHeight: HerdrTheme.ControlHeight.row).contentShape(.rect)
-                }.buttonStyle(.plain).accessibilityIdentifier("first-mate-document-\(document.id)")
+                }.buttonStyle(.herdrPlain).accessibilityIdentifier("first-mate-document-\(document.id)")
                 Rectangle().fill(HerdrTheme.rowDivider).frame(height: 1)
             }
             if snapshot.documents.isEmpty { ContentUnavailableView("No documents yet", systemImage: "doc.text") }

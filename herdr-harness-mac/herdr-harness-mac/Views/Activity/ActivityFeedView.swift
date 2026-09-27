@@ -54,7 +54,7 @@ struct ActivityFeedView: View {
             .frame(width: 44, height: 44)
             .background(HerdrTheme.elevated)
             .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .disabled(model.isRefreshingActivity)
             .accessibilityIdentifier("activity-refresh")
         }

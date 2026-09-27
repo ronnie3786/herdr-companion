@@ -25,7 +25,7 @@ struct HerdrUpdateToolbarItem: View {
                 .background(HerdrTheme.accent.opacity(0.15), in: .rect(cornerRadius: HerdrTheme.Radius.control))
                 .herdrHitTarget()
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .help("Herdr \(version) is available. Click to review and install it.")
             .accessibilityLabel("Herdr \(version) is available")
             .accessibilityIdentifier("update-toolbar-item")

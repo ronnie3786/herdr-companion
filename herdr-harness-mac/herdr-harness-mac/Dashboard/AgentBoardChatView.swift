@@ -21,7 +21,7 @@ struct AgentBoardChatView: View {
                                 .frame(maxWidth: .infinity, minHeight: HerdrTheme.minHitTarget)
                                 .contentShape(.rect)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.herdrPlain)
                     }
                     if content.timeline.isEmpty {
                         Text("No messages yet. Give First Mate your direction below.")
@@ -69,7 +69,7 @@ struct AgentBoardChatView: View {
                             .frame(minHeight: HerdrTheme.minHitTarget)
                             .contentShape(.rect)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.herdrPlain)
                     .padding(10)
                     .accessibilityLabel("Scroll to the latest message")
                 }

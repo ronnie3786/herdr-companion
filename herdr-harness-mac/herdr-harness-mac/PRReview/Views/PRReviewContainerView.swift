@@ -144,7 +144,13 @@ struct PRReviewContainerView: View {
         Group {
             if review.rankingState == .running { Text("Ranking…") }
             else if review.rankingState == .done { Text("Ranked") }
-            else { Button("Rank files") { Task { await store.rank() } }.disabled(!canControl) }
+            else {
+                // Herdr's outline button: the system bezel washes the inherited
+                // mist label in its own tint, under 4.5:1 over the dusk glass.
+                Button("Rank files") { Task { await store.rank() } }
+                    .buttonStyle(HerdrButtonStyle(kind: .outline, height: HerdrTheme.ControlHeight.small))
+                    .disabled(!canControl)
+            }
         }
     }
 

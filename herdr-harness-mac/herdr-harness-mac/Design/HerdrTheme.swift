@@ -81,9 +81,11 @@ enum HerdrTheme {
     static let proseText = inkSolid(dark: 0.78, light: 0.88)
     /// Labels and secondary copy: 70% (light 82%).
     static let secondaryText = inkSolid(dark: 0.70, light: 0.82)
-    /// Metadata, timestamps and placeholders: 64% (light 76%), the lowest text
-    /// level. Increase Contrast lifts it to the secondary level.
-    static let tertiaryText = inkSolid(dark: 0.64, light: 0.76, highContrastDark: 0.70, highContrastLight: 0.82)
+    /// Metadata, timestamps and placeholders: 70% in dark, the secondary
+    /// level, because dark surfaces sit over the dusk glass and a selected
+    /// card at the dusk's brightest point needs it for 4.5:1. First Mate's
+    /// opaque light appearance keeps 76%; Increase Contrast lifts it to 82%.
+    static let tertiaryText = inkSolid(dark: 0.70, light: 0.76, highContrastLight: 0.82)
     /// Glyph-only icons: 50% (light 62%). Never use for words.
     static let iconTint = inkSolid(dark: 0.50, light: 0.62)
 
@@ -202,10 +204,11 @@ enum HerdrTheme {
         static let panel: CGFloat = 16
     }
 
-    /// Legible glass: how much of `base` covers the blurred desktop.
+    /// Legible glass: how much of `base` covers Herdr's dusk backdrop
+    /// (`HerdrDusk`); `HerdrThemeAccessibilityTests` measures text over it.
     enum Glass {
         static let sidebar = 0.80
-        static let pane = 0.75
+        static let pane = 0.80
         static let hud = 0.78
     }
 

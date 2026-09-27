@@ -36,7 +36,7 @@ struct SkimTextView: NSViewRepresentable {
         view.anchorInk = ink
         view.accent = accent
         view.linkTextAttributes = [.cursor: NSCursor.pointingHand]
-        view.selectedTextAttributes = [.backgroundColor: accent.withAlphaComponent(0.3)]
+        view.selectedTextAttributes = ChatSelectableText.selection(palette)
         let size = fontSize * fontScale.rawValue
         let font = NSFont.systemFont(ofSize: size)
         let paragraph = NSMutableParagraphStyle()
@@ -278,7 +278,8 @@ final class SkimAnchorTextView: NSTextView {
     }
 
     /// Rest: dotted ink at 55%. Hover or focus: lavender underline and a 13%
-    /// tint. Open: solid underline and a 17% tint.
+    /// tint. Open: solid underline on the same tint (a deeper one drops the
+    /// words under 4.5:1 over the dusk glass).
     func refreshAnchorStyles() {
         guard let layoutManager, let storage = textStorage else { return }
         let whole = NSRange(location: 0, length: storage.length)
@@ -288,7 +289,7 @@ final class SkimAnchorTextView: NSTextView {
         for (id, range) in anchorRanges where NSMaxRange(range) <= storage.length {
             if interaction?.openAnchorID == id {
                 layoutManager.addTemporaryAttributes([
-                    .backgroundColor: accent.withAlphaComponent(0.17), .underlineColor: accent,
+                    .backgroundColor: accent.withAlphaComponent(0.13), .underlineColor: accent,
                     .underlineStyle: NSUnderlineStyle.single.rawValue,
                 ], forCharacterRange: range)
             } else if id == hoveredAnchor || id == focusedAnchor {

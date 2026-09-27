@@ -26,11 +26,16 @@ struct AgentBoardMessageView: View {
                             .truncationMode(.middle)
                             .padding(.horizontal, 8)
                             .frame(minHeight: 22)
-                            .background(HerdrTheme.chipFill, in: .rect(cornerRadius: HerdrTheme.Radius.control))
+                            // Outlined, not filled: a third fill inside the bubble
+                            // and column would drop the name under 4.5:1 over the dusk.
+                            .overlay {
+                                RoundedRectangle(cornerRadius: HerdrTheme.Radius.control)
+                                    .strokeBorder(HerdrTheme.outline, lineWidth: 1)
+                            }
                             .frame(minHeight: HerdrTheme.minHitTarget)
                             .contentShape(.rect)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.herdrPlain)
                     .foregroundStyle(HerdrTheme.accent)
                     .help("Open the full First Mate conversation for this attachment")
                     .accessibilityLabel("Attachment \(attachment.filename), open full First Mate view")
@@ -67,7 +72,7 @@ struct AgentBoardMessageView: View {
             AgentBoardProseView(blocks: folds ? foldedBlocks : message.blocks, codeLineLimit: isExpanded ? nil : 14)
             if characterCount > Self.foldCharacterBudget {
                 Button(isExpanded ? "Show less" : "Show more") { isExpanded.toggle() }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.herdrPlain)
                     .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                     .foregroundStyle(HerdrTheme.accent)
                     .frame(minHeight: HerdrTheme.minHitTarget)

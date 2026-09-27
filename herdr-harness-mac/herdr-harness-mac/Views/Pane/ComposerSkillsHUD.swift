@@ -147,7 +147,7 @@ struct ComposerSkillsHUD: View {
             .background(index == highlightedIndex ? HerdrTheme.accent.opacity(0.16) : .clear)
             .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .onHover { isHovering in
             if isHovering { highlight(index) }
         }

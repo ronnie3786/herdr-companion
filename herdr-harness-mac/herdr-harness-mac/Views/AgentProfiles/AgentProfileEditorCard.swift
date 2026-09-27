@@ -144,6 +144,7 @@ struct AgentProfileEditorCard: View {
                 }
             }
             .pickerStyle(.segmented)
+            .tint(HerdrTheme.controlAccent)
             .labelsHidden()
             .fixedSize()
             .accessibilityIdentifier("agent-profile-document")

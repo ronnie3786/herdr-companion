@@ -29,7 +29,7 @@ struct FirstMatePullRequestsSection: View {
                 Spacer()
                 if surface == .overview {
                     Button("Manage links") { store.showLinksCollection() }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.herdrPlain)
                         .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                         .foregroundStyle(palette.accent)
                         .frame(minHeight: HerdrTheme.minHitTarget)

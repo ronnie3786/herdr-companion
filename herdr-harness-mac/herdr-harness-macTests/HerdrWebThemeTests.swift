@@ -116,7 +116,7 @@ struct HerdrWebThemeTests {
             """) as? [String]
         #expect(values == [
             "rgb(0, 212, 146)", "10px", "16px", "28px", "0px", "1", "0", "none", "28px",
-            "rgb(157, 157, 160)", "13px",
+            "rgb(169, 169, 173)", "13px",
         ])
     }
 

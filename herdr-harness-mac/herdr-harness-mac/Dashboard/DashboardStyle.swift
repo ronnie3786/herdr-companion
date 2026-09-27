@@ -180,7 +180,7 @@ struct DashboardSegmented<Value: Hashable>: View {
                     .frame(minHeight: HerdrTheme.minHitTarget)
                     .contentShape(.rect)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }

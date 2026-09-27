@@ -138,7 +138,7 @@ struct CleanupPaneDecisionRow: View {
                 Image(systemName: "checkmark.square.fill")
                     .herdrHitTarget()
             }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .foregroundStyle(HerdrTheme.signal)
                 .help("Included with the selected workspace. Select to keep this pane open.")
                 .accessibilityLabel("Keep \(pane.title ?? pane.paneID) open")
@@ -148,7 +148,7 @@ struct CleanupPaneDecisionRow: View {
                 Image(systemName: isSelected ? "checkmark.square.fill" : "square")
                     .herdrHitTarget()
             }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .foregroundStyle(isSelected ? HerdrTheme.signal : HerdrTheme.mist)
                 .accessibilityLabel(isSelected ? "Keep \(pane.title ?? pane.paneID) open" : "Close \(pane.title ?? pane.paneID)")
                 .accessibilityIdentifier("cleanup-pane-checkbox-\(pane.paneID)")

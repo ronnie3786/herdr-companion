@@ -21,7 +21,7 @@ struct QuickVoiceDetailsView: View {
                 .disabled(session.notes.isEmpty || session.phase != .idle || session.hasPendingSubmission)
                 .help("Recent requests and their reports")
                 Button("Close voice request", systemImage: "xmark", action: controller.collapse)
-                    .labelStyle(.iconOnly).buttonStyle(.plain)
+                    .labelStyle(.iconOnly).buttonStyle(.herdrPlain)
                     .frame(width: HerdrTheme.minHitTarget, height: HerdrTheme.minHitTarget)
             }
             ScrollView {
@@ -61,13 +61,13 @@ struct QuickVoiceDetailsView: View {
                 Spacer(minLength: 4)
                 if session.playingMessageID != nil {
                     Button("Stop audio", systemImage: "stop.circle", action: session.stopAudio)
-                        .labelStyle(.iconOnly).buttonStyle(.plain)
+                        .labelStyle(.iconOnly).buttonStyle(.herdrPlain)
                         .frame(width: HerdrTheme.minHitTarget, height: HerdrTheme.minHitTarget)
                 }
                 Button(session.isMuted ? "Unmute voice reports" : "Mute voice reports", systemImage: session.isMuted ? "speaker.slash" : "speaker.wave.2") {
                     session.isMuted.toggle()
                 }
-                .labelStyle(.iconOnly).buttonStyle(.plain)
+                .labelStyle(.iconOnly).buttonStyle(.herdrPlain)
                 .frame(width: HerdrTheme.minHitTarget, height: HerdrTheme.minHitTarget)
             }
             if session.phase == .recording {

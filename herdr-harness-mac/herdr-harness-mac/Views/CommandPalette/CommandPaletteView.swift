@@ -30,7 +30,7 @@ struct CommandPaletteView: View {
             Button(action: dismiss) {
                 Color.clear
             }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.black.opacity(0.4))
                 .contentShape(.rect)
@@ -93,7 +93,7 @@ struct CommandPaletteView: View {
                             Image(systemName: "xmark.circle.fill")
                                 .herdrHitTarget(minWidth: 32, minHeight: 32)
                         }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.herdrPlain)
                             .foregroundStyle(HerdrTheme.mist)
                             .help("Clear search")
                             .accessibilityLabel("Clear search")

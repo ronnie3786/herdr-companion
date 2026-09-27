@@ -18,7 +18,7 @@ struct WorkspaceScopeSegment: View {
                 .frame(minWidth: HerdrTheme.minHitTarget, minHeight: HerdrTheme.minHitTarget)
                 .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         // The containing strip owns keyboard focus and arrow-key selection.
         .focusable(false)
         .onHover { isHovering = $0 }

@@ -28,7 +28,7 @@ struct HerdrNoteCompactStackView: View {
                     .foregroundStyle(HerdrNoteColor.yellow.ink)
                     .contentShape(.capsule)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .accessibilityIdentifier("hud-note-new")
             if viewportHeight < naturalHeight {
                 VStack(spacing: 4) {
@@ -68,7 +68,7 @@ struct HerdrNoteCompactStackView: View {
                     .shadow(color: HerdrTheme.ink.opacity(0.3), radius: 2, y: 1)
                     .contentShape(.capsule)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .accessibilityLabel("Open note: \(note.displayTitle)")
                 .accessibilityIdentifier("hud-note-compact-\(note.id)")
             }

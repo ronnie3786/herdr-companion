@@ -102,7 +102,9 @@ struct FirstMateWorkspaceView: View {
                         Text(store.error ?? "Start with a ticket or an idea. Keep the plan, independent agents, and evidence in one conversation.")
                     } actions: {
                         if !store.unsupported, allowsDirectCreate {
-                            Button("New feature") { store.isCreating = true }.disabled(!canControl)
+                            Button("New feature") { store.isCreating = true }
+                                .herdrProminentButton()
+                                .disabled(!canControl)
                         }
                         Button("Refresh") { Task { await store.refresh() } }
                     }
@@ -118,6 +120,9 @@ struct FirstMateWorkspaceView: View {
         // Hierarchical `.secondary` / `.tertiary` resolve to palette tokens
         // that clear 4.5:1 in both appearances.
         .foregroundStyle(palette.text, palette.secondaryText, palette.tertiaryText)
+        // Unstyled buttons get Herdr's outline: under the hierarchical style
+        // above, the native bezel turns light gray behind a white label.
+        .buttonStyle(HerdrButtonStyle(kind: .outline, height: HerdrTheme.ControlHeight.regular))
         .tint(palette.accent)
         .task(id: FirstMateWorkspaceObservationID(store: store)) { await observe() }
         .onChange(of: gitTargetIdentity, initial: true) { _, target in
@@ -178,7 +183,7 @@ struct FirstMateWorkspaceView: View {
                     FirstMateStatusLabel(status: store.executionDisplayStatus(for: feature), style: .pill)
                 }
                 .menuStyle(.button)
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .disabled(!canControl || store.isSending || closed)

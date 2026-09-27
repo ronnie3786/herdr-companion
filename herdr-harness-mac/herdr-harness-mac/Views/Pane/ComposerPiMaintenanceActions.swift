@@ -55,7 +55,7 @@ struct ComposerPopoverRow: View {
             .contentShape(.rect)
             .opacity(isEnabled ? 1 : 0.45)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .onHover { isHovering = $0 }
         .accessibilityLabel(accessibilityLabel ?? title)
     }

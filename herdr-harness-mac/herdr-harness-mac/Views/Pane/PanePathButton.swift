@@ -26,7 +26,7 @@ struct PanePathButton: View {
             )
             .herdrHitTarget(minWidth: 0)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .onHover { isHovering = $0 }
         .help("Open \(path) in Finder")
         .accessibilityLabel("Open \(path) in Finder")

@@ -2,9 +2,11 @@ import AppKit
 import CoreImage
 import SwiftUI
 
-/// Legible glass: the blurred desktop shows softly through the sidebar (base
-/// at 80%), the pane (75%) and the HUD (78%). Behind-window blur comes from
-/// `NSVisualEffectView`; no private window APIs, no live SwiftUI blur.
+/// Legible glass: Herdr's dusk backdrop shows softly through the sidebar
+/// and the pane (base at 80%) and the HUD (78%). The backdrop is one
+/// Herdr-owned image drawn once and stretched, not the desktop: the system's
+/// behind-window materials flatten any wallpaper to gray, and a true desktop
+/// blur needs private window APIs. No live blur runs anywhere.
 ///
 /// Glass is on when the person has it on in Settings → General → Appearance,
 /// Reduce Transparency is off, and the window is dark. First Mate's light
@@ -21,32 +23,28 @@ extension EnvironmentValues {
     @Entry var herdrGlassActive = false
     /// True when the Haze band should show behind the chat (needs glass).
     @Entry var herdrHazeActive = false
-    /// Render tests only: offscreen captures never include behind-window
-    /// blur, so they draw the glass levels over their own stand-in desktop.
-    @Entry var herdrGlassDrawsBlur = true
 }
 
-/// A glass surface: behind-window blur with `base` at `level` over it, or an
-/// opaque `base` when glass is off.
+/// A glass surface: `base` at `level` over the dusk backdrop, or an opaque
+/// `base` when glass is off.
 struct HerdrGlassBackground: View {
     let level: Double
     var base: Color = HerdrTheme.windowBackground
-    /// Rounded panels (the HUD) mask the blur itself: a SwiftUI clip does not
-    /// reliably clip a behind-window view.
     var cornerRadius: CGFloat = 0
-    var material: NSVisualEffectView.Material = .underWindowBackground
+    /// Draws its own dusk under the base. A floating panel (the HUD) needs
+    /// this; the main window draws one dusk behind both columns instead, so
+    /// the sidebar and pane share a single continuous backdrop.
+    var drawsDusk = false
+    var duskRegion: HerdrDuskBackdrop.Region = .whole
     @Environment(\.herdrGlassActive) private var isActive
-    @Environment(\.herdrGlassDrawsBlur) private var drawsBlur
 
     var body: some View {
         if isActive {
             ZStack {
-                if drawsBlur {
-                    HerdrBehindWindowBlur(material: material, cornerRadius: cornerRadius)
-                }
+                if drawsDusk { HerdrDuskBackdrop(region: duskRegion) }
                 base.opacity(level)
-                    .clipShape(.rect(cornerRadius: cornerRadius))
             }
+            .clipShape(.rect(cornerRadius: cornerRadius))
         } else {
             base.clipShape(.rect(cornerRadius: cornerRadius))
         }
@@ -71,42 +69,111 @@ private struct HerdrPaneBackgroundModifier: ViewModifier {
     }
 }
 
-/// `NSVisualEffectView` blending with whatever is behind the window. It never
-/// takes clicks or drops, and stays active while the window is in the
-/// background so the glass does not flatten.
-struct HerdrBehindWindowBlur: NSViewRepresentable {
-    var material: NSVisualEffectView.Material = .underWindowBackground
-    var cornerRadius: CGFloat = 0
-
-    func makeNSView(context: Context) -> PassthroughEffectView {
-        let view = PassthroughEffectView()
-        view.blendingMode = .behindWindow
-        view.state = .active
-        view.material = material
-        view.isEmphasized = false
-        view.maskImage = cornerRadius > 0 ? Self.mask(radius: cornerRadius) : nil
-        return view
+/// The dusk backdrop under Legible glass: violet from the top left, rose at
+/// the top right, indigo along the bottom. One cached image, stretched to the
+/// surface like the study's percentage-based gradients.
+///
+/// Its brightest point sets the text floor: `HerdrThemeAccessibilityTests`
+/// checks every text level on the pane's fills over it.
+struct HerdrDuskBackdrop: View {
+    enum Region {
+        /// The whole scene, for the main window.
+        case whole
+        /// The right half (rose above, indigo below), for the HUD, which sits
+        /// at the top right of the screen.
+        case trailingHalf
     }
 
-    func updateNSView(_ view: PassthroughEffectView, context: Context) {
-        if view.material != material { view.material = material }
+    var region: Region = .whole
+
+    var body: some View {
+        Image(nsImage: region == .whole ? HerdrDusk.image : HerdrDusk.trailingHalf)
+            .resizable()
+            .interpolation(.high)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
+enum HerdrDusk {
+    /// The study's desktop art (`DESK` in theme-study-v2), blurred the way
+    /// the study blurs it (24pt across a 1336pt window) and saturated 110%.
+    /// The violet glow is at 80% rather than the study's 95%, so tertiary text
+    /// on a selected card at its center still reads at 4.5:1.
+    @MainActor static let image: NSImage = render(size: CGSize(width: 640, height: 400))
+    @MainActor static let trailingHalf: NSImage = {
+        let size = image.size
+        guard let whole = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let half = whole.cropping(to: CGRect(x: whole.width / 2, y: 0, width: whole.width / 2, height: whole.height))
+        else { return image }
+        return NSImage(cgImage: half, size: CGSize(width: size.width / 2, height: size.height))
+    }()
+
+    /// A CSS `radial-gradient(rx% ry% at x% y%, color, transparent stop%)`.
+    struct Glow {
+        var center: CGPoint
+        var radii: CGSize
+        var stop: CGFloat
+        var red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat
     }
 
-    /// A stretchable rounded-rect mask with the radius in its cap insets.
-    private static func mask(radius: CGFloat) -> NSImage {
-        let edge = radius * 2 + 1
-        let image = NSImage(size: NSSize(width: edge, height: edge), flipped: false) { rect in
-            NSColor.black.setFill()
-            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
-            return true
+    /// Top of the stack last. Positions and radii are fractions of the size,
+    /// measured from the top left.
+    static let glows: [Glow] = [
+        Glow(center: CGPoint(x: 0.20, y: 0.95), radii: CGSize(width: 0.60, height: 0.60), stop: 0.60,
+             red: 96, green: 58, blue: 160, alpha: 0.65),
+        Glow(center: CGPoint(x: 0.70, y: 1.00), radii: CGSize(width: 0.80, height: 0.70), stop: 0.65,
+             red: 52, green: 70, blue: 168, alpha: 0.80),
+        Glow(center: CGPoint(x: 0.88, y: 0.06), radii: CGSize(width: 0.55, height: 0.50), stop: 0.60,
+             red: 214, green: 120, blue: 178, alpha: 0.60),
+        Glow(center: CGPoint(x: 0.12, y: 0.08), radii: CGSize(width: 0.70, height: 0.60), stop: 0.62,
+             red: 132, green: 98, blue: 222, alpha: 0.80),
+    ]
+
+    private static func render(size: CGSize) -> NSImage {
+        let width = Int(size.width), height = Int(size.height)
+        let space = CGColorSpace(name: CGColorSpace.sRGB)!
+        guard let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return NSImage(size: size) }
+
+        // #2a1d4a at the top, #171a36 at 55%, #0f1226 at the bottom.
+        let sky = [
+            CGColor(srgbRed: 42 / 255, green: 29 / 255, blue: 74 / 255, alpha: 1),
+            CGColor(srgbRed: 23 / 255, green: 26 / 255, blue: 54 / 255, alpha: 1),
+            CGColor(srgbRed: 15 / 255, green: 18 / 255, blue: 38 / 255, alpha: 1),
+        ]
+        if let gradient = CGGradient(colorsSpace: space, colors: sky as CFArray, locations: [0, 0.55, 1]) {
+            context.drawLinearGradient(gradient, start: CGPoint(x: 0, y: size.height), end: .zero, options: [])
         }
-        image.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius)
-        image.resizingMode = .stretch
-        return image
-    }
+        for glow in glows {
+            let color = CGColor(srgbRed: glow.red / 255, green: glow.green / 255, blue: glow.blue / 255, alpha: glow.alpha)
+            guard let clear = color.copy(alpha: 0),
+                  let gradient = CGGradient(colorsSpace: space, colors: [color, clear] as CFArray, locations: [0, 1])
+            else { continue }
+            let radiusX = glow.radii.width * size.width
+            let radiusY = glow.radii.height * size.height
+            context.saveGState()
+            // Bitmap y runs up; the study measures from the top.
+            context.translateBy(x: glow.center.x * size.width, y: (1 - glow.center.y) * size.height)
+            context.scaleBy(x: 1, y: radiusY / radiusX)
+            context.drawRadialGradient(gradient, startCenter: .zero, startRadius: 0,
+                                       endCenter: .zero, endRadius: radiusX * glow.stop, options: [])
+            context.restoreGState()
+        }
+        guard let drawn = context.makeImage() else { return NSImage(size: size) }
 
-    final class PassthroughEffectView: NSVisualEffectView {
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        let input = CIImage(cgImage: drawn)
+        let blurred = input.clampedToExtent()
+            .applyingGaussianBlur(sigma: 24 * size.width / 1336)
+            .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 1.1])
+            .cropped(to: input.extent)
+        let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+        guard let output = ciContext.createCGImage(blurred, from: input.extent, format: .RGBA8, colorSpace: space) else {
+            return NSImage(cgImage: drawn, size: size)
+        }
+        return NSImage(cgImage: output, size: size)
     }
 }
 
@@ -114,6 +181,9 @@ struct HerdrBehindWindowBlur: NSViewRepresentable {
 /// a built-in gradient that is blurred with Core Image and cached. It is one
 /// static image behind the transcript, never a per-row or live blur.
 struct HerdrHazeBand: View {
+    /// 6%, not the study's 24%: the band now sits over the dusk, and its
+    /// violet lands on the dusk's own. The contrast tests hold it to 4.5:1.
+    static let opacity = 0.06
     var height: CGFloat = 280
     @Environment(\.herdrHazeActive) private var isActive
 
@@ -124,7 +194,7 @@ struct HerdrHazeBand: View {
                 .interpolation(.medium)
                 .frame(height: height)
                 .frame(maxWidth: .infinity)
-                .opacity(0.24)
+                .opacity(Self.opacity)
                 .mask {
                     LinearGradient(colors: [.white, .white.opacity(0)], startPoint: .top, endPoint: .bottom)
                 }

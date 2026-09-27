@@ -76,7 +76,7 @@ struct PRReviewFilesView: View {
                         Text("Change the impact, viewed, or text filters.")
                     } actions: {
                         Button("Clear filters", action: clearFilters)
-                            .buttonStyle(.borderedProminent)
+                            .herdrProminentButton()
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .accessibilityIdentifier("pr-review-no-filter-matches")
@@ -139,6 +139,7 @@ struct PRReviewFilesView: View {
                 Text("Guided").tag(PRReviewViewMode.guided)
             }
             .pickerStyle(.segmented)
+            .tint(HerdrTheme.controlAccent)
             .accessibilityIdentifier("pr-review-view-mode")
             HStack {
                 Picker("Impact", selection: $store.impactFilter) {
@@ -195,7 +196,7 @@ struct PRReviewFilesView: View {
         } actions: {
             if retry {
                 Button("Retry") { Task { await store.refreshReview() } }
-                    .buttonStyle(.borderedProminent)
+                    .herdrProminentButton()
             }
         }
         .accessibilityIdentifier("pr-review-files-state")
@@ -685,7 +686,7 @@ struct PRReviewDiffView: View {
         } actions: {
             if retry {
                 Button("Retry") { Task { await loadDiff() } }
-                    .buttonStyle(.borderedProminent)
+                    .herdrProminentButton()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

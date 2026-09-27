@@ -15,14 +15,15 @@ struct AttentionAlertRow: View {
                 } label: {
                     AlertCardView(alert: alert, pane: pane)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .overlay(alignment: .topTrailing) {
                     if isHovering { clearButton }
                 }
                 .onHover { isHovering = $0 }
             } else {
+                // Full strength: the closed-pane label and the missing chevron
+                // mark the state, and dimming the card would drop its text under 4.5:1.
                 AlertCardView(alert: alert, pane: nil)
-                    .opacity(0.78)
                     .overlay(alignment: .topTrailing) {
                         clearButton
                     }
@@ -45,7 +46,7 @@ struct AttentionAlertRow: View {
                 .frame(width: HerdrTheme.minHitTarget, height: HerdrTheme.minHitTarget)
                 .background(HerdrTheme.elevated, in: Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .padding(8)
         .help("Clear notification")
         .accessibilityLabel("Clear notification")

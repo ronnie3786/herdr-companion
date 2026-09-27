@@ -91,7 +91,7 @@ struct AgentBoardView: View {
                 Text(shell.agentBoard.filter == .needsYou ? "No First Mates need you right now." : "No First Mates are working right now.")
                     .herdrFont(size: HerdrTheme.TextSize.body).foregroundStyle(HerdrTheme.secondaryText)
                 Button("Show all") { shell.agentBoard.filter = .all }
-                    .buttonStyle(.plain).foregroundStyle(HerdrTheme.accent)
+                    .buttonStyle(.herdrPlain).foregroundStyle(HerdrTheme.accent)
                     .frame(minHeight: HerdrTheme.minHitTarget)
                     .contentShape(.rect)
             } else {
@@ -103,7 +103,7 @@ struct AgentBoardView: View {
                         .frame(minHeight: HerdrTheme.minHitTarget)
                         .contentShape(.rect)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -182,7 +182,7 @@ private struct AgentBoardHeaderBar: View {
                     }
                     .contentShape(.rect)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .onHover { isHovered = $0 }
             .accessibilityIdentifier("agent-board-new-feature")
         }

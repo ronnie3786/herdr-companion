@@ -54,29 +54,176 @@ struct HerdrThemeAccessibilityTests {
         }
     }
 
-    @Test("Legible glass keeps text readable over the brightest desktop color")
-    func legibleGlassContrast() throws {
-        // The study's brightest wallpaper point: violet at 95% over deep indigo.
-        let desktop = mix(RGB(132, 98, 222), 0.95, over: RGB(42, 29, 74))
+    @Test("Every text level stays readable on glass fills over the dusk's brightest points")
+    @MainActor
+    func duskGlassContrast() throws {
+        let dusk = try brightestPixel(HerdrDusk.image)
+        let hudDusk = try brightestPixel(HerdrDusk.trailingHalf)
+        let haze = try brightestPixel(HerdrHaze.image)
+        #expect(luminance(dusk) > luminance(RGB(40, 30, 70)), "The dusk rendered too dark: \(dusk)")
         let base = try rgb(HerdrTheme.base)
-        let sidebar = mix(base, HerdrTheme.Glass.sidebar, over: desktop)
-        let pane = mix(base, HerdrTheme.Glass.pane, over: desktop)
-        let hud = mix(base, HerdrTheme.Glass.hud, over: desktop)
-        let checks: [(String, Color, RGB)] = [
-            // Under glass the sidebar lifts its tertiary text to secondary.
-            ("sidebar secondary", HerdrTheme.secondaryText, sidebar),
-            ("selected sidebar secondary", HerdrTheme.secondaryText, try over(HerdrTheme.selectedFill, sidebar)),
-            ("sidebar accent", HerdrTheme.accent, sidebar),
-            ("pane tertiary", HerdrTheme.tertiaryText, pane),
-            ("pane prose", HerdrTheme.proseText, pane),
-            ("pane accent", HerdrTheme.accent, pane),
-            ("HUD tertiary", HerdrTheme.tertiaryText, hud),
-            ("HUD prose", HerdrTheme.proseText, hud),
+        let rail = try rgb(HerdrTheme.railBackground)
+        let pane = mix(base, HerdrTheme.Glass.pane, over: dusk)
+        let highlight = HerdrTheme.accent.opacity(WorkspacePaneListView.highlightWash)
+        // Cards, NOW blocks, chips, hover and selected rows sit on every glass
+        // surface: up to a selected row (or an Agent view bubble) inside a
+        // card, chips on the First Mate graph's current visit (inset), and
+        // cards inside a highlighted tab's wash.
+        let glassFills: [[Color]] = [
+            [], [HerdrTheme.cardFill], [HerdrTheme.insetFill], [HerdrTheme.chipFill], [HerdrTheme.hoverFill],
+            [HerdrTheme.selectedFill], [HerdrTheme.cardFill, HerdrTheme.insetFill],
+            [HerdrTheme.cardFill, HerdrTheme.chipFill], [HerdrTheme.cardFill, HerdrTheme.hoverFill],
+            [HerdrTheme.cardFill, HerdrTheme.selectedFill], [HerdrTheme.insetFill, HerdrTheme.chipFill],
+            [highlight, HerdrTheme.cardFill],
         ]
-        for (name, color, background) in checks {
+        // Under the chat's haze band: transcript text, code, chips, bubbles,
+        // and soft buttons (chip weight) inside interaction cards.
+        let chatFills: [[Color]] = [
+            [], [HerdrTheme.cardFill], [HerdrTheme.insetFill], [HerdrTheme.chipFill], [HerdrTheme.selectedFill],
+            [HerdrTheme.codeFill], [HerdrTheme.cardFill, HerdrTheme.insetFill],
+            [HerdrTheme.cardFill, HerdrTheme.chipFill], [HerdrTheme.cardFill, HerdrTheme.codeFill],
+        ]
+        let surfaces: [(String, RGB, [[Color]])] = [
+            ("sidebar", mix(rail, HerdrTheme.Glass.sidebar, over: dusk), glassFills),
+            ("pane", pane, glassFills),
+            ("HUD", mix(base, HerdrTheme.Glass.hud, over: hudDusk), glassFills),
+            // The haze's brightest point stacked on the dusk's, which is
+            // worse than anywhere the two actually overlap.
+            ("chat haze", mix(haze, HerdrHazeBand.opacity, over: pane), chatFills),
+        ]
+        let text: [(String, Color)] = [
+            ("tertiary", HerdrTheme.tertiaryText), ("secondary", HerdrTheme.secondaryText),
+            ("prose", HerdrTheme.proseText), ("accent", HerdrTheme.accent), ("signal", HerdrTheme.signal),
+            ("success", HerdrTheme.success), ("working", HerdrTheme.working), ("alert", HerdrTheme.alert),
+            ("warning", HerdrTheme.warning),
+        ]
+        for (surfaceName, surface, fills) in surfaces {
+            for stack in fills {
+                var background = surface
+                for fill in stack { background = try over(fill, background) }
+                for (textName, color) in text {
+                    let contrast = ratio(try rgb(color), background)
+                    #expect(contrast >= 4.5, "\(textName) on \(surfaceName) with \(stack.count) fill(s) was \(contrast):1")
+                }
+            }
+        }
+        let chat = surfaces[3].1, hud = surfaces[2].1
+        // Lavender washes under text: selected text (drawn in the strongest
+        // ink), a skim link's hover and open tint on a column card, and a
+        // build ticket on a hovered row.
+        let washes: [(String, RGB, [Color], Color)] = [
+            ("pressed primary", pane, [HerdrTheme.primaryAction.opacity(0.85)], HerdrTheme.onPrimary),
+            ("pressed primary in HUD", hud, [HerdrTheme.primaryAction.opacity(0.85)], HerdrTheme.onPrimary),
+            ("app icon letter", pane, [HerdrTheme.cardFill, HerdrTheme.hoverFill, HerdrTheme.accent.opacity(0.10)], HerdrTheme.accent),
+            ("selection", pane, [HerdrTheme.accent.opacity(0.3)], HerdrTheme.primaryText),
+            ("selection in code", chat, [HerdrTheme.codeFill, HerdrTheme.accent.opacity(0.3)], HerdrTheme.primaryText),
+            ("selection in HUD", hud, [HerdrTheme.accent.opacity(0.3)], HerdrTheme.primaryText),
+            ("skim link", pane, [HerdrTheme.cardFill, HerdrTheme.accent.opacity(0.13)], HerdrTheme.secondaryText),
+            ("skim link in chat", chat, [HerdrTheme.cardFill, HerdrTheme.accent.opacity(0.13)], HerdrTheme.secondaryText),
+            ("build ticket", pane, [HerdrTheme.cardFill, HerdrTheme.hoverFill, HerdrTheme.accent.opacity(0.10)], HerdrTheme.accent),
+        ]
+        for (name, surface, stack, color) in washes {
+            var background = surface
+            for fill in stack { background = try over(fill, background) }
             let contrast = ratio(try rgb(color), background)
             #expect(contrast >= 4.5, "\(name) was \(contrast):1")
         }
+        // Status badges: each label on its own 12% wash, on a card, alone or
+        // inside a highlighted tab.
+        for status in AgentStatus.allCases {
+            for (surfaceName, surface) in [("pane", pane), ("sidebar", surfaces[0].1)] {
+                for stack in [[HerdrTheme.cardFill], [highlight, HerdrTheme.cardFill]] {
+                    var background = surface
+                    for fill in stack + [status.color.opacity(0.12)] { background = try over(fill, background) }
+                    let contrast = ratio(try rgb(status.labelColor), background)
+                    #expect(contrast >= 4.5, "\(status) badge on \(surfaceName) with \(stack.count) fill(s) was \(contrast):1")
+                }
+            }
+        }
+    }
+
+    @Test("Herdr's plain buttons dim only when disabled")
+    @MainActor
+    func plainButtonDimsWhenDisabled() throws {
+        func red(enabled: Bool) throws -> CGFloat {
+            let view = Button {} label: { Color(red: 1, green: 0, blue: 0).frame(width: 8, height: 8) }
+                .buttonStyle(.herdrPlain)
+                .disabled(!enabled)
+                .background(Color.black)
+            let image = try #require(ImageRenderer(content: view).cgImage)
+            let color = try #require(NSBitmapImageRep(cgImage: image).colorAt(x: image.width / 2, y: image.height / 2))
+            return try #require(color.usingColorSpace(.sRGB)).redComponent
+        }
+        #expect(try red(enabled: true) > 0.95)
+        #expect(try red(enabled: false) < 0.6)
+    }
+
+    @Test("Mac views avoid system styles that fade or wash their labels")
+    func noFadingSystemStyles() throws {
+        let sources = URL(filePath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "herdr-harness-mac")
+        let files = try #require(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }
+            .filter { $0.pathExtension == "swift" }
+        #expect(files.count > 100)
+        for file in files {
+            let lines = try String(contentsOf: file, encoding: .utf8).components(separatedBy: .newlines)
+            for (index, line) in lines.enumerated() {
+                let place = "\(file.lastPathComponent):\(index + 1)"
+                // `.plain` draws the label at 75% while pressed or while its
+                // menu is open, under 4.5:1 over the dusk glass.
+                let system = line.replacingOccurrences(of: "HerdrPlainButtonStyle", with: "")
+                #expect(!system.contains(".buttonStyle(.plain)") && !system.contains("PlainButtonStyle()"),
+                        "\(place) uses the fading .plain style; use .herdrPlain")
+                // Native segmented pickers inherit the light lavender window
+                // tint, which puts white on lavender at about 2.2:1.
+                if line.contains(".pickerStyle(.segmented)") {
+                    let next = lines[(index + 1)..<min(index + 3, lines.count)].joined()
+                    #expect(next.contains(".tint(HerdrTheme.controlAccent)"), "\(place) needs the deep lavender tint")
+                }
+            }
+        }
+    }
+
+    @Test("Dark roles match First Mate's palette")
+    func darkPaletteParity() throws {
+        let palette = FirstMatePalette(scheme: .dark)
+        for (name, role, token) in [("base", HerdrTheme.base, palette.background),
+                                    ("secondary", HerdrTheme.secondaryText, palette.secondaryText),
+                                    ("tertiary", HerdrTheme.tertiaryText, palette.tertiaryText),
+                                    ("prose", HerdrTheme.proseText, palette.proseText),
+                                    ("accent", HerdrTheme.accent, palette.accent)] {
+            let difference = try rgb(role) - rgb(token)
+            let largest = [difference.x, difference.y, difference.z].map(Swift.abs).max() ?? 0
+            #expect(largest <= 1, "dark \(name) differs from First Mate's palette by \(difference)")
+        }
+    }
+
+    /// The brightest sRGB pixel of an opaque image, by relative luminance.
+    private func brightestPixel(_ image: NSImage) throws -> RGB {
+        let cgImage = try #require(image.cgImage(forProposedRect: nil, context: nil, hints: nil))
+        let width = cgImage.width, height = cgImage.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(
+                data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return false }
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        #expect(drawn)
+        var brightest = RGB(0, 0, 0), brightestLuminance = 0.0, isOpaque = true
+        for index in stride(from: 0, to: pixels.count, by: 4) {
+            isOpaque = isOpaque && pixels[index + 3] == 255
+            let pixel = RGB(Double(pixels[index]), Double(pixels[index + 1]), Double(pixels[index + 2]))
+            let value = luminance(pixel)
+            if value > brightestLuminance { (brightest, brightestLuminance) = (pixel, value) }
+        }
+        #expect(isOpaque, "Glass backdrops must be opaque")
+        return brightest
     }
 
     @Test("Primary, badge and native control labels have readable contrast")

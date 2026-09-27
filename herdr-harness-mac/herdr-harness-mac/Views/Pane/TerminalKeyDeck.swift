@@ -75,7 +75,7 @@ struct TerminalKeyDeck: View {
                 )
         }
         .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .disabled(!model.canControl)
         .onHover { isHovering in
             if isHovering {
@@ -108,7 +108,7 @@ struct TerminalKeyDeck: View {
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .foregroundStyle(HerdrTheme.mist)
         .background(HerdrTheme.elevated)
         .overlay {

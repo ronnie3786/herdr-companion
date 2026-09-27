@@ -47,7 +47,7 @@ struct WorkspaceFileSearchSheet: View {
         .background {
             Button("Focus Search Field") { isSearchFocused = true }
                 .keyboardShortcut("f", modifiers: .command)
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .opacity(0)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
@@ -82,7 +82,7 @@ struct WorkspaceFileSearchSheet: View {
                         .frame(width: 44, height: 44)
                         .contentShape(.rect)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .foregroundStyle(HerdrTheme.mist)
                 .accessibilityLabel("Clear search")
             }
@@ -156,7 +156,7 @@ struct WorkspaceFileSearchSheet: View {
                             .frame(minHeight: 56)
                             .contentShape(.rect)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.herdrPlain)
                         .accessibilityLabel("Insert \(file.path)")
 
                         Divider()

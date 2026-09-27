@@ -127,7 +127,7 @@ struct SkimmableReply<FullReply: View>: View {
             .contentShape(.rect)
             .background(SkimViewProbeView(probe: restProbe))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .onHover { inside in
             if inside, let view = restProbe.view {
                 interaction.showPreview(refs: reader.restRefs, hint: reader.restPeek, from: view)
@@ -176,7 +176,7 @@ struct SkimmableReply<FullReply: View>: View {
                 interactions.current?.closeAll()
                 state.toggle(messageID)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
             .foregroundStyle(palette.accent)
             .accessibilityIdentifier("skim-toggle-\(messageID)")
@@ -203,10 +203,12 @@ struct SkimmableReply<FullReply: View>: View {
                     }
                 }
                 .background {
-                    // The tint reaches past the text without changing its layout.
+                    // An outline that reaches past the text without changing its
+                    // layout; a fill under code and tables drops them below 4.5:1
+                    // over the dusk glass.
                     if highlighted.contains(segment.id) {
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(palette.accent.opacity(0.16))
+                            .strokeBorder(palette.accent.opacity(0.55), lineWidth: 1.5)
                             .padding(.horizontal, -6)
                             .padding(.vertical, -4)
                     }

@@ -63,7 +63,7 @@ struct HerdrHudChatBubbleView: View {
             )
             .contentShape(.rect(cornerRadius: HerdrHudChatBubblePresentation.cornerRadius))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .help(model.showSessionTitles ? "Open HUD chat: \(chat.displayTitle)" : "Open HUD chat")
         .accessibilityIdentifier("hud-chat-bubble-\(chat.id)")
         .contextMenu {

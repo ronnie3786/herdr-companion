@@ -9,18 +9,17 @@ struct ActiveWorkAgentAvatar: View {
         ZStack(alignment: .bottomTrailing) {
             avatarContent
                 .frame(width: size, height: size)
-                .background(avatarColor.opacity(0.22), in: Circle())
+                .background(avatarColor.opacity(0.22 * dim), in: Circle())
                 .clipShape(Circle())
                 .overlay {
-                    Circle().strokeBorder(HerdrTheme.ink, lineWidth: 2)
+                    Circle().strokeBorder(HerdrTheme.ink.opacity(dim), lineWidth: 2)
                 }
 
             Circle()
-                .fill(agent.status.color)
+                .fill(agent.status.color.opacity(dim))
                 .frame(width: max(7, size * 0.27), height: max(7, size * 0.27))
-                .overlay { Circle().strokeBorder(HerdrTheme.ink, lineWidth: 1.5) }
+                .overlay { Circle().strokeBorder(HerdrTheme.ink.opacity(dim), lineWidth: 1.5) }
         }
-        .opacity(isFuture ? 0.58 : 1)
         .help("\(agent.displayName) · \(agent.roleLabel ?? agent.linkRole ?? agent.kind ?? "agent") · \(agent.status.title)")
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(agent.displayName), \(agent.roleLabel ?? agent.kind ?? "agent"), \(agent.status.title)")
@@ -31,7 +30,7 @@ struct ActiveWorkAgentAvatar: View {
         if let url = agent.remoteAvatarURL {
             AsyncImage(url: url) { phase in
                 if let image = phase.image {
-                    image.resizable().scaledToFill()
+                    image.resizable().scaledToFill().opacity(dim)
                 } else {
                     initials
                 }
@@ -47,6 +46,10 @@ struct ActiveWorkAgentAvatar: View {
             .foregroundStyle(HerdrTheme.text)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+
+    /// Future stages fade their avatar, ring and status dot, but never the
+    /// initials, which must keep 4.5:1 over the dusk glass.
+    private var dim: Double { isFuture ? 0.58 : 1 }
 
     private var avatarColor: Color {
         let palette = [HerdrTheme.accent, HerdrTheme.mauve, HerdrTheme.signal, HerdrTheme.working, HerdrTheme.code]

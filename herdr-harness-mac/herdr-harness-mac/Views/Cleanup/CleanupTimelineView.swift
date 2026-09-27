@@ -53,7 +53,7 @@ struct CleanupTimelineView: View {
                     .accessibilityLabel("\(phase.label), \(statusLabel(active: active, complete: complete, failed: failed))")
                 Text(explanation(for: phase))
                     .herdrFont(.caption)
-                    .foregroundStyle(pending ? HerdrTheme.muted : HerdrTheme.mist)
+                    .foregroundStyle(pending ? HerdrTheme.muted : HerdrTheme.proseText)
                 if complete, let detail = entry?.detail {
                     Text("\(detail)\(durationText(for: entry).map { " · \($0)" } ?? "")")
                         .herdrFont(.caption)

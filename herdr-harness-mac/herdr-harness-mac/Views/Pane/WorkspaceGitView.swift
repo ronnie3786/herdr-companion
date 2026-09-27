@@ -64,7 +64,7 @@ struct WorkspaceGitView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .herdrPaneBackground()
+        .background(HerdrTheme.windowBackground)
         .task(id: workspace.id) { await refresh() }
         .herdrHaptic(trigger: hapticPulse)
     }
@@ -388,7 +388,7 @@ private struct GitFileRow: View {
                     .frame(maxHeight: .infinity)
                     .contentShape(.rect)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .help(file.file)
                 .accessibilityLabel("View diff for \(file.file)")
 
@@ -724,7 +724,7 @@ private struct GitStageBox: View {
             .frame(minWidth: HerdrTheme.minHitTarget, minHeight: HerdrTheme.minHitTarget)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .disabled(isPending)
         .help(isStaged ? "Unstage \(file)" : "Stage \(file)")
         .accessibilityLabel("Staged")

@@ -26,7 +26,7 @@ struct HerdrHudAttachmentChipView: View {
                     .foregroundStyle(HerdrTheme.tertiaryText)
                     .herdrHitTarget()
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .accessibilityLabel("Remove \(attachment.filename)")
         }
         .padding(.leading, 5)

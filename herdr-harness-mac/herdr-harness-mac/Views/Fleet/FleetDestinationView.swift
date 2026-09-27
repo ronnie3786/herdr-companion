@@ -12,6 +12,7 @@ struct FleetDestinationView: View {
                 }
             }
             .pickerStyle(.segmented)
+            .tint(HerdrTheme.controlAccent)
             .labelsHidden()
             .frame(maxWidth: 360)
             .padding(.horizontal, 24)

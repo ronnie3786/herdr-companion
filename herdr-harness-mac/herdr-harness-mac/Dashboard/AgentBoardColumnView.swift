@@ -136,7 +136,7 @@ struct AgentBoardColumnView: View {
                     .padding(.horizontal, 8)
                     .contentShape(.rect)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .accessibilityLabel(tab.rawValue)
                 .accessibilityAddTraits(selected ? .isSelected : [])
             }
@@ -168,7 +168,7 @@ struct AgentBoardColumnView: View {
                 state.tab = .chat
                 composerFocused = true
             }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
                 .foregroundStyle(HerdrTheme.accent)
                 .contentShape(.rect.inset(by: -6))
@@ -209,7 +209,7 @@ struct AgentBoardColumnView: View {
                         await state.refresh(capabilities: capabilities, force: true)
                     }
                 }
-                .buttonStyle(.plain).foregroundStyle(HerdrTheme.accent)
+                .buttonStyle(.herdrPlain).foregroundStyle(HerdrTheme.accent)
                 .frame(minHeight: HerdrTheme.minHitTarget)
                 .contentShape(.rect)
             }
@@ -238,7 +238,7 @@ struct AgentBoardColumnView: View {
                     Label(error, systemImage: "exclamationmark.circle")
                         .lineLimit(2)
                         .textSelection(.enabled)
-                    Button("Retry", action: send).buttonStyle(.plain).foregroundStyle(HerdrTheme.accent)
+                    Button("Retry", action: send).buttonStyle(.herdrPlain).foregroundStyle(HerdrTheme.accent)
                         .frame(minHeight: HerdrTheme.minHitTarget)
                         .contentShape(.rect)
                 }

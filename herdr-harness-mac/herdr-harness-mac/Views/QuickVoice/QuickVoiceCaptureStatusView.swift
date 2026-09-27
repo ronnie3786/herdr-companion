@@ -14,7 +14,7 @@ struct QuickVoiceCaptureStatusView: View {
                 }
                 HerdrVoiceWaveform(samples: session.recorder.samples, isRecording: true, showsContainer: false)
                 Text("Say everything you want your agents to do.").foregroundStyle(HerdrTheme.mist)
-                Button("Cancel recording", action: session.cancelRecording).buttonStyle(.plain)
+                Button("Cancel recording", action: session.cancelRecording).buttonStyle(.herdrPlain)
             } else if session.phase == .transcribing || session.phase == .submitting {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)

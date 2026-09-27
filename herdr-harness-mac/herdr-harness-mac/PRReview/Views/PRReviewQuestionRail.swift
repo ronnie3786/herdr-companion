@@ -28,7 +28,7 @@ struct PRReviewQuestionRail: View {
                             .padding(10)
                             .background(HerdrTheme.elevated, in: .rect(cornerRadius: 10))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.herdrPlain)
                         .help("Reopen the saved answer and continue this conversation")
                         .accessibilityIdentifier("pr-review-question-\(question.id)")
                     }

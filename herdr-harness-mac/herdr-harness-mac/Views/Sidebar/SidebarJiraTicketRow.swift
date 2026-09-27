@@ -51,7 +51,7 @@ struct SidebarJiraTicketRow: View {
             }
             .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .disabled(ticket.workInboxURL == nil)
         .onHover { isHovering = $0 }
         .accessibilityIdentifier("sidebar-jira-ticket-\(ticket.key)")

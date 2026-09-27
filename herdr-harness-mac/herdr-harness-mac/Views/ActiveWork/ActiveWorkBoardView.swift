@@ -46,7 +46,9 @@ struct ActiveWorkBoardView: View {
                             setup: setupJira,
                             openURL: openURL
                         )
-                        .opacity(0.82)
+                        // Full strength: the section label marks candidates as
+                        // untracked, and dimming the card would drop its text
+                        // and Set up button under 4.5:1 over the dusk glass.
                     }
                 }
             }
@@ -158,7 +160,7 @@ private struct ActiveWorkBoardCard: View {
             .padding(.leading, 5)
             .contentShape(.rect(cornerRadius: 18))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .background {
             ZStack {
                 isSelected ? HerdrTheme.selection : HerdrTheme.elevated
@@ -508,7 +510,7 @@ private struct ActiveWorkJiraCandidateCard: View {
                             Image(systemName: "arrow.up.right.square")
                                 .herdrHitTarget(minWidth: 32, minHeight: 32)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.herdrPlain)
                         .foregroundStyle(HerdrTheme.mist)
                         .help("Open \(candidate.key) in Jira")
                         .accessibilityLabel("Open \(candidate.key) in Jira")

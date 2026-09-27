@@ -68,7 +68,7 @@ struct AgentProfilesMachineBar: View {
             }
             .contentShape(RoundedRectangle(cornerRadius: 10))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityIdentifier("agent-profiles-machine-\(machine.id)")
     }

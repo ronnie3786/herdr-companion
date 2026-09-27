@@ -24,8 +24,9 @@ struct FirstMatePalette {
     var text: Color { ink }
     /// Labels: ink 70% (dark) / 82% (light) over the base.
     var secondaryText: Color { isDark ? Self.rgb(0xA9, 0xA9, 0xAD) : Self.rgb(0x4F, 0x4F, 0x56) }
-    /// Metadata: ink 64% / 76%.
-    var tertiaryText: Color { isDark ? Self.rgb(0x9D, 0x9D, 0xA0) : Self.rgb(0x5B, 0x5B, 0x62) }
+    /// Metadata: ink 70% / 76%. Dark matches secondary so it reads at 4.5:1
+    /// over the dusk glass, as `HerdrTheme.tertiaryText` does.
+    var tertiaryText: Color { isDark ? Self.rgb(0xA9, 0xA9, 0xAD) : Self.rgb(0x5B, 0x5B, 0x62) }
     /// Rendered prose: ink 78% / 88%.
     var proseText: Color { isDark ? Self.rgb(0xBA, 0xBA, 0xBE) : Self.rgb(0x43, 0x43, 0x4A) }
     /// Glyph-only icons: ink 50% / 62%.

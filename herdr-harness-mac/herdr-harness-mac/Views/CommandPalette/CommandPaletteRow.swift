@@ -59,7 +59,7 @@ struct CommandPaletteRow: View {
                     .padding(.vertical, 10)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .onHover { isHovering in
             if isHovering { highlight() }
         }

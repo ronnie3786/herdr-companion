@@ -111,20 +111,22 @@ struct PiMarkdownText: View {
         strongColor: Color? = nil
     ) -> AttributedString {
         var result = source
-        var codeRanges: [Range<AttributedString.Index>] = []
+        var codeRanges: [(Range<AttributedString.Index>, isLink: Bool)] = []
         var strongRanges: [Range<AttributedString.Index>] = []
         for run in result.runs {
             guard let intent = run.inlinePresentationIntent else { continue }
             if intent.contains(.code) {
-                codeRanges.append(run.range)
+                codeRanges.append((run.range, run.link != nil))
             } else if intent.contains(.stronglyEmphasized) {
                 strongRanges.append(run.range)
             }
         }
-        for range in codeRanges {
+        for (range, isLink) in codeRanges {
             result[range].font = font
             result[range].foregroundColor = color
-            if let background { result[range].backgroundColor = background }
+            // A linked code span keeps no chip: the accent link on a chip drops
+            // under 4.5:1 in table headers over the dusk glass.
+            if let background, !isLink { result[range].backgroundColor = background }
         }
         if let strongColor {
             for range in strongRanges {

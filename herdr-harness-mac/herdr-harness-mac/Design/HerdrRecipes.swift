@@ -161,12 +161,22 @@ struct HerdrCountBadge: View {
 
 /// SwiftUI's `.plain` without its press fade. On macOS `.plain` draws the
 /// whole label, fills included, at 75% while the mouse is down and while a
-/// menu is open, which drops text under 4.5:1 over the dusk glass. Hit
-/// testing, focus and accessibility are unchanged; rows show hover and
-/// selection in their own fills.
+/// menu is open, which drops text under 4.5:1 over the dusk glass. Disabled
+/// labels still dim, to 42% like the other Herdr styles (disabled controls
+/// are exempt from 4.5:1). Hit testing, focus and accessibility are
+/// unchanged; rows show hover and selection in their own fills.
 struct HerdrPlainButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+        HerdrPlainButtonBody(label: configuration.label)
+    }
+}
+
+private struct HerdrPlainButtonBody<Label: View>: View {
+    let label: Label
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        label.opacity(isEnabled ? 1 : 0.42)
     }
 }
 

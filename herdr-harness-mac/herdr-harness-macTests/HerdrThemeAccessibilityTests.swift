@@ -142,6 +142,22 @@ struct HerdrThemeAccessibilityTests {
         }
     }
 
+    @Test("Herdr's plain buttons dim only when disabled")
+    @MainActor
+    func plainButtonDimsWhenDisabled() throws {
+        func red(enabled: Bool) throws -> CGFloat {
+            let view = Button {} label: { Color(red: 1, green: 0, blue: 0).frame(width: 8, height: 8) }
+                .buttonStyle(.herdrPlain)
+                .disabled(!enabled)
+                .background(Color.black)
+            let image = try #require(ImageRenderer(content: view).cgImage)
+            let color = try #require(NSBitmapImageRep(cgImage: image).colorAt(x: image.width / 2, y: image.height / 2))
+            return try #require(color.usingColorSpace(.sRGB)).redComponent
+        }
+        #expect(try red(enabled: true) > 0.95)
+        #expect(try red(enabled: false) < 0.6)
+    }
+
     @Test("Mac views avoid system styles that fade or wash their labels")
     func noFadingSystemStyles() throws {
         let sources = URL(filePath: #filePath)

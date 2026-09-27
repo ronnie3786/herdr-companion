@@ -116,7 +116,7 @@ struct PaneSessionTitle: View {
                         .truncationMode(.tail)
                         .herdrHitTarget(minWidth: 0)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .disabled(!model.canControl(machineID: pane.machineID))
                 .help("Edit chat title")
                 .accessibilityIdentifier("pane-session-title")

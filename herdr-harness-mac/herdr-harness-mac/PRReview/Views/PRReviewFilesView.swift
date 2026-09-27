@@ -139,6 +139,7 @@ struct PRReviewFilesView: View {
                 Text("Guided").tag(PRReviewViewMode.guided)
             }
             .pickerStyle(.segmented)
+            .tint(HerdrTheme.controlAccent)
             .accessibilityIdentifier("pr-review-view-mode")
             HStack {
                 Picker("Impact", selection: $store.impactFilter) {

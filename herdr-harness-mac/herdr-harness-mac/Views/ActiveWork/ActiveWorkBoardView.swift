@@ -158,7 +158,7 @@ private struct ActiveWorkBoardCard: View {
             .padding(.leading, 5)
             .contentShape(.rect(cornerRadius: 18))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .background {
             ZStack {
                 isSelected ? HerdrTheme.selection : HerdrTheme.elevated
@@ -508,7 +508,7 @@ private struct ActiveWorkJiraCandidateCard: View {
                             Image(systemName: "arrow.up.right.square")
                                 .herdrHitTarget(minWidth: 32, minHeight: 32)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.herdrPlain)
                         .foregroundStyle(HerdrTheme.mist)
                         .help("Open \(candidate.key) in Jira")
                         .accessibilityLabel("Open \(candidate.key) in Jira")

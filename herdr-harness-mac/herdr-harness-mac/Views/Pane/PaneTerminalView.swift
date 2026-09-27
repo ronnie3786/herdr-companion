@@ -77,7 +77,7 @@ private struct TerminalToolbar: View {
                 isFollowing.toggle()
             }
             .labelStyle(.iconOnly)
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .foregroundStyle(isFollowing ? HerdrTheme.success : HerdrTheme.working)
             .frame(width: 28, height: 30)
             .contentShape(.rect)
@@ -85,7 +85,7 @@ private struct TerminalToolbar: View {
 
             Button("Refresh output", systemImage: "arrow.clockwise", action: refresh)
                 .labelStyle(.iconOnly)
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .foregroundStyle(HerdrTheme.mist)
                 .frame(width: 28, height: 30)
                 .contentShape(.rect)

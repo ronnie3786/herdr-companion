@@ -116,7 +116,7 @@ struct HerdrHudWorkingFolderEditorView: View {
                                     remove(folder)
                                 })
                                 .labelStyle(.iconOnly)
-                                .buttonStyle(.plain)
+                                .buttonStyle(.herdrPlain)
                                 .foregroundStyle(HerdrTheme.tertiaryText)
                                 .help("Remove this saved folder")
                                 .accessibilityLabel("Remove \(folder.displayPath(for: machine))")

@@ -258,7 +258,7 @@ struct ActiveWorkContainerView: View {
                 .herdrFont(.title3, weight: .bold)
                 .frame(width: 46, height: 46)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .foregroundStyle(HerdrTheme.ink)
         .background(HerdrTheme.accent, in: .rect(cornerRadius: HerdrTheme.compactRadius))
         .shadow(color: .black.opacity(0.32), radius: 14, y: 8)

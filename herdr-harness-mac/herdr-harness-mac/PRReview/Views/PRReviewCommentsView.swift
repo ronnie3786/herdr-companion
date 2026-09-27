@@ -172,7 +172,7 @@ struct PRReviewCommentsView: View {
                         expandedPreviewIDs.insert(comment.id)
                     }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .herdrFont(.caption)
                 .foregroundStyle(HerdrTheme.accent)
                 .accessibilityIdentifier("pr-review-comment-expand-\(comment.id.uuidString)")

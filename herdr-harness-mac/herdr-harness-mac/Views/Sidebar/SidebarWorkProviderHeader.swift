@@ -42,7 +42,7 @@ struct SidebarWorkProviderHeader: View {
             .frame(minHeight: SidebarMetrics.projectRowHeight)
             .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .accessibilityIdentifier("sidebar-my-work-\(provider.rawValue)")
         .accessibilityLabel("\(accessibilityTitle), \(count)")
         .accessibilityValue(isExpanded ? "expanded" : "collapsed")

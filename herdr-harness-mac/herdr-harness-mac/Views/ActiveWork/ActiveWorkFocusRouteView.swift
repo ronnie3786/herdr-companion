@@ -125,7 +125,7 @@ struct ActiveWorkFocusRouteView: View {
                     .strokeBorder(isSelected ? HerdrTheme.accent.opacity(0.52) : .clear, lineWidth: 1)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .accessibilityLabel("\(item.title), \(status.title)")
         .accessibilityHint("Shows this work item's route")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -1153,7 +1153,7 @@ private struct ActiveWorkRouteStageView: View {
                         .herdrFont(.caption, weight: .bold)
                         .herdrHitTarget(minWidth: 0)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .foregroundStyle(HerdrTheme.accent)
                 .accessibilityLabel("Open Pi session \(session.title)")
                 .accessibilityIdentifier("active-work-open-pane-\(session.id)")
@@ -1190,7 +1190,7 @@ private struct ActiveWorkRouteStageView: View {
                         .herdrFont(.caption, weight: .bold)
                         .herdrHitTarget(minWidth: 0)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .foregroundStyle(HerdrTheme.mauve)
                 .accessibilityLabel("Open Buzz thread \(thread.title)")
                 .accessibilityIdentifier("active-work-open-buzz-\(thread.id)")
@@ -1233,7 +1233,7 @@ private struct ActiveWorkDiscussionSection: View {
                             Image(systemName: "arrow.up.right.square")
                                 .herdrHitTarget()
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.herdrPlain)
                         .foregroundStyle(HerdrTheme.mauve)
                         .help("Open this Buzz discussion")
                         .accessibilityLabel("Open Buzz thread \(thread.title)")

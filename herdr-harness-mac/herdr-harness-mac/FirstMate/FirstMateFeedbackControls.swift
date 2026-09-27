@@ -148,7 +148,7 @@ struct FirstMateResponseFeedbackFooter: View {
 
                 if presentation.isSelectedDown {
                     Button("Edit", action: onEditFeedback)
-                        .buttonStyle(.plain)
+                        .buttonStyle(.herdrPlain)
                         .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                         .foregroundStyle(palette.accent)
                         .frame(minHeight: HerdrTheme.minHitTarget)
@@ -162,7 +162,7 @@ struct FirstMateResponseFeedbackFooter: View {
 
                 if presentation.hasSavedRating {
                     Button("Remove rating", action: onRemoveRating)
-                        .buttonStyle(.plain)
+                        .buttonStyle(.herdrPlain)
                         .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                         .foregroundStyle(palette.secondaryText)
                         .frame(minHeight: HerdrTheme.minHitTarget)

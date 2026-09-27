@@ -19,7 +19,7 @@ struct AgentBoardOverviewView: View {
                         .textSelection(.enabled)
                     if content.goal.count > 220 {
                         Button(goalExpanded ? "Show less" : "Show more") { goalExpanded.toggle() }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.herdrPlain)
                             .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                             .foregroundStyle(HerdrTheme.accent)
                             .frame(minHeight: HerdrTheme.minHitTarget)
@@ -32,7 +32,7 @@ struct AgentBoardOverviewView: View {
                         Spacer()
                         if content.agents.count > 3 {
                             Button("View all \(content.agents.count)", action: showAgents)
-                                .buttonStyle(.plain)
+                                .buttonStyle(.herdrPlain)
                                 .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                                 .foregroundStyle(HerdrTheme.accent)
                                 .frame(minHeight: HerdrTheme.minHitTarget)

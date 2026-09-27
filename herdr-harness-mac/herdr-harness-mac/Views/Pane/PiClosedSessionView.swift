@@ -17,7 +17,7 @@ struct PiClosedSessionView: View {
                         .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
                         .foregroundStyle(HerdrTheme.primaryText)
                         .herdrHitTarget(minWidth: 0)
-                }.buttonStyle(.plain)
+                }.buttonStyle(.herdrPlain)
                 Spacer()
                 Text(session.closedAt, format: .dateTime.month(.abbreviated).day().hour().minute())
                     .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText)
@@ -32,7 +32,7 @@ struct PiClosedSessionView: View {
                     Text("Pi had omitted older context from this transcript.").herdrFont(size: HerdrTheme.TextSize.small).foregroundStyle(HerdrTheme.tertiaryText)
                 }
                 if session.entries.count > visibleCount {
-                    Button("Show earlier messages") { visibleCount += 80 }.buttonStyle(.plain)
+                    Button("Show earlier messages") { visibleCount += 80 }.buttonStyle(.herdrPlain)
                 }
                 ForEach(session.entries.suffix(visibleCount)) { entry in
                     PiClosedSessionEntryView(entry: entry, sessionID: session.id)

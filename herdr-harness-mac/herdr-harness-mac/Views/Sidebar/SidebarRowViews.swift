@@ -166,7 +166,7 @@ struct SidebarProjectRow: View {
             .contentShape(Rectangle())
             .herdrRowBackground(selected: isSelected, hovered: isHovering)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .sidebarFolderStrip(isExpanded ? .top : .single)
         .onHover { isHovering = $0 }
         .help(tooltip(workingCount: workingCount))
@@ -267,7 +267,7 @@ struct SidebarMachineRow: View {
         .padding(.leading, SidebarMetrics.workspaceRowLeadingPadding)
         .padding(.trailing, 4)
         .herdrRowBackground(selected: false, hovered: isHovering)
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .onHover { isHovering = $0 }
     }
 }
@@ -325,7 +325,7 @@ struct SidebarSectionRow: View {
             .background(tabColor?.rowBackground(hovering: isHovering) ?? (isHovering ? HerdrTheme.hoverFill : .clear), in: .rect(cornerRadius: HerdrTheme.Radius.control))
             .padding(.horizontal, SidebarMetrics.folderCardInset)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .sidebarFolderStrip(.middle)
         .onHover { isHovering = $0 }
         .accessibilityIdentifier("sidebar-tab-\(tab.id)")
@@ -419,7 +419,7 @@ struct SidebarChatRow: View {
                 }
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .onHover { isHovering = $0 }
         .help(dragHelp)
         .accessibilityIdentifier("sidebar-pane-\(pane.id)")
@@ -562,7 +562,7 @@ struct SidebarChatRow: View {
             .labelStyle(.iconOnly)
             .herdrFont(size: 10, weight: .semibold)
             .foregroundStyle(HerdrTheme.iconTint)
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .frame(width: 20, height: SidebarMetrics.chatRowHeight)
             .contentShape(Rectangle())
             .padding(.leading, SidebarMetrics.chatRowLeadingPadding - 4 + hierarchyIndent)
@@ -598,7 +598,7 @@ struct SidebarChatRow: View {
                     .padding(.vertical, -6)
                     .padding(.horizontal, -6)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .opacity(isStarred || isHovering ? 1 : 0)
             .allowsHitTesting(isStarred || isHovering)
             .help(isStarred ? "Unstar this chat" : "Star this chat")

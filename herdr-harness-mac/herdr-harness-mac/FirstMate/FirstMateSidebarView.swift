@@ -123,7 +123,7 @@ struct FirstMateSidebarView: View {
             .accessibilityLabel("\(feature.title), \(feature.workItemID ?? "Idea"), status \(store.executionDisplayStatus(for: feature).replacingOccurrences(of: "_", with: " ")), \(FirstMateUsageFormatting.taskAccessibilityDescription(feature.usage))")
             .accessibilityAddTraits(store.selectedFeatureID == feature.id ? .isSelected : [])
             .help("\(feature.title)\n\(FirstMateUsageFormatting.taskAccessibilityDescription(feature.usage))")
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .accessibilityIdentifier("first-mate-feature-\(feature.id)")
             if feature.isArchived {
                 Button("Unarchive", systemImage: "arrow.uturn.backward") {

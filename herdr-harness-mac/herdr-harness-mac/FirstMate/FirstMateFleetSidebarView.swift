@@ -74,7 +74,7 @@ struct FirstMateFleetSidebarView: View {
                             }
                             .help(feature.title)
                             .accessibilityAddTraits(isSelected ? .isSelected : [])
-                            .buttonStyle(.plain)
+                            .buttonStyle(.herdrPlain)
                             .accessibilityIdentifier("first-mate-feature-\(host.machineID)-\(feature.id)")
                         }
                     }

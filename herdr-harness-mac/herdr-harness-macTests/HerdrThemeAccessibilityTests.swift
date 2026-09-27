@@ -142,6 +142,35 @@ struct HerdrThemeAccessibilityTests {
         }
     }
 
+    @Test("Mac views avoid system styles that fade or wash their labels")
+    func noFadingSystemStyles() throws {
+        let sources = URL(filePath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "herdr-harness-mac")
+        let files = try #require(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }
+            .filter { $0.pathExtension == "swift" }
+        #expect(files.count > 100)
+        for file in files {
+            let lines = try String(contentsOf: file, encoding: .utf8).components(separatedBy: .newlines)
+            for (index, line) in lines.enumerated() {
+                let place = "\(file.lastPathComponent):\(index + 1)"
+                // `.plain` draws the label at 75% while pressed or while its
+                // menu is open, under 4.5:1 over the dusk glass.
+                let system = line.replacingOccurrences(of: "HerdrPlainButtonStyle", with: "")
+                #expect(!system.contains(".buttonStyle(.plain)") && !system.contains("PlainButtonStyle()"),
+                        "\(place) uses the fading .plain style; use .herdrPlain")
+                // Native segmented pickers inherit the light lavender window
+                // tint, which puts white on lavender at about 2.2:1.
+                if line.contains(".pickerStyle(.segmented)") {
+                    let next = lines[(index + 1)..<min(index + 3, lines.count)].joined()
+                    #expect(next.contains(".tint(HerdrTheme.controlAccent)"), "\(place) needs the deep lavender tint")
+                }
+            }
+        }
+    }
+
     @Test("Dark roles match First Mate's palette")
     func darkPaletteParity() throws {
         let palette = FirstMatePalette(scheme: .dark)

@@ -202,7 +202,7 @@ struct DashboardReviewRow: View {
             .herdrHairline(.bottom, color: HerdrTheme.rowDivider)
             .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .onHover { isHovered = $0 }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("dashboard-review-\(review.id)")

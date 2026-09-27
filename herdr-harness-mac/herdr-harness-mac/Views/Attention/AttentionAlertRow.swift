@@ -15,7 +15,7 @@ struct AttentionAlertRow: View {
                 } label: {
                     AlertCardView(alert: alert, pane: pane)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .overlay(alignment: .topTrailing) {
                     if isHovering { clearButton }
                 }
@@ -46,7 +46,7 @@ struct AttentionAlertRow: View {
                 .frame(width: HerdrTheme.minHitTarget, height: HerdrTheme.minHitTarget)
                 .background(HerdrTheme.elevated, in: Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .padding(8)
         .help("Clear notification")
         .accessibilityLabel("Clear notification")

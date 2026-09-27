@@ -231,7 +231,7 @@ struct PiChatTimelineView: View {
                             .herdrCard(radius: HerdrTheme.Radius.control, fill: HerdrTheme.selectedFill, outline: HerdrTheme.strongOutline)
                             .herdrHitTarget(minWidth: 0)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.herdrPlain)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.bottom, 12)
                     .transition(PiChatMotion.jumpToLatestTransition(reduceMotion: reduceMotion))

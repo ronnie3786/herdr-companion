@@ -210,7 +210,7 @@ struct DashboardSectionHeading: View {
             .frame(minHeight: HerdrTheme.minHitTarget)
             .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .onHover { isHovered = $0 }
         .help("Open \(title)")
         .accessibilityIdentifier(identifier)

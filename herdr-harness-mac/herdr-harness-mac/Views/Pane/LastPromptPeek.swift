@@ -21,7 +21,7 @@ struct LastPromptPeekButton: View {
                 .strokeBorder(HerdrTheme.surface, lineWidth: 1)
         }
         .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .disabled(message == nil)
         .help("See what you last asked")
         .accessibilityIdentifier("pane-last-prompt")
@@ -53,7 +53,7 @@ struct LastPromptPeekButton: View {
                 }
                 .herdrFont(.caption, monospaced: true, weight: .medium)
                 .foregroundStyle(copied ? HerdrTheme.success : HerdrTheme.accent)
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .accessibilityIdentifier("pane-last-prompt-copy")
                 .accessibilityLabel(copied ? "Prompt copied" : "Copy prompt")
             }

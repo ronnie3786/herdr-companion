@@ -27,7 +27,7 @@ struct FirstMateSessionRow: View {
                 FirstMateStatusLabel(status: session.status)
             }.padding(.vertical, 8).contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .accessibilityIdentifier("first-mate-saved-session-\(session.nativeSessionID)")
     }
 }

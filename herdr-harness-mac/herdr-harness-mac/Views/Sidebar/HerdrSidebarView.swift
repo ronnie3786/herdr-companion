@@ -536,7 +536,7 @@ struct HerdrSidebarView: View {
                     quickPiActionLabel(machineID: nil)
                 }
                 .menuIndicator(.hidden)
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .accessibilityIdentifier("sidebar-new-pi-session")
 
                 Menu {
@@ -548,7 +548,7 @@ struct HerdrSidebarView: View {
                     SidebarNavRowLabel(title: "New workspace", systemImage: "folder.badge.plus")
                 }
                 .menuIndicator(.hidden)
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .help("New workspace")
                 .accessibilityIdentifier("sidebar-new-workspace")
             } else {
@@ -557,7 +557,7 @@ struct HerdrSidebarView: View {
                 } label: {
                     quickPiActionLabel(machineID: scopedMachineID)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .disabled(
                     scopedMachineID == nil
                         || model.isCreatingQuickPiSession(machineID: scopedMachineID)
@@ -570,7 +570,7 @@ struct HerdrSidebarView: View {
                 } label: {
                     SidebarNavRowLabel(title: "New workspace", systemImage: "folder.badge.plus")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .disabled(!(scopedMachineID.map { model.canControl(machineID: $0) } ?? false))
                 .help("New workspace")
                 .accessibilityIdentifier("sidebar-new-workspace")
@@ -654,7 +654,7 @@ struct HerdrSidebarView: View {
                             .frame(minHeight: HerdrTheme.minHitTarget)
                             .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.herdrPlain)
                     .disabled(!model.canControl(machineID: group.machine.id))
                     .accessibilityIdentifier("sidebar-review-stale-\(group.machine.id)")
                 }
@@ -692,7 +692,7 @@ struct HerdrSidebarView: View {
                     .foregroundStyle(HerdrTheme.muted)
                     .multilineTextAlignment(.center)
                 Button("Show all colors") { selectedColor = nil }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.herdrPlain)
                     .foregroundStyle(HerdrTheme.accent)
             }
             .herdrFont(.caption)
@@ -858,7 +858,7 @@ struct HerdrSidebarView: View {
                     Button("Show all colors", systemImage: "line.3.horizontal.decrease.circle") {
                         selectedColor = nil
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.herdrPlain)
                     .herdrFont(.caption)
                     .foregroundStyle(HerdrTheme.mist)
                     .frame(minHeight: HerdrTheme.minHitTarget)
@@ -1428,7 +1428,7 @@ struct SidebarNavRow: View {
             SidebarNavRowLabel(title: title, systemImage: systemImage, tint: tint)
                 .herdrRowBackground(selected: false, hovered: isHovering)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .onHover { isHovering = $0 }
         .accessibilityLabel(title)
     }

@@ -144,6 +144,7 @@ struct IssueReportView: View {
                 }
             }
             .pickerStyle(.segmented)
+            .tint(HerdrTheme.controlAccent)
             .labelsHidden()
             .accessibilityIdentifier("issue-report-kind")
 
@@ -345,7 +346,7 @@ struct IssueReportView: View {
             .contentShape(Circle())
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: smartInput.isRecording)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .disabled(!smartInput.canToggleRecording)
         .accessibilityLabel(
             IssueReportSmartInputPresentation.micAccessibilityLabel(voiceState: smartInput.voiceState)

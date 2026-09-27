@@ -24,7 +24,7 @@ struct PiCopyButton: View {
                 .foregroundStyle(copied ? HerdrTheme.success : HerdrTheme.iconTint.opacity(restingOpacity))
                 .herdrHitTarget(minWidth: 0)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .help(label)
         .accessibilityLabel(copied ? "Copied" : label)
         .accessibilityIdentifier(accessibilityIdentifier ?? "")

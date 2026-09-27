@@ -13,10 +13,21 @@ the purple from the design previews never appeared.
 - The backdrop is one image drawn once and stretched. Nothing blurs live, and
   the window no longer asks macOS to blur the desktop behind it.
 - Every text color stays at 4.5:1 contrast or better over the dusk's brightest
-  point, including on cards, chips and selected rows. To get there, the pane's
-  glass matches the sidebar at 80%, the Haze band behind the chat is softer,
-  and tertiary text (timestamps, counts, metadata) is as bright as secondary
-  text in dark mode.
+  point, including on cards, chips, badges, selected text and pressed buttons.
+  To get there:
+  - The pane's glass matches the sidebar at 80%.
+  - The violet glow and the Haze band behind the chat are softer.
+  - Tertiary text (timestamps, counts, metadata) is as bright as secondary
+    text in dark mode.
+  - Presses show in a button's fill instead of fading its label.
+  - Selected chat text turns bright.
+  - A few highlights became outlines: dropping a file on the composer, and a
+    skim's "Show in reply".
+- Disabled buttons now dim clearly, since they can no longer rely on the
+  dimmer tertiary color.
+- Native prominent buttons, such as "New Pi chat" in a reserved shell and
+  the PR Review file actions, use the deeper lavender, so their white labels
+  are readable.
 - The Git workbench draws on solid base again, so diff colors keep their
   contrast.
 - **Settings → General → Appearance → Glass** turns it off, and **Reduce

@@ -60,7 +60,7 @@ private struct ResponseAudioButton: View {
             .frame(minWidth: HerdrTheme.minHitTarget, minHeight: HerdrTheme.minHitTarget)
             .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .disabled(activeAction != nil && activeAction != action)
         .opacity(activeAction != nil && activeAction != action ? 0.38 : 1)
         .onHover { isHovering = $0 }

@@ -60,7 +60,7 @@ struct AttentionView: View {
                                     since: statusSince(for: pane)
                                 )
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.herdrPlain)
                         }
                     }
                 }
@@ -110,7 +110,7 @@ struct AttentionView: View {
                 .strokeBorder(HerdrTheme.surface, lineWidth: 1)
         }
         .clipShape(.rect(cornerRadius: HerdrTheme.compactRadius))
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .disabled(model.isRefreshing)
         .help("Refresh")
         .accessibilityIdentifier("attention-refresh")

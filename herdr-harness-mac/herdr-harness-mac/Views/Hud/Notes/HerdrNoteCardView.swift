@@ -147,7 +147,7 @@ struct HerdrNoteCardView: View {
                     .herdrHitTarget()
                     .background(note.color.ink.opacity(0.08), in: .circle)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .herdrDelayedTooltip("Close note")
             .accessibilityLabel("Close note")
             .accessibilityIdentifier("hud-note-close")
@@ -267,7 +267,7 @@ struct HerdrNoteCardView: View {
                         .herdrFont(size: 14, weight: .bold, relativeTo: .caption)
                         .herdrHitTarget()
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .accessibilityLabel("Stop note activity")
                 .accessibilityIdentifier("hud-note-stop")
             }
@@ -287,7 +287,7 @@ struct HerdrNoteCardView: View {
                         .foregroundStyle(note.color.ink)
                         .herdrHitTarget()
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                     .disabled(notes.isBusy(note.id))
             }
             if note.actions.isEmpty, let summary = note.aiSummary {
@@ -320,7 +320,7 @@ struct HerdrNoteCardView: View {
                         .herdrHitTarget()
                         .background(note.color.ink.opacity(0.08), in: .capsule)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .disabled(!isAlive)
                 .help(isAlive ? "Open session" : "This session is gone")
             }
@@ -343,7 +343,7 @@ struct HerdrNoteCardView: View {
                             }
                             .herdrHitTarget()
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.herdrPlain)
                     .accessibilityLabel("Set note color to \(color.label)")
                 }
             }
@@ -355,7 +355,7 @@ struct HerdrNoteCardView: View {
                         .herdrFont(.caption, weight: .bold)
                         .herdrHitTarget()
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .help("Restore your original text")
             }
             deleteButton(note)
@@ -418,7 +418,7 @@ struct HerdrNoteCardView: View {
             }
             .herdrHitTarget()
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .help(note.isEmpty ? "Delete note" : "Delete note (tap again to confirm)")
         .accessibilityIdentifier(isDeleteArmed ? "hud-note-delete-confirm" : "hud-note-delete")
     }
@@ -507,7 +507,7 @@ private struct HerdrNoteActionRow: View {
                 .herdrHitTarget()
                 .background(note.color.ink.opacity(0.08), in: .rect(cornerRadius: 7))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .disabled(isDisabled)
             .help(action.status == .started && !isStartedLinkAlive ? "This session is gone" : action.title)
             .accessibilityIdentifier("hud-note-action-\(action.id)")

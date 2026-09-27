@@ -32,7 +32,7 @@ struct FirstMateGraphView: View {
                             Spacer()
                             FirstMateStatusLabel(status: visit.status)
                         }.contentShape(.rect)
-                    }.buttonStyle(.plain)
+                    }.buttonStyle(.herdrPlain)
                     Rectangle().fill(HerdrTheme.hairline).frame(height: 1)
                     FirstMateResourceButtons(store: store, snapshot: snapshot, visit: visit)
                 }

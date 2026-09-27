@@ -174,7 +174,7 @@ struct WorkspacePaneListView: View {
                         colorLabel: model.chatTabColors.color(for: pane.scopedTabID).map { model.chatTabColors.label(for: $0) }
                     )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .contextMenu { ChatTabColorMenu(store: model.chatTabColors, tabID: pane.scopedTabID) }
                 .accessibilityIdentifier("pane-\(pane.id)")
             }

@@ -136,7 +136,7 @@ struct ComposerAuxiliaryBar: View {
                 isHovered: hoveredControl == identity
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .onHover { isHovering in
             hoveredControl = isHovering ? identity : (hoveredControl == identity ? nil : hoveredControl)
         }

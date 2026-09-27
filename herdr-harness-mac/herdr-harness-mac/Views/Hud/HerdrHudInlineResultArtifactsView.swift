@@ -24,7 +24,7 @@ struct HerdrHudInlineResultArtifactsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.compactRadius))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .accessibilityLabel("Open result: \(artifact.displayTitle)")
             .onAppear { model.dismissResultArtifact(artifact) }
         }

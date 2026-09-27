@@ -127,7 +127,7 @@ struct SkimmableReply<FullReply: View>: View {
             .contentShape(.rect)
             .background(SkimViewProbeView(probe: restProbe))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .onHover { inside in
             if inside, let view = restProbe.view {
                 interaction.showPreview(refs: reader.restRefs, hint: reader.restPeek, from: view)
@@ -176,7 +176,7 @@ struct SkimmableReply<FullReply: View>: View {
                 interactions.current?.closeAll()
                 state.toggle(messageID)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
             .foregroundStyle(palette.accent)
             .accessibilityIdentifier("skim-toggle-\(messageID)")

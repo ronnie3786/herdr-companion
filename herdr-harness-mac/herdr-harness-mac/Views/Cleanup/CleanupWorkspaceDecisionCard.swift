@@ -59,7 +59,7 @@ struct CleanupWorkspaceDecisionCard: View {
                 Image(systemName: isSelected ? "checkmark.square.fill" : "square")
                     .herdrHitTarget(minWidth: 0)
             }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .herdrFont(.caption, weight: .bold)
                 .foregroundStyle(isSelected ? HerdrTheme.signal : HerdrTheme.mist)
                 .accessibilityLabel(isSelected ? "Keep workspace open" : "Close entire workspace")

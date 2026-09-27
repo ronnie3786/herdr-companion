@@ -60,7 +60,7 @@ struct PiDisclosureCard<Label: View, Content: View>: View {
                 .frame(minHeight: PiChatChrome.controlHeight)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
 
             if isExpanded {
                 content()
@@ -152,7 +152,7 @@ extension View {
     /// indicator next to the chip's own `chevron.up.chevron.down`.
     func piChipMenu() -> some View {
         menuStyle(.button)
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .menuIndicator(.hidden)
     }
 }

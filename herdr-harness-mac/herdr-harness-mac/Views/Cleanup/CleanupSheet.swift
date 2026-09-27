@@ -138,7 +138,7 @@ struct CleanupSheet: View {
             .background(HerdrTheme.elevated)
             .clipShape(.rect(cornerRadius: 9))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .accessibilityIdentifier(identifier)
     }
 

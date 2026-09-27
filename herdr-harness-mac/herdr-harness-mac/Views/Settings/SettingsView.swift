@@ -117,7 +117,7 @@ struct SettingsView: View {
                         .herdrRowBackground(selected: selected, hovered: hoveredPane == pane)
                         .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.herdrPlain)
                     .onHover { hoveredPane = $0 ? pane : (hoveredPane == pane ? nil : hoveredPane) }
                     .accessibilityLabel(pane.title)
                     .accessibilityIdentifier(pane.accessibilityIdentifier)
@@ -230,7 +230,7 @@ struct SettingsView: View {
                     .frame(minHeight: HerdrTheme.minHitTarget)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .accessibilityIdentifier("settings-machine-row-\(machine.id)")
             }
 

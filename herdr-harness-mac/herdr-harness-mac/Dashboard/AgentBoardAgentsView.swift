@@ -41,7 +41,7 @@ struct AgentBoardAgentsView: View {
                         .frame(minHeight: HerdrTheme.minHitTarget)
                         .contentShape(.rect)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.herdrPlain)
                     .accessibilityValue(showsSessions ? "Expanded" : "Collapsed")
                     .padding(.top, 12)
                     if showsSessions {
@@ -114,7 +114,7 @@ struct AgentBoardAgentRow: View {
             .herdrHairline(.bottom, color: HerdrTheme.rowDivider)
             .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .disabled(!agent.canOpen)
         .onHover { isHovered = $0 }
         .help(detail.isEmpty ? agent.title : "\(agent.title)\n\(detail)")
@@ -146,7 +146,7 @@ private struct AgentBoardSessionRow: View {
             .frame(minHeight: 28)
             .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .accessibilityLabel("Open First Mate session \(session.title)")
     }
 }

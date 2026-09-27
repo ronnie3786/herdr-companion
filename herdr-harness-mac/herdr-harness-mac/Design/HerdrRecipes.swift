@@ -159,6 +159,22 @@ struct HerdrCountBadge: View {
     }
 }
 
+/// SwiftUI's `.plain` without its press fade. On macOS `.plain` draws the
+/// whole label, fills included, at 75% while the mouse is down and while a
+/// menu is open, which drops text under 4.5:1 over the dusk glass. Hit
+/// testing, focus and accessibility are unchanged; rows show hover and
+/// selection in their own fills.
+struct HerdrPlainButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+    }
+}
+
+extension ButtonStyle where Self == HerdrPlainButtonStyle {
+    /// `.plain` without the press fade; use it instead of `.plain`.
+    static var herdrPlain: HerdrPlainButtonStyle { HerdrPlainButtonStyle() }
+}
+
 /// MonoCode's tab strips.
 ///
 /// `.segments`: equal-width 24pt tabs in a row, the selected one on a 10%
@@ -200,7 +216,7 @@ struct HerdrTabs<Value: Hashable>: View {
         Button { selection = tab.value } label: {
             label(for: tab, selected: selected)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .modifier(HerdrOptionalHelp(text: tab.help))
         .accessibilityLabel(tab.accessibilityLabel ?? tab.count.map { "\(tab.title), \($0)" } ?? tab.title)
         .accessibilityAddTraits(selected ? .isSelected : [])

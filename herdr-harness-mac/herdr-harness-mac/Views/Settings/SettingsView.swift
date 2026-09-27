@@ -528,7 +528,7 @@ struct SettingsView: View {
             SettingsSectionFooter {
                 Text(reduceTransparency
                      ? "Reduce Transparency is on in System Settings, so Herdr draws opaque surfaces."
-                     : "Glass lets the desktop show softly through the sidebar, panes and HUD. Haze adds a dusk band behind the chat.")
+                     : "Glass shows a soft dusk through the sidebar, panes and HUD. Haze adds a brighter band behind the chat.")
             }
         }
     }

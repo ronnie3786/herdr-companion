@@ -57,7 +57,37 @@ struct HerdrThemeAccessibilityTests {
     @Test("Legible glass keeps text readable over the brightest desktop color")
     func legibleGlassContrast() throws {
         // The study's brightest wallpaper point: violet at 95% over deep indigo.
-        let desktop = mix(RGB(132, 98, 222), 0.95, over: RGB(42, 29, 74))
+        try expectReadableGlass(over: mix(RGB(132, 98, 222), 0.95, over: RGB(42, 29, 74)))
+    }
+
+    @Test("Legible glass keeps text readable over the dusk backdrop's brightest pixel")
+    @MainActor
+    func duskBackdropContrast() throws {
+        let image = try #require(HerdrDusk.image.cgImage(forProposedRect: nil, context: nil, hints: nil))
+        let width = image.width, height = image.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(
+                data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return false }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        #expect(drawn)
+        var brightest = RGB(0, 0, 0), brightestLuminance = 0.0, isOpaque = true
+        for index in stride(from: 0, to: pixels.count, by: 4) {
+            isOpaque = isOpaque && pixels[index + 3] == 255
+            let pixel = RGB(Double(pixels[index]), Double(pixels[index + 1]), Double(pixels[index + 2]))
+            let value = luminance(pixel)
+            if value > brightestLuminance { (brightest, brightestLuminance) = (pixel, value) }
+        }
+        #expect(isOpaque, "The dusk must be opaque")
+        #expect(luminance(brightest) > luminance(RGB(40, 30, 70)), "The dusk rendered too dark: \(brightest)")
+        try expectReadableGlass(over: brightest)
+    }
+
+    private func expectReadableGlass(over desktop: RGB) throws {
         let base = try rgb(HerdrTheme.base)
         let sidebar = mix(base, HerdrTheme.Glass.sidebar, over: desktop)
         let pane = mix(base, HerdrTheme.Glass.pane, over: desktop)

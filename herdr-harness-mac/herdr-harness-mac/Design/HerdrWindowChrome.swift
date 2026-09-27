@@ -16,12 +16,9 @@ struct HerdrWindowChrome: NSViewRepresentable {
     static let trafficLightInset: CGFloat = 80
 
     @Binding var isFullScreen: Bool
-    /// A transparent window lets the sidebar and pane glass blur the desktop.
-    var isGlass = false
 
     func makeNSView(context: Context) -> ChromeView {
         let view = ChromeView()
-        view.isGlass = isGlass
         view.onFullScreenChange = { value in
             if isFullScreen != value { isFullScreen = value }
         }
@@ -32,14 +29,12 @@ struct HerdrWindowChrome: NSViewRepresentable {
         view.onFullScreenChange = { value in
             if isFullScreen != value { isFullScreen = value }
         }
-        view.isGlass = isGlass
         view.applyChrome()
     }
 
     final class ChromeView: NSView {
         static let toolbarIdentifier = NSToolbar.Identifier("herdr.main.chrome")
         var onFullScreenChange: ((Bool) -> Void)?
-        var isGlass = false
         private var observers: [NSObjectProtocol] = []
 
         override func viewDidMoveToWindow() {
@@ -71,10 +66,6 @@ struct HerdrWindowChrome: NSViewRepresentable {
                 window.toolbar = toolbar
             }
             if window.toolbarStyle != .unifiedCompact { window.toolbarStyle = .unifiedCompact }
-            if window.isOpaque == isGlass {
-                window.isOpaque = !isGlass
-                window.backgroundColor = isGlass ? .clear : .windowBackgroundColor
-            }
         }
 
         private func reportFullScreen() {
@@ -117,7 +108,13 @@ struct HerdrMainWindowChromeModifier: ViewModifier {
             .environment(\.herdrWindowIsFullScreen, isFullScreen)
             .environment(\.herdrGlassActive, glass)
             .environment(\.herdrHazeActive, glass && hazeEnabled)
-            .background(glass ? Color.clear : background)
-            .background { HerdrWindowChrome(isFullScreen: $isFullScreen, isGlass: glass) }
+            // One dusk behind both columns; their glass levels sit over it.
+            .background {
+                Group {
+                    if glass { HerdrDuskBackdrop() } else { background }
+                }
+                .ignoresSafeArea()
+            }
+            .background { HerdrWindowChrome(isFullScreen: $isFullScreen) }
     }
 }

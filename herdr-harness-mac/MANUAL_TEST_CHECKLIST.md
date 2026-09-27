@@ -5,7 +5,7 @@ Use your configured Herdr Mac build with sample sessions. Check off each item af
 ## Mono × Herdr look (0.51)
 
 - [ ] **Window frame:** The traffic lights sit centered in a 40pt title bar. The sidebar is 260pt wide; drag its edge between 240 and 480 and relaunch: the width sticks. **View → Toggle Sidebar** (⌃⌘S) and the title-bar sidebar button both hide and show it. Double-click empty title-bar space to zoom.
-- [ ] **Glass:** On a colorful desktop picture, the sidebar, the pane and the HUD show a soft blur of what is behind the window. Move the window over a white document: every label stays readable. Turn **Settings → General → Appearance → Glass** off: all three surfaces become opaque immediately.
+- [ ] **Glass:** On any desktop picture (try the macOS default and a white one), the sidebar and pane show Herdr's dusk: violet at the top left, rose at the top right, indigo along the bottom, one continuous backdrop across both columns. The HUD card shows rose at its top and indigo at its bottom. Every label stays readable. Resizing the window stays smooth. Turn **Settings → General → Appearance → Glass** off: all three surfaces become opaque immediately.
 - [ ] **Haze:** With Glass on, a faint dusk band sits at the top of a chat. **Haze behind the chat** turns it off, and it is disabled while Glass is off. Scrolling a long transcript stays smooth with Haze on.
 - [ ] **Reduce Transparency:** Turn on **System Settings → Accessibility → Display → Reduce transparency**. Herdr's glass and haze disappear, both Appearance toggles are disabled, and their footer explains why.
 - [ ] **Increase Contrast:** Turn on **Increase contrast**. Rules and card outlines get noticeably stronger and timestamps and other tertiary text brighten to the secondary level.

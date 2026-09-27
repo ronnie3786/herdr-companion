@@ -18,11 +18,17 @@ struct ChatSelectableText: NSViewRepresentable {
         ChatTextLinkDelegate(openURL: environment.openURL)
     }
 
+    /// Selected text draws in the palette's strongest ink on the lavender
+    /// highlight, so quotes and links stay at 4.5:1 over the dusk glass.
+    static func selection(_ palette: ChatProsePalette) -> [NSAttributedString.Key: Any] {
+        [.backgroundColor: NSColor(palette.accent).withAlphaComponent(0.3), .foregroundColor: NSColor(palette.strong)]
+    }
+
     func makeNSView(context: Context) -> ChatTextLayoutView {
         let view = ChatTextLayoutView()
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         view.textView.linkTextAttributes = [.foregroundColor: NSColor(palette.accent)]
-        view.textView.selectedTextAttributes = [.backgroundColor: NSColor(palette.accent).withAlphaComponent(0.3)]
+        view.textView.selectedTextAttributes = Self.selection(palette)
         return view
     }
 
@@ -31,7 +37,7 @@ struct ChatSelectableText: NSViewRepresentable {
         context.coordinator.openURL = environment.openURL
         view.delegate = context.coordinator
         view.linkTextAttributes = [.foregroundColor: NSColor(palette.accent)]
-        view.selectedTextAttributes = [.backgroundColor: NSColor(palette.accent).withAlphaComponent(0.3)]
+        view.selectedTextAttributes = Self.selection(palette)
         let baseFont = font.resolve(in: environment.fontResolutionContext).ctFont as NSFont
         let result = NSMutableAttributedString(attributedString: NSAttributedString(text))
         let fullRange = NSRange(location: 0, length: result.length)

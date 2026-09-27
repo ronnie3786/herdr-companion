@@ -406,6 +406,9 @@ private struct HerdrRowButtonBody: View {
             .foregroundStyle(tint)
             .padding(.horizontal, 8)
             .frame(minHeight: HerdrTheme.ControlHeight.small)
+            // Pressed shows a hover-weight fill rather than dimming the label,
+            // which would drop it under 4.5:1 over the dusk glass.
+            .background(configuration.isPressed ? HerdrTheme.hoverFill : .clear, in: .rect(cornerRadius: HerdrTheme.Radius.control))
             .overlay {
                 RoundedRectangle(cornerRadius: HerdrTheme.Radius.control)
                     .strokeBorder(HerdrTheme.outline, lineWidth: 1)
@@ -413,7 +416,7 @@ private struct HerdrRowButtonBody: View {
             .frame(minHeight: HerdrTheme.minHitTarget)
             .contentShape(Rectangle())
             // Disabled dims to 42%, like icon buttons.
-            .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.42)
+            .opacity(isEnabled ? 1 : 0.42)
     }
 }
 

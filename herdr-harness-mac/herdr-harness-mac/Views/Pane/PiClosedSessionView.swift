@@ -60,7 +60,8 @@ private struct PiClosedSessionEntryView: View {
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(entry.role == "You" ? HerdrTheme.selectedFill : .clear, in: .rect(cornerRadius: HerdrTheme.Radius.card))
+            // Card weight, so code blocks and tables inside keep 4.5:1 over the dusk.
+            .background(entry.role == "You" ? HerdrTheme.cardFill : .clear, in: .rect(cornerRadius: HerdrTheme.Radius.card))
         } else {
             // A plain disclosure card: up to 36 of these can mount at once,
             // and `DisclosureGroup` is too expensive in the transcript.

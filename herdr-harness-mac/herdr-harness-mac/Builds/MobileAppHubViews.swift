@@ -37,7 +37,8 @@ private struct MobileAppHubTicket: View {
             .herdrFont(.caption, weight: .semibold, monospacedDigit: true)
             .foregroundStyle(tint)
             .padding(.horizontal, 6).padding(.vertical, 1)
-            .background(tint.opacity(0.16), in: .rect(cornerRadius: 4))
+            // 10%: the ticket stays at 4.5:1 on a hovered row over the dusk glass.
+            .background(tint.opacity(0.10), in: .rect(cornerRadius: 4))
             .fixedSize()
     }
 }

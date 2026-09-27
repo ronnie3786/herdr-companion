@@ -126,22 +126,23 @@ private struct PiChatButtonBody: View {
         // Chip-weight fill, so a soft button inside a card under the chat's
         // haze keeps 4.5:1 over the dusk; hover adds a rule, not more fill.
         case .soft: HerdrTheme.chipFill
-        case .prominent: tint.opacity(isHovering && isEnabled ? 1 : 0.9)
+        case .prominent: tint.opacity(configuration.isPressed ? 0.8 : (isHovering && isEnabled ? 1 : 0.9))
         case .text: .clear
         }
     }
 
     private var stroke: Color {
         switch emphasis {
-        case .soft: isHovering && isEnabled ? HerdrTheme.strongOutline : .clear
+        case .soft: (isHovering || configuration.isPressed) && isEnabled ? HerdrTheme.strongOutline : .clear
         case .prominent, .text: .clear
         }
     }
 
+    /// Presses show in the fill or rule, never by dimming the label, which
+    /// would drop it under 4.5:1 over the dusk glass.
     private var opacity: Double {
         guard isEnabled else { return 0.42 }
-        if configuration.isPressed { return 0.7 }
-        return emphasis == .text && !isHovering ? 0.84 : 1
+        return emphasis == .text && !isHovering && !configuration.isPressed ? 0.84 : 1
     }
 }
 

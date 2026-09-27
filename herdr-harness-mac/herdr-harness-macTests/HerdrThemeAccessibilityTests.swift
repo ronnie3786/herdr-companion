@@ -80,7 +80,8 @@ struct HerdrThemeAccessibilityTests {
         // and soft buttons (chip weight) inside interaction cards.
         let chatFills: [[Color]] = [
             [], [HerdrTheme.cardFill], [HerdrTheme.insetFill], [HerdrTheme.chipFill], [HerdrTheme.selectedFill],
-            [HerdrTheme.cardFill, HerdrTheme.insetFill], [HerdrTheme.cardFill, HerdrTheme.chipFill],
+            [HerdrTheme.codeFill], [HerdrTheme.cardFill, HerdrTheme.insetFill],
+            [HerdrTheme.cardFill, HerdrTheme.chipFill], [HerdrTheme.cardFill, HerdrTheme.codeFill],
         ]
         let surfaces: [(String, RGB, [[Color]])] = [
             ("sidebar", mix(rail, HerdrTheme.Glass.sidebar, over: dusk), glassFills),
@@ -105,6 +106,24 @@ struct HerdrThemeAccessibilityTests {
                     #expect(contrast >= 4.5, "\(textName) on \(surfaceName) with \(stack.count) fill(s) was \(contrast):1")
                 }
             }
+        }
+        let chat = surfaces[3].1, hud = surfaces[2].1
+        // Lavender washes under text: selected text (drawn in the strongest
+        // ink), a skim link's hover and open tint on a column card, and a
+        // build ticket on a hovered row.
+        let washes: [(String, RGB, [Color], Color)] = [
+            ("selection", pane, [HerdrTheme.accent.opacity(0.3)], HerdrTheme.primaryText),
+            ("selection in code", chat, [HerdrTheme.codeFill, HerdrTheme.accent.opacity(0.3)], HerdrTheme.primaryText),
+            ("selection in HUD", hud, [HerdrTheme.accent.opacity(0.3)], HerdrTheme.primaryText),
+            ("skim link", pane, [HerdrTheme.cardFill, HerdrTheme.accent.opacity(0.13)], HerdrTheme.secondaryText),
+            ("skim link in chat", chat, [HerdrTheme.cardFill, HerdrTheme.accent.opacity(0.13)], HerdrTheme.secondaryText),
+            ("build ticket", pane, [HerdrTheme.cardFill, HerdrTheme.hoverFill, HerdrTheme.accent.opacity(0.10)], HerdrTheme.accent),
+        ]
+        for (name, surface, stack, color) in washes {
+            var background = surface
+            for fill in stack { background = try over(fill, background) }
+            let contrast = ratio(try rgb(color), background)
+            #expect(contrast >= 4.5, "\(name) was \(contrast):1")
         }
         // Status badges: each label on its own 12% wash, on a card, alone or
         // inside a highlighted tab.

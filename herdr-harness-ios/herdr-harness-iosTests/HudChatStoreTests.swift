@@ -677,6 +677,34 @@ struct HudChatStoreTests {
         await store.load(machineID: "fast", query: "", transport: transport)
         #expect(store.draft == "Fast machine draft")
     }
+
+    @Test("History refreshes keep each turn's skim, so a ready skim replaces a pending one")
+    func refreshKeepsSkim() async throws {
+        let transport = HudChatFakeTransport()
+        let pending = try SkimFixture.uploadRun(skimJSON: ["status": "pending", "format": "breath_tight"])
+        let ready = try SkimFixture.uploadRun(skimJSON: SkimFixture.json(SkimFixture.uploadSkim()))
+        let root = pending.id
+        transport.histories["\(root)|0"] = HudChatHistory(
+            turns: [pending], rootRunId: root, latestRunId: root, promotedPaneId: nil, nextOffset: nil
+        )
+        let store = HudChatStore()
+        await store.load(machineID: "work", query: "", transport: transport)
+        await store.open(summary(id: root, latest: root), transport: transport)
+        #expect(store.turns.first?.skim?.status == .pending)
+
+        transport.histories["\(root)|0"] = HudChatHistory(
+            turns: [ready], rootRunId: root, latestRunId: root, promotedPaneId: nil, nextOffset: nil
+        )
+        #expect(await store.refreshConversation(transport: transport))
+        #expect(store.turns.first?.skim == SkimFixture.uploadSkim())
+        #expect(FirstMateSkimReader(skim: store.turns.first?.skim, reply: store.turns.first?.response ?? "") != nil)
+
+        // Reopening shows the cached turn, skim included, even when the refresh fails.
+        store.showCatalog()
+        transport.historyHandler = { _, _, _ in throw APIError.invalidResponse }
+        await store.open(summary(id: root, latest: root), transport: transport)
+        #expect(store.turns.first?.skim?.status == .ready)
+    }
 }
 
 private extension HudChatStore {

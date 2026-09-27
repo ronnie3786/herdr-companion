@@ -1,0 +1,342 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "skim-document.v1",
+  "title": "Skim document v1 (normalized; what renderers consume)",
+  "type": "object",
+  "required": [
+    "version",
+    "format",
+    "status",
+    "statusLabel",
+    "headline",
+    "blocks",
+    "drawers",
+    "rest",
+    "anchors",
+    "stats",
+    "warnings"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "format": {
+      "enum": [
+        "notes",
+        "chat",
+        "card",
+        "breath",
+        "breath_next",
+        "breath_reply",
+        "breath_tight"
+      ]
+    },
+    "status": {
+      "enum": [
+        "done",
+        "partial",
+        "blocked",
+        "answer",
+        "plan"
+      ]
+    },
+    "statusLabel": {
+      "type": "string"
+    },
+    "headline": {
+      "$ref": "#/$defs/inline"
+    },
+    "blocks": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "tokens"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "say",
+                  "ask",
+                  "heads_up",
+                  "what",
+                  "why",
+                  "next",
+                  "reply"
+                ]
+              },
+              "tokens": {
+                "$ref": "#/$defs/inline"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "items"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "list"
+              },
+              "items": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "$ref": "#/$defs/inline"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "drawers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "kind",
+          "peek",
+          "refs"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^d[1-9][0-9]*$"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 48
+          },
+          "kind": {
+            "enum": [
+              "code",
+              "table",
+              "log",
+              "steps",
+              "files",
+              "detail"
+            ]
+          },
+          "peek": {
+            "type": "string"
+          },
+          "refs": {
+            "$ref": "#/$defs/refs",
+            "minItems": 1
+          }
+        }
+      }
+    },
+    "rest": {
+      "type": "object",
+      "required": [
+        "refs"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "refs": {
+          "$ref": "#/$defs/refs"
+        }
+      }
+    },
+    "anchors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "refs",
+          "kind",
+          "where"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^a[1-9][0-9]*$"
+          },
+          "label": {
+            "type": "string"
+          },
+          "refs": {
+            "$ref": "#/$defs/refs",
+            "minItems": 1
+          },
+          "kind": {
+            "enum": [
+              "code",
+              "table",
+              "text"
+            ]
+          },
+          "where": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "stats": {
+      "type": "object",
+      "required": [
+        "sourceWords",
+        "skimWords",
+        "budget",
+        "links",
+        "coveredWords",
+        "totalWords",
+        "coverage"
+      ],
+      "properties": {
+        "sourceWords": {
+          "type": "integer"
+        },
+        "skimWords": {
+          "type": "integer"
+        },
+        "budget": {
+          "type": "object",
+          "required": [
+            "max",
+            "target"
+          ],
+          "properties": {
+            "max": {
+              "type": "integer"
+            },
+            "target": {
+              "type": "integer"
+            }
+          }
+        },
+        "links": {
+          "type": "integer"
+        },
+        "coveredWords": {
+          "type": "integer"
+        },
+        "totalWords": {
+          "type": "integer"
+        },
+        "coverage": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "level",
+          "code",
+          "message"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "level": {
+            "enum": [
+              "warn",
+              "info"
+            ]
+          },
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^s[1-9][0-9]*$"
+      },
+      "uniqueItems": true
+    },
+    "inline": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "t",
+              "v"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "t": {
+                "const": "text"
+              },
+              "v": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "t",
+              "v"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "t": {
+                "const": "code"
+              },
+              "v": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "t",
+              "id",
+              "label",
+              "refs"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "t": {
+                "const": "anchor"
+              },
+              "id": {
+                "type": "string",
+                "pattern": "^a[1-9][0-9]*$"
+              },
+              "label": {
+                "$ref": "#/$defs/inline"
+              },
+              "refs": {
+                "$ref": "#/$defs/refs",
+                "minItems": 1
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

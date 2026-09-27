@@ -16,7 +16,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from .first_mate_links import (
     LinkValidationError,
@@ -42,6 +42,16 @@ class FirstMateError(RuntimeError):
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _age_seconds(value: str) -> float:
+    try:
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (AttributeError, ValueError):
+        return 0.0
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - stamp).total_seconds()
 
 
 def _id(prefix: str) -> str:
@@ -140,8 +150,28 @@ _BOARD_VERSION_SQL = f"""SELECT f.*,
                 (SELECT count(*) FROM fm_messages WHERE feature_id=f.id AND visibility='conversation') AS board_conversation,
                 (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_assignments WHERE feature_id=f.id) AS board_assignments,
                 (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_visits WHERE feature_id=f.id) AS board_visits,
-                (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_sessions WHERE feature_id=f.id) AS board_sessions
+                (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_sessions WHERE feature_id=f.id) AS board_sessions,
+                (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_message_skims WHERE feature_id=f.id) AS board_skims
                 FROM fm_features f WHERE f.id=?"""
+# A skim is a second presentation of one finished conversation reply (see
+# skim_service.py). Rows hold ids, offsets, and the normalized document only;
+# excerpts are always sliced from the stored message text.
+SKIM_STATUSES = ("pending", "ready", "failed", "rejected")
+# A pending skim older than this lost its job; clients read it as failed.
+SKIM_STALE_SECONDS = 300
+_SKIM_SCHEMA = """
+CREATE TABLE IF NOT EXISTS fm_message_skims(
+ message_id TEXT PRIMARY KEY REFERENCES fm_messages(id),
+ feature_id TEXT NOT NULL REFERENCES fm_features(id),
+ format TEXT NOT NULL, prompt_version TEXT NOT NULL, segmenter_version INTEGER NOT NULL,
+ skim_version INTEGER NOT NULL, model TEXT NOT NULL, thinking TEXT NOT NULL,
+ status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 1,
+ output TEXT NOT NULL DEFAULT '', document_json TEXT NOT NULL DEFAULT '{}',
+ segments_json TEXT NOT NULL DEFAULT '[]', warnings_json TEXT NOT NULL DEFAULT '[]',
+ reply_sha256 TEXT NOT NULL, error TEXT NOT NULL DEFAULT '', duration_ms INTEGER,
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS fm_message_skims_feature ON fm_message_skims(feature_id,updated_at);
+"""
 # The three requested starting reasons. Stable IDs keep saved selections valid
 # if a later release adjusts a label's wording.
 DEFAULT_FEEDBACK_CATEGORIES = (
@@ -268,7 +298,7 @@ CREATE INDEX IF NOT EXISTS fm_visits_feature ON fm_visits(feature_id,created_at)
 CREATE INDEX IF NOT EXISTS fm_messages_dashboard ON fm_messages(feature_id,role,created_at DESC,id DESC);
 CREATE INDEX IF NOT EXISTS fm_assignments_feature ON fm_assignments(feature_id,updated_at);
 CREATE INDEX IF NOT EXISTS fm_sessions_feature ON fm_sessions(feature_id,updated_at);
-""" + f"CREATE INDEX IF NOT EXISTS fm_events_journal ON fm_events(feature_id,sequence,type) WHERE {JOURNAL_EVENT_SQL};\n"
+""" + f"CREATE INDEX IF NOT EXISTS fm_events_journal ON fm_events(feature_id,sequence,type) WHERE {JOURNAL_EVENT_SQL};\n" + _SKIM_SCHEMA
 
 
 class FirstMateStore:
@@ -281,6 +311,14 @@ class FirstMateStore:
             os.close(descriptor)
             os.chmod(self.path, 0o600)
         self._lock = threading.RLock()
+        # Called with (feature_id, message_id) after a transaction that posted a
+        # finished assistant reply commits. Listeners must not block or raise.
+        self.reply_listeners: list[Callable[[str, str], None]] = []
+        self._committed_replies: list[tuple[str, str]] = []
+        # Given a reply's text, returns the skim key (format, versions, model,
+        # thinking, reply_sha256) when it should be skimmed, else None. The
+        # pending row then commits with the reply, so clients see "Skimming".
+        self.skim_policy: Callable[[str], dict | None] | None = None
         self._db = sqlite3.connect(str(self.path) if self.path else ":memory:", timeout=15, isolation_level=None, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA foreign_keys=ON")
@@ -379,6 +417,8 @@ class FirstMateStore:
                 if "visibility" not in {row[1] for row in self._db.execute("PRAGMA table_info(fm_messages)")}:
                     self._migrate_message_visibility()
                 self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(13,?)", (_now(),))
+        # Version 14 adds only fm_message_skims (in SCHEMA). Message rows are never touched.
+        self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(14,?)", (_now(),))
         self._seed_feedback_categories()
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(7,?)", (_now(),))
 
@@ -499,7 +539,15 @@ class FirstMateStore:
                 self._db.execute("COMMIT")
             except BaseException:
                 self._db.execute("ROLLBACK")
+                self._committed_replies.clear()
                 raise
+            replies, self._committed_replies = self._committed_replies, []
+        for feature_id, message_id in replies:
+            for listener in list(self.reply_listeners):
+                try:
+                    listener(feature_id, message_id)
+                except Exception:
+                    pass
 
     @contextmanager
     def _read(self):
@@ -606,6 +654,16 @@ class FirstMateStore:
         self._db.execute("INSERT INTO fm_messages(id,feature_id,role,text,status,metadata_json,created_at,updated_at,visibility) VALUES(?,?,?,?,?,?,?,?,?)",
                          (message_id, feature_id, role, _text(text, "text"), status, _json(metadata or {}), now, now, visibility))
         message = self._one("fm_messages", message_id)
+        if role == "assistant" and status == "done" and visibility == CONVERSATION:
+            self._committed_replies.append((feature_id, message_id))
+            policy = self.skim_policy
+            if policy is not None:
+                try:
+                    key = policy(message["text"])
+                    if key is not None:
+                        self._insert_pending_skim(message_id, feature_id, key)
+                except (sqlite3.Error, TypeError, ValueError, KeyError):
+                    pass  # A skim is optional; it never costs a reply.
         if role == "assistant" and status == "done":
             # Provenance is written once, with the response, and never inferred later.
             source = dict(source or {})
@@ -1142,6 +1200,8 @@ class FirstMateStore:
                     result[key] = [self._assignment_projection(row) for row in rows]
                 elif key == "links":
                     result[key] = [self._link_projection(row) for row in rows]
+                elif key == "messages":
+                    result[key] = self._with_skims(rows, feature_id=feature_id)
                 else:
                     result[key] = rows
             result["memberships"] = [dict(row) for row in self._db.execute("SELECT m.* FROM fm_assignment_memberships m JOIN fm_visits v ON v.id=m.visit_id WHERE v.feature_id=? ORDER BY m.revision,m.created_at,m.assignment_id", (feature_id,))]
@@ -1202,9 +1262,9 @@ class FirstMateStore:
                 "assignments": [{**dict(row), "visit_ids": visit_ids.get(row["id"], [])} for row in self._db.execute(
                     f"SELECT {BOARD_ASSIGNMENT_COLUMNS} FROM fm_assignments WHERE feature_id=? ORDER BY created_at,id", (feature_id,))],
                 # Only the conversation: background notes live in the journal.
-                "messages": [self._decode(row) for row in reversed(self._db.execute(
+                "messages": self._with_skims([self._decode(row) for row in reversed(self._db.execute(
                     f"SELECT * FROM fm_messages WHERE feature_id=? AND role IN ({roles}) AND visibility=? ORDER BY created_at DESC,id DESC LIMIT ?",
-                    (feature_id, *BOARD_MESSAGE_ROLES, CONVERSATION, messages)).fetchall())],
+                    (feature_id, *BOARD_MESSAGE_ROLES, CONVERSATION, messages)).fetchall())]),
                 "messages_total": self._db.execute(f"SELECT count(*) FROM fm_messages WHERE feature_id=? AND role IN ({roles}) AND visibility=?", (feature_id, *BOARD_MESSAGE_ROLES, CONVERSATION)).fetchone()[0],
                 "journal": [self._decode(row) for row in reversed(self._db.execute(
                     f"SELECT * FROM fm_events INDEXED BY fm_events_journal WHERE feature_id=? AND {JOURNAL_EVENT_SQL} ORDER BY sequence DESC LIMIT ?", (feature_id, journal)).fetchall())],
@@ -2554,6 +2614,146 @@ class FirstMateStore:
                 sql += " AND feature_id=?"
                 args = (feature_id,)
             return [self._decode(row) for row in self._db.execute(sql + " ORDER BY created_at,id", args)]
+
+    # -- skims ------------------------------------------------------------------
+
+    @staticmethod
+    def _skim_projection(row: Mapping[str, Any]) -> dict:
+        """What clients read. Only a ready skim carries its document and segments."""
+        status = row["status"]
+        if status == "pending" and _age_seconds(row["updated_at"]) > SKIM_STALE_SECONDS:
+            status = "failed"  # Never leave a reader on "Skimming" after a lost job.
+        projection = {
+            "status": status, "format": row["format"], "prompt_version": row["prompt_version"],
+            "segmenter_version": row["segmenter_version"], "skim_version": row["skim_version"],
+        }
+        if status == "ready":
+            projection.update(document=json.loads(row["document_json"]),
+                              segments=json.loads(row["segments_json"]),
+                              reply_sha256=row["reply_sha256"])
+        return projection
+
+    def _with_skims(self, messages: list[dict], *, feature_id: str | None = None) -> list[dict]:
+        identities = [message["id"] for message in messages if message.get("role") == "assistant"]
+        if not identities:
+            return messages
+        if feature_id is not None:
+            rows = self._db.execute("SELECT * FROM fm_message_skims WHERE feature_id=?", (feature_id,)).fetchall()
+        else:
+            marks = ",".join("?" for _ in identities)
+            rows = self._db.execute(f"SELECT * FROM fm_message_skims WHERE message_id IN ({marks})", identities).fetchall()
+        skims = {row["message_id"]: self._skim_projection(row) for row in rows}
+        for message in messages:
+            if message["id"] in skims:
+                message["skim"] = skims[message["id"]]
+        return messages
+
+    def _insert_pending_skim(self, message_id: str, feature_id: str, key: Mapping[str, Any]) -> bool:
+        now = _now()
+        cursor = self._db.execute(
+            "INSERT OR IGNORE INTO fm_message_skims(message_id,feature_id,format,prompt_version,segmenter_version,"
+            "skim_version,model,thinking,status,attempts,reply_sha256,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,'pending',0,?,?,?)",
+            (message_id, feature_id, key["format"], key["prompt_version"], int(key["segmenter_version"]),
+             int(key["skim_version"]), key["model"], key["thinking"], key["reply_sha256"], now, now))
+        return cursor.rowcount == 1
+
+    def skim_source(self, message_id: str) -> dict | None:
+        """A finished conversation reply and the human words it answers, or None."""
+        with self._read():
+            row = self._db.execute("SELECT * FROM fm_messages WHERE id=?", (message_id,)).fetchone()
+            if (row is None or row["role"] != "assistant" or row["status"] != "done"
+                    or row["visibility"] != CONVERSATION):
+                return None
+            message = self._decode(row)
+            question = None
+            in_reply_to = message["metadata"].get("in_reply_to")
+            if isinstance(in_reply_to, str):
+                asked = self._db.execute("SELECT role,text FROM fm_messages WHERE id=? AND feature_id=?",
+                                         (in_reply_to, message["feature_id"])).fetchone()
+                # Service templates are coordinator inputs, not the human's question.
+                if asked is not None and asked["role"] in {"user", "human"}:
+                    question = asked["text"]
+            return {"id": message["id"], "feature_id": message["feature_id"], "text": message["text"],
+                    "question": question, "created_at": message["created_at"]}
+
+    def queue_skim(self, message_id: str, key: Mapping[str, Any]) -> bool:
+        """Record a pending skim for an earlier reply once. Idempotent per message."""
+        with self._transaction():
+            message = self._one("fm_messages", message_id)
+            return self._insert_pending_skim(message_id, message["feature_id"], key)
+
+    def begin_skim(self, message_id: str, *, max_attempts: int = 2) -> dict | None:
+        """Start one attempt at a pending skim and return its key, or None.
+
+        A job lost to a restart runs again once; after that it is failed, never
+        retried in a loop.
+        """
+        with self._transaction():
+            row = self._db.execute("SELECT * FROM fm_message_skims WHERE message_id=?", (message_id,)).fetchone()
+            if row is None or row["status"] != "pending":
+                return None
+            now = _now()
+            if row["attempts"] >= max_attempts:
+                self._db.execute("UPDATE fm_message_skims SET status='failed',error='interrupted',updated_at=? "
+                                 "WHERE message_id=?", (now, message_id))
+                return None
+            self._db.execute("UPDATE fm_message_skims SET attempts=attempts+1,updated_at=? WHERE message_id=?",
+                             (now, message_id))
+            return {key: row[key] for key in ("format", "prompt_version", "segmenter_version", "skim_version",
+                                              "model", "thinking", "reply_sha256")}
+
+    def finish_skim(self, message_id: str, status: str, *, output: str = "", document: Any = None,
+                    segments: Any = None, warnings: Any = None, error: str = "",
+                    duration_ms: int | None = None) -> str | None:
+        """Settle a pending skim. Returns its feature id, or None if nothing was pending."""
+        if status not in SKIM_STATUSES or status == "pending":
+            raise FirstMateError("Invalid skim status", code="invalid_request", status=400)
+        with self._transaction():
+            row = self._db.execute("SELECT feature_id,status FROM fm_message_skims WHERE message_id=?",
+                                   (message_id,)).fetchone()
+            if row is None or row["status"] != "pending":
+                return None
+            self._db.execute(
+                "UPDATE fm_message_skims SET status=?,output=?,document_json=?,segments_json=?,warnings_json=?,"
+                "error=?,duration_ms=?,updated_at=? WHERE message_id=?",
+                (status, output, _json(document if document is not None else {}),
+                 _json(segments if segments is not None else []), _json(warnings if warnings is not None else []),
+                 error[:200], duration_ms, _now(), message_id))
+            return row["feature_id"]
+
+    def pending_skims(self) -> list[str]:
+        with self._lock:
+            return [row[0] for row in self._db.execute(
+                "SELECT message_id FROM fm_message_skims WHERE status='pending' ORDER BY created_at DESC")]
+
+    def abandon_pending_skims(self, reason: str) -> list[str]:
+        """Fail every pending skim (skims turned off): readers get the full reply."""
+        with self._transaction():
+            features = [row[0] for row in self._db.execute(
+                "SELECT DISTINCT feature_id FROM fm_message_skims WHERE status='pending'")]
+            self._db.execute("UPDATE fm_message_skims SET status='failed',error=?,updated_at=? WHERE status='pending'",
+                             (reason[:200], _now()))
+            return features
+
+    def unskimmed_replies(self, since: str, *, limit: int = 50, minimum_characters: int = 0) -> list[str]:
+        """Recent finished conversation replies that have no skim row, newest first."""
+        with self._lock:
+            return [row[0] for row in self._db.execute(
+                "SELECT m.id FROM fm_messages m LEFT JOIN fm_message_skims k ON k.message_id=m.id "
+                "WHERE k.message_id IS NULL AND m.role='assistant' AND m.status='done' AND m.visibility=? "
+                "AND m.created_at>=? AND length(m.text)>=? ORDER BY m.created_at DESC,m.id DESC LIMIT ?",
+                (CONVERSATION, since, minimum_characters, limit))]
+
+    def get_skim(self, message_id: str) -> dict | None:
+        with self._lock:
+            row = self._db.execute("SELECT * FROM fm_message_skims WHERE message_id=?", (message_id,)).fetchone()
+            if row is None:
+                return None
+            result = dict(row)
+            for name in ("document_json", "segments_json", "warnings_json"):
+                result[name[:-5]] = json.loads(result.pop(name))
+            return result
 
     def list_feedback_categories(self) -> list[dict]:
         with self._lock:

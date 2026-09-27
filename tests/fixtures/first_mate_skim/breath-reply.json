@@ -1,0 +1,186 @@
+{
+  "name": "breath-reply",
+  "about": "One breath ending with suggested replies: plain-text buttons, a link stripped from one, and the next step kept out of the sentence.",
+  "segmenterVersion": 1,
+  "skimVersion": 1,
+  "input": {
+    "reply": "Checkout leaks reservations when the charge fails.\n\nA rollback wrapper fixes it.\n\nThe race needs a per-SKU lock.\n\nWant me to write the rollback first?",
+    "modelOutput": "status: answer\nsay: Checkout [leaks reservations](s1) when a charge fails, and [the race](s3) needs a lock.\nreply: Write the [rollback](s2) first\nreply: Do the lock first\ndrawer: The fix | detail | s2 | rollback wrapper around reserve and charge",
+    "voice": "buddy",
+    "format": "breath_reply"
+  },
+  "expected": {
+    "segments": [
+      {
+        "id": "s1",
+        "n": 1,
+        "kind": "paragraph",
+        "startLine": 1,
+        "endLine": 1,
+        "start": 0,
+        "end": 50,
+        "words": 7,
+        "section": null
+      },
+      {
+        "id": "s2",
+        "n": 2,
+        "kind": "paragraph",
+        "startLine": 3,
+        "endLine": 3,
+        "start": 52,
+        "end": 80,
+        "words": 5,
+        "section": null
+      },
+      {
+        "id": "s3",
+        "n": 3,
+        "kind": "paragraph",
+        "startLine": 5,
+        "endLine": 5,
+        "start": 82,
+        "end": 112,
+        "words": 6,
+        "section": null
+      },
+      {
+        "id": "s4",
+        "n": 4,
+        "kind": "paragraph",
+        "startLine": 7,
+        "endLine": 7,
+        "start": 114,
+        "end": 150,
+        "words": 7,
+        "section": null
+      }
+    ],
+    "promptView": "[s1 para]\nCheckout leaks reservations when the charge fails.\n\n[s2 para]\nA rollback wrapper fixes it.\n\n[s3 para]\nThe race needs a per-SKU lock.\n\n[s4 para]\nWant me to write the rollback first?",
+    "document": {
+      "version": 1,
+      "format": "breath_reply",
+      "status": "answer",
+      "statusLabel": "Answer",
+      "headline": [],
+      "blocks": [
+        {
+          "kind": "say",
+          "tokens": [
+            {
+              "t": "text",
+              "v": "Checkout "
+            },
+            {
+              "t": "anchor",
+              "id": "a1",
+              "label": [
+                {
+                  "t": "text",
+                  "v": "leaks reservations"
+                }
+              ],
+              "refs": [
+                "s1"
+              ]
+            },
+            {
+              "t": "text",
+              "v": " when a charge fails, and "
+            },
+            {
+              "t": "anchor",
+              "id": "a2",
+              "label": [
+                {
+                  "t": "text",
+                  "v": "the race"
+                }
+              ],
+              "refs": [
+                "s3"
+              ]
+            },
+            {
+              "t": "text",
+              "v": " needs a lock."
+            }
+          ]
+        },
+        {
+          "kind": "reply",
+          "tokens": [
+            {
+              "t": "text",
+              "v": "Write the rollback first"
+            }
+          ]
+        },
+        {
+          "kind": "reply",
+          "tokens": [
+            {
+              "t": "text",
+              "v": "Do the lock first"
+            }
+          ]
+        }
+      ],
+      "drawers": [
+        {
+          "id": "d1",
+          "title": "The fix",
+          "kind": "detail",
+          "peek": "rollback wrapper around reserve and charge",
+          "refs": [
+            "s2"
+          ]
+        }
+      ],
+      "rest": {
+        "refs": [
+          "s4"
+        ]
+      },
+      "anchors": [
+        {
+          "id": "a1",
+          "label": "leaks reservations",
+          "refs": [
+            "s1"
+          ],
+          "where": "block 1",
+          "kind": "text"
+        },
+        {
+          "id": "a2",
+          "label": "the race",
+          "refs": [
+            "s3"
+          ],
+          "where": "block 1",
+          "kind": "text"
+        }
+      ],
+      "stats": {
+        "sourceWords": 25,
+        "skimWords": 21,
+        "budget": {
+          "max": 30,
+          "target": 30
+        },
+        "links": 2,
+        "coveredWords": 18,
+        "totalWords": 25,
+        "coverage": 0.72
+      },
+      "warnings": [
+        {
+          "level": "info",
+          "code": "reply_link",
+          "message": "block 2: removed a link from a suggested reply."
+        }
+      ]
+    }
+  }
+}

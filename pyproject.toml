@@ -42,4 +42,4 @@ include-package-data = true
 herdr_commands = "scripts"
 
 [tool.setuptools.package-data]
-herdr_harness = ["static/**/*", "workflows/*.json", "_bundled/**/*"]
+herdr_harness = ["static/**/*", "workflows/*.json", "_bundled/**/*", "skim_prompts/**/*.md"]

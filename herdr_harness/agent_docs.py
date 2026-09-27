@@ -14,6 +14,7 @@ RESTRICTED_AGENT_PROFILES = frozenset({
     "response-brief-v1",
     "smart-rename-v1",
     "issue-report-draft-v1",
+    "first-mate-skim-v1",
 })
 
 TOPICS = {

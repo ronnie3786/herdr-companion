@@ -94,6 +94,10 @@ ENVIRONMENT_FIELDS = {
         "store_path": "HERDR_HARNESS_FIRST_MATE_STORE_PATH", "runs_root": "HERDR_HARNESS_FIRST_MATE_RUNS_ROOT",
         "message_hub_url": "HERDR_FIRST_MATE_MESSAGE_HUB_URL",
         "message_hub_token": "HERDR_FIRST_MATE_MESSAGE_HUB_TOKEN", "app_url": "HERDR_FIRST_MATE_APP_URL",
+        "skim": "HERDR_FIRST_MATE_SKIM", "skim_model": "HERDR_FIRST_MATE_SKIM_MODEL",
+        "skim_thinking": "HERDR_FIRST_MATE_SKIM_THINKING", "skim_min_words": "HERDR_FIRST_MATE_SKIM_MIN_WORDS",
+        "skim_hud_chats": "HERDR_FIRST_MATE_SKIM_HUD_CHATS",
+        "skim_backfill_hours": "HERDR_FIRST_MATE_SKIM_BACKFILL_HOURS",
     },
     "pr_review": {
         "workspace_label": "HERDR_PR_REVIEW_WORKSPACE_LABEL", "workspace_root": "HERDR_PR_REVIEW_WORKSPACE_ROOT",

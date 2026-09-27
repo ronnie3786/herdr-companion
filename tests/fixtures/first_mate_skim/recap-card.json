@@ -1,0 +1,268 @@
+{
+  "name": "recap-card",
+  "about": "The recap card format: fixed what/why/next slots plus ask and heads_up.",
+  "segmenterVersion": 1,
+  "skimVersion": 1,
+  "input": {
+    "reply": "The export loads every row first.\n\nMemory peaked at 3.1 GB.\n\nA cursor would stream rows.\n\nI couldn't run it against production data.\n\nWant me to try it?",
+    "modelOutput": "status: plan\nheadline: Export is memory-bound\nwhat: It [loads every row first](s1).\nwhy: [Memory hit 3.1 GB](s2).\nnext: [A cursor](s3) would stream rows.\nask: Want me to [try it](s5)?\nheads_up: [Not tested on production data](s4).",
+    "voice": "buddy",
+    "format": "card"
+  },
+  "expected": {
+    "segments": [
+      {
+        "id": "s1",
+        "n": 1,
+        "kind": "paragraph",
+        "startLine": 1,
+        "endLine": 1,
+        "start": 0,
+        "end": 33,
+        "words": 6,
+        "section": null
+      },
+      {
+        "id": "s2",
+        "n": 2,
+        "kind": "paragraph",
+        "startLine": 3,
+        "endLine": 3,
+        "start": 35,
+        "end": 59,
+        "words": 5,
+        "section": null
+      },
+      {
+        "id": "s3",
+        "n": 3,
+        "kind": "paragraph",
+        "startLine": 5,
+        "endLine": 5,
+        "start": 61,
+        "end": 88,
+        "words": 5,
+        "section": null
+      },
+      {
+        "id": "s4",
+        "n": 4,
+        "kind": "paragraph",
+        "startLine": 7,
+        "endLine": 7,
+        "start": 90,
+        "end": 132,
+        "words": 7,
+        "section": null
+      },
+      {
+        "id": "s5",
+        "n": 5,
+        "kind": "paragraph",
+        "startLine": 9,
+        "endLine": 9,
+        "start": 134,
+        "end": 152,
+        "words": 5,
+        "section": null
+      }
+    ],
+    "promptView": "[s1 para]\nThe export loads every row first.\n\n[s2 para]\nMemory peaked at 3.1 GB.\n\n[s3 para]\nA cursor would stream rows.\n\n[s4 para]\nI couldn't run it against production data.\n\n[s5 para]\nWant me to try it?",
+    "document": {
+      "version": 1,
+      "format": "card",
+      "status": "plan",
+      "statusLabel": "Plan, needs your go-ahead",
+      "headline": [
+        {
+          "t": "text",
+          "v": "Export is memory-bound"
+        }
+      ],
+      "blocks": [
+        {
+          "kind": "what",
+          "tokens": [
+            {
+              "t": "text",
+              "v": "It "
+            },
+            {
+              "t": "anchor",
+              "id": "a1",
+              "label": [
+                {
+                  "t": "text",
+                  "v": "loads every row first"
+                }
+              ],
+              "refs": [
+                "s1"
+              ]
+            },
+            {
+              "t": "text",
+              "v": "."
+            }
+          ]
+        },
+        {
+          "kind": "why",
+          "tokens": [
+            {
+              "t": "anchor",
+              "id": "a2",
+              "label": [
+                {
+                  "t": "text",
+                  "v": "Memory hit 3.1 GB"
+                }
+              ],
+              "refs": [
+                "s2"
+              ]
+            },
+            {
+              "t": "text",
+              "v": "."
+            }
+          ]
+        },
+        {
+          "kind": "next",
+          "tokens": [
+            {
+              "t": "anchor",
+              "id": "a3",
+              "label": [
+                {
+                  "t": "text",
+                  "v": "A cursor"
+                }
+              ],
+              "refs": [
+                "s3"
+              ]
+            },
+            {
+              "t": "text",
+              "v": " would stream rows."
+            }
+          ]
+        },
+        {
+          "kind": "ask",
+          "tokens": [
+            {
+              "t": "text",
+              "v": "Want me to "
+            },
+            {
+              "t": "anchor",
+              "id": "a4",
+              "label": [
+                {
+                  "t": "text",
+                  "v": "try it"
+                }
+              ],
+              "refs": [
+                "s5"
+              ]
+            },
+            {
+              "t": "text",
+              "v": "?"
+            }
+          ]
+        },
+        {
+          "kind": "heads_up",
+          "tokens": [
+            {
+              "t": "anchor",
+              "id": "a5",
+              "label": [
+                {
+                  "t": "text",
+                  "v": "Not tested on production data"
+                }
+              ],
+              "refs": [
+                "s4"
+              ]
+            },
+            {
+              "t": "text",
+              "v": "."
+            }
+          ]
+        }
+      ],
+      "drawers": [],
+      "rest": {
+        "refs": []
+      },
+      "anchors": [
+        {
+          "id": "a1",
+          "label": "loads every row first",
+          "refs": [
+            "s1"
+          ],
+          "where": "block 1",
+          "kind": "text"
+        },
+        {
+          "id": "a2",
+          "label": "Memory hit 3.1 GB",
+          "refs": [
+            "s2"
+          ],
+          "where": "block 2",
+          "kind": "text"
+        },
+        {
+          "id": "a3",
+          "label": "A cursor",
+          "refs": [
+            "s3"
+          ],
+          "where": "block 3",
+          "kind": "text"
+        },
+        {
+          "id": "a4",
+          "label": "try it",
+          "refs": [
+            "s5"
+          ],
+          "where": "block 4",
+          "kind": "text"
+        },
+        {
+          "id": "a5",
+          "label": "Not tested on production data",
+          "refs": [
+            "s4"
+          ],
+          "where": "block 5",
+          "kind": "text"
+        }
+      ],
+      "stats": {
+        "sourceWords": 28,
+        "skimWords": 27,
+        "budget": {
+          "max": 30,
+          "target": 30
+        },
+        "links": 5,
+        "coveredWords": 28,
+        "totalWords": 28,
+        "coverage": 1
+      },
+      "warnings": []
+    }
+  }
+}

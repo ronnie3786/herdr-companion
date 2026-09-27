@@ -58,6 +58,8 @@ struct HeadlessAgentRun: Codable, Equatable, Identifiable, Sendable {
     let steps: [HeadlessAgentStep]?
     let stepsTruncated: Bool?
     let threadRootRunId: String?
+    /// A HUD chat turn's skim (`first-mate-skim-v1`); older companions omit it.
+    var skim: FirstMateSkim? = nil
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -81,6 +83,7 @@ struct HeadlessAgentRun: Codable, Equatable, Identifiable, Sendable {
         case steps
         case stepsTruncated
         case threadRootRunId
+        case skim
     }
 }
 

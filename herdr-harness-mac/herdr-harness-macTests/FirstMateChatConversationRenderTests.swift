@@ -6,7 +6,8 @@ import Testing
 /// The chat window's conversation column on its own, over the window's dusk
 /// and pane glass, with the chat demo's synthetic features: the blocked
 /// Receipt export feature (skim, suggested replies, an agent's bubble, a file
-/// card), My First Mate's briefing, the `@` picker, and a capsule's readout.
+/// card), My First Mate as the lead's conversation, the shared composer with a
+/// draft, and a capsule's readout.
 @Suite("First Mate chat conversation renders", .serialized)
 @MainActor
 struct FirstMateChatConversationRenderTests {
@@ -58,24 +59,28 @@ struct FirstMateChatConversationRenderTests {
         result.expectSubstantial()
     }
 
-    @Test("My First Mate: the summary with feature pills")
+    @Test("My First Mate: the lead's conversation, a skimmed answer, and the shared composer")
     func lead() async throws {
         let (session, model) = try await demoSession()
         session.select(.lead)
+        #expect(session.leadMachineID == FirstMateChatWindowSession.demoMachineID)
+        let store = try #require(session.leadStore)
+        #expect(await store.openLead())
+        #expect(store.selectedFeatureID == store.leadFeatureID)
+        #expect(session.selectedStore === store)
         let result = try await HerdrRenderHarness.render("fmchat-conversation-lead.png", size: Self.size) {
             column(session, model: model)
         }
         result.expectSubstantial()
     }
 
-    @Test("The @ picker open over Receipt export")
-    func picker() async throws {
+    @Test("Receipt export with a draft in the shared composer")
+    func composerDraft() async throws {
         let (session, model) = try await demoSession()
         session.select(.feature(Self.receipts))
-        // The picker follows the draft: a trailing "@" opens it.
         let store = try #require(session.selectedStore)
-        store.draft = "@"
-        let result = try await HerdrRenderHarness.render("fmchat-conversation-picker.png", size: Self.size) {
+        store.draft = "Ship iPhone-only and file the iPad bug."
+        let result = try await HerdrRenderHarness.render("fmchat-conversation-composer.png", size: Self.size) {
             column(session, model: model)
         }
         result.expectSubstantial()

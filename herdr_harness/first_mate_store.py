@@ -62,6 +62,45 @@ def _text(value: Any, name: str, maximum: int = 200000, optional: bool = False) 
 
 ARCHIVE_REASONS = {"test/synthetic", "duplicate", "no longer relevant", "superseded", "other"}
 
+# A feature row is a feature unless it is the machine's one lead First Mate
+# (first-mate-lead-v1): a long-lived conversation across every feature. The
+# lead reuses the coordinator's conversation machinery (messages, skims,
+# context, handoff, model settings) but has no stages, assignments, or gates,
+# and never appears in feature lists or the fleet.
+FEATURE_KIND, LEAD_KIND = "feature", "lead"
+LEAD_TITLE = "First Mate"
+LEAD_GOAL = "Lead First Mate: answer questions across every feature on this machine and relay the human's decisions to them."
+# Bounds on the read-only snapshot of other machines' features a client may
+# send with a message to the lead (the lead's tools reach only this machine).
+LEAD_CONTEXT_MACHINES, LEAD_CONTEXT_FEATURES = 8, 40
+_LEAD_CONTEXT_FIELDS = {"label": 60, "title": 200, "status": 20, "step": 20, "now": 200, "latest": 240}
+
+
+def lead_context(value: Any) -> dict:
+    """Normalize a client's snapshot of features on its other machines.
+
+    Only known fields survive, every string is clipped, and the counts are
+    capped, so a message can never carry an unbounded blob into the lead.
+    """
+    if not isinstance(value, Mapping) or not isinstance(value.get("machines"), list):
+        raise FirstMateError("context must be {machines: [...]}", code="invalid_request", status=400)
+    machines = []
+    for machine in value["machines"][:LEAD_CONTEXT_MACHINES]:
+        if not isinstance(machine, Mapping) or not isinstance(machine.get("name"), str) or not isinstance(machine.get("features"), list):
+            raise FirstMateError("Each context machine needs a name and features", code="invalid_request", status=400)
+        features = []
+        for feature in machine["features"][:LEAD_CONTEXT_FEATURES]:
+            if not isinstance(feature, Mapping):
+                raise FirstMateError("Each context feature must be an object", code="invalid_request", status=400)
+            item = {key: " ".join(feature[key].split())[:limit] for key, limit in _LEAD_CONTEXT_FIELDS.items()
+                    if isinstance(feature.get(key), str) and feature[key].strip()}
+            if isinstance(feature.get("unread"), bool):
+                item["unread"] = feature["unread"]
+            if item.get("label"):
+                features.append(item)
+        machines.append({"name": " ".join(machine["name"].split())[:80], "features": features})
+    return {"machines": machines}
+
 # Pi telemetry (pi.*) dominates the event ledger. Every other event is the
 # feature's journal. Native clients read no pi.* event types. The SQL form must
 # stay textually identical to the fm_events_journal partial index predicate.
@@ -430,6 +469,20 @@ class FirstMateStore:
                 self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(15,?)", (_now(),))
         # Version 15 adds only fm_feature_presentation. Existing rows are never touched.
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(15,?)", (_now(),))
+        if "kind" not in {row[1] for row in self._db.execute("PRAGMA table_info(fm_features)")}:
+            with self._transaction():
+                # Another process may have migrated between the check and the lock.
+                if "kind" not in {row[1] for row in self._db.execute("PRAGMA table_info(fm_features)")}:
+                    self._db.execute(f"ALTER TABLE fm_features ADD COLUMN kind TEXT NOT NULL DEFAULT '{FEATURE_KIND}'")
+                self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(16,?)", (_now(),))
+        # Version 16 adds fm_features.kind; every existing row stays a feature.
+        # At most one row is the machine's lead First Mate (first-mate-lead-v1).
+        self._db.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS fm_features_lead ON fm_features(kind) WHERE kind='{LEAD_KIND}'")
+        # The read-only snapshot of other machines a message to the lead may
+        # carry. Its own table, so snapshots and boards never repeat it.
+        self._db.execute("CREATE TABLE IF NOT EXISTS fm_message_context(message_id TEXT PRIMARY KEY REFERENCES fm_messages(id), "
+                         "context_json TEXT NOT NULL, created_at TEXT NOT NULL)")
+        self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(16,?)", (_now(),))
         self._seed_feedback_categories()
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(7,?)", (_now(),))
 
@@ -785,16 +838,151 @@ class FirstMateStore:
         with self._lock:
             return self._one("fm_features", feature_id)
 
-    def list_features(self, view: str = "active") -> list[dict]:
+    def list_features(self, view: str = "active", *, include_lead: bool = False) -> list[dict]:
+        """Features in update order. The lead First Mate is never a feature;
+        only the runtime's dispatch loop asks for it (``include_lead``)."""
         if view not in {"active", "archived", "all"}:
             raise FirstMateError("Invalid feature view", code="invalid_request", status=400)
-        where = {
-            "active": "WHERE archived_at IS NULL",
-            "archived": "WHERE archived_at IS NOT NULL",
-            "all": "",
+        clauses = {
+            "active": ["f.archived_at IS NULL"],
+            "archived": ["f.archived_at IS NOT NULL"],
+            "all": [],
         }[view]
+        if not include_lead:
+            clauses.append(f"f.kind<>'{LEAD_KIND}'")
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         with self._lock:
             return self._feature_summaries(where + " ORDER BY f.updated_at DESC,f.id")
+
+    # -- lead First Mate (first-mate-lead-v1) ------------------------------------
+
+    def lead(self) -> dict | None:
+        """The machine's lead First Mate row, or None before it is first used."""
+        with self._lock:
+            row = self._db.execute("SELECT id FROM fm_features WHERE kind=?", (LEAD_KIND,)).fetchone()
+            return self._one("fm_features", row["id"]) if row else None
+
+    def ensure_lead(self, cwd: str) -> dict:
+        """Create the lead once, working from ``cwd`` (the service account's home).
+
+        Idempotent without a request ID: there is exactly one lead per ledger,
+        enforced by a unique partial index. It starts ready with no message.
+        """
+        cwd = _text(cwd, "cwd", 4096)
+        if not Path(cwd).is_absolute():
+            raise FirstMateError("cwd must be absolute", code="invalid_request", status=400)
+        with self._transaction():
+            row = self._db.execute("SELECT id FROM fm_features WHERE kind=?", (LEAD_KIND,)).fetchone()
+            if row is not None:
+                return self._one("fm_features", row["id"])
+            feature_id, now = _id("fmf"), _now()
+            self._db.execute("INSERT INTO fm_features(id,title,goal,cwd,status,revision,kind,created_at,updated_at) "
+                             "VALUES(?,?,?,?,?,?,?,?,?)",
+                             (feature_id, LEAD_TITLE, LEAD_GOAL, cwd, "ready", 1, LEAD_KIND, now, now))
+            self._event(feature_id, "lead.created", "Lead First Mate created", {})
+            return self._one("fm_features", feature_id)
+
+    def is_lead(self, feature_id: str) -> bool:
+        with self._lock:
+            row = self._db.execute("SELECT kind FROM fm_features WHERE id=?", (feature_id,)).fetchone()
+            return row is not None and row["kind"] == LEAD_KIND
+
+    def _refuse_lead(self, feature: Mapping[str, Any], action: str) -> None:
+        if feature.get("kind") == LEAD_KIND:
+            raise FirstMateError(f"The lead First Mate has no {action}", code="lead_unsupported")
+
+    def message_context(self, message_id: str) -> dict | None:
+        """The other-machines snapshot sent with a message to the lead, if any."""
+        with self._lock:
+            row = self._db.execute("SELECT context_json FROM fm_message_context WHERE message_id=?",
+                                   (message_id,)).fetchone()
+            return json.loads(row["context_json"]) if row else None
+
+    def lead_unread(self, lead_id: str) -> bool:
+        """Whether the lead's newest reply is past its read marker."""
+        with self._read():
+            return self._lead_unread(lead_id)
+
+    def _lead_unread(self, lead_id: str) -> bool:
+        latest = self._latest_first_mate_message(lead_id)
+        if latest is None:
+            return False
+        marker = self._db.execute("SELECT read_through_message_id,read_through_created_at "
+                                  "FROM fm_feature_presentation WHERE feature_id=?", (lead_id,)).fetchone()
+        return fleet_format.is_after(latest["created_at"], latest["id"],
+                                     marker["read_through_created_at"] if marker else None,
+                                     marker["read_through_message_id"] if marker else None)
+
+    def lead_summary(self, lead_id: str) -> dict:
+        """The lead's row, newest conversation message, and reply state in one
+        bounded read: clients poll it, so it never loads the conversation."""
+        with self._read():
+            feature = self._one("fm_features", lead_id)
+            latest = self._db.execute(
+                "SELECT id,role,substr(text,1,?) AS text,created_at FROM fm_messages WHERE feature_id=? "
+                "AND role IN ('user','assistant') AND visibility=? ORDER BY created_at DESC,id DESC LIMIT 1",
+                (fleet_format.LATEST_TEXT_LIMIT + 1, lead_id, CONVERSATION)).fetchone()
+            pending = self._db.execute(
+                "SELECT 1 FROM fm_messages WHERE feature_id=? AND role IN ('user','human') "
+                "AND status IN ('queued','processing') LIMIT 1", (lead_id,)).fetchone()
+            return {"feature": feature, "unread": self._lead_unread(lead_id),
+                    "working_on_reply": bool(pending) or bool(feature.get("coordinator_owner")),
+                    "latest_message": None if latest is None else {
+                        "id": latest["id"], "role": latest["role"],
+                        "text": fleet_format.clip(latest["text"], fleet_format.LATEST_TEXT_LIMIT),
+                        "created_at": latest["created_at"]}}
+
+    def relay_human_message(self, feature_id: str, text: str, *, lead_message_id: str,
+                            request_id: str) -> dict:
+        """Post the human's words, relayed by the lead, as their message to a feature.
+
+        The feature's coordinator sees an ordinary human message (the lead holds
+        no authority of its own); metadata and the journal record the relay.
+        Relaying answers the feature, so its newest First Mate reply is read.
+        """
+        payload = {"text": _text(text, "text"), "lead_message_id": _text(lead_message_id, "lead_message_id", 200)}
+        with self._transaction():
+            feature = self._one("fm_features", feature_id)
+            if feature.get("kind") == LEAD_KIND:
+                raise FirstMateError("Relay to a feature, not to the lead", code="invalid_request", status=400)
+            scope = f"relay:{feature_id}"
+            cached = self._receipt(scope, request_id, payload)
+            if cached is not None:
+                return cached
+            if feature["status"] in {"cancelled", "completed"}:
+                raise FirstMateError("Feature is closed", code="feature_closed")
+            latest = self._latest_first_mate_message(feature_id)
+            message = self._message(feature_id, "user", text,
+                                    metadata={"relayed_by": LEAD_KIND, "lead_message_id": lead_message_id})
+            self._event(feature_id, "message.queued", "Human direction relayed by the lead First Mate",
+                        {"message_id": message["id"], "lead_message_id": lead_message_id})
+            if latest is not None:
+                self._advance_read_marker(feature_id, latest["id"], latest["created_at"])
+            return self._save_receipt(scope, request_id, payload, message)
+
+    def mark_latest_read(self, feature_id: str) -> dict:
+        """Mark a feature read through its newest First Mate reply (the lead told the human)."""
+        with self._transaction():
+            feature = self._one("fm_features", feature_id)
+            if feature.get("kind") == LEAD_KIND:
+                raise FirstMateError("Use the lead's own read marker", code="invalid_request", status=400)
+            latest = self._latest_first_mate_message(feature_id)
+            if latest is not None:
+                self._advance_read_marker(feature_id, latest["id"], latest["created_at"])
+            return {"feature_id": feature_id, "read_through_message_id": latest["id"] if latest else None}
+
+    def _advance_read_marker(self, feature_id: str, message_id: str, created_at: str) -> None:
+        """Move the read marker forward inside the caller's transaction; never backward."""
+        marker = self._db.execute("SELECT read_through_message_id,read_through_created_at "
+                                  "FROM fm_feature_presentation WHERE feature_id=?", (feature_id,)).fetchone()
+        if fleet_format.is_after(created_at, message_id,
+                                 marker["read_through_created_at"] if marker else None,
+                                 marker["read_through_message_id"] if marker else None):
+            self._db.execute(
+                "INSERT INTO fm_feature_presentation(feature_id,read_through_message_id,read_through_created_at,updated_at) "
+                "VALUES(?,?,?,?) ON CONFLICT(feature_id) DO UPDATE SET read_through_message_id=excluded.read_through_message_id,"
+                "read_through_created_at=excluded.read_through_created_at,updated_at=excluded.updated_at",
+                (feature_id, message_id, created_at, _now()))
 
     def _feature_summaries(self, clause: str, args: tuple = ()) -> list[dict]:
         # Project bounded card data in one SQL query, without loading every
@@ -871,7 +1059,8 @@ class FirstMateStore:
         """
         if view not in fleet_format.FLEET_VIEWS:
             raise FirstMateError("Invalid feature view", code="invalid_request", status=400)
-        clauses, args = [], []
+        # The lead First Mate is the conversation above the fleet, not a member.
+        clauses, args = [f"f.kind<>'{LEAD_KIND}'"], []
         if view == "active":
             clauses.append("f.archived_at IS NULL")
         elif view == "archived":
@@ -991,7 +1180,7 @@ class FirstMateStore:
             raise FirstMateError(str(error), code="invalid_request", status=400) from error
         columns = sorted(values)
         with self._transaction():
-            self._one("fm_features", feature_id)
+            self._refuse_lead(self._one("fm_features", feature_id), "fleet label or emoji")
             updates = ",".join(f"{column}=excluded.{column}" for column in columns)
             self._db.execute(
                 f"INSERT INTO fm_feature_presentation(feature_id,{','.join(columns)},updated_at) "
@@ -1015,6 +1204,7 @@ class FirstMateStore:
             if cached is not None:
                 return cached
             feature = self._one("fm_features", feature_id)
+            self._refuse_lead(feature, "archive")
             if archived and feature["archived_at"] is None:
                 archived_at = _now()
                 self._db.execute(
@@ -1056,8 +1246,11 @@ class FirstMateStore:
         return max(1, min(limit, 1000))
 
     def link_discovery_context(self, feature_id: str) -> dict | None:
+        # The lead talks about every feature's pull requests; they belong to
+        # those features, so nothing is discovered from its conversation.
         with self._lock:
-            row = self._db.execute("SELECT id,title,goal,cwd FROM fm_features WHERE id=?", (feature_id,)).fetchone()
+            row = self._db.execute("SELECT id,title,goal,cwd FROM fm_features WHERE id=? AND kind<>?",
+                                   (feature_id, LEAD_KIND)).fetchone()
             return dict(row) if row else None
 
     def link_discovery_links(self, *, after: Any = None, limit: int = 64) -> list[dict]:
@@ -1445,8 +1638,13 @@ class FirstMateStore:
         with self._lock:
             return self._one("fm_documents", document_id)
 
-    def append_human_message(self, feature_id: str, text: str, request_id: str) -> dict:
+    def append_human_message(self, feature_id: str, text: str, request_id: str, *,
+                             context: Mapping[str, Any] | None = None) -> dict:
+        """Queue the human's message. ``context`` (the lead only) is a read-only
+        snapshot of the human's other machines, kept in metadata, never shown."""
         payload = {"text": _text(text, "text")}
+        if context is not None:
+            payload["context"] = lead_context(context)
         with self._transaction():
             feature = self._one("fm_features", feature_id)
             cached = self._receipt(f"message:{feature_id}", request_id, payload)
@@ -1454,7 +1652,13 @@ class FirstMateStore:
                 return cached
             if feature["status"] in {"cancelled", "completed"}:
                 raise FirstMateError("Feature is closed", code="feature_closed")
+            if context is not None and feature.get("kind") != LEAD_KIND:
+                raise FirstMateError("Only the lead First Mate accepts other machines' context",
+                                     code="invalid_request", status=400)
             message = self._message(feature_id, "user", text)
+            if context is not None:
+                self._db.execute("INSERT INTO fm_message_context(message_id,context_json,created_at) VALUES(?,?,?)",
+                                 (message["id"], _json(payload["context"]), _now()))
             self._event(feature_id, "message.queued", "Human direction queued", {"message_id": message["id"]})
             return self._save_receipt(f"message:{feature_id}", request_id, payload, message)
 
@@ -1670,6 +1874,7 @@ class FirstMateStore:
             if cached is not None:
                 return cached
             feature = self._one("fm_features", feature_id)
+            self._refuse_lead(feature, "workflow stages")
             self._revision(feature, expected_revision)
             if feature["status"] in {"paused", "cancelled", "completed", "recovering"}:
                 raise FirstMateError("Feature is not available for a new stage")
@@ -2230,6 +2435,7 @@ class FirstMateStore:
             if cached is not None:
                 return cached
             feature = self._one("fm_features", feature_id)
+            self._refuse_lead(feature, "workflow actions")
             if expected_revision is not None:
                 self._revision(feature, expected_revision)
             if feature["status"] in {"completed", "cancelled"}:

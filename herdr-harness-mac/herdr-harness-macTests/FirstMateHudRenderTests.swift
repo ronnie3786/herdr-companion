@@ -11,6 +11,9 @@ struct FirstMateHudRenderTests {
     static let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
     static let face = CGPoint(x: 900, y: 790)
     static let receipts = FirstMateFleetFeatureID(machineID: "demo", featureID: "demo-receipts")
+    /// The HUD holds its model and shell weakly, like the app's; the renders
+    /// keep them alive for the lead chat, which reads them after setup.
+    private static var retained: [AnyObject] = []
 
     private func controller(count: Int?, expanded: Bool, face: CGPoint = Self.face) async throws -> FirstMateHudController {
         let model = HerdrRenderFixtures.demoModel()
@@ -21,6 +24,7 @@ struct FirstMateHudRenderTests {
         let controller = FirstMateHudController(defaults: defaults, isInert: true)
         controller.demoCount = count
         controller.prepareForRendering(model: model, shell: shell, visibleFrame: Self.screen, face: face)
+        Self.retained = [model, shell]
         return controller
     }
 
@@ -72,8 +76,8 @@ struct FirstMateHudRenderTests {
     func expandedAll() async throws {
         let hud = try await controller(count: 14, expanded: true)
         hud.clearLatestLine()
-        hud.toggleShowAllMoving()
-        #expect(hud.expanded.movingAreCompact)
+        hud.toggleShowAllRows()
+        #expect(hud.expanded.rowsAreCompact)
         try await render("fmhud-expanded-14-all.png", hud)
     }
 
@@ -99,8 +103,13 @@ struct FirstMateHudRenderTests {
         case "message": hud.openExplicit(.message(Self.receipts))
         case "editor": hud.openExplicit(.editor(Self.receipts))
         default:
+            // The demo's lead First Mate, with the shared composer.
+            hud.modelFavorites = ModelFavoritesStore()
             hud.openExplicit(.chat)
-            await hud.submit("What needs me?")
+            let store = try #require(hud.currentLeadStore())
+            #expect(await store.openLead())
+            await hud.submit("Which one should I look at first?")
+            #expect(store.leadSnapshot?.messages.count == 4)
         }
         #expect(hud.visibleCard != nil)
         try await render("fmhud-card-\(kind).png", hud)

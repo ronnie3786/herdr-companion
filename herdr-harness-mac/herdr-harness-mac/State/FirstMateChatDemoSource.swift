@@ -17,7 +17,8 @@ final class FirstMateChatDemoSource {
         self.now = now
         fleet = FirstMateDemo.chatWindowFleet(now: now)
         store = FirstMateStore()
-        store.configure(client: nil, demo: true, demoFeatures: FirstMateDemo.chatWindowFeatures(now: now))
+        store.configure(client: nil, demo: true,
+                        demoFeatures: FirstMateDemo.chatWindowFeatures(now: now) + [FirstMateDemo.chatWindowLead(now: now)])
     }
 
     /// The demo's one host, with each chat's newest message taken from the

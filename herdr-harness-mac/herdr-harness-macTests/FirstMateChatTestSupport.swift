@@ -17,6 +17,12 @@ final class SyntheticChatFleetClient: FirstMateClient, @unchecked Sendable {
     private var _featureCalls = 0
     private var _fleetCalls = 0
     private var _reads: [(featureID: String, messageID: String)] = []
+    /// The lead summary GET and POST return (nil: no lead yet).
+    private var _lead: FirstMateLeadSummary?
+    private var _leadCalls = 0
+    private var _ensureCalls = 0
+    private var _sent: [(featureID: String, text: String)] = []
+    private var _sentContexts: [FirstMateLeadContext] = []
 
     init(
         capabilities: Result<[String], APIError> = .success(["first-mate-v1", "first-mate-fleet-v1"]),
@@ -52,6 +58,14 @@ final class SyntheticChatFleetClient: FirstMateClient, @unchecked Sendable {
         get { lock.withLock { _snapshots } }
         set { lock.withLock { _snapshots = newValue } }
     }
+    var lead: FirstMateLeadSummary? {
+        get { lock.withLock { _lead } }
+        set { lock.withLock { _lead = newValue } }
+    }
+    var leadCalls: Int { lock.withLock { _leadCalls } }
+    var ensureCalls: Int { lock.withLock { _ensureCalls } }
+    var sent: [(featureID: String, text: String)] { lock.withLock { _sent } }
+    var sentContexts: [FirstMateLeadContext] { lock.withLock { _sentContexts } }
     var capabilityCalls: Int { lock.withLock { _capabilityCalls } }
     var featureListCalls: Int { lock.withLock { _featureListCalls } }
     var featureCalls: Int { lock.withLock { _featureCalls } }
@@ -90,7 +104,28 @@ final class SyntheticChatFleetClient: FirstMateClient, @unchecked Sendable {
         throw APIError.invalidResponse
     }
     func createFirstMateFeature(title: String, goal: String, cwd: String, requestID: String) async throws -> FirstMateSnapshot { throw APIError.invalidResponse }
-    func sendFirstMateMessage(featureID: String, text: String, requestID: String) async throws -> FirstMateSnapshot { throw APIError.invalidResponse }
+    func sendFirstMateMessage(featureID: String, text: String, requestID: String) async throws -> FirstMateSnapshot {
+        let snapshot = lock.withLock { () -> FirstMateSnapshot? in
+            _sent.append((featureID, text))
+            return _snapshots[featureID]
+        }
+        guard let snapshot else { throw APIError.invalidResponse }
+        return snapshot
+    }
+    func sendFirstMateMessage(featureID: String, text: String, requestID: String,
+                              context: FirstMateLeadContext) async throws -> FirstMateSnapshot {
+        lock.withLock { _sentContexts.append(context) }
+        return try await sendFirstMateMessage(featureID: featureID, text: text, requestID: requestID)
+    }
+    func fetchFirstMateLead() async throws -> FirstMateLeadResponse {
+        let lead = lock.withLock { _leadCalls += 1; return _lead }
+        return FirstMateLeadResponse(ok: true, lead: lead)
+    }
+    func ensureFirstMateLead(requestID: String) async throws -> FirstMateLeadResponse {
+        let lead = lock.withLock { _ensureCalls += 1; return _lead }
+        guard let lead else { throw APIError.invalidResponse }
+        return FirstMateLeadResponse(ok: true, lead: lead)
+    }
     func performFirstMateAction(featureID: String, action: String, requestID: String) async throws -> FirstMateSnapshot { throw APIError.invalidResponse }
     func fetchFirstMateDocument(_ id: String) async throws -> FirstMateDocumentResponse { throw APIError.invalidResponse }
     func fetchFirstMateSession(_ id: String, before: Int?) async throws -> FirstMateSessionResponse { throw APIError.invalidResponse }

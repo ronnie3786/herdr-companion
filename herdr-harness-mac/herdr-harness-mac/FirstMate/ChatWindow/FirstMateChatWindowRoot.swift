@@ -126,6 +126,9 @@ struct FirstMateChatWindowRoot: View {
             shell.firstMateChatOpenRequest = nil
             session.applyOpenRequest(request)
         }
+        .onChange(of: shell.firstMateChatOpenLeadRequest) { _, _ in
+            session.select(.lead, focusComposer: true)
+        }
         .onChange(of: session.selectionIsUnresolvable) { _, unresolvable in
             if unresolvable { session.select(.lead) }
         }

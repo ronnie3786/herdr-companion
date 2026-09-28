@@ -205,8 +205,8 @@ enum FirstMateHudGeometry {
     /// The expanded rows' natural height: full rows at 46 pt pitch, compact
     /// rows at 30, the diamond between groups, and the summary row.
     static func listContentHeight(_ expanded: FirstMateHudOverflow.Expanded) -> CGFloat {
-        var height = CGFloat(expanded.needsYou.count) * rowPitch
-        height += CGFloat(expanded.moving.count) * (expanded.movingAreCompact ? compactPitch : rowPitch)
+        let pitch = expanded.rowsAreCompact ? compactPitch : rowPitch
+        var height = CGFloat(expanded.needsYou.count + expanded.moving.count) * pitch
         if !expanded.needsYou.isEmpty, !expanded.moving.isEmpty || expanded.summary != nil { height += groupGap }
         if expanded.summary != nil { height += rowPitch }
         return height

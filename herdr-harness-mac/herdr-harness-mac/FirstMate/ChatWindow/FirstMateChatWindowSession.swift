@@ -158,6 +158,11 @@ final class FirstMateChatWindowSession {
         stores[Self.demoMachineID] = nil
         let store = FirstMateStore()
         store.configure(client: makeClient(configuration), demo: false)
+        // Messages to this machine's lead carry a snapshot of the others.
+        store.leadContextProvider = { [weak self] in
+            guard let self else { return nil }
+            return FirstMateLeadMachine.context(hosts: self.hosts, excluding: machineID)
+        }
         // A rebuilt store keeps the open chat, so its next refresh fetches
         // that snapshot instead of the machine's first feature. If the store
         // rejects it, `selectionIsUnresolvable` still falls back.
@@ -171,8 +176,55 @@ final class FirstMateChatWindowSession {
         return id
     }
 
+    /// The selected chat's store: a feature's machine, or the lead's while
+    /// My First Mate is a real lead conversation.
     var selectedStore: FirstMateStore? {
-        selectedConversationID.flatMap { store(for: $0.machineID) }
+        switch selection {
+        case .feature(let id): store(for: id.machineID)
+        case .lead: leadStore
+        }
+    }
+
+    // MARK: Lead First Mate
+
+    /// The machine whose lead First Mate "My First Mate" talks to, or nil when
+    /// no machine has a lead: My First Mate then keeps the Phase 1 briefing
+    /// and starts features.
+    var leadMachineID: String? {
+        if isDemo {
+            return store(for: Self.demoMachineID)?.leadSupported == true ? Self.demoMachineID : nil
+        }
+        return FirstMateLeadMachine.current(hosts: hosts, machines: model.machines)
+    }
+
+    /// Machines with a lead, for the header's switcher.
+    var leadMachineIDs: [String] {
+        isDemo ? leadMachineID.map { [$0] } ?? [] : FirstMateLeadMachine.capable(hosts: hosts)
+    }
+
+    var leadStore: FirstMateStore? { leadMachineID.flatMap { store(for: $0) } }
+
+    /// The lead's summary from the fleet index: its newest message and
+    /// whether it is unread or replying.
+    var leadSummary: FirstMateLeadSummary? {
+        guard let id = leadMachineID else { return nil }
+        return hosts.first { $0.machineID == id }?.lead
+    }
+
+    func machineName(_ machineID: String) -> String {
+        if isDemo { return Self.demoMachineName }
+        return hosts.first { $0.machineID == machineID }?.machineName
+            ?? model.machines.first { $0.id == machineID }?.name ?? machineID
+    }
+
+    /// Talks to another machine's lead from now on.
+    func setLeadMachine(_ machineID: String) {
+        guard leadMachineIDs.contains(machineID) else { return }
+        FirstMateLeadMachine.save(machineID)
+        if selection == .lead {
+            selectionGeneration &+= 1
+            wakeRefresh()
+        }
     }
 
     var selectedSnapshot: FirstMateSnapshot? {
@@ -208,6 +260,13 @@ final class FirstMateChatWindowSession {
             self.selection = selection
             selectionGeneration &+= 1
             wakeRefresh()
+        }
+        if case .lead = selection {
+            // The refresh loop opens the lead on first use.
+            if let store = leadStore, let lead = store.leadFeatureID, store.selectedFeatureID != lead {
+                store.select(lead)
+            }
+            return
         }
         guard case .feature(let id) = selection, let store = store(for: id.machineID) else { return }
         if store.selectedFeatureID != id.featureID {
@@ -302,6 +361,12 @@ final class FirstMateChatWindowSession {
             let store = selectedStore
             if let store {
                 lease.update(store: store, available: true)
+                if case .lead = selection, store.leadFeatureID == nil || store.selectedFeatureID != store.leadFeatureID {
+                    // Creates the lead on first use, loads it, and selects it.
+                    if await store.openLead(), !isDemo, let machineID = leadMachineID {
+                        FirstMateLeadMachine.remember(machineID, hosts: hosts)
+                    }
+                }
                 await store.refresh()
             } else {
                 lease.release()
@@ -351,6 +416,14 @@ final class FirstMateChatWindowSession {
     /// transcript holds, which is what the dot compares against.
     func markReadIfNeeded(featureID: String, machineID: String, newestMessageID: String?, isKeyWindow: Bool, isAtBottom: Bool) {
         guard isKeyWindow, isAtBottom, let newestMessageID else { return }
+        if let lead = leadSummary, lead.feature.id == featureID, machineID == leadMachineID {
+            guard lead.unread,
+                  let through = store(for: machineID)?.snapshots[featureID]?.messages
+                      .last(where: { $0.role == "assistant" && $0.isConversation })?.id else { return }
+            let fleet = shell.firstMateFleet
+            Task { await fleet.markLeadRead(machineID: machineID, throughMessageID: through) }
+            return
+        }
         let id = FirstMateFleetFeatureID(machineID: machineID, featureID: featureID)
         guard let conversation = conversations.first(where: { $0.id == id }), conversation.isUnread else { return }
         let newestFirstMate = store(for: machineID)?.snapshots[featureID]?.messages

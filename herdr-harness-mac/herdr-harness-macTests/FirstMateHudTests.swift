@@ -97,34 +97,50 @@ struct FirstMateHudTests {
         #expect(layout.orbs.first?.label == "Blocked")
     }
 
-    @Test("Needs-you features are never tucked, even past the cap")
-    func collapsedNeedsYouNeverHidden() {
-        let needsYou = (0..<7).map { item("Needs \($0)", .turn, start: Double($0)) }
+    @Test("Past six, needs-you features are tucked too: five orbs and +N")
+    func collapsedNeedsYouCapped() {
+        let needsYou = (0..<9).map { item("Needs \($0)", .turn, start: Double($0)) }
         let layout = FirstMateHudOverflow.collapsed(FirstMateHudOrder.sorted(needsYou + moving(3)))
-        #expect(layout.orbs.count == 7)
-        #expect(layout.orbs.allSatisfy { $0.needsYou })
-        #expect(layout.tucked.count == 3)
-        #expect(!layout.tucked.contains { $0.needsYou })
+        #expect(layout.orbs.count == 5)
+        #expect(layout.orbs.map(\.label) == (0..<5).map { "Needs \($0)" })
+        #expect(layout.tucked.count == 7)
+        #expect(layout.tucked.filter(\.needsYou).count == 4)
+        // The badge still counts every feature that needs you.
+        #expect(FirstMateHudBadge.value(needsYou)?.count == 9)
     }
 
-    @Test("Four moving rows show in full; more show three and a summary")
+    @Test("Six rows show in full; more show five and a summary row")
     func expandedSummary() {
-        let four = FirstMateHudOverflow.expanded(moving(4), showAllMoving: false)
-        #expect(four.moving.count == 4)
-        #expect(four.summary == nil)
+        let six = FirstMateHudOverflow.expanded(moving(6), showAll: false)
+        #expect(six.moving.count == 6)
+        #expect(six.summary == nil)
 
         let items = FirstMateHudOrder.sorted([item("Blocked", .blocked, start: 0)] + moving(8))
-        let expanded = FirstMateHudOverflow.expanded(items, showAllMoving: false)
+        let expanded = FirstMateHudOverflow.expanded(items, showAll: false)
         #expect(expanded.needsYou.map(\.label) == ["Blocked"])
-        #expect(expanded.moving.count == 3)
-        #expect(!expanded.movingAreCompact)
-        #expect(expanded.summary?.count == 5)
+        #expect(expanded.moving.count == 4)
+        #expect(!expanded.rowsAreCompact)
+        #expect(expanded.summary?.count == 4)
         #expect(expanded.summary?.isShowingAll == false)
 
-        let all = FirstMateHudOverflow.expanded(items, showAllMoving: true)
+        let all = FirstMateHudOverflow.expanded(items, showAll: true)
+        #expect(all.needsYou.count == 1)
         #expect(all.moving.count == 8)
-        #expect(all.movingAreCompact)
+        #expect(all.rowsAreCompact)
         #expect(all.summary?.isShowingAll == true)
+    }
+
+    @Test("Nine features that need you show five rows and a summary naming the rest")
+    func expandedNeedsYouCapped() {
+        let needsYou = [item("Blocked", .blocked, start: 0)] + (0..<5).map { item("Turn \($0)", .turn, start: Double($0)) }
+            + (0..<3).map { item("Ready \($0)", .ready, start: Double($0)) }
+        let expanded = FirstMateHudOverflow.expanded(FirstMateHudOrder.sorted(needsYou + moving(2)), showAll: false)
+        #expect(expanded.needsYou.count == 5)
+        #expect(expanded.moving.isEmpty)
+        #expect(expanded.summary?.count == 6)
+        #expect(expanded.summary?.needsYouCount == 4)
+        #expect(FirstMateHudGeometry.listContentHeight(expanded) == 5 * FirstMateHudGeometry.rowPitch
+            + FirstMateHudGeometry.groupGap + FirstMateHudGeometry.rowPitch)
     }
 
     @Test("The summary averages the tucked features' known percent")
@@ -141,7 +157,7 @@ struct FirstMateHudTests {
     @Test("Fourteen features with everything showing fit 680 pt below the list top")
     func fourteenFit() {
         let items = FirstMateHudOrder.sorted((0..<4).map { item("Needs \($0)", .blocked, start: Double($0)) } + moving(10))
-        let height = FirstMateHudGeometry.listContentHeight(FirstMateHudOverflow.expanded(items, showAllMoving: true))
+        let height = FirstMateHudGeometry.listContentHeight(FirstMateHudOverflow.expanded(items, showAll: true))
         #expect(FirstMateHudGeometry.listTop + height + FirstMateHudGeometry.faceRadius <= 680)
     }
 
@@ -181,7 +197,9 @@ struct FirstMateHudTests {
     @Test("Nothing named and no question says so plainly")
     func noMatch() {
         let items = [item("Offline sync", .working)]
-        #expect(FirstMateHudRouting.route("ship it", items: items) == .answer(FirstMateHudRouting.noMatchAnswer))
+        #expect(FirstMateHudRouting.route("ship it", items: items) == .answer(FirstMateHudRouting.noMatchAnswer(items: items)))
+        #expect(FirstMateHudRouting.noMatchAnswer(items: items).contains("“\(items[0].label)”"))
+        #expect(!FirstMateHudRouting.noMatchAnswer(items: []).contains("“"))
         #expect(FirstMateHudRouting.route("status", items: []) == .answer("Nothing needs you, and no features are running."))
         // Two features with one name match neither.
         let twins = [item("Sync", .working, machine: "alpha"), item("Sync", .working, machine: "beta")]

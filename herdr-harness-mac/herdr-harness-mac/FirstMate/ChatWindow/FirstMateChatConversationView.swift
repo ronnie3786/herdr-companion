@@ -1,7 +1,9 @@
 import SwiftUI
 
-/// The chat column under the header: the transcript (or My First Mate's
-/// briefing) and the composer.
+/// The chat column under the header: the transcript and the shared prompt
+/// composer, for a feature or for My First Mate (the lead First Mate). Against
+/// companions without a lead, My First Mate keeps its briefing and starts
+/// features.
 struct FirstMateChatConversationView: View {
     let session: FirstMateChatWindowSession
     let model: HerdrAppModel
@@ -36,7 +38,38 @@ struct FirstMateChatConversationView: View {
 
     // MARK: My First Mate
 
+    @ViewBuilder
     private var leadColumn: some View {
+        if let machineID = session.leadMachineID {
+            if let store = session.leadStore, let snapshot = store.leadSnapshot {
+                FirstMateLeadChat(
+                    session: session,
+                    model: model,
+                    store: store,
+                    snapshot: snapshot,
+                    machineID: machineID,
+                    modelFavorites: modelFavorites
+                )
+            } else {
+                VStack(spacing: 10) {
+                    ProgressView().controlSize(.small)
+                    Text(session.leadStore?.error ?? "Opening First Mate…")
+                        .herdrFont(size: HerdrTheme.TextSize.small)
+                        .foregroundStyle(HerdrTheme.tertiaryText)
+                        .multilineTextAlignment(.center)
+                        .textSelection(.enabled)
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        } else {
+            briefingColumn
+        }
+    }
+
+    /// Phase 1, for companions without a lead: a briefing built on this Mac,
+    /// and a composer that starts a new feature.
+    private var briefingColumn: some View {
         let conversations = session.conversations
         return VStack(spacing: 0) {
             ScrollView {
@@ -92,7 +125,7 @@ struct FirstMateChatConversationView: View {
                 store: store,
                 snapshot: snapshot,
                 id: id,
-                picks: picksBinding(id.machineID + "|" + id.featureID)
+                modelFavorites: modelFavorites
             )
             .environment(\.firstMateMentionCatalog, FirstMateMentionCatalog(
                 conversations: session.conversations.filter { $0.machineID == id.machineID },
@@ -131,7 +164,9 @@ private struct FirstMateFeatureChat: View {
     @Bindable var store: FirstMateStore
     let snapshot: FirstMateSnapshot
     let id: FirstMateFleetFeatureID
-    @Binding var picks: [FirstMateMentionCandidate]
+    let modelFavorites: ModelFavoritesStore
+
+    @State private var focusRequest = 0
 
     private var messages: [FirstMateMessage] { snapshot.messages.filter(\.isConversation) }
     private var conversation: FirstMateConversation? { session.conversations.first { $0.id == id } }
@@ -172,41 +207,154 @@ private struct FirstMateFeatureChat: View {
                     .padding(.vertical, 14)
             } else {
                 FirstMateChatConversationView.composerZone {
-                    FirstMateChatComposer(
-                        mode: .feature(id),
-                        session: session,
-                        model: model,
-                        store: store,
-                        draft: draftBinding,
-                        attachments: attachmentBinding,
-                        picks: $picks,
-                        placeholder: "Message \(conversation?.title ?? snapshot.feature.title)",
-                        suggestions: FirstMateTranscriptLayout.suggestedReplies(messages: messages, needsYou: needsYou, isTyping: typing),
-                        features: FirstMateMentionOption.taggableFeatures(session.conversations, machineID: id.machineID),
-                        crew: snapshot.assignments,
-                        crewTitle: conversation?.title ?? snapshot.feature.title,
-                        canSend: store.selectedFeatureID == id.featureID
-                    )
+                    VStack(alignment: .leading, spacing: 0) {
+                        FirstMateSuggestionRow(
+                            suggestions: FirstMateTranscriptLayout.suggestedReplies(messages: messages, needsYou: needsYou, isTyping: typing),
+                            store: store,
+                            featureID: id.featureID
+                        ) { session.didMutate(machineID: id.machineID) }
+                        FirstMatePromptComposer(
+                            store: store,
+                            model: model,
+                            snapshot: snapshot,
+                            canControl: store.controlAvailable && store.selectedFeatureID == id.featureID,
+                            modelFavorites: modelFavorites,
+                            placeholder: "Message \(conversation?.title ?? snapshot.feature.title)",
+                            focusRequest: focusRequest
+                        ) { session.didMutate(machineID: id.machineID) }
+                    }
                     .id(id)
                 }
             }
         }
+        .onAppear(perform: takePendingFocus)
+        .onChange(of: id) { takePendingFocus() }
     }
 
-    private var draftBinding: Binding<String> {
+    /// A pointer choice (row click, capsule, open request) focuses the composer.
+    private func takePendingFocus() {
+        guard session.pendingComposerFocus else { return }
+        session.pendingComposerFocus = false
+        focusRequest &+= 1
+    }
+}
+
+/// My First Mate as the lead First Mate: one real, continuing conversation
+/// across this machine's features, with the same prompt composer as every
+/// other chat (attachments, paste, voice, the model pill, and context).
+private struct FirstMateLeadChat: View {
+    let session: FirstMateChatWindowSession
+    let model: HerdrAppModel
+    @Bindable var store: FirstMateStore
+    let snapshot: FirstMateSnapshot
+    let machineID: String
+    let modelFavorites: ModelFavoritesStore
+
+    @State private var focusRequest = 0
+
+    private var messages: [FirstMateMessage] { snapshot.messages.filter(\.isConversation) }
+    private var id: FirstMateFleetFeatureID { FirstMateFleetFeatureID(machineID: machineID, featureID: snapshot.feature.id) }
+
+    /// From the snapshot, which refreshes every 2 s here, rather than the
+    /// fleet poll, so the typing bubble ends with the reply.
+    private var isTyping: Bool {
+        FirstMateTranscriptLayout.isTyping(
+            messages: messages,
+            isSending: store.isSending && store.selectedFeatureID == snapshot.feature.id,
+            isWorkingOnReply: snapshot.feature.coordinatorOwner != nil
+        )
+    }
+
+    var body: some View {
+        let typing = isTyping
+        VStack(spacing: 0) {
+            if messages.isEmpty, !typing {
+                welcome
+            } else {
+                FirstMateChatTranscript(session: session, store: store, snapshot: snapshot, conversationID: id, isTyping: typing)
+                    .id(id)
+            }
+            if let error = store.error {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .herdrFont(size: HerdrTheme.TextSize.small)
+                    .foregroundStyle(HerdrTheme.warning)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, FirstMateChatConversationView.gutter + 12)
+                    .padding(.bottom, 4)
+            }
+            FirstMateChatConversationView.composerZone {
+                FirstMatePromptComposer(
+                    store: store,
+                    model: model,
+                    snapshot: snapshot,
+                    canControl: store.controlAvailable && store.selectedFeatureID == snapshot.feature.id,
+                    modelFavorites: modelFavorites,
+                    focusRequest: focusRequest
+                ) { session.didMutate(machineID: machineID) }
+                .id(id)
+            }
+        }
+        .onAppear {
+            guard session.pendingComposerFocus else { return }
+            session.pendingComposerFocus = false
+            focusRequest &+= 1
+        }
+    }
+
+    /// An empty lead: the briefing of this machine's features and what to ask.
+    private var welcome: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                FirstMateLeadSummaryCard(
+                    conversations: session.conversations.filter { $0.machineID == machineID },
+                    now: .now
+                ) { conversation in
+                    session.select(.feature(conversation.id), focusComposer: true)
+                }
+                .padding(.top, 6)
+                Text("Ask First Mate about any feature, or tell it a decision to pass on.")
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(HerdrTheme.tertiaryText)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 14)
+            }
+            .padding(.top, 22)
+            .padding(.bottom, 16)
+            .padding(.horizontal, FirstMateChatConversationView.gutter)
+            .frame(maxWidth: FirstMateChatConversationView.contentWidth + FirstMateChatConversationView.gutter * 2)
+            .frame(maxWidth: .infinity)
+        }
+    }
+}
+
+/// Suggested replies above a feature's composer: the newest message's skim
+/// `reply` choices. Tapping one sends it.
+private struct FirstMateSuggestionRow: View {
+    let suggestions: [String]
+    @Bindable var store: FirstMateStore
+    let featureID: String
+    let didSend: @MainActor () -> Void
+
+    var body: some View {
+        if !suggestions.isEmpty {
+            FirstMateFlowLayout(spacing: 6, lineSpacing: 6) {
+                ForEach(suggestions, id: \.self) { suggestion in
+                    FirstMateSuggestionChip(title: suggestion) { send(suggestion) }
+                }
+            }
+            .padding(.leading, 2)
+            .padding(.bottom, 8)
+        }
+    }
+
+    private func send(_ text: String) {
         let context = store.operationContext
-        return Binding(
-            get: { store.composerDraft(for: context) },
-            set: { store.setComposerDraft($0, for: context) }
-        )
-    }
-
-    private var attachmentBinding: Binding<[TerminalAttachment]> {
-        let featureID = id.featureID
-        return Binding(
-            get: { store.composerDrafts.attachments(for: featureID) },
-            set: { store.composerDrafts.setAttachments($0, for: featureID) }
-        )
+        guard context.matchesFeature(featureID), !store.isSending else { return }
+        Task {
+            if await store.sendPreparedMessage(text, expectedContext: context) { didSend() }
+        }
     }
 }
 

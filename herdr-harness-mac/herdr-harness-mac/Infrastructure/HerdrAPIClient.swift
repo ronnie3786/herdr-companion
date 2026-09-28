@@ -267,6 +267,12 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, AgentPr
         ])
     }
 
+    func sendFirstMateMessage(featureID: String, text: String, requestID: String,
+                              context: FirstMateLeadContext) async throws -> FirstMateSnapshot {
+        try await request(path: firstMatePath("features", id: featureID) + "/messages", method: "POST",
+                          body: FirstMateLeadMessageBody(text: text, requestID: requestID, context: context))
+    }
+
     func uploadFirstMateAttachment(
         featureID: String,
         fileURL: URL,
@@ -327,6 +333,14 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, AgentPr
 
     func fetchFirstMateFleet() async throws -> FirstMateFleetResponse {
         try await request(path: "/api/v1/first-mate/fleet")
+    }
+
+    func fetchFirstMateLead() async throws -> FirstMateLeadResponse {
+        try await request(path: "/api/v1/first-mate/lead")
+    }
+
+    func ensureFirstMateLead(requestID: String) async throws -> FirstMateLeadResponse {
+        try await request(path: "/api/v1/first-mate/lead", method: "POST", body: ["request_id": requestID])
     }
 
     func markFirstMateRead(featureID: String, throughMessageID: String) async throws -> FirstMateReadResponse {
@@ -2077,3 +2091,15 @@ private struct PRReviewStatusRefreshResponse: Decodable, Sendable { let ok: Bool
 /// requirement, so production code can inject the real per-machine client
 /// without a wrapper.
 extension HerdrAPIClient: HerdrHudWorkspaceLaunchClient {}
+
+/// A message to the lead First Mate with the other-machines snapshot.
+private struct FirstMateLeadMessageBody: Encodable, Sendable {
+    let text: String
+    let requestID: String
+    let context: FirstMateLeadContext
+
+    enum CodingKeys: String, CodingKey {
+        case text, context
+        case requestID = "request_id"
+    }
+}

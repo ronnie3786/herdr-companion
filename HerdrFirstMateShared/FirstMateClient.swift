@@ -37,6 +37,74 @@ protocol FirstMateClient: Sendable {
     /// Sets the HUD label and emoji. `nil` leaves a field unchanged; an empty
     /// string resets it to the companion's default.
     func updateFirstMateHud(featureID: String, label: String?, emoji: String?) async throws -> FirstMateFleetEntry
+    /// The machine's lead First Mate (`first-mate-lead-v1`), or a nil lead
+    /// before its first use.
+    func fetchFirstMateLead() async throws -> FirstMateLeadResponse
+    /// Creates the lead on first use and returns it. Idempotent.
+    func ensureFirstMateLead(requestID: String) async throws -> FirstMateLeadResponse
+    /// A message to the lead with a read-only snapshot of the person's other
+    /// machines (`first-mate-lead-v1`), which the lead's tools cannot reach.
+    func sendFirstMateMessage(featureID: String, text: String, requestID: String,
+                              context: FirstMateLeadContext) async throws -> FirstMateSnapshot
+}
+
+/// What the lead First Mate is told about features on the person's other
+/// machines: a small, read-only snapshot sent with a message to it. The
+/// companion bounds and stores it apart from the conversation.
+struct FirstMateLeadContext: Codable, Equatable, Sendable {
+    struct Machine: Codable, Equatable, Sendable {
+        var name: String
+        var features: [Feature]
+    }
+
+    struct Feature: Codable, Equatable, Sendable {
+        var label: String
+        var title: String?
+        /// blocked, turn, ready, working, idle, or done.
+        var status: String
+        var step: String?
+        var now: String?
+        var unread: Bool
+        /// The newest message's preview.
+        var latest: String?
+    }
+
+    var machines: [Machine]
+}
+
+/// The lead First Mate: one conversation across every feature on a machine.
+/// Its messages, attachments, model settings, and read marker use the
+/// ordinary feature routes with ``feature``'s ID.
+struct FirstMateLeadSummary: Decodable, Equatable, Sendable {
+    struct LatestMessage: Decodable, Equatable, Sendable {
+        var id: String
+        var role: String
+        var text: String
+        var createdAt: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id, role, text
+            case createdAt = "created_at"
+        }
+    }
+
+    var feature: FirstMateFeature
+    /// The lead's newest reply is past its read marker.
+    var unread: Bool
+    /// A message of yours is queued or the lead is answering.
+    var workingOnReply: Bool
+    var latestMessage: LatestMessage?
+
+    enum CodingKeys: String, CodingKey {
+        case feature, unread
+        case workingOnReply = "working_on_reply"
+        case latestMessage = "latest_message"
+    }
+}
+
+struct FirstMateLeadResponse: Decodable, Sendable {
+    var ok: Bool
+    var lead: FirstMateLeadSummary?
 }
 
 struct FirstMateFeatureList: Decodable, Sendable {
@@ -61,6 +129,7 @@ struct FirstMateCapabilities: Decodable, Sendable {
     var supportsFeedback: Bool { capabilities.contains("first-mate-feedback-v1") }
     var supportsLinks: Bool { capabilities.contains("first-mate-links-v1") }
     var supportsFleet: Bool { capabilities.contains("first-mate-fleet-v1") }
+    var supportsLead: Bool { capabilities.contains("first-mate-lead-v1") }
 }
 
 /// A link save or visibility response: the affected link plus the same full
@@ -203,4 +272,10 @@ extension FirstMateClient {
     func updateFirstMateHud(featureID: String, label: String?, emoji: String?) async throws -> FirstMateFleetEntry {
         throw APIError.invalidResponse
     }
+    func fetchFirstMateLead() async throws -> FirstMateLeadResponse { throw APIError.invalidResponse }
+    func sendFirstMateMessage(featureID: String, text: String, requestID: String,
+                              context: FirstMateLeadContext) async throws -> FirstMateSnapshot {
+        try await sendFirstMateMessage(featureID: featureID, text: text, requestID: requestID)
+    }
+    func ensureFirstMateLead(requestID: String) async throws -> FirstMateLeadResponse { throw APIError.invalidResponse }
 }

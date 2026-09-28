@@ -13,16 +13,21 @@ struct FirstMateCoordinatorContextPresentation: Equatable {
     var pressureReached = false
 
     init(feature: FirstMateFeature, capabilityAvailable: Bool) {
-        policy = "Managed handoff automatically checkpoints and starts a fresh coordinator at a safe turn boundary. Full history remains available; ordinary compaction is disabled."
+        // The lead First Mate hands off the same way, and may also compact
+        // within one turn that would overflow (first-mate-lead-v1).
+        let name = feature.isLead ? "Context" : "Coordinator context"
+        policy = feature.isLead
+            ? "After a reply that reaches the handoff target, First Mate starts a fresh session carrying the recent conversation. If one turn would overflow first, it compacts. Full history remains available."
+            : "Managed handoff automatically checkpoints and starts a fresh coordinator at a safe turn boundary. Full history remains available; ordinary compaction is disabled."
         guard capabilityAvailable else {
-            summary = "Coordinator context unavailable · update server"
+            summary = "\(name) unavailable · update server"
             pressure = nil
             measurement = nil
             compactLine = summary
             return
         }
         guard feature.nativeSessionID != nil else {
-            summary = "Coordinator context · new session"
+            summary = "\(name) · new session"
             pressure = nil
             measurement = nil
             compactLine = summary
@@ -31,7 +36,7 @@ struct FirstMateCoordinatorContextPresentation: Equatable {
         guard let context = feature.coordinatorContext,
               context.nativeSessionID == feature.nativeSessionID,
               context.status == .measured else {
-            summary = "Coordinator context · measurement unavailable"
+            summary = "\(name) · measurement unavailable"
             pressure = nil
             measurement = nil
             compactLine = summary
@@ -43,17 +48,17 @@ struct FirstMateCoordinatorContextPresentation: Equatable {
            let measuredFraction = context.measuredFraction {
             // measuredFraction is finite and clamped before conversion to Int.
             let percent = Int((measuredFraction * 100).rounded())
-            summary = "Coordinator context · \(tokens.formatted()) / \(window.formatted()) tokens (\(percent)%)"
+            summary = "\(name) · \(tokens.formatted()) / \(window.formatted()) tokens (\(percent)%)"
         } else if let tokens = context.tokens {
-            summary = "Coordinator context · \(tokens.formatted()) tokens · window unknown"
+            summary = "\(name) · \(tokens.formatted()) tokens · window unknown"
         } else {
-            summary = "Coordinator context · measurement unavailable"
+            summary = "\(name) · measurement unavailable"
         }
 
         var compact = summary
         if context.tokens != nil, context.contextWindow != nil, let measuredFraction = context.measuredFraction {
             fraction = measuredFraction
-            compact = "Coordinator context \(Int((measuredFraction * 100).rounded()))%"
+            compact = "\(name) \(Int((measuredFraction * 100).rounded()))%"
         }
         switch context.managedHandoffPressure {
         case .approaching:

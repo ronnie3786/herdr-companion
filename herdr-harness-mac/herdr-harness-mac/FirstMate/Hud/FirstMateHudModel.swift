@@ -127,10 +127,8 @@ enum FirstMateHudOrder {
 enum FirstMateHudOverflow {
     /// The collapsed row's cap, including the "+N" orb.
     static let maxOrbs = 6
-    /// The expanded list summarizes moving rows beyond this many.
-    static let movingRowLimit = 4
-    /// Moving rows shown above the summary row.
-    static let movingRowsShown = 3
+    /// The expanded list's cap, including the summary row.
+    static let maxRows = 6
 
     struct Collapsed: Equatable, Sendable {
         /// Orbs in list order.
@@ -140,22 +138,24 @@ enum FirstMateHudOverflow {
         var hasMore: Bool { !tucked.isEmpty }
     }
 
-    /// Up to ``maxOrbs`` orbs. With more features, the first five show and the
-    /// sixth slot becomes "+N". Needs-you features always keep their own orb,
-    /// even past the cap; then only moving features are tucked.
+    /// At most six orbs. With more features, the first five in list order
+    /// (most urgent first) show and the sixth slot becomes "+N", even when
+    /// more than five need you: the "+N" orb carries their unread dot and
+    /// lists them on hover, and the face's badge still counts every one.
     static func collapsed(_ ordered: [FirstMateHudItem], maxOrbs: Int = maxOrbs) -> Collapsed {
         guard ordered.count > maxOrbs else { return Collapsed(orbs: ordered, tucked: []) }
-        let needsYou = ordered.filter(\.needsYou)
-        let shown = max(maxOrbs - 1, needsYou.count)
+        let shown = max(maxOrbs - 1, 0)
         return Collapsed(orbs: Array(ordered.prefix(shown)), tucked: Array(ordered.dropFirst(shown)))
     }
 
     struct Summary: Equatable, Sendable {
-        /// Moving features the summary stands for (empty when showing all).
+        /// Features the summary stands for (empty when showing all).
         var tucked: [FirstMateHudItem]
-        /// True once every moving row shows; the row then reads "Show fewer".
+        /// True once every row shows; the row then reads "Show fewer".
         var isShowingAll: Bool
         var count: Int { tucked.count }
+        /// How many of the tucked features need you.
+        var needsYouCount: Int { tucked.count(where: \.needsYou) }
         /// The tucked features' average percent, over those with a known step.
         var averagePercent: Int? {
             let known = tucked.compactMap(\.percent)
@@ -167,29 +167,26 @@ enum FirstMateHudOverflow {
     struct Expanded: Equatable, Sendable {
         var needsYou: [FirstMateHudItem]
         var moving: [FirstMateHudItem]
-        /// Moving rows draw compact (one line) while every row shows.
-        var movingAreCompact: Bool
+        /// Every row draws compact (one line) while all of a long fleet shows.
+        var rowsAreCompact: Bool
         var summary: Summary?
     }
 
-    /// Every needs-you row in full. More than four moving rows show three and
-    /// a summary row; showing all turns every moving row compact.
-    static func expanded(_ ordered: [FirstMateHudItem], showAllMoving: Bool) -> Expanded {
-        let needsYou = ordered.filter(\.needsYou)
-        let moving = ordered.filter { !$0.needsYou }
-        guard moving.count > movingRowLimit else {
-            return Expanded(needsYou: needsYou, moving: moving, movingAreCompact: false, summary: nil)
+    /// At most six rows. With more features, the first five in list order
+    /// show and a summary row stands for the rest; showing all turns every
+    /// row compact so a long fleet still fits.
+    static func expanded(_ ordered: [FirstMateHudItem], showAll: Bool, maxRows: Int = maxRows) -> Expanded {
+        func split(_ items: [FirstMateHudItem], compact: Bool, summary: Summary?) -> Expanded {
+            Expanded(needsYou: items.filter(\.needsYou), moving: items.filter { !$0.needsYou },
+                     rowsAreCompact: compact, summary: summary)
         }
-        if showAllMoving {
-            return Expanded(needsYou: needsYou, moving: moving, movingAreCompact: true,
-                            summary: Summary(tucked: [], isShowingAll: true))
+        guard ordered.count > maxRows else { return split(ordered, compact: false, summary: nil) }
+        if showAll {
+            return split(ordered, compact: true, summary: Summary(tucked: [], isShowingAll: true))
         }
-        return Expanded(
-            needsYou: needsYou,
-            moving: Array(moving.prefix(movingRowsShown)),
-            movingAreCompact: false,
-            summary: Summary(tucked: Array(moving.dropFirst(movingRowsShown)), isShowingAll: false)
-        )
+        let shown = max(maxRows - 1, 0)
+        return split(Array(ordered.prefix(shown)), compact: false,
+                     summary: Summary(tucked: Array(ordered.dropFirst(shown)), isShowingAll: false))
     }
 }
 
@@ -211,9 +208,10 @@ enum FirstMateHudBadge {
     }
 }
 
-/// Phase 1 routing for typed and spoken words, with no lead First Mate yet:
-/// a question about the fleet is answered here from the summary; words that
-/// name a feature go to that feature as the person's message.
+/// Routing for typed and spoken words when no machine has a lead First Mate
+/// (`first-mate-lead-v1`; with one, everything goes to the lead): a question
+/// about the fleet is answered here from the summary; words that name a
+/// feature go to that feature as the person's message.
 enum FirstMateHudRouting {
     enum Route: Equatable, Sendable {
         /// Post `text` to the feature as the person's message.
@@ -222,7 +220,13 @@ enum FirstMateHudRouting {
         case answer(String)
     }
 
-    static let noMatchAnswer = "I couldn't tell which feature that's for. Name one, like “Receipt export”, or ask what needs you."
+    /// Names one of the person's own features as the example, never a made-up one.
+    static func noMatchAnswer(items: [FirstMateHudItem]) -> String {
+        guard let example = items.first?.label else {
+            return "I couldn't tell which feature that's for. Name a feature, or ask what needs you."
+        }
+        return "I couldn't tell which feature that's for. Name one, like “\(example)”, or ask what needs you."
+    }
 
     static func route(_ text: String, items: [FirstMateHudItem]) -> Route {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -231,7 +235,7 @@ enum FirstMateHudRouting {
         }
         if isFleetQuestion(trimmed) { return .answer(summary(items)) }
         if items.isEmpty { return .answer("No First Mate features are running.") }
-        return .answer(noMatchAnswer)
+        return .answer(noMatchAnswer(items: items))
     }
 
     /// The feature whose label or title the text names, as whole words,

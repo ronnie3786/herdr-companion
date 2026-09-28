@@ -56,9 +56,15 @@ struct FirstMateChatWindowSessionTests {
 
         session.open(.feature(featureID: "demo-receipts"), machineID: "demo")
         #expect(store.inspector == .overview, "Opening another chat starts on Overview")
+        // My First Mate is the lead First Mate: a chat in the same machine
+        // store, so selecting it moves that store's chat and never the main window's.
         session.select(.lead)
-        #expect(session.selectedStore == nil)
-        #expect(store.selectedFeatureID == "demo-receipts", "The lead leaves the store's chat alone")
+        #expect(session.selectedStore === store)
+        #expect(store.selectedFeatureID == store.leadFeatureID)
+        #expect(store.leadFeatureID == "demo-lead")
+        #expect(shell.firstMate.selectedFeatureID == "demo-search")
+        session.select(.feature(receipts))
+        #expect(store.selectedFeatureID == "demo-receipts")
     }
 
     @Test("Each machine gets its own store, rebuilt only when its connection changes")

@@ -48,9 +48,6 @@ final class FirstMateChatWindowSession {
     @ObservationIgnored private let configurationProvider: @MainActor (String) -> ServerConfiguration?
     @ObservationIgnored private let makeClient: @MainActor (ServerConfiguration) -> any FirstMateClient
     @ObservationIgnored private let fleetSources: @MainActor () -> [FirstMateFleetSource]
-    /// The demo's clock, fixed for the session so its times do not drift.
-    @ObservationIgnored private let demoNow = Date()
-    @ObservationIgnored private var cachedDemoFleet: [FirstMateFleetEntry]?
     @ObservationIgnored private var selectionGeneration = 0
 
     private struct ConversationCacheKey: Equatable {
@@ -141,8 +138,8 @@ final class FirstMateChatWindowSession {
             guard machineID == Self.demoMachineID else { return nil }
             let identity = FirstMateConnectionIdentity(configuration: nil, generation: 0, isDemo: true)
             if let entry = stores[machineID], entry.identity == identity { return entry.store }
-            let store = FirstMateStore()
-            store.configure(client: nil, demo: true, demoFeatures: FirstMateDemo.chatWindowFeatures(now: demoNow))
+            // The process's chat demo, shared with the Dock badge and menu.
+            let store = shell.firstMateChatDemo.store
             stores = [machineID: StoreEntry(store: store, identity: identity)]
             return store
         }
@@ -338,12 +335,11 @@ final class FirstMateChatWindowSession {
     // MARK: Demo
 
     /// The demo's one host: the chat demo's fleet summary, with each chat's
-    /// newest message taken from the demo store so local sends show up.
+    /// newest message taken from the demo store so local sends show up. The
+    /// Dock badge and menu count the same host (`HerdrShellState.firstMateChatDemo`).
     private var demoHost: FirstMateFleetHost {
-        let snapshots = store(for: Self.demoMachineID)?.snapshots ?? [:]
-        let fleet = cachedDemoFleet ?? FirstMateDemo.chatWindowFleet(now: demoNow)
-        cachedDemoFleet = fleet
-        return Self.demoHost(fleet: fleet, snapshots: snapshots, lastUpdated: demoNow)
+        _ = store(for: Self.demoMachineID)
+        return shell.firstMateChatDemo.host
     }
 
     static func demoHost(fleet: [FirstMateFleetEntry], snapshots: [String: FirstMateSnapshot], lastUpdated: Date) -> FirstMateFleetHost {

@@ -240,8 +240,8 @@ final class HerdrAppModel {
         }
     }
     /// Test seam for the alert-count badge writer.
-    @ObservationIgnored var alertBadgeWriter: @MainActor (Int) -> Void = { count in
-        Task { await NotificationManager.setBadge(count) }
+    @ObservationIgnored var alertBadgeWriter: @MainActor (Int) async -> Void = { count in
+        await NotificationManager.setBadge(count)
     }
     @ObservationIgnored private var paneIndex: [String: PaneLocation] = [:]
     /// Internal test seam for deterministic URLProtocol-backed clients.
@@ -4649,7 +4649,12 @@ final class HerdrAppModel {
         let count = unreadAlertCount
         guard count != lastBadgeCount else { return }
         lastBadgeCount = count
-        alertBadgeWriter(count)
+        // A write still queued when the First Mate count takes the badge over
+        // is dropped rather than landing over it.
+        Task { [weak self] in
+            guard let self, !self.isAlertBadgeSuspended else { return }
+            await self.alertBadgeWriter(count)
+        }
     }
 
     private func syncPushDevice(machineID: String, using client: HerdrAPIClient, expectedGeneration: Int) async {

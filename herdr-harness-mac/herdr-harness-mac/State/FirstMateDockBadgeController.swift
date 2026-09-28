@@ -11,8 +11,15 @@ import Observation
 /// (`HerdrAppModel.updateBadgeIfNeeded`) yields. Turning it off clears the
 /// First Mate count and hands the badge back, which re-applies the alert
 /// count. Process-owned, so it keeps updating with every window closed. In
-/// demo mode it counts the chat window's demo host. Inert under XCTest unless
-/// a test asks otherwise.
+/// demo mode it counts the chat window's demo host
+/// (`HerdrShellState.firstMateChatDemo`), so a demo send or read moves both.
+/// Inert under XCTest unless a test asks otherwise.
+///
+/// Another writer can still land on the icon after this one: an alert-count
+/// write already in flight when the setting took over, or the system applying
+/// a notification's badge. So the label is written again, without the
+/// unchanged-count shortcut, shortly after taking the badge over, whenever
+/// Herdr becomes active, and after a notification is presented.
 @MainActor
 final class FirstMateDockBadgeController {
     private let defaults: UserDefaults
@@ -22,22 +29,28 @@ final class FirstMateDockBadgeController {
     private weak var model: HerdrAppModel?
     private weak var shell: HerdrShellState?
     private var defaultsObserver: (any NSObjectProtocol)?
+    private var activationObserver: (any NSObjectProtocol)?
+    private let reassertDelay: Duration?
+    private var reassertTask: Task<Void, Never>?
     private var isStarted = false
     /// Whether this controller currently owns the badge.
     private(set) var ownsBadge = false
     /// The label last written, so an unchanged count writes nothing.
     private(set) var appliedLabel: String?
     private var hasAppliedLabel = false
-    private var demoFleet: (fleet: [FirstMateFleetEntry], snapshots: [String: FirstMateSnapshot], now: Date)?
 
+    /// `reassertDelay` is how long after taking the badge over the label is
+    /// written once more (nil never does; tests).
     init(
         defaults: UserDefaults = .standard,
         apply: @escaping @MainActor (String?) -> Void = { NSApp?.dockTile.badgeLabel = $0 },
-        isInert: Bool = FirstMateFleetDriver.isHostedByTests
+        isInert: Bool = FirstMateFleetDriver.isHostedByTests,
+        reassertDelay: Duration? = .seconds(1)
     ) {
         self.defaults = defaults
         self.apply = apply
         self.isInert = isInert
+        self.reassertDelay = reassertDelay
     }
 
     /// Nil hides the badge at zero.
@@ -66,22 +79,19 @@ final class FirstMateDockBadgeController {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.update() }
         }
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reassert() }
+        }
     }
 
     /// The hosts the chat window shows: the chat demo's host in demo mode,
     /// else every fleet host.
     func hosts(model: HerdrAppModel, shell: HerdrShellState) -> [FirstMateFleetHost] {
-        guard model.isDemoMode else { return shell.firstMateFleet.hosts }
-        let demo = demoFleet ?? {
-            let now = Date()
-            let snapshots = Dictionary(
-                FirstMateDemo.chatWindowFeatures(now: now).map { ($0.feature.id, $0) },
-                uniquingKeysWith: { first, _ in first }
-            )
-            return (FirstMateDemo.chatWindowFleet(now: now), snapshots, now)
-        }()
-        demoFleet = demo
-        return [FirstMateChatWindowSession.demoHost(fleet: demo.fleet, snapshots: demo.snapshots, lastUpdated: demo.now)]
+        model.isDemoMode ? [shell.firstMateChatDemo.host] : shell.firstMateFleet.hosts
     }
 
     /// The Dock count for the current hosts and read markers.
@@ -98,6 +108,7 @@ final class FirstMateDockBadgeController {
                 ownsBadge = true
                 hasAppliedLabel = false
                 model.isAlertBadgeSuspended = true
+                scheduleReassert()
             }
             let label = Self.label(for: count(model: model, shell: shell))
             if !hasAppliedLabel || label != appliedLabel {
@@ -106,12 +117,35 @@ final class FirstMateDockBadgeController {
                 apply(label)
             }
         } else if ownsBadge {
+            reassertTask?.cancel()
+            reassertTask = nil
             ownsBadge = false
             hasAppliedLabel = false
             appliedLabel = nil
             apply(nil)
             // Re-applies the unread alert count.
             model.isAlertBadgeSuspended = false
+        }
+    }
+
+    /// Writes the current label again even when the count has not changed,
+    /// over whatever another writer put on the icon since. Does nothing while
+    /// the setting is off.
+    func reassert() {
+        guard ownsBadge else { return }
+        hasAppliedLabel = false
+        update()
+    }
+
+    /// Covers an alert-count write that was already in flight when this took
+    /// the badge over.
+    private func scheduleReassert() {
+        guard let reassertDelay else { return }
+        reassertTask?.cancel()
+        reassertTask = Task { [weak self] in
+            try? await Task.sleep(for: reassertDelay)
+            guard !Task.isCancelled else { return }
+            self?.reassert()
         }
     }
 

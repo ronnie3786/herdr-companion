@@ -147,6 +147,15 @@ final class HerdrShellState {
     /// starts them; they keep running with every window closed.
     @ObservationIgnored private(set) var firstMateFleetDriver: FirstMateFleetDriver?
     @ObservationIgnored private(set) var firstMateDockBadge: FirstMateDockBadgeController?
+    @ObservationIgnored private var firstMateChatDemoStorage: FirstMateChatDemoSource?
+    /// The chat window's demo, shared with the Dock badge and menu. Created on
+    /// first use.
+    var firstMateChatDemo: FirstMateChatDemoSource {
+        if let firstMateChatDemoStorage { return firstMateChatDemoStorage }
+        let demo = FirstMateChatDemoSource()
+        firstMateChatDemoStorage = demo
+        return demo
+    }
     var isCreatingWorkspace = false
     var isCreatingPRReview = false
     var isAddingPRReviewSkill = false

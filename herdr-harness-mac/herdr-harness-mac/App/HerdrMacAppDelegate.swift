@@ -82,6 +82,9 @@ final class HerdrMacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
     /// these (see `FirstMateAppServicesModifier`).
     var firstMateDockMenuItems: (@MainActor () -> [FirstMateDockMenuItem])?
     var openFirstMateDockMenuItem: (@MainActor (FirstMateFleetFeatureID) -> Void)?
+    /// The First Mate Dock count, which owns the icon badge while its setting
+    /// is on. Notifications then present without touching the badge.
+    weak var firstMateDockBadge: FirstMateDockBadgeController?
     private var dockMenuTargets: [FirstMateFleetFeatureID] = []
 
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
@@ -133,7 +136,18 @@ final class HerdrMacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         // The active app supplies semantic feedback from agent-state changes.
         // Keep the banner visible, but do not duplicate that feedback with a
         // generic notification sound while Herdr is in the foreground.
-        [.banner, .badge]
+        let ownsBadge = await MainActor.run { self.firstMateDockBadge?.ownsBadge ?? false }
+        if ownsBadge {
+            // Written back over anything the notification did to the icon.
+            Task { @MainActor in self.firstMateDockBadge?.reassert() }
+        }
+        return Self.presentationOptions(firstMateOwnsBadge: ownsBadge)
+    }
+
+    /// The banner always; the badge only while the First Mate count does not
+    /// own the icon.
+    nonisolated static func presentationOptions(firstMateOwnsBadge: Bool) -> UNNotificationPresentationOptions {
+        firstMateOwnsBadge ? [.banner] : [.banner, .badge]
     }
 
     nonisolated func userNotificationCenter(

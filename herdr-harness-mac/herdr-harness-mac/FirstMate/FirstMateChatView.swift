@@ -19,13 +19,16 @@ struct FirstMateChatView: View {
         ["completed", "cancelled"].contains(snapshot.feature.status)
     }
 
-    /// The newest First Mate message, and whether the person can see it: the
-    /// chat is in the key window and scrolled to the bottom.
+    /// The newest First Mate message, whether the person can see it (the
+    /// chat is in the key window and scrolled to the bottom), and whether the
+    /// fleet reports the chat unread, so a fleet that catches up after the
+    /// transcript marks it again.
     private var readMarker: FirstMateChatReadMarker {
         FirstMateChatReadMarker(
             featureID: snapshot.feature.id,
             messageID: snapshot.messages.last { $0.role == "assistant" && $0.isConversation }?.id,
-            isVisible: controlActiveState == .key && followsLatest
+            isVisible: controlActiveState == .key && followsLatest,
+            fleetUnreadThrough: markRead?.unreadThrough[snapshot.feature.id]
         )
     }
 
@@ -70,8 +73,8 @@ struct FirstMateChatView: View {
         .task(id: feedbackLoadID) { await loadFeedback() }
         .onChange(of: store.operationContext) { _, _ in feedbackEditor = nil }
         .onChange(of: readMarker, initial: true) { _, marker in
-            guard marker.isVisible, let messageID = marker.messageID else { return }
-            markRead?(marker.featureID, messageID)
+            guard let messageID = marker.markTarget else { return }
+            markRead?(featureID: marker.featureID, messageID: messageID)
         }
         .sheet(item: $feedbackEditor) { target in
             FirstMateFeedbackEditor(store: store, target: target)
@@ -561,10 +564,4 @@ private struct FirstMateChatNote: View {
         .herdrHairline(.top)
         .accessibilityElement(children: .combine)
     }
-}
-
-private struct FirstMateChatReadMarker: Equatable {
-    let featureID: String
-    let messageID: String?
-    let isVisible: Bool
 }

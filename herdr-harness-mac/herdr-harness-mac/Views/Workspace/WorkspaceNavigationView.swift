@@ -552,16 +552,21 @@ struct WorkspaceNavigationView: View {
 
     /// The current First Mate screen marks its chat read while it is in the
     /// key window and scrolled to the newest message, like the chat window.
-    /// Only a chat the fleet reports unread posts a marker.
-    private var markFirstMateRead: @MainActor (String, String) -> Void {
-        { [shell] featureID, messageID in
-            guard let machineID = shell.activeFirstMateMachineID else { return }
-            let fleet = shell.firstMateFleet
-            guard let entry = fleet.hosts.first(where: { $0.machineID == machineID })?.fleetEntries?[featureID],
-                  fleet.readState.isUnread(entry, machineID: machineID)
-            else { return }
-            Task { await fleet.markRead(machineID: machineID, featureID: featureID, throughMessageID: messageID) }
-        }
+    /// Only a chat the fleet reports unread posts a marker. An equatable
+    /// value, so the chat re-renders only when the machine or its unread
+    /// chats change.
+    private var markFirstMateRead: FirstMateMarkReadAction? {
+        guard let machineID = shell.activeFirstMateMachineID else { return nil }
+        let fleet = shell.firstMateFleet
+        return FirstMateMarkReadAction(
+            machineID: machineID,
+            unreadThrough: FirstMateMarkReadAction.unreadThrough(hosts: fleet.hosts, readState: fleet.readState, machineID: machineID),
+            owner: fleet,
+            perform: { [weak fleet] machineID, featureID, messageID in
+                guard let fleet else { return }
+                Task { await fleet.markRead(machineID: machineID, featureID: featureID, throughMessageID: messageID) }
+            }
+        )
     }
 
     /// "Open in window": the chat window on the current feature. In demo mode

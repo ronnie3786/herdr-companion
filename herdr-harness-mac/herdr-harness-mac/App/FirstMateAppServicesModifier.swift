@@ -15,6 +15,7 @@ struct FirstMateAppServicesModifier: ViewModifier {
     func body(content: Content) -> some View {
         content.onAppear {
             shell.startFirstMateServices(model: model)
+            appDelegate.firstMateDockBadge = shell.firstMateDockBadge
             let openWindow = openWindow
             appDelegate.firstMateDockMenuItems = { [weak model, weak shell] in
                 guard let model, let shell, let badge = shell.firstMateDockBadge else { return [] }

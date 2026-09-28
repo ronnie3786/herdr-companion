@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import SwiftUI
 import Testing
+import UserNotifications
 @testable import herdr_harness_mac
 
 @MainActor
@@ -229,7 +230,7 @@ struct FirstMateDockBadgeTests {
         let model = ChatFixtures.model(demo: true)
         let shell = ChatFixtures.shell()
         var applied: [String?] = []
-        let controller = FirstMateDockBadgeController(defaults: Self.defaults(), apply: { applied.append($0) }, isInert: false)
+        let controller = FirstMateDockBadgeController(defaults: Self.defaults(), apply: { applied.append($0) }, isInert: false, reassertDelay: nil)
         #expect(controller.count(model: model, shell: shell) == 3)
         controller.start(model: model, shell: shell)
         controller.start(model: model, shell: shell)
@@ -253,7 +254,7 @@ struct FirstMateDockBadgeTests {
         let model = ChatFixtures.model(demo: false)
         let shell = ChatFixtures.shell()
         var applied: [String?] = []
-        let controller = FirstMateDockBadgeController(defaults: Self.defaults(), apply: { applied.append($0) }, isInert: false)
+        let controller = FirstMateDockBadgeController(defaults: Self.defaults(), apply: { applied.append($0) }, isInert: false, reassertDelay: nil)
         controller.start(model: model, shell: shell)
         #expect(controller.count(model: model, shell: shell) == 0)
         #expect(applied == [nil])
@@ -268,7 +269,7 @@ struct FirstMateDockBadgeTests {
         model.alertBadgeWriter = { alertWrites.append($0) }
         let defaults = Self.defaults()
         var applied: [String?] = []
-        let controller = FirstMateDockBadgeController(defaults: defaults, apply: { applied.append($0) }, isInert: false)
+        let controller = FirstMateDockBadgeController(defaults: defaults, apply: { applied.append($0) }, isInert: false, reassertDelay: nil)
         controller.start(model: model, shell: shell)
         #expect(model.isAlertBadgeSuspended)
         #expect(alertWrites.isEmpty)
@@ -277,12 +278,91 @@ struct FirstMateDockBadgeTests {
         try await ChatFixtures.waitUntil("setting off applies") { !controller.ownsBadge }
         #expect(applied == ["3", nil])
         #expect(!model.isAlertBadgeSuspended)
-        #expect(alertWrites == [model.unreadAlertCount], "The alert count is written again")
+        try await ChatFixtures.waitUntil("the alert count is written again") { alertWrites == [model.unreadAlertCount] }
 
         defaults.set(true, forKey: FirstMateChatPreferences.dockBadgeEnabledKey)
         try await ChatFixtures.waitUntil("setting on applies") { controller.ownsBadge }
         #expect(applied == ["3", nil, "3"])
         #expect(model.isAlertBadgeSuspended)
+    }
+
+    @Test("An alert-count write still queued when the First Mate count takes over is dropped")
+    func queuedAlertWriteYields() async throws {
+        let model = ChatFixtures.model(demo: true)
+        var alertWrites: [Int] = []
+        model.alertBadgeWriter = { alertWrites.append($0) }
+        model.isAlertBadgeSuspended = true
+        // Handing the badge back queues an alert-count write...
+        model.isAlertBadgeSuspended = false
+        // ...and the First Mate count takes it over before that write runs.
+        model.isAlertBadgeSuspended = true
+        for _ in 0..<20 { await Task.yield() }
+        #expect(alertWrites.isEmpty)
+
+        model.isAlertBadgeSuspended = false
+        try await ChatFixtures.waitUntil("an unsuspended write lands") { alertWrites == [model.unreadAlertCount] }
+    }
+
+    @Test("The label is written again over another writer: after taking over, on activation, and on request")
+    func reassertsOverOtherWriters() async throws {
+        let model = ChatFixtures.model(demo: true)
+        let shell = ChatFixtures.shell()
+        let defaults = Self.defaults()
+        var applied: [String?] = []
+        let controller = FirstMateDockBadgeController(
+            defaults: defaults, apply: { applied.append($0) }, isInert: false, reassertDelay: .milliseconds(20)
+        )
+        controller.start(model: model, shell: shell)
+        #expect(applied == ["3"])
+        try await ChatFixtures.waitUntil("re-asserted shortly after taking over") { applied == ["3", "3"] }
+
+        controller.reassert()
+        #expect(applied == ["3", "3", "3"], "An unchanged count is still written again")
+
+        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+        try await ChatFixtures.waitUntil("re-asserted on activation") { applied.count == 4 }
+        #expect(applied.last == "3")
+
+        defaults.set(false, forKey: FirstMateChatPreferences.dockBadgeEnabledKey)
+        try await ChatFixtures.waitUntil("setting off applies") { !controller.ownsBadge }
+        let written = applied.count
+        controller.reassert()
+        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+        for _ in 0..<20 { await Task.yield() }
+        #expect(applied.count == written, "Nothing is written while the setting is off")
+    }
+
+    @Test("Notifications leave the icon badge alone while the First Mate count owns it")
+    func presentationOptions() {
+        #expect(HerdrMacAppDelegate.presentationOptions(firstMateOwnsBadge: true) == [.banner])
+        #expect(HerdrMacAppDelegate.presentationOptions(firstMateOwnsBadge: false) == [.banner, .badge])
+    }
+
+    @Test("The demo badge counts the chat window's own demo, through a send and a read")
+    func demoFollowsChatWindowDemo() async throws {
+        let model = ChatFixtures.model(demo: true)
+        let shell = ChatFixtures.shell()
+        let session = FirstMateChatWindowSession(model: model, shell: shell)
+        var applied: [String?] = []
+        let controller = FirstMateDockBadgeController(defaults: Self.defaults(), apply: { applied.append($0) }, isInert: false, reassertDelay: nil)
+        controller.start(model: model, shell: shell)
+        #expect(applied == ["3"])
+        #expect(session.badgeCount == 3)
+
+        let id = FirstMateFleetFeatureID(machineID: "demo", featureID: "demo-receipts")
+        session.select(.feature(id))
+        let store = try #require(session.selectedStore)
+        #expect(store === shell.firstMateChatDemo.store, "The window and the badge share one demo store")
+        store.draft = "Synthetic direction"
+        await store.send()
+        let reply = try #require(store.snapshots[id.featureID]?.messages.last { $0.role == "assistant" && $0.isConversation })
+        #expect(controller.hosts(model: model, shell: shell) == session.hosts)
+
+        await shell.firstMateFleet.markRead(machineID: id.machineID, featureID: id.featureID, throughMessageID: reply.id)
+        #expect(session.badgeCount == 2)
+        #expect(controller.count(model: model, shell: shell) == 2)
+        try await ChatFixtures.waitUntil("the Dock follows the window's read") { applied.last == "2" }
+        #expect(controller.menuItems(model: model, shell: shell).allSatisfy { $0.id != id })
     }
 
     @Test("A setting that starts off never touches the badge")
@@ -291,7 +371,7 @@ struct FirstMateDockBadgeTests {
         let defaults = Self.defaults()
         defaults.set(false, forKey: FirstMateChatPreferences.dockBadgeEnabledKey)
         var applied: [String?] = []
-        let controller = FirstMateDockBadgeController(defaults: defaults, apply: { applied.append($0) }, isInert: false)
+        let controller = FirstMateDockBadgeController(defaults: defaults, apply: { applied.append($0) }, isInert: false, reassertDelay: nil)
         controller.start(model: model, shell: ChatFixtures.shell())
         #expect(applied.isEmpty)
         #expect(!model.isAlertBadgeSuspended)
@@ -403,4 +483,62 @@ struct FirstMateChatShellRenderTests {
         }
         result.expectSubstantial()
     }
+}
+
+@Suite("First Mate screen read markers")
+@MainActor
+struct FirstMateScreenReadMarkerTests {
+    @Test("A message that reaches the transcript before the fleet marks the chat when the fleet reports it unread")
+    func transcriptAheadOfFleet() {
+        // The transcript's store has the new reply; the fleet still reports the chat read.
+        let early = FirstMateChatReadMarker(featureID: "fmf_one", messageID: "fmm_new", isVisible: true, fleetUnreadThrough: nil)
+        #expect(early.markTarget == nil)
+        // The fleet catches up: the marker changes, so the hook runs again and marks it.
+        let caughtUp = FirstMateChatReadMarker(featureID: "fmf_one", messageID: "fmm_new", isVisible: true, fleetUnreadThrough: "fmm_new")
+        #expect(caughtUp != early)
+        #expect(caughtUp.markTarget == "fmm_new")
+        // Hidden or scrolled up, nothing posts.
+        let hidden = FirstMateChatReadMarker(featureID: "fmf_one", messageID: "fmm_new", isVisible: false, fleetUnreadThrough: "fmm_new")
+        #expect(hidden.markTarget == nil)
+    }
+
+    @Test("The action lists the fleet's unread chats after local reads, and posts only for them")
+    func actionFollowsFleet() {
+        let entries = [
+            ChatFixtures.entry("fmf_unread", hud: .blocked, unread: true, latestFirstMate: "fmm_a"),
+            ChatFixtures.entry("fmf_read", hud: .turn, unread: false, latestFirstMate: "fmm_b"),
+            ChatFixtures.entry("fmf_local", hud: .turn, unread: true, latestFirstMate: "fmm_c"),
+        ]
+        let hosts = [ChatFixtures.host("alpha", entries: entries), ChatFixtures.host("beta", entries: [ChatFixtures.entry("fmf_other", hud: .blocked)])]
+        var readState = FirstMateReadState()
+        readState.markRead(FirstMateFleetFeatureID(machineID: "alpha", featureID: "fmf_local"), messageID: "fmm_c")
+        let unread = FirstMateMarkReadAction.unreadThrough(hosts: hosts, readState: readState, machineID: "alpha")
+        #expect(unread == ["fmf_unread": "fmm_a"])
+        #expect(FirstMateMarkReadAction.unreadThrough(hosts: hosts, readState: readState, machineID: "gamma").isEmpty)
+
+        let owner = FirstMateFleetIndex()
+        let posted = PostedReads()
+        let action = FirstMateMarkReadAction(machineID: "alpha", unreadThrough: unread, owner: owner) { machineID, featureID, messageID in
+            posted.values.append("\(machineID)/\(featureID)/\(messageID)")
+        }
+        action(featureID: "fmf_read", messageID: "fmm_b")
+        action(featureID: "fmf_unread", messageID: "fmm_newer")
+        #expect(posted.values == ["alpha/fmf_unread/fmm_newer"])
+    }
+
+    @Test("The action compares by owner, machine and unread chats, not by closure")
+    func actionEquality() {
+        let owner = FirstMateFleetIndex()
+        let first = FirstMateMarkReadAction(machineID: "alpha", unreadThrough: ["fmf_one": "fmm_a"], owner: owner) { _, _, _ in }
+        let rebuilt = FirstMateMarkReadAction(machineID: "alpha", unreadThrough: ["fmf_one": "fmm_a"], owner: owner) { _, _, _ in }
+        #expect(first == rebuilt, "A new host pass with nothing changed is the same value")
+        #expect(first != FirstMateMarkReadAction(machineID: "alpha", unreadThrough: [:], owner: owner) { _, _, _ in })
+        #expect(first != FirstMateMarkReadAction(machineID: "beta", unreadThrough: ["fmf_one": "fmm_a"], owner: owner) { _, _, _ in })
+        #expect(first != FirstMateMarkReadAction(machineID: "alpha", unreadThrough: ["fmf_one": "fmm_a"], owner: FirstMateFleetIndex()) { _, _, _ in })
+    }
+}
+
+@MainActor
+private final class PostedReads {
+    var values: [String] = []
 }

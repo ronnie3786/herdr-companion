@@ -149,10 +149,21 @@ class FirstMateRemedyTests(unittest.TestCase):
         self.assertEqual(error.exception.code, 'no_active_stage')
         self.assertEqual(error.exception.next_permitted_actions[0]['tool'], 'fm_begin_stage')
 
+    def test_coordinator_deadline_allows_long_tasks_and_honors_explicit_bounds(self):
+        feature, message, job, _ = self.coordinator()
+        for configured, expected in [('172800', 172800), ('9999999', 604800), ('1', 30)]:
+            with self.subTest(configured=configured):
+                self.runtime.environ['HERDR_FIRST_MATE_COORDINATOR_MAX_SECONDS'] = configured
+                self.runtime.environ['HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS'] = configured
+                _write_json(self.runtime._job_dir(job) / 'finalized.json', {'at': 'test'})
+                job = self.runtime._new_job(feature, kind='coordinator', claim=message, prompt=message['text'])
+                self.assertEqual(job['timeout_seconds'], expected)
+                self.assertEqual(job['idle_timeout_seconds'], expected)
+
     def test_interrupted_coordinator_reports_committed_and_unknown_operations(self):
         feature, message, job, _ = self.coordinator()
-        self.assertEqual(job['timeout_seconds'], 3600)
-        self.assertEqual(job['idle_timeout_seconds'], 600)
+        self.assertEqual(job['timeout_seconds'], 604800)
+        self.assertEqual(job['idle_timeout_seconds'], 86400)
         directory = self.runtime._job_dir(job)
         _write_json(directory / 'requests' / 'done.json', {'action': 'fm_begin_stage'})
         _write_json(directory / 'responses' / 'done.json', {'ok': True})

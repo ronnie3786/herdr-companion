@@ -6,6 +6,79 @@ import Testing
 @Suite("First Mate fleet index")
 @MainActor
 struct FirstMateFleetIndexTests {
+    @Test("Archive targets the owning machine and removes only its feature")
+    func archiveOwningMachine() async throws {
+        let value = snapshot(id: "same-id", title: "Synthetic task", goal: "Archive this task")
+        let alpha = ArchiveFleetClient(snapshot: value)
+        let beta = ArchiveFleetClient(snapshot: value)
+        let index = FirstMateFleetIndex()
+        let a = machine(id: "alpha", name: "Alpha")
+        let b = machine(id: "beta", name: "Beta")
+        index.activate(sources: [
+            .init(machine: a, configuration: configuration(for: a, token: "alpha"), client: alpha),
+            .init(machine: b, configuration: configuration(for: b, token: "beta"), client: beta),
+        ], connectionGeneration: 1)
+        await index.refresh()
+        let target = index.archiveTarget(machineID: a.id, feature: value.feature)
+        #expect(await index.archive(target, reason: .testSynthetic) == nil)
+        #expect(index.hosts[0].features.isEmpty)
+        #expect(index.hosts[1].features.map(\.id) == [value.feature.id])
+        #expect(await alpha.archiveRequests == [value.feature.id])
+        #expect(await beta.archiveRequests.isEmpty)
+        await index.refresh()
+        #expect(index.hosts[0].features.isEmpty)
+    }
+
+    @Test("Unsupported and failed archives retain the feature and explain the failure")
+    func archiveFailure() async {
+        for supported in [false, true] {
+            let value = snapshot(id: "task", title: "Synthetic task", goal: "Keep on failure")
+            let client = ArchiveFleetClient(snapshot: value, supported: supported, failArchive: true)
+            let host = machine(id: "alpha", name: "Alpha")
+            let index = FirstMateFleetIndex()
+            index.activate(sources: [.init(machine: host, configuration: configuration(for: host, token: "token"), client: client)], connectionGeneration: 1)
+            await index.refresh()
+            let target = index.archiveTarget(machineID: host.id, feature: value.feature)
+            #expect(await index.archive(target, reason: nil) != nil)
+            #expect(index.hosts[0].features.map(\.id) == [value.feature.id])
+            #expect(await client.archiveRequests.count == (supported ? 1 : 0))
+        }
+    }
+
+    @Test("An archive dialog from an old connection cannot mutate a replacement owner")
+    func staleArchiveTarget() async {
+        let value = snapshot(id: "task", title: "Synthetic task", goal: "Keep on reconnect")
+        let client = ArchiveFleetClient(snapshot: value)
+        let host = machine(id: "alpha", name: "Alpha")
+        let index = FirstMateFleetIndex()
+        let source = FirstMateFleetSource(machine: host, configuration: configuration(for: host, token: "token"), client: client)
+        index.activate(sources: [source], connectionGeneration: 1)
+        await index.refresh()
+        let target = index.archiveTarget(machineID: host.id, feature: value.feature)
+        index.activate(sources: [source], connectionGeneration: 2)
+        #expect(await index.archive(target, reason: nil) != nil)
+        #expect(await client.archiveRequests.isEmpty)
+        #expect(index.hosts[0].features.count == 1)
+    }
+
+    @Test("A list fetched before archive cannot put the feature back")
+    func archiveRejectsStaleList() async throws {
+        let value = snapshot(id: "task", title: "Synthetic task", goal: "Stay archived")
+        let gate = FirstMateFleetResponseGate()
+        let client = ArchiveFleetClient(snapshot: value, listGate: gate)
+        let host = machine(id: "alpha", name: "Alpha")
+        let index = FirstMateFleetIndex()
+        index.activate(sources: [.init(machine: host, configuration: configuration(for: host, token: "token"), client: client)], connectionGeneration: 1)
+        let polling = Task { await index.refresh() }
+        defer { polling.cancel(); Task { await gate.cancelPending() } }
+        try await gate.waitForRequest()
+        let target = index.archiveTarget(machineID: host.id, feature: value.feature)
+        #expect(await index.archive(target, reason: nil) == nil)
+        await gate.succeed(with: [value.feature])
+        await polling.value
+        #expect(index.hosts[0].features.isEmpty)
+    }
+
     @Test("Aggregate results keep duplicate feature IDs distinct and isolate partial failures")
     func aggregatePartialFailureAndSearch() async throws {
         let alpha = snapshot(id: "shared-feature", title: "Alpha launch", goal: "Ship the synthetic alpha")
@@ -915,4 +988,39 @@ private final class FleetChangeFlag: @unchecked Sendable {
     private var flag = false
     var value: Bool { lock.withLock { flag } }
     func set() { lock.withLock { flag = true } }
+}
+
+private actor ArchiveFleetClient: FirstMateClient {
+    private var snapshot: FirstMateSnapshot
+    let supported: Bool
+    let failArchive: Bool
+    let listGate: FirstMateFleetResponseGate?
+    var archiveRequests: [String] = []
+
+    init(snapshot: FirstMateSnapshot, supported: Bool = true, failArchive: Bool = false,
+         listGate: FirstMateFleetResponseGate? = nil) {
+        self.snapshot = snapshot
+        self.supported = supported
+        self.failArchive = failArchive
+        self.listGate = listGate
+    }
+    func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities {
+        .init(ok: true, capabilities: supported ? ["first-mate-archive-v1"] : [])
+    }
+    func fetchFirstMateFeatures() async throws -> FirstMateFeatureList {
+        if let listGate { return try await listGate.fetch() }
+        return .init(ok: true, features: snapshot.feature.isArchived ? [] : [snapshot.feature])
+    }
+    func setFirstMateArchived(featureID: String, archived: Bool, reason: FirstMateArchiveReason?, requestID: String) async throws -> FirstMateSnapshot {
+        archiveRequests.append(featureID)
+        if failArchive { throw APIError.server(status: 503, message: "Synthetic failure") }
+        snapshot.feature.archivedAt = FirstMateDemo.timestamp
+        return snapshot
+    }
+    func fetchFirstMateFeature(_ id: String) async throws -> FirstMateSnapshot { snapshot }
+    func createFirstMateFeature(title: String, goal: String, cwd: String, requestID: String) async throws -> FirstMateSnapshot { throw APIError.invalidResponse }
+    func sendFirstMateMessage(featureID: String, text: String, requestID: String) async throws -> FirstMateSnapshot { throw APIError.invalidResponse }
+    func performFirstMateAction(featureID: String, action: String, requestID: String) async throws -> FirstMateSnapshot { throw APIError.invalidResponse }
+    func fetchFirstMateDocument(_ id: String) async throws -> FirstMateDocumentResponse { throw APIError.invalidResponse }
+    func fetchFirstMateSession(_ id: String, before: Int?) async throws -> FirstMateSessionResponse { throw APIError.invalidResponse }
 }

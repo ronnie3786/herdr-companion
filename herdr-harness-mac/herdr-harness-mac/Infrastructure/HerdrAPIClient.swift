@@ -1788,6 +1788,7 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, PRRevie
 
     static func timeoutInterval(path: String, method: String) -> TimeInterval {
         if path == "/api/v1/response-audio/captioned-speech" { return 180 }
+        if method == "POST", path.hasPrefix("/api/v1/first-mate/") { return 24 * 60 * 60 }
         if path.hasPrefix("/api/v1/pr-reviews/") && path.hasSuffix("/content") { return 600 }
         if path.hasPrefix("/api/v1/pr-reviews/") && path.hasSuffix("/documents") && method == "POST" { return 90 }
         if path.hasPrefix("/api/v1/pr-reviews") { return 30 }

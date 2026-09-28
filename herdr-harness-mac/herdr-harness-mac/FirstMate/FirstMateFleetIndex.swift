@@ -66,6 +66,47 @@ final class FirstMateFleetIndex {
         let probedAt: Date
     }
 
+    struct ArchiveTarget: Identifiable {
+        let machineID: String
+        let feature: FirstMateFeature
+        fileprivate let lifecycle: Int
+        var id: FirstMateFleetFeatureID { .init(machineID: machineID, featureID: feature.id) }
+    }
+
+    func archiveTarget(machineID: String, feature: FirstMateFeature) -> ArchiveTarget {
+        .init(machineID: machineID, feature: feature, lifecycle: lifecycle)
+    }
+
+    /// Route to the captured owner even when the main conversation changes.
+    /// Reject old list responses so polling cannot resurrect a just-archived row.
+    func archive(_ target: ArchiveTarget, reason: FirstMateArchiveReason?) async -> String? {
+        guard target.lifecycle == lifecycle, let client = clients[target.machineID] else {
+            return "The connection changed. Reopen Archive on this feature."
+        }
+        do {
+            let capabilities = try await client.fetchFirstMateCapabilities()
+            guard target.lifecycle == lifecycle else { return "The connection changed. Reopen Archive on this feature." }
+            guard capabilities.ok, capabilities.supportsArchive else {
+                return "Update this companion server to archive First Mate features."
+            }
+            let result = try await client.setFirstMateArchived(featureID: target.feature.id, archived: true,
+                                                               reason: reason, requestID: UUID().uuidString)
+            guard target.lifecycle == lifecycle else { return "The connection changed. Refresh the feature list to check its archive status." }
+            guard result.ok, result.feature.id == target.feature.id, result.feature.isArchived else {
+                throw APIError.invalidResponse
+            }
+            refreshGeneration &+= 1
+            for index in hosts.indices { hosts[index].isLoading = false }
+            if let index = hosts.firstIndex(where: { $0.machineID == target.machineID }) {
+                hosts[index].features.removeAll { $0.id == target.feature.id }
+                contentRevision &+= 1
+            }
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
     var search = ""
     private(set) var hosts: [FirstMateFleetHost] = []
     /// Increments only when a host's published state actually changes, or the

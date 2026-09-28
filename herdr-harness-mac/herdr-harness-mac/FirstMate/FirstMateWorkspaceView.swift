@@ -174,6 +174,7 @@ struct FirstMateWorkspaceView: View {
                     .foregroundStyle(palette.text)
                     .lineLimit(1)
                     .help(feature.title)
+                    .modifier(FirstMateArchiveContextMenu(store: store, feature: feature, canControl: canControl))
                     .accessibilityAddTraits(.isHeader)
                 if let workItemID = feature.workItemID {
                     Text(workItemID)

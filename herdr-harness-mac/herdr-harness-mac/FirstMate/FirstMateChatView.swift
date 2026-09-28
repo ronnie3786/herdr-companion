@@ -46,6 +46,7 @@ struct FirstMateChatView: View {
             }
 
             transcript
+                .modifier(FirstMateArchiveContextMenu(store: store, feature: snapshot.feature, canControl: canControl))
             featureStatus
             feedbackNotices
 

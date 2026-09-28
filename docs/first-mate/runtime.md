@@ -538,12 +538,17 @@ Pi's existing provider configuration. Missing Pi or a missing bundled extension
 is reported as an unavailable capability.
 
 For newly dispatched coordinator turns, `coordinator_timeout_seconds` is an
-inactivity budget (default 600 seconds, bounded 30–3600), rather than the former
-absolute ten-minute cap. `coordinator_max_seconds` is the separate absolute
-ceiling (default 3600 seconds, bounded 30–86400). Existing private timeout values
-remain in use as inactivity settings. Already running or spooled executions keep
-their persisted budgets; installation does not restart them or replay failed
-human messages. Workers and advisors retain their existing execution limits.
+inactivity budget (default 24 hours, bounded 30 seconds through 7 days).
+Model output and completed tools renew it. `coordinator_max_seconds` is the
+separate absolute ceiling (default 7 days, bounded 30 seconds through 7 days).
+Existing private timeout values remain authoritative. Already running or spooled
+executions keep their persisted budgets; installation does not restart them or
+replay failed human messages. Workers and advisors retain their existing limits.
+
+The Mac client allows 24 hours for First Mate write requests; background reads
+keep their short timeout. HTTP acceptance and background execution have separate
+deadlines. A transport timeout does not prove the server rejected a request.
+Retrying an unchanged prompt uses its existing request identity.
 
 The repository's existing wheel build bundles the `pi-semantic-bridge` package,
 including `extensions/first-mate.ts`. Runtime resource discovery first supports
@@ -586,8 +591,7 @@ Tool refusals retain their error text and add a typed `code` and
 `next_permitted_actions`. When a coordinator reaches its bounded deadline, its
 interruption event lists completed, refused, and unconfirmed durable tool
 requests. Unconfirmed requests are evidence to inspect, never permission to
-replay external effects. The coordinator default deadline is 600 seconds; the
-existing environment override remains bounded from 30 to 600 seconds.
+replay external effects. 
 
 Shared human checkouts never need to be cleaned for selective carry-forward.
 Only isolated worktrees require clean code evidence; a review with an explicit

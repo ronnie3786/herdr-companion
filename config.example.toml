@@ -136,8 +136,8 @@ thinking_level = "high"
 max_workers = 8
 context_target = 150000
 stall_seconds = 600
-coordinator_timeout_seconds = 600 # Inactivity, not total time; model output/completed tools renew it.
-coordinator_max_seconds = 3600 # Absolute turn ceiling, even with continuous activity.
+coordinator_timeout_seconds = 86400 # Inactivity; model output/completed tools renew it.
+coordinator_max_seconds = 604800 # Seven-day absolute ceiling, even with continuous activity.
 # Service-owned checks continue with every client closed. No model polling.
 auto_recovery = true
 sweep_seconds = 3600 # Hourly stale-progress sweep (minimum 300 seconds).

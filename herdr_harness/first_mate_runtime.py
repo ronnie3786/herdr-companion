@@ -1453,7 +1453,7 @@ class FirstMateRuntime:
                "session_file": str(session), "prompt": prompt, "claim": claim, "owner": claim.get("owner") or self.owner,
                "pi_bin": self.pi_bin, "extension": str(self.extension), "created_at": utc_now(),
                "context_target": self.context_target, "safety_ledger_version": 1,
-               "timeout_seconds": _bounded(self.environ, "HERDR_FIRST_MATE_COORDINATOR_MAX_SECONDS", 3600, 30, 86400) if kind == "coordinator" else (180 if kind == "advisor" else 86400), "handoff_id": handoff_id,
+               "timeout_seconds": _bounded(self.environ, "HERDR_FIRST_MATE_COORDINATOR_MAX_SECONDS", 604800, 30, 604800) if kind == "coordinator" else (180 if kind == "advisor" else 86400), "handoff_id": handoff_id,
                "parent_job_id": parent_job["id"] if parent_job else None,
                "parent_session_id": parent_session_id,
                "parent_session_source": parent_session_source,
@@ -1461,7 +1461,7 @@ class FirstMateRuntime:
                "charter": {"coordinator": COORDINATOR_PROMPT, "worker": WORKER_PROMPT, "advisor": ADVISOR_PROMPT}[kind]}
         if kind == "coordinator":
             job["idle_timeout_seconds"] = _bounded(
-                self.environ, "HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS", 600, 30, 3600)
+                self.environ, "HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS", 86400, 30, 604800)
         if retry:
             job["retry_not_before"] = retry.get("not_before", 0)
         if kind == "coordinator" and current_feature.get("kind") == LEAD_KIND:

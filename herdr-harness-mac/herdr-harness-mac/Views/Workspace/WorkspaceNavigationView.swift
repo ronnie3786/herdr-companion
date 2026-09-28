@@ -384,6 +384,11 @@ struct WorkspaceNavigationView: View {
                 shell.show(.firstMate, model: model)
             }
         }
+        .onChange(of: shell.firstMate.features.filter { !$0.isArchived }.map(\.id)) { old, new in
+            if old.contains(where: { !new.contains($0) }) {
+                Task { await shell.firstMateFleet.refresh() }
+            }
+        }
         // Fleet observation and store reconciliation belong to the process
         // (`FirstMateFleetDriver`, started from `AppRootView`), so the badge,
         // the Dock, and the chat window keep updating after this window closes.

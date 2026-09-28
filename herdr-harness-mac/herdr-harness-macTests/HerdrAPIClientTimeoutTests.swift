@@ -27,6 +27,13 @@ struct HerdrAPIClientTimeoutTests {
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/workspaces", method: "GET") == 15)
     }
 
+    @Test func firstMateWritesAllowDayLongRequestsWithoutSlowingPolling() {
+        for path in ["/api/v1/first-mate/features", "/api/v1/first-mate/features/f1/messages", "/api/v1/first-mate/features/f1/actions"] {
+            #expect(HerdrAPIClient.timeoutInterval(path: path, method: "POST") == 86_400)
+            #expect(HerdrAPIClient.timeoutInterval(path: path, method: "GET") == 15)
+        }
+    }
+
     @Test func terminalMutationsFailFast() {
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/panes/p1/send-text", method: "POST") == 5)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/panes/p1/send-keys", method: "POST") == 5)

@@ -10,6 +10,7 @@ struct FirstMateFleetSidebarView: View {
     let openFeature: (String, String) -> Void
     let createFeature: (String) -> Void
     let refresh: () -> Void
+    @State private var archiveCandidate: FirstMateFleetIndex.ArchiveTarget?
     @Environment(\.colorScheme) private var scheme
 
     private var palette: FirstMatePalette { FirstMatePalette(scheme: scheme) }
@@ -72,6 +73,12 @@ struct FirstMateFleetSidebarView: View {
                                     isSelected: isSelected
                                 )
                             }
+                            .contextMenu {
+                                Button("Archive feature…", systemImage: "archivebox") {
+                                    archiveCandidate = index.archiveTarget(machineID: host.machineID, feature: feature)
+                                }
+                                .disabled(!createMachines.contains { $0.id == host.machineID })
+                            }
                             .help(feature.title)
                             .accessibilityAddTraits(isSelected ? .isSelected : [])
                             .buttonStyle(.herdrPlain)
@@ -121,6 +128,15 @@ struct FirstMateFleetSidebarView: View {
                 .buttonStyle(HerdrIconButtonStyle(tint: palette.iconTint))
                 .help("Refresh all machines")
                 .accessibilityIdentifier("first-mate-fleet-refresh")
+        }
+        .sheet(item: $archiveCandidate) { target in
+            FirstMateArchiveConfirmation(feature: target.feature) { reason in
+                let error = await index.archive(target, reason: reason)
+                if error == nil, selectedMachineID == target.machineID {
+                    await appearanceStore.refresh()
+                }
+                return error
+            }
         }
         .accessibilityIdentifier("first-mate-fleet-sidebar")
     }

@@ -28,6 +28,7 @@ struct FirstMateSessionRow: View {
             }.padding(.vertical, 8).contentShape(.rect)
         }
         .buttonStyle(.herdrPlain)
+        .modifier(FirstMateSessionArchiveMenu(store: store, session: session))
         .accessibilityIdentifier("first-mate-saved-session-\(session.nativeSessionID)")
     }
 }

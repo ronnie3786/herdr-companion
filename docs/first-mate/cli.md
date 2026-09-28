@@ -95,6 +95,11 @@ session/default behavior. Pi clamps requested effort to levels the model support
 The model catalog reflects configured providers, not a successful billing or OAuth
 check. Provider failures remain visible when the next turn runs.
 
+Catalog discovery runs Pi with `--offline`, disabling background network refresh
+so its short-lived process cannot strand Pi's authentication lock and delay the
+coordinator launched right after a model selection. Agent turns
+continue to use the connected host's normal cloud authentication and network.
+
 ```sh
 herdr-first-mate models
 herdr-first-mate get FEATURE_ID

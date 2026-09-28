@@ -5,7 +5,9 @@ import Foundation
 /// long replies with ready skims. The main window keeps `features(step:)`.
 ///
 /// Times are relative to `now` so the list reads "11:20" and "Yesterday" the
-/// way the design does. Every name, path, and repository is invented.
+/// way the design does; before the design's newest time of day, every time
+/// moves back so nothing is in the future. Every name, path, and repository
+/// is invented.
 extension FirstMateDemo {
     static func chatWindowFeatures(now: Date = Date(), calendar: Calendar = .current) -> [FirstMateSnapshot] {
         chatDemoFeatures.map { snapshot(for: $0, now: now, calendar: calendar) }
@@ -265,9 +267,24 @@ extension FirstMateDemo {
     }
 
     static func chatTimestamp(daysAgo: Int, hour: Int, minute: Int, now: Date, calendar: Calendar) -> String {
+        let date = designDate(daysAgo: daysAgo, hour: hour, minute: minute, now: now, calendar: calendar)
+        return HerdrTimestamp.string(from: date.addingTimeInterval(-chatDemoShift(now: now, calendar: calendar)))
+    }
+
+    /// The design's clock time on a day relative to `now`.
+    private static func designDate(daysAgo: Int, hour: Int, minute: Int, now: Date, calendar: Calendar) -> Date {
         let day = calendar.date(byAdding: .day, value: -daysAgo, to: calendar.startOfDay(for: now)) ?? now
-        let date = calendar.date(bySettingHour: hour, minute: minute, second: 0, of: day) ?? day
-        return HerdrTimestamp.string(from: date)
+        return calendar.date(bySettingHour: hour, minute: minute, second: 0, of: day) ?? day
+    }
+
+    /// Early in the day the design's clock times are still ahead of `now`, so
+    /// the whole demo moves back until its newest message is a minute old.
+    /// Order and spacing stay the same; later in the day nothing moves.
+    static func chatDemoShift(now: Date, calendar: Calendar) -> TimeInterval {
+        let newest = chatDemoFeatures.flatMap(\.messages)
+            .map { designDate(daysAgo: $0.daysAgo, hour: $0.hour, minute: $0.minute, now: now, calendar: calendar) }
+            .max() ?? now
+        return max(0, newest.timeIntervalSince(now) + 60)
     }
 
     private static func chatDemoUsage(tokens: Int, sessions: Int) -> FirstMateUsage {

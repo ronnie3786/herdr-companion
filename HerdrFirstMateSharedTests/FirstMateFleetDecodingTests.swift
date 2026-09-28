@@ -237,6 +237,37 @@ struct FirstMateChatDemoTests {
         #expect(FirstMateSkimReader(skim: question.skim, reply: question.text)?.replies == ["Ship iPhone-only", "Investigate iPad"])
     }
 
+    @Test("Early in the day the demo moves back so no message is in the future; later it keeps the design's times")
+    func demoTimesNeverAhead() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "UTC"))
+        let day = try #require(calendar.date(from: DateComponents(year: 2026, month: 3, day: 10)))
+        let morning = try #require(calendar.date(bySettingHour: 9, minute: 26, second: 0, of: day))
+        let evening = try #require(calendar.date(bySettingHour: 22, minute: 0, second: 0, of: day))
+
+        func times(_ now: Date) -> [String: [Date]] {
+            Dictionary(uniqueKeysWithValues: FirstMateDemo.chatWindowFeatures(now: now, calendar: calendar).map { snapshot in
+                (snapshot.feature.id, snapshot.messages.compactMap { HerdrTimestamp.date(from: $0.createdAt) })
+            })
+        }
+        let early = times(morning), late = times(evening)
+        let newest = try #require(early.values.flatMap { $0 }.max())
+        #expect(newest <= morning.addingTimeInterval(-59))
+        #expect(newest > morning.addingTimeInterval(-120))
+        // One uniform shift, so every chat keeps the evening demo's order and spacing.
+        let shift = try #require(late["demo-receipts"]?.first).timeIntervalSince(try #require(early["demo-receipts"]?.first))
+        #expect(shift > 0)
+        for (id, dates) in late {
+            let shifted = try #require(early[id])
+            #expect(dates.count == shifted.count)
+            #expect(zip(dates, shifted).allSatisfy { abs($0.timeIntervalSince($1) - shift) < 1 })
+        }
+        let receipts = try #require(late["demo-receipts"]?.last)
+        let clock = calendar.dateComponents([.hour, .minute], from: receipts)
+        #expect(clock.hour == 11 && clock.minute == 20)
+        #expect(FirstMateDemo.chatDemoShift(now: evening, calendar: calendar) == 0)
+    }
+
     @Test("The demo has seven features, a crew message with a document, and three unread chats that need you")
     func demoShape() throws {
         let features = FirstMateDemo.chatWindowFeatures(now: now)

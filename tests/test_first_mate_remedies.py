@@ -151,7 +151,8 @@ class FirstMateRemedyTests(unittest.TestCase):
 
     def test_interrupted_coordinator_reports_committed_and_unknown_operations(self):
         feature, message, job, _ = self.coordinator()
-        self.assertEqual(job['timeout_seconds'], 600)
+        self.assertEqual(job['timeout_seconds'], 3600)
+        self.assertEqual(job['idle_timeout_seconds'], 600)
         directory = self.runtime._job_dir(job)
         _write_json(directory / 'requests' / 'done.json', {'action': 'fm_begin_stage'})
         _write_json(directory / 'responses' / 'done.json', {'ok': True})

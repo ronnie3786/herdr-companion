@@ -409,7 +409,8 @@ class FirstMateReliability:
             else:
                 local.append({**entry, 'reason': 'Local command failed; check its effects on this machine first'
                               if row.get('is_error') else 'Local command was cut off; check its effects on this machine first'})
-        return {'safe': not issues, 'has_mutations': has_mutations, 'issues': issues, 'local': local}
+        return {'safe': not issues, 'has_mutations': has_mutations, 'issues': issues, 'local': local,
+                'started_tools': len(started), 'completed_tools': len(ended)}
 
     def _effects_safe(self, job):
         return self._effect_status(job)['safe']

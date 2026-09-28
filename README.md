@@ -76,6 +76,12 @@ every client supports every feature or that all integrations work without setup.
 | Private local setup | Keep machine addresses, provider settings, and credentials outside Git while continuing to pull the shared source. A downloadable sample shows what to fill in. |
 | Demo mode | Explore the native apps with synthetic data using `-HerdrDemoMode`, without connecting a real cluster. |
 
+First Mate coordinator turns distinguish inactivity from total runtime. Model
+output and completed tools keep active turns running past the initial ten-minute
+budget, with a separate one-hour ceiling by default. Interrupted replies explain
+why automatic continuation stopped and distinguish workflow operations from other
+tool receipts. See [autonomy and checkpoints](docs/first-mate/autonomy.md).
+
 When adding or changing a user-facing feature, update this list and describe any
 setup it needs. Release notes record what changed in a particular version.
 

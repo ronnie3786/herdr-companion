@@ -59,6 +59,56 @@ _PI_SESSION_ID = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
 CHECKPOINT_SUMMARY_LIMIT = 1200
 CHECKPOINT_RECOMMENDATION_LIMIT = 400
 NOTICE_LIMIT = 600
+
+
+class _ExecutionBudget:
+    """Separate coordinator inactivity from its absolute execution ceiling.
+
+    RPC acknowledgments and telemetry are not model activity. All clocks here
+    are monotonic, and activity can never extend the absolute ceiling.
+    """
+
+    def __init__(self, job: dict, now: float):
+        self.started = self.last_activity = now
+        self.maximum = job.get("timeout_seconds", 86400)
+        self.idle = job.get("idle_timeout_seconds") if job.get("kind") == "coordinator" else None
+        self.nudged = False
+        self.completed_tools: set[str] = set()
+
+    def observe(self, event: dict, now: float) -> bool:
+        if self.idle is None:
+            return False
+        active = False
+        if event.get("type") == "message_update":
+            update = event.get("assistantMessageEvent") or {}
+            active = (isinstance(update, Mapping) and update.get("type") in {"text_delta", "thinking_delta", "toolcall_delta"}
+                      and isinstance(update.get("delta"), str) and bool(update["delta"].strip()))
+        elif event.get("type") == "message_end":
+            message = event.get("message") or {}
+            active = isinstance(message, Mapping) and message.get("role") == "assistant" and bool(_assistant_text(message))
+        elif event.get("type") == "tool_execution_end":
+            call = event.get("toolCallId")
+            if isinstance(call, str) and call and call not in self.completed_tools:
+                self.completed_tools.add(call)
+                active = True
+        if active:
+            self.last_activity = now
+        return active
+
+    def error(self, now: float) -> str | None:
+        if now - self.started >= self.maximum:
+            return "Execution exceeded its bounded supervisor deadline"
+        if self.idle is not None and now - self.last_activity >= self.idle:
+            return "Coordinator inactivity timeout: no model output or completed tools within the activity budget"
+        return None
+
+    def nudge_due(self, now: float) -> bool:
+        if self.idle is None or self.nudged or now - self.started < min(self.idle, self.maximum * .8):
+            return False
+        self.nudged = True
+        return True
+
+
 # The lead's handoff keeps its recent conversation, each message bounded.
 LEAD_CHECKPOINT_MESSAGES = 30
 LEAD_CHECKPOINT_TEXT_LIMIT = 4000
@@ -1403,12 +1453,15 @@ class FirstMateRuntime:
                "session_file": str(session), "prompt": prompt, "claim": claim, "owner": claim.get("owner") or self.owner,
                "pi_bin": self.pi_bin, "extension": str(self.extension), "created_at": utc_now(),
                "context_target": self.context_target, "safety_ledger_version": 1,
-               "timeout_seconds": _bounded(self.environ, "HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS", 600, 30, 600) if kind == "coordinator" else (180 if kind == "advisor" else 86400), "handoff_id": handoff_id,
+               "timeout_seconds": _bounded(self.environ, "HERDR_FIRST_MATE_COORDINATOR_MAX_SECONDS", 3600, 30, 86400) if kind == "coordinator" else (180 if kind == "advisor" else 86400), "handoff_id": handoff_id,
                "parent_job_id": parent_job["id"] if parent_job else None,
                "parent_session_id": parent_session_id,
                "parent_session_source": parent_session_source,
                "workspace_mode": claim.get("metadata", {}).get("workspace_mode", "read_only"),
                "charter": {"coordinator": COORDINATOR_PROMPT, "worker": WORKER_PROMPT, "advisor": ADVISOR_PROMPT}[kind]}
+        if kind == "coordinator":
+            job["idle_timeout_seconds"] = _bounded(
+                self.environ, "HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS", 600, 30, 3600)
         if retry:
             job["retry_not_before"] = retry.get("not_before", 0)
         if kind == "coordinator" and current_feature.get("kind") == LEAD_KIND:
@@ -3054,32 +3107,38 @@ class FirstMateRuntime:
         Only observational shell activity and reconciled managed operations are
         eligible. A successful external command is still not safe to replay.
         """
+        job.pop("coordinator_retry_blocked_reason", None)
+
+        def blocked(reason: str) -> bool:
+            job["coordinator_retry_blocked_reason"] = reason
+            return False
+
         error = str(state.get("error", "")).lower()
         transient = any(term in error for term in (
             "timeout", "timed out", "deadline", "during startup", "connection reset",
             "temporarily unavailable", "overloaded", "rate limit", "429", "502", "503"))
         if not transient or state.get("startup_validation_failed") or job.get("cancel_requested"):
-            return False
+            return blocked("This failure is not eligible for an automatic transient retry.")
         feature = self.store.get_feature(job["feature_id"])
         if feature["status"] in {"paused", "cancelled", "completed", "blocked", "recovering"}:
-            return False
+            return blocked("The feature's current state does not permit automatic continuation.")
         snapshot = self.store.snapshot(feature["id"])
         if any(a.get("metadata", {}).get("human_gate", {}).get("status") == "pending"
                for a in snapshot["assignments"]):
-            return False
+            return blocked("A recorded human decision is pending.")
         if any((m["role"] == "user" and m["status"] == "queued" and m["id"] != job["claim"]["id"])
                or (m["role"] == "assistant" and m.get("metadata", {}).get("turn_id") == job["claim"]["id"])
                for m in snapshot["messages"]):
             # A posted checkpoint already answered this claim, and newer human
             # direction takes priority over finishing an interrupted old turn.
-            return False
+            return blocked("Newer human direction or an already posted answer takes precedence.")
         directory = self._job_dir(job)
         operations = []
         for path in sorted((directory / "requests").glob("*.json")):
             request = _read_json(path, {})
             response = _read_json(directory / "responses" / path.name, {})
             if not request or not isinstance(response.get("ok"), bool):
-                return False
+                return blocked("A workflow operation has no confirmed receipt and needs reconciliation.")
             operation = {"tool": request.get("action"), "request_id": path.stem,
                          "status": "completed" if response["ok"] else "refused"}
             if response["ok"]:
@@ -3103,7 +3162,7 @@ class FirstMateRuntime:
         effects = self.reliability._effect_status(job)
         before_prompt = state.get("prompt_sent") is False and not operations
         if not before_prompt and (not effects["safe"] or effects["has_mutations"]):
-            return False
+            return blocked("Tool effects need reconciliation before continuation; recorded activity was not proven safe to repeat.")
         path = self.root / "coordinator-retries" / (job["claim"]["id"] + ".json")
         previous = _read_json(path, {})
         if previous.get("source_job_id") == job["id"]:
@@ -3111,7 +3170,7 @@ class FirstMateRuntime:
         else:
             attempts = previous.get("attempts", 0)
             if attempts >= 2:
-                return False
+                return blocked("The two automatic continuations for this turn were exhausted.")
             retained_operations = previous.get("operations", [])
             if not isinstance(retained_operations, list):
                 retained_operations = []
@@ -3159,13 +3218,21 @@ class FirstMateRuntime:
                         operations.append({"tool": request.get("action"), "request_id": path.stem,
                                            "status": "completed" if response.get("ok") else "refused" if response else "unconfirmed"})
                     current = self.store.get_feature(job["feature_id"])
+                    effects = self.reliability._effect_status(job)
+                    tool_activity = {key: effects[key] for key in ("started_tools", "completed_tools") if key in effects}
+                    retry_reason = job.get("coordinator_retry_blocked_reason")
                     self._event(job["feature_id"], "coordinator.interrupted", "Coordinator stopped before finishing its turn; inspect committed operations before continuation.",
-                        {"job_id": job["id"], "operations": operations[-30:], "feature_status": current["status"], "revision": current["revision"]},
+                        {"job_id": job["id"], "operations": operations[-30:], "feature_status": current["status"], "revision": current["revision"],
+                         "tool_activity": tool_activity, "automatic_continuation_blocked_reason": retry_reason},
                         "coordinator-interrupted:" + job["id"])
                     completed = [op["tool"] for op in operations if op["status"] == "completed"]
                     unconfirmed = [op["tool"] for op in operations if op["status"] == "unconfirmed"]
                     reply += "\n\nCoordinator stopped: " + str(state["error"])[:700]
-                    reply += " Completed tools: " + (", ".join(completed) or "none") + ". Unconfirmed tools: " + (", ".join(unconfirmed) or "none") + ". Current feature state: " + current["status"] + "."
+                    reply += " Completed workflow tools: " + (", ".join(completed) or "none") + ". Unconfirmed tools: " + (", ".join(unconfirmed) or "none") + ". Current feature state: " + current["status"] + "."
+                    if tool_activity:
+                        reply += f" Other tool receipts: {tool_activity['completed_tools']} completed of {tool_activity['started_tools']} started (completion alone does not prove the intended effect)."
+                    if retry_reason:
+                        reply += "\n\nAutomatic continuation stopped: " + retry_reason
                 # Every park, including an informal awaiting-turn reply, carries
                 # the known coverage warning when structured evidence exists.
                 verification = None
@@ -3687,6 +3754,7 @@ def run_detached(directory: Path) -> int:
     initial_state: dict[str, Any] = {}
     initial_state_error: list[str] = []
     stdin_lock = threading.Lock()
+    budget = _ExecutionBudget(job, time.monotonic())
     try:
         stderr = (directory / "pi-stderr.log").open("ab")
         process = subprocess.Popen(command, cwd=job["cwd"], env=os.environ,
@@ -3715,6 +3783,8 @@ def run_detached(directory: Path) -> int:
                     output.flush()
                     with event_lock:
                         status["last_event_epoch"] = time.time()
+                        if budget.observe(event, time.monotonic()):
+                            status["last_activity_epoch"] = time.time()
                         if (event.get("type") == "response"
                                 and event.get("command") == "get_state"
                                 and event.get("id") == "initial-state"):
@@ -3778,10 +3848,11 @@ def run_detached(directory: Path) -> int:
             raise RuntimeError(startup_error)
         status["prompt_sent"] = True
         _write_json(directory / "status.json", status)
+        with event_lock:
+            budget.started = budget.last_activity = time.monotonic()
         send({"type": "prompt", "id": "dispatch:" + job["id"], "message": job["prompt"]})
         sent_controls = set()
         abort_deadline = None
-        started_epoch = time.monotonic()
         last_flush = time.monotonic()
         while process.poll() is None and not ended.is_set():
             for path in sorted((directory / "controls").glob("*.json")):
@@ -3798,9 +3869,19 @@ def run_detached(directory: Path) -> int:
                 _write_json(directory / "controls-applied" / path.name, control)
             if abort_deadline and time.monotonic() >= abort_deadline:
                 break
-            if time.monotonic() - started_epoch > job.get("timeout_seconds", 86400):
-                status["error"] = "Execution exceeded its bounded supervisor deadline"
+            with event_lock:
+                deadline_error = budget.error(time.monotonic())
+                nudge = not deadline_error and not abort_deadline and budget.nudge_due(time.monotonic())
+            if deadline_error:
+                status["error"] = deadline_error
                 break
+            if nudge:
+                send({"type": "steer", "id": "coordinator-budget-nudge", "message":
+                      "This coordinator turn is taking longer than its initial activity budget. "
+                      "Preserve your findings and finish the response, or delegate substantial remaining "
+                      "work within the existing human authorization. Do not repeat completed actions "
+                      "or ask again for permission already granted. The absolute execution ceiling still applies."})
+                status["budget_nudge_sent"] = True
             if time.monotonic() - last_flush >= 5:
                 with event_lock:
                     _write_json(directory / "status.json", status)

@@ -50,6 +50,13 @@ class FirstMateAutonomyTests(unittest.TestCase):
         self.assertEqual(snapshot["messages"][0]["status"], "done")
         self.assertEqual(len([m for m in snapshot["messages"] if m["role"] == "assistant"]), 1)
 
+    def test_coordinator_keeps_configured_inactivity_budget_and_separate_total_ceiling(self):
+        self.runtime.environ['HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS'] = '600'
+        self.runtime.environ['HERDR_FIRST_MATE_COORDINATOR_MAX_SECONDS'] = '2400'
+        job = self.coordinator()
+        self.assertEqual(job['idle_timeout_seconds'], 600)
+        self.assertEqual(job['timeout_seconds'], 2400)
+
     def test_transient_continuation_retains_completed_dispatch_facts(self):
         job = self.coordinator()
         directory = self.runtime._job_dir(job)
@@ -90,6 +97,26 @@ class FirstMateAutonomyTests(unittest.TestCase):
         job = self.coordinator()
         _write_json(self.runtime._job_dir(job) / "requests" / "dispatch.json", {"action": "fm_delegate"})
         self.assertFalse(self.runtime._retry_coordinator(job, {"error": "timeout"}))
+
+    def test_interruption_discloses_completed_shell_receipts_and_retry_reason(self):
+        job = self.coordinator()
+        path = self.runtime._job_dir(job) / 'effects.jsonl'
+        with path.open('a') as handle:
+            for index in range(5):
+                handle.write(json.dumps({'type': 'start', 'id': str(index), 'tool': 'bash',
+                    'scope': 'external', 'command': 'git show HEAD:README.md'}) + '\n')
+                handle.write(json.dumps({'type': 'end', 'id': str(index), 'is_error': False}) + '\n')
+        self.runtime._finish(job, {'ended': True, 'prompt_sent': True,
+                                  'error': 'Execution exceeded its bounded supervisor deadline'})
+        snapshot = self.store.snapshot(self.feature['id'])
+        reply = snapshot['messages'][-1]['text']
+        self.assertIn('Completed workflow tools: none', reply)
+        self.assertIn('Other tool receipts: 5 completed of 5 started', reply)
+        self.assertIn('Tool effects need reconciliation', reply)
+        event = next(e for e in snapshot['events'] if e['type'] == 'coordinator.interrupted')
+        self.assertEqual(event['payload']['tool_activity'], {'started_tools': 5, 'completed_tools': 5})
+        self.assertIn('reconciliation', event['payload']['automatic_continuation_blocked_reason'])
+        self.assertFalse(any(e['type'] == 'coordinator.retry_scheduled' for e in snapshot['events']))
 
     def test_timeout_after_checkpoint_does_not_repeat_the_human_turn(self):
         job = self.coordinator()

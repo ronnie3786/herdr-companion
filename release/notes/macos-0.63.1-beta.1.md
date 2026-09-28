@@ -6,7 +6,7 @@ Includes the shared Git comparison, commit-aware AI questions, workflow history,
 
 ## Companion compatibility
 
-Companion **0.62.0b1** or newer enables the shared comparison and AI features. Companion **0.62.1b1** also corrects Wrap in the web viewer's plain-text fallback. The Mac updater updates only the app; install companion packages separately.
+Companion **0.62.0b1** or newer enables the shared comparison and AI features. Companion **0.62.2b1** also corrects Wrap in the web viewer's plain-text fallback. The Mac updater updates only the app; install companion packages separately.
 
 ## Install and verify
 

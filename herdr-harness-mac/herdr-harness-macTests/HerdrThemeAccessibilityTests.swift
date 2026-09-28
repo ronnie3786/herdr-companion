@@ -61,8 +61,8 @@ struct HerdrThemeAccessibilityTests {
         let hudDusk = try brightestPixel(HerdrDusk.trailingHalf)
         let haze = try brightestPixel(HerdrHaze.image)
         #expect(luminance(dusk) > luminance(RGB(40, 30, 70)), "The dusk rendered too dark: \(dusk)")
-        let base = try rgb(HerdrTheme.base)
-        let rail = try rgb(HerdrTheme.railBackground)
+        let base = try activeBase(HerdrTheme.base)
+        let rail = try activeBase(HerdrTheme.railBackground)
         let pane = mix(base, HerdrTheme.Glass.pane, over: dusk)
         let highlight = HerdrTheme.accent.opacity(WorkspacePaneListView.highlightWash)
         // Cards, NOW blocks, chips, hover and selected rows sit on every glass
@@ -144,13 +144,58 @@ struct HerdrThemeAccessibilityTests {
         }
     }
 
+    @Test("Darkened Glass and Haze raise reading-text contrast above the baseline")
+    @MainActor
+    func darkenedBackgroundsRaiseContrast() throws {
+        let baselineDusk = try brightestPixel(HerdrDusk.baselineImage)
+        let baselineHudDusk = try brightestPixel(HerdrDusk.baselineTrailingHalf)
+        let baselineHaze = try brightestPixel(HerdrHaze.baselineImage)
+        let dusk = try brightestPixel(HerdrDusk.image)
+        let hudDusk = try brightestPixel(HerdrDusk.trailingHalf)
+        let haze = try brightestPixel(HerdrHaze.image)
+        // The baseline composes the authored base and artwork; the updated
+        // side uses `HerdrGlass.darkened` exactly as `HerdrGlassBackground`
+        // does for an active surface.
+        let base = try rgb(HerdrTheme.base)
+        let rail = try rgb(HerdrTheme.railBackground)
+        let darkBase = try activeBase(HerdrTheme.base)
+        let darkRail = try activeBase(HerdrTheme.railBackground)
+        let baselinePane = mix(base, HerdrTheme.Glass.pane, over: baselineDusk)
+        let baselineSidebar = mix(rail, HerdrTheme.Glass.sidebar, over: baselineDusk)
+        let baselineHud = mix(base, HerdrTheme.Glass.hud, over: baselineHudDusk)
+        let baselineChat = mix(baselineHaze, HerdrHazeBand.opacity, over: baselinePane)
+        let pane = mix(darkBase, HerdrTheme.Glass.pane, over: dusk)
+        let sidebar = mix(darkRail, HerdrTheme.Glass.sidebar, over: dusk)
+        let hud = mix(darkBase, HerdrTheme.Glass.hud, over: hudDusk)
+        let chat = mix(haze, HerdrHazeBand.opacity, over: pane)
+        let text: [(String, Color)] = [
+            ("primary", HerdrTheme.primaryText), ("prose", HerdrTheme.proseText),
+            ("secondary", HerdrTheme.secondaryText), ("tertiary", HerdrTheme.tertiaryText),
+        ]
+        let surfaces: [(String, RGB, RGB)] = [
+            ("sidebar", baselineSidebar, sidebar), ("pane", baselinePane, pane),
+            ("HUD", baselineHud, hud), ("chat haze", baselineChat, chat),
+        ]
+        for (surfaceName, before, after) in surfaces {
+            for (textName, color) in text {
+                let baselineContrast = ratio(try rgb(color), before)
+                let darkenedContrast = ratio(try rgb(color), after)
+                #expect(
+                    darkenedContrast > baselineContrast,
+                    "\(textName) on \(surfaceName): \(baselineContrast):1 → \(darkenedContrast):1 did not rise"
+                )
+                #expect(darkenedContrast >= 4.5, "\(textName) on \(surfaceName) was \(darkenedContrast):1")
+            }
+        }
+    }
+
     @Test("First Mate chat window capsules and the breathing label stay readable over the dusk")
     @MainActor
     func firstMateChatWindowContrast() throws {
         let dusk = try brightestPixel(HerdrDusk.image)
         let haze = try brightestPixel(HerdrHaze.image)
-        let pane = mix(try rgb(HerdrTheme.base), HerdrTheme.Glass.pane, over: dusk)
-        let sidebar = mix(try rgb(HerdrTheme.railBackground), HerdrTheme.Glass.sidebar, over: dusk)
+        let pane = mix(try activeBase(HerdrTheme.base), HerdrTheme.Glass.pane, over: dusk)
+        let sidebar = mix(try activeBase(HerdrTheme.railBackground), HerdrTheme.Glass.sidebar, over: dusk)
         let chat = mix(haze, HerdrHazeBand.opacity, over: pane)
         // A capsule's name sits on its status tint (11% over ink 6%), inside a
         // First Mate bubble (ink 6%) or a briefing, in the chat or on a card.
@@ -186,7 +231,10 @@ struct HerdrThemeAccessibilityTests {
         }
         var floor = 0.05
         while floor < 1, try !passes(floor) { floor = ((floor + 0.05) * 100).rounded() / 100 }
-        #expect(FirstMateBreathing.floor == floor, "The breathing floor should be \(floor)")
+        // The darkened backgrounds only widen the margin, so the existing
+        // 0.75 floor stays; it must still clear 4.5:1.
+        #expect(floor <= FirstMateBreathing.floor, "The breathing minimum rose to \(floor)")
+        #expect(FirstMateBreathing.floor == 0.75)
         #expect(try passes(FirstMateBreathing.floor))
     }
 
@@ -416,6 +464,12 @@ struct HerdrThemeAccessibilityTests {
         let value = HerdrTheme.resolved(color, scheme: scheme)
         #expect(value.alphaComponent > 0.999, "Measured an unexpectedly translucent color")
         return RGB(value.redComponent, value.greenComponent, value.blueComponent) * 255
+    }
+
+    /// The base an active glass surface draws: `HerdrGlass.darkened` exactly as
+    /// `HerdrGlassBackground` applies it.
+    private func activeBase(_ color: Color, _ scheme: ColorScheme = .dark) throws -> RGB {
+        try rgb(HerdrGlass.darkened(color, scheme: scheme), scheme)
     }
 
     /// A translucent `fill` composited over an opaque `background`.

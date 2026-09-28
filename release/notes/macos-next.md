@@ -32,6 +32,12 @@
 - The Dashboard **Working** pill is corrected from green to yellow, and an explicit blocked status stays red even when an inconsistent payload also sets the parked-turn flag. Attention counting, the orange sidebar attention badge, non-status banners, filtering, and execution behavior are unchanged.
 - Dark appearance uses the existing HUD tokens exactly. The First Mate light appearance deepens the same hues so the caption and icon stay readable against the badge's color wash; the shared palette, iOS, and the web client are untouched. This is Mac presentation only — no companion update or new configuration is needed.
 
+## Glass and Haze backgrounds
+
+- The Mac **Glass** and **Haze** backgrounds are about 20% darker: the same violet top-left, rose top-right, and indigo-bottom dusk gradient at a deeper shade across the main window, both HUDs, and the First Mate chat window. Text stands out more clearly, and the existing 4.5:1 reading-contrast checks still pass on every glass fill; the breathing status floor stays at 0.75.
+- Gradient stops and glow geometry, blur, saturation, the HUD crop, glass levels, Haze height, opacity, mask, and top-to-bottom fade, image caching, and the opaque Glass off, Haze off, Reduce Transparency, and First Mate light appearances are unchanged. Only the background channels darken: text, icons, status colors, and controls keep their existing colors, and the inactive surfaces look exactly as before.
+- This is Mac presentation only. No new setting and no companion update are required; the signed Mac feed installs only the app, and existing companion packages keep working unchanged.
+
 ## Sidebar and navigation
 
 - Recents uses compact single-line titles, quieter machine/workspace context, and visible Working, Done, and attention states. Full tab context stays available on hover.

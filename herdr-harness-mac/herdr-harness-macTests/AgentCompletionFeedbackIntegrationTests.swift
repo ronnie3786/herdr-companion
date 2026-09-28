@@ -432,6 +432,103 @@ struct AgentCompletionFeedbackIntegrationTests {
         await follow.value
     }
 
+    @Test("A fresh alert over a stale done pane keeps one cue for the raced completion")
+    func freshAlertOverStaleDonePaneKeepsReceiptInstant() async throws {
+        let fixture = try ModelFixture()
+        defer { fixture.cleanUp() }
+        let recorder = CompletionFeedbackRecorder()
+        fixture.model.agentCompletionFeedback.playback = { recorder.record() }
+        let pane = Self.testPane()
+
+        // Baseline: the previous answer is done at T0 and its alert is known.
+        let baselineAlert = Self.alertJSON(id: "a1", status: "done", createdAt: "2030-01-01T00:00:00Z")
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(
+                paneStatus: "done",
+                lastActivityAt: "2030-01-01T00:00:00Z",
+                alerts: [baselineAlert]
+            )
+        }
+        try await fixture.model.refresh(
+            machineID: fixture.machine.id,
+            using: fixture.fleetClient(),
+            expectedGeneration: fixture.model.connectionGeneration
+        )
+        #expect(recorder.count == 0)
+
+        let store = PiConversationStore()
+        store.reconnectBackoffBase = .zero
+        var eventsContinuation: AsyncThrowingStream<PiConversationStreamEvent, any Error>.Continuation?
+        store.snapshotProvider = { _ in try Self.snapshot(prompt: "Earlier answer") }
+        store.eventsProvider = { _, _ in
+            AsyncThrowingStream { continuation in eventsContinuation = continuation }
+        }
+        let follow = Task { @MainActor in
+            await store.follow(model: fixture.model, pane: pane)
+        }
+        defer {
+            follow.cancel()
+            eventsContinuation?.finish()
+        }
+        try await Self.waitUntil { store.sessionID == "s1" && !store.turns.isEmpty }
+        #expect(recorder.count == 0)
+
+        // The server publishes the new completion's alert at T2, but the
+        // debounced pane snapshot still reports the previous done episode T0.
+        let freshAlert = Self.alertJSON(id: "a2", status: "done", createdAt: "2030-01-01T00:00:20Z")
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(
+                paneStatus: "done",
+                lastActivityAt: "2030-01-01T00:00:00Z",
+                alerts: [baselineAlert, freshAlert]
+            )
+        }
+        try await fixture.model.refresh(
+            machineID: fixture.machine.id,
+            using: fixture.fleetClient(),
+            expectedGeneration: fixture.model.connectionGeneration
+        )
+        #expect(recorder.count == 1)
+
+        // The committed stream resumes late: the delayed start at T1 predates
+        // the receipted completion T2, so the settlement of that same run is
+        // the already-receipted completion and stays silent.
+        eventsContinuation?.yield(try Self.streamEvent(
+            2,
+            #"{"type":"agent_start"}"#,
+            generatedAt: "2030-01-01T00:00:10Z"
+        ))
+        try await Task.sleep(for: .milliseconds(30))
+        eventsContinuation?.yield(try Self.streamEvent(
+            3,
+            #"{"type":"agent_settled"}"#,
+            generatedAt: "2030-01-01T00:00:30Z"
+        ))
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(recorder.count == 1)
+
+        // A genuinely later turn plays its own single cue.
+        eventsContinuation?.yield(try Self.streamEvent(
+            4,
+            #"{"type":"agent_start"}"#,
+            generatedAt: "2030-01-01T00:01:00Z"
+        ))
+        try await Self.waitUntil { store.phase == .working }
+        eventsContinuation?.yield(try Self.streamEvent(
+            5,
+            #"{"type":"agent_settled"}"#,
+            generatedAt: "2030-01-01T00:01:05Z"
+        ))
+        try await Self.waitUntil { recorder.count == 2 }
+        // The later turn's single cue is not followed by a delayed duplicate.
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(recorder.count == 2)
+
+        follow.cancel()
+        eventsContinuation?.finish()
+        await follow.value
+    }
+
     @Test("A delayed fleet alert never completes a newer Pi turn")
     func delayedFleetAlertDoesNotCompleteNewPiTurn() async throws {
         let fixture = try ModelFixture()

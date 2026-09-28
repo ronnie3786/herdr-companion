@@ -4550,22 +4550,24 @@ final class HerdrAppModel {
             }
         }
         var newDoneAlerts: [HerdrAlert] = []
-        var alertIDByPaneID: [String: String] = [:]
+        var newDoneAlertByPaneID: [String: HerdrAlert] = [:]
         for alert in freshAlerts where alert.status == .done && !previousAlertIDs.contains(alert.id) {
             newDoneAlerts.append(alert)
-            if alertIDByPaneID[alert.paneID] == nil {
-                alertIDByPaneID[alert.paneID] = alert.id
+            if newDoneAlertByPaneID[alert.paneID] == nil {
+                newDoneAlertByPaneID[alert.paneID] = alert
             }
         }
         var observations: [AgentCompletionFeedbackCoordinator.FleetObservation] = []
         for workspace in freshWorkspaces {
             for pane in workspace.panes {
+                let newDoneAlert = newDoneAlertByPaneID[pane.paneID]
                 observations.append(AgentCompletionFeedbackCoordinator.FleetObservation(
                     paneID: pane.paneID,
                     terminalID: pane.terminalID,
                     status: pane.agentStatus,
                     episodeKey: pane.episodeKey,
-                    newDoneAlertID: alertIDByPaneID[pane.paneID],
+                    newDoneAlertID: newDoneAlert?.id,
+                    newDoneAlertCreatedAt: newDoneAlert?.createdAt,
                     workingSince: pane.workingSince.map(HerdrTimestamp.string),
                     piCursor: pane.piSemantic?.cursor
                 ))

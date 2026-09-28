@@ -53,11 +53,15 @@ receipted completion is the replay of an episode whose stream was interrupted,
 so it keeps the existing receipt instead of arming a duplicate settlement. The
 recorded completion instant decides whenever both sides have one, with the
 journal cursor as the fallback for a server that omits a comparable timestamp.
-This is evidence ordering against server-recorded evidence, not a local
-elapsed-time window. Repeated polling, replayed alerts, a later turn, and a
-different machine or run stay independently correct. Receipts are bounded and
-are dropped only at real identity boundaries, such as a changed connection
-identity, a re-created pane, or a pane that left the fleet.
+A fresh completion alert carries its own server timestamp: when the debounced
+pane snapshot still reports the previous done episode, the alert instant - not
+the stale pane episode key - is what the receipt records, so a late replay of
+that run's start and settlement cannot look like a newer turn. This is evidence
+ordering against server-recorded evidence, not a local elapsed-time window.
+Repeated polling, replayed alerts, a later turn, and a different machine or run
+stay independently correct. Receipts are bounded and are dropped only at real
+identity boundaries, such as a changed connection identity, a re-created pane,
+or a pane that left the fleet.
 
 ## What plays and what stays silent
 

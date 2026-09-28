@@ -80,6 +80,12 @@ final class AgentCompletionFeedbackCoordinator {
         /// A completion alert this refresh reported for the first time for this
         /// pane. The server creates one alert per transition into `.done`.
         let newDoneAlertID: String?
+        /// The fresh alert's server timestamp. A debounced pane snapshot can
+        /// still report the previous done episode when the alert arrives, so
+        /// an alert-only claim must record this instant rather than the stale
+        /// `episodeKey`; otherwise a delayed Pi replay of the same completion
+        /// looks like a newer turn and plays a second cue.
+        let newDoneAlertCreatedAt: String?
         /// `HerdrPane.workingSince`: unlike `episodeKey`, it does not move on
         /// revision churn inside one work episode, so a changed value proves a
         /// new episode began.
@@ -95,6 +101,7 @@ final class AgentCompletionFeedbackCoordinator {
             status: AgentStatus,
             episodeKey: String,
             newDoneAlertID: String? = nil,
+            newDoneAlertCreatedAt: String? = nil,
             workingSince: String? = nil,
             piCursor: String? = nil
         ) {
@@ -103,6 +110,7 @@ final class AgentCompletionFeedbackCoordinator {
             self.status = status
             self.episodeKey = episodeKey
             self.newDoneAlertID = newDoneAlertID
+            self.newDoneAlertCreatedAt = newDoneAlertCreatedAt
             self.workingSince = workingSince
             self.piCursor = piCursor
         }
@@ -391,13 +399,15 @@ final class AgentCompletionFeedbackCoordinator {
                 piCursor: state.observedPiCursor
             )
         } else {
-            // The done status confirms the pane's completion instant even when
-            // only its alert is new to the coordinator.
+            // Only the alert is new to the coordinator, and the pane snapshot
+            // may still describe the previous done episode. The alert's own
+            // server timestamp is the completion instant; the pane episode key
+            // is only a fallback for evidence that carries no alert time.
             shouldPlay = receiveFleetCompletion(
                 &state,
                 channel: .alert,
                 partnerIncluded: false,
-                completedAt: pane.episodeKey,
+                completedAt: pane.newDoneAlertCreatedAt ?? pane.episodeKey,
                 piCursor: state.observedPiCursor
             )
         }

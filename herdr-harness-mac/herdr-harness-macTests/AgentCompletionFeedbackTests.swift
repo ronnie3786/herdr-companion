@@ -35,6 +35,7 @@ struct AgentCompletionFeedbackTests {
         _ status: AgentStatus,
         episodeKey: String,
         newDoneAlertID: String? = nil,
+        newDoneAlertCreatedAt: String? = nil,
         workingSince: String? = nil,
         piCursor: String? = nil,
         machineID: String = "machine-a",
@@ -47,6 +48,7 @@ struct AgentCompletionFeedbackTests {
             status: status,
             episodeKey: episodeKey,
             newDoneAlertID: newDoneAlertID,
+            newDoneAlertCreatedAt: newDoneAlertCreatedAt,
             workingSince: workingSince,
             piCursor: piCursor
         )
@@ -178,6 +180,48 @@ struct AgentCompletionFeedbackTests {
 
         // A later run's alert is independent.
         refresh(coordinator, [paneObservation(.done, episodeKey: "e2", newDoneAlertID: "alert-2")])
+        #expect(recorder.count == 2)
+    }
+
+    @Test("A fresh alert keeps its own instant over a stale pane snapshot")
+    func freshAlertInstantBeatsStalePaneSnapshot() {
+        let (coordinator, recorder) = makeCoordinator()
+        // Baseline: the previous answer is done at T0 and its alert is known.
+        refresh(coordinator, [paneObservation(.done, episodeKey: "2030-01-01T00:00:00Z")])
+        #expect(recorder.count == 0)
+
+        // The new alert (T2) arrives while the debounced pane snapshot still
+        // reports the previous done episode at T0. The alert owns the claim.
+        refresh(coordinator, [paneObservation(
+            .done,
+            episodeKey: "2030-01-01T00:00:00Z",
+            newDoneAlertID: "alert-1",
+            newDoneAlertCreatedAt: "2030-01-01T00:00:20Z"
+        )])
+        #expect(recorder.count == 1)
+
+        // The committed stream resumes late. The delayed start at T1 predates
+        // the receipted completion T2, so the same run's settlement is silent
+        // instead of being mistaken for a newer turn.
+        coordinator.piWorkStarted(
+            scope: scope(),
+            evidence: .init(sessionID: "s1", observedAt: "2030-01-01T00:00:10Z")
+        )
+        coordinator.piWorkSettled(
+            scope: scope(),
+            evidence: .init(sessionID: "s1", observedAt: "2030-01-01T00:00:30Z")
+        )
+        #expect(recorder.count == 1)
+
+        // A genuinely later turn is newer than the receipt and plays once.
+        coordinator.piWorkStarted(
+            scope: scope(),
+            evidence: .init(sessionID: "s1", observedAt: "2030-01-01T00:01:00Z")
+        )
+        coordinator.piWorkSettled(
+            scope: scope(),
+            evidence: .init(sessionID: "s1", observedAt: "2030-01-01T00:01:05Z")
+        )
         #expect(recorder.count == 2)
     }
 

@@ -20,7 +20,8 @@ export class AssistantSession {
   private observing = false;
   state: AssistantState;
   constructor(readonly key: string, readonly paneId: string, readonly rootPath: string | undefined,
-              context: AssistantContext, private transport: AssistantTransport) {
+              context: AssistantContext, private transport: AssistantTransport,
+              private profile: AssistantRequest["profile"] = "contextual-question-v1") {
     this.state = { draft: "", turns: [], context, pending: null, busy: false, ready: false, error: null };
     try {
       const stored = sessionStorage.getItem(key);
@@ -36,12 +37,13 @@ export class AssistantSession {
   }
   setDraft = (draft: string) => this.set({ draft });
   get latest() { return this.state.turns[this.state.turns.length - 1]; }
+  get allowsGitInspection() { return this.profile === "git-question-v1"; }
   async prepare() {
     if (this.state.ready || this.preparing) return;
     this.preparing = true;
     try {
       const caps = await this.transport.capabilities();
-      if (!caps.profiles.includes("contextual-question-v1")) throw new Error("Update this machine's companion to use contextual questions.");
+      if (!caps.profiles.includes(this.profile)) throw new Error("Update this machine's companion to use contextual questions.");
       this.set({ ready: true });
       if (this.latest && !isTerminalRunStatus(this.latest.status)) void this.observe(this.latest.id);
     } catch (error) { this.set({ error: message(error) }); }
@@ -50,7 +52,7 @@ export class AssistantSession {
   async submit() {
     if (!this.state.ready || this.state.busy || this.state.pending || !this.state.draft.trim() ||
         (this.latest && (!isTerminalRunStatus(this.latest.status) || this.latest.status === "promoted"))) return;
-    this.set({ pending: { profile: "contextual-question-v1", mode: "ask", prompt: this.state.draft,
+    this.set({ pending: { profile: this.profile, mode: "ask", prompt: this.state.draft,
       paneId: this.paneId, scope: { expectedRootPath: this.rootPath }, context: this.state.context,
       clientRequestId: crypto.randomUUID(), continueFromRunId: this.latest?.id } });
     await this.reconcile();

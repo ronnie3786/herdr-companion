@@ -33,6 +33,7 @@ from .alerts import utc_now
 from .child_environment import agent_environment
 from .resources import pi_extension_path
 from .first_mate_context import FirstMateContext
+from .first_mate_git_history import capture_baselines, capture_commits, capture_comparison_baseline, recorded_comparison_baseline
 from .first_mate_link_discovery import FirstMateLinkDiscovery
 from .first_mate_peers import PeerDirectory
 from .first_mate_routing import (
@@ -1482,6 +1483,10 @@ class FirstMateRuntime:
             metadata = {"workspace_mode": mode, "worktree_path": source, "source_assignment_id": source_assignment,
                         "base_revision": baseline, "model_profile": profile,
                         "model_selection": policy.selection()}
+            prior_baseline = recorded_comparison_baseline(self.store.snapshot(feature["id"]), source_assignment or "project")
+            if prior_baseline is None and source_assignment:
+                prior_baseline = source_record.get("metadata")
+            metadata.update(capture_comparison_baseline(source, baseline, self._git, prior=prior_baseline))
             if baseline and mode == "read_only" and (source_assignment or "review" in str(params.get("role", "")).lower()):
                 metadata["expected_code_revision"] = baseline
             if mode == "isolated":
@@ -2742,7 +2747,8 @@ class FirstMateRuntime:
                     prior = next(v for v in self.store.snapshot(feature_id)["visits"] if v["id"] == feature["current_visit_id"])
                     authorization_id, followups = prior["authorization_message_id"], []
                 return self.store.start_visit(feature_id, params["stage_key"], params["title"], request_id,
-                                              feature["revision"], authorization_id, followup_stages=followups)
+                                              feature["revision"], authorization_id, followup_stages=followups,
+                                              git_baselines=capture_baselines(self.store.snapshot(feature_id), self._git))
             if action == "fm_delegate":
                 if not feature.get("current_visit_id") or feature["status"] != "running":
                     visits = self.store.snapshot(feature_id)["visits"]
@@ -2905,10 +2911,13 @@ class FirstMateRuntime:
                             raise DeferredOperation()
                 selection = self._verification_selection(feature_id, params.get("verification_run_ids"))
                 verification = self.verification_assessment(feature_id, selection)
+                snapshot = self.store.snapshot(feature_id)
+                visit = next(v for v in snapshot["visits"] if v["id"] == feature["current_visit_id"])
+                git_evidence = visit.get("git_evidence", []) if replay else capture_commits(snapshot, visit, self._git)
                 return self.store.complete_visit(feature["current_visit_id"], params["summary"], params["recommendation"], request_id,
                                                  native_session_id=job.get("native_session_id"),
                                                  verification=verification if verification.get("evidence_present") else None,
-                                                 selection=selection, turn_id=claim.get("id"))
+                                                 selection=selection, turn_id=claim.get("id"), git_evidence=git_evidence)
             if action == "fm_revise":
                 revisions = job.setdefault("operation_revisions", {})
                 if request_id not in revisions:
@@ -2938,9 +2947,14 @@ class FirstMateRuntime:
                                     raise FirstMateError("Cannot carry completed code evidence from a dirty isolated worktree. Preserve all edits and revise that assignment instead; never stash or clean the human checkout.")
                                 carry[assignment["id"]] = self._git(path, "rev-parse", "HEAD")
                     _write_json(prepared_path, carry)
+                snapshot = self.store.snapshot(feature_id)
+                boundary = capture_baselines(snapshot, self._git)
+                prior = next((v for v in snapshot["visits"] if v["id"] == feature.get("current_visit_id")), None)
+                prior_git_evidence = capture_commits(snapshot, prior, self._git, end_baselines=boundary) if prior else None
                 result = self.store.revise_feature(feature_id, params["goal"], revisions[request_id], request_id,
                                                   authorization_message_id=claim["id"], verified_stopped=True,
-                                                  affected_assignment_ids=affected, carry_forward_evidence=carry)
+                                                  affected_assignment_ids=affected, carry_forward_evidence=carry,
+                                                  git_baselines=boundary, prior_git_evidence=prior_git_evidence)
                 self._event(feature_id, "revision.reason", params["reason"], {}, "reason:" + request_id)
                 return result
             if action == "fm_finish_feature":

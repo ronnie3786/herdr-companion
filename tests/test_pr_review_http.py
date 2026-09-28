@@ -147,6 +147,7 @@ class PRReviewHTTPTests(unittest.TestCase):
         status, capabilities, _ = self.request("/api/v1/pr-reviews/capabilities")
         self.assertEqual(status, 200)
         self.assertIn("pr-review-v1", capabilities["capabilities"])
+        self.assertIn("git-comparison-v1", capabilities["capabilities"])
         status, root, _ = self.request("/api/v1")
         self.assertIn("pr-review-v1", root["capabilities"])
         self.assertEqual(root["endpoints"]["prReviews"], "/api/v1/pr-reviews")

@@ -3,6 +3,7 @@ import SwiftUI
 struct PRReviewGuideDock: View {
     @Bindable var session: PRReviewGuideSession
     var preferPrivateTranscription = true
+    var compact = false
     @State private var recording = false
     @FocusState private var questionFocused: Bool
 
@@ -80,6 +81,23 @@ struct PRReviewGuideDock: View {
                 }
                 .buttonStyle(.herdrPlain)
             }
+            if session.isBreezing {
+                HStack(spacing: 8) {
+                    Text("Low-impact files · \(session.breezePath ?? "")")
+                        .herdrFont(.caption).lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 0)
+                    Button(session.breezePaused ? "Resume breeze" : "Pause breeze") {
+                        if session.breezePaused { session.resumeBreeze() } else { session.pause() }
+                    }.disabled((session.isBusy || session.isSavingBreeze) && session.breezePaused)
+                    Button("Stop breeze") { session.pause(); session.stopBreeze() }
+                }
+                .accessibilityIdentifier("pr-review-breeze-progress")
+            } else if session.canStartBreeze && !(compact && isInitialPresentation) {
+                Button("Breeze through low-impact files", systemImage: "forward") { session.startBreeze() }
+                    .buttonStyle(.link).herdrFont(.caption)
+                    .help("Explain each unviewed low-impact file in the full PR, then mark it viewed when narration finishes. Pause any time to ask a question.")
+                    .accessibilityIdentifier("pr-review-breeze-start")
+            }
             if let error = session.error {
                 Text(error).herdrFont(.caption).foregroundStyle(HerdrTheme.alert).textSelection(.enabled)
             }
@@ -133,6 +151,15 @@ struct PRReviewGuideDock: View {
                 .buttonStyle(HerdrButtonStyle(kind: .primary, height: HerdrTheme.ControlHeight.small))
                 .disabled(!session.isAvailable || session.isBusy)
                 .accessibilityIdentifier("pr-review-guide-start")
+            if compact && session.canStartBreeze {
+                Menu("Review options", systemImage: "ellipsis") {
+                    Button("Breeze through low-impact files", systemImage: "forward") { session.startBreeze() }
+                        .help("Explain each file, then mark it viewed after narration finishes")
+                        .accessibilityIdentifier("pr-review-breeze-start")
+                }
+                .labelStyle(.iconOnly).menuStyle(.borderlessButton).fixedSize()
+                .help("Review options, including Breeze through low-impact files")
+            }
         }
     }
 

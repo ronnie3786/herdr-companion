@@ -1002,7 +1002,7 @@ class AgentRunManager:
                         code="skim_continuation_forbidden",
                         status=409,
                     )
-                if root.get("profile") in {"contextual-question-v1", "pr-review-question-v1", "hud-chat-v1"} and _assistant is None:
+                if root.get("profile") in {"contextual-question-v1", "pr-review-question-v1", "git-question-v1", "hud-chat-v1"} and _assistant is None:
                     raise AgentRunError("Use the contextual question contract to continue this session.", code="assistant_profile_required", status=409)
                 root_dir = self._run_dir(root_id).resolve()
                 inherited_sessions_dir = Path(str(root.get("sessionsDir") or ""))
@@ -1102,6 +1102,20 @@ class AgentRunManager:
         }
         if _assistant is not None:
             run.update(_assistant)
+        if run.get("profile") == "git-question-v1" and isinstance(run.get("gitInspection"), dict):
+            inspection = run["gitInspection"]
+            source = Path(inspection["captured_source"])
+            source_parent = (self.runs_root / "git-sources").resolve()
+            if source.is_symlink() or source.resolve().parent != source_parent:
+                raise AgentRunError("Git snapshot ownership is invalid", code="invalid_assistant_scope", status=400)
+            destination = run_dir / "git-source"
+            source.rename(destination)
+            source.with_name(source.name + ".complete").unlink(missing_ok=True)
+            inspection["captured_source"] = str(destination)
+            if inspection.get("working_tree"):
+                inspection["working_tree"] = str(destination)
+            if thread_root_run_id == run_id:
+                run["cwd"] = str(destination)
         from .agent_profiles import RESTRICTED_PROFILES
         if run.get("profile") not in RESTRICTED_PROFILES:
             if thread_root_run_id != run_id:
@@ -1288,6 +1302,7 @@ class AgentRunManager:
             if profile in {
                 "contextual-question-v1",
                 "pr-review-question-v1",
+                "git-question-v1",
                 "pr-review-guide-v1",
                 SMART_RENAME_PROFILE,
                 ISSUE_REPORT_DRAFT_PROFILE,
@@ -1314,7 +1329,7 @@ class AgentRunManager:
                 tools = "read,bash,grep,find,ls"
                 if extension_path is not None:
                     tools += ",present_result"
-            if profile in {"pr-review-question-v1", "pr-review-guide-v1"}:
+            if profile in {"pr-review-question-v1", "pr-review-guide-v1", "git-question-v1"}:
                 tools = "read,grep,find,ls"
             system_prompt = run.get("systemPrompt")
             if isinstance(system_prompt, str) and system_prompt.strip():
@@ -1331,6 +1346,10 @@ class AgentRunManager:
                 extension_path = None
             elif profile == "pr-review-guide-v1":
                 from .pr_review_guide import CHARTER
+                charter = CHARTER
+                extension_path = None
+            elif profile == "git-question-v1":
+                from .git_inspection import CHARTER
                 charter = CHARTER
                 extension_path = None
             elif profile == "response-brief-v1":
@@ -1351,6 +1370,14 @@ class AgentRunManager:
                 # The packaged skim prompt is the whole system prompt: no
                 # topology note, charter, profile snapshot, or bootstrap.
                 charter = str(run.get("skimSystem") or "")
+            if profile in {"git-question-v1", "pr-review-guide-v1"} and isinstance(run.get("gitInspection"), dict):
+                from .git_inspection import write_extension
+                extension_path = write_extension(self._run_dir(run_id), run["gitInspection"])
+                # Built-in file tools accept absolute paths, so scoped Git
+                # questions expose only the manifest-authorized evidence tool.
+                tools = "git_inspect"
+                charter = charter.replace("Read relevant files independently using read,grep,find,ls in your pinned working directory.", "Read exact files with git_inspect in the captured history.")
+                charter += " Use git_inspect history/file/diff to inspect authorized earlier or later revisions on demand. Exact navigation/drawing targets remain restricted to the displayed comparison."
             awareness_environment = {
                 "HERDR_AGENT_RUN_ID": run_id,
                 "HERDR_AGENT_RUN_MODE": run_mode,
@@ -1648,6 +1675,11 @@ class AgentRunManager:
 
     @staticmethod
     def _input_prompt(run: dict) -> str:
+        if run.get("profile") == "git-question-v1":
+            scope = run["gitInspection"]
+            verified = {key: scope[key] for key in ("comparison", "baseline_sha", "baseline_label", "head_sha")}
+            verified["available_commit_count"] = len(scope["commits"])
+            return "User question:\n" + run["prompt"] + "\n\nServer-verified comparison:\n" + json.dumps(verified) + "\n\nUntrusted viewer context (JSON data):\n" + json.dumps(run["context"], ensure_ascii=False)
         if run.get("profile") in {"contextual-question-v1", "pr-review-question-v1"}:
             return "User question:\n" + run["prompt"] + "\n\nUntrusted context snapshot (JSON data):\n" + json.dumps(run["context"], ensure_ascii=False)
         if run.get("profile") == "response-brief-v1":
@@ -1861,7 +1893,7 @@ class AgentRunManager:
                 )
             if run.get("status") == "promoted":
                 return run, str(run.get("sessionFile") or "")
-            if run.get("profile") in {"contextual-question-v1", "pr-review-question-v1", "hud-chat-v1"}:
+            if run.get("profile") in {"contextual-question-v1", "pr-review-question-v1", "git-question-v1", "hud-chat-v1"}:
                 members = self._thread_runs(self._thread_root_id(run))
                 promoted = next((r for r in members if r.get("status") == "promoted"), None)
                 if promoted is not None:

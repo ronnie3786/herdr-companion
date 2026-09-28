@@ -38,6 +38,7 @@ struct FirstMateWorkspaceView: View {
     @State private var mode = FirstMateWorkspaceMode.chat
     @State private var selectedGitWorkspaceID = "project"
     @State private var selectedGitTargetIdentity: String?
+    @State private var selectedGitCommitSHA: String?
     @State private var controlLease = FirstMateWorkspaceControlLease()
     @Environment(\.colorScheme) private var scheme
     @Environment(\.herdrHostsTitleBar) private var hostsTitleBar
@@ -70,8 +71,10 @@ struct FirstMateWorkspaceView: View {
                                 configuration: configuration,
                                 configurationRevision: configurationRevision,
                                 initialWorkspaceID: initialGitWorkspaceID,
+                                initialCommitSHA: selectedGitCommitSHA,
                                 workspaceSelectionChanged: {
                                     selectedGitWorkspaceID = $0
+                                    selectedGitCommitSHA = nil
                                     selectedGitTargetIdentity = gitTargetIdentity
                                 },
                                 popOut: popOutGit
@@ -94,7 +97,12 @@ struct FirstMateWorkspaceView: View {
                                 modelFavorites: modelFavorites
                             )
                                 .frame(minWidth: 330, idealWidth: 480, maxWidth: .infinity)
-                            FirstMateInspectorView(store: store, snapshot: snapshot)
+                            FirstMateInspectorView(store: store, snapshot: snapshot, openCommit: { selection in
+                                selectedGitWorkspaceID = selection.workspaceID
+                                selectedGitCommitSHA = selection.commitSHA
+                                selectedGitTargetIdentity = gitTargetIdentity
+                                mode = .git
+                            })
                                 .frame(minWidth: 340, idealWidth: 420, maxWidth: .infinity)
                         }
                     }
@@ -132,6 +140,7 @@ struct FirstMateWorkspaceView: View {
             guard let target else { return }
             if let selectedGitTargetIdentity, selectedGitTargetIdentity != target {
                 selectedGitWorkspaceID = "project"
+                selectedGitCommitSHA = nil
             }
             selectedGitTargetIdentity = target
         }

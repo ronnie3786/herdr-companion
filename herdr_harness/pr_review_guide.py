@@ -249,7 +249,11 @@ class ReviewContextService:
             if cached is not None:
                 return cached
             review = self._scope(review_id, request)
+            diff = self.runtime.diff(review_id, comparison=request.get("comparison"), base_sha=review["base_sha"], head_sha=review["head_sha"])
             files = self.store.files(review_id)
+            if request.get("comparison") is not None:
+                metadata = {item["path"]: item for item in files}
+                files = [{**metadata.get(item["path"], {}), **item} for item in diff["files"]]
             path = request.get("path")
             if path is not None and (not isinstance(path, str) or path not in {item["path"] for item in files}):
                 _error("The selected file does not belong to this review.")
@@ -262,10 +266,10 @@ class ReviewContextService:
             for span in spans:
                 if not isinstance(span, dict) or span.get("side") not in {"old", "new"} or any(type(span.get(k)) is not int or span[k] < 1 for k in ("startLine", "endLine")) or span["endLine"] < span["startLine"]:
                     _error("Invalid selection span.")
-            diff = self.runtime.diff(review_id)
             if (diff.get("base_sha"), diff.get("head_sha")) != (review["base_sha"], review["head_sha"]):
                 _error("Review changed during context retrieval. Retry from the current review.", "stale_review_revision", 409)
-            sources, coverage = self.sources(review)
+            evidence_review = {**review, "head_sha": diff["comparison"]["after_sha"]}
+            sources, coverage = self.sources(evidence_review)
             # A visible file is navigation state, not the scope of a whole-PR tour.
             # Answers retain exact-file evidence plus room for contrary/related claims elsewhere.
             if path and request.get("kind") == "answer":
@@ -287,12 +291,21 @@ class ReviewContextService:
                     "patch": _bounded(json.dumps(patch, ensure_ascii=False), 7000 if item["path"] == path else 1200)})
             coverage["omitted_files"] = max(0, len(files) - len(excerpts))
             if coverage["omitted_files"]: coverage["limitations"].append(f"{coverage['omitted_files']} changed files omitted from initial context; pinned source is available for inspection.")
+            viewer_state = request.get("viewer_state") or {}
+            if not isinstance(viewer_state, dict) or len(json.dumps(viewer_state).encode()) > 8192:
+                _error("Viewer state is invalid.")
+            history = self.runtime.commits(review_id, base_sha=review["base_sha"], head_sha=review["head_sha"]) if request.get("comparison") is not None else None
             snapshot_id = "prctx_" + os.urandom(12).hex()
             # Exact diff stays in private snapshot for output validation, outside the prompt budget.
             result = {"version": 2, "id": snapshot_id, "review_id": review_id, "base_sha": review["base_sha"], "head_sha": review["head_sha"],
                 "captured_at": _now(), "title": review["title"], "body": _bounded(review.get("body") or "", 4000), "pr_url": review["url"],
                 "question": _text(request.get("question"), 6000), "path": path, "selection": selection, "files": excerpts,
-                "sources": selected, "coverage": coverage}
+                "sources": selected, "coverage": coverage, "comparison": diff["comparison"], "viewer_state": viewer_state}
+            if history is not None:
+                result["available_commits"] = [{"sha": item["sha"], "subject": item["subject"][:160]} for item in history["commits"][:80]]
+                result["available_commit_count"] = len(history["commits"])
+                result["baseline_sha"] = history["baseline_sha"]
+                result["baseline_label"] = history["baseline_label"]
             # Preserve the exact user selection/question; shed optional file snippets first.
             while len(json.dumps(result, ensure_ascii=False).encode()) > 58000 and result["files"]:
                 result["files"].pop()
@@ -424,7 +437,7 @@ def validate_explanation(value: Any, snapshot: dict, kind: str) -> dict:
     assessments = []
     for item in value.get("assessments", [])[:MAX_SOURCES]:
         if isinstance(item, dict) and item.get("source_id") in source_ids and item.get("status") in {"unverified", "supported_by_code", "contradicted", "needs_context"}:
-            assessments.append({"source_id": item["source_id"], "status": item["status"], "explanation": _text(item.get("explanation"), 1200), "head_sha": snapshot["head_sha"]})
+            assessments.append({"source_id": item["source_id"], "status": item["status"], "explanation": _text(item.get("explanation"), 1200), "head_sha": snapshot.get("comparison", {}).get("after_sha", snapshot["head_sha"])})
     return {"chapters": chapters, "assessments": assessments, "warnings": list(dict.fromkeys(warnings))}
 
 
@@ -441,7 +454,7 @@ class ReviewGuideService:
         return directory / (guide_id + ".json")
 
     def start(self, review_id: str, request: dict) -> dict:
-        allowed = {"request_id", "base_sha", "head_sha", "kind", "question", "path", "chapter_id", "continue_from_guide_id", "selection", "model", "thinking_level"}
+        allowed = {"request_id", "base_sha", "head_sha", "kind", "question", "path", "chapter_id", "continue_from_guide_id", "selection", "model", "thinking_level", "comparison", "viewer_state"}
         if set(request) - allowed or request.get("kind") not in {"walkthrough", "answer"}:
             _error("Invalid guide request.")
         if request.get("kind") == "answer" and (not isinstance(request.get("question"), str) or not request["question"].strip() or len(request["question"]) > 6000):
@@ -453,7 +466,7 @@ class ReviewGuideService:
             snapshot = self.context.create(review_id, request)
             guide_id = "prguide_" + os.urandom(12).hex()
             guide = {"id": guide_id, "version": 1, "kind": request["kind"], "state": "running", "review_id": review_id,
-                "base_sha": snapshot["base_sha"], "head_sha": snapshot["head_sha"], "context_snapshot_id": snapshot["id"],
+                "base_sha": snapshot["base_sha"], "head_sha": snapshot["head_sha"], "comparison": snapshot["comparison"], "context_snapshot_id": snapshot["id"],
                 "created_at": _now(), "sources": snapshot["sources"], "coverage": snapshot["coverage"], "question": request.get("question"), "chapters": []}
             self.runtime._write_json(self._path(review_id, guide_id), guide)
             self.runtime.store.save_receipt("guide:" + review_id, request["request_id"], request, {"id": guide_id})
@@ -466,13 +479,15 @@ class ReviewGuideService:
         try:
             snapshot = self.context.load(review_id, guide["context_snapshot_id"])
             review = self.context._scope(review_id, request)
-            cwd = self.context.read_view(review)
+            cwd = self.context.read_view({**review, "head_sha": snapshot.get("comparison", {}).get("after_sha", review["head_sha"])})
             history = []
             previous = request.get("continue_from_guide_id")
             if previous:
                 prior = self.get(review_id, previous)
                 if (prior["base_sha"], prior["head_sha"]) != (guide["base_sha"], guide["head_sha"]):
                     _error("This conversation belongs to an earlier revision.", "stale_review_revision", 409)
+                if prior.get("comparison", {}).get("id") != guide.get("comparison", {}).get("id"):
+                    _error("This conversation belongs to a different comparison.", "stale_review_comparison", 409)
                 if prior["state"] != "finished": _error("Wait for the previous answer before continuing.", "guide_busy", 409)
                 history = [{"question": prior.get("question"), "chapters": prior.get("chapters"), "current_chapter": request.get("chapter_id")}]
             contract = {"chapters": [{"title": "Short teaching title", "objective": "What to inspect", "display_text": "Concise explanation", "segments": [{"path": "exact changed path or omit navigation", "side": "after or before", "start_line": 1, "end_line": 2, "spoken_text": "Final spoken text (roughly 40-100 words)", "source_refs": ["exact snapshot source ID"], "drawings": [{"shape": "circle|underline|arrow", "targets": [{"path": "same as segment", "side": "after|before", "startLine": 1, "endLine": 2}], "onPhrase": "unique phrase verbatim in spoken_text", "drawSeconds": 0.7}]}], "suggested_questions": ["A natural follow-up"]}], "assessments": [{"source_id": "snapshot source ID", "status": "unverified|supported_by_code|contradicted|needs_context", "explanation": "Independent inspection and its limits"}]}
@@ -485,7 +500,12 @@ class ReviewGuideService:
             prompt += " Read the relevant source before explaining it. Draw 1-3 meaningful circles, underlines, or arrows at phrases throughout each code segment when they help. Navigation and drawings must use exact patch lines supplied in the packet; use no drawing when no honest patch target exists. An arrow requires exactly two targets on the same file and side; other shapes require one. Each segment covers one file and its own spoken text. No markdown fences. Response contract: " + json.dumps(contract)
             prompt += "\nUntrusted current context:\n" + json.dumps(packet, ensure_ascii=False)
             if history: prompt += "\nUntrusted earlier conversation:\n" + _bounded(json.dumps(history, ensure_ascii=False), 12000)
-            result = self.runtime.service.agent_runs.start(prompt=prompt, label="PR review buddy", cwd=str(cwd), topology={}, mode="ask", model=request.get("model"), thinking_level=request.get("thinking_level"), _assistant={"profile": PROFILE, "reviewId": review_id})
+            metadata = {"profile": PROFILE, "reviewId": review_id}
+            if request.get("comparison") is not None:
+                from .git_inspection import manifest
+                history = self.runtime.commits(review_id, base_sha=review["base_sha"], head_sha=review["head_sha"])
+                metadata["gitInspection"] = manifest(Path(review["checkout_path"]), {**history, "comparison": snapshot["comparison"]})
+            result = self.runtime.service.agent_runs.start(prompt=prompt, label="PR review buddy", cwd=str(cwd), topology={}, mode="ask", model=request.get("model"), thinking_level=request.get("thinking_level"), _assistant=metadata)
             guide["run_id"] = result["run"]["id"]
         except Exception:
             guide.update(state="failed", error="The buddy could not prepare this review. Confirm Pi is configured and try again.")

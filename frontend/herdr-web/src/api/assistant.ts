@@ -1,5 +1,6 @@
 import { apiRequest, getServerUrl } from "./client";
 import type { AgentRun, AgentRunEnvelope } from "./agentRuns";
+import type { GitComparisonSelection } from "../components/Git/comparison";
 
 export interface AssistantContextItem {
   id: string;
@@ -17,12 +18,12 @@ export interface AssistantContext {
   items: AssistantContextItem[];
 }
 export interface AssistantRequest {
-  profile: "contextual-question-v1";
+  profile: "contextual-question-v1" | "git-question-v1";
   prompt: string;
   mode: "ask";
   clientRequestId: string;
   paneId?: string;
-  scope: { expectedRootPath?: string };
+  scope: { expectedRootPath?: string; firstMateFeatureId?: string; workspaceId?: string; comparison?: GitComparisonSelection; comparisonId?: string };
   context: AssistantContext;
   continueFromRunId?: string;
   model?: string;

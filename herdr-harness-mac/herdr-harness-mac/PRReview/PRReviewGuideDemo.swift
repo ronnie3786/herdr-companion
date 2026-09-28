@@ -45,6 +45,6 @@ enum PRReviewGuideDemo {
                 chapter("recap", "Decide what needs a comment", "Separate observations, evidence, and unanswered questions.", "For this change, you have identified the new catalog entry point and the removed migration. Keep comments tied to an observable behavior and a concrete code location. The reviewer report is a source to investigate. It is not a test result. You decide whether the available evidence is enough to approve, ask a question, or request a fix.", catalog, 2)
             ]
         }
-        return .init(id: "demo-" + UUID().uuidString, state: "finished", reviewID: scope.reviewID, baseSHA: scope.baseSHA, headSHA: scope.headSHA, contextSnapshotID: "synthetic-context", chapters: chapters, sources: [source], coverage: .init(limitations: ["Synthetic demo. No GitHub connection or real code execution."]), error: nil)
+        return .init(id: "demo-" + UUID().uuidString, state: "finished", reviewID: scope.reviewID, baseSHA: scope.baseSHA, headSHA: scope.headSHA, contextSnapshotID: "synthetic-context", chapters: chapters, sources: [source], coverage: .init(limitations: ["Synthetic demo. No GitHub connection or real code execution."]), error: nil, comparison: scope.comparison)
     }
 }

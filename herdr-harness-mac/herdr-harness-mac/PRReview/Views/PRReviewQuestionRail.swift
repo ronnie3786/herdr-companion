@@ -5,8 +5,30 @@ struct PRReviewQuestionRail: View {
     let baseSHA: String
     let headSHA: String
     var open: (PRReviewQuestionHistory.Question) -> Void
+    var compact = false
 
     var body: some View {
+        Group {
+            if compact {
+                Menu("Saved questions · \(questions.count)", systemImage: "bubble.left.and.bubble.right") {
+                    ForEach(questions) { question in
+                        Button(question.prompt) { open(question) }
+                            .help(question.context.items.first?.label ?? question.path)
+                    }
+                }
+                .herdrFont(.caption).menuStyle(.borderlessButton)
+                .fixedSize(horizontal: true, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(HerdrTheme.ink)
+            } else {
+                expandedRail
+            }
+        }
+        .accessibilityIdentifier("pr-review-saved-questions")
+    }
+
+    private var expandedRail: some View {
         VStack(alignment: .leading, spacing: 6) {
             Label("Saved questions · \(questions.count)", systemImage: "bubble.left.and.bubble.right")
                 .herdrFont(.caption, weight: .semibold)
@@ -38,6 +60,5 @@ struct PRReviewQuestionRail: View {
         }
         .padding(10)
         .background(HerdrTheme.ink)
-        .accessibilityIdentifier("pr-review-saved-questions")
     }
 }

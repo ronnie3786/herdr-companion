@@ -222,7 +222,7 @@ final class PRReviewCommentsSession {
     func beginComposition(selection: PRReviewSelection, store: PRReviewStore) -> Bool {
         // A dirty editor is never silently replaced or retargeted.
         guard composition == nil else { return false }
-        guard self.store != nil,
+        guard self.store != nil, store.comparisonSelection == .all,
               let machineID = store.currentMachineID,
               let reviewID = store.selectedReviewID,
               let review = store.snapshot?.review ?? store.selectedReview,
@@ -429,6 +429,17 @@ final class PRReviewCommentsSession {
             return .notInDiff(.missingFile)
         }
 
+        // Saved comments are anchored to the full PR. Restore that exact
+        // comparison before revealing their lines from a historical view.
+        if store.comparisonSelection != .all, let listing = store.comparisonCommits {
+            store.selectComparison(before: listing.baselineSHA, after: listing.headSHA)
+            await store.loadComparison()
+        }
+        guard store.comparisonSelection == .all,
+              store.selectedReviewID == review.id,
+              store.snapshot?.review.baseSHA == review.baseSHA,
+              store.snapshot?.review.headSHA == review.headSHA else { return .notInDiff(.revisionMismatch) }
+
         // Clear the filters that could hide the file, then select Files and
         // the saved path. The diff view's own task loads the file when this
         // path is not the loaded one.
@@ -443,7 +454,7 @@ final class PRReviewCommentsSession {
             await store.loadDiff(for: comment.anchor.path)
         }
 
-        guard let diff = store.diff,
+        guard store.comparisonSelection == .all, let diff = store.diff,
               diff.files.contains(where: { $0.path == comment.anchor.path })
         else { return .notInDiff(nil) }
         if let problem = comment.anchor.problem(against: diff) {

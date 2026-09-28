@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
 import { clampAnchor, selectionAskContext, type SelectionAskContext } from "./selectionAsk";
 import { InlineAskPanel, gitQuestionKey, hasGitQuestion, type InlineAskAnchor } from "./InlineAskPanel";
+import type { GitComparisonSelection } from "./comparison";
 
 const BUTTON_WIDTH = 108;
 const BUTTON_HEIGHT = 30;
@@ -20,6 +21,11 @@ interface SelectionAskLauncherProps {
   section?: string;
   rootPath?: string;
   revision?: string;
+  comparison?: GitComparisonSelection;
+  viewerContext?: object;
+  allowsFileQuestion?: boolean;
+  availableFiles?: string[];
+  onShowFile?: (path: string) => void;
   /** The scrollable diff container; Pierre's shadow DOM lives below it. */
   containerRef: React.MutableRefObject<HTMLDivElement | null>;
 }
@@ -30,7 +36,7 @@ interface SelectionAskLauncherProps {
  * clicking it opens the inline chat panel with the highlighted code, file,
  * and line range already attached.
  */
-export function SelectionAskLauncher({ paneId, file, containerRef, section, rootPath, revision }: SelectionAskLauncherProps) {
+export function SelectionAskLauncher({ paneId, file, containerRef, section, rootPath, revision, comparison, viewerContext, allowsFileQuestion, availableFiles, onShowFile }: SelectionAskLauncherProps) {
   const [pending, setPending] = useState<FloatingAskTarget | null>(null);
   const [open, setOpen] = useState<FloatingAskTarget | null>(null);
   const debounceRef = useRef<number | null>(null);
@@ -113,7 +119,8 @@ export function SelectionAskLauncher({ paneId, file, containerRef, section, root
   useEffect(() => {
     setOpen(null);
     setPending(null);
-  }, [file]);
+    pendingRef.current = null;
+  }, [paneId, file, section, rootPath, revision]);
 
   useEffect(() => {
     const onSelectionChange = () => {
@@ -187,18 +194,23 @@ export function SelectionAskLauncher({ paneId, file, containerRef, section, root
           <span>Ask AI</span>
         </button>
       ) : null}
-      {open === null && hasGitQuestion(gitQuestionKey(paneId, file, section, rootPath)) ? (
+      {open === null && (allowsFileQuestion || hasGitQuestion(gitQuestionKey(paneId, file, section, rootPath, revision))) ? (
         <button className="hz-inline-ask-launcher" style={{ right: 26, bottom: 26 }} onClick={() => setOpen({
           anchor: clampAnchor(window.innerWidth - PANEL_WIDTH - 26, 90, PANEL_WIDTH, PANEL_HEIGHT, window.innerWidth, window.innerHeight),
           context: { code: "", startLine: null, endLine: null },
-        })}>Resume question</button>
+        })}>{hasGitQuestion(gitQuestionKey(paneId, file, section, rootPath, revision)) ? "Resume question" : "Ask AI"}</button>
       ) : null}
       {open !== null ? (
         <InlineAskPanel
+          key={gitQuestionKey(paneId, file, section, rootPath, revision)}
           paneId={paneId}
           section={section}
           rootPath={rootPath}
           revision={revision}
+          comparison={comparison}
+          viewerContext={viewerContext}
+          availableFiles={availableFiles}
+          onShowFile={onShowFile}
           file={file}
           context={open.context}
           anchor={open.anchor}

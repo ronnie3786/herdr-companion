@@ -17,6 +17,7 @@ struct PRReviewDiffRequestIdentity: Equatable, Hashable, Sendable {
     let path: String
     let baseSHA: String
     let headSHA: String
+    var comparison: GitComparisonSelection = .all
 }
 
 /// One window's deleted-file disclosure belongs to a single host, review, base
@@ -46,6 +47,16 @@ final class PRReviewStore {
     var selectedReviewID: String?
     var snapshot: PRReviewSnapshot?
     var diff: PRReviewDiff?
+    private(set) var comparisonSelection: GitComparisonSelection = .all
+    private(set) var comparisonCommits: PRReviewCommits?
+    private(set) var comparisonLoadError: String?
+    private(set) var isLoadingComparison = false
+    private var comparisonLoadedIdentity: PRReviewDiffRequestIdentity?
+    private var comparisonDiff: PRReviewDiff?
+    private var comparisonViewed: [String: Set<String>] = [:]
+    @ObservationIgnored private var comparisonSeedRevision: (baseSHA: String, headSHA: String)?
+    var diffStyle = "unified"
+    var diffOverflow = "scroll"
     private(set) var diffLoadError: String?
     private(set) var diffLoadErrorIdentity: PRReviewDiffRequestIdentity?
     private(set) var loadingDiffIdentity: PRReviewDiffRequestIdentity?
@@ -152,6 +163,7 @@ final class PRReviewStore {
 
     /// A new host must discard every server-specific selection before a late response arrives.
     func configure(client: (any PRReviewClient)?, machineID: String?, demo: Bool) {
+        guide.suspend()
         generation &+= 1
         settleInterruptedProgress()
         releaseOutstandingDocumentLeases()
@@ -169,6 +181,14 @@ final class PRReviewStore {
         loadingDiffIdentity = nil
         completedDiffIdentity = nil
         selectedPath = nil
+        comparisonSelection = .all
+        comparisonSeedRevision = nil
+        comparisonCommits = nil
+        comparisonDiff = nil
+        comparisonLoadedIdentity = nil
+        comparisonLoadError = nil
+        isLoadingComparison = false
+        comparisonViewed = [:]
         hasLoaded = false
         unsupported = false
         error = nil
@@ -186,6 +206,7 @@ final class PRReviewStore {
     }
 
     func select(_ id: String?) {
+        guide.suspend()
         isRefreshingReview = false
         selectedReviewID = id
         snapshot = nil
@@ -195,6 +216,14 @@ final class PRReviewStore {
         loadingDiffIdentity = nil
         completedDiffIdentity = nil
         selectedPath = nil
+        comparisonSelection = .all
+        comparisonSeedRevision = nil
+        comparisonCommits = nil
+        comparisonDiff = nil
+        comparisonLoadedIdentity = nil
+        comparisonLoadError = nil
+        isLoadingComparison = false
+        comparisonViewed = [:]
         error = nil
         expandedDeletedPaths = []
         deletedDisclosureScope = nil
@@ -213,6 +242,7 @@ final class PRReviewStore {
     /// retryable state here instead of spinning forever. Nothing is resent; a
     /// following refresh reconciles uploads that did reach the server.
     func reconnect(client: (any PRReviewClient)?, machineID: String?, demo: Bool) {
+        guide.suspend()
         generation &+= 1
         let machineChanged = self.machineID != machineID
         self.client = client
@@ -287,7 +317,7 @@ final class PRReviewStore {
     }
 
     var orderedFiles: [PRReviewFile] {
-        let files = snapshot?.files ?? []
+        let files = comparisonFiles
         let ordered: [PRReviewFile]
 
         if viewMode == .github {
@@ -463,7 +493,8 @@ final class PRReviewStore {
             reviewID: selectedReviewID,
             path: selectedPath,
             baseSHA: (snapshot?.review ?? selectedReview)?.baseSHA ?? "",
-            headSHA: (snapshot?.review ?? selectedReview)?.headSHA ?? ""
+            headSHA: (snapshot?.review ?? selectedReview)?.headSHA ?? "",
+            comparison: comparisonSelection
         )
     }
 
@@ -481,7 +512,8 @@ final class PRReviewStore {
               let review = snapshot?.review ?? selectedReview,
               diff.reviewID.isEmpty || diff.reviewID == review.id,
               review.baseSHA.isEmpty || diff.baseSHA == review.baseSHA,
-              review.headSHA.isEmpty || diff.headSHA == review.headSHA
+              review.headSHA.isEmpty || diff.headSHA == review.headSHA,
+              diff.comparison?.matches(comparisonSelection) ?? (comparisonSelection == .all)
         else { return nil }
         return diff
     }
@@ -492,6 +524,14 @@ final class PRReviewStore {
               let identity = currentDiffRequestIdentity,
               identity.path == path
         else { return }
+        if comparisonLoadedIdentity == comparisonLoadIdentity, let comparisonDiff {
+            diff = comparisonDiff
+            completedDiffIdentity = identity
+            return
+        }
+        // The full comparison owns its file set; never request a historical
+        // path through the legacy full-PR endpoint while it is loading.
+        guard comparisonSelection == .all else { return }
         loadingDiffIdentity = identity
         if completedDiffIdentity == identity {
             completedDiffIdentity = nil
@@ -550,10 +590,29 @@ final class PRReviewStore {
             return
         }
 
+        if let seed = comparisonSeedRevision {
+            comparisonSeedRevision = nil
+            if seed.baseSHA != value.review.baseSHA || seed.headSHA != value.review.headSHA || !supportsComparisons {
+                comparisonSelection = .all
+                selectedPath = nil
+                error = "The saved comparison is no longer available. Showing current PR changes."
+            }
+        }
         var value = value
         value.review = value.review.retainingNewerViewerState(from: reviews.first { $0.id == value.review.id }
             ?? archivedReviews.first { $0.id == value.review.id })
             .retainingNewerViewerState(from: snapshot?.review)
+        if let previous = snapshot?.review,
+           previous.baseSHA != value.review.baseSHA || previous.headSHA != value.review.headSHA {
+            comparisonSelection = .all
+            comparisonCommits = nil
+            comparisonDiff = nil
+            comparisonLoadedIdentity = nil
+            comparisonViewed = [:]
+            highlight = nil
+            visibleLines = nil
+            scrollRequest = nil
+        }
         snapshot = value
         selectedReviewID = value.review.id
         syncDeletedDisclosureScope(for: value.review)
@@ -565,9 +624,18 @@ final class PRReviewStore {
             archivedReviews.insert(value.review, at: 0)
         }
         reconcileSettledUploads(with: value)
+        guide.configure(store: self)
     }
 
     func setViewed(paths: [String], viewed: Bool) async {
+        if comparisonSelection != .all {
+            var viewedPaths = comparisonViewed[comparisonSelection.identity] ?? []
+            for path in paths {
+                if viewed { viewedPaths.insert(path) } else { viewedPaths.remove(path) }
+            }
+            comparisonViewed[comparisonSelection.identity] = viewedPaths
+            return
+        }
         guard var snapshot else {
             return
         }
@@ -1112,7 +1180,7 @@ final class PRReviewStore {
     /// reports `path` as deleted. Removal counts and filenames never decide,
     /// and a diff retained from an earlier revision is not consulted.
     func isDeletedFile(path: String) -> Bool {
-        if snapshot?.files.first(where: { $0.path == path })?.isDeleted == true { return true }
+        if comparisonFiles.first(where: { $0.path == path })?.isDeleted == true { return true }
         return currentDiff?.files.first(where: { $0.path == path })?.isDeleted == true
     }
 
@@ -1432,5 +1500,169 @@ final class PRReviewStore {
 
     private func documentUploadKey(reviewID: String?, url: URL) -> String {
         "\(reviewID ?? "unselected")|\(url.path)"
+    }
+}
+
+
+extension PRReviewStore {
+    var hasLoadedComparison: Bool {
+        comparisonLoadIdentity != nil && comparisonLoadedIdentity == comparisonLoadIdentity && comparisonDiff != nil
+    }
+
+    /// A pop-out applies this seed once, before its first snapshot arrives.
+    /// The revision and commit catalog still have to validate it before use.
+    func restoreComparisonSelection(_ selection: GitComparisonSelection, baseSHA: String?, headSHA: String?) {
+        guard snapshot == nil, selection != .all, let baseSHA, let headSHA else { return }
+        comparisonSelection = selection
+        comparisonSeedRevision = (baseSHA, headSHA)
+    }
+
+    func normalizeSelectedFile() {
+        guard snapshot != nil, comparisonSelection == .all || hasLoadedComparison else { return }
+        if selectedPath == nil || !orderedFiles.contains(where: { $0.path == selectedPath }) {
+            selectedPath = orderedFiles.first?.path
+        }
+    }
+
+    var currentComparison: GitComparison? {
+        comparisonLoadedIdentity == comparisonLoadIdentity ? comparisonDiff?.comparison : nil
+    }
+
+    var supportsComparisons: Bool { capabilities?.capabilities.contains("git-comparison-v1") == true }
+
+    var comparisonLoadIdentity: PRReviewDiffRequestIdentity? {
+        guard supportsComparisons, let review = snapshot?.review, review.status == .ready else { return nil }
+        return .init(generation: generation, machineID: machineID, reviewID: review.id, path: "",
+                     baseSHA: review.baseSHA, headSHA: review.headSHA, comparison: comparisonSelection)
+    }
+
+    var comparisonFiles: [PRReviewFile] {
+        guard comparisonLoadedIdentity == comparisonLoadIdentity, let comparisonDiff else {
+            return comparisonSelection == .all ? snapshot?.files ?? [] : []
+        }
+        let viewed = comparisonViewed[comparisonSelection.identity] ?? []
+        return comparisonDiff.files.map { file in
+            var value = snapshot?.files.first { $0.path == file.path } ?? PRReviewFile(diff: file)
+            value.oldPath = file.oldPath ?? ""
+            value.status = file.status
+            value.additions = file.additions
+            value.deletions = file.deletions
+            if comparisonSelection != .all {
+                value.viewed = viewed.contains(file.path)
+                // Whole-PR rankings describe a different patch.
+                value.impact = nil; value.impactReason = nil
+                value.guidedOrder = nil; value.guidedReason = nil
+            }
+            return value
+        }
+    }
+
+    var comparisonBeforeSHA: String {
+        if comparisonSelection.mode == .range { return comparisonSelection.startCommit ?? "" }
+        return comparisonCommits?.baselineSHA ?? snapshot?.review.mergeBaseSHA ?? snapshot?.review.baseSHA ?? ""
+    }
+
+    var comparisonAfterSHA: String {
+        switch comparisonSelection.mode {
+        case .all: return snapshot?.review.headSHA ?? ""
+        case .commit: return comparisonSelection.startCommit ?? ""
+        case .range: return comparisonSelection.endCommit ?? ""
+        }
+    }
+
+    func selectComparison(before: String, after: String) {
+        guard let listing = comparisonCommits else { return }
+        guard listing.allows(before: before, after: after) else { return }
+        let selection: GitComparisonSelection
+        if before == listing.baselineSHA {
+            selection = after == listing.headSHA ? .all : .init(mode: .commit, startCommit: after)
+        } else { selection = .init(mode: .range, startCommit: before, endCommit: after) }
+        guard selection != comparisonSelection else { return }
+        comparisonSelection = selection
+        comparisonDiff = nil
+        diff = nil
+        comparisonLoadError = nil
+        completedDiffIdentity = nil
+        loadingDiffIdentity = nil
+        diffLoadError = nil
+        diffLoadErrorIdentity = nil
+        highlight = nil
+        visibleLines = nil
+        scrollRequest = nil
+        resetDeletedContentDisclosure()
+        guide.configure(store: self)
+    }
+
+    /// Commits and the full changed-file set are pinned to one connection,
+    /// review revision, and comparison. A late response cannot repopulate a
+    /// different menu selection, including a file absent from the final PR.
+    func loadComparison() async {
+        guard let identity = comparisonLoadIdentity, let client else { return }
+        if comparisonLoadedIdentity == identity { return }
+        isLoadingComparison = true
+        comparisonLoadError = nil
+        defer { if comparisonLoadIdentity == identity { isLoadingComparison = false } }
+        do {
+            if comparisonCommits?.baseSHA != identity.baseSHA || comparisonCommits?.headSHA != identity.headSHA {
+                let listing = try await client.prReviewCommits(id: identity.reviewID, baseSHA: identity.baseSHA, headSHA: identity.headSHA)
+                guard comparisonLoadIdentity == identity, !Task.isCancelled else { return }
+                guard listing.reviewID == identity.reviewID, listing.baseSHA == identity.baseSHA,
+                      listing.headSHA == identity.headSHA, !listing.truncated else { throw APIError.invalidResponse }
+                comparisonCommits = listing
+                let selectionIsValid: Bool
+                switch identity.comparison.mode {
+                case .all: selectionIsValid = true
+                case .commit: selectionIsValid = listing.allows(before: listing.baselineSHA, after: identity.comparison.startCommit ?? "")
+                case .range: selectionIsValid = listing.allows(before: identity.comparison.startCommit ?? "", after: identity.comparison.endCommit ?? "")
+                }
+                if !selectionIsValid {
+                    comparisonSelection = .all
+                    selectedPath = nil
+                    error = "The saved commits are no longer available. Showing current PR changes."
+                    return
+                }
+            }
+            let value = try await client.prReviewDiff(id: identity.reviewID, path: nil,
+                comparison: identity.comparison, baseSHA: identity.baseSHA, headSHA: identity.headSHA)
+            guard comparisonLoadIdentity == identity, !Task.isCancelled else { return }
+            guard value.reviewID == identity.reviewID, value.baseSHA == identity.baseSHA,
+                  value.headSHA == identity.headSHA, value.comparison?.matches(identity.comparison) == true,
+                  value.comparison?.beforeSHA == comparisonBeforeSHA,
+                  value.comparison?.afterSHA == comparisonAfterSHA else {
+                throw APIError.server(status: 409, message: "The comparison changed. Refresh the review and try again.")
+            }
+            comparisonDiff = value
+            comparisonLoadedIdentity = identity
+            diff = value
+            if !value.files.contains(where: { $0.path == selectedPath }) { selectedPath = value.files.first?.path }
+            completedDiffIdentity = currentDiffRequestIdentity
+            guide.configure(store: self)
+        } catch {
+            guard comparisonLoadIdentity == identity, !Task.isCancelled, !HerdrCancellation.isCancellation(error) else { return }
+            comparisonLoadError = error.localizedDescription
+        }
+    }
+}
+
+
+extension PRReviewStore {
+    /// Breeze saves after playback completion, with no optimistic Viewed flag.
+    /// The exact revision and connection still have to own the response.
+    func markBreezeViewed(path: String, scope: PRReviewGuideScope) async throws -> Bool {
+        guard comparisonSelection == .all, currentMachineID == scope.machineID,
+              snapshot?.review.id == scope.reviewID, snapshot?.review.baseSHA == scope.baseSHA,
+              snapshot?.review.headSHA == scope.headSHA, currentComparison == scope.comparison,
+              snapshot?.files.contains(where: { $0.path == path && $0.impact == .low }) == true else { return false }
+        let operation = operationScope(reviewID: scope.reviewID)
+        if isDemo {
+            if let index = snapshot?.files.firstIndex(where: { $0.path == path }) { snapshot?.files[index].viewed = true }
+            return true
+        }
+        guard let client else { return false }
+        let files = try await client.setPRReviewViewed(id: scope.reviewID, paths: [path], viewed: true, requestID: UUID().uuidString)
+        guard isCurrentSelection(operation), comparisonSelection == .all,
+              snapshot?.review.baseSHA == scope.baseSHA, snapshot?.review.headSHA == scope.headSHA else { return false }
+        snapshot?.files = files
+        return files.contains { $0.path == path && $0.viewed }
     }
 }

@@ -13,6 +13,8 @@ interface NativeDiffPayload {
   patch: string;
   plainText: string;
   fontScale: number;
+  diffStyle?: "unified" | "split";
+  overflow?: "scroll" | "wrap";
   highlight?: { start: number; end: number; side: "old" | "new" };
 }
 interface ScrollRequest { line: number; side: "old" | "new"; identity: string }
@@ -233,6 +235,7 @@ function App() {
   return (
     <main ref={hostRef} className="native-diff" data-render-identity={payload.identity}>
       <SharedDiffRenderer file={payload.path} patch={payload.patch} fontScale={payload.fontScale}
+        diffStyle={payload.diffStyle} overflow={payload.overflow}
         selectedLines={selectedLines} disableWorkerPool onRendered={onRendered} />
       {selectionTarget !== null ? (
         <div className="native-selection-actions"

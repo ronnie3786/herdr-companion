@@ -61,7 +61,8 @@ export default function App() {
       : gitTargetKey({ kind: "firstMate", featureId: route.featureId, workspaceId: route.workspaceId });
     return (
       <>
-        <GitStatusView paneId={targetKey} embedded />
+        <GitStatusView key={targetKey} paneId={targetKey} embedded
+          initialCommit={new URLSearchParams(window.location.hash.slice(1)).get("git_commit") ?? undefined} />
         <Toast />
       </>
     );
@@ -281,7 +282,7 @@ function HerdrShell() {
         showPiChat ? (
           <PiChatPane />
         ) : effectiveView === "git" ? (
-          <GitStatusView paneId={selectedPaneId} />
+          <GitStatusView key={selectedPaneId} paneId={selectedPaneId} />
         ) : effectiveView === "skills" ? (
           <SkillsView />
         ) : (

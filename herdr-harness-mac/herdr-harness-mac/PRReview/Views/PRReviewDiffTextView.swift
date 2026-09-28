@@ -244,7 +244,8 @@ final class PRReviewDiffTextView: WKWebView, WKScriptMessageHandler, WKNavigatio
         let spans = Self.coalescedSpans(rawSpans)
         guard !spans.isEmpty else { return }
         let selectedText = (body["exactCode"] as? String) ?? (body["code"] as? String) ?? ""
-        let selection = PRReviewSelection(path: path, oldPath: oldPath, spans: spans, text: selectedText)
+        let selection = PRReviewSelection(path: path, oldPath: oldPath, spans: spans, text: selectedText,
+            comparison: pendingPayload?.comparison, comparisonSelection: pendingPayload?.comparisonSelection)
         let anchor = isFlipped ? rect : CGRect(x: rect.minX, y: bounds.height - rect.maxY, width: rect.width, height: rect.height)
         let clipped = anchor.intersection(bounds)
         showQuestionPopover(selection: selection, anchor: clipped.isNull ? CGRect(x: 8, y: 8, width: 1, height: 1) : clipped)
@@ -329,6 +330,10 @@ struct PRReviewDiffText: NSViewRepresentable {
     let file: PRReviewDiffFile
     var baseSHA = ""
     var headSHA = ""
+    var diffStyle = "unified"
+    var overflow = "scroll"
+    var comparison: GitComparison?
+    var comparisonSelection: GitComparisonSelection?
     var guideAnnotations: PRReviewGuideAnnotationChannel?
     @Environment(\.herdrFontScale) private var fontScale
     var highlight: (start: Int, end: Int, side: PRReviewSide)?
@@ -358,14 +363,18 @@ struct PRReviewDiffText: NSViewRepresentable {
             oldPath: file.oldPath,
             baseSHA: baseSHA,
             headSHA: headSHA,
-            fontScale: fontScale
+            fontScale: fontScale,
+            diffStyle: diffStyle, overflow: overflow,
+            comparison: comparison, comparisonSelection: comparisonSelection
         )
         if context.coordinator.shouldRender(identity: identity, file: file, highlight: highlight) {
             view.render(PRReviewDiffRenderer.payload(
                 file: file,
                 identity: identity.value,
                 fontScale: fontScale,
-                highlight: highlight
+                highlight: highlight,
+                diffStyle: diffStyle, overflow: overflow,
+                comparison: comparison, comparisonSelection: comparisonSelection
             ))
             context.coordinator.lastRenderedIdentity = identity
             context.coordinator.lastFile = file
@@ -404,9 +413,13 @@ struct PRReviewDiffText: NSViewRepresentable {
             let baseSHA: String
             let headSHA: String
             let fontScale: HerdrFontScale
+            var diffStyle = "unified"
+            var overflow = "scroll"
+            var comparison: GitComparison? = nil
+            var comparisonSelection: GitComparisonSelection? = nil
 
             var value: String {
-                [path, oldPath ?? "", baseSHA, headSHA, String(fontScale.rawValue)]
+                [path, oldPath ?? "", baseSHA, headSHA, String(fontScale.rawValue), diffStyle, overflow, comparison?.id ?? "", comparisonSelection?.identity ?? ""]
                     .joined(separator: "\u{1f}")
             }
         }
@@ -449,13 +462,19 @@ enum PRReviewDiffRenderer {
         let plainText: String
         let fontScale: Double
         let highlight: Highlight?
+        let diffStyle: String
+        let overflow: String
+        let comparison: GitComparison?
+        let comparisonSelection: GitComparisonSelection?
     }
 
     static func payload(
         file: PRReviewDiffFile,
         identity: String,
         fontScale: HerdrFontScale = .medium,
-        highlight: (start: Int, end: Int, side: PRReviewSide)? = nil
+        highlight: (start: Int, end: Int, side: PRReviewSide)? = nil,
+        diffStyle: String = "unified", overflow: String = "scroll",
+        comparison: GitComparison? = nil, comparisonSelection: GitComparisonSelection? = nil
     ) -> Payload {
         let patch = patch(for: file)
         let digest = SHA256.hash(data: Data(patch.utf8)).map { String(format: "%02x", $0) }.joined()
@@ -468,7 +487,9 @@ enum PRReviewDiffRenderer {
             fontScale: fontScale.rawValue,
             highlight: highlight.map {
                 Payload.Highlight(start: $0.start, end: $0.end, side: $0.side == .before ? "old" : "new")
-            }
+            },
+            diffStyle: diffStyle, overflow: overflow,
+            comparison: comparison, comparisonSelection: comparisonSelection
         )
     }
 

@@ -29,6 +29,7 @@ import {
 import { ToolErrorCard } from "../Shared/ToolErrorCard";
 import { CommandLensDock } from "../Pane/CommandLensDock";
 import { DiffInspector } from "./DiffSheet";
+import { GitComparisonWorkbench } from "./GitComparisonWorkbench";
 import { GitContextMenu, type GitContextTarget } from "./GitContextMenu";
 import "./git.css";
 
@@ -71,9 +72,12 @@ interface GitStatusViewProps {
   /** Opaque scoped Git target key; legacy pane IDs remain unchanged. */
   paneId: string;
   embedded?: boolean;
+  initialCommit?: string;
 }
 
-export function GitStatusView({ paneId, embedded = false }: GitStatusViewProps) {
+export function GitStatusView({ paneId, embedded = false, initialCommit }: GitStatusViewProps) {
+  const [mode, setMode] = useState<"compare" | "working">("compare");
+  const [comparisonAvailable, setComparisonAvailable] = useState(true);
   const target = gitTargetFromKey(paneId);
   const data = useWorkspacesStore((state) => state.data);
   const pane = embedded
@@ -143,7 +147,18 @@ export function GitStatusView({ paneId, embedded = false }: GitStatusViewProps) 
       </div>
     );
   } else {
-    body = <GitBody paneId={paneId} entry={entry} snapshot={entry.snapshot} allowsAsk={target.kind === "pane"} />;
+    body = <>
+      <div className="hz-git-view-modes" role="group" aria-label="Git view">
+        {comparisonAvailable ? <button aria-pressed={mode === "compare"} onClick={() => setMode("compare")}>Compare commits</button> : null}
+        <button aria-pressed={mode === "working"} onClick={() => setMode("working")}>Working files</button>
+      </div>
+      {mode === "compare" && comparisonAvailable
+        ? <GitComparisonWorkbench key={`${paneId}:${entry.snapshot.rootPath}:${initialCommit ?? ""}`}
+            targetKey={paneId} rootPath={entry.snapshot.rootPath} initialCommit={initialCommit}
+            head={entry.snapshot.commits[0]?.hash}
+            onUnsupported={() => { setComparisonAvailable(false); setMode("working"); }} />
+        : <GitBody paneId={paneId} entry={entry} snapshot={entry.snapshot} allowsAsk={target.kind === "pane"} />}
+    </>;
   }
 
   return (

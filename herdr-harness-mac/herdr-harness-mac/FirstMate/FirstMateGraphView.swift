@@ -3,6 +3,7 @@ import SwiftUI
 struct FirstMateGraphView: View {
     @Bindable var store: FirstMateStore
     let snapshot: FirstMateSnapshot
+    var openCommit: ((FirstMateGitCommitSelection) -> Void)? = nil
     @Environment(\.colorScheme) private var scheme
     private let spacing: CGFloat = 24
     var body: some View {
@@ -35,6 +36,7 @@ struct FirstMateGraphView: View {
                     }.buttonStyle(.herdrPlain)
                     Rectangle().fill(HerdrTheme.hairline).frame(height: 1)
                     FirstMateResourceButtons(store: store, snapshot: snapshot, visit: visit)
+                    FirstMateVisitCommitsView(visit: visit, openCommit: openCommit)
                 }
                 .padding(12)
                 .herdrCard(

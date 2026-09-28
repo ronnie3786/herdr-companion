@@ -458,6 +458,23 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, PRRevie
         return try await request(path: "/api/v1/response-audio/captioned-speech", method: "POST", body: Body(text: text, voice: voice, cues: drawings))
     }
 
+    func prReviewCommits(id: String, baseSHA: String, headSHA: String) async throws -> PRReviewCommits {
+        try await request(path: try prReviewPath(id: id) + "/commits", query: [
+            .init(name: "base_sha", value: baseSHA), .init(name: "head_sha", value: headSHA)
+        ])
+    }
+    func prReviewDiff(id: String, path: String?, comparison: GitComparisonSelection, baseSHA: String, headSHA: String) async throws -> PRReviewDiff {
+        var query = comparison.queryItems(baseSHA: baseSHA, headSHA: headSHA)
+        if let path { query.append(.init(name: "path", value: path)) }
+        return try await request(path: try prReviewPath(id: id) + "/diff", query: query)
+    }
+    func prReviewFileText(id: String, path: String, side: PRReviewSide, start: Int?, end: Int?, comparison: GitComparisonSelection, baseSHA: String, headSHA: String) async throws -> PRReviewFileText {
+        var query = comparison.queryItems(baseSHA: baseSHA, headSHA: headSHA)
+        query += [.init(name: "path", value: path), .init(name: "side", value: side.rawValue)]
+        if let start { query.append(.init(name: "start", value: String(start))) }
+        if let end { query.append(.init(name: "end", value: String(end))) }
+        return try await request(path: try prReviewPath(id: id) + "/file", query: query)
+    }
     func prReviewDiff(id: String, path: String? = nil) async throws -> PRReviewDiff { try await request(path: try prReviewPath(id: id) + "/diff", query: path.map { [.init(name: "path", value: $0)] } ?? []) }
     func prReviewFileText(id: String, path: String, side: PRReviewSide, start: Int?, end: Int?) async throws -> PRReviewFileText { var q=[URLQueryItem(name:"path",value:path),.init(name:"side",value:side.rawValue)]; if let start { q.append(.init(name:"start",value:String(start))) }; if let end { q.append(.init(name:"end",value:String(end))) }; return try await request(path: try prReviewPath(id:id)+"/file",query:q) }
     func prReviewFindings(id: String, path: String) async throws -> PRReviewFindings { try await request(path: try prReviewPath(id:id)+"/findings",query:[.init(name:"path",value:path)]) }

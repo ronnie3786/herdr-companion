@@ -1,6 +1,7 @@
 /** Git endpoints for pane and First Mate feature-scoped workspaces. */
 
 import { apiRequest } from "./client";
+import type { GitComparison, GitComparisonSelection, ComparisonCommit } from "../components/Git/comparison";
 
 const GIT_TIMEOUT_MS = 30_000;
 const FIRST_MATE_KEY_PREFIX = "first-mate-git:";
@@ -147,4 +148,33 @@ export function gitCommitDiff(targetKey: string, hash: string, file: string, exp
 }
 export function paneGitCommitDiff(paneId: string, hash: string, file: string, expectedRoot: string, signal?: AbortSignal) {
   return gitCommitDiff(paneId, hash, file, expectedRoot, signal);
+}
+
+export interface ComparisonFile {
+  path: string;
+  old_path?: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  binary: boolean;
+  truncated: boolean;
+  patch: string;
+}
+export interface GitComparisonResponse {
+  ok: boolean;
+  root_path: string;
+  head_sha: string;
+  baseline_sha: string;
+  baseline_label: string;
+  commits: ComparisonCommit[];
+  comparison: GitComparison;
+  files: ComparisonFile[];
+  diff: string;
+  truncated: boolean;
+}
+
+export function gitComparison(targetKey: string, selection: GitComparisonSelection, expectedRoot: string, signal?: AbortSignal, file?: string): Promise<GitComparisonResponse> {
+  const target = targetBase(targetKey);
+  const params = targetQuery(targetKey, { ...selection, expected_root: expectedRoot, ...(file ? { file } : {}) });
+  return apiRequest<GitComparisonResponse>(`${target.path}/compare?${params}`, { signal }, GIT_TIMEOUT_MS);
 }

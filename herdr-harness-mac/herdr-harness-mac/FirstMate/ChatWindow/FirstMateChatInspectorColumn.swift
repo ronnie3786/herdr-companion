@@ -9,6 +9,7 @@ import SwiftUI
 struct FirstMateChatInspectorColumn: View {
     let session: FirstMateChatWindowSession
     var topInset: CGFloat = 0
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,9 +31,14 @@ struct FirstMateChatInspectorColumn: View {
         switch session.selection {
         case .lead:
             FirstMateLeadOverviewView(session: session)
-        case .feature:
+        case .feature(let identity):
             if let store = session.selectedStore, let snapshot = session.selectedSnapshot {
-                FirstMateChatFeatureInspector(store: store, snapshot: snapshot)
+                FirstMateChatFeatureInspector(store: store, snapshot: snapshot, openCommit: { selection in
+                    openWindow(id: HerdrWindowID.firstMateGit, value: FirstMateGitWindowTarget(
+                        machineID: identity.machineID, featureID: identity.featureID,
+                        workspaceID: selection.workspaceID, commitSHA: selection.commitSHA
+                    ))
+                })
             } else {
                 FirstMateInspectorPlaceholder(error: session.selectedStore?.error)
             }
@@ -45,12 +51,13 @@ struct FirstMateChatInspectorColumn: View {
 private struct FirstMateChatFeatureInspector: View {
     @Bindable var store: FirstMateStore
     let snapshot: FirstMateSnapshot
+    var openCommit: ((FirstMateGitCommitSelection) -> Void)?
     @Environment(\.colorScheme) private var scheme
 
     private var palette: FirstMatePalette { FirstMatePalette(scheme: scheme) }
 
     var body: some View {
-        FirstMateInspectorView(store: store, snapshot: snapshot)
+        FirstMateInspectorView(store: store, snapshot: snapshot, openCommit: openCommit)
             .foregroundStyle(palette.text, palette.secondaryText, palette.tertiaryText)
             .buttonStyle(HerdrButtonStyle(kind: .outline, height: HerdrTheme.ControlHeight.regular))
             .tint(palette.accent)

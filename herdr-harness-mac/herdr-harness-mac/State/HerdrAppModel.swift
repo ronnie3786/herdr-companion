@@ -3209,7 +3209,7 @@ final class HerdrAppModel {
                     path: selection.path,
                     oldPath: selection.oldPath.isEmpty ? nil : selection.oldPath,
                     section: side == .before ? "pr-base" : "pr-head",
-                    revision: side == .before ? (review.mergeBaseSHA ?? review.baseSHA) : review.headSHA,
+                    revision: side == .before ? (selection.comparison?.beforeSHA ?? review.mergeBaseSHA ?? review.baseSHA) : (selection.comparison?.afterSHA ?? review.headSHA),
                     spans: selection.spans.map {
                         .init(side: $0.side.wireSide, startLine: $0.start, endLine: $0.end)
                     }
@@ -3223,7 +3223,9 @@ final class HerdrAppModel {
                 path: selection.path,
                 side: side,
                 start: max(1, line - 40),
-                end: line + 40
+                end: line + 40,
+                comparison: selection.comparisonSelection ?? .all,
+                baseSHA: review.baseSHA, headSHA: review.headSHA
             ) {
                 items.append(.init(id: "excerpt", kind: "text.v1", label: "Surrounding excerpt (\(side.rawValue))",
                                    text: Self.byteLimited(text.text, maximum: 12 * 1024), priority: "optional"))
@@ -3234,6 +3236,11 @@ final class HerdrAppModel {
                                    label: "Review findings for \(selection.path) (reference only; may be wrong)",
                                    text: Self.byteLimited(findings.text, maximum: 12 * 1024), priority: "optional"))
             }
+        }
+        if let comparison = selection.comparison {
+            items.append(.init(id: "comparison", kind: "view.v1", label: "Selected Git comparison",
+                text: "Mode: \(comparison.mode.rawValue)\nBefore tree: \(comparison.beforeSHA)\nAfter tree: \(comparison.afterSHA)\nIncluded commits: \(comparison.commitSHAs.joined(separator: ", "))\nThe selected excerpt belongs to these trees. Use this comparison for demonstrations; full-PR findings may describe different code.",
+                priority: "required"))
         }
         items.append(.init(
             id: "review",

@@ -459,6 +459,8 @@ def api_description() -> dict:
             "pr-review-v1",
             "pr-review-guide-v1",
             "pr-review-context-v2",
+            "git-comparison-v1",
+            "pr-review-comparison-v1",
             "response-audio-captions-v1",
             "pi-session-context-v1",
             "agent-control-v1",
@@ -491,6 +493,7 @@ def api_description() -> dict:
             "prReviews": "/api/v1/pr-reviews",
             "prReview": "/api/v1/pr-reviews/{reviewId}",
             "prReviewCapabilities": "/api/v1/pr-reviews/capabilities",
+            "prReviewCommits": "/api/v1/pr-reviews/{reviewId}/commits",
             "prReviewContext": "/api/v1/pr-reviews/{reviewId}/context",
             "prReviewGuide": "/api/v1/pr-reviews/{reviewId}/guide",
             "prReviewGuideJob": "/api/v1/pr-reviews/{reviewId}/guide/{guideId}",
@@ -1237,6 +1240,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                             "diff": {"workspace", "file", "section", "expected_root"},
                             "commit-files": {"workspace", "hash", "expected_root"},
                             "commit-diff": {"workspace", "hash", "file", "expected_root"},
+                            "compare": {"workspace", "file", "expected_root", "mode", "start_commit", "end_commit"},
                         }.get(action)
                         if allowed_query_fields is None:
                             raise HTTPValidationError("First Mate Git endpoint not found", code="not_found", status=404)
@@ -1263,6 +1267,10 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                                 section=_string((query.get("section") or ["unstaged"])[0], "section", maximum=32),
                                 expected_root=expected_root,
                             )
+                        if action == "compare":
+                            comparison = {key: values[0] for key, values in query.items() if key in {"mode", "start_commit", "end_commit"}}
+                            return service.first_mate_git_compare(feature_id, workspace_id, comparison=comparison,
+                                file=(query.get("file") or [None])[0], expected_root=expected_root)
                         if action == "commit-files":
                             return service.first_mate_git_commit_files(
                                 feature_id, workspace_id,
@@ -1462,7 +1470,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             store = service.pr_review_store
             runtime = service.pr_review
             if method == "GET" and tail == ["capabilities"]:
-                return {"ok": True, "capabilities": ["pr-review-v1", "pr-review-dashboard-v1", "pr-review-context-v2", "pr-review-guide-v1"], **runtime.capabilities(), "skills": store.skills()}
+                return {"ok": True, "capabilities": ["pr-review-v1", "pr-review-dashboard-v1", "pr-review-context-v2", "pr-review-guide-v1", "pr-review-comparison-v1", "git-comparison-v1"], **runtime.capabilities(), "skills": store.skills()}
             if method == "POST" and tail == ["review-status", "refresh"]:
                 if set(body) != {"request_id"}:
                     raise HTTPValidationError("Review status refresh contains an unsupported field")
@@ -1504,8 +1512,18 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 if set(body) != {"request_id"}:
                     raise HTTPValidationError("Refresh contains an unsupported field")
                 return {"ok": True, "review": runtime.refresh_review(review_id, body["request_id"])}, 202
+            comparison_fields = {"mode", "start_commit", "end_commit", "base_sha", "head_sha"}
+            if rest in (["commits"], ["diff"], ["file"]) and method == "GET":
+                allowed = {"base_sha", "head_sha"} if rest == ["commits"] else comparison_fields | ({"path"} if rest == ["diff"] else {"path", "side", "start", "end"})
+                if set(query) - allowed or any(len(values) != 1 for values in query.values()):
+                    raise HTTPValidationError("Invalid comparison query fields")
+                options = {key: query[key][0] for key in ("base_sha", "head_sha") if key in query}
+                selection = {key: query[key][0] for key in ("mode", "start_commit", "end_commit") if key in query}
+                if selection: options["comparison"] = selection
+            if rest == ["commits"] and method == "GET":
+                return {"ok": True, **runtime.commits(review_id, **options)}
             if rest == ["diff"] and method == "GET":
-                return {"ok": True, **runtime.diff(review_id, (query.get("path") or [None])[0])}
+                return {"ok": True, **runtime.diff(review_id, (query.get("path") or [None])[0], **options)}
             if rest == ["file"] and method == "GET":
                 path = _string((query.get("path") or [None])[0], "path", maximum=4096)
                 if path.startswith("/") or any(part == ".." for part in path.split("/")):
@@ -1513,7 +1531,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 side = (query.get("side") or ["after"])[0]
                 if side not in {"before", "after"}:
                     raise HTTPValidationError("side is invalid")
-                return {"ok": True, **runtime.file_text(review_id, path, side, _query_int(query, "start", default=1, minimum=1, maximum=10**9), _query_int(query, "end", default=10**9, minimum=1, maximum=10**9))}
+                return {"ok": True, **runtime.file_text(review_id, path, side, _query_int(query, "start", default=1, minimum=1, maximum=10**9), _query_int(query, "end", default=10**9, minimum=1, maximum=10**9), **options)}
             if rest == ["context"] and method == "POST":
                 return {"ok": True, "context": runtime.guide.context.create(review_id, body)}
             if rest == ["guide"] and method == "POST":
@@ -2141,6 +2159,12 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                             section=section,
                             expected_root=expected_root,
                         )
+                    if action == "compare":
+                        if set(query) - {"mode", "start_commit", "end_commit", "file", "expected_root"} or any(len(v) != 1 for v in query.values()):
+                            raise HTTPValidationError("Invalid comparison query fields")
+                        comparison = {key: values[0] for key, values in query.items() if key in {"mode", "start_commit", "end_commit"}}
+                        return service.pane_git_compare(pane_id, comparison=comparison, file=(query.get("file") or [None])[0],
+                            expected_root=_string((query.get("expected_root") or [""])[0], "expected_root", maximum=4096))
                     if action == "commit-files":
                         commit_hash = _string(
                             (query.get("hash") or [""])[0],

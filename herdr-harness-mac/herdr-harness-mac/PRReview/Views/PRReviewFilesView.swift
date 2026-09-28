@@ -14,7 +14,11 @@ struct PRReviewFilesView: View {
     var questionDraftChanged: (Bool) -> Void = { _ in }
 
     var body: some View {
-        Group {
+        GeometryReader { geometry in
+            let comparisonInRail = geometry.size.height < 500 && (presentation == .content || presentation == .noFilterMatches)
+            VStack(spacing: 0) {
+            if store.supportsComparisons && !comparisonInRail { PRReviewComparisonControls(store: store) }
+            Group {
             switch presentation {
             case .preparing:
                 unavailable(
@@ -38,14 +42,17 @@ struct PRReviewFilesView: View {
             case .noFiles:
                 unavailable(
                     "No changed files",
-                    detail: "This ready review did not report any changed files.",
+                    detail: store.supportsComparisons ? "These revisions have no changed files." : "This ready review did not report any changed files.",
                     systemImage: "doc"
                 )
             case .content, .noFilterMatches:
-                filesAndDiff
+                filesAndDiff(comparisonInRail: comparisonInRail)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .task(id: store.comparisonLoadIdentity) { await store.loadComparison() }
         .onAppear { selectFirstFileIfNeeded() }
         .onChange(of: store.orderedFiles.map(\.path)) { _, _ in selectFirstFileIfNeeded() }
         .onKeyPress(.upArrow, phases: .down) { press in
@@ -67,9 +74,12 @@ struct PRReviewFilesView: View {
         }
     }
 
-    private var filesAndDiff: some View {
+    private func filesAndDiff(comparisonInRail: Bool) -> some View {
         HSplitView {
             VStack(spacing: 0) {
+                if store.supportsComparisons && comparisonInRail {
+                    PRReviewComparisonControls(store: store, compact: true)
+                }
                 controls
                 if presentation == .noFilterMatches {
                     ContentUnavailableView {
@@ -126,6 +136,7 @@ struct PRReviewFilesView: View {
                         PRReviewDiffView(
                             store: store,
                             comments: comments,
+                            compact: geometry.size.height < 500,
                             questionHistory: questionHistory,
                             openQuestion: openQuestion,
                             openURL: openURL,
@@ -141,7 +152,7 @@ struct PRReviewFilesView: View {
                         PRReviewGuideDetails(session: store.guide, showSource: showGuideSource)
                             .frame(height: min(280, geometry.size.height * 0.42))
                     }
-                    PRReviewGuideDock(session: store.guide, preferPrivateTranscription: preferPrivateTranscription)
+                    PRReviewGuideDock(session: store.guide, preferPrivateTranscription: preferPrivateTranscription, compact: geometry.size.height < 500)
                 }
             }
             .frame(minWidth: PRReviewFilesLayout.minimumDiffWidth, maxWidth: .infinity, maxHeight: .infinity)
@@ -174,22 +185,16 @@ struct PRReviewFilesView: View {
     }
 
     private func selectFirstFileIfNeeded() {
-        // `refresh()` publishes the review summaries before its snapshot
-        // arrives, so the mounted view briefly sees an empty file list.
-        // Normalizing against that temporary emptiness would drop a pop-out's
-        // seeded selection before its files load; wait for the snapshot.
-        guard store.snapshot != nil else { return }
-        if store.selectedPath == nil || !store.orderedFiles.contains(where: { $0.path == store.selectedPath }) {
-            store.selectedPath = store.orderedFiles.first?.path
-        }
+        store.normalizeSelectedFile()
     }
 
     private var presentation: PRReviewFilesPresentation {
-        PRReviewFilesPresentation.resolve(
+        if store.isLoadingComparison && store.comparisonFiles.isEmpty { return .loading }
+        return PRReviewFilesPresentation.resolve(
             status: store.snapshot?.review.status ?? store.selectedReview?.status,
             reviewError: store.snapshot?.review.error ?? store.selectedReview?.error,
             hasSnapshot: store.snapshot != nil,
-            fileCount: store.snapshot?.files.count ?? 0,
+            fileCount: store.comparisonFiles.count,
             visibleFileCount: store.orderedFiles.count
         )
     }
@@ -436,14 +441,16 @@ struct PRReviewFileRow: View {
 struct PRReviewDiffView: View {
     @Bindable var store: PRReviewStore
     @Bindable var comments = PRReviewCommentsSession()
+    var compact = false
     var questionHistory: PRReviewQuestionHistory?
     var openQuestion: (PRReviewQuestionHistory.Question) -> Void = { _ in }
     var openURL: (URL) -> Void = { _ in }
     var askAI: (PRReviewSelection, NSView, CGRect) -> Void = { _, _, _ in }
     var questionDraftChanged: (Bool) -> Void = { _ in }
     @State private var hasQuestionDraft = false
+    @State private var showingImpactDetails = false
 
-    private var file: PRReviewFile? { store.snapshot?.files.first { $0.path == store.selectedPath } }
+    private var file: PRReviewFile? { store.comparisonFiles.first { $0.path == store.selectedPath } }
     private var currentDiff: PRReviewDiff? { store.currentDiff }
     private var diffFile: PRReviewDiffFile? { currentDiff?.files.first { $0.path == store.selectedPath } }
 
@@ -490,7 +497,7 @@ struct PRReviewDiffView: View {
                 if !questions.isEmpty {
                     PRReviewQuestionRail(questions: questions,
                                          baseSHA: store.snapshot?.review.baseSHA ?? "",
-                                         headSHA: store.snapshot?.review.headSHA ?? "", open: openQuestion)
+                                         headSHA: store.snapshot?.review.headSHA ?? "", open: openQuestion, compact: compact)
                 }
                 if let error = questionHistory.loadError {
                     Text(error).herdrFont(.caption).foregroundStyle(HerdrTheme.alert).padding(8)
@@ -543,10 +550,25 @@ struct PRReviewDiffView: View {
                             PRReviewDeletedIndicator(accessibilityIdentifier: "pr-review-deleted-indicator")
                         }
                     }
-                    Text(headerSummary(file)).herdrFont(.caption).foregroundStyle(HerdrTheme.mist)
+                    HStack(spacing: 5) {
+                        Text(headerSummary(file)).herdrFont(.caption).foregroundStyle(HerdrTheme.mist)
+                        if compact {
+                            Button("Impact details", systemImage: "info.circle") { showingImpactDetails = true }
+                                .labelStyle(.iconOnly).buttonStyle(.plain)
+                                .popover(isPresented: $showingImpactDetails) {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Text(file.impactExplanation)
+                                        if let reason = file.guidedReason { Text(reason) }
+                                    }
+                                    .herdrFont(.caption).textSelection(.enabled)
+                                    .frame(width: 320, alignment: .leading).padding(12)
+                                }
+                        }
+                    }
                 }
                 Spacer()
             }
+            if !compact {
             Text(file.impactExplanation)
                 .herdrFont(.caption)
                 .foregroundStyle(HerdrTheme.mist)
@@ -558,6 +580,7 @@ struct PRReviewDiffView: View {
                     .herdrFont(.caption)
                     .foregroundStyle(HerdrTheme.muted)
                     .lineLimit(2)
+            }
             }
             PRReviewHeaderActionsLayout(spacing: 8) {
                 if showsDeletedContentDisclosure {
@@ -577,7 +600,7 @@ struct PRReviewDiffView: View {
             }
         }
         .buttonStyle(.bordered)
-        .padding(10)
+        .padding(compact ? 8 : 10)
         .background(HerdrTheme.ink)
     }
 
@@ -637,12 +660,20 @@ struct PRReviewDiffView: View {
     private func diffText(_ diffFile: PRReviewDiffFile) -> some View {
         PRReviewDiffText(
             file: diffFile,
-            baseSHA: currentDiff?.baseSHA ?? "",
-            headSHA: currentDiff?.headSHA ?? "",
+            baseSHA: currentDiff?.comparison?.beforeSHA ?? currentDiff?.baseSHA ?? "",
+            headSHA: currentDiff?.comparison?.afterSHA ?? currentDiff?.headSHA ?? "",
+            diffStyle: store.diffStyle,
+            overflow: store.diffOverflow,
+            comparison: currentDiff?.comparison,
+            comparisonSelection: store.supportsComparisons ? store.comparisonSelection : nil,
             guideAnnotations: store.guide.annotations,
             highlight: highlight,
             scrollRequest: scrollRequest,
-            askAI: askAI,
+            askAI: { selection, view, rect in
+                guard selection.comparison == currentDiff?.comparison,
+                      selection.comparisonSelection == (store.supportsComparisons ? store.comparisonSelection : nil) else { return }
+                askAI(selection, view, rect)
+            },
             addComment: addComment,
             questionDraftChanged: { isNonEmpty in
                 hasQuestionDraft = isNonEmpty
@@ -674,7 +705,7 @@ struct PRReviewDiffView: View {
     /// and the host can accept a selection, so existing ask-only call sites
     /// keep their exact behavior.
     private var addComment: ((PRReviewSelection) -> Void)? {
-        guard comments.isReady else { return nil }
+        guard comments.isReady, store.comparisonSelection == .all else { return nil }
         return { selection in
             comments.beginComposition(selection: selection, store: store)
         }

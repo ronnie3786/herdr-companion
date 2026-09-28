@@ -125,6 +125,8 @@ struct PRReviewSelection: Equatable, Sendable {
     /// Kept with the transient selection so existing review callbacks can carry
     /// the composer text without expanding every view's callback signature.
     var question: String? = nil
+    var comparison: GitComparison? = nil
+    var comparisonSelection: GitComparisonSelection? = nil
 }
 
 enum PRReviewTab: String, Codable, CaseIterable, Equatable, Sendable {
@@ -276,6 +278,13 @@ struct PRReviewFile: Codable, Equatable, Identifiable, Sendable {
     var viewedSource: String?
 
     var id: String { path }
+
+    init(diff: PRReviewDiffFile) {
+        path = diff.path; oldPath = diff.oldPath ?? ""; status = diff.status
+        additions = diff.additions; deletions = diff.deletions
+        impact = nil; impactReason = nil; guidedOrder = nil; guidedReason = nil
+        viewed = false; viewedAt = nil; viewedSource = nil
+    }
 
     enum CodingKeys: String, CodingKey {
         case path
@@ -700,6 +709,7 @@ struct PRReviewDiff: Codable, Equatable, Sendable {
     var headSHA: String
     var truncated: Bool
     var files: [PRReviewDiffFile]
+    var comparison: GitComparison? = nil
 
     enum CodingKeys: String, CodingKey {
         case ok
@@ -707,7 +717,7 @@ struct PRReviewDiff: Codable, Equatable, Sendable {
         case baseSHA = "base_sha"
         case headSHA = "head_sha"
         case truncated
-        case files
+        case files, comparison
     }
 
     init(from decoder: Decoder) throws {
@@ -718,6 +728,7 @@ struct PRReviewDiff: Codable, Equatable, Sendable {
         headSHA = try container.decodeIfPresent(String.self, forKey: .headSHA) ?? ""
         truncated = try container.decodeIfPresent(Bool.self, forKey: .truncated) ?? false
         files = try container.decodeIfPresent([PRReviewDiffFile].self, forKey: .files) ?? []
+        comparison = try container.decodeIfPresent(GitComparison.self, forKey: .comparison)
     }
 }
 

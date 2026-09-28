@@ -3,6 +3,25 @@ import Testing
 @testable import herdr_harness_mac
 
 struct PaneGitWebDocumentTests {
+    @Test("Workflow Git routes preserve the exact clicked commit and owning checkout")
+    func workflowCommitRoute() throws {
+        let configuration = try #require(ServerConfiguration(urlString: "https://git.example.invalid", token: "synthetic-token"))
+        let sha = String(repeating: "a", count: 40)
+        let target = FirstMateGitWindowTarget(machineID: "desktop", featureID: "feature-one", workspaceID: "worker-one", commitSHA: sha)
+        let document = PaneGitWebDocument(configuration: configuration, firstMateTarget: target)
+        var route = URLComponents()
+        route.percentEncodedQuery = URLComponents(url: document.url, resolvingAgainstBaseURL: false)?.percentEncodedFragment
+        let values = Dictionary(uniqueKeysWithValues: (route.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+        #expect(values["firstMate"] == "feature-one")
+        #expect(values["workspace"] == "worker-one")
+        #expect(values["git_commit"] == sha)
+        let ordinary = FirstMateGitWindowTarget(machineID: "desktop", featureID: "feature-one", workspaceID: "worker-one")
+        #expect(target.id != ordinary.id)
+        #expect(document != PaneGitWebDocument(configuration: configuration, firstMateTarget: ordinary))
+        let legacy = Data(#"{"machineID":"desktop","featureID":"feature-one","workspaceID":"project"}"#.utf8)
+        #expect(try JSONDecoder().decode(FirstMateGitWindowTarget.self, from: legacy).commitSHA == nil)
+    }
+
     @Test("Embedded Git route keeps identifiers in the fragment and secrets out of the URL")
     func embeddedRoute() throws {
         let token = "secret-\"token\""

@@ -421,6 +421,11 @@ class FirstMateStore:
         elif "followup_stages_json" not in {row[1] for row in self._db.execute("PRAGMA table_info(fm_visits)")}:
             self._db.execute("ALTER TABLE fm_visits ADD COLUMN followup_stages_json TEXT NOT NULL DEFAULT '[]'")
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(5,?)", (_now(),))
+        visit_columns = {row[1] for row in self._db.execute("PRAGMA table_info(fm_visits)")}
+        for column in ("git_baselines_json", "git_evidence_json"):
+            if column not in visit_columns:
+                self._db.execute(f"ALTER TABLE fm_visits ADD COLUMN {column} TEXT NOT NULL DEFAULT '[]'")
+        self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(17,?)", (_now(),))
         # Version 6 adds only the idempotent board indexes in SCHEMA.
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(6,?)", (_now(),))
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(8,?)", (_now(),))
@@ -640,7 +645,7 @@ class FirstMateStore:
         result = dict(row)
         for name in ("metadata_json", "payload_json", "followup_stages_json", "provenance_json",
                      "verification_json", "verification_run_ids_json", "suites_json", "gates_json",
-                     "assessment_json", "verification_selection_json"):
+                     "assessment_json", "verification_selection_json", "git_baselines_json", "git_evidence_json"):
             if name in result:
                 result[name[:-5]] = json.loads(result.pop(name))
         return result
@@ -1884,7 +1889,7 @@ class FirstMateStore:
             result = self._one("fm_messages", message_id)
             return self._save_receipt(f"release_message:{message_id}", request_id, payload, result) if request_id else result
 
-    def start_visit(self, feature_id: str, stage_key: str, title: str, request_id: str, expected_revision: int, authorization_message_id: str, *, followup_stages: list[str] | None = None) -> dict:
+    def start_visit(self, feature_id: str, stage_key: str, title: str, request_id: str, expected_revision: int, authorization_message_id: str, *, followup_stages: list[str] | None = None, git_baselines: list[dict] | None = None) -> dict:
         if followup_stages is None:
             followup_stages = []
         if (not isinstance(followup_stages, list) or len(followup_stages) > 8 or
@@ -1924,6 +1929,7 @@ class FirstMateStore:
                 raise FirstMateError("The next stage needs direction after the completed checkpoint", code="human_direction_required")
             visit_id, now = _id("fmv"), _now()
             self._db.execute("INSERT INTO fm_visits(id,feature_id,stage_key,title,status,revision,authorization_message_id,followup_stages_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (visit_id, feature_id, stage_key, title, "running", expected_revision, authorization_message_id, _json(followup_stages), now, now))
+            self._db.execute("UPDATE fm_visits SET git_baselines_json=? WHERE id=?", (_json(git_baselines or []), visit_id))
             self._db.execute("UPDATE fm_features SET status='running',current_visit_id=? WHERE id=?", (visit_id, feature_id))
             self._event(feature_id, "visit.started", f"{title} started", {"visit_id": visit_id, "authorization_message_id": authorization_message_id, "revision": expected_revision})
             return self._save_receipt(f"visit:{feature_id}", request_id, payload, self._one("fm_visits", visit_id))
@@ -2334,7 +2340,8 @@ class FirstMateStore:
                        *, native_session_id: str | None = None,
                        verification: Mapping[str, Any] | None = None,
                        selection: list[str] | None = None,
-                       turn_id: str | None = None) -> dict:
+                       turn_id: str | None = None,
+                       git_evidence: list[dict] | None = None) -> dict:
         payload = {"summary": _text(summary, "summary"), "recommendation": _text(recommendation, "recommendation", optional=True),
                    "verification": self._stable_verification(verification),
                    "selection": list(selection) if selection is not None else None}
@@ -2349,6 +2356,9 @@ class FirstMateStore:
             if visit["status"] != "running" or feature["status"] != "running" or not assignments or any(a["status"] != "completed" or a["revision"] != visit["revision"] for a in assignments):
                 raise FirstMateError("All current-revision assignments must complete before the stage", code="stage_incomplete")
             self._db.execute("UPDATE fm_visits SET status='completed',summary=?,recommendation=?,updated_at=? WHERE id=?", (summary, recommendation, _now(), visit_id))
+            # Derived observations are retained with completion and never changed
+            # by a replay against a checkout that has since advanced.
+            self._db.execute("UPDATE fm_visits SET git_evidence_json=? WHERE id=?", (_json(git_evidence or []), visit_id))
             continuing = bool(visit["followup_stages"])
             self._db.execute("UPDATE fm_features SET status=? WHERE id=?", ("coordinating" if continuing else "awaiting_direction", feature["id"]))
             message_metadata = {"visit_id": visit_id, "checkpoint": True}
@@ -2509,7 +2519,7 @@ class FirstMateStore:
             self._event(feature_id, f"feature.{action}", f"Feature {status}", event_payload)
             return self._save_receipt(f"action:{feature_id}", request_id, payload, self._one("fm_features", feature_id))
 
-    def revise_feature(self, feature_id: str, goal: str, expected_revision: int, request_id: str, authorization_message_id: str, verified_stopped: bool = False, affected_assignment_ids: list[str] | None = None, carry_forward_evidence: dict | None = None) -> dict:
+    def revise_feature(self, feature_id: str, goal: str, expected_revision: int, request_id: str, authorization_message_id: str, verified_stopped: bool = False, affected_assignment_ids: list[str] | None = None, carry_forward_evidence: dict | None = None, *, git_baselines: list[dict] | None = None, prior_git_evidence: list[dict] | None = None) -> dict:
         if affected_assignment_ids is not None and (not isinstance(affected_assignment_ids, list) or not all(isinstance(value, str) for value in affected_assignment_ids) or len(set(affected_assignment_ids)) != len(affected_assignment_ids)):
             raise FirstMateError("Affected assignments must be unique explicit IDs", code="invalid_request", status=400)
         payload = {"goal": _text(goal, "goal"), "expected_revision": expected_revision, "authorization_message_id": authorization_message_id, "verified_stopped": verified_stopped, "affected_assignment_ids": affected_assignment_ids, "carry_forward_evidence": carry_forward_evidence or {}}
@@ -2546,7 +2556,8 @@ class FirstMateStore:
                              "preserved_visit_id": visit["id"]})
                 return self._save_receipt(f"revision:{feature_id}", request_id, payload, self._one("fm_features", feature_id))
             if affected_assignment_ids is not None:
-                return self._revise_selected(feature, goal, expected_revision, request_id, authorization_message_id, verified_stopped, affected_assignment_ids, carry_forward_evidence or {}, payload)
+                return self._revise_selected(feature, goal, expected_revision, request_id, authorization_message_id, verified_stopped, affected_assignment_ids, carry_forward_evidence or {}, payload,
+                                             git_baselines=git_baselines, prior_git_evidence=prior_git_evidence)
             active = self._db.execute("SELECT id FROM fm_assignments WHERE feature_id=? AND status IN ('dispatching','running','handoff_pending','awaiting_ack','recovering','waiting_children')", (feature_id,)).fetchall()
             if active and not verified_stopped:
                 raise FirstMateError("Pause affected writers before replacing their plan", code="writer_not_stopped")
@@ -2557,6 +2568,8 @@ class FirstMateStore:
             self._db.execute("UPDATE fm_attempts SET status='superseded',updated_at=? WHERE assignment_id IN (SELECT id FROM fm_assignments WHERE feature_id=? AND status='superseded') AND status IN ('dispatching','running','handoff_pending','awaiting_ack')", (_now(), feature_id))
             self._db.execute("UPDATE fm_handoffs SET status='superseded',updated_at=? WHERE feature_id=? AND status NOT IN ('completed','failed')", (_now(), feature_id))
             if feature["current_visit_id"]:
+                if prior_git_evidence is not None:
+                    self._db.execute("UPDATE fm_visits SET git_evidence_json=? WHERE id=? AND status<>'completed'", (_json(prior_git_evidence), feature["current_visit_id"]))
                 self._db.execute("UPDATE fm_visits SET status='superseded',updated_at=? WHERE id=? AND status<>'completed'", (_now(), feature["current_visit_id"]))
             self._db.execute("UPDATE fm_features SET goal=?,revision=revision+1,status='awaiting_direction',updated_at=? WHERE id=?", (goal, _now(), feature_id))
             self._event(feature_id, "feature.revised", "Human direction revised the feature plan", {"previous_revision": expected_revision, "revision": expected_revision + 1, "previous_goal": feature["goal"], "goal": goal, "authorization_message_id": authorization_message_id})
@@ -2565,7 +2578,7 @@ class FirstMateStore:
 
 
 
-    def _revise_selected(self, feature: dict, goal: str, expected_revision: int, request_id: str, authorization_message_id: str, verified_stopped: bool, affected_assignment_ids: list[str], carry_forward_evidence: dict, payload: dict) -> dict:
+    def _revise_selected(self, feature: dict, goal: str, expected_revision: int, request_id: str, authorization_message_id: str, verified_stopped: bool, affected_assignment_ids: list[str], carry_forward_evidence: dict, payload: dict, *, git_baselines: list[dict] | None = None, prior_git_evidence: list[dict] | None = None) -> dict:
         """Create a revised visit with explicit carry-forward execution membership.
 
         The execution's producer visit, input revision and documents are never
@@ -2594,6 +2607,7 @@ class FirstMateStore:
                     raise FirstMateError("Completed work needs fresh matching code evidence before carry-forward", code="stale_code_revision")
         revision, visit_id, now = expected_revision + 1, _id("fmv"), _now()
         self._db.execute("INSERT INTO fm_visits(id,feature_id,stage_key,title,status,revision,authorization_message_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)", (visit_id, feature["id"], previous_visit["stage_key"], previous_visit["title"], "running", revision, authorization_message_id, now, now))
+        self._db.execute("UPDATE fm_visits SET git_baselines_json=? WHERE id=?", (_json(git_baselines or []), visit_id))
         carried = []
         for assignment in members:
             if assignment["id"] in affected:
@@ -2605,6 +2619,8 @@ class FirstMateStore:
             else:
                 self._db.execute("INSERT INTO fm_assignment_memberships VALUES(?,?,?,?,?,?)", (visit_id, assignment["id"], revision, authorization_message_id, previous_visit["id"], now))
                 carried.append(assignment)
+        if prior_git_evidence is not None:
+            self._db.execute("UPDATE fm_visits SET git_evidence_json=? WHERE id=? AND status<>'completed'", (_json(prior_git_evidence), previous_visit["id"]))
         self._db.execute("UPDATE fm_visits SET status='superseded',updated_at=? WHERE id=? AND status<>'completed'", (now, previous_visit["id"]))
         pending_gate = any(assignment["metadata"].get("human_gate", {}).get("status") == "pending" for assignment in carried)
         status = "awaiting_direction" if pending_gate else "running"

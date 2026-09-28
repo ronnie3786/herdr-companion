@@ -1,7 +1,7 @@
 # Code Factory: from an in-app report to a signed release
 
 Code Factory turns a bug report or feature request filed from the Mac app into a
-GitHub issue, a planned and implemented pull request, an Astra code review, a squash
+GitHub issue, a planned and implemented pull request, an Opus code review, a squash
 merge, and a signed macOS preview release, without a person driving each step. It is an
 operator-run daemon plus a Tailscale-reachable dashboard. Nothing in it replaces the
 authentication, privacy, signing, or CI gates already described in
@@ -34,32 +34,33 @@ This is an experimental personal automation. Read the safety section before enab
 4. **Isolated worktree.** Each issue gets `codefactory/issue-<n>` in its own git worktree
    under the configured worktree root, based on `origin/main`. Issues never share a
    checkout, and your working checkout is never touched.
-5. **Astra plans.** A headless Pi session on `openai-codex/gpt-6-astra` reads the issue and
+5. **Fable plans.** A headless Pi session on `anthropic/claude-fable-5-1` reads the issue and
    the attachments (images included), inspects the repository read-only, and returns a
    bounded JSON plan. The plan carries stable requirement IDs that preserve excerpts from
    the original request, observable outcomes, required evidence, and explicit confirmed or
    unresolved assumptions, plus acceptance criteria, at most four sequential tasks with
-   owned paths and tests, documentation obligations, and attachment descriptions. Astra
+   owned paths and tests, documentation obligations, and attachment descriptions. Fable
    resolves ordinary low- and medium-risk ambiguity from repository evidence, established
    best practices, the safest reversible choice, and the ideal user experience. Those choices
    are recorded as confirmed inferred assumptions instead of becoming operator questions.
    Human input is reserved for high-risk authority boundaries involving security or privacy,
    credentials or access, destructive or irreversible data loss, money or legal/compliance
    obligations, or external production impact when no safe reversible path exists. At that
-   point Astra asks one specific question, the issue is marked **blocked**, and Message Me
+   point Fable asks one specific question, the issue is marked **blocked**, and Message Me
    alerts the operator with a link to the Code Factory dashboard. On **Retry**, planning
    refreshes the issue body and recent replies from allow-listed operators while excluding
    Code Factory's own comments, so an answer becomes part of the next plan.
-6. **DeepSeek implements.** For each task a fresh Pi session on
-   `ollama-cloud/deepseek-v4.1-flash:cloud` with thinking `max` implements the task in the
+6. **GPT 6 Sol implements.** For each task a fresh Pi session on
+   `openai-codex/gpt-6-sol` with thinking `xhigh` implements the task in the
    worktree, writes tests, runs cheap focused checks for changed behavior, and commits.
    Targeted builds may diagnose compiler failures; the complete candidate is still
    exercised by the final Verify gate. The daemon also runs the public-source
-   privacy check and gives DeepSeek one chance to fix findings.
+   privacy check and gives Sol one chance to fix findings.
 7. **Pull request and CI.** The daemon pushes the branch, opens a PR that references the
    issue (`Refs #n`, never `Closes`, so the issue stays open until released), and waits
    for the **Verify** workflow on the exact head commit.
-8. **Astra reviews.** Astra receives the bounded original issue body and the downloaded
+8. **Opus reviews.** A Pi session on `anthropic/claude-opus-5-5` with thinking `high`
+   receives the bounded original issue body and the downloaded
    image attachments again, independently derives observable outcomes, and compares the
    request with both the plan and diff. Each planned requirement must have a unique review
    assessment with concrete evidence. The review also records whether the plan narrowed
@@ -76,7 +77,7 @@ This is an experimental personal automation. Read the safety section before enab
    regressions, security or privacy problems, and a narrowed request; each names a file and a
    specific fix, while ordinary improvements, pre-existing behavior, and speculative edge
    cases are non-blocking notes. Ordinary reversible
-   findings go to a reviser with Astra's recommended best-practice fix; review asks a human
+   findings go to a reviser with Opus's recommended best-practice fix; review asks a human
    only for the same high-risk authority boundaries used during planning. A narrowing finding
    starts a fresh plan with the original request and bounded prior review evidence (requirement
    assessments, narrowing explanation, blocking findings, and human question) as explicitly
@@ -87,11 +88,11 @@ This is an experimental personal automation. Read the safety section before enab
    the review is posted as a comment-type review
    with an explicit **approve** or **request changes** verdict in its text.
 9. **Fresh revisions.** A red CI run first gets one automatic re-run of only its failed
-   jobs for that head commit. A second failure on the same head goes to a new DeepSeek
-   revision session, which commits and pushes. Astra implementation findings go to a
+   jobs for that head commit. A second failure on the same head goes to a new Sol
+   revision session, which commits and pushes. Opus implementation findings go to a
    revision session; a rejected/narrowed plan returns to planning, and only high-risk authority
    questions block for an issue-description decision instead of using a safe reversible fix.
-   Astra's requested-change loop is bounded by
+   Opus's requested-change loop is bounded by
    `max_review_rounds`, while repeated CI failures are bounded separately by
    `max_ci_failures`. Exhausting either blocks the issue for a human with
    `review_rounds_exhausted` or `ci_failures_exhausted`, respectively.
@@ -105,7 +106,7 @@ This is an experimental personal automation. Read the safety section before enab
    rewriting a green branch. A genuinely red head captures the latest failed log, grants
    one fresh bounded CI budget, and starts the reviser directly.
    Retrying `review_rounds_exhausted` likewise grants one fresh bounded review budget and
-   starts the reviser with Astra's latest feedback. Both recoveries remain bounded, so a
+   starts the reviser with Opus's latest feedback. Both recoveries remain bounded, so a
    reviser that cannot produce a working change blocks again instead of creating an
    unlimited retry loop. A session that fails on a transient provider error
    (HTTP 5xx, connection reset, timeout, rate limit) is re-queued automatically at most
@@ -117,8 +118,8 @@ This is an experimental personal automation. Read the safety section before enab
    the authoritative full Verify matrix still runs on the exact candidate.
 10. **Merge and cleanup.** Immediately before merge the daemon asks GitHub whether the
     branch conflicts with the base, requesting both `mergeable` and `mergeStateStatus`
-    in the PR response. A conflicted branch goes to a fresh DeepSeek
-    conflict-resolution session (`ollama-cloud/deepseek-v4.1-flash:cloud`, thinking `max`)
+    in the PR response. A conflicted branch goes to a fresh Sol
+    conflict-resolution session (`openai-codex/gpt-6-sol`, thinking `xhigh`)
     that fetches the base, rebases, resolves every conflict preserving both sides' intent,
     and leaves the rebase committed; the daemon then force-pushes with a lease pinned to
     the head it recorded, re-runs Verify, and re-reviews the rebased head. A rebase is not
@@ -133,7 +134,7 @@ This is an experimental personal automation. Read the safety section before enab
     issue-closing relationship, replaces the stale per-issue PR link, and marks the
     dashboard request done. This also repairs older blocked or skipped ledger entries;
     it never infers delivery from a closed issue alone.
-11. **Release.** Merged issues wait for the next release batch. A DeepSeek session in a
+11. **Release.** Merged issues wait for the next release batch. A Sol session in a
     fresh worktree runs `scripts/release-macos.py bump` (patch for bug-only batches,
     minor when a feature is included, on the configured channel), writes the release
     notes under `release/notes/`, and commits. The daemon validates the commit, pushes
@@ -148,14 +149,8 @@ This is an experimental personal automation. Read the safety section before enab
 - The companion server package built from a revision that advertises
   `issue-reports-v1` (`GET /api/v1` lists it), installed and running as usual.
 - `gh` authenticated with `repo` and `workflow` scopes for the repository.
-- Pi with the `openai-codex` login (for Astra) and an `ollama-cloud` provider entry for
-  DeepSeek. Ollama Cloud reads `OLLAMA_API_KEY`; a login shell may define it, but a
-  daemon does not inherit your shell. Provide it through the private configuration:
-
-  ```toml
-  [environment]
-  OLLAMA_API_KEY = { file = "~/.config/herdr-companion/secrets/ollama-api-key" }
-  ```
+- Pi with Anthropic access for Fable and Opus, plus the `openai-codex` login for Sol.
+  Check all three exact model IDs with `herdr-code-factory doctor`.
 
 - A git checkout of the repository whose `origin` is the GitHub repository. The daemon
   only creates and removes worktrees from it; it does not modify its working tree.
@@ -417,7 +412,7 @@ reported unused runtimes.
 | AI drafting is unavailable but manual reporting works | The companion does not advertise `issue-report-draft-v1`, or its Pi has no usable default. Update the companion separately or write the report by hand; no generic-agent fallback is used. |
 | Report fails with `github_failed` | `gh auth status` on the server machine; repository configured under `[code_factory]`. |
 | Issue never leaves **Picked up** | Daemon not running, wrong `allowed_authors`, or missing trigger label. Run `doctor`. |
-| DeepSeek sessions fail immediately | `OLLAMA_API_KEY` is not available to the daemon; add it to `[environment]`. |
+| Model sessions fail immediately | Check the provider login used by the daemon and run `herdr-code-factory doctor` to verify all three model IDs. |
 | Planner blocked with a question | Answer on the issue, adjust the description if needed, then **Retry**. |
 | Planner blocks but no alert arrives | Confirm the Message Me skill exists at `~/.codex/skills/message-me/scripts/message_me.py`, then inspect the issue event log for the recorded delivery status. |
 | Release stays **failed** | Read the error in the release card; a red Verify run or a Keychain prompt are the usual causes. Fix, then **Release now**. |

@@ -409,10 +409,12 @@ release_output_root = "~/releases"
 poll_seconds = 30
 trigger_label = "herdr-autofix"
 allowed_authors = "your-username,teammate"
-planner_model = "openai-codex/gpt-6-astra"
-planner_thinking = "xhigh"
-implementer_model = "ollama-cloud/deepseek-v4.1-flash:cloud"
-implementer_thinking = "max"
+planner_model = "anthropic/claude-fable-5-1"
+planner_thinking = "high"
+implementer_model = "openai-codex/gpt-6-sol"
+implementer_thinking = "xhigh"
+reviewer_model = "anthropic/claude-opus-5-5"
+reviewer_thinking = "high"
 max_parallel_issues = 2
 max_review_rounds = 3
 max_ci_failures = 3
@@ -446,10 +448,12 @@ python = "python3"
             'HERDR_CODE_FACTORY_POLL_SECONDS': '30',
             'HERDR_CODE_FACTORY_TRIGGER_LABEL': 'herdr-autofix',
             'HERDR_CODE_FACTORY_ALLOWED_AUTHORS': 'your-username,teammate',
-            'HERDR_CODE_FACTORY_PLANNER_MODEL': 'openai-codex/gpt-6-astra',
-            'HERDR_CODE_FACTORY_PLANNER_THINKING': 'xhigh',
-            'HERDR_CODE_FACTORY_IMPLEMENTER_MODEL': 'ollama-cloud/deepseek-v4.1-flash:cloud',
-            'HERDR_CODE_FACTORY_IMPLEMENTER_THINKING': 'max',
+            'HERDR_CODE_FACTORY_PLANNER_MODEL': 'anthropic/claude-fable-5-1',
+            'HERDR_CODE_FACTORY_PLANNER_THINKING': 'high',
+            'HERDR_CODE_FACTORY_IMPLEMENTER_MODEL': 'openai-codex/gpt-6-sol',
+            'HERDR_CODE_FACTORY_IMPLEMENTER_THINKING': 'xhigh',
+            'HERDR_CODE_FACTORY_REVIEWER_MODEL': 'anthropic/claude-opus-5-5',
+            'HERDR_CODE_FACTORY_REVIEWER_THINKING': 'high',
             'HERDR_CODE_FACTORY_MAX_PARALLEL_ISSUES': '2',
             'HERDR_CODE_FACTORY_MAX_REVIEW_ROUNDS': '3',
             'HERDR_CODE_FACTORY_MAX_CI_FAILURES': '3',

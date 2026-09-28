@@ -1413,7 +1413,16 @@ final class PiConversationStore {
         reducer = candidate
         pendingCompactionCompletion = nil
         hasLoadedSnapshot = true
-        publishReducerState()
+        // A snapshot can restore an already-active run after the fleet has
+        // receipted its completion. Publish its committed cursor and server
+        // time so the completion owner can recognize the restored start as
+        // covered instead of clearing the receipt and replaying the cue when
+        // the settlement arrives.
+        publishReducerState(workStartEvidence: AgentCompletionFeedbackCoordinator.PiWorkEvidence(
+            sessionID: candidate.sessionID,
+            observedAt: snapshot.generatedAt,
+            cursor: candidate.cursor ?? snapshot.cursor
+        ))
         connection = snapshot.connected ? .connected : .bridgeOffline
         lastError = snapshot.connected ? nil : "Pi is offline. The saved transcript is still available."
     }

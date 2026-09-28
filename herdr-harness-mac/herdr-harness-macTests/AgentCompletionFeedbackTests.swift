@@ -488,4 +488,115 @@ struct AgentCompletionFeedbackTests {
         coordinator.piWorkSettled(scope: scope(), evidence: .init(sessionID: "s1"))
         #expect(recorder.count == 1)
     }
+
+    @Test("Batched delayed alerts for ordered Pi turns never replay")
+    func orderedBatchedAlertsStaySilent() {
+        let (coordinator, recorder) = makeCoordinator()
+        refresh(coordinator, [paneObservation(.idle, episodeKey: "e0")])
+
+        // Three turns settle while the fleet is stalled. Ordering evidence
+        // makes every heard completion independently identifiable.
+        let timestamps = [
+            "2030-01-01T00:00:10Z",
+            "2030-01-01T00:00:20Z",
+            "2030-01-01T00:00:30Z",
+        ]
+        for (index, timestamp) in timestamps.enumerated() {
+            coordinator.piWorkStarted(scope: scope(), evidence: .init(
+                sessionID: "s1",
+                observedAt: timestamp,
+                cursor: String(index + 1)
+            ))
+            coordinator.piWorkSettled(scope: scope(), evidence: .init(
+                sessionID: "s1",
+                observedAt: timestamp,
+                cursor: String(index + 1)
+            ))
+        }
+        #expect(recorder.count == 3)
+
+        // The recovered fleet delivers all three fresh alerts at once without
+        // any done transition: the pane was acknowledged and projects idle.
+        refresh(coordinator, [paneObservation(.idle, episodeKey: "e0")], alerts: [
+            alert("a1", createdAt: timestamps[0]),
+            alert("a2", createdAt: timestamps[1]),
+            alert("a3", createdAt: timestamps[2]),
+        ])
+        #expect(recorder.count == 3)
+
+        // A fourth genuine turn is still eligible exactly once.
+        coordinator.piWorkStarted(scope: scope(), evidence: .init(
+            sessionID: "s1",
+            observedAt: "2030-01-01T00:00:40Z",
+            cursor: "4"
+        ))
+        coordinator.piWorkSettled(scope: scope(), evidence: .init(
+            sessionID: "s1",
+            observedAt: "2030-01-01T00:00:40Z",
+            cursor: "4"
+        ))
+        #expect(recorder.count == 4)
+    }
+
+    @Test("Batched alerts match every unordered Pi turn without truncation")
+    func unorderedBatchedAlertsStaySilent() {
+        let (coordinator, recorder) = makeCoordinator()
+        refresh(coordinator, [paneObservation(.idle, episodeKey: "e0")])
+
+        // Three turns settle with no ordering evidence and no fleet refresh.
+        for _ in 0..<3 {
+            coordinator.piWorkStarted(scope: scope(), evidence: .init(sessionID: "s1"))
+            coordinator.piWorkSettled(scope: scope(), evidence: .init(sessionID: "s1"))
+        }
+        #expect(recorder.count == 3)
+
+        // A later refresh hands over all three alerts at once. Every already
+        // heard completion owns one obligation, so none of them replays.
+        refresh(coordinator, [paneObservation(.idle, episodeKey: "e0")], alerts: [
+            alert("a1"),
+            alert("a2"),
+            alert("a3"),
+        ])
+        #expect(recorder.count == 3)
+
+        // A fourth genuine turn is still eligible exactly once.
+        coordinator.piWorkStarted(scope: scope(), evidence: .init(sessionID: "s1"))
+        coordinator.piWorkSettled(scope: scope(), evidence: .init(sessionID: "s1"))
+        #expect(recorder.count == 4)
+    }
+
+    @Test("A covered snapshot start cannot clear a fleet receipt")
+    func coveredSnapshotStartKeepsReceipt() {
+        let (coordinator, recorder) = makeCoordinator()
+        // The fleet observed the completion at cursor 11 before the committed
+        // snapshot restored the still-active run at cursor 10.
+        refresh(coordinator, [paneObservation(.working, episodeKey: "e1")])
+        refresh(coordinator, [paneObservation(.done, episodeKey: "e2", piCursor: "11")])
+        #expect(recorder.count == 1)
+
+        coordinator.piWorkStarted(scope: scope(), evidence: .init(
+            sessionID: "s1",
+            observedAt: "2030-01-01T00:00:05Z",
+            cursor: "10"
+        ))
+        coordinator.piWorkSettled(scope: scope(), evidence: .init(
+            sessionID: "s1",
+            observedAt: "2030-01-01T00:00:30Z",
+            cursor: "11"
+        ))
+        #expect(recorder.count == 1)
+
+        // A genuinely later turn past the watermark still plays once.
+        coordinator.piWorkStarted(scope: scope(), evidence: .init(
+            sessionID: "s1",
+            observedAt: "2030-01-01T00:01:00Z",
+            cursor: "20"
+        ))
+        coordinator.piWorkSettled(scope: scope(), evidence: .init(
+            sessionID: "s1",
+            observedAt: "2030-01-01T00:01:05Z",
+            cursor: "21"
+        ))
+        #expect(recorder.count == 2)
+    }
 }

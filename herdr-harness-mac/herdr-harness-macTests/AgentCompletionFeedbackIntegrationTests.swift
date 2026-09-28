@@ -8,6 +8,94 @@ import Testing
 struct AgentCompletionFeedbackIntegrationTests {
     // MARK: Pi conversation lifecycle
 
+    @Test("Three stalled Pi turns absorb their batched fleet alerts exactly once each")
+    func batchedFleetAlertsReconcileHeardTurns() async throws {
+        let fixture = try ModelFixture()
+        defer { fixture.cleanUp() }
+        let recorder = CompletionFeedbackRecorder()
+        fixture.model.agentCompletionFeedback.playback = { recorder.record() }
+        let pane = Self.testPane()
+
+        // Baseline idle so the fleet has a pane identity before the batch.
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(paneStatus: "idle", lastActivityAt: "2030-01-01T00:00:00Z", alerts: [])
+        }
+        try await fixture.model.refresh(
+            machineID: fixture.machine.id,
+            using: fixture.fleetClient(),
+            expectedGeneration: fixture.model.connectionGeneration
+        )
+        #expect(recorder.count == 0)
+
+        let store = PiConversationStore()
+        store.reconnectBackoffBase = .zero
+        var eventsContinuation: AsyncThrowingStream<PiConversationStreamEvent, any Error>.Continuation?
+        store.snapshotProvider = { _ in try Self.snapshot(prompt: "Earlier answer") }
+        store.eventsProvider = { _, _ in
+            AsyncThrowingStream { continuation in eventsContinuation = continuation }
+        }
+        let follow = Task { @MainActor in
+            await store.follow(model: fixture.model, pane: pane)
+        }
+        defer {
+            follow.cancel()
+            eventsContinuation?.finish()
+        }
+        try await Self.waitUntil { store.sessionID == "s1" && !store.turns.isEmpty }
+
+        // Three turns settle while the fleet never refreshes.
+        let timestamps = [
+            "2030-01-01T00:00:10Z",
+            "2030-01-01T00:00:20Z",
+            "2030-01-01T00:00:30Z",
+        ]
+        for (index, timestamp) in timestamps.enumerated() {
+            eventsContinuation?.yield(try Self.streamEvent(
+                index * 2 + 2,
+                #"{"type":"agent_start"}"#,
+                generatedAt: timestamp
+            ))
+            try await Self.waitUntil { store.phase == .working }
+            eventsContinuation?.yield(try Self.streamEvent(
+                index * 2 + 3,
+                #"{"type":"agent_settled"}"#,
+                generatedAt: timestamp
+            ))
+            try await Self.waitUntil { recorder.count == index + 1 }
+        }
+
+        // The stalled fleet recovers and reports the acknowledged pane as idle
+        // while delivering all three already-heard done alerts at once.
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(
+                paneStatus: "idle",
+                lastActivityAt: "2030-01-01T00:00:00Z",
+                alerts: [
+                    Self.alertJSON(id: "a1", status: "done", createdAt: timestamps[0]),
+                    Self.alertJSON(id: "a2", status: "done", createdAt: timestamps[1]),
+                    Self.alertJSON(id: "a3", status: "done", createdAt: timestamps[2]),
+                ]
+            )
+        }
+        try await fixture.model.refresh(
+            machineID: fixture.machine.id,
+            using: fixture.fleetClient(),
+            expectedGeneration: fixture.model.connectionGeneration
+        )
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(recorder.count == 3)
+
+        // A fourth genuine turn is newer than every receipt and plays once.
+        eventsContinuation?.yield(try Self.streamEvent(8, #"{"type":"agent_start"}"#, generatedAt: "2030-01-01T00:00:40Z"))
+        try await Self.waitUntil { store.phase == .working }
+        eventsContinuation?.yield(try Self.streamEvent(9, #"{"type":"agent_settled"}"#, generatedAt: "2030-01-01T00:00:40Z"))
+        try await Self.waitUntil { recorder.count == 4 }
+
+        follow.cancel()
+        eventsContinuation?.finish()
+        await follow.value
+    }
+
     @Test("Committed settlement plays once and shares its receipt with the fleet")
     func committedSettlementDeduplicatesFleet() async throws {
         let fixture = try ModelFixture()
@@ -202,6 +290,127 @@ struct AgentCompletionFeedbackIntegrationTests {
 
         follow.cancel()
         catchUpContinuation?.finish()
+        liveContinuation?.finish()
+        await follow.value
+    }
+
+    @Test("A delayed active snapshot covered by a fleet receipt never replays")
+    func delayedActiveSnapshotKeepsFleetReceipt() async throws {
+        let fixture = try ModelFixture()
+        defer { fixture.cleanUp() }
+        let recorder = CompletionFeedbackRecorder()
+        fixture.model.agentCompletionFeedback.playback = { recorder.record() }
+        let pane = Self.testPane()
+
+        // The fleet observes a complete run at committed cursor 11 while the
+        // chat stream is still disconnected.
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(paneStatus: "idle", lastActivityAt: "2030-01-01T00:00:00Z", alerts: [])
+        }
+        try await fixture.model.refresh(
+            machineID: fixture.machine.id,
+            using: fixture.fleetClient(),
+            expectedGeneration: fixture.model.connectionGeneration
+        )
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(paneStatus: "working", lastActivityAt: "2030-01-01T00:00:01Z", alerts: [])
+        }
+        try await fixture.model.refresh(
+            machineID: fixture.machine.id,
+            using: fixture.fleetClient(),
+            expectedGeneration: fixture.model.connectionGeneration
+        )
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(
+                paneStatus: "done",
+                lastActivityAt: "2030-01-01T00:00:10Z",
+                alerts: [],
+                piCursor: "11"
+            )
+        }
+        try await fixture.model.refresh(
+            machineID: fixture.machine.id,
+            using: fixture.fleetClient(),
+            expectedGeneration: fixture.model.connectionGeneration
+        )
+        #expect(recorder.count == 1)
+
+        // The active snapshot that restores that same run at cursor 10 is held
+        // until after the fleet already receipted the completion.
+        let (snapshotGate, snapshotGateContinuation) = AsyncStream<Void>.makeStream()
+        var snapshotRequests = 0
+        var eventStreams = 0
+        var liveContinuation: AsyncThrowingStream<PiConversationStreamEvent, any Error>.Continuation?
+        let store = PiConversationStore()
+        store.reconnectBackoffBase = .zero
+        store.snapshotProvider = { _ in
+            snapshotRequests += 1
+            if snapshotRequests == 1 {
+                return try Self.snapshot(cursor: "1", latest: "1", prompt: "Earlier answer")
+            }
+            for await _ in snapshotGate { break }
+            return try Self.snapshot(cursor: "10", latest: "10", working: true, prompt: "Earlier answer")
+        }
+        store.eventsProvider = { _, _ in
+            eventStreams += 1
+            if eventStreams == 1 {
+                return AsyncThrowingStream { continuation in
+                    continuation.yield(.envelope(PiConversationEnvelope(
+                        paneID: "w1:p1",
+                        sessionID: "s1",
+                        cursor: "2",
+                        event: .object([
+                            "type": .string("stream.reset"),
+                            "reason": .string("replay_gap")
+                        ])
+                    )))
+                    continuation.finish()
+                }
+            }
+            return AsyncThrowingStream { continuation in liveContinuation = continuation }
+        }
+        let follow = Task { @MainActor in
+            await store.follow(model: fixture.model, pane: pane)
+        }
+        defer {
+            follow.cancel()
+            liveContinuation?.finish()
+        }
+
+        try await Self.waitUntil { snapshotRequests == 2 }
+        #expect(store.phase == .idle)
+        #expect(recorder.count == 1)
+
+        // Releasing the snapshot restores the still-active run at cursor 10,
+        // which the fleet's cursor-11 receipt already covers.
+        snapshotGateContinuation.yield()
+        try await Self.waitUntil { store.phase == .working }
+
+        // The committed settlement of that same run arrives after recovery.
+        try await Self.waitUntil { liveContinuation != nil }
+        liveContinuation?.yield(try Self.streamEvent(
+            11,
+            #"{"type":"agent_settled"}"#,
+            generatedAt: "2030-01-01T00:00:30Z"
+        ))
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(recorder.count == 1)
+
+        // A genuinely later turn past the receipt still plays exactly once.
+        liveContinuation?.yield(try Self.streamEvent(
+            20,
+            #"{"type":"agent_start"}"#,
+            generatedAt: "2030-01-01T00:01:00Z"
+        ))
+        try await Self.waitUntil { store.phase == .working }
+        liveContinuation?.yield(try Self.streamEvent(
+            21,
+            #"{"type":"agent_settled"}"#,
+            generatedAt: "2030-01-01T00:01:05Z"
+        ))
+        try await Self.waitUntil { recorder.count == 2 }
+
+        follow.cancel()
         liveContinuation?.finish()
         await follow.value
     }
@@ -776,16 +985,18 @@ struct AgentCompletionFeedbackIntegrationTests {
         cursor: String = "1",
         latest: String? = "1",
         working: Bool = false,
-        prompt: String = "Earlier answer"
+        prompt: String = "Earlier answer",
+        generatedAt: String? = nil
     ) throws -> PiConversationSnapshot {
         let latestField = latest.map { ",\"latest_cursor\":\"\($0)\"" } ?? ""
+        let generatedAtField = generatedAt.map { ",\"generated_at\":\"\($0)\"" } ?? ""
         let entries = prompt.isEmpty
             ? ""
             : #"{"type":"message","id":"u1","message":{"role":"user","content":"\#(prompt)"}}"#
         return try JSONDecoder().decode(
             PiConversationSnapshot.self,
             from: Data(
-                #"{"protocol":{"name":"herdr.pi.semantic","version":1},"pane_id":"w1:p1","available":true,"connected":true,"session":{"id":"s1"},"state":{"context":{"tokens":1},"cost":{"totalUSD":1,"totalTokens":10},"isStreaming":\#(working)},"entries":[\#(entries)],"pending_interactions":[],"cursor":"\#(cursor)"\#(latestField),"oldest_cursor":"0","truncated":false}"#.utf8
+                #"{"protocol":{"name":"herdr.pi.semantic","version":1},"pane_id":"w1:p1","available":true,"connected":true,"session":{"id":"s1"},"state":{"context":{"tokens":1},"cost":{"totalUSD":1,"totalTokens":10},"isStreaming":\#(working)},"entries":[\#(entries)],"pending_interactions":[],"cursor":"\#(cursor)"\#(latestField)\#(generatedAtField),"oldest_cursor":"0","truncated":false}"#.utf8
             )
         )
     }
@@ -861,6 +1072,7 @@ private struct CompletionFleetProtocolState: Sendable {
     var paneStatus: String
     var lastActivityAt: String
     var alerts: [String]
+    var piCursor: String? = nil
 }
 
 private final class CompletionFleetURLProtocol: URLProtocol, @unchecked Sendable {
@@ -880,9 +1092,12 @@ private final class CompletionFleetURLProtocol: URLProtocol, @unchecked Sendable
         if url.path == "/api/v1/workspaces" {
             let served = Self.state.withLock { $0 }
             let alerts = served.alerts.joined(separator: ",")
+            let piSemantic = served.piCursor.map {
+                ",\"pi_semantic\":{\"available\":true,\"connected\":true,\"protocol_version\":1,\"cursor\":\"\($0)\"}"
+            } ?? ""
             data = Data(
                 """
-                {"ok":true,"workspaces":[{"workspace_id":"w1","number":1,"label":"Workspace","focused":true,"pane_count":1,"tab_count":0,"active_tab_id":"","agent_status":"\(served.paneStatus)","panes":[{"pane_id":"w1:p1","terminal_id":"terminal-1","workspace_id":"w1","tab_id":"","focused":true,"agent_status":"\(served.paneStatus)","revision":1,"last_activity_at":"\(served.lastActivityAt)"}]}],"alerts":[\(alerts)]}
+                {"ok":true,"workspaces":[{"workspace_id":"w1","number":1,"label":"Workspace","focused":true,"pane_count":1,"tab_count":0,"active_tab_id":"","agent_status":"\(served.paneStatus)","panes":[{"pane_id":"w1:p1","terminal_id":"terminal-1","workspace_id":"w1","tab_id":"","focused":true,"agent_status":"\(served.paneStatus)","revision":1,"last_activity_at":"\(served.lastActivityAt)"\(piSemantic)}]}],"alerts":[\(alerts)]}
                 """.utf8
             )
         } else {

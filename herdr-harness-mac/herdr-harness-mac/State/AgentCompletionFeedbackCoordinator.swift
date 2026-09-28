@@ -24,6 +24,16 @@ import Foundation
 /// disconnected stream can be ordered against a completion the fleet already
 /// receipted, instead of replacing that receipt.
 ///
+/// Reconciliation is exact and never truncated. A stalled fleet can deliver a
+/// batch of already-heard completions at once (an acknowledged pane projects
+/// as idle, so no `working → done` transition accompanies them), and dropping
+/// the oldest obligations would make one of those delayed observations look
+/// like a new completion. Every played completion therefore keeps its own
+/// obligation until the matching observation consumes it, and a per-pane
+/// ordering watermark collapses arbitrarily many duplicates whose committed
+/// journal cursor is at or before - or whose server instant is strictly
+/// before - an already-receipted completion.
+///
 /// The coordinator lives on `HerdrAppModel`, so completion ownership survives
 /// the main window closing. `playback` is injectable so tests record requests
 /// instead of playing audio.
@@ -147,7 +157,7 @@ final class AgentCompletionFeedbackCoordinator {
 
     /// One finished piece of work and the acknowledgements it still expects.
     ///
-    /// The counters make the two server-side fleet observations of one
+    /// The exact counters make the two server-side fleet observations of one
     /// completion idempotent:
     /// - `pendingPiAcknowledgements`: a committed Pi settlement already played,
     ///   so the first fleet evidence for the same run consumes one instead of
@@ -158,6 +168,10 @@ final class AgentCompletionFeedbackCoordinator {
     /// - `pendingStatusAcknowledgements`: an alert already played, so the
     ///   matching done transition consumes one. A changed `workingSince`
     ///   discards these, because that transition can no longer arrive.
+    ///
+    /// These counts are never capped or truncated. Bounding them drops
+    /// obligations that a later batched delivery still needs, which turns an
+    /// already-heard completion into a replay.
     private struct Episode {
         var sessionID: String?
         var isComplete = false
@@ -174,11 +188,56 @@ final class AgentCompletionFeedbackCoordinator {
         var pendingStatusAcknowledgements = 0
     }
 
+    /// Ordering evidence for the newest receipted completion on one pane,
+    /// retained across later turns. An observation whose server instant is
+    /// strictly before, or whose committed Pi cursor is at or before, this
+    /// watermark describes work whose cue was already played, no matter how
+    /// many refreshes were missed before it arrived. Unlike
+    /// `Episode.completedAt`, it is not cleared when a new turn starts, so a
+    /// snapshot restored from an older committed cursor can still be
+    /// recognized as covered.
+    ///
+    /// The instant comparison is strict because the server timestamps are not
+    /// guaranteed unique: two completions inside the same second share one, and
+    /// the channel obligations above pair equal observations of one completion.
+    /// Only a completion the stream itself cannot order needs the exact pairing.
+    private struct ReceiptWatermark {
+        var completedAt: Date?
+        var piCursor: String?
+
+        func covers(date: Date?, cursor: String?) -> Bool {
+            if let cursorValue = cursor.flatMap(Int64.init),
+               let receiptCursor = piCursor.flatMap(Int64.init) {
+                return cursorValue <= receiptCursor
+            }
+            if let date, let completedAt {
+                return date < completedAt
+            }
+            return false
+        }
+
+        mutating func record(date: Date?, cursor: String?) {
+            if let date {
+                completedAt = completedAt.map { Swift.max($0, date) } ?? date
+            }
+            if let cursorValue = cursor.flatMap(Int64.init) {
+                if let receiptCursor = piCursor.flatMap(Int64.init) {
+                    if cursorValue > receiptCursor { piCursor = cursor }
+                } else {
+                    piCursor = cursor
+                }
+            }
+        }
+    }
+
     private struct PaneState {
         var episode: Episode?
         var fleetStatus: AgentStatus?
         var workingSince: String?
         var observedPiCursor: String?
+        /// Ordering evidence for the newest played completion. Persists across
+        /// episodes until a newer completion advances it.
+        var receiptWatermark: ReceiptWatermark?
         var seenDoneEpisodeKeys: [String] = []
         var consumedDoneAlertIDs: [String] = []
     }
@@ -195,13 +254,11 @@ final class AgentCompletionFeedbackCoordinator {
 
     /// How many recent episode keys or alert ids one pane remembers. Bounded so
     /// a long-lived process cannot grow without limit while still outliving any
-    /// realistic delayed duplicate observation.
+    /// realistic delayed duplicate observation. Acknowledgement counts are
+    /// deliberately not bounded: ordering watermarks already collapse ordered
+    /// duplicates, and an exact obligation is what lets an unordered batch of
+    /// already-heard completions reconcile without replaying.
     private static let recentEvidenceLimit = 8
-    /// How many acknowledgement slots one pane can carry across a carry-over
-    /// into a newer episode. More than this means the matching channel is not
-    /// observing the pane, and suppressing every later completion would hide
-    /// real work.
-    private static let acknowledgementLimit = 2
     /// How many finished-run receipts are retained before the oldest are
     /// pruned.
     private static let runReceiptLimit = 512
@@ -274,17 +331,18 @@ final class AgentCompletionFeedbackCoordinator {
     }
 
     /// A completed receipt absorbs a Pi start that the fleet already covered.
-    /// The recorded completion instant decides whenever both sides have one;
-    /// only when that instant is unavailable does the committed journal cursor
-    /// order the start against the receipt's watermark.
+    /// The committed journal cursor is authoritative when both sides have one;
+    /// the recorded completion instant decides otherwise. A start at or before
+    /// the receipt's watermark is that receipt's own replay, even when a newer
+    /// snapshot delivered it out of order.
     private func isReplayedStart(episode: Episode, evidence: PiWorkEvidence) -> Bool {
         guard episode.isComplete else { return false }
-        if let startedAt = evidence.date, let completedAt = episode.completedAt {
-            return startedAt <= completedAt
-        }
         if let cursor = evidence.cursor.flatMap(Int64.init),
            let completedCursor = episode.completedPiCursor.flatMap(Int64.init) {
             return cursor <= completedCursor
+        }
+        if let startedAt = evidence.date, let completedAt = episode.completedAt {
+            return startedAt <= completedAt
         }
         return false
     }
@@ -310,14 +368,21 @@ final class AgentCompletionFeedbackCoordinator {
             paneStates[scope] = state
             return
         }
+        // A settlement the watermark already covers is an out-of-order replay
+        // of work whose cue was already played, never a new turn.
+        if state.receiptWatermark?.covers(date: evidence.date, cursor: evidence.cursor) == true {
+            state.episode = episode
+            paneStates[scope] = state
+            return
+        }
         if episode.sessionID == nil { episode.sessionID = evidence.sessionID }
         episode.isComplete = true
         if let completedAt = evidence.date { episode.completedAt = completedAt }
         if let cursor = evidence.cursor { episode.completedPiCursor = cursor }
-        episode.pendingPiAcknowledgements = min(
-            episode.pendingPiAcknowledgements + 1,
-            Self.acknowledgementLimit
-        )
+        episode.pendingPiAcknowledgements += 1
+        var watermark = state.receiptWatermark ?? ReceiptWatermark()
+        watermark.record(date: evidence.date, cursor: evidence.cursor)
+        state.receiptWatermark = watermark
         state.episode = episode
         paneStates[scope] = state
         playback()
@@ -476,6 +541,16 @@ final class AgentCompletionFeedbackCoordinator {
         piCursor: String?
     ) -> Bool {
         var episode = state.episode ?? Episode()
+        let observationDate = completedAt.flatMap(HerdrTimestamp.date(from:))
+
+        // Covered by the newest receipted completion: a delayed duplicate,
+        // however many refreshes were missed before it arrived. Consume the
+        // still-open obligation when there is one so a later genuine turn is
+        // not mistaken for this completion's partner.
+        if state.receiptWatermark?.covers(date: observationDate, cursor: piCursor) == true {
+            consumeDuplicateAcknowledgement(&state, channel: channel, partnerIncluded: partnerIncluded)
+            return false
+        }
 
         // The matching observation for a completion already receipted through
         // the other fleet channel: consume it without claiming a new episode.
@@ -505,29 +580,50 @@ final class AgentCompletionFeedbackCoordinator {
         // First evidence for this completion. Record the other channel's
         // expectation unless it arrived in the same refresh.
         episode.isComplete = true
-        if let completedAt, let date = HerdrTimestamp.date(from: completedAt) {
-            episode.completedAt = date
-        }
+        if let observationDate { episode.completedAt = observationDate }
         if let piCursor { episode.completedPiCursor = piCursor }
         if !partnerIncluded {
             recordExpectation(for: channel, in: &episode)
         }
+        var watermark = state.receiptWatermark ?? ReceiptWatermark()
+        watermark.record(date: observationDate, cursor: piCursor)
+        state.receiptWatermark = watermark
         state.episode = episode
         return true
+    }
+
+    /// Consumes the open obligation a delayed duplicate would otherwise leave
+    /// behind. Without this, a batch of already-heard completions arriving
+    /// after the matching channel stopped observing would make the next
+    /// genuine turn look like an old partner and stay silent.
+    private func consumeDuplicateAcknowledgement(
+        _ state: inout PaneState,
+        channel: FleetChannel,
+        partnerIncluded: Bool
+    ) {
+        var episode = state.episode ?? Episode()
+        switch channel {
+        case .status where episode.pendingStatusAcknowledgements > 0:
+            episode.pendingStatusAcknowledgements -= 1
+        case .alert where episode.pendingAlertAcknowledgements > 0:
+            episode.pendingAlertAcknowledgements -= 1
+        default:
+            if episode.pendingPiAcknowledgements > 0 {
+                episode.pendingPiAcknowledgements -= 1
+                if !partnerIncluded {
+                    recordExpectation(for: channel, in: &episode)
+                }
+            }
+        }
+        state.episode = episode
     }
 
     private func recordExpectation(for channel: FleetChannel, in episode: inout Episode) {
         switch channel {
         case .status:
-            episode.pendingAlertAcknowledgements = min(
-                episode.pendingAlertAcknowledgements + 1,
-                Self.acknowledgementLimit
-            )
+            episode.pendingAlertAcknowledgements += 1
         case .alert:
-            episode.pendingStatusAcknowledgements = min(
-                episode.pendingStatusAcknowledgements + 1,
-                Self.acknowledgementLimit
-            )
+            episode.pendingStatusAcknowledgements += 1
         }
     }
 

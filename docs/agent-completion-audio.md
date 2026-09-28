@@ -48,11 +48,18 @@ silent in either order. One completion normally produces two fleet observations
 different times - and each receipt records which channels have been
 acknowledged, so the later observation never claims a second completion and a
 delayed alert cannot complete a newer turn. A committed Pi start carries the
-committed event's server timestamp and journal cursor; a start at or before the
+committed event's server timestamp and journal cursor; a start covered by the
 receipted completion is the replay of an episode whose stream was interrupted,
 so it keeps the existing receipt instead of arming a duplicate settlement. The
-recorded completion instant decides whenever both sides have one, with the
-journal cursor as the fallback for a server that omits a comparable timestamp.
+journal cursor orders the start whenever both sides have one, and the recorded
+completion instant decides otherwise, including a snapshot restored from an
+older committed cursor after the fleet already receipted the run. Each played
+completion also keeps an exact reconciliation obligation: a stalled fleet that
+later delivers a batch of already-heard completions - an acknowledged pane
+reports idle, so no status transition accompanies them - consumes one
+obligation per completion instead of replaying one. A per-pane ordering
+watermark additionally collapses arbitrarily many delayed duplicates that
+arrive after a newer turn began.
 A fresh completion alert carries its own server timestamp: when the debounced
 pane snapshot still reports the previous done episode, the alert instant - not
 the stale pane episode key - is what the receipt records, so a late replay of

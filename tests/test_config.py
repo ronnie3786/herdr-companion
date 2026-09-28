@@ -69,6 +69,8 @@ state_dir = "state"
 context_target = 120000
 max_workers = 4
 coordinator_thinking = "low"
+coordinator_timeout_seconds = 600
+coordinator_max_seconds = 3600
 planner_model = "synthetic/planner"
 planner_thinking = "high"
 worker_model = "synthetic/worker"
@@ -84,6 +86,8 @@ message_hub_url = "https://messages.example.invalid/api/v1/messages"
         self.assertEqual(config.environ['HERDR_FIRST_MATE_CONTEXT_TARGET'], '120000')
         self.assertEqual(config.environ['HERDR_FIRST_MATE_MAX_WORKERS'], '4')
         self.assertEqual(config.environ['HERDR_FIRST_MATE_COORDINATOR_THINKING'], 'low')
+        self.assertEqual(config.environ['HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS'], '600')
+        self.assertEqual(config.environ['HERDR_FIRST_MATE_COORDINATOR_MAX_SECONDS'], '3600')
         self.assertEqual(config.environ['HERDR_FIRST_MATE_PLANNER_MODEL'], 'synthetic/planner')
         self.assertEqual(config.environ['HERDR_FIRST_MATE_PLANNER_THINKING'], 'high')
         self.assertEqual(config.environ['HERDR_FIRST_MATE_WORKER_MODEL'], 'synthetic/worker')

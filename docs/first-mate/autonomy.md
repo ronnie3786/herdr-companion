@@ -23,12 +23,21 @@ human instructions remain authoritative.
 
 ## Recovery from retained state
 
+- Coordinator turns have separate inactivity and total execution budgets. Model
+  output (including streamed thinking) and distinct completed tools renew the
+  inactivity budget. RPC responses, telemetry, empty deltas, and duplicate tool
+  receipts do not. After the initial budget, the supervisor nudges the coordinator
+  once to finish or delegate already authorized work instead of killing an active
+  turn. The absolute ceiling still applies, even with continuous activity.
 - A transient coordinator failure can retry twice with short backoff under the
   same inbox message. The controller first verifies the writer stopped, all
   managed requests have durable responses, and no arbitrary external mutation
   occurred. The next prompt includes completed operations and current state.
   Posted checkpoints, newer human direction, and unresolved effects prevent a
   duplicate continuation. Exhaustion produces one visible failure report.
+  That report names the reason automatic continuation stopped and distinguishes
+  workflow operations from other tool receipts. A completed receipt is not proof
+  that an external command achieved its intended effect.
 - The lead's relay and feature-creation receipts are tied to the original human
   turn and exact normalized action payload. Retrying with a different process or
   tool-call identifier returns the existing result for the same action. Completed

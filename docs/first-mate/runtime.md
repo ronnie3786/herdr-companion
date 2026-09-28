@@ -528,6 +528,7 @@ are `HERDR_HARNESS_FIRST_MATE_RUNS_ROOT`, `HERDR_STATE_DIR`,
 `HERDR_FIRST_MATE_MAX_WORKERS`,
 `HERDR_FIRST_MATE_CONTEXT_TARGET`, `HERDR_FIRST_MATE_STALL_SECONDS`, and
 `HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS`, `HERDR_FIRST_MATE_AUTO_RECOVERY`,
+`HERDR_FIRST_MATE_COORDINATOR_MAX_SECONDS`,
 `HERDR_FIRST_MATE_SWEEP_SECONDS`, `HERDR_FIRST_MATE_NUDGE_GRACE_SECONDS`, and
 `HERDR_FIRST_MATE_MINIMUM_FREE_MB`. See [reliability configuration](reliability.md#configuration-and-compatibility).
 The default runtime directory is
@@ -535,6 +536,14 @@ The default runtime directory is
 `~/.local/share/herdr-companion/first-mate-runs`. Model authentication remains in
 Pi's existing provider configuration. Missing Pi or a missing bundled extension
 is reported as an unavailable capability.
+
+For newly dispatched coordinator turns, `coordinator_timeout_seconds` is an
+inactivity budget (default 600 seconds, bounded 30–3600), rather than the former
+absolute ten-minute cap. `coordinator_max_seconds` is the separate absolute
+ceiling (default 3600 seconds, bounded 30–86400). Existing private timeout values
+remain in use as inactivity settings. Already running or spooled executions keep
+their persisted budgets; installation does not restart them or replay failed
+human messages. Workers and advisors retain their existing execution limits.
 
 The repository's existing wheel build bundles the `pi-semantic-bridge` package,
 including `extensions/first-mate.ts`. Runtime resource discovery first supports

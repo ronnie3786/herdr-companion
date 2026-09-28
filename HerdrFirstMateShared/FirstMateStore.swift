@@ -128,6 +128,10 @@ final class FirstMateStore {
     private var resourceGeneration = 0
     private var drafts: [String: String] = [:]
     private var pendingMessages: [String: (text: String, requestID: String)] = [:]
+    /// Optimistic submissions for one exact feature, in submission order.
+    /// Scoped to this store's lifecycle: ``configure(client:demo:demoFeatures:)``
+    /// clears them, and a local identity never reaches the companion.
+    private var outgoingMessages: [String: [FirstMateOutgoingMessage]] = [:]
     /// The snapshot sent with a pending message to the lead, by request ID,
     /// so a retry repeats the exact request.
     private var pendingLeadContexts: [String: FirstMateLeadContext] = [:]
@@ -190,6 +194,7 @@ final class FirstMateStore {
         draft = ""
         drafts = [:]
         pendingMessages = [:]
+        outgoingMessages = [:]
         pendingLeadContexts = [:]
         openedResource = nil
         resourcePresentation = nil
@@ -392,6 +397,10 @@ final class FirstMateStore {
             features[index] = acceptedFeature
         } else { features.append(acceptedFeature) }
         lastUpdated = .now
+        // Observation is presentation state, not part of the snapshot: a poll
+        // may be the first proof that a submitted row exists, and its status
+        // may be newer than a receipt that has not arrived yet.
+        reconcileOutgoingMessages(for: value.feature.id)
     }
 
     private func apply(_ capabilities: FirstMateCapabilities) {
@@ -631,6 +640,323 @@ final class FirstMateStore {
             record(error)
             return false
         }
+    }
+
+    // MARK: - Optimistic outgoing messages
+
+    /// Validates and reserves one submission for immediate presentation.
+    ///
+    /// The reservation is created synchronously, before any transport starts,
+    /// so the caller can clear the submitted composer material and begin the
+    /// request afterwards. It returns nil for a foreign, closed, or otherwise
+    /// unready destination, an empty payload, another operation already using
+    /// this store, or a submission already in flight for this feature; an
+    /// invalid call never consumes content.
+    func beginOutgoingMessage(
+        _ text: String,
+        expectedContext: OperationContext,
+        submission: FirstMateOutgoingMessage.Submission? = nil
+    ) -> FirstMateOutgoingMessage.Handle? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard expectedContext == operationContext,
+              isCurrentLifecycle(expectedContext),
+              let featureID = expectedContext.featureID,
+              !isSending,
+              !trimmed.isEmpty,
+              isDemo || client != nil,
+              isDestinationAlive(expectedContext),
+              !(snapshots[featureID].map { ["completed", "cancelled"].contains($0.feature.status) } ?? false),
+              !(outgoingMessages[featureID]?.contains { $0.state.isPending } ?? false) else { return nil }
+        let message = FirstMateOutgoingMessage(
+            id: FirstMateOutgoingMessage.makeLocalID(),
+            featureID: featureID,
+            requestID: UUID().uuidString,
+            text: text,
+            createdAt: HerdrTimestamp.string(from: .now),
+            baselineMessageIDs: Set((snapshots[featureID]?.messages ?? []).map(\.id)),
+            leadContext: featureID == leadFeatureID ? leadContextProvider?() : nil,
+            submission: submission,
+            state: .pending,
+            acceptedStatus: nil
+        )
+        outgoingMessages[featureID, default: []].append(message)
+        return FirstMateOutgoingMessage.Handle(
+            outgoingID: message.id,
+            requestID: message.requestID,
+            featureID: featureID,
+            context: expectedContext
+        )
+    }
+
+    /// Runs the transport for a reservation created by ``beginOutgoingMessage``.
+    ///
+    /// A confirmed receipt is recorded without waiting for any follow-up
+    /// refresh; a follow-up poll only retires the local row when the
+    /// authoritative conversation includes it. Returns the resulting state, or
+    /// nil when the reservation no longer belongs to this store lifecycle.
+    @discardableResult
+    func completeOutgoingMessage(
+        _ handle: FirstMateOutgoingMessage.Handle
+    ) async -> FirstMateOutgoingMessage.State? {
+        await transportOutgoingMessage(handle, isRetry: false)
+    }
+
+    /// Explicitly retries a failed or unconfirmed reservation with its
+    /// original payload, request identity, and frozen lead context. Nothing
+    /// retries automatically, and an in-flight or accepted submission is
+    /// never resent.
+    @discardableResult
+    func retryOutgoingMessage(
+        _ handle: FirstMateOutgoingMessage.Handle
+    ) async -> FirstMateOutgoingMessage.State? {
+        await transportOutgoingMessage(handle, isRetry: true)
+    }
+
+    /// Explicitly abandons a failed submission without resending it, returning
+    /// its frozen composer material so a caller can restore untouched content.
+    /// Returns nil when the reservation is unknown or not a failure.
+    @discardableResult
+    func discardOutgoingMessage(
+        _ handle: FirstMateOutgoingMessage.Handle
+    ) -> FirstMateOutgoingMessage.Submission? {
+        guard isCurrentLifecycle(handle.context),
+              var entries = outgoingMessages[handle.featureID],
+              let index = entries.firstIndex(where: { $0.id == handle.outgoingID && $0.requestID == handle.requestID }),
+              entries[index].state.isRetryable else { return nil }
+        let submission = entries[index].submission
+        entries.remove(at: index)
+        outgoingMessages[handle.featureID] = entries.isEmpty ? nil : entries
+        return submission
+    }
+
+    /// This feature's outgoing submissions, in submission order.
+    func outgoingMessages(for featureID: String) -> [FirstMateOutgoingMessage] {
+        outgoingMessages[featureID] ?? []
+    }
+
+    /// One exact reservation, or nil when its store lifecycle has moved on.
+    func outgoingMessage(_ handle: FirstMateOutgoingMessage.Handle) -> FirstMateOutgoingMessage? {
+        guard isCurrentLifecycle(handle.context) else { return nil }
+        return outgoingMessages[handle.featureID]?.first {
+            $0.id == handle.outgoingID && $0.requestID == handle.requestID
+        }
+    }
+
+    /// The newest red send error for this feature, from a definite rejection
+    /// or an unconfirmed transport result. It stays separate from ``error``,
+    /// which carries refresh and other operation failures, so a successful
+    /// poll can never erase an unresolved send error.
+    func sendFailure(for featureID: String) -> FirstMateOutgoingMessage? {
+        outgoingMessages[featureID]?.last { $0.state.isFailure }
+    }
+
+    /// True while this exact feature has a transport request in flight.
+    func isSubmitting(featureID: String) -> Bool {
+        outgoingMessages[featureID]?.contains { $0.state.isPending } ?? false
+    }
+
+    /// True while a submission for this feature is still awaiting its
+    /// authoritative row. Submission-related working feedback belongs after
+    /// the local row and stops on a failure.
+    func isAwaitingSendResolution(featureID: String) -> Bool {
+        guard let entries = outgoingMessages[featureID], !entries.isEmpty else { return false }
+        let messages = (snapshots[featureID]?.messages ?? []).filter(\.isConversation)
+        let matches = FirstMateOutgoingMessage.provisionalMatches(outgoing: entries, messages: messages)
+        return entries.contains { entry in
+            (entry.state.isPending || entry.state.isAcceptedAwaitingSnapshot)
+                && !isOutgoingResolved(entry, in: messages, matches: matches)
+        }
+    }
+
+    /// The conversation rows to show for one snapshot: the authoritative
+    /// conversation plus honest local rows for submissions it has not
+    /// reflected yet. Local rows are appended last, so working feedback that
+    /// follows the transcript can never appear ahead of them.
+    func conversationMessages(for snapshot: FirstMateSnapshot) -> [FirstMateMessage] {
+        var messages = snapshot.messages.filter(\.isConversation)
+        guard let entries = outgoingMessages[snapshot.feature.id], !entries.isEmpty else { return messages }
+        let matches = FirstMateOutgoingMessage.provisionalMatches(outgoing: entries, messages: messages)
+        for entry in entries where !isOutgoingResolved(entry, in: messages, matches: matches) {
+            messages.append(entry.localMessage)
+        }
+        return messages
+    }
+
+    /// The same projection grouped into conversation turns.
+    func conversationEntries(for snapshot: FirstMateSnapshot) -> [FirstMateConversationEntry] {
+        FirstMateConversationEntry.make(messages: conversationMessages(for: snapshot))
+    }
+
+    /// The newest authoritative conversation message ID, for read markers and
+    /// feedback. Local presentation IDs never appear here.
+    func newestServerMessageID(for snapshot: FirstMateSnapshot) -> String? {
+        snapshot.messages.last { $0.isConversation }?.id
+    }
+
+    /// Refreshes one exact feature in the captured lifecycle. It never changes
+    /// the selection and never clears a send failure: a failed poll only
+    /// records the ordinary refresh error.
+    func refreshFeature(_ context: OperationContext) async {
+        guard !isDemo, isCurrentLifecycle(context), let featureID = context.featureID, let client else { return }
+        do {
+            let value = try await client.fetchFirstMateFeature(featureID, journalEventsOnly: journalEventSnapshotsSupported)
+            guard isCurrentLifecycle(context), value.ok, value.feature.id == featureID else { return }
+            receive(value)
+            error = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            guard isCurrentLifecycle(context) else { return }
+            record(error)
+        }
+    }
+
+    private func isCurrentLifecycle(_ context: OperationContext) -> Bool {
+        context.generation == generation && context.lifecycleIdentity == lifecycleIdentity
+    }
+
+    private func transportOutgoingMessage(
+        _ handle: FirstMateOutgoingMessage.Handle,
+        isRetry: Bool
+    ) async -> FirstMateOutgoingMessage.State? {
+        guard isCurrentLifecycle(handle.context),
+              handle.context.featureID == handle.featureID,
+              var entries = outgoingMessages[handle.featureID],
+              let index = entries.firstIndex(where: { $0.id == handle.outgoingID && $0.requestID == handle.requestID }) else {
+            return nil
+        }
+        if isRetry {
+            guard entries[index].state.isRetryable else { return entries[index].state }
+            entries[index].state = .pending
+        } else {
+            // A second completion for the same reservation (or a completion
+            // for an already-finished one) must never send a duplicate.
+            guard entries[index].state.isPending else { return entries[index].state }
+        }
+        outgoingMessages[handle.featureID] = entries
+        let entry = entries[index]
+
+        if isDemo {
+            sendDemo(entry.text, featureID: handle.featureID)
+            return recordOutgoingAcceptance(handle, receipt: nil)
+        }
+        guard let client else {
+            return recordOutgoingFailure(
+                handle,
+                state: .failed(message: "Connect to send your direction.")
+            )
+        }
+        do {
+            let value: FirstMateSnapshot
+            if handle.featureID == leadFeatureID, let leadContext = entry.leadContext {
+                value = try await client.sendFirstMateMessage(
+                    featureID: handle.featureID,
+                    text: entry.text,
+                    requestID: entry.requestID,
+                    context: leadContext
+                )
+            } else {
+                value = try await client.sendFirstMateMessage(
+                    featureID: handle.featureID,
+                    text: entry.text,
+                    requestID: entry.requestID
+                )
+            }
+            guard isCurrentLifecycle(handle.context) else { return nil }
+            guard value.ok, value.feature.id == handle.featureID else {
+                return recordOutgoingFailure(handle, state: Self.outgoingFailureState(for: APIError.invalidResponse))
+            }
+            receive(value)
+            guard isCurrentLifecycle(handle.context) else { return nil }
+            return recordOutgoingAcceptance(handle, receipt: value.message)
+        } catch is CancellationError {
+            guard isCurrentLifecycle(handle.context) else { return nil }
+            return recordOutgoingFailure(handle, state: .deliveryUnconfirmed(
+                message: "Delivery could not be confirmed. Sending was interrupted."
+            ))
+        } catch {
+            guard isCurrentLifecycle(handle.context) else { return nil }
+            return recordOutgoingFailure(handle, state: Self.outgoingFailureState(for: error))
+        }
+    }
+
+    @discardableResult
+    private func recordOutgoingAcceptance(
+        _ handle: FirstMateOutgoingMessage.Handle,
+        receipt: FirstMateMessage?
+    ) -> FirstMateOutgoingMessage.State? {
+        guard isCurrentLifecycle(handle.context),
+              var entries = outgoingMessages[handle.featureID],
+              let index = entries.firstIndex(where: { $0.id == handle.outgoingID && $0.requestID == handle.requestID }) else {
+            return nil
+        }
+        let messageID = receipt.flatMap { $0.id.isEmpty ? nil : $0.id }
+        entries[index].state = .acceptedAwaitingSnapshot(messageID: messageID)
+        entries[index].acceptedStatus = FirstMateOutgoingMessage.advancingStatus(
+            entries[index].acceptedStatus,
+            to: receipt?.status
+        )
+        outgoingMessages[handle.featureID] = entries
+        // A poll may already have shown the accepted row while the receipt was
+        // delayed: keep its newer status instead of the receipt's older one.
+        reconcileOutgoingMessages(for: handle.featureID)
+        return outgoingMessages[handle.featureID]?[index].state
+    }
+
+    @discardableResult
+    private func recordOutgoingFailure(
+        _ handle: FirstMateOutgoingMessage.Handle,
+        state: FirstMateOutgoingMessage.State
+    ) -> FirstMateOutgoingMessage.State? {
+        guard isCurrentLifecycle(handle.context),
+              var entries = outgoingMessages[handle.featureID],
+              let index = entries.firstIndex(where: { $0.id == handle.outgoingID && $0.requestID == handle.requestID }) else {
+            return nil
+        }
+        entries[index].state = state
+        outgoingMessages[handle.featureID] = entries
+        return state
+    }
+
+    /// Conservative, display-only: a receipt identity or a one-to-one
+    /// provisional match records the canonical row's status so a later
+    /// receipt can never roll it back.
+    private func reconcileOutgoingMessages(for featureID: String) {
+        guard var entries = outgoingMessages[featureID], !entries.isEmpty,
+              let snapshot = snapshots[featureID] else { return }
+        let messages = snapshot.messages.filter(\.isConversation)
+        let matches = FirstMateOutgoingMessage.provisionalMatches(outgoing: entries, messages: messages)
+        var changed = false
+        for index in entries.indices {
+            let observedID = entries[index].acknowledgedMessageID ?? matches[entries[index].id]
+            guard let observedID, let message = messages.first(where: { $0.id == observedID }) else { continue }
+            let advanced = FirstMateOutgoingMessage.advancingStatus(entries[index].acceptedStatus, to: message.status)
+            if advanced != entries[index].acceptedStatus {
+                entries[index].acceptedStatus = advanced
+                changed = true
+            }
+        }
+        if changed { outgoingMessages[featureID] = entries }
+    }
+
+    private func isOutgoingResolved(
+        _ entry: FirstMateOutgoingMessage,
+        in messages: [FirstMateMessage],
+        matches: [String: String]
+    ) -> Bool {
+        if let messageID = entry.acknowledgedMessageID,
+           messages.contains(where: { $0.id == messageID }) { return true }
+        return matches[entry.id] != nil
+    }
+
+    /// A definite rejection keeps its ordinary error text; an uncertain
+    /// transport result explicitly says delivery was not confirmed. Only a
+    /// 4xx (or an unimplemented route) is treated as a rejection.
+    private static func outgoingFailureState(for error: Error) -> FirstMateOutgoingMessage.State {
+        if case let APIError.server(status, _) = error, status < 500 || status == 501 {
+            return .failed(message: error.localizedDescription)
+        }
+        return .deliveryUnconfirmed(message: "Delivery could not be confirmed. \(error.localizedDescription)")
     }
 
     func uploadAttachment(

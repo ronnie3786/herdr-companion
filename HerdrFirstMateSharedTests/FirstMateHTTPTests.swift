@@ -41,6 +41,38 @@ struct FirstMateHTTPTests {
         #expect(bodies[3] == ["action": "archive", "reason": "duplicate", "request_id": "archive-101"])
     }
 
+    @Test("Send receipts decode the accepted message and keep older envelopes compatible")
+    func acceptedMessageReceipt() async throws {
+        let (client, session) = try makeClient()
+        defer { session.invalidateAndCancel() }
+        let receipt = try await client.sendFirstMateMessage(
+            featureID: "feature:123",
+            text: "Queue this synthetic direction",
+            requestID: "direction-receipt"
+        )
+        #expect(receipt.ok)
+        #expect(receipt.message?.id == "fmm_receipt_1")
+        #expect(receipt.message?.role == "user")
+        #expect(receipt.message?.text == "Queue this synthetic direction")
+        #expect(receipt.message?.status == "queued")
+        #expect(!receipt.hasDetails, "A receipt is not a full snapshot")
+        #expect(receipt.messages.isEmpty)
+        let request = try #require(FirstMateURLProtocol.recorder.requests().last)
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.path == "/api/v1/first-mate/features/feature:123/messages")
+
+        let (olderClient, olderSession) = try makeClient(omitsAcceptedMessage: true)
+        defer { olderSession.invalidateAndCancel() }
+        let older = try await olderClient.sendFirstMateMessage(
+            featureID: "feature:123",
+            text: "Queue this synthetic direction",
+            requestID: "direction-older"
+        )
+        #expect(older.ok)
+        #expect(older.message == nil)
+        #expect(!older.hasDetails)
+    }
+
     @Test("Model settings use the authenticated host and independent settings revision")
     func modelSettings() async throws {
         let (client, session) = try makeClient()
@@ -260,8 +292,8 @@ struct FirstMateHTTPTests {
         #expect(!store.isDemo)
     }
 
-    private func makeClient(status: Int = 200) throws -> (HerdrAPIClient, URLSession) {
-        FirstMateURLProtocol.recorder.reset(status: status)
+    private func makeClient(status: Int = 200, omitsAcceptedMessage: Bool = false) throws -> (HerdrAPIClient, URLSession) {
+        FirstMateURLProtocol.recorder.reset(status: status, omitsAcceptedMessage: omitsAcceptedMessage)
         let configuration = try #require(ServerConfiguration(urlString: "http://localhost:9092", token: "first-mate-test-token"))
         let sessionConfiguration = URLSessionConfiguration.ephemeral
         sessionConfiguration.protocolClasses = [FirstMateURLProtocol.self]
@@ -315,6 +347,30 @@ private final class FirstMateURLProtocol: URLProtocol {
                 data = try JSONSerialization.data(withJSONObject: object)
             } else if url.path == "/api/v1/first-mate/models" {
                 data = Data(#"{"ok":true,"models":[{"id":"synthetic/reasoner","name":"Reasoner","provider":"synthetic","reasoning":true}],"default_model":"synthetic/default","thinking_levels":["off","high"]}"#.utf8)
+            } else if url.path.hasSuffix("/messages"), request.httpMethod == "POST" {
+                // The companion's 202 receipt: the feature plus the accepted
+                // message and no conversation arrays. Older companions omit
+                // the singular message entirely.
+                let feature = FirstMateDemo.features(step: 0)[0].feature
+                var object: [String: Any] = [
+                    "ok": true,
+                    "feature": try JSONSerialization.jsonObject(with: JSONEncoder().encode(feature)),
+                ]
+                if !Self.recorder.omitsAcceptedMessage {
+                    let body = captured.httpBody.flatMap {
+                        try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+                    } ?? [:]
+                    let accepted = FirstMateMessage(
+                        id: "fmm_receipt_1",
+                        featureID: feature.id,
+                        role: "user",
+                        text: body["text"] as? String ?? "",
+                        status: "queued",
+                        createdAt: "2030-01-01T12:00:00Z"
+                    )
+                    object["message"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(accepted))
+                }
+                data = try JSONSerialization.data(withJSONObject: object)
             } else if url.path.hasSuffix("/attachments") {
                 data = Data(#"{"ok":true,"attachment":{"id":"attachment-1","filename":"first-mate-http-synthetic.txt","originalFilename":"first-mate-http-synthetic.txt","contentType":"text/plain","size":20,"path":"first-mate:feature:123/attachment-1","workspaceId":"first-mate:feature:123","createdAt":"2030-01-01T12:00:00Z"}}"#.utf8)
             } else if url.path.contains("/sessions/") {
@@ -340,7 +396,15 @@ private final class FirstMateRequestRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var recorded: [URLRequest] = []
     private var status = 200
-    func reset(status: Int) { lock.withLock { recorded = []; self.status = status } }
+    private var omits = false
+    var omitsAcceptedMessage: Bool { lock.withLock { omits } }
+    func reset(status: Int, omitsAcceptedMessage: Bool = false) {
+        lock.withLock {
+            recorded = []
+            self.status = status
+            omits = omitsAcceptedMessage
+        }
+    }
     func record(_ request: URLRequest) -> Int { lock.withLock { recorded.append(request); return status } }
     func requests() -> [URLRequest] { lock.withLock { recorded } }
 }

@@ -554,7 +554,7 @@ struct PRReviewDiffView: View {
                         Text(headerSummary(file)).herdrFont(.caption).foregroundStyle(HerdrTheme.mist)
                         if compact {
                             Button("Impact details", systemImage: "info.circle") { showingImpactDetails = true }
-                                .labelStyle(.iconOnly).buttonStyle(.plain)
+                                .labelStyle(.iconOnly).buttonStyle(.herdrPlain)
                                 .popover(isPresented: $showingImpactDetails) {
                                     VStack(alignment: .leading, spacing: 8) {
                                         Text(file.impactExplanation)

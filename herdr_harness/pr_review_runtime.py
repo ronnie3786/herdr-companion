@@ -157,6 +157,8 @@ class PRReviewRuntime:
         self._last_heavy_scan = 0.0
         self._review_status_thread: threading.Thread | None = None
         self._last_review_status_refresh = 0.0
+        from .pr_review_guide import ReviewGuideService
+        self.guide = ReviewGuideService(self)
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -588,10 +590,10 @@ class PRReviewRuntime:
         args.append(prompt)
         return args
 
-    def _snapshot_outputs(self, worktree: Path, outputs: list[str]) -> list[str]:
+    def _snapshot_outputs(self, worktree: Path, outputs: list[str]) -> dict[str, str]:
         result = self._run(["git", "-C", str(worktree), "ls-files", "--others", "--exclude-standard"], cwd=worktree, kind="git")
         candidates = [line for line in (result.stdout or "").splitlines() if line]
-        return [path for path in candidates if self._matches_output(path, outputs)]
+        return {path: self._file_hash(worktree / path) for path in candidates if self._matches_output(path, outputs) and (worktree / path).is_file()}
 
     @staticmethod
     def _matches_output(path: str, patterns: list[str]) -> bool:
@@ -604,6 +606,19 @@ class PRReviewRuntime:
             self._launch_existing_run(review_id, run["id"])
         return self.store.run(review_id, run["id"])
 
+    def _observed_head(self, worktree: Path) -> str | None:
+        try:
+            value = str(self._run(["git", "-C", str(worktree), "rev-parse", "HEAD"], kind="git").stdout or "").strip()
+            return value if re.fullmatch(r"[a-fA-F0-9]{40,64}", value) else None
+        except (OSError, PRReviewError):
+            return None
+
+    def _observed_clean(self, worktree: Path) -> bool | None:
+        try:
+            return not str(self._run(["git", "-C", str(worktree), "status", "--porcelain", "--untracked-files=no"], kind="git").stdout or "").strip()
+        except (OSError, PRReviewError):
+            return None
+
     def _launch_existing_run(self, review_id: str, run_id: str) -> None:
         review = self.store.get_review(review_id, True)
         run = self.store.run(review_id, run_id)
@@ -611,6 +626,7 @@ class PRReviewRuntime:
             return
         skill = self.store.skill(run["skill_id"])
         worktree = Path(str(review.get("checkout_path") or self._review_worktree(review_id)))
+        self.store.record_run_revision(run_id, base_sha=review.get("base_sha"), head_sha=review.get("head_sha"), start_head=self._observed_head(worktree), start_clean=self._observed_clean(worktree))
         outputs = list(skill.get("outputs") or [])
         snapshot = self._snapshot_outputs(worktree, outputs)
         run_dir = self._review_dir(review_id) / "runs" / run_id
@@ -682,7 +698,8 @@ class PRReviewRuntime:
                 result = self.runner(shlex.split(command), stdout=log, stderr=subprocess.STDOUT, text=True, timeout=600, cwd=str(worktree), env=self._child_environment())
             state = "finished" if result.returncode == 0 else "failed"
             self.store.update_run(review_id, run_id, state=state, finished_at=_now(), error=None if state == "finished" else "Utility command failed")
-            self._register_output_documents(review_id, run_id)
+            self.store.record_run_revision(run_id, finish_head=self._observed_head(worktree), finish_clean=self._observed_clean(worktree))
+            self._register_output_documents(review_id, run_id, finalized=state == "finished")
             self.sync_viewed(review_id, f"utility-sync:{run_id}")
         except (OSError, subprocess.TimeoutExpired, PRReviewError) as exc:
             self.store.update_run(review_id, run_id, state="failed", finished_at=_now(), error=_trim_error(exc, "Utility command failed"))
@@ -708,24 +725,26 @@ class PRReviewRuntime:
     def _safe_name(self, value: str) -> str:
         return re.sub(r"[^A-Za-z0-9._-]", "_", Path(value).name)[:160] or "document"
 
-    def _register_output_documents(self, review_id: str, run_id: str) -> bool:
+    def _register_output_documents(self, review_id: str, run_id: str, *, finalized: bool = False) -> bool:
         review = self.store.get_review(review_id, True)
         run = self.store.run(review_id, run_id)
         skill = self.store.skill(run["skill_id"])
         worktree = Path(str(review.get("checkout_path") or self._review_worktree(review_id)))
         try:
-            before = set(json.loads(run.get("output_snapshot_json") or "[]"))
+            before = json.loads(run.get("output_snapshot_json") or "[]")
         except json.JSONDecodeError:
             before = set()
         changed = False
         for candidate in worktree.rglob("*"):
-            if not candidate.is_file() or ".git" in candidate.parts or "node_modules" in candidate.parts:
+            if candidate.is_symlink() or not candidate.is_file() or ".git" in candidate.parts or "node_modules" in candidate.parts:
                 continue
             try:
                 relative = candidate.relative_to(worktree).as_posix()
             except ValueError:
                 continue
-            if relative in before or not self._matches_output(relative, list(skill.get("outputs") or [])):
+            if not self._matches_output(relative, list(skill.get("outputs") or [])):
+                continue
+            if relative in before and (not isinstance(before, dict) or before[relative] == self._file_hash(candidate)):
                 continue
             # ``git ls-files`` returns a nonzero status for untracked files; run it
             # directly without translating that expected status to a PRReviewError.
@@ -736,7 +755,9 @@ class PRReviewRuntime:
             if byte_size > MAX_DOCUMENT_BYTES:
                 continue
             digest = self._file_hash(candidate)
-            if self.store.document_for_hash(review_id, digest) is not None:
+            existing = self.store.document_for_hash(review_id, digest)
+            if existing is not None:
+                self.store.associate_document(review_id, existing["id"], run_id, "shared_output_scan" if finalized else "partial_shared_output_scan")
                 continue
             docs_dir = self._review_dir(review_id) / "documents"
             docs_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -746,6 +767,7 @@ class PRReviewRuntime:
             os.chmod(destination, 0o600)
             kind, media_type = self._document_kind(candidate.name)
             document = self.store.add_document(review_id, {"id": document_id, "run_id": run_id, "kind": kind, "title": candidate.name, "media_type": media_type, "filename": candidate.name, "stored_path": str(destination), "byte_size": byte_size, "content_hash": digest, "origin": "skill", "origin_path": relative})
+            self.store.associate_document(review_id, document["id"], run_id, "shared_output_scan" if finalized else "partial_shared_output_scan")
             if document["id"] == document_id:
                 changed = True
         return changed
@@ -806,7 +828,10 @@ class PRReviewRuntime:
         run = self.store.run(review_id, run_id)
         if run["state"] not in {"queued", "running"}:
             raise PRReviewError("Run is not running", code="run_not_running")
-        self._register_output_documents(review_id, run_id)
+        review = self.store.get_review(review_id, True)
+        worktree = Path(str(review.get("checkout_path") or self._review_worktree(review_id)))
+        self.store.record_run_revision(run_id, finish_head=self._observed_head(worktree), finish_clean=self._observed_clean(worktree))
+        self._register_output_documents(review_id, run_id, finalized=state == "finished")
         result = self.store.update_run(review_id, run_id, state=state, note=note, finished_at=_now())
         self.store.add_event(review_id, "run.finished", "Skill run finished", {"run_id": run_id, "state": state})
         self._changed(review_id)
@@ -837,23 +862,11 @@ class PRReviewRuntime:
         return {"path": path, "side": side, **line_window(text, start, end)}
 
     def findings_for_path(self, review_id: str, path: str, limit: int = 8192) -> dict[str, Any]:
-        needles = {path.casefold(), Path(path).name.casefold()}
-        blocks: list[str] = []
-        document_ids: list[str] = []
-        for document in self.store.documents(review_id):
-            if document["kind"] not in {"markdown", "html"} or not document["downloadable"]:
-                continue
-            if int(document.get("byte_size") or 0) > MAX_FINDINGS_DOCUMENT_BYTES:
-                continue
-            with self.open_document(review_id, document["id"]) as content:
-                text = content.handle.read(MAX_FINDINGS_DOCUMENT_BYTES).decode("utf-8", "ignore")
-            if document["kind"] == "html":
-                text = re.sub(r"<[^>]+>", " ", html.unescape(text))
-            matching = [block.strip() for block in re.split(r"\n\s*\n|\n(?=[*-]\s)|\n(?=\|)", text) if any(needle in block.casefold() for needle in needles)]
-            if matching:
-                blocks.append(f"## {document['title']}\n" + "\n".join(matching))
-                document_ids.append(document["id"])
-        return {"path": path, "text": "\n\n".join(blocks)[:limit], "document_ids": document_ids}
+        review = self.store.get_review(review_id, True)
+        sources, _ = self.guide.context.sources(review, path)
+        active = [source for source in sources if source["disposition"] != "dismissed"]
+        text = "\n\n".join(f"## {source['title']} ({source['reviewer']}; {source['freshness']} revision)\n{source['excerpt']}" for source in active)
+        return {"path": path, "text": text[:limit], "document_ids": list(dict.fromkeys(source["document_id"] for source in active))}
 
     def _save_document(self, review_id: str, filename: str, data: bytes, media_type: str | None, title: str, origin: str, request_id: str, *, origin_path: str | None = None) -> dict[str, Any]:
         if not data or len(data) > MAX_DOCUMENT_BYTES:

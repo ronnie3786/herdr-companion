@@ -4,6 +4,7 @@ import type { SelectedLineRange } from "@pierre/diffs";
 import { SharedDiffRenderer } from "./components/Git/SharedDiffRenderer";
 import { selectionAskContext } from "./components/Git/selectionAsk";
 import "./nativeDiffRenderer.css";
+import { NativeGuideAnnotations, type GuideFrame, type GuidePreparation } from "./nativeGuideAnnotations";
 
 interface NativeDiffPayload {
   identity: string;
@@ -57,6 +58,10 @@ declare global {
       scrollToLine(request: ScrollRequest): void;
       reportVisibleLines(): void;
       setCommentingEnabled(enabled: boolean): void;
+      prepareGuide(request: GuidePreparation): void;
+      guideFrame(frame: GuideFrame): void;
+      clearGuide(): void;
+      setGuideEnabled(enabled: boolean): void;
     };
   }
 }
@@ -76,6 +81,8 @@ function diffHost() { return document.querySelector("diffs-container"); }
 function renderedLines() {
   return Array.from(diffHost()?.shadowRoot?.querySelectorAll<HTMLElement>("[data-line]") ?? []);
 }
+const guideAnnotations = new NativeGuideAnnotations(() => currentPayload, renderedLines);
+
 function reportVisibleLines() {
   if (currentPayload === null) return;
   const lines = renderedLines().filter((line) => {
@@ -110,7 +117,7 @@ function App() {
 
   useEffect(() => {
     updatePayload = (next) => {
-      if (currentPayload?.identity !== next.identity) pendingScroll = null;
+      if (currentPayload?.identity !== next.identity) { pendingScroll = null; guideAnnotations.reset(); }
       currentPayload = next;
       setSelectionTarget(null);
       setPayload(next);
@@ -140,7 +147,7 @@ function App() {
     // This callback runs after real renderer output, including async grammar
     // loading, rather than treating an arbitrary timer as completion.
     post({ kind: "ready", identity: payload.identity });
-    requestAnimationFrame(() => { applyPendingScroll(); reportVisibleLines(); });
+    requestAnimationFrame(() => { applyPendingScroll(); reportVisibleLines(); guideAnnotations.refresh(); });
   }, [payload]);
 
   useEffect(() => {
@@ -277,6 +284,13 @@ window.herdrNativeDiff = {
   },
   scrollToLine(request) { pendingScroll = request; applyPendingScroll(); },
   reportVisibleLines,
+  prepareGuide(request) {
+    const available = guideAnnotations.prepare(request);
+    post({kind: "guideReady", identity: request.identity, generation: request.generation, available});
+  },
+  guideFrame(frame) { guideAnnotations.update(frame); },
+  clearGuide() { guideAnnotations.reset(); },
+  setGuideEnabled(enabled) { guideAnnotations.setEnabled(enabled); },
   setCommentingEnabled(enabled) { updateCommenting?.(enabled); },
 };
 createRoot(document.getElementById("root")!).render(<App />);

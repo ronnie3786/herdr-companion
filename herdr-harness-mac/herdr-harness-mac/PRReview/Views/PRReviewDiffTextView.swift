@@ -7,6 +7,10 @@ import WebKit
 /// First Mate Git. The document and every syntax grammar ship in the app, so an
 /// already-loaded PR remains readable without the companion or network.
 final class PRReviewDiffTextView: WKWebView, WKScriptMessageHandler, WKNavigationDelegate, NSPopoverDelegate {
+    weak var guideAnnotations: PRReviewGuideAnnotationChannel?
+    private var guideFrameInFlight = false
+    private var queuedGuideFrame: PRReviewGuideAnnotationFrame?
+    private var guideEpoch = 0
     var askAI: ((PRReviewSelection, NSView, CGRect) -> Void)?
     var addComment: ((PRReviewSelection) -> Void)? {
         didSet { syncCommentingAvailability() }
@@ -51,6 +55,7 @@ final class PRReviewDiffTextView: WKWebView, WKScriptMessageHandler, WKNavigatio
             visibleLines = nil
             renderedIdentity = nil
             pendingScroll = nil
+            clearGuideAnnotations()
         }
         pendingPayload = payload
         renderedPlainText = payload.plainText
@@ -111,6 +116,12 @@ final class PRReviewDiffTextView: WKWebView, WKScriptMessageHandler, WKNavigatio
         case "ready":
             renderedIdentity = body["identity"] as? String
             sendPendingScroll()
+            guideAnnotations?.rendered()
+        case "guideReady":
+            if let identity = body["identity"] as? String, let generation = body["generation"] as? String,
+               let available = body["available"] as? Bool {
+                guideAnnotations?.ready(identity: identity, generation: generation, available: available)
+            }
         case "visibleLines":
             receiveVisibleLines(body)
         case "ask":
@@ -125,6 +136,56 @@ final class PRReviewDiffTextView: WKWebView, WKScriptMessageHandler, WKNavigatio
     func popoverDidClose(_ notification: Notification) {
         questionDraftChanged?(false)
         askPopover = nil
+    }
+
+    var renderedGuidePath: String? { renderedIdentity == pendingPayload?.identity ? pendingPayload?.path : nil }
+
+    func prepareGuideAnnotations(targets: [PRReviewGuideTarget], generation: String) {
+        guard let identity = renderedIdentity,
+              let data = try? JSONEncoder().encode(targets),
+              let raw = try? JSONSerialization.jsonObject(with: data) else { return }
+        callAsyncJavaScript("window.herdrNativeDiff?.prepareGuide(request)", arguments: [
+            "request": ["identity": identity, "generation": generation, "targets": raw],
+        ], in: nil, in: .page) { _ in }
+    }
+
+    func setGuideAnnotationsEnabled(_ enabled: Bool) {
+        guard isRendererReady else { return }
+        callAsyncJavaScript("window.herdrNativeDiff?.setGuideEnabled(enabled)", arguments: ["enabled": enabled], in: nil, in: .page) { _ in }
+    }
+
+    func clearGuideAnnotations() {
+        guideEpoch += 1
+        queuedGuideFrame = nil
+        // An outstanding sample may finish, but it cannot enqueue another old sample.
+        if isRendererReady {
+            callAsyncJavaScript("window.herdrNativeDiff?.clearGuide()", arguments: [:], in: nil, in: .page) { _ in }
+        }
+    }
+
+    func sendGuideFrame(_ frame: PRReviewGuideAnnotationFrame) {
+        guard isRendererReady, let identity = renderedIdentity else { return }
+        if guideFrameInFlight { queuedGuideFrame = frame; return }
+        guard let data = try? JSONEncoder().encode(frame),
+              var payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
+        payload["identity"] = identity
+        guideFrameInFlight = true
+        let epoch = guideEpoch
+        callAsyncJavaScript("window.herdrNativeDiff?.guideFrame(frame)", arguments: ["frame": payload], in: nil, in: .page) { [weak self] _ in
+            guard let self else { return }
+            self.guideFrameInFlight = false
+            guard epoch == self.guideEpoch else {
+                if let next = self.queuedGuideFrame {
+                    self.queuedGuideFrame = nil
+                    self.sendGuideFrame(next)
+                }
+                return
+            }
+            if let next = self.queuedGuideFrame {
+                self.queuedGuideFrame = nil
+                self.sendGuideFrame(next)
+            }
+        }
     }
 
     private static let bridgeName = "herdrDiffBridge"
@@ -268,6 +329,7 @@ struct PRReviewDiffText: NSViewRepresentable {
     let file: PRReviewDiffFile
     var baseSHA = ""
     var headSHA = ""
+    var guideAnnotations: PRReviewGuideAnnotationChannel?
     @Environment(\.herdrFontScale) private var fontScale
     var highlight: (start: Int, end: Int, side: PRReviewSide)?
     var scrollRequest: (path: String, line: Int, side: PRReviewSide, token: Int)?
@@ -285,6 +347,8 @@ struct PRReviewDiffText: NSViewRepresentable {
     }
 
     func updateNSView(_ view: PRReviewDiffTextView, context: Context) {
+        view.guideAnnotations = guideAnnotations
+        guideAnnotations?.install(view)
         view.askAI = askAI
         view.addComment = addComment
         view.questionDraftChanged = questionDraftChanged

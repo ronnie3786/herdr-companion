@@ -994,6 +994,8 @@ class AgentRunManager:
                         code="issue_report_draft_continuation_forbidden",
                         status=409,
                     )
+                if root.get("profile") == "pr-review-guide-v1":
+                    raise AgentRunError("Use the guide endpoint to ask a fresh revision-bound question.", code="guide_continuation_forbidden", status=409)
                 if root.get("profile") == SKIM_PROFILE:
                     raise AgentRunError(
                         "Skims are one-shot and cannot be continued.",
@@ -1286,6 +1288,7 @@ class AgentRunManager:
             if profile in {
                 "contextual-question-v1",
                 "pr-review-question-v1",
+                "pr-review-guide-v1",
                 SMART_RENAME_PROFILE,
                 ISSUE_REPORT_DRAFT_PROFILE,
                 SKIM_PROFILE,
@@ -1311,7 +1314,7 @@ class AgentRunManager:
                 tools = "read,bash,grep,find,ls"
                 if extension_path is not None:
                     tools += ",present_result"
-            if profile == "pr-review-question-v1":
+            if profile in {"pr-review-question-v1", "pr-review-guide-v1"}:
                 tools = "read,grep,find,ls"
             system_prompt = run.get("systemPrompt")
             if isinstance(system_prompt, str) and system_prompt.strip():
@@ -1325,6 +1328,10 @@ class AgentRunManager:
             elif profile == "pr-review-question-v1":
                 from .assistant import PR_REVIEW_CHARTER
                 charter = PR_REVIEW_CHARTER
+                extension_path = None
+            elif profile == "pr-review-guide-v1":
+                from .pr_review_guide import CHARTER
+                charter = CHARTER
                 extension_path = None
             elif profile == "response-brief-v1":
                 from .response_briefs import charter_for
@@ -1844,6 +1851,8 @@ class AgentRunManager:
                     code="issue_report_draft_promotion_forbidden",
                     status=409,
                 )
+            if run.get("profile") == "pr-review-guide-v1":
+                raise AgentRunError("Walkthrough runs cannot be promoted.", code="guide_promotion_forbidden", status=409)
             if run.get("profile") == SKIM_PROFILE:
                 raise AgentRunError(
                     "Skims cannot be promoted.",

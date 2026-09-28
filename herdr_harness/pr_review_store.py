@@ -63,6 +63,8 @@ CREATE TABLE IF NOT EXISTS prr_documents(id TEXT PRIMARY KEY,review_id TEXT,run_
 CREATE TABLE IF NOT EXISTS prr_events(sequence INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE,review_id TEXT,type TEXT,summary TEXT,payload_json TEXT,created_at TEXT);
 CREATE TABLE IF NOT EXISTS prr_receipts(scope TEXT,request_id TEXT,payload_hash TEXT,result_json TEXT,created_at TEXT,PRIMARY KEY(scope,request_id));
 CREATE TABLE IF NOT EXISTS prr_viewer_reviews(review_id TEXT PRIMARY KEY REFERENCES prr_reviews(id),summary_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS prr_run_revisions(run_id TEXT PRIMARY KEY,binding_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS prr_document_sources(review_id TEXT,document_id TEXT,run_id TEXT,provenance TEXT,PRIMARY KEY(document_id,run_id));
 CREATE INDEX IF NOT EXISTS prr_skill_runs_summary ON prr_skill_runs(review_id,skill_id,created_at DESC);
 """
 
@@ -384,6 +386,27 @@ class PRReviewStore:
             else:
                 self._db.execute("INSERT INTO prr_skills VALUES(?,?,?,?,?,?,?,?,?,?,?)", (skill_id, _text(body.get("title"), "title", 300), kind, "agent", body.get("prompt_template") or f"/{skill_id} {{number}}", command, _json(outputs), description, 0, 1, _now()))
             return self._save("add_skill", request_id, dict(body), self.skill(skill_id))
+
+    def record_run_revision(self, run_id: str, **values: Any) -> None:
+        with self._transaction():
+            binding = self.run_revision(run_id)
+            binding.update(values)
+            self._db.execute("INSERT INTO prr_run_revisions VALUES(?,?) ON CONFLICT(run_id) DO UPDATE SET binding_json=excluded.binding_json", (run_id, _json(binding)))
+
+    def run_revision(self, run_id: str) -> dict[str, Any]:
+        with self._lock:
+            row = self._db.execute("SELECT binding_json FROM prr_run_revisions WHERE run_id=?", (run_id,)).fetchone()
+            return json.loads(row[0]) if row else {}
+
+    def associate_document(self, review_id: str, document_id: str, run_id: str, provenance: str = "shared_output_scan") -> None:
+        with self._transaction():
+            self.document(review_id, document_id)
+            self.run(review_id, run_id)
+            self._db.execute("INSERT INTO prr_document_sources VALUES(?,?,?,?) ON CONFLICT(document_id,run_id) DO UPDATE SET provenance=CASE WHEN excluded.provenance='shared_output_scan' THEN excluded.provenance ELSE prr_document_sources.provenance END", (review_id, document_id, run_id, provenance))
+
+    def document_sources(self, review_id: str, document_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            return [dict(row) for row in self._db.execute("SELECT run_id,provenance FROM prr_document_sources WHERE review_id=? AND document_id=? ORDER BY run_id", (review_id, document_id))]
 
     def document_for_hash(self, review_id: str, content_hash: str) -> dict[str, Any] | None:
         with self._lock:

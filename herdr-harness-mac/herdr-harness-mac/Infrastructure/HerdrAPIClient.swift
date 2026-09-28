@@ -177,7 +177,7 @@ private struct PRReviewEventsResponse: Decodable, Sendable {
     let events: [PRReviewEvent]
 }
 
-actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, AgentProfilesClient {
+actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, PRReviewGuideClient, AgentProfilesClient {
     /// Nonisolated so the model can bind refreshed topology to the endpoint
     /// that produced it without another actor hop.
     nonisolated let configuration: ServerConfiguration
@@ -439,6 +439,25 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, AgentPr
     func prReview(id: String) async throws -> PRReviewSnapshot { try await request(path: try prReviewPath(id: id)) }
     func refreshPRReview(id: String, requestID: String) async throws -> PRReviewSnapshot { try await request(path: try prReviewPath(id: id) + "/refresh", method: "POST", body: PRReviewRequestID(requestID: requestID)) }
     func archivePRReview(id: String, archived: Bool, requestID: String) async throws -> PRReviewSnapshot { try await request(path: try prReviewPath(id: id) + (archived ? "/archive" : "/unarchive"), method: "POST", body: PRReviewRequestID(requestID: requestID)) }
+    func startPRReviewGuide(reviewID: String, request body: PRReviewGuideRequest) async throws -> PRReviewGuide {
+        let result: PRReviewGuideResponse = try await request(path: try prReviewPath(id: reviewID) + "/guide", method: "POST", body: body)
+        return result.guide
+    }
+
+    func fetchPRReviewGuide(reviewID: String, guideID: String) async throws -> PRReviewGuide {
+        let result: PRReviewGuideResponse = try await request(path: try prReviewPath(id: reviewID) + "/guide/" + guideID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/?#%")))!)
+        return result.guide
+    }
+
+    func prReviewNarrationCapabilities() async throws -> PRReviewNarrationCapabilities {
+        try await request(path: "/api/v1/response-audio/captioned-capabilities")
+    }
+
+    func captionedPRReviewSpeech(text: String, voice: String, drawings: [PRReviewGuideDrawing]) async throws -> PRReviewNarrationManifest {
+        struct Body: Encodable, Sendable { var text: String; var voice: String; var cues: [PRReviewGuideDrawing] }
+        return try await request(path: "/api/v1/response-audio/captioned-speech", method: "POST", body: Body(text: text, voice: voice, cues: drawings))
+    }
+
     func prReviewDiff(id: String, path: String? = nil) async throws -> PRReviewDiff { try await request(path: try prReviewPath(id: id) + "/diff", query: path.map { [.init(name: "path", value: $0)] } ?? []) }
     func prReviewFileText(id: String, path: String, side: PRReviewSide, start: Int?, end: Int?) async throws -> PRReviewFileText { var q=[URLQueryItem(name:"path",value:path),.init(name:"side",value:side.rawValue)]; if let start { q.append(.init(name:"start",value:String(start))) }; if let end { q.append(.init(name:"end",value:String(end))) }; return try await request(path: try prReviewPath(id:id)+"/file",query:q) }
     func prReviewFindings(id: String, path: String) async throws -> PRReviewFindings { try await request(path: try prReviewPath(id:id)+"/findings",query:[.init(name:"path",value:path)]) }
@@ -1751,6 +1770,7 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, AgentPr
     }
 
     static func timeoutInterval(path: String, method: String) -> TimeInterval {
+        if path == "/api/v1/response-audio/captioned-speech" { return 180 }
         if path.hasPrefix("/api/v1/pr-reviews/") && path.hasSuffix("/content") { return 600 }
         if path.hasPrefix("/api/v1/pr-reviews/") && path.hasSuffix("/documents") && method == "POST" { return 90 }
         if path.hasPrefix("/api/v1/pr-reviews") { return 30 }

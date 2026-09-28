@@ -78,8 +78,12 @@ struct PRReviewContainerView: View {
         .accessibilityIdentifier("pr-review-container")
         .onAppear {
             comments.updateScope(from: store)
+            store.guide.configure(store: store)
             comments.configure(openURL: openURL)
         }
+        .onChange(of: guideScopeIdentity) { _, _ in store.guide.configure(store: store) }
+        .onDisappear { store.guide.pause() }
+        .onChange(of: store.selectedPath) { _, path in store.guide.observedFileNavigation(path) }
         .onChange(of: store.currentMachineID) { _, _ in comments.updateScope(from: store) }
         .onChange(of: store.selectedReviewID) { _, _ in comments.updateScope(from: store) }
         .sheet(isPresented: $store.isPresentingStartSheet, onDismiss: { setCreating(false) }) {
@@ -89,6 +93,10 @@ struct PRReviewContainerView: View {
                 setCreating(false)
             }
         }
+    }
+
+    private var guideScopeIdentity: String {
+        "\(store.currentMachineID ?? "")|\(store.selectedReviewID ?? "")|\(store.snapshot?.review.baseSHA ?? "")|\(store.snapshot?.review.headSHA ?? "")|\(store.guideConnectionGeneration)|\(store.capabilities?.capabilities.contains("pr-review-guide-v1") == true)"
     }
 
     private func header(_ review: PRReviewSummary) -> some View {
@@ -221,7 +229,21 @@ struct PRReviewContainerView: View {
                 questionHistory: documentHost?.prReviewQuestions,
                 openQuestion: { documentHost?.presentSavedPRReviewQuestion($0) },
                 openURL: openURL,
-                askAI: askAI,
+                askAI: { selection, view, rect in
+                    if store.guide.isAvailable {
+                        store.guide.beginQuestion(selection: selection)
+                        if selection.question?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false { store.guide.submitQuestion() }
+                    } else { askAI(selection, view, rect) }
+                },
+                showGuideSource: { source in
+                    guard let document = store.snapshot?.documents.first(where: { $0.id == source.documentID }) else { store.tab = .context; return }
+                    switch document.kind {
+                    case .markdown: PRReviewDocumentWindow.showMarkdown(document: document, store: store, host: documentHost)
+                    case .html: PRReviewDocumentWindow.showHTML(document: document, store: store, host: documentHost)
+                    default: store.tab = .context
+                    }
+                },
+                preferPrivateTranscription: documentHost?.preferPrivateTranscription ?? true,
                 questionDraftChanged: questionDraftChanged
             )
         case .context:

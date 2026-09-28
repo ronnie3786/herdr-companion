@@ -20,6 +20,7 @@ final class ResponseAudioPlayer: NSObject, AVAudioPlayerDelegate {
     @ObservationIgnored private var queuedAudio: [Data] = []
     @ObservationIgnored private var isPreparingMore = false
     @ObservationIgnored private var generation = 0
+    @ObservationIgnored private let speechOwner = UUID()
 
     var isVisible: Bool {
         hasPlayableResponse && capabilities.available && phase != .checking && phase != .unavailable
@@ -93,6 +94,7 @@ final class ResponseAudioPlayer: NSObject, AVAudioPlayerDelegate {
     }
 
     func stop() {
+        HerdrSpeechOwnership.shared.release(speechOwner)
         generation &+= 1
         renderTask?.cancel()
         renderTask = nil
@@ -119,6 +121,7 @@ final class ResponseAudioPlayer: NSObject, AVAudioPlayerDelegate {
         phase = .preparing(action)
         progressText = action == .tldr ? "Summarizing…" : "Preparing…"
         isPreparingMore = true
+        HerdrSpeechOwnership.shared.claim(speechOwner) { [weak self] in self?.stop() }
 
         renderTask = Task { [weak self] in
             do {
@@ -166,6 +169,7 @@ final class ResponseAudioPlayer: NSObject, AVAudioPlayerDelegate {
             if !isPreparingMore { finishPlayback() }
             return
         }
+        HerdrSpeechOwnership.shared.claim(speechOwner) { [weak self] in self?.stop() }
         try activateAudioSession()
         let next = queuedAudio.removeFirst()
         let player = try AVAudioPlayer(data: next)
@@ -179,6 +183,7 @@ final class ResponseAudioPlayer: NSObject, AVAudioPlayerDelegate {
     private func pause() {
         guard case let .playing(action) = phase, let player else { return }
         player.pause()
+        HerdrSpeechOwnership.shared.release(speechOwner)
         phase = .paused(action)
         progressText = nil
     }
@@ -187,6 +192,7 @@ final class ResponseAudioPlayer: NSObject, AVAudioPlayerDelegate {
         guard case let .paused(action) = phase else { return }
         do {
             if let player {
+                HerdrSpeechOwnership.shared.claim(speechOwner) { [weak self] in self?.stop() }
                 try activateAudioSession()
                 guard player.play() else { throw ResponseAudioPlaybackError.invalidAudio }
                 phase = .playing(action)
@@ -199,6 +205,7 @@ final class ResponseAudioPlayer: NSObject, AVAudioPlayerDelegate {
     }
 
     private func finishPlayback() {
+        HerdrSpeechOwnership.shared.release(speechOwner)
         player = nil
         queuedAudio.removeAll(keepingCapacity: false)
         progressText = nil

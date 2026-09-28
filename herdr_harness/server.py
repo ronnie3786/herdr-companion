@@ -456,6 +456,9 @@ def api_description() -> dict:
             first_mate_fleet.CAPABILITY,
             VERIFICATION_CAPABILITY,
             "pr-review-v1",
+            "pr-review-guide-v1",
+            "pr-review-context-v2",
+            "response-audio-captions-v1",
             "pi-session-context-v1",
             "agent-control-v1",
             "agent-profiles-v1",
@@ -486,6 +489,9 @@ def api_description() -> dict:
             "prReviews": "/api/v1/pr-reviews",
             "prReview": "/api/v1/pr-reviews/{reviewId}",
             "prReviewCapabilities": "/api/v1/pr-reviews/capabilities",
+            "prReviewContext": "/api/v1/pr-reviews/{reviewId}/context",
+            "prReviewGuide": "/api/v1/pr-reviews/{reviewId}/guide",
+            "prReviewGuideJob": "/api/v1/pr-reviews/{reviewId}/guide/{guideId}",
             "issueReports": "/api/v1/issue-reports",
             "issueReportCapabilities": "/api/v1/issue-reports/capabilities",
             "network": "/api/v1/network",
@@ -511,6 +517,8 @@ def api_description() -> dict:
             "responseAudioCapabilities": "/api/v1/response-audio/capabilities",
             "responseAudioPrepare": "/api/v1/response-audio/prepare",
             "responseAudioSpeech": "/api/v1/response-audio/speech",
+            "responseAudioCaptionedCapabilities": "/api/v1/response-audio/captioned-capabilities",
+            "responseAudioCaptionedSpeech": "/api/v1/response-audio/captioned-speech",
             "resultArtifacts": "/api/v1/result-artifacts",
             "agentProfiles": "/api/v1/agent-profiles",
             "notes": "/api/v1/notes",
@@ -1431,7 +1439,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             store = service.pr_review_store
             runtime = service.pr_review
             if method == "GET" and tail == ["capabilities"]:
-                return {"ok": True, "capabilities": ["pr-review-v1", "pr-review-dashboard-v1"], **runtime.capabilities(), "skills": store.skills()}
+                return {"ok": True, "capabilities": ["pr-review-v1", "pr-review-dashboard-v1", "pr-review-context-v2", "pr-review-guide-v1"], **runtime.capabilities(), "skills": store.skills()}
             if method == "POST" and tail == ["review-status", "refresh"]:
                 if set(body) != {"request_id"}:
                     raise HTTPValidationError("Review status refresh contains an unsupported field")
@@ -1483,6 +1491,12 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 if side not in {"before", "after"}:
                     raise HTTPValidationError("side is invalid")
                 return {"ok": True, **runtime.file_text(review_id, path, side, _query_int(query, "start", default=1, minimum=1, maximum=10**9), _query_int(query, "end", default=10**9, minimum=1, maximum=10**9))}
+            if rest == ["context"] and method == "POST":
+                return {"ok": True, "context": runtime.guide.context.create(review_id, body)}
+            if rest == ["guide"] and method == "POST":
+                return {"ok": True, "guide": runtime.guide.start(review_id, body)}, 202
+            if len(rest) == 2 and rest[0] == "guide" and method == "GET":
+                return {"ok": True, "guide": runtime.guide.get(review_id, _identifier(rest[1], "guide_id"))}
             if rest == ["findings"] and method == "GET":
                 return {"ok": True, **runtime.findings_for_path(review_id, _string((query.get("path") or [None])[0], "path", maximum=4096))}
             if rest == ["runs"] and method == "POST":
@@ -1964,6 +1978,12 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             ):
                 self._serve_result_artifact_content(tail[1])
                 return None
+            if method == "GET" and tail == ["response-audio", "captioned-capabilities"]:
+                return service.captioned_speech.capabilities()
+            if method == "POST" and tail == ["response-audio", "captioned-speech"]:
+                if set(body) - {"text", "voice", "cues"}:
+                    raise HTTPValidationError("Captioned speech contains an unsupported field")
+                return service.captioned_speech.synthesize(text=_string(body.get("text"), "text", maximum=12000), voice=body.get("voice"), cues=body.get("cues", []))
             if method == "GET" and tail == ["response-audio", "capabilities"]:
                 return service.response_audio_capabilities()
             if method == "GET" and tail == ["quick-voice"]:

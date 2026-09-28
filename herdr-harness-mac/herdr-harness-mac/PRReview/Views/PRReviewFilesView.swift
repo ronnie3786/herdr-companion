@@ -9,6 +9,8 @@ struct PRReviewFilesView: View {
     var openQuestion: (PRReviewQuestionHistory.Question) -> Void = { _ in }
     var openURL: (URL) -> Void = { _ in }
     var askAI: (PRReviewSelection, NSView, CGRect) -> Void = { _, _, _ in }
+    var showGuideSource: (PRReviewGuideSource) -> Void = { _ in }
+    var preferPrivateTranscription = true
     var questionDraftChanged: (Bool) -> Void = { _ in }
 
     var body: some View {
@@ -118,16 +120,31 @@ struct PRReviewFilesView: View {
                 maxHeight: .infinity,
                 alignment: .top
             )
-            PRReviewDiffView(
-                store: store,
-                comments: comments,
-                questionHistory: questionHistory,
-                openQuestion: openQuestion,
-                openURL: openURL,
-                askAI: askAI,
-                questionDraftChanged: questionDraftChanged
-            )
-                .frame(minWidth: PRReviewFilesLayout.minimumDiffWidth, maxWidth: .infinity, maxHeight: .infinity)
+            GeometryReader { geometry in
+                VStack(spacing: 0) {
+                    HStack(spacing: 0) {
+                        PRReviewDiffView(
+                            store: store,
+                            comments: comments,
+                            questionHistory: questionHistory,
+                            openQuestion: openQuestion,
+                            openURL: openURL,
+                            askAI: askAI,
+                            questionDraftChanged: questionDraftChanged
+                        )
+                        if store.guide.isExpanded && geometry.size.width >= 760 {
+                            PRReviewGuideDetails(session: store.guide, showSource: showGuideSource)
+                                .frame(width: 310)
+                        }
+                    }.frame(maxHeight: .infinity)
+                    if store.guide.isExpanded && geometry.size.width < 760 {
+                        PRReviewGuideDetails(session: store.guide, showSource: showGuideSource)
+                            .frame(height: min(280, geometry.size.height * 0.42))
+                    }
+                    PRReviewGuideDock(session: store.guide, preferPrivateTranscription: preferPrivateTranscription)
+                }
+            }
+            .frame(minWidth: PRReviewFilesLayout.minimumDiffWidth, maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -136,7 +153,7 @@ struct PRReviewFilesView: View {
         VStack(alignment: .leading, spacing: 8) {
             Picker("Order", selection: $store.viewMode) {
                 Text("GitHub order").tag(PRReviewViewMode.github)
-                Text("Guided").tag(PRReviewViewMode.guided)
+                Text("Suggested").tag(PRReviewViewMode.guided)
             }
             .pickerStyle(.segmented)
             .tint(HerdrTheme.controlAccent)
@@ -622,6 +639,7 @@ struct PRReviewDiffView: View {
             file: diffFile,
             baseSHA: currentDiff?.baseSHA ?? "",
             headSHA: currentDiff?.headSHA ?? "",
+            guideAnnotations: store.guide.annotations,
             highlight: highlight,
             scrollRequest: scrollRequest,
             askAI: askAI,

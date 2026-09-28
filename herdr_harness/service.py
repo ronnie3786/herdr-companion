@@ -174,6 +174,8 @@ class HerdrService:
             on_event=self._dispatch_pi_event,
         )
         self.response_audio = response_audio_service or response_audio.ResponseAudioService(self.environ)
+        from .captioned_speech import CaptionedSpeechService
+        self.captioned_speech = CaptionedSpeechService(self.response_audio)
         self.issue_reports = IssueReporter(self.environ)
         label_store = self.environ.get("HERDR_HARNESS_SESSION_LABEL_STORE_PATH")
         if not label_store and (production_environment or self.environ.get("HOME")):

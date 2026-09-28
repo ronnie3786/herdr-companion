@@ -32,6 +32,9 @@ struct PRReviewDeletedDisclosureScope: Equatable {
 @MainActor
 @Observable
 final class PRReviewStore {
+    let guide = PRReviewGuideSession()
+    var guideClient: (any PRReviewGuideClient)? { client as? any PRReviewGuideClient }
+    var guideConnectionGeneration: Int { generation }
     private var client: (any PRReviewClient)?
     private var generation = 0
     private var machineID: String?
@@ -235,6 +238,7 @@ final class PRReviewStore {
     /// install state, and a retained document window has nothing to retry
     /// through until the host returns and the window is re-activated.
     func invalidateConnection() {
+        guide.suspend()
         generation &+= 1
         client = nil
         isDemo = false
@@ -421,6 +425,12 @@ final class PRReviewStore {
     }
 
     func refreshSelected() async {
+        if isDemo, let selectedReviewID {
+            snapshot = PRReviewDemo.snapshot(for: selectedReviewID)
+            hasLoaded = true
+            error = nil
+            return
+        }
         guard let selectedReviewID,
               let client,
               !isDemo

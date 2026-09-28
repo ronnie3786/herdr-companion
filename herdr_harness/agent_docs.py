@@ -11,6 +11,7 @@ AWARENESS_MARKER = "<!-- herdr-companion-awareness:v1 -->"
 RESTRICTED_AGENT_PROFILES = frozenset({
     "contextual-question-v1",
     "pr-review-question-v1",
+    "pr-review-guide-v1",
     "response-brief-v1",
     "smart-rename-v1",
     "issue-report-draft-v1",

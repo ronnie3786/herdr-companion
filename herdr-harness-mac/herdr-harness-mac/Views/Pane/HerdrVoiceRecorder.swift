@@ -88,6 +88,7 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
     @ObservationIgnored nonisolated(unsafe) private var recordingTimer: Timer?
     private var playbackTimer: Timer?
     private var startGeneration = 0
+    @ObservationIgnored private let speechOwner = UUID()
     @ObservationIgnored private var notifiedCaptureGeneration = -1
 
     var isRecording: Bool { status == .recording }
@@ -136,6 +137,7 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
                 player.currentTime = 0
             }
             playbackTime = player.currentTime
+            HerdrSpeechOwnership.shared.claim(speechOwner) { [weak self] in self?.stopForBackground() }
             player.play()
             isPlaying = true
             startPlaybackTimer()
@@ -200,6 +202,7 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
         errorMessage = nil
         do {
             discardCurrentFile()
+            HerdrSpeechOwnership.shared.claim(speechOwner) { [weak self] in self?.stopForBackground() }
 
             let outputURL = VoiceRecordingPolicy.makeTemporaryURL()
             let settings: [String: Any] = [
@@ -247,6 +250,7 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
     }
 
     func stopRecording() {
+        HerdrSpeechOwnership.shared.release(speechOwner)
         let duration = recorder?.currentTime ?? elapsedTime
         recorder?.stop()
         recorder = nil
@@ -292,6 +296,7 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
     }
 
     private func cleanup(deleteFile: Bool) {
+        HerdrSpeechOwnership.shared.release(speechOwner)
         startGeneration += 1
         isRequestingPermission = false
         stopRecordingTimer()
@@ -312,6 +317,7 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
     }
 
     private func discardCurrentFile() {
+        HerdrSpeechOwnership.shared.release(speechOwner)
         startGeneration += 1
         isRequestingPermission = false
         stopRecordingTimer()
@@ -328,6 +334,7 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
     }
 
     private func pausePlayback() {
+        HerdrSpeechOwnership.shared.release(speechOwner)
         player?.pause()
         playbackTime = player?.currentTime ?? playbackTime
         isPlaying = false
@@ -335,6 +342,7 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
     }
 
     private func stopPlayback(reset: Bool) {
+        HerdrSpeechOwnership.shared.release(speechOwner)
         stopPlaybackTimer()
         player?.stop()
         if reset {
@@ -354,6 +362,7 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
                 guard let self, let player = self.player else { return }
                 self.playbackTime = player.currentTime
                 if !player.isPlaying {
+                    HerdrSpeechOwnership.shared.release(self.speechOwner)
                     self.isPlaying = false
                     self.stopPlaybackTimer()
                 }
@@ -390,6 +399,7 @@ final class HerdrVoiceRecorder: NSObject, AVAudioRecorderDelegate, AVAudioPlayer
     /// one, mark its file finished, or invoke the new transcription callback.
     func handleCaptureFinished(_ engine: any HerdrRecordingEngine, successfully flag: Bool) {
         guard let current = recorder, current === engine else { return }
+        HerdrSpeechOwnership.shared.release(speechOwner)
         let duration = engine.currentTime
         stopRecordingTimer()
         recorder = nil

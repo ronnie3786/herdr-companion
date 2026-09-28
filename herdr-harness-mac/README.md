@@ -74,14 +74,22 @@ Hovering visible HUD controls expands result icons into document-title pills. Th
   input. Labeled Attach, Paste code, and Voice actions are in its footer. More contains
   additional context tools. Active voice and playback states remain visible. Drafts
   remain shared between chat and terminal modes. Return sends; Shift, Option, or
-  Command-Return inserts a newline.
+  Command-Return inserts a newline. In **First Mate** the microphone beside **+** starts
+  click-to-stop dictation whose explicit Stop transcribes and sends, while **More →
+  Record a voice note** opens the recorder sheet; every other composer keeps the
+  microphone-opens-recorder and More-dictates routing.
 - **`$` skills palette** — type `$` at a word boundary to raise a filtering HUD of the
   workspace's skills. Arrow keys move the highlight, Enter/Tab (or click) inserts the skill,
   Esc dismisses, and space dismisses while typing normally — so a stray `$` never gets in your
   way. Zero matches auto-dismisses; only a fresh `$` re-opens it.
-- **Voice** — tap the mic for the long-form recorder sheet, press-and-hold to dictate
-  (auto-locks after a beat). Recordings are mono 16 kHz WAV, transcribed by your private
-  Parakeet endpoint with on-device Speech as fallback.
+- **Voice** — in pane Chat and the terminal composer, tap the mic for the long-form
+  recorder sheet, press-and-hold to dictate (auto-locks after a beat). In **First Mate**,
+  the microphone beside **+** starts click-to-stop dictation: an explicit **Stop**
+  transcribes and submits the composed prompt once, an automatic duration-limit
+  completion and every other destination append to the draft only, and **More → Record
+  a voice note** opens the same recorder sheet with its record, preview, attach, and
+  explicit Transcribe actions. Recordings are mono 16 kHz WAV, transcribed by your
+  private Parakeet endpoint with on-device Speech as fallback.
 - **Attention deck** — blocked and done agents rise to the top; alerts sync read-state with the
   server; local notifications deep-link straight into the pane (`herdr://pane/{id}` works too).
 - **Workspace overview** — fleet summary, pane topology radar built from Herdr's real split

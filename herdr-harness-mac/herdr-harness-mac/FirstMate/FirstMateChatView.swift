@@ -395,6 +395,7 @@ struct FirstMateChatView: View {
         let context = store.operationContext
         let featureID = snapshot.feature.id
         return PromptComposerDestination(
+            voicePolicy: .firstMateStopToSend,
             id: context.destinationID(for: featureID)
                 ?? "first-mate:invalid:\(context.lifecycleIdentity.opaqueID)",
             canControl: canControl && !featureIsClosed,

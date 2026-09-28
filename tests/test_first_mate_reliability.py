@@ -8,7 +8,8 @@ from unittest.mock import Mock, patch
 import zipfile
 
 from herdr_harness.first_mate_backup import BackupUnavailable, capture_backup
-from herdr_harness.first_mate_runtime import FirstMateRuntime, _read_json, _write_json
+from herdr_harness.first_mate_runtime import (HANDOFF_ACTIVE_SECONDS, HANDOFF_GRACE_SECONDS, HANDOFF_MAX_SECONDS,
+                                              FirstMateRuntime, _read_json, _write_json)
 from herdr_harness.first_mate_store import FirstMateError
 from tests import test_first_mate_acceptance as fixtures
 
@@ -369,6 +370,88 @@ class FirstMateReliabilityTests(unittest.TestCase):
         self.assertEqual(event['payload']['effects'][0]['id'], 'publish')
         self.assertEqual(event['payload']['effects'][0]['command'], 'synthetic-publish artifact')
         self.assertEqual(event['payload']['next_permitted_actions'][0]['action'], 'inspect_effects')
+
+    def test_failed_or_cut_off_local_commands_go_to_the_successor_not_a_human(self):
+        feature, assignment, job = self.isolated()
+        # A red test run, a diff that found differences outside the worktree,
+        # a failed edit there, and a wait cut off by the stop.
+        self.ledger(job, [
+            {'type':'start','id':'tests','tool':'bash','scope':'external',
+             'command':'cd "/synthetic/work" && python3 -m unittest discover -s tests'},
+            {'type':'end','id':'tests','is_error':True},
+            {'type':'start','id':'diff','tool':'bash','scope':'external',
+             'command':'S=~/.agents/skills/x/run; /bin/bash -n "$S" && shasum -a 256 "$S"; diff "$S" copy'},
+            {'type':'end','id':'diff','is_error':True},
+            {'type':'start','id':'edit','tool':'edit','scope':'external'},
+            {'type':'end','id':'edit','is_error':True},
+            {'type':'start','id':'wait','tool':'bash','scope':'external','command':'sleep 30'},
+        ])
+        effects = self.runtime.reliability._effect_status(job)
+        self.assertTrue(effects['safe'])
+        self.assertEqual(effects['issues'], [])
+        self.assertEqual([item['id'] for item in effects['local']], ['tests', 'diff', 'edit', 'wait'])
+        self.assertIn('failed', effects['local'][0]['reason'])
+        self.assertIn('cut off', effects['local'][3]['reason'])
+        with patch.object(self.runtime, '_launch') as launch:
+            self.runtime.reliability.recover(job, {})
+        launch.assert_called()  # The recovery advisor, which sees the list.
+        self.assertNotEqual(self.store.get_feature(feature['id'])['status'], 'blocked')
+        events = self.store.get_events(feature['id'])['events']
+        self.assertFalse(any(e['type'] == 'reliability.effect_inspection_required' for e in events))
+        noted = next(e for e in events if e['type'] == 'reliability.local_effects_noted')
+        self.assertEqual([item['id'] for item in noted['payload']['effects']], ['tests', 'diff', 'edit', 'wait'])
+        checkpoint = self.runtime._recovery_checkpoint(job)
+        self.assertEqual([item['id'] for item in checkpoint['local_commands_to_check']], ['tests', 'diff', 'edit', 'wait'])
+
+    def test_failed_or_cut_off_calls_that_may_reach_beyond_this_machine_still_need_a_human(self):
+        feature, assignment, job = self.isolated()
+        for rows, identity in (
+                ([{'type':'start','id':'push','tool':'bash','scope':'external','command':'cd repo && git push origin main'},
+                  {'type':'end','id':'push','is_error':True}], 'push'),
+                ([{'type':'start','id':'release','tool':'bash','scope':'external',
+                   'command':'gh release create v1 dist.zip'}], 'release'),
+                ([{'type':'start','id':'script','tool':'bash','scope':'external',
+                   'command':'python3 scripts/deploy.py --target synthetic'},
+                  {'type':'end','id':'script','is_error':True}], 'script'),
+                ([{'type':'start','id':'fetch','tool':'web_fetch','scope':'external'},
+                  {'type':'end','id':'fetch','is_error':True}], 'fetch')):
+            self.ledger(job, rows)
+            effects = self.runtime.reliability._effect_status(job)
+            self.assertFalse(effects['safe'], identity)
+            self.assertEqual([item['id'] for item in effects['issues']], [identity])
+            self.assertEqual(effects['local'], [])
+        self.ledger(job, [{'type':'start','id':'push','tool':'bash','scope':'external','command':'git push origin main'},
+                          {'type':'end','id':'push','is_error':True}])
+        with patch.object(self.runtime, '_launch') as launch:
+            self.assertFalse(self.runtime.reliability.recover(job, {}))
+        launch.assert_not_called()
+        self.assertEqual(self.store.get_feature(feature['id'])['status'], 'blocked')
+
+    def test_a_worker_writing_its_handoff_keeps_its_turn_until_it_goes_quiet_or_reaches_the_ceiling(self):
+        feature, assignment, job, lock, now = self.stalled()
+        directory = self.runtime._job_dir(job)
+        controls = lambda: sorted(_read_json(path)['action'] for path in (directory / 'controls').glob('*.json'))
+        self.runtime._request_handoff(job)
+        self.assertEqual(job['handoff_deadline'] - job['handoff_requested_at'], HANDOFF_GRACE_SECONDS)
+        # Past the grace while Pi still streams the checkpoint: it keeps its turn.
+        job.update(handoff_requested_at=time.time() - HANDOFF_GRACE_SECONDS - 5, handoff_deadline=time.time() - 5)
+        self.runtime._save_job(job)
+        _write_json(directory / 'status.json', {'ended': False, 'accepted': True, 'last_event_epoch': time.time()})
+        self.runtime._watch([job])
+        self.assertEqual(controls(), [])
+        # Quiet past the grace: stopped.
+        _write_json(directory / 'status.json', {'ended': False, 'accepted': True,
+                                                 'last_event_epoch': time.time() - HANDOFF_ACTIVE_SECONDS - 5})
+        self.runtime._watch([job])
+        self.assertEqual(controls(), ['abort'])
+        self.assertNotIn('handoff_deadline', job)
+        # Still active but past the ceiling: stopped.
+        for path in (directory / 'controls').glob('*.json'):
+            path.unlink()
+        job.update(handoff_requested_at=time.time() - HANDOFF_MAX_SECONDS - 1, handoff_deadline=time.time() - 60)
+        _write_json(directory / 'status.json', {'ended': False, 'accepted': True, 'last_event_epoch': time.time()})
+        self.runtime._watch([job])
+        self.assertEqual(controls(), ['abort'])
 
     def test_effect_inspection_projection_bounds_fields_and_drops_arbitrary_ledger_payload(self):
         feature, assignment, job = self.isolated()

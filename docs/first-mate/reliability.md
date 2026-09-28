@@ -69,16 +69,28 @@ text-conversion helpers where applicable. Unknown shell syntax, build/test scrip
 publishing commands and unfamiliar tools remain conservatively external: a build
 script can run arbitrary commands, so its name alone cannot establish local effects.
 
-Automatic writable recovery requires the versioned ledger. Missing, malformed,
-incomplete, or failed external receipts stop it. A successful tool receipt still
-does not prove a remote business operation completed. The read-only advisor
-supplies a recovery checkpoint. If it cannot establish the next action, but the
-writer has stopped, the backup is intact and all external effect receipts are
-complete and nonfailed, a fenced inspection successor may read the exact
-predecessor session and acknowledge a verified next step or request a real human
-decision. Every successor acknowledges before mutation. Missing or failed
-external receipts remain blocked. The system does not replay the original prompt
-or retry a deployment because its process died.
+Automatic writable recovery requires the versioned ledger. A missing or malformed
+ledger stops it. A failed or unfinished external call stops it only when it may
+have reached beyond this machine: a push, release, upload, deploy, remote API
+call, remote shell, message, or agent CLI; any tool other than shell, `edit` and
+`write`; or a command whose retained text was truncated. Shell commands are
+matched by program, subcommand, upload flags, and release-named scripts, targets
+or paths anywhere in the command, so a stray mention errs toward stopping. Every
+other failed or cut-off call (a red test run, a build, a diff that found
+differences, an edit whose text was not found, a command interrupted mid-run) left
+its effects on this machine. It is journaled as `reliability.local_effects_noted` and
+listed as `local_commands_to_check` in the recovery checkpoint, so the advisor and
+the successor check it first. Before this rule, those local failures blocked every
+interrupted worker for human inspection, and none of a week's sixteen such blocks
+involved anything beyond the machine. A successful tool receipt still does not
+prove a remote business operation completed. The read-only advisor supplies a
+recovery checkpoint. If it cannot establish the next action, but the writer has
+stopped, the backup is intact and no remote-capable receipt is missing or failed,
+a fenced inspection successor may read the exact predecessor session and
+acknowledge a verified next step or request a real human decision. Every successor
+acknowledges before mutation. Missing or failed remote-capable receipts remain
+blocked. The system does not replay the original prompt or retry a deployment
+because its process died.
 
 Older executions without the ledger require explicit recovery direction.
 A `read_only` workspace is an instruction, not a tool sandbox in current Pi.

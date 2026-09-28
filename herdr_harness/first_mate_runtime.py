@@ -67,6 +67,13 @@ LEAD_STATUS_MESSAGES = 12
 LEAD_STATUS_TEXT_LIMIT = 2000
 LEAD_STATUS_EVENTS = 10
 LEAD_STEP_NAMES = ("Plan", "Build", "Review", "QA", "PR", "Merge")
+# A worker asked to hand off must reach a safe boundary and write a complete
+# checkpoint, which takes a max-thinking model minutes. It keeps its turn while
+# Pi still reports activity (thinking, text, a tool call streaming or running)
+# and is stopped only once it goes quiet past the grace or reaches the ceiling.
+HANDOFF_GRACE_SECONDS = 180
+HANDOFF_ACTIVE_SECONDS = 60
+HANDOFF_MAX_SECONDS = 900
 LEAD_TOOLS = frozenset({"fm_fleet", "fm_feature_status", "fm_read_document", "fm_relay",
                         "fm_mark_read", "fm_create_feature"})
 
@@ -2534,7 +2541,7 @@ class FirstMateRuntime:
                 elif kind == "session_started":
                     self._bind(job, event.get("native_session_id", ""), event.get("session_file", ""))
                 if kind == "checkpoint_requested" and not job.get("handoff_deadline"):
-                    job["handoff_deadline"] = time.time() + 90
+                    self._request_handoff(job)
                     self._save_job(job)
                 if kind in {"tool_execution_start", "tool_execution_end", "message_end", "agent_end",
                             "context_usage", "checkpoint_requested", "compaction_prevented"}:
@@ -2825,7 +2832,8 @@ class FirstMateRuntime:
                     previous["recovery_checkpoint_required"] = True
                     previous["recovery_inspection_required"] = bool(previous.get("native_session_id"))
                     previous["recovery_brief"] = ("Human requested a stop and continuation. Inspect post-stop evidence before any mutation; the stop does not verify external effects. "
-                        + params["reason"] + "\nEffect receipt inspection:\n" + json.dumps(self.reliability._effect_status(previous)["issues"][:20]))
+                        + params["reason"] + "\nEffect receipt inspection:\n" + json.dumps(
+                            (lambda effects: effects["issues"][:20] + effects["local"][:20])(self.reliability._effect_status(previous))))
                     self._save_job(previous)
                 return self.store.recover_assignment(assignment["id"], assignment["generation"], params["reason"], request_id,
                     verified_stopped=True, reset_budget=reset_budget, authorization_message_id=claim["id"])
@@ -3324,6 +3332,9 @@ class FirstMateRuntime:
         path = self._job_dir(job) / "recovery-checkpoint.json"
         checkpoint = _read_json(path)
         if checkpoint:
+            if job.get("recovery_local_effects") and "local_commands_to_check" not in checkpoint:
+                checkpoint["local_commands_to_check"] = job["recovery_local_effects"]
+                _write_json(path, checkpoint)
             return checkpoint
         snapshot = self.store.snapshot(job["feature_id"])
         handoffs = [h for h in snapshot["handoffs"] if h["assignment_id"] == job["claim"]["id"]
@@ -3335,6 +3346,8 @@ class FirstMateRuntime:
                       "workspace_path": job["cwd"], "side_effects_verified": False,
                       "handoff_document_id": latest["document_id"] if latest else None,
                       "current_position": next((a.get("metadata", {}).get("progress") for a in snapshot["assignments"] if a["id"] == job["claim"]["id"]), None)}
+        if job.get("recovery_local_effects"):
+            checkpoint["local_commands_to_check"] = job["recovery_local_effects"]
         try:
             checkpoint["head"] = self._git(job["cwd"], "rev-parse", "HEAD")
             checkpoint["branch"] = self._git(job["cwd"], "branch", "--show-current")
@@ -3407,9 +3420,11 @@ class FirstMateRuntime:
                 continue
             if self.reliability.progress_lease_until(job, assignment) > time.time():
                 continue
-            if job.get("handoff_deadline") and time.time() > job["handoff_deadline"] and not job.get("pending_handoff"):
+            if (job.get("handoff_deadline") and time.time() > job["handoff_deadline"]
+                    and not job.get("pending_handoff") and not self._handoff_still_working(job)):
                 self._control(job, "abort", "Worker did not produce a checkpoint after the advisor's handoff deadline")
                 job.pop("handoff_deadline", None)
+                job.pop("handoff_requested_at", None)
                 self._save_job(job)
             if job.get("advisor_job_id"):
                 advisor_dir = self.jobs_root / job["advisor_job_id"]
@@ -3445,6 +3460,26 @@ class FirstMateRuntime:
             self._save_job(job)
             self._launch(advisor)
 
+    @staticmethod
+    def _request_handoff(job: dict) -> None:
+        """Start a handoff's grace (see HANDOFF_GRACE_SECONDS)."""
+        now = time.time()
+        job["handoff_requested_at"] = now
+        job["handoff_deadline"] = now + HANDOFF_GRACE_SECONDS
+
+    def _handoff_still_working(self, job: dict) -> bool:
+        """A worker past its handoff grace keeps its turn while Pi still
+        reports activity, up to the ceiling. Stopping it mid-checkpoint loses
+        the checkpoint, its verification and its outcome."""
+        now = time.time()
+        requested = float(job.get("handoff_requested_at") or job["handoff_deadline"] - HANDOFF_GRACE_SECONDS)
+        if now >= requested + HANDOFF_MAX_SECONDS:
+            return False
+        state = _read_json(self._job_dir(job) / "status.json", {})
+        if state.get("ended"):
+            return False
+        return now - float(state.get("last_event_epoch") or 0) < HANDOFF_ACTIVE_SECONDS
+
     def _advice(self, job: dict, params: dict, request_id: str) -> dict:
         parent = _read_json(self.jobs_root / str(job.get("parent_job_id")) / "job.json")
         if not parent:
@@ -3468,7 +3503,7 @@ class FirstMateRuntime:
             instruction = params.get("instruction") or params["reason"]
             if decision == "handoff":
                 instruction = "Stop at a safe boundary, call fm_handoff with a complete checkpoint, then end. " + instruction
-                parent["handoff_deadline"] = time.time() + 90
+                self._request_handoff(parent)
                 self._save_job(parent)
             self._control(parent, "steer", instruction)
         elif decision == "pause":

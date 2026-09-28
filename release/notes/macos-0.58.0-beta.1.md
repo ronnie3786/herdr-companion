@@ -1,25 +1,39 @@
-# Herdr Companion 0.58.0-beta.1
+# macOS 0.58.0-beta.1
 
-PR Review now has a coding buddy. Open a prepared review's Files tab and choose
-**Start walkthrough** for short chapters that teach what to inspect and why.
-You control **Next**. Ask a question at any point, follow the relevant code, then
-use **Back to walkthrough** to return to your saved position paused.
+## Darker Glass and Haze backgrounds
 
-The compact dock expands into explanations, chapter navigation, saved questions,
-and original review excerpts. Sources distinguish available reviewer attribution,
-revision freshness, and the buddy's separate code assessment. Existing review
-skills are reused and are not rerun by starting a walkthrough.
+The Mac app's shared purple **Glass** and **Haze** backgrounds are about 20% darker.
+The same violet top-left, rose top-right and indigo-bottom dusk gradient remains,
+just at a deeper shade across the main window, both HUDs and the First Mate chat
+window. Text, icons, status colors and controls keep their existing colors, and
+the established 4.5:1 reading-contrast checks still pass — primary, prose,
+secondary and tertiary text now stand out more against every glass fill.
 
-Listen with the configured Kokoro voice. Circles, underlines, and arrows follow
-spoken phrases on exact diff lines. Pausing, seeking, replaying, and changing
-speed keep drawings synchronized. Voice questions use the existing recorder and
-transcription service; the transcript stays editable before sending.
+Gradient geometry, blur and saturation, HUD crop, glass levels, Haze height and
+fade, image caching, and the opaque Glass off, Haze off, Reduce Transparency and
+First Mate light appearances are unchanged. This is Mac presentation only, so no
+new setting and no companion update are needed.
 
-Install companion **0.58.0b1** separately on the review host for the new guide and
-context APIs. Captioned narration requires the existing private Kokoro service
-configuration. Older servers keep the original PR review workbench. The Mac
-updater installs only the Mac app; this release does not install an iOS build.
+([#86](https://github.com/ronnie3786/herdr-companion/issues/86),
+[#91](https://github.com/ronnie3786/herdr-companion/pull/91))
 
-Text remains available when audio or a drawing target cannot be used. A changed
-PR revision pauses old guidance until you start a new walkthrough. Completing a
-walkthrough does not mark files viewed or submit a GitHub review.
+## Compatibility and installation
+
+This release updates the Mac app only. The companion server, CLI and Pi package
+are published separately and are not installed by the Mac updater; install and
+restart them separately on each machine where they are used. This appearance
+change needs no companion update.
+
+Install this preview through **Settings → Updates → Check for Updates…**, with
+**Include preview builds** enabled. The app is Apple Development-signed,
+distributed through the signed update feed, and is not notarized.
+
+## Check the changes
+
+- Open the main window over any desktop picture. The sidebar and pane show a
+  deeper purple dusk, and labels stay readable.
+- Open both HUDs and the First Mate chat window. Their glass surfaces are darker
+  while the gradient positions and softness are unchanged.
+- Toggle **Glass** and **Haze behind the chat** in **Settings → General →
+  Appearance**, and try Reduce Transparency in System Settings. Each option
+  keeps its existing behavior.

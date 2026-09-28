@@ -216,9 +216,10 @@ struct FirstMateBlinkSchedule: TimelineSchedule {
 /// Motion.
 struct FirstMateBreathing: ViewModifier {
     static let period: TimeInterval = 2.4
-    /// The dimmest opacity: the smallest multiple of 0.05 at which `working`
-    /// still clears 4.5:1 over the sidebar and pane glass at the dusk's
-    /// brightest point, hovered or selected (`HerdrThemeAccessibilityTests`).
+    /// The dimmest opacity: kept at 0.75 over the darkened Glass/Haze
+    /// backgrounds, where `working` still clears 4.5:1 over the sidebar and
+    /// pane glass at the dusk's brightest point, hovered or selected
+    /// (`HerdrThemeAccessibilityTests`).
     static let floor = 0.75
 
     var isActive = true

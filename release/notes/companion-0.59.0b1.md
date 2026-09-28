@@ -1,4 +1,4 @@
-# Herdr Companion server 0.58.0b1
+# Herdr Companion server 0.59.0b1
 
 Adds revision-bound PR review walkthroughs and question answers for the native
 Mac review buddy, with authenticated context and guide endpoints. Each request

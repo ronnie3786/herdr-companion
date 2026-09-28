@@ -15,6 +15,20 @@ Use your configured Herdr Mac build with sample sessions. Check off each item af
 - [ ] **First Mate replies:** Replies have no box, only a small First Mate label. Thumbs up/down and copy sit in a row under each completed reply; quoting a reply's text (issue #73) still stages a quote in the composer.
 - [ ] **Composer:** In a Pi chat, **+** opens Attach files and Paste code block; the model + effort pill opens both menus; Send is a lavender square that becomes Stop while the agent works. The HUD composer offers the same controls.
 
+## Darker Glass and Haze backgrounds
+
+Compare with the previous release's build (0.55.0, build 94) or its synthetic renders. Repository rendering tests measure the background pixels and the increased reading contrast; these installed visual and interaction checks are pending until an operator performs them and records the actual result. No server update and no new setting are required.
+
+- [ ] **Main window (before/after):** In dark appearance with Glass and Haze on, open a chat and compare against the previous build: the sidebar, pane, and chat-top Haze are about 20% darker, with violet still at the top left, rose at the top right, and indigo along the bottom, one continuous backdrop across both columns. Text, icons, status colors, and controls look exactly as before and read more clearly.
+- [ ] **Both HUDs (before/after):** Open the agent HUD card and the First Mate HUD over a desktop picture. Both backgrounds are darker without a gray wash or a doubled dark edge; each keeps its existing dusk crop and softness, and its labels stay readable.
+- [ ] **First Mate chat window (before/after):** Open First Mate dark with the inspector inline. Compare the sidebar, chat column, and Haze band with the previous build: the same deeper purple gradient, with chat prose, selected rows, card text, and HUD labels all easier to read.
+- [ ] **Text size and window size:** Repeat the three comparisons at Settings → General → Text size 100% and 160% and at a narrow and a wide window (including the HUD expanded). Nothing clips, no background banding or double-darkening appears, and the backdrop stays continuous while resizing.
+- [ ] **Haze on/off:** Toggle **Haze behind the chat**. With Haze on, the darker band still fades softly from top to clear at the bottom; with Haze off, the pane is the darker glass alone. Both stay readable.
+- [ ] **Glass off:** Turn **Settings → General → Appearance → Glass** off. All surfaces become the ordinary opaque theme background immediately and look unchanged from the previous build.
+- [ ] **Reduce Transparency:** Turn on **System Settings → Accessibility → Display → Reduce transparency**. Glass and Haze disappear, both Appearance toggles are disabled with their footer, and the opaque backgrounds match the previous build.
+- [ ] **First Mate light:** Switch First Mate to light. The window stays opaque and unchanged from the previous build; switch back to dark and confirm the deeper purple returns.
+- [ ] **Contrast:** On the darkened backgrounds, confirm primary, prose, secondary, and tertiary text and the status words all read at least as clearly as before, including selected rows and cards.
+
 ## Skims (0.52)
 
 Use a synthetic feature on a companion advertising `first-mate-skim-v1` with a fast `skim_model`.

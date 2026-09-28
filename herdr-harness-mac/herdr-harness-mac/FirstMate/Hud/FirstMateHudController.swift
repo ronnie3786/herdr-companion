@@ -1071,6 +1071,17 @@ extension FirstMateHudController {
         return shell.firstMateFleet.hosts.first { $0.machineID == id }?.machineName
     }
 
+    /// While the lead's own machine is offline and another machine's lead
+    /// stands in: "On DevBox · Work Mac is offline".
+    var leadFallbackNote: String? {
+        guard let model, let shell, !model.isDemoMode else { return nil }
+        let hosts = shell.firstMateFleet.hosts
+        let choice = FirstMateLeadMachine.choice(hosts: hosts, machines: model.machines)
+        guard choice.isFallback, let current = choice.current, let preferred = choice.preferred else { return nil }
+        let name = { (id: String) in hosts.first { $0.machineID == id }?.machineName ?? id }
+        return "On \(name(current)) · \(name(preferred)) is offline"
+    }
+
     /// The lead store for the current lead machine, rebuilt when the machine
     /// or its connection changes; nil when no machine has a lead.
     func currentLeadStore() -> FirstMateStore? {
@@ -1087,10 +1098,12 @@ extension FirstMateHudController {
         if let leadStore, leadStoreMachineID == machineID, leadStoreIdentity == identity { return leadStore }
         let store = FirstMateStore()
         store.configure(client: HerdrAPIClient(configuration: configuration), demo: false)
-        // Messages to this machine's lead carry a snapshot of the others.
-        store.leadContextProvider = { [weak shell] in
+        // Messages to this machine's lead carry a snapshot of the machines it
+        // does not reach itself.
+        store.leadContextProvider = { [weak shell, weak model] in
             guard let shell else { return nil }
-            return FirstMateLeadMachine.context(hosts: shell.firstMateFleet.hosts, excluding: machineID)
+            return FirstMateLeadMachine.context(hosts: shell.firstMateFleet.hosts, machines: model?.machines ?? [],
+                                                excluding: machineID)
         }
         replaceLeadStore(store, machineID: machineID, identity: identity)
         return store
@@ -1116,7 +1129,7 @@ extension FirstMateHudController {
                 guard let store = self?.currentLeadStore() else { return }
                 lease.update(store: store, available: true)
                 if store.leadFeatureID == nil || store.selectedFeatureID != store.leadFeatureID {
-                    if await store.openLead() { self?.rememberLeadMachine() }
+                    _ = await store.openLead()
                 } else {
                     await store.refreshLead()
                 }
@@ -1129,12 +1142,6 @@ extension FirstMateHudController {
     func stopLeadSession() {
         leadTask?.cancel()
         leadTask = nil
-    }
-
-    /// Keeps the lead on the machine it opened on (see ``FirstMateLeadMachine``).
-    private func rememberLeadMachine() {
-        guard let model, let shell, !model.isDemoMode, let machineID = leadMachineID else { return }
-        FirstMateLeadMachine.remember(machineID, hosts: shell.firstMateFleet.hosts)
     }
 
     /// Sends words to the lead as your message.

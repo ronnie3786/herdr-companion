@@ -430,7 +430,12 @@ struct FirstMateHudLeadChatCard: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text("First Mate")
                     .font(.system(size: 13, weight: .semibold))
-                if let machine = controller.leadMachineName {
+                if let note = controller.leadFallbackNote {
+                    Text(note)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(HerdrTheme.warning)
+                        .lineLimit(1)
+                } else if let machine = controller.leadMachineName {
                     Text(machine)
                         .font(.system(size: 10.5))
                         .foregroundStyle(HerdrTheme.tertiaryText)

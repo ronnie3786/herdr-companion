@@ -571,6 +571,68 @@ def _normalized_uuid(value: Any) -> str | None:
     return normalized if value.casefold() == normalized else None
 
 
+def machine_client(
+    config: str | Path | None,
+    machine: str,
+    environ: Mapping[str, str],
+    *,
+    roster: Mapping[str, Mapping[str, Any]],
+    opener: Callable[..., Any] | Any | None = None,
+    timeout: float = 20,
+) -> ControlClient:
+    """A client for one roster machine, authenticated with that machine's own
+    configured credential, never the caller's. Shared by this CLI and the lead
+    First Mate's reach into other machines."""
+    baseline = _configuration_environment(environ)
+    try:
+        raw = load_configuration(
+            config,
+            machine,
+            environ=baseline,
+            resolve_secrets=False,
+        )
+        effective_raw = {key: value for key, value in raw.data.items() if key != "machines"}
+        references = _collect_environment_references(effective_raw)
+        selected_environment = _configuration_environment(environ, references=references)
+        configuration = load_configuration(
+            config,
+            machine,
+            environ=selected_environment,
+        )
+    except (ConfigurationError, SecretFileError, OSError, ValueError) as exc:
+        raise CLIError(str(exc), "invalid_configuration") from exc
+
+    machine_settings = raw.data.get("machines", {}).get(machine, {})
+    machine_server = machine_settings.get("server", {}) if isinstance(machine_settings, dict) else {}
+    machine_environment = machine_settings.get("environment", {}) if isinstance(machine_settings, dict) else {}
+    explicit_machine_token = (
+        isinstance(machine_server, dict)
+        and any(key in machine_server for key in ("api_token", "api_token_file"))
+    ) or (
+        isinstance(machine_environment, dict)
+        and any(key in machine_environment for key in ("HERDR_HARNESS_API_TOKEN", "HERDR_HARNESS_API_TOKEN_FILE"))
+    )
+    if len(roster) > 1 and not explicit_machine_token:
+        raise CLIError(
+            "Each machine in a multi-machine roster needs its own configured API credential",
+            "machine_credential_required",
+        )
+    token = configuration.environ.get("HERDR_HARNESS_API_TOKEN", "")
+    token_file = configuration.environ.get("HERDR_HARNESS_API_TOKEN_FILE", "")
+    try:
+        if token and token_file:
+            raise SecretFileError("Herdr API credential is configured twice")
+        if token_file:
+            token = load_private_bearer_token_file(
+                str(Path(token_file).expanduser().absolute()), field="Herdr API token"
+            )
+        token = validate_bearer_token(token, field="Herdr API token", required=True)
+    except SecretFileError as exc:
+        raise CLIError("Selected machine API credential is unavailable or unsafe", "invalid_configuration") from exc
+    origin = roster[machine].get("url") or configuration.environ.get("HERDR_HARNESS_URL")
+    return ControlClient(str(origin or ""), token, opener=opener, timeout=timeout)
+
+
 class ControlCLI:
     def __init__(
         self,
@@ -615,55 +677,8 @@ class ControlCLI:
         roster = self.roster()
         if machine not in roster:
             raise CLIError("Selected machine is not in the configured roster", "unknown_machine")
-        baseline = _configuration_environment(self.environ)
-        try:
-            raw = load_configuration(
-                self.args.config,
-                machine,
-                environ=baseline,
-                resolve_secrets=False,
-            )
-            effective_raw = {key: value for key, value in raw.data.items() if key != "machines"}
-            references = _collect_environment_references(effective_raw)
-            selected_environment = _configuration_environment(self.environ, references=references)
-            configuration = load_configuration(
-                self.args.config,
-                machine,
-                environ=selected_environment,
-            )
-        except (ConfigurationError, SecretFileError, OSError, ValueError) as exc:
-            raise CLIError(str(exc), "invalid_configuration") from exc
-
-        machine_settings = raw.data.get("machines", {}).get(machine, {})
-        machine_server = machine_settings.get("server", {}) if isinstance(machine_settings, dict) else {}
-        machine_environment = machine_settings.get("environment", {}) if isinstance(machine_settings, dict) else {}
-        explicit_machine_token = (
-            isinstance(machine_server, dict)
-            and any(key in machine_server for key in ("api_token", "api_token_file"))
-        ) or (
-            isinstance(machine_environment, dict)
-            and any(key in machine_environment for key in ("HERDR_HARNESS_API_TOKEN", "HERDR_HARNESS_API_TOKEN_FILE"))
-        )
-        if len(roster) > 1 and not explicit_machine_token:
-            raise CLIError(
-                "Each machine in a multi-machine roster needs its own configured API credential",
-                "machine_credential_required",
-            )
-        token = configuration.environ.get("HERDR_HARNESS_API_TOKEN", "")
-        token_file = configuration.environ.get("HERDR_HARNESS_API_TOKEN_FILE", "")
-        try:
-            if token and token_file:
-                raise SecretFileError("Herdr API credential is configured twice")
-            if token_file:
-                token = load_private_bearer_token_file(
-                    str(Path(token_file).expanduser().absolute()), field="Herdr API token"
-                )
-            token = validate_bearer_token(token, field="Herdr API token", required=True)
-        except SecretFileError as exc:
-            raise CLIError("Selected machine API credential is unavailable or unsafe", "invalid_configuration") from exc
-        origin = roster[machine].get("url") or configuration.environ.get("HERDR_HARNESS_URL")
-        client = ControlClient(str(origin or ""), token, opener=self.opener)
-        self.secrets.append(token)
+        client = machine_client(self.args.config, machine, self.environ, roster=roster, opener=self.opener)
+        self.secrets.append(client.token)
         self._clients[machine] = client
         return client
 

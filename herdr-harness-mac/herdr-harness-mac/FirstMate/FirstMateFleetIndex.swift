@@ -25,9 +25,16 @@ struct FirstMateFleetHost: Identifiable, Equatable, Sendable {
     /// Whether the companion advertises `first-mate-lead-v1`: a lead First
     /// Mate conversation across this machine's features.
     var supportsLead: Bool = false
+    /// Whether its lead reaches the other machines its companion holds a
+    /// credential for (`first-mate-lead-peers-v1`).
+    var supportsLeadPeers: Bool = false
     /// The lead's summary (newest message, unread, replying), or nil before it
     /// is first used or when the host has no lead. A failed poll keeps it.
     var lead: FirstMateLeadSummary? = nil
+    /// Polls that failed in a row, capped so an outage publishes only its
+    /// start. The lead moves to another machine only after more than one
+    /// (``FirstMateLeadMachine/offlineAfterFailedPolls``).
+    var failedPolls = 0
 
     var id: String { machineID }
 }
@@ -46,6 +53,7 @@ final class FirstMateFleetIndex {
         var fleet: [FirstMateFleetEntry]? = nil
         /// The lead capability answer, alongside ``probedFleetSupport``.
         var probedLeadSupport: Bool? = nil
+        var probedLeadPeersSupport: Bool? = nil
         /// The lead summary; nil when not requested or the request failed,
         /// `.some(nil)` when the host has no lead yet.
         var lead: FirstMateLeadSummary?? = nil
@@ -54,6 +62,7 @@ final class FirstMateFleetIndex {
     private struct CapabilityProbe {
         let supportsFleet: Bool
         var supportsLead = false
+        var supportsLeadPeers = false
         let probedAt: Date
     }
 
@@ -84,6 +93,8 @@ final class FirstMateFleetIndex {
     /// records nothing, so the next refresh asks again.
     @ObservationIgnored private var capabilityProbes: [String: CapabilityProbe] = [:]
     @ObservationIgnored var capabilityReprobeInterval: TimeInterval = 5 * 60
+    /// Where ``FirstMateFleetHost/failedPolls`` stops counting.
+    static let failedPollsCap = 3
     /// Each observer's wait for its next poll, by lifecycle. A new activation
     /// or a deactivation cancels them, so a superseded observer returns at
     /// once instead of waking periodically to check.
@@ -239,7 +250,8 @@ final class FirstMateFleetIndex {
             // lifecycle, and a host without the fleet or the lead is asked
             // again after the reprobe interval (a companion upgraded mid-run).
             let known = capabilityProbes[host.machineID].flatMap { probe -> CapabilityProbe? in
-                (probe.supportsFleet && probe.supportsLead) || now.timeIntervalSince(probe.probedAt) < capabilityReprobeInterval
+                (probe.supportsFleet && probe.supportsLead && probe.supportsLeadPeers)
+                    || now.timeIntervalSince(probe.probedAt) < capabilityReprobeInterval
                     ? probe : nil
             }
             return (host.machineID, client, known)
@@ -268,6 +280,7 @@ final class FirstMateFleetIndex {
                         var result = FetchResult(machineID: machineID, features: response.features, error: nil, unsupported: false)
                         result.probedFleetSupport = probed?.fleet
                         result.probedLeadSupport = probed?.lead
+                        result.probedLeadPeersSupport = probed?.leadPeers
                         if probed?.lead ?? known?.supportsLead ?? false {
                             // The lead's small summary: its newest message and
                             // whether it is unread, for the HUD and the window.
@@ -324,9 +337,13 @@ final class FirstMateFleetIndex {
                     if host.lastUpdated == nil || host.error != nil || host.unsupported { host.lastUpdated = .now }
                     host.error = nil
                     host.unsupported = false
+                    host.failedPolls = 0
                     if let probed = result.probedFleetSupport {
                         let lead = result.probedLeadSupport ?? false
-                        capabilityProbes[result.machineID] = CapabilityProbe(supportsFleet: probed, supportsLead: lead, probedAt: now)
+                        let peers = result.probedLeadPeersSupport ?? false
+                        capabilityProbes[result.machineID] = CapabilityProbe(supportsFleet: probed, supportsLead: lead,
+                                                                             supportsLeadPeers: peers, probedAt: now)
+                        host.supportsLeadPeers = peers
                         host.supportsFleet = probed
                         host.supportsLead = lead
                     }
@@ -346,6 +363,7 @@ final class FirstMateFleetIndex {
                     if host.error == nil, let contact = lastContact[result.machineID] { host.lastUpdated = contact }
                     host.error = result.error
                     host.unsupported = result.unsupported
+                    host.failedPolls = min(host.failedPolls + 1, Self.failedPollsCap)
                 }
                 if host != hosts[index] {
                     hosts[index] = host
@@ -383,17 +401,18 @@ final class FirstMateFleetIndex {
         }
     }
 
-    /// Whether the host advertises `first-mate-fleet-v1` and
-    /// `first-mate-lead-v1`: nil when not `needed`, or when the probe failed
+    /// Whether the host advertises `first-mate-fleet-v1`,
+    /// `first-mate-lead-v1`, and `first-mate-lead-peers-v1`: nil when not `needed`, or when the probe failed
     /// (unknown: the host keeps its last answer and is asked again next time).
     /// A companion without the capability route predates the fleet.
-    nonisolated private static func probeCapabilities(_ client: any FirstMateClient, needed: Bool) async -> (fleet: Bool, lead: Bool)? {
+    nonisolated private static func probeCapabilities(_ client: any FirstMateClient, needed: Bool) async -> (fleet: Bool, lead: Bool, leadPeers: Bool)? {
         guard needed else { return nil }
         do {
             let capabilities = try await client.fetchFirstMateCapabilities()
-            return (capabilities.ok && capabilities.supportsFleet, capabilities.ok && capabilities.supportsLead)
+            return (capabilities.ok && capabilities.supportsFleet, capabilities.ok && capabilities.supportsLead,
+                    capabilities.ok && capabilities.supportsLeadPeers)
         } catch APIError.server(let status, _) where status == 404 || status == 501 {
-            return (false, false)
+            return (false, false, false)
         } catch {
             return nil
         }
@@ -405,6 +424,7 @@ final class FirstMateFleetIndex {
         guard let lhs, let rhs else { return lhs == nil && rhs == nil }
         return lhs.feature.id == rhs.feature.id && lhs.unread == rhs.unread
             && lhs.workingOnReply == rhs.workingOnReply && lhs.latestMessage == rhs.latestMessage
+            && lhs.peers == rhs.peers
     }
 
     /// Records that the lead was read on this Mac once the companion confirms

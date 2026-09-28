@@ -99,7 +99,11 @@ def lead_context(value: Any) -> dict:
                 item["unread"] = feature["unread"]
             if item.get("label"):
                 features.append(item)
-        machines.append({"name": " ".join(machine["name"].split())[:80], "features": features})
+        entry = {"name": " ".join(machine["name"].split())[:80], "features": features}
+        if machine.get("offline") is True:
+            # Unreachable from the Mac: its features are as last seen.
+            entry["offline"] = True
+        machines.append(entry)
     return {"machines": machines}
 
 # Pi telemetry (pi.*) dominates the event ledger. Every other event is the
@@ -946,14 +950,17 @@ class FirstMateStore:
                         "created_at": latest["created_at"]}}
 
     def relay_human_message(self, feature_id: str, text: str, *, lead_message_id: str,
-                            request_id: str) -> dict:
+                            request_id: str, lead_machine: str | None = None) -> dict:
         """Post the human's words, relayed by the lead, as their message to a feature.
 
         The feature's coordinator sees an ordinary human message (the lead holds
-        no authority of its own); metadata and the journal record the relay.
+        no authority of its own); metadata and the journal record the relay,
+        and which machine's lead sent it when that lead lives on another one.
         Relaying answers the feature, so its newest First Mate reply is read.
         """
         payload = {"text": _text(text, "text"), "lead_message_id": _text(lead_message_id, "lead_message_id", 200)}
+        if lead_machine is not None:
+            payload["lead_machine"] = _text(lead_machine, "lead_machine", 64)
         with self._transaction():
             feature = self._one("fm_features", feature_id)
             if feature.get("kind") == LEAD_KIND:
@@ -965,10 +972,11 @@ class FirstMateStore:
             if feature["status"] in {"cancelled", "completed"}:
                 raise FirstMateError("Feature is closed", code="feature_closed")
             latest = self._latest_first_mate_message(feature_id)
-            message = self._message(feature_id, "user", text,
-                                    metadata={"relayed_by": LEAD_KIND, "lead_message_id": lead_message_id})
-            self._event(feature_id, "message.queued", "Human direction relayed by the lead First Mate",
-                        {"message_id": message["id"], "lead_message_id": lead_message_id})
+            relay = {key: payload[key] for key in ("lead_message_id", "lead_machine") if key in payload}
+            message = self._message(feature_id, "user", text, metadata={"relayed_by": LEAD_KIND, **relay})
+            self._event(feature_id, "message.queued", "Human direction relayed by the lead First Mate"
+                        + (f" on {payload['lead_machine']}" if "lead_machine" in payload else ""),
+                        {"message_id": message["id"], **relay})
             if latest is not None:
                 self._advance_read_marker(feature_id, latest["id"], latest["created_at"])
             return self._save_receipt(scope, request_id, payload, message)

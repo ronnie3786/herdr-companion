@@ -21,6 +21,8 @@ no_browser = true
 # attachments_dir = "~/.local/share/herdr-companion/uploads"
 
 # The SAME file can describe every computer. Select the local computer explicitly.
+# A machine whose API credential is configured on this computer is one that this
+# computer's CLIs and lead First Mate can reach (docs/first-mate/lead.md).
 # URLs contain only public-to-your-cluster connection metadata, never tokens.
 # Tailscale is optional: substitute your private hostname or another reachable URL.
 [machines.desktop]

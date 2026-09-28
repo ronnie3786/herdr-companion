@@ -66,6 +66,14 @@ struct PromptComposerDestination: Equatable {
     let supportsPaneTools: Bool
     let isCurrent: @MainActor () -> Bool
     let acceptsCompletion: @MainActor () -> Bool
+    /// Live readiness for this destination's next submission. `canControl`,
+    /// `isSubmitting`, and `isBusy` above describe the render that produced
+    /// this value; a completion that resumes after a suspension re-reads this
+    /// closure instead, so a readiness change during transcription cannot let
+    /// a stale permission submit or a stale block suppress a valid send.
+    /// Supplied by the owner from current state (for First Mate: the live
+    /// store's control, sending, and destination-alive state).
+    let isReadyToSubmit: @MainActor () -> Bool
     let upload: @MainActor (URL, String) async throws -> UploadedAttachment
     let transcribe: @MainActor (URL) async throws -> VoiceTranscription
     let submit: @MainActor (String) async -> Bool
@@ -91,4 +99,29 @@ struct PromptComposerPaneContext {
     let model: HerdrAppModel
     let pane: HerdrPane
     let workspace: HerdrWorkspace
+}
+
+extension PromptComposerDestination {
+    /// The production completion wiring for one composer's inline dictation.
+    ///
+    /// The composer supplies the operations that read its live bindings;
+    /// destination identity, transcription, readiness, and error reporting are
+    /// re-read from this destination so a completion that resumes after a
+    /// suspension never trusts the view value that created it. Kept here so
+    /// tests can exercise the same wiring the view passes to the session.
+    func dictationCompletion(
+        appendTranscript: @escaping @MainActor (String) -> Void,
+        hasReadyContent: @escaping @MainActor () -> Bool,
+        submit: @escaping @MainActor () async -> Bool
+    ) -> PromptComposerDictationSession.Completion {
+        PromptComposerDictationSession.Completion(
+            isCurrent: { [isCurrent] in isCurrent() },
+            acceptsCompletion: { [acceptsCompletion] in acceptsCompletion() },
+            transcribe: { [transcribe] url in try await transcribe(url) },
+            appendTranscript: appendTranscript,
+            canSubmit: { [isReadyToSubmit] in isReadyToSubmit() && hasReadyContent() },
+            submit: submit,
+            reportError: { [reportError] in reportError($0) }
+        )
+    }
 }

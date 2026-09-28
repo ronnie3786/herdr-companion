@@ -125,6 +125,14 @@ struct PromptComposerView: View {
                 destinationID == "pane:\(pane.id):generation:\(model.connectionGeneration)"
                     && model.pane(id: pane.id) != nil
             },
+            isReadyToSubmit: {
+                if let piConfiguration {
+                    return piConfiguration.isConnected
+                        && !piConfiguration.isSubmitting
+                        && !piConfiguration.isCompacting
+                }
+                return model.canControl && !model.isSending
+            },
             upload: { url, contentType in
                 try await model.uploadAttachment(from: url, contentType: contentType, to: workspace)
             },
@@ -776,13 +784,17 @@ struct PromptComposerView: View {
     }
 
     private func handleDictationMicrophoneTap() {
-        guard canControl, !isPiCompacting, !isSubmitting else { return }
-        switch dictationSession.externalMicAction() {
+        // Readiness gates the start only: while a recording is active the
+        // microphone stays a Stop control, and a click ends the capture even
+        // if control or another submission became unavailable meanwhile.
+        switch dictationSession.externalMicAction(
+            canStart: canControl && !isPiCompacting && !isSubmitting
+        ) {
         case .start:
             isShowingMoreTools = false
             isCTACapture = true
         case .stop:
-            finishLockedQuickVoiceCapture()
+            stopVoiceCapture()
         case .ignored:
             break
         }
@@ -1255,15 +1267,37 @@ struct PromptComposerView: View {
     /// The destination-bound operations for one dictation completion. The
     /// session appends the transcript and, only when the explicit Stop intent
     /// survived the await, submits through the composer's normal path.
-    private var dictationCompletion: PromptComposerDictationSession.Completion {
-        PromptComposerDictationSession.Completion(
-            isCurrent: { destination.isCurrent() },
-            acceptsCompletion: { destination.acceptsCompletion() },
-            transcribe: { url in try await destination.transcribe(url) },
-            appendTranscript: { transcript in appendTranscript(transcript) },
-            canSubmit: { canSend && !isPiCompacting && destination.isCurrent() },
-            submit: { await dispatchSubmission() },
-            reportError: { destination.reportError($0) }
+    ///
+    /// Internal so production-wiring tests can exercise the exact completion
+    /// this view hands to `PromptComposerDictationSession`.
+    var dictationCompletion: PromptComposerDictationSession.Completion {
+        destination.dictationCompletion(
+            appendTranscript: { appendTranscript($0) },
+            hasReadyContent: { hasReadyContentForSubmission() },
+            submit: { await dispatchSubmission() }
+        )
+    }
+
+    /// Live readiness for a submission that may resume after a suspension.
+    ///
+    /// `canSend` reads the destination's render snapshot, which is right for a
+    /// synchronous button but wrong inside an asynchronous completion: the
+    /// view value that started the transcription never receives re-renders.
+    /// Staged content is read through the bindings and control, submission,
+    /// and compaction state through `destination.isReadyToSubmit()`.
+    private func isReadyToSubmitLive() -> Bool {
+        destination.isReadyToSubmit() && hasReadyContentForSubmission()
+    }
+
+    private func hasReadyContentForSubmission() -> Bool {
+        guard piConfiguration?.availableDispositions.contains(effectiveDisposition) ?? true else {
+            return false
+        }
+        return PromptComposerSubmission.hasReadyContent(
+            draft: draft,
+            attachments: attachments,
+            quoteCount: quotes.count,
+            conversationReferenceCount: stagedConversationReferences.count
         )
     }
 
@@ -1447,7 +1481,10 @@ struct PromptComposerView: View {
         // A recording or transcription must never race a submission; the
         // dictation completion itself runs after its capture is idle.
         guard quickVoiceCapture.phase == .idle else { return false }
-        guard canSend, destination.isCurrent() else { return false }
+        // Re-read readiness from the destination instead of `canSend`: this
+        // method also runs when a dictation completion resumes long after the
+        // view value that recorded the explicit Stop was rendered.
+        guard destination.isCurrent(), isReadyToSubmitLive() else { return false }
         let destinationID = destination.id
         let draftToSend = draft
         let attachmentsToSend = attachments.filter { $0.status == .uploaded && $0.uploadedPath != nil }

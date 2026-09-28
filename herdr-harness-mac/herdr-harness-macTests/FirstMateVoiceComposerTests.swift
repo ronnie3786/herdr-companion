@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 @testable import herdr_harness_mac
 
@@ -78,14 +79,45 @@ struct FirstMateVoiceComposerTests {
 
         // One click starts; the same control's next click records the
         // explicit-stop intent that authorizes the send.
-        #expect(session.externalMicAction() == .start)
+        #expect(session.externalMicAction(canStart: true) == .start)
         #expect(session.phase == .locked)
         harness.engine?.currentTime = 1.3
-        #expect(session.externalMicAction() == .stop)
+        #expect(session.externalMicAction(canStart: true) == .stop)
 
         let outcome = await session.finish(composer.completion(transcribe: immediate("From the microphone")))
         #expect(outcome == .submitted(transcription("From the microphone")))
         #expect(composer.submissions.count == 1)
+    }
+
+    @Test("A click while unready still stops an active recording")
+    func externalMicStopIgnoresReadiness() async throws {
+        let (session, harness) = makeSession()
+        let composer = DictationComposerStub(draft: "Existing direction")
+        let transcriber = DeferredVoiceTranscriber()
+
+        #expect(session.externalMicAction(canStart: true) == .start)
+        harness.engine?.currentTime = 1.2
+        // A pause or model-settings request now owns submission readiness. The
+        // next microphone click is a Stop and must still end the capture.
+        composer.isSubmitting = true
+        #expect(session.externalMicAction(canStart: false) == .stop)
+        let finishing = Task { await session.finish(composer.completion(transcribe: transcriber.transcribe)) }
+        try await waitUntil("transcription to suspend") { transcriber.isWaiting }
+
+        transcriber.succeed(with: transcription("Keep me"))
+        let outcome = await finishing.value
+
+        #expect(outcome == .notSent(transcription("Keep me"), message: PromptComposerDictationSession.notSentMessage))
+        #expect(composer.draft.contains("Keep me"))
+        #expect(composer.submissions.isEmpty)
+        #expect(composer.reportedErrors == [PromptComposerDictationSession.notSentMessage])
+    }
+
+    @Test("An idle microphone click does nothing while unready")
+    func externalMicStartRequiresReadiness() {
+        let (session, _) = makeSession()
+        #expect(session.externalMicAction(canStart: false) == .ignored)
+        #expect(session.phase == .idle)
     }
 
     @Test("The submitted payload carries every staged item and the dictation marker")
@@ -375,6 +407,73 @@ struct FirstMateVoiceComposerTests {
         #expect(composer.submissions.count == 1)
     }
 
+    // MARK: - Live production wiring
+
+    @Test("Losing control while transcription is suspended blocks the send")
+    func liveReadinessLossBlocksSuspendedCompletion() async throws {
+        let fixture = try await LiveComposerFixture()
+        defer { fixture.dispose() }
+        let lease = fixture.store.acquireControlLease(available: true)
+        fixture.store.setComposerDraft("Existing direction", for: fixture.context)
+        let view = fixture.makeView(canControl: true)
+        let harness = QuickCaptureHarness()
+        let session = PromptComposerDictationSession(capture: harness.capture)
+
+        #expect(session.beginDictation())
+        harness.engine?.currentTime = 1.4
+        #expect(session.beginExplicitStop())
+        let finishing = Task { await session.finish(view.dictationCompletion) }
+        try await waitUntil("production transcription to suspend") {
+            await fixture.client.transcriptionIsWaiting
+        }
+
+        // Control is lost while the transcript is still being produced. The
+        // destination's `canControl`/`isSubmitting` snapshot still says ready,
+        // so only the live store check can catch this.
+        fixture.store.updateControlLease(lease, available: false)
+        await fixture.client.succeedTranscription(with: "Ship the fix")
+        let outcome = await finishing.value
+
+        let expected = transcription("Ship the fix", provider: .parakeet, language: "en")
+        #expect(outcome == .notSent(expected, message: PromptComposerDictationSession.notSentMessage))
+        #expect(fixture.store.composerDraft(for: fixture.context).contains("Ship the fix"))
+        #expect(fixture.store.error == PromptComposerDictationSession.notSentMessage)
+        #expect(await fixture.client.sentTexts.isEmpty)
+    }
+
+    @Test("A stale unready snapshot still submits when the live destination is ready")
+    func liveReadinessOverridesObsoleteSnapshot() async throws {
+        let fixture = try await LiveComposerFixture()
+        defer { fixture.dispose() }
+        _ = fixture.store.acquireControlLease(available: true)
+        fixture.store.setComposerDraft("Existing direction", for: fixture.context)
+        // The destination was produced by a render that saw control as
+        // unavailable; the live store says otherwise, so the send must land.
+        let view = fixture.makeView(canControl: false)
+        let harness = QuickCaptureHarness()
+        let session = PromptComposerDictationSession(capture: harness.capture)
+
+        #expect(session.beginDictation())
+        harness.engine?.currentTime = 1.4
+        #expect(session.beginExplicitStop())
+        let finishing = Task { await session.finish(view.dictationCompletion) }
+        try await waitUntil("production transcription to suspend") {
+            await fixture.client.transcriptionIsWaiting
+        }
+        await fixture.client.succeedTranscription(with: "Ship the fix")
+        let outcome = await finishing.value
+
+        let expected = transcription("Ship the fix", provider: .parakeet, language: "en")
+        #expect(outcome == .submitted(expected))
+        let payload = try #require(await fixture.client.sentTexts.first)
+        #expect(payload.contains("Existing direction"))
+        #expect(payload.contains("Ship the fix"))
+        #expect(payload.contains("(transcribed audio, please account for incorrect names or typos)"))
+        #expect(fixture.store.composerDraft(for: fixture.context).isEmpty)
+        #expect(!fixture.store.composerDrafts.containsDictation(for: fixture.snapshot.feature.id))
+        #expect(fixture.store.error == nil)
+    }
+
     // MARK: - Helpers
 
     private func makeSession() -> (session: PromptComposerDictationSession, harness: QuickCaptureHarness) {
@@ -384,6 +483,14 @@ struct FirstMateVoiceComposerTests {
 
     private func transcription(_ text: String) -> VoiceTranscription {
         VoiceTranscription(text: text, provider: .demo, language: nil, usedFallback: false)
+    }
+
+    private func transcription(
+        _ text: String,
+        provider: VoiceTranscriptionProvider,
+        language: String?
+    ) -> VoiceTranscription {
+        VoiceTranscription(text: text, provider: provider, language: language, usedFallback: false)
     }
 
     private func immediate(_ text: String) -> @MainActor (URL) async throws -> VoiceTranscription {
@@ -406,6 +513,7 @@ struct FirstMateVoiceComposerTests {
             supportsPaneTools: false,
             isCurrent: { true },
             acceptsCompletion: { true },
+            isReadyToSubmit: { true },
             upload: { _, _ in throw APIError.invalidResponse },
             transcribe: { _ in throw APIError.invalidResponse },
             submit: { _ in true },
@@ -574,5 +682,124 @@ private final class DeferredVoiceTranscriber {
     func fail(with error: any Error) {
         continuation?.resume(throwing: error)
         continuation = nil
+    }
+}
+
+// MARK: - Production fixture
+
+/// A First Mate store, model, and produced `PromptComposerView` wired through
+/// the same `PromptComposerDestination.firstMate` factory the app uses, so
+/// live-readiness coverage exercises production code rather than the stub.
+@MainActor
+private final class LiveComposerFixture {
+    let client: DeferredFirstMateVoiceClient
+    let store: FirstMateStore
+    let model: HerdrAppModel
+    let snapshot: FirstMateSnapshot
+    let context: FirstMateStore.OperationContext
+    private let userDefaultsSuite: String
+    private let userDefaults: UserDefaults
+
+    init() async throws {
+        client = DeferredFirstMateVoiceClient()
+        store = FirstMateStore()
+        store.configure(client: client, demo: false)
+        await store.refresh()
+        context = store.operationContext
+        snapshot = try #require(store.snapshot(for: context))
+        userDefaultsSuite = "herdr-first-mate-voice-\(UUID().uuidString)"
+        userDefaults = try #require(UserDefaults(suiteName: userDefaultsSuite))
+        model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"], userDefaults: userDefaults)
+    }
+
+    func dispose() {
+        userDefaults.removePersistentDomain(forName: userDefaultsSuite)
+    }
+
+    func makeView(canControl: Bool) -> PromptComposerView {
+        let featureID = snapshot.feature.id
+        let draft = Binding(
+            get: { self.store.composerDraft(for: self.context) },
+            set: { self.store.setComposerDraft($0, for: self.context) }
+        )
+        let containsDictation = Binding(
+            get: { self.store.composerDrafts.containsDictation(for: featureID) },
+            set: { self.store.composerDrafts.setContainsDictation($0, for: featureID) }
+        )
+        return PromptComposerView(
+            model: model,
+            destination: .firstMate(store: store, model: model, snapshot: snapshot, canControl: canControl),
+            draft: draft,
+            attachments: .constant([]),
+            quotes: .constant([]),
+            containsDictation: containsDictation,
+            modelFavorites: ModelFavoritesStore(userDefaults: userDefaults)
+        )
+    }
+}
+
+/// Suspends First Mate's private transcription request until the test releases
+/// it and records accepted sends, so readiness transitions can be observed
+/// while the production completion is still awaiting a transcript.
+private actor DeferredFirstMateVoiceClient: FirstMateClient {
+    private var transcriptionContinuation: CheckedContinuation<VoiceTranscriptionResponse, Error>?
+    private(set) var sentTexts: [String] = []
+
+    var transcriptionIsWaiting: Bool { transcriptionContinuation != nil }
+
+    func succeedTranscription(with text: String) {
+        let response = VoiceTranscriptionResponse(ok: true, text: text, backend: "parakeet", language: "en")
+        transcriptionContinuation?.resume(returning: response)
+        transcriptionContinuation = nil
+    }
+
+    func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities {
+        .init(ok: true, capabilities: ["first-mate-v1", "first-mate-attachments-v1"])
+    }
+
+    func fetchFirstMateFeatures() async throws -> FirstMateFeatureList {
+        .init(ok: true, features: FirstMateDemo.features(step: 0).map(\.feature))
+    }
+
+    func fetchFirstMateFeatures(scope: FirstMateFeatureScope) async throws -> FirstMateFeatureList {
+        try await fetchFirstMateFeatures()
+    }
+
+    func fetchFirstMateFeature(_ id: String) async throws -> FirstMateSnapshot {
+        try #require(FirstMateDemo.features(step: 0).first { $0.feature.id == id })
+    }
+
+    func fetchFirstMateFeature(_ id: String, journalEventsOnly: Bool) async throws -> FirstMateSnapshot {
+        try await fetchFirstMateFeature(id)
+    }
+
+    func sendFirstMateMessage(featureID: String, text: String, requestID: String) async throws -> FirstMateSnapshot {
+        sentTexts.append(text)
+        guard let snapshot = FirstMateDemo.features(step: 0).first(where: { $0.feature.id == featureID }) else {
+            throw APIError.invalidResponse
+        }
+        return snapshot
+    }
+
+    func createFirstMateFeature(title: String, goal: String, cwd: String, requestID: String) async throws -> FirstMateSnapshot {
+        throw APIError.invalidResponse
+    }
+
+    func performFirstMateAction(featureID: String, action: String, requestID: String) async throws -> FirstMateSnapshot {
+        throw APIError.invalidResponse
+    }
+
+    func fetchFirstMateDocument(_ id: String) async throws -> FirstMateDocumentResponse {
+        throw APIError.invalidResponse
+    }
+
+    func fetchFirstMateSession(_ id: String, before: Int?) async throws -> FirstMateSessionResponse {
+        throw APIError.invalidResponse
+    }
+
+    func transcribeFirstMateVoice(fileURL: URL) async throws -> VoiceTranscriptionResponse {
+        try await withCheckedThrowingContinuation { continuation in
+            transcriptionContinuation = continuation
+        }
     }
 }

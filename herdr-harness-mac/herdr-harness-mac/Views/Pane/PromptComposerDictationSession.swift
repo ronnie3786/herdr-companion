@@ -113,14 +113,16 @@ final class PromptComposerDictationSession {
     }
 
     /// What one click on the external dictation microphone should do. Starting
-    /// records the session token; stopping records the explicit-stop intent
-    /// before returning, so the caller only has to finish the capture.
-    func externalMicAction() -> ExternalMicAction {
+    /// is gated by `canStart`; stopping is not, because the control stays a
+    /// Stop affordance while a recording is active and a readiness change must
+    /// never strand it. Stopping records the explicit-stop intent before
+    /// returning, so the caller only has to finish the capture.
+    func externalMicAction(canStart: Bool) -> ExternalMicAction {
         if isRecording {
             beginExplicitStop()
             return .stop
         }
-        guard phase == .idle, !isBusy, beginDictation() else { return .ignored }
+        guard canStart, phase == .idle, !isBusy, beginDictation() else { return .ignored }
         return .start
     }
 

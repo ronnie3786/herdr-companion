@@ -55,6 +55,26 @@ enum FirstMateTranscriptLayout {
         return rows
     }
 
+    /// What re-runs read marking. The fleet's read state is part of it: the
+    /// transcript usually shows a reply before the fleet reports the chat
+    /// unread, and marking then is a no-op, so the flip to unread (or a newer
+    /// First Mate reply) must mark again while the newest message is on screen.
+    struct ReadKey: Equatable, Sendable {
+        var followsLatest: Bool
+        var isKey: Bool
+        var newest: String?
+        var isUnread: Bool?
+        var latestFirstMateMessageID: String?
+
+        init(followsLatest: Bool, isKey: Bool, newest: String?, conversation: FirstMateConversation?) {
+            self.followsLatest = followsLatest
+            self.isKey = isKey
+            self.newest = newest
+            isUnread = conversation?.isUnread
+            latestFirstMateMessageID = conversation?.latestFirstMateMessageID
+        }
+    }
+
     /// Whether the typing bubble starts its own group (shows "First Mate").
     static func typingStartsGroup(_ rows: [Row]) -> Bool {
         rows.last?.speaker != .firstMate
@@ -235,7 +255,12 @@ struct FirstMateChatTranscript: View {
             }
         }
         .onAppear(perform: markRead)
-        .onChange(of: ReadKey(followsLatest: followsLatest, isKey: controlActiveState == .key, newest: messages.last?.id)) { _, _ in
+        .onChange(of: FirstMateTranscriptLayout.ReadKey(
+            followsLatest: followsLatest,
+            isKey: controlActiveState == .key,
+            newest: messages.last?.id,
+            conversation: session.conversations.first { $0.id == conversationID }
+        )) { _, _ in
             markRead()
         }
         .task(id: feedbackLoadID) { await loadFeedback() }
@@ -243,12 +268,6 @@ struct FirstMateChatTranscript: View {
         .sheet(item: $feedbackEditor) { target in
             FirstMateFeedbackEditor(store: store, target: target)
         }
-    }
-
-    private struct ReadKey: Equatable {
-        let followsLatest: Bool
-        let isKey: Bool
-        let newest: String?
     }
 
     /// Read when this window is key and the newest message is on screen.

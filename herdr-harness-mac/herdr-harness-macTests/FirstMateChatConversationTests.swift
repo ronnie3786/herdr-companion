@@ -190,6 +190,76 @@ struct FirstMateChatConversationTests {
             == "Check [Receipt export](herdr://first-mate?feature_id=fmf_1) please")
     }
 
+    static func conversation(_ title: String, machineID: String, unread: Bool = false, latest: String? = nil) -> FirstMateConversation {
+        let base = ChatFixtures.conversation(title, hud: .blocked, step: 3, unread: unread)
+        return FirstMateConversation(
+            id: FirstMateFleetFeatureID(machineID: machineID, featureID: base.featureID), machineID: machineID,
+            machineName: machineID, featureID: base.featureID, title: base.title, label: base.label, emoji: base.emoji,
+            hudStatus: base.hudStatus, featureStatus: base.featureStatus, stepIndex: base.stepIndex, stepFraction: nil,
+            now: nil, previewText: "", previewIsFromUser: false, isWorkingOnReply: false, activityAt: nil,
+            latestFirstMateMessageID: latest, isUnread: unread, isArchived: false
+        )
+    }
+
+    @Test("Only the chat's own machine's features can be tagged")
+    func taggableFeatures() {
+        let features = [
+            Self.conversation("Receipt export", machineID: "mac-a"),
+            Self.conversation("Offline sync", machineID: "mac-b"),
+            Self.conversation("Search polish", machineID: "mac-a"),
+        ]
+        #expect(FirstMateMentionOption.taggableFeatures(features, machineID: "mac-a").map(\.title) == ["Receipt export", "Search polish"])
+        #expect(FirstMateMentionOption.taggableFeatures(features, machineID: "mac-c").isEmpty)
+        #expect(FirstMateMentionOption.taggableFeatures(features, machineID: nil).isEmpty)
+    }
+
+    @Test("A restored draft's tags are recovered at send; recorded picks keep their names")
+    func picksForSend() {
+        let features = [
+            Self.conversation("Receipt export", machineID: "local"),
+            Self.conversation("Offline sync", machineID: "local"),
+        ]
+        let crew = [
+            FirstMateAssignment(id: "as_1", featureID: "Receipt export", visitID: "v", title: "Device QA", role: "Tester",
+                                status: "blocked", attempt: 1, generation: 1, inputRevision: 1, updatedAt: "2030-03-06T10:00:00Z"),
+        ]
+        let draft = "Ask @Device QA about @Receipt export please"
+        let restored = FirstMateMentionOption.picksForSend([], draft: draft, features: features, crew: crew)
+        #expect(Set(restored.map(\.name)) == ["Receipt export", "Device QA"])
+        #expect(FirstMateMention.serializeComposer(draft, picks: restored)
+            == "Ask [Device QA](herdr://first-mate?feature_id=Receipt%20export&assignment_id=as_1) about [Receipt export](herdr://first-mate?feature_id=Receipt%20export) please")
+
+        let recorded = FirstMateMentionCandidate(name: "Receipt export", target: .feature(featureID: "fmf_recorded"))
+        let kept = FirstMateMentionOption.picksForSend([recorded], draft: draft, features: features, crew: crew)
+        #expect(kept.first == recorded)
+        #expect(kept.filter { $0.name == "Receipt export" }.count == 1)
+        #expect(FirstMateMentionOption.picksForSend([], draft: "Receipt export without a tag", features: features, crew: crew).isEmpty)
+    }
+
+    @Test("Read marking re-runs when the fleet flips the chat to unread or reports a newer reply")
+    func readKey() {
+        let read = Self.conversation("Receipt export", machineID: "local", unread: false, latest: "m1")
+        let unread = Self.conversation("Receipt export", machineID: "local", unread: true, latest: "m1")
+        let newer = Self.conversation("Receipt export", machineID: "local", unread: true, latest: "m2")
+        func key(_ conversation: FirstMateConversation?) -> FirstMateTranscriptLayout.ReadKey {
+            .init(followsLatest: true, isKey: true, newest: "m2", conversation: conversation)
+        }
+        #expect(key(read) != key(unread))
+        #expect(key(unread) != key(newer))
+        #expect(key(read) == key(read))
+        #expect(key(nil) != key(read))
+    }
+
+    @Test("Letting go of the mic sends while listening and hints only after a quick tap")
+    func micRelease() {
+        #expect(FirstMateChatComposer.micRelease(isListening: true, isIdle: false, listenedThisPress: true) == .finish)
+        #expect(FirstMateChatComposer.micRelease(isListening: false, isIdle: true, listenedThisPress: false) == .tapHint)
+        // Held, then Esc cancelled before letting go.
+        #expect(FirstMateChatComposer.micRelease(isListening: false, isIdle: true, listenedThisPress: true) == FirstMateChatComposer.MicRelease.none)
+        // Still transcribing an earlier recording.
+        #expect(FirstMateChatComposer.micRelease(isListening: false, isIdle: false, listenedThisPress: false) == FirstMateChatComposer.MicRelease.none)
+    }
+
     // MARK: Mention runs
 
     static var catalog: FirstMateMentionCatalog {

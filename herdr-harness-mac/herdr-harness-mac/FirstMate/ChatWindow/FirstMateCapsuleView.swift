@@ -16,9 +16,6 @@ struct FirstMateCapsuleView: View {
     @FocusState private var focused: Bool
 
     static let height: CGFloat = 21
-    /// Just under half the height, which reads as the 11 pt pill without the
-    /// stray edge segment an exact half-height radius draws offscreen.
-    static let radius: CGFloat = 10
     static let hoverDelay: Duration = .milliseconds(200)
     static let hideDelay: Duration = .milliseconds(160)
 
@@ -47,11 +44,11 @@ struct FirstMateCapsuleView: View {
             .frame(height: Self.height)
             .background {
                 ZStack {
-                    RoundedRectangle(cornerRadius: Self.radius).fill(HerdrTheme.inkFill(0.06))
-                    RoundedRectangle(cornerRadius: Self.radius).fill(tint.opacity(isActive ? 0.22 : 0.11))
+                    Capsule(style: .continuous).fill(HerdrTheme.inkFill(0.06))
+                    Capsule(style: .continuous).fill(tint.opacity(isActive ? 0.22 : 0.11))
                 }
             }
-            .overlay(RoundedRectangle(cornerRadius: Self.radius).strokeBorder(tint.opacity(isActive ? 1 : 0.36), lineWidth: 1))
+            .overlay(Capsule(style: .continuous).strokeBorder(tint.opacity(isActive ? 1 : 0.36), lineWidth: 1))
             .contentShape(.capsule)
         }
         .buttonStyle(.herdrPlain)

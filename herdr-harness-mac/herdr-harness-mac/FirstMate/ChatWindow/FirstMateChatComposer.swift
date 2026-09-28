@@ -33,6 +33,9 @@ struct FirstMateChatComposer: View {
     @State private var voice = HerdrQuickVoiceCapture()
     @State private var holdTask: Task<Void, Never>?
     @State private var isPressingMic = false
+    /// Whether the 300 ms hold fired during this press, so letting go after
+    /// Esc cancelled it is not mistaken for a quick tap.
+    @State private var listenedThisPress = false
     @State private var hint: Hint = .idle
     @State private var hintTask: Task<Void, Never>?
     @State private var highlighted = 0
@@ -45,13 +48,25 @@ struct FirstMateChatComposer: View {
 
     static let holdDelay: Duration = .milliseconds(300)
     static let buttonSize: CGFloat = 34
-    /// 22 pt, a hair under half the one-line height: an exact half-height
-    /// radius draws a stray edge segment in offscreen renders.
-    static let pillRadius: CGFloat = 21.5
 
     enum Hint: Equatable {
         case idle, tapHint, listening, transcribing, nothingHeard
         case error(String)
+    }
+
+    enum MicRelease: Equatable {
+        /// Transcribe and send.
+        case finish
+        /// The hold never fired: explain how to talk.
+        case tapHint
+        /// Cancelled, transcribing, or otherwise busy.
+        case none
+    }
+
+    /// What letting go of the mic does.
+    static func micRelease(isListening: Bool, isIdle: Bool, listenedThisPress: Bool) -> MicRelease {
+        if isListening { return .finish }
+        return isIdle && !listenedThisPress ? .tapHint : .none
     }
 
     // MARK: Derived
@@ -141,6 +156,13 @@ struct FirstMateChatComposer: View {
                     .hidden()
             }
         }
+        // The composer is rebuilt per chat, so this focuses it on every chat
+        // switch; a focus request covers the sidebar's ＋ on My First Mate.
+        .onAppear { focused = true }
+        .onReceive(NotificationCenter.default.publisher(for: .firstMateChatFocusComposer)) { note in
+            guard (note.object as? FirstMateChatWindowSession) === session, !isListening else { return }
+            focused = true
+        }
         .onDisappear {
             holdTask?.cancel()
             hintTask?.cancel()
@@ -159,8 +181,8 @@ struct FirstMateChatComposer: View {
             trailingButton
         }
         .padding(5)
-        .background(HerdrTheme.inkFill(0.05), in: .rect(cornerRadius: Self.pillRadius))
-        .overlay(RoundedRectangle(cornerRadius: Self.pillRadius).strokeBorder(pillStroke, lineWidth: 1))
+        .background(HerdrTheme.inkFill(0.05), in: Capsule(style: .continuous))
+        .overlay(Capsule(style: .continuous).strokeBorder(pillStroke, lineWidth: 1))
         .shadow(color: isListening ? HerdrTheme.alert.opacity(0.30) : focused ? HerdrTheme.accent.opacity(0.20) : .black.opacity(0.18),
                 radius: isListening || focused ? 11 : 14, y: isListening || focused ? 0 : 10)
     }
@@ -279,7 +301,12 @@ struct FirstMateChatComposer: View {
         HStack(spacing: 0) {
             switch hint {
             case .idle:
-                (Text("Type ") + Text("@").foregroundStyle(HerdrTheme.secondaryText) + Text(isFeature ? " to tag a feature. Hold the mic to talk." : " to tag a feature. Sending starts a new feature."))
+                Text("Type ")
+                Text("@")
+                    .foregroundStyle(HerdrTheme.secondaryText)
+                    .padding(.horizontal, 4)
+                    .background(HerdrTheme.inkFill(0.08), in: .rect(cornerRadius: 4))
+                Text(isFeature ? " to tag a feature. Hold the mic to talk." : " to tag a feature. Sending starts a new feature.")
             case .tapHint:
                 Text("Hold the mic to talk.")
             case .listening:
@@ -340,7 +367,10 @@ struct FirstMateChatComposer: View {
     private func send() {
         guard isReady else { return }
         let text = draft
-        let serialized = FirstMateMention.serializeComposer(text.trimmingCharacters(in: .whitespacesAndNewlines), picks: picks)
+        let serialized = FirstMateMention.serializeComposer(
+            text.trimmingCharacters(in: .whitespacesAndNewlines),
+            picks: FirstMateMentionOption.picksForSend(picks, draft: text, features: features, crew: crew)
+        )
         switch mode {
         case .lead:
             session.beginCreate(goal: serialized)
@@ -389,6 +419,7 @@ struct FirstMateChatComposer: View {
     private func pressBegan() {
         guard !isPressingMic else { return }
         isPressingMic = true
+        listenedThisPress = false
         guard voice.phase == .idle else { return }
         holdTask?.cancel()
         holdTask = Task {
@@ -402,14 +433,16 @@ struct FirstMateChatComposer: View {
         isPressingMic = false
         holdTask?.cancel()
         holdTask = nil
-        if isListening {
-            finishListening()
-        } else if voice.phase == .idle {
-            showHint(.tapHint)
+        switch Self.micRelease(isListening: isListening, isIdle: voice.phase == .idle, listenedThisPress: listenedThisPress) {
+        case .finish: finishListening()
+        case .tapHint: showHint(.tapHint)
+        case .none: break
         }
+        listenedThisPress = false
     }
 
     private func startListening() {
+        listenedThisPress = true
         hintTask?.cancel()
         hint = .listening
         voice.beginHold()
@@ -581,8 +614,8 @@ struct FirstMateSuggestionChip: View {
                 .lineLimit(1)
                 .padding(.horizontal, 12)
                 .frame(height: 28)
-                .background(hovering ? HerdrTheme.accent.opacity(0.16) : HerdrTheme.windowBackground.opacity(0.5), in: .rect(cornerRadius: 13.5))
-                .overlay(RoundedRectangle(cornerRadius: 13.5).strokeBorder(HerdrTheme.accent.opacity(0.40), lineWidth: 1))
+                .background(hovering ? HerdrTheme.accent.opacity(0.16) : HerdrTheme.windowBackground.opacity(0.5), in: Capsule(style: .continuous))
+                .overlay(Capsule(style: .continuous).strokeBorder(HerdrTheme.accent.opacity(0.40), lineWidth: 1))
                 .contentShape(.capsule)
         }
         .buttonStyle(.herdrPlain)
@@ -610,4 +643,11 @@ private struct FirstMateMicPulse: View {
             .allowsHitTesting(false)
         }
     }
+}
+
+extension Notification.Name {
+    /// Focuses the chat window's composer. Post it with the window's
+    /// `FirstMateChatWindowSession` as the object, for example from the
+    /// sidebar's ＋ after selecting My First Mate.
+    static let firstMateChatFocusComposer = Notification.Name("FirstMateChatFocusComposer")
 }

@@ -56,6 +56,33 @@ struct FirstMateMentionOption: Identifiable, Equatable, Sendable {
 
     static let featureLimit = 5
 
+    /// The features a draft can tag: a mention carries only a feature id and
+    /// opens on the chat's own machine, so only that machine's features. No
+    /// machine (nothing can start a feature) means none.
+    static func taggableFeatures(_ conversations: [FirstMateConversation], machineID: String?) -> [FirstMateConversation] {
+        guard let machineID else { return [] }
+        return conversations.filter { $0.machineID == machineID }
+    }
+
+    /// The picks to serialize at send. The picks live in view state while the
+    /// draft outlives it (the window store keeps it), so a restored draft's
+    /// `@Name` tags are recovered from the taggable features and crew. Recorded
+    /// picks come first and keep their names.
+    static func picksForSend(
+        _ picks: [FirstMateMentionCandidate], draft: String,
+        features: [FirstMateConversation], crew: [FirstMateAssignment]
+    ) -> [FirstMateMentionCandidate] {
+        let named = features.map { FirstMateMentionCandidate(name: $0.title, target: .feature(featureID: $0.featureID)) }
+            + crew.filter { !$0.title.isEmpty }.map {
+                FirstMateMentionCandidate(name: $0.title, target: .agent(featureID: $0.featureID, assignmentID: $0.id))
+            }
+        var result = picks
+        for candidate in named where !result.contains(where: { $0.name == candidate.name }) && draft.contains("@" + candidate.name) {
+            result.append(candidate)
+        }
+        return result
+    }
+
     /// Features first (at most five), then the open feature's crew, each
     /// filtered case-insensitively by name.
     static func options(query: String, features: [FirstMateConversation], crew: [FirstMateAssignment]) -> [Self] {

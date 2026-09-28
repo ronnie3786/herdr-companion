@@ -71,7 +71,9 @@ struct FirstMateChatConversationView: View {
                     picks: picksBinding("lead"),
                     placeholder: "Describe a new feature",
                     suggestions: [],
-                    features: conversations,
+                    // A new feature starts on the first machine that can
+                    // create one, so only its features can be tagged.
+                    features: FirstMateMentionOption.taggableFeatures(conversations, machineID: session.createMachineIDs.first),
                     crew: [],
                     crewTitle: nil
                 )
@@ -180,7 +182,7 @@ private struct FirstMateFeatureChat: View {
                         picks: $picks,
                         placeholder: "Message \(conversation?.title ?? snapshot.feature.title)",
                         suggestions: FirstMateTranscriptLayout.suggestedReplies(messages: messages, needsYou: needsYou, isTyping: typing),
-                        features: session.conversations,
+                        features: FirstMateMentionOption.taggableFeatures(session.conversations, machineID: id.machineID),
                         crew: snapshot.assignments,
                         crewTitle: conversation?.title ?? snapshot.feature.title,
                         canSend: store.selectedFeatureID == id.featureID

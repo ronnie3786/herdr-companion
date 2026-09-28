@@ -19,6 +19,60 @@ class StageGrantTests(unittest.TestCase):
         self.store = FirstMateStore(self.path)
         self.addCleanup(lambda: self.store.close())
 
+    def test_refining_empty_stage_preserves_current_human_grant_and_followups(self):
+        for affected in (None, []):
+            with self.subTest(affected=affected):
+                suffix = "whole" if affected is None else "selected"
+                feature = self.store.create_feature({"title": "Synthetic approved delivery", "goal": "Implement and review the change",
+                                                     "cwd": "/tmp/synthetic-delivery", "request_id": "create-" + suffix})
+                human = self.store.claim_message(feature["id"], "coordinator")
+                visit = self.store.start_visit(feature["id"], "implement", "Implement", "begin", 1, human["id"],
+                                               followup_stages=["review", "release"])
+                revised = self.store.revise_feature(feature["id"], "Implement the requested behavior, then review and release it",
+                                                     1, "refine", human["id"], affected_assignment_ids=affected)
+                self.assertEqual((revised["status"], revised["revision"], revised["current_visit_id"]),
+                                 ("running", 2, visit["id"]))
+                self.assertEqual(self.store.revise_feature(feature["id"], revised["goal"], 1, "refine", human["id"],
+                                                           affected_assignment_ids=affected), revised)
+                current = self.store.snapshot(feature["id"])["visits"][-1]
+                self.assertEqual(current["followup_stages"], ["review", "release"])
+                self.assertEqual(current["revision"], 2)
+                task = self.store.create_assignment(visit["id"], {"title": "Implement", "role": "coder", "prompt": "Implement approved scope",
+                                                                   "request_id": "task", "input_revision": 2})
+                claimed = self.store.claim_assignment(task["id"], "worker")
+                bound = self.store.bind_session(task["id"], claimed["generation"], "worker", "native-" + suffix,
+                                                "/tmp/synthetic-delivery/" + suffix, "run")
+                self.store.record_outcome(task["id"], bound["generation"], bound["native_session_id"], 2,
+                                          "success", "Implemented and checked", "outcome")
+                self.store.finish_message(human["id"], "coordinator")
+                self.store.complete_visit(visit["id"], "Implementation checked", "Review", "complete")
+                review = self.store.start_visit(feature["id"], "review", "Review", "review", 2, human["id"])
+                self.assertEqual(review["followup_stages"], ["release"])
+                with self.assertRaises(FirstMateError):
+                    self.store.start_visit(feature["id"], "unapproved", "Unapproved", "extra", 2, human["id"])
+
+    def test_empty_stage_refinement_does_not_reuse_a_finished_human_turn(self):
+        feature = self.store.create_feature({"title": "Synthetic stage", "goal": "Plan", "cwd": "/tmp/synthetic", "request_id": "create"})
+        human = self.store.claim_message(feature["id"], "coordinator")
+        visit = self.store.start_visit(feature["id"], "plan", "Plan", "begin", 1, human["id"], followup_stages=["implement"])
+        self.store.finish_message(human["id"], "coordinator")
+        revised = self.store.revise_feature(feature["id"], "Changed scope", 1, "refine", human["id"])
+        self.assertEqual(revised["status"], "awaiting_direction")
+        self.assertEqual(self.store.snapshot(feature["id"])["visits"][-1]["status"], "superseded")
+        with self.assertRaises(FirstMateError):
+            self.store.start_visit(feature["id"], "plan", "Plan", "reused", 2, human["id"])
+
+    def test_revision_after_dispatch_still_requires_verified_writer_stop(self):
+        feature = self.store.create_feature({"title": "Synthetic stage", "goal": "Implement", "cwd": "/tmp/synthetic", "request_id": "create"})
+        human = self.store.claim_message(feature["id"], "coordinator")
+        visit = self.store.start_visit(feature["id"], "implement", "Implement", "begin", 1, human["id"], followup_stages=["review"])
+        task = self.store.create_assignment(visit["id"], {"title": "Implement", "role": "coder", "prompt": "Implement", "request_id": "task"})
+        self.store.claim_assignment(task["id"], "worker")
+        with self.assertRaises(FirstMateError) as error:
+            self.store.revise_feature(feature["id"], "Changed implementation", 1, "refine", human["id"])
+        self.assertEqual(error.exception.code, "writer_not_stopped")
+        self.assertEqual(self.store.get_feature(feature["id"])["revision"], 1)
+
     def test_one_human_request_authorizes_only_its_recorded_stage_sequence(self):
         feature = self.store.create_feature({"title": "Synthetic sequence", "goal": "Plan then implement then review a synthetic feature", "cwd": "/tmp/synthetic-sequence", "request_id": "create"})
         human = self.store.claim_message(feature["id"], "coordinator")
@@ -79,6 +133,21 @@ class RecoveryContinuationTests(unittest.TestCase):
     worker = reliability_fixtures.FirstMateReliabilityTests.worker
     isolated = reliability_fixtures.FirstMateReliabilityTests.isolated
     ledger = reliability_fixtures.FirstMateReliabilityTests.ledger
+
+    def test_coordinator_can_begin_refine_and_delegate_under_one_human_direction(self):
+        feature = self.store.create_feature({"title": "Synthetic approved pipeline", "goal": "Implement, review, then release",
+                                             "cwd": str(self.cwd), "request_id": "pipeline"})
+        human = self.store.claim_message(feature["id"], "coordinator")
+        job = self.runtime._new_job(feature, kind="coordinator", claim=human, prompt=human["text"])
+        visit = self.runtime._tool(job, "fm_begin_stage", {"stage_key": "implement", "title": "Implement",
+                                                           "followup_stages": ["review", "release"]}, "begin")
+        revised = self.runtime._tool(job, "fm_revise", {"goal": "Implement the requested behavior, review it, and release",
+                                                         "reason": "Retain the approved scope"}, "refine")
+        task = self.runtime._tool(job, "fm_delegate", {"title": "Implement", "role": "coder", "prompt": "Implement the approved behavior",
+                                                         "workspace_mode": "isolated"}, "delegate")
+        self.assertEqual((revised["status"], task["status"], task["input_revision"]), ("running", "queued", 2))
+        self.assertEqual(task["visit_id"], visit["id"])
+        self.assertEqual(self.store.snapshot(feature["id"])["visits"][-1]["followup_stages"], ["review", "release"])
 
     def test_system_turn_consumes_only_recorded_stage_and_router_can_see_grant(self):
         feature = self.store.create_feature({"title": "Synthetic routing", "goal": "Plan then implement a synthetic feature", "cwd": str(self.cwd), "request_id": "routing"})

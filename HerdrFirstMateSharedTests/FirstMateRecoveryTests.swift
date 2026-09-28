@@ -96,6 +96,25 @@ struct FirstMateRecoveryTests {
     }
 
     #if os(macOS)
+    @Test func leadAndFeatureWindowsShareHonestRecoveryNotices() {
+        var snapshot = FirstMateDemo.features(step: 0)[0]
+        snapshot.feature.kind = "lead"
+        snapshot.feature.status = "recovering"
+        var health = FirstMateRuntimeHealth(status: "healthy", schedulerAlive: true, consecutiveFailures: 0)
+        health.automaticRecovery = true
+        #expect(FirstMateExecutionStateNotice.message(snapshot: snapshot, health: health)?.contains("automatic continuation") == true)
+        health.status = "stopped"
+        #expect(FirstMateExecutionStateNotice.message(snapshot: snapshot, health: health) == health.warning)
+        #expect(FirstMateExecutionStateNotice.message(snapshot: snapshot, health: nil)?.contains("interrupted") == true)
+        snapshot.feature.status = "awaiting_direction"
+        snapshot.assignments = []
+        health.status = "healthy"
+        #expect(FirstMateExecutionStateNotice.message(snapshot: snapshot, health: health) == nil)
+        snapshot.feature.status = "completed"
+        health.status = "stopped"
+        #expect(FirstMateExecutionStateNotice.message(snapshot: snapshot, health: health) == nil)
+    }
+
     @Test func stabilityViewRendersScheduleAndProgress() throws {
         var snapshot = FirstMateDemo.features(step: 0)[0]
         snapshot.assignments[0].metadata = .init(progress: .init(summary: "Parser implemented", nextAction: "Run focused tests", evidence: "Two source files updated", recordedAt: "2026-01-01T00:00:00Z", waitUntilEpoch: nil))

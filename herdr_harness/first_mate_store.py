@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -672,6 +673,18 @@ class FirstMateStore:
         result["next_permitted_actions"] = []
         if result["metadata"].get("human_gate", {}).get("status") == "pending":
             result["next_permitted_actions"] = [{"tool": "fm_resolve_gate", "assignment_id": result["id"], "requires_human_direction": True}]
+        elif result["status"] in {"blocked", "failed"} and result["has_outcome"]:
+            feature = self._one("fm_features", result["feature_id"])
+            repair_count = result["metadata"].get("repair_count", 0)
+            repair_limit = result["metadata"].get("max_repair_attempts", 2)
+            if (feature["status"] == "running" and self.assignment_is_in_current_visit(result["id"])
+                    and isinstance(repair_count, int) and not isinstance(repair_count, bool)
+                    and isinstance(repair_limit, int) and not isinstance(repair_limit, bool)
+                    and 0 <= repair_count < min(2, repair_limit)):
+                result["next_permitted_actions"] = [{"tool": "fm_retry", "assignment_id": result["id"],
+                    "requires_verified_stop": True, "requires_human_direction": False}]
+            else:
+                result["next_permitted_actions"] = [{"tool": "fm_revise", "requires_human_direction": True}]
         elif result["status"] in {"running", "dispatching", "recovering", "blocked", "failed", "handoff_pending", "awaiting_ack"}:
             result["next_permitted_actions"] = [{"tool": "fm_recover", "assignment_id": result["id"],
                 "reset_budget": result["recovery_exhausted"], "requires_verified_stop": True,
@@ -1681,9 +1694,9 @@ class FirstMateStore:
                        verification: Mapping[str, Any] | None = None) -> dict:
         """Settle a coordinator turn.
 
-        A human turn's reply always joins the conversation. A background turn's
-        final text becomes a private journal note unless the human must act (see
-        _background_report).
+        A turn posts one canonical report. A stage checkpoint already answers a
+        human turn; its closing text stays in the journal. Other background
+        closing text stays private unless the human must act.
         """
         with self._transaction():
             message = self._one("fm_messages", message_id)
@@ -1694,7 +1707,9 @@ class FirstMateStore:
                 raise FirstMateError("Coordinator ownership changed", code="stale_owner")
             if reply:
                 posted, detail = True, {}
-                if message["role"] == "system":
+                if self._turn_reported(feature["id"], message):
+                    posted, detail = False, {"reason": "reported_this_turn"}
+                elif message["role"] == "system":
                     posted, detail = self._background_report(feature, message)
                 created = None
                 if posted:
@@ -2343,7 +2358,9 @@ class FirstMateStore:
                 # parks, and restarts until a newer completion supersedes it.
                 self._db.execute("UPDATE fm_features SET verification_selection_json=?,verification_selection_explicit=1 WHERE id=?",
                                  (_json(list(selection)), feature["id"]))
-            self._message(feature["id"], "assistant", summary + (f"\n\nSuggested next step: {recommendation}" if recommendation else "") + (f"\n\nContinuing with the previously authorized {visit['followup_stages'][0]} stage." if continuing else "\n\nAwaiting your direction.") + note, status="done", metadata=message_metadata,
+            next_step = (f"\n\nContinuing with the previously authorized {visit['followup_stages'][0]} stage." if continuing else
+                         (f"\n\nSuggested next step: {recommendation}" if recommendation else "") + "\n\nAwaiting your direction.")
+            self._message(feature["id"], "assistant", summary + next_step + note, status="done", metadata=message_metadata,
                           source={"source_kind": "checkpoint", "in_reply_to": None,
                                   "visit_id": visit_id, "feature_revision": visit["revision"],
                                   "native_session_id": native_session_id})
@@ -2499,6 +2516,27 @@ class FirstMateStore:
                 raise FirstMateError("A processed human direction is required", code="human_direction_required")
             if feature["status"] in {"completed", "cancelled"}:
                 raise FirstMateError("Feature is closed", code="feature_closed")
+            visit = self._one("fm_visits", feature["current_visit_id"]) if feature["current_visit_id"] else None
+            if (visit and feature["status"] == "running" and visit["status"] == "running"
+                    and visit["revision"] == expected_revision
+                    and visit["authorization_message_id"] == authorization_message_id
+                    and authorization["status"] == "processing"
+                    and authorization["owner"] == feature["coordinator_owner"]
+                    and feature["coordinator_owner"]
+                    and affected_assignment_ids in (None, [])
+                    and not self._db.execute("SELECT 1 FROM fm_assignment_memberships WHERE visit_id=?", (visit["id"],)).fetchone()
+                    and not self._db.execute("SELECT 1 FROM fm_assignments WHERE visit_id=?", (visit["id"],)).fetchone()):
+                # Saving the goal after opening an empty stage is still the same
+                # human-directed preparation. No execution or evidence exists to
+                # supersede, and its recorded follow-up grant remains intact.
+                now = _now()
+                self._db.execute("UPDATE fm_visits SET revision=?,updated_at=? WHERE id=?", (expected_revision + 1, now, visit["id"]))
+                self._db.execute("UPDATE fm_features SET goal=?,revision=revision+1,updated_at=? WHERE id=?", (goal, now, feature_id))
+                self._event(feature_id, "feature.revised", "Human direction refined the unstarted stage without another checkpoint",
+                            {"previous_revision": expected_revision, "revision": expected_revision + 1,
+                             "previous_goal": feature["goal"], "goal": goal, "authorization_message_id": authorization_message_id,
+                             "preserved_visit_id": visit["id"]})
+                return self._save_receipt(f"revision:{feature_id}", request_id, payload, self._one("fm_features", feature_id))
             if affected_assignment_ids is not None:
                 return self._revise_selected(feature, goal, expected_revision, request_id, authorization_message_id, verified_stopped, affected_assignment_ids, carry_forward_evidence or {}, payload)
             active = self._db.execute("SELECT id FROM fm_assignments WHERE feature_id=? AND status IN ('dispatching','running','handoff_pending','awaiting_ack','recovering','waiting_children')", (feature_id,)).fetchall()
@@ -2801,10 +2839,14 @@ class FirstMateStore:
         with self._lock:
             return self._receipt(f"recover:{assignment_id}", request_id, payload)
 
-    def recover_assignment(self, assignment_id: str, generation: int, reason: str, request_id: str, verified_stopped: bool = False, *, automatic: bool = False, reset_budget: bool = False, authorization_message_id: str | None = None) -> dict:
+    def recover_assignment(self, assignment_id: str, generation: int, reason: str, request_id: str, verified_stopped: bool = False, *, automatic: bool = False, reset_budget: bool = False, authorization_message_id: str | None = None, progress_key: str | None = None) -> dict:
         payload = {"generation": generation, "reason": _text(reason, "reason"), "verified_stopped": verified_stopped}
         if automatic:
             payload["automatic"] = True
+        if progress_key is not None:
+            if not automatic or not isinstance(progress_key, str) or not re.fullmatch(r"[0-9a-f]{64}", progress_key):
+                raise FirstMateError("Automatic recovery progress must be a validated evidence fingerprint", code="invalid_request", status=400)
+            payload["progress_key"] = progress_key
         if reset_budget:
             payload.update(reset_budget=True, authorization_message_id=authorization_message_id)
         with self._transaction():
@@ -2835,17 +2877,27 @@ class FirstMateStore:
                 raise FirstMateError("Execution is not recoverable")
             if assignment["metadata"].get("human_gate", {}).get("status") == "pending":
                 raise FirstMateError("Resolve the internal checkpoint with human direction before recovery", code="human_direction_required")
-            exhausted = assignment["recovery_count"] >= 2 and not reset_budget
+            metadata = dict(assignment["metadata"])
+            previous_progress = metadata.get("recovery_progress_key")
+            progressed = bool(progress_key and previous_progress and progress_key != previous_progress)
+            exhausted = assignment["recovery_count"] >= 2 and not reset_budget and not progressed
             if exhausted and assignment["metadata"].get("recovery_limit_reported"):
                 raise FirstMateError("Recovery limit reached. Use fm_recover with reset_budget=true on a new human direction turn, or fm_revise to replace the assignment.",
                     code="recovery_exhausted", next_permitted_actions=assignment["next_permitted_actions"])
-            count = 1 if reset_budget else assignment["recovery_count"] + (0 if exhausted else 1)
+            count = 1 if reset_budget or progressed else assignment["recovery_count"] + (0 if exhausted else 1)
             status = "blocked" if exhausted else "queued"
-            metadata = dict(assignment["metadata"])
+            metadata["recovery_total_count"] = metadata.get("recovery_total_count", assignment["recovery_count"]) + (0 if exhausted else 1)
+            if progress_key:
+                metadata["recovery_progress_key"] = progress_key
             if exhausted:
                 metadata["recovery_limit_reported"] = True
-            if reset_budget:
+            if reset_budget or progressed:
                 metadata.pop("recovery_limit_reported", None)
+            if progressed:
+                self._event(feature["id"], "assignment.recovery_progressed", "Verified progress renewed the bounded recovery budget",
+                    {"assignment_id": assignment_id, "generation": generation,
+                     "previous_recovery_count": assignment["recovery_count"], "progress_key": progress_key})
+            if reset_budget:
                 metadata.update(reliability_reset_generation=generation, recovery_reset_authorization=authorization_message_id, recovery_direction=reason)
                 self._event(feature["id"], "assignment.recovery_reset", "Human direction reset the bounded recovery and handoff budget",
                     {"assignment_id": assignment_id, "generation": generation, "previous_recovery_count": assignment["recovery_count"],

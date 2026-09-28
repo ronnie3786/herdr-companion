@@ -160,96 +160,26 @@ struct FirstMateChatView: View {
     }
 
     private var transcript: some View {
+        let entries = snapshot.conversationEntries
         let eligibleQuoteIDs = FirstMateQuoteEligibility.messageIDs(in: snapshot.messages)
-        let quoteContext = store.operationContext
-        let feedbackContext = store.operationContext
-        let feedbackSupported = store.feedbackSupported
-        let feedbackWritable = store.controlAvailable
+        let pendingDecisionID = snapshot.pendingDecisionMessageID
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(snapshot.messages.filter(\.isConversation)) { message in
-                        let feedback = FirstMateResponseFeedbackPresentation.make(
-                            message: message,
-                            supported: feedbackSupported,
-                            writable: feedbackWritable,
-                            isSaving: store.isSavingFeedback(featureID: message.featureID, messageID: message.id),
-                            record: store.feedback(for: message.featureID, messageID: message.id),
-                            saveErrorMessage: store.feedbackSaveError(featureID: message.featureID, messageID: message.id),
-                            hasConflict: store.feedbackConflict(featureID: message.featureID, messageID: message.id),
-                            isFeedbackLoaded: store.hasLoadedFeedback(for: message.featureID)
-                        )
-                        FirstMateMessageView(
-                            message: message,
-                            canQuote: canControl && !featureIsClosed && eligibleQuoteIDs.contains(message.id),
-                            quoteSource: "First Mate feature \(snapshot.feature.id) · message \(message.id)",
-                            saveQuote: { quote in
-                                try await saveQuote(
-                                    quote,
-                                    sourceMessageID: message.id,
-                                    expectedContext: quoteContext
-                                )
-                            },
-                            feedback: feedback,
-                            rateFeedback: { rating in
-                                Task {
-                                    await store.rateFeedback(
-                                        rating,
-                                        messageID: message.id,
-                                        expectedContext: feedbackContext
-                                    )
-                                }
-                            },
-                            editFeedback: {
-                                openFeedbackEditor(for: message, expectedContext: feedbackContext)
-                            },
-                            removeFeedback: {
-                                Task {
-                                    await store.saveFeedback(
-                                        FirstMateFeedbackDraft(rating: nil),
-                                        messageID: message.id,
-                                        expectedContext: feedbackContext
-                                    )
-                                }
-                            },
-                            retryFeedback: {
-                                // A failed thumbs-up or Remove rating keeps its
-                                // attempted draft in the store, so retry resubmits
-                                // that exact payload and reuses its request identity.
-                                let draft = store.feedbackDraft(
-                                    for: message.featureID,
-                                    messageID: message.id
-                                )
-                                Task {
-                                    await store.saveFeedback(
-                                        draft,
-                                        messageID: message.id,
-                                        expectedContext: feedbackContext
-                                    )
-                                }
-                            },
-                            resolveFeedbackConflict: {
-                                // A stale revision is recovered only through this
-                                // explicit action: reload the latest record,
-                                // rebase the preserved up/clear payload, then
-                                // retry with the new revision and request ID.
-                                Task {
-                                    guard await store.resolveFeedbackConflict(
-                                        messageID: message.id,
-                                        expectedContext: feedbackContext
-                                    ) else { return }
-                                    let draft = store.feedbackDraft(
-                                        for: message.featureID,
-                                        messageID: message.id
-                                    )
-                                    await store.saveFeedback(
-                                        draft,
-                                        messageID: message.id,
-                                        expectedContext: feedbackContext
-                                    )
+                    ForEach(entries) { entry in
+                        messageRow(entry.message, eligibleQuoteIDs: eligibleQuoteIDs, pendingDecisionID: pendingDecisionID)
+                        if !entry.additionalReplies.isEmpty {
+                            DisclosureGroup("Additional response from this turn") {
+                                ForEach(entry.additionalReplies) { message in
+                                    messageRow(message, eligibleQuoteIDs: eligibleQuoteIDs, pendingDecisionID: pendingDecisionID)
                                 }
                             }
-                        )
+                            .herdrFont(size: HerdrTheme.TextSize.caption)
+                            .foregroundStyle(HerdrTheme.secondaryText)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 12)
+                            .accessibilityIdentifier("first-mate-additional-replies-\(entry.id)")
+                        }
                     }
                     Color.clear.frame(height: 1).id("first-mate-chat-end")
                 }
@@ -268,12 +198,102 @@ struct FirstMateChatView: View {
             } action: { _, nearBottom in
                 followsLatest = nearBottom
             }
-            .onChange(of: snapshot.messages.last(where: \.isConversation)?.id) { _, _ in
+            .onChange(of: entries.last?.id) { _, _ in
                 if followsLatest { proxy.scrollTo("first-mate-chat-end", anchor: .bottom) }
             }
             .onChange(of: snapshot.feature.id) { followsLatest = true }
             .id(snapshot.feature.id)
         }
+    }
+
+    @ViewBuilder
+    private func messageRow(_ message: FirstMateMessage, eligibleQuoteIDs: Set<String>, pendingDecisionID: String?) -> some View {
+        let quoteContext = store.operationContext
+        let feedbackContext = store.operationContext
+        let feedbackSupported = store.feedbackSupported
+        let feedbackWritable = store.controlAvailable
+        let feedback = FirstMateResponseFeedbackPresentation.make(
+            message: message,
+            supported: feedbackSupported,
+            writable: feedbackWritable,
+            isSaving: store.isSavingFeedback(featureID: message.featureID, messageID: message.id),
+            record: store.feedback(for: message.featureID, messageID: message.id),
+            saveErrorMessage: store.feedbackSaveError(featureID: message.featureID, messageID: message.id),
+            hasConflict: store.feedbackConflict(featureID: message.featureID, messageID: message.id),
+            isFeedbackLoaded: store.hasLoadedFeedback(for: message.featureID)
+        )
+        FirstMateMessageView(
+            message: message,
+            isPendingDecision: pendingDecisionID == message.id,
+            canQuote: canControl && !featureIsClosed && eligibleQuoteIDs.contains(message.id),
+            quoteSource: "First Mate feature \(snapshot.feature.id) · message \(message.id)",
+            saveQuote: { quote in
+                try await saveQuote(
+                    quote,
+                    sourceMessageID: message.id,
+                    expectedContext: quoteContext
+                )
+            },
+            feedback: feedback,
+            rateFeedback: { rating in
+                Task {
+                    await store.rateFeedback(
+                        rating,
+                        messageID: message.id,
+                        expectedContext: feedbackContext
+                    )
+                }
+            },
+            editFeedback: {
+                openFeedbackEditor(for: message, expectedContext: feedbackContext)
+            },
+            removeFeedback: {
+                Task {
+                    await store.saveFeedback(
+                        FirstMateFeedbackDraft(rating: nil),
+                        messageID: message.id,
+                        expectedContext: feedbackContext
+                    )
+                }
+            },
+            retryFeedback: {
+                // A failed thumbs-up or Remove rating keeps its
+                // attempted draft in the store, so retry resubmits
+                // that exact payload and reuses its request identity.
+                let draft = store.feedbackDraft(
+                    for: message.featureID,
+                    messageID: message.id
+                )
+                Task {
+                    await store.saveFeedback(
+                        draft,
+                        messageID: message.id,
+                        expectedContext: feedbackContext
+                    )
+                }
+            },
+            resolveFeedbackConflict: {
+                // A stale revision is recovered only through this
+                // explicit action: reload the latest record,
+                // rebase the preserved up/clear payload, then
+                // retry with the new revision and request ID.
+                Task {
+                    guard await store.resolveFeedbackConflict(
+                        messageID: message.id,
+                        expectedContext: feedbackContext
+                    ) else { return }
+                    let draft = store.feedbackDraft(
+                        for: message.featureID,
+                        messageID: message.id
+                    )
+                    await store.saveFeedback(
+                        draft,
+                        messageID: message.id,
+                        expectedContext: feedbackContext
+                    )
+                }
+            }
+        )
     }
 
     @ViewBuilder
@@ -295,8 +315,8 @@ struct FirstMateChatView: View {
                 : "Execution was interrupted and needs your direction. Inspect the retained work and latest handoff in Workflow, then ask First Mate to recover the assignment after verifying uncertain effects.")
         } else if snapshot.feature.status == "awaiting_direction" {
             FirstMateChatNote(
-                text: snapshot.currentVisit?.status == "completed"
-                    ? "Stage complete. Waiting for your direction."
+                text: snapshot.pendingDecisionMessageID != nil
+                    ? "Reply to the decision marked above to continue."
                     : "Waiting for your direction before work continues.",
                 systemImage: "hand.raised",
                 tone: FirstMateStatusColors.color(for: .awaitingDirection, scheme: scheme)

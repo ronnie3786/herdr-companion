@@ -57,7 +57,8 @@ struct FirstMateStatusLabel: View {
 
     private var symbol: String {
         switch status {
-        case "awaiting_direction", "blocked", "recovering": "hand.raised"
+        case "awaiting_direction", "blocked": "hand.raised"
+        case "recovering": "arrow.clockwise"
         case "unverified": "exclamationmark.triangle"
         case "running", "coordinating": "circle.dashed"
         case "completed", "complete", "passed": "checkmark.circle"

@@ -181,4 +181,24 @@ struct FirstMateLeadTests {
         #expect(store.leadFeatureID == lead.feature.id)
         #expect(!store.features.contains { $0.isLead })
     }
+
+    @Test("Compact lead history groups a checkpoint before applying its row limit")
+    func compactLeadCheckpoint() {
+        var snapshot = leadSnapshot(leadFeature())
+        snapshot.feature.status = "awaiting_direction"
+        snapshot.feature.currentVisitID = "visit"
+        snapshot.messages[1].metadata = .init(turnID: "fmm_ask", visitID: "visit", checkpoint: true)
+        var closing = snapshot.messages[1]
+        closing.id = "fmm_closing"
+        closing.text = "A duplicate closing question"
+        closing.metadata = .init(inReplyTo: "fmm_ask")
+        snapshot.messages.append(closing)
+        let recent = FirstMateTranscriptLayout.recentRows(for: snapshot.messages, limit: 1,
+            pendingDecisionMessageID: snapshot.pendingDecisionMessageID, now: .now, calendar: .current)
+        #expect(recent.map(\.id) == ["fmm_answer"])
+        #expect(recent[0].additionalReplies == [closing])
+        #expect(recent[0].isPendingDecision)
+        #expect(recent[0].isFirstInGroup)
+        #expect(FirstMateTranscriptLayout.recentRows(for: snapshot.messages, limit: 0, now: .now, calendar: .current).isEmpty)
+    }
 }

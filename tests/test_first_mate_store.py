@@ -44,6 +44,57 @@ class FirstMateStoreTests(unittest.TestCase):
             callback()
         self.assertEqual(error.exception.code, code)
 
+    def test_reported_failure_advertises_internal_retry_instead_of_human_recovery(self):
+        assignment = self.running()
+        self.store.record_outcome(assignment["id"], assignment["generation"], assignment["native_session_id"],
+                                  1, "blocked", "Repair the local build configuration", "blocked")
+        projected = self.store.get_assignment(assignment["id"])
+        self.assertEqual(projected["next_permitted_actions"], [{"tool": "fm_retry", "assignment_id": assignment["id"],
+                                                              "requires_verified_stop": True, "requires_human_direction": False}])
+        self.store.feature_action(self.feature["id"], "pause", "pause")
+        projected = self.store.get_assignment(assignment["id"])
+        self.assertTrue(projected["next_permitted_actions"][0]["requires_human_direction"])
+        self.assertNotEqual(projected["next_permitted_actions"][0]["tool"], "fm_retry")
+
+    def test_verified_progress_renews_only_the_current_recovery_budget(self):
+        assignment = self.running()
+        for index, key in enumerate(("a" * 64, "a" * 64, "b" * 64)):
+            kwargs = {"verified_stopped": True, "automatic": True, "progress_key": key}
+            result = self.store.recover_assignment(assignment["id"], assignment["generation"], "Continue from retained evidence",
+                                                   "recover-" + str(index), **kwargs)
+            self.assertEqual(result["status"], "queued")
+            self.assertEqual(result["recovery_count"], (1, 2, 1)[index])
+            self.assertEqual(result["metadata"]["recovery_total_count"], index + 1)
+            self.assertEqual(result, self.store.recover_assignment(assignment["id"], assignment["generation"],
+                "Continue from retained evidence", "recover-" + str(index), **kwargs))
+            assignment = self.running(result, suffix="retry-" + str(index))
+        events = self.store.get_events(self.feature["id"])["events"]
+        self.assertEqual(sum(event["type"] == "assignment.recovery_progressed" for event in events), 1)
+        self.assert_code("invalid_request", lambda: self.store.recover_assignment(assignment["id"], assignment["generation"],
+            "Unvalidated reset", "invalid-reset", verified_stopped=True, progress_key="c" * 64))
+
+    def test_new_progress_baseline_does_not_bypass_legacy_exhaustion(self):
+        assignment = self.running()
+        for index in range(2):
+            result = self.store.recover_assignment(assignment["id"], assignment["generation"], "Stopped", "old-" + str(index),
+                                                   verified_stopped=True, automatic=True)
+            assignment = self.running(result, suffix="old-" + str(index))
+        result = self.store.recover_assignment(assignment["id"], assignment["generation"], "Stopped", "new-baseline",
+                                               verified_stopped=True, automatic=True, progress_key="a" * 64)
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["recovery_count"], 2)
+        self.assertEqual(result["metadata"]["recovery_total_count"], 2)
+
+    def test_progress_evidence_does_not_release_a_human_checkpoint(self):
+        assignment = self.running()
+        self.store.request_human_gate(assignment["id"], assignment["generation"], assignment["native_session_id"],
+                                      "Choose the product behavior", "gate")
+        self.assert_code("human_direction_required", lambda: self.store.recover_assignment(assignment["id"], assignment["generation"],
+            "New source evidence", "gate-bypass", verified_stopped=True, automatic=True, progress_key="a" * 64))
+        action = self.store.get_assignment(assignment["id"])["next_permitted_actions"][0]
+        self.assertEqual(action["tool"], "fm_resolve_gate")
+        self.assertTrue(action["requires_human_direction"])
+
     def test_duplicate_commands_are_identical_and_changed_payload_conflicts(self):
         duplicate = self.store.create_feature({"title": "Garden schedule", "goal": "Plan a garden watering feature", "cwd": "/tmp/synthetic-garden", "work_item_id": "SYNTH-31", "request_id": "feature-create"})
         self.assertEqual(self.feature, duplicate)

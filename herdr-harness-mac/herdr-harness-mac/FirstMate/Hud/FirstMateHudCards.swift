@@ -378,6 +378,7 @@ struct FirstMateHudLeadChatCard: View {
             if let store = controller.leadStore, let snapshot = store.leadSnapshot,
                let model = controller.appModel, let favorites = controller.modelFavorites {
                 FirstMateHudLeadTranscript(controller: controller, store: store, snapshot: snapshot)
+                FirstMateExecutionStateNotice(snapshot: snapshot, health: store.runtimeHealth)
                 if controller.voicePhase.showsCaption {
                     FirstMateHudVoiceCaption(controller: controller)
                         .padding(.horizontal, 14)
@@ -469,13 +470,14 @@ private struct FirstMateHudLeadTranscript: View {
     static let bubbleWidth: CGFloat = 296
 
     var body: some View {
-        let messages = Array(snapshot.messages.filter(\.isConversation).suffix(Self.messageLimit))
+        let messages = snapshot.messages.filter(\.isConversation)
         let typing = FirstMateTranscriptLayout.isTyping(
             messages: messages,
             isSending: store.isSending,
             isWorkingOnReply: snapshot.feature.coordinatorOwner != nil
         )
-        let rows = FirstMateTranscriptLayout.rows(for: messages, typing: typing, now: .now, calendar: .current)
+        let rows = FirstMateTranscriptLayout.recentRows(for: messages, limit: Self.messageLimit, typing: typing,
+            pendingDecisionMessageID: snapshot.pendingDecisionMessageID, now: .now, calendar: .current)
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
@@ -487,16 +489,18 @@ private struct FirstMateHudLeadTranscript: View {
                             .padding(.top, 4)
                     }
                     ForEach(rows) { row in
-                        FirstMateChatBubbleRow(
-                            row: row,
-                            agent: nil,
-                            fileCards: [],
-                            maxBubbleWidth: Self.bubbleWidth,
-                            feedback: nil,
-                            feedbackActions: FirstMateChatFeedbackActions(),
-                            openDocuments: {}
-                        )
-                        .padding(.top, row.isFirstInGroup ? 12 : 3)
+                        bubble(row)
+                            .padding(.top, row.isFirstInGroup ? 12 : 3)
+                        if !row.additionalReplies.isEmpty {
+                            DisclosureGroup("Additional response from this turn") {
+                                ForEach(FirstMateTranscriptLayout.rows(for: row.additionalReplies, now: .now, calendar: .current)) { reply in
+                                    bubble(reply)
+                                }
+                            }
+                            .font(.system(size: 11))
+                            .foregroundStyle(HerdrTheme.secondaryText)
+                            .padding(.vertical, 5)
+                        }
                     }
                     if typing {
                         let startsGroup = FirstMateTranscriptLayout.typingStartsGroup(rows)
@@ -519,6 +523,18 @@ private struct FirstMateHudLeadTranscript: View {
                 if isTyping { proxy.scrollTo(FirstMateChatTranscript.endID, anchor: .bottom) }
             }
         }
+    }
+
+    private func bubble(_ row: FirstMateTranscriptLayout.Row) -> some View {
+        FirstMateChatBubbleRow(
+            row: row,
+            agent: row.message.assignmentID.flatMap { id in snapshot.assignments.first { $0.id == id } },
+            fileCards: [],
+            maxBubbleWidth: Self.bubbleWidth,
+            feedback: nil,
+            feedbackActions: FirstMateChatFeedbackActions(),
+            openDocuments: {}
+        )
     }
 }
 

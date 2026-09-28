@@ -99,6 +99,40 @@ class QuietChatStoreTests(unittest.TestCase):
         self.assertNotIn("Stage closed. Awaiting your direction.", [m["text"] for m in chat])
         self.assertEqual(self.notes()[-1]["payload"]["reason"], "reported_this_turn")
 
+    def test_human_turn_checkpoint_answers_once_and_retains_closing_text_in_journal(self):
+        visit = self.stage()
+        self.outcome(self.running(visit, "1"))
+        self.store.append_human_message(self.fid, "Finish the plan and report the result", "finish-direction")
+        turn = self.turn()
+        self.assertEqual(turn["role"], "user")
+        before = len(self.chat())
+        self.store.complete_visit(visit["id"], "Plan reviewed; see the review Document.", "Approve implementation",
+                                  "complete-human", turn_id=turn["id"])
+        closing = "Would you like me to implement it?"
+        self.store.finish_message(turn["id"], "coordinator", closing)
+        self.assertEqual(len(self.chat()), before + 1)
+        self.assertTrue(self.chat()[-1]["metadata"]["checkpoint"])
+        self.assertEqual(self.notes()[-1]["summary"], closing)
+        self.assertEqual(self.notes()[-1]["payload"]["reason"], "reported_this_turn")
+        self.assertIsNone(self.store.get_feature(self.fid)["coordinator_owner"])
+
+    def test_authorized_continuation_does_not_render_a_second_permission_request(self):
+        human = self.turn()
+        visit = self.store.start_visit(self.fid, "plan", "Planning", "plan-then-build", 1, human["id"],
+                                       followup_stages=["implement"])
+        self.store.finish_message(human["id"], "coordinator", "I will plan and implement it.")
+        self.outcome(self.running(visit, "1"))
+        turn = self.turn()
+        self.store.complete_visit(visit["id"], "Plan is ready.", "Would you like me to implement it?",
+                                  "continue-checkpoint", turn_id=turn["id"])
+        self.store.finish_message(turn["id"], "coordinator", "Continuing with implementation.")
+        report = self.chat()[-1]["text"]
+        self.assertIn("Continuing with the previously authorized implement stage", report)
+        self.assertNotIn("Would you like", report)
+        self.assertNotIn("Suggested next step", report)
+        self.assertNotIn("Awaiting your direction", report)
+        self.assertEqual(self.store.get_feature(self.fid)["status"], "coordinating")
+
     def test_a_stranded_stage_reaches_the_human_once_per_state(self):
         visit = self.stage()
         self.outcome(self.running(visit, "1"), verdict="blocked", summary="Cannot compile: the SDK is missing.")

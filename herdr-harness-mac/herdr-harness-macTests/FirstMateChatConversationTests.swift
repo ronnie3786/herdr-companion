@@ -74,6 +74,31 @@ struct FirstMateChatConversationTests {
         #expect(!FirstMateTranscriptLayout.isTyping(messages: [Self.message("a", status: "queued")], isSending: false, isWorkingOnReply: false))
     }
 
+    @Test("The chat window presents one checkpoint and retains its closing reply and crew identity")
+    func canonicalCheckpointRows() throws {
+        let snapshot = try #require(FirstMateDemo.chatWindowFeatures().first { $0.feature.id == "demo-receipts" })
+        let latest = snapshot.messages.last(where: \.isConversation)
+        var checkpoint = try #require(latest)
+        checkpoint.metadata = .init(turnID: "turn", visitID: "visit", checkpoint: true)
+        var closing = Self.message("closing", text: "A second question")
+        closing.featureID = checkpoint.featureID
+        closing.metadata = .init(inReplyTo: "turn")
+        let rows = FirstMateTranscriptLayout.rows(for: [checkpoint, closing],
+            pendingDecisionMessageID: checkpoint.id, now: Self.now, calendar: Self.calendar)
+        #expect(rows.map(\.id) == [checkpoint.id])
+        #expect(rows[0].isPendingDecision)
+        #expect(rows[0].additionalReplies == [closing])
+        #expect(FirstMateTranscriptLayout.suggestedReplies(messages: [checkpoint, closing], needsYou: true, isTyping: false)
+            == ["Ship iPhone-only", "Investigate iPad"])
+        var crew = Self.message("crew", assignment: "assignment")
+        crew.featureID = checkpoint.featureID
+        crew.metadata?.inReplyTo = "turn"
+        let withCrew = FirstMateTranscriptLayout.rows(for: [checkpoint, crew, closing], now: Self.now, calendar: Self.calendar)
+        #expect(withCrew.map(\.id) == [checkpoint.id, "crew"])
+        #expect(withCrew[1].speaker == .agent("assignment"))
+        #expect(withCrew[0].additionalReplies == [closing])
+    }
+
     // MARK: Your bubble
 
     @Test("The dictation note is stripped for display and marks the bubble as voice")

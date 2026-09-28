@@ -85,6 +85,13 @@ struct FirstMateChatBubbleRow: View {
     private var themBubble: some View {
         FirstMateBubbleStack(spacing: 2) {
             if row.isFirstInGroup { speakerLine.padding(.bottom, 2) }
+            if row.isPendingDecision {
+                Label("Decision needed", systemImage: "hand.raised")
+                    .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
+                    .foregroundStyle(HerdrTheme.warning)
+                    .padding(.bottom, 2)
+                    .accessibilityIdentifier("first-mate-window-pending-decision-\(message.id)")
+            }
             // A long reply shows its skim; the full reply is one click away and
             // stays what Copy and feedback act on. The text is passed exactly
             // as sent: skim offsets point into it.

@@ -189,6 +189,7 @@ private struct FirstMateFeatureChat: View {
         VStack(spacing: 0) {
             FirstMateChatTranscript(session: session, store: store, snapshot: snapshot, conversationID: id, isTyping: typing)
                 .id(id)
+            FirstMateExecutionStateNotice(snapshot: snapshot, health: store.runtimeHealth)
             if let error = store.error {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .herdrFont(size: HerdrTheme.TextSize.small)
@@ -274,6 +275,7 @@ private struct FirstMateLeadChat: View {
                 FirstMateChatTranscript(session: session, store: store, snapshot: snapshot, conversationID: id, isTyping: typing)
                     .id(id)
             }
+            FirstMateExecutionStateNotice(snapshot: snapshot, health: store.runtimeHealth)
             if let error = store.error {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .herdrFont(size: HerdrTheme.TextSize.small)

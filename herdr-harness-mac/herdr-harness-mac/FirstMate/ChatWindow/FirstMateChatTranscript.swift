@@ -22,6 +22,8 @@ enum FirstMateTranscriptLayout {
         var isLastInGroup: Bool
         /// "Today", "Yesterday", or a date when this message starts a new day.
         var dayLabel: String?
+        var additionalReplies: [FirstMateMessage] = []
+        var isPendingDecision = false
 
         var id: String { message.id }
     }
@@ -35,7 +37,10 @@ enum FirstMateTranscriptLayout {
     /// Groups consecutive messages from one speaker within one day. The typing
     /// bubble joins a First Mate group, so with `typing` the last First Mate
     /// bubble gives up its avatar and tail to it.
-    static func rows(for messages: [FirstMateMessage], typing: Bool = false, now: Date, calendar: Calendar) -> [Row] {
+    static func rows(for messages: [FirstMateMessage], typing: Bool = false,
+                     pendingDecisionMessageID: String? = nil, now: Date, calendar: Calendar) -> [Row] {
+        let entries = FirstMateConversationEntry.make(messages: messages)
+        let messages = entries.map(\.message)
         let days = messages.map { HerdrTimestamp.date(from: $0.createdAt).map { calendar.startOfDay(for: $0) } }
         var rows: [Row] = []
         for (index, message) in messages.enumerated() {
@@ -47,12 +52,28 @@ enum FirstMateTranscriptLayout {
             let dayLabel: String? = newDay
                 ? HerdrTimestamp.date(from: message.createdAt).map { FirstMateChatTime.dayLabel(for: $0, now: now, calendar: calendar) }
                 : nil
-            rows.append(Row(message: message, speaker: speaker, isFirstInGroup: startsGroup, isLastInGroup: false, dayLabel: dayLabel))
+            rows.append(Row(message: message, speaker: speaker, isFirstInGroup: startsGroup, isLastInGroup: false,
+                            dayLabel: dayLabel, additionalReplies: entries[index].additionalReplies,
+                            isPendingDecision: message.id == pendingDecisionMessageID))
         }
         if !rows.isEmpty {
             rows[rows.count - 1].isLastInGroup = !(typing && rows[rows.count - 1].speaker == .firstMate)
         }
         return rows
+    }
+
+    /// Apply compact-surface limits after canonical turn grouping, so cutting
+    /// old history cannot leave a checkpoint's closing question on its own.
+    static func recentRows(for messages: [FirstMateMessage], limit: Int, typing: Bool = false,
+                           pendingDecisionMessageID: String? = nil, now: Date, calendar: Calendar) -> [Row] {
+        var recent = Array(rows(for: messages, typing: typing, pendingDecisionMessageID: pendingDecisionMessageID,
+                                now: now, calendar: calendar).suffix(max(0, limit)))
+        if !recent.isEmpty {
+            recent[0].isFirstInGroup = true
+            recent[0].dayLabel = HerdrTimestamp.date(from: recent[0].message.createdAt)
+                .map { FirstMateChatTime.dayLabel(for: $0, now: now, calendar: calendar) }
+        }
+        return recent
     }
 
     /// What re-runs read marking. The fleet's read state is part of it: the
@@ -115,6 +136,7 @@ enum FirstMateTranscriptLayout {
     /// it is First Mate's, the conversation needs you, and nothing is typing.
     /// Choices are never invented here.
     static func suggestedReplies(messages: [FirstMateMessage], needsYou: Bool, isTyping: Bool) -> [String] {
+        let messages = FirstMateConversationEntry.make(messages: messages).map(\.message)
         guard needsYou, !isTyping, let newest = messages.last, speaker(for: newest) == .firstMate,
               let reader = FirstMateSkimReader.cached(skim: newest.skim, reply: newest.text, owner: newest.id) else { return [] }
         return reader.replies.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -221,7 +243,8 @@ struct FirstMateChatTranscript: View {
 
     var body: some View {
         let messages = messages
-        let rows = FirstMateTranscriptLayout.rows(for: messages, typing: isTyping, now: .now, calendar: .current)
+        let rows = FirstMateTranscriptLayout.rows(for: messages, typing: isTyping,
+            pendingDecisionMessageID: snapshot.pendingDecisionMessageID, now: .now, calendar: .current)
         let cards = FirstMateTranscriptLayout.fileCards(messages: messages, documents: snapshot.documents)
         return ScrollViewReader { proxy in
             ScrollView {
@@ -234,6 +257,18 @@ struct FirstMateChatTranscript: View {
                         }
                         bubble(for: row, cards: cards[row.id] ?? [])
                             .padding(.top, row.isFirstInGroup ? (row.dayLabel == nil ? 14 : 6) : 3)
+                        if !row.additionalReplies.isEmpty {
+                            DisclosureGroup("Additional response from this turn") {
+                                ForEach(FirstMateTranscriptLayout.rows(for: row.additionalReplies, now: .now, calendar: .current)) { reply in
+                                    bubble(for: reply, cards: cards[reply.id] ?? [])
+                                }
+                            }
+                            .herdrFont(size: HerdrTheme.TextSize.caption)
+                            .foregroundStyle(HerdrTheme.secondaryText)
+                            .padding(.leading, FirstMateChatBubbleRow.avatarSize + FirstMateChatBubbleRow.avatarGap)
+                            .padding(.vertical, 6)
+                            .accessibilityIdentifier("first-mate-window-additional-replies-\(row.id)")
+                        }
                     }
                     if isTyping {
                         let startsGroup = FirstMateTranscriptLayout.typingStartsGroup(rows)

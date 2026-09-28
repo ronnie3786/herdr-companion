@@ -69,6 +69,18 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
     }
 
     var currentVisit: FirstMateVisit? { visits.first { $0.id == feature.currentVisitID } }
+    var conversationEntries: [FirstMateConversationEntry] { FirstMateConversationEntry.make(messages: messages) }
+
+    /// Only the current visit's explicit checkpoint is a pending decision.
+    /// An old question in the transcript never manufactures a new checkpoint.
+    var pendingDecisionMessageID: String? {
+        guard feature.status == "awaiting_direction", let visitID = feature.currentVisitID else { return nil }
+        return messages.last {
+            $0.featureID == feature.id && $0.isConversation && $0.role == "assistant"
+                && $0.assignmentID == nil
+                && $0.metadata?.checkpoint == true && $0.metadata?.visitID == visitID
+        }?.id
+    }
     var visibleLinks: [FirstMateLink] { FirstMateLinkOrdering.sorted(links.filter { !$0.hidden }) }
     var pullRequestLinks: [FirstMateLink] { FirstMateLinkOrdering.visiblePullRequests(links) }
     var otherLinks: [FirstMateLink] { FirstMateLinkOrdering.visibleOtherLinks(links) }

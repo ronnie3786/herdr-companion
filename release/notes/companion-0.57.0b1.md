@@ -1,24 +1,39 @@
 # Herdr Companion server 0.57.0b1
 
-Adds revision-bound PR review walkthroughs and question answers for the native
-Mac review buddy, with authenticated context and guide endpoints. Each request
-retains a context snapshot and supplies a pinned copy of committed source to the
-restricted read-only agent. Follow-ups retrieve current report context; retries
-reuse the original snapshot.
+First Mate can continue through routine recovery without repeatedly asking for
+permission that the operator already granted.
 
-Saved Markdown and HTML reports provide bounded original excerpts, exact-path
-matching, available reviewer labels, revision freshness, and dismissal context.
-Unknown provenance stays unknown. The buddy records its assessment separately
-from the original report and cannot claim a test reproduction from inspection.
+- Publishes one primary conversation response when a checkpoint already answered
+  the turn. The closing response remains in the activity journal.
+- Preserves authorized follow-up stages and permits the current coordinator to
+  refine an empty stage without invalidating that authorization.
+- Retries safe transient coordinator failures twice with backoff. It does not
+  replay uncertain or externally mutating operations, override a human checkpoint,
+  or retry after a response was already published.
+- Retains lead relay and feature-creation receipts across retries, preventing the
+  same action from duplicating a human instruction or feature after an interruption.
+- Bounds worker status and document references, breaks the recovery-acknowledgment
+  context loop, and gives a successor a limited opportunity to perform useful work.
+- Renews recovery budgets only after independently observed worktree or completed
+  child progress. Repeated handoffs without progress trigger one focused repair
+  before stopping with retained diagnostic evidence.
+- Isolates malformed jobs and feature-specific failures so healthy features can
+  keep running. Shared storage failures still stop writes.
+- Accepts an explicitly registered verification worktree and baseline, validates
+  repository provenance, and records the actual tested revision. Existing failures
+  and verification coverage are retained.
 
-An additive captioned speech endpoint uses the existing private response-audio
-Kokoro configuration. It returns measured audio duration, word timestamps, exact
-script/recording hashes, and validated phrase cues for each selected voice.
-Ordinary response audio and existing `pr-review-v1` clients remain compatible.
+Install the wheel in a fresh Python 3.11+ environment using the server procedure in
+`herdr_harness/README.md`. Build web assets before packaging. Run
+`scripts/verify-installed.py`, validate the destination's existing private
+configuration, and take consistent SQLite backups before switching the companion,
+its CLI wrappers, enabled workers, and the wheel's bundled Pi package together.
+Preserve unrelated Pi packages and disabled services. Retain the prior runtime and
+service definitions for rollback; do not restore an old database over newer work.
 
-Install the wheel in a new versioned runtime. Preserve the private TOML,
-credentials, review records, and state; validate configuration and Fleet paths,
-back up state consistently, then switch the companion service, installed CLIs,
-Pi package, and enabled workers together. Verify authenticated health and saved
-state after restart. Retain the prior runtime for rollback. The signed Mac app
-feed does not install this server package.
+The matching Mac app is **0.57.0-beta.1**. Older clients remain compatible with the
+API additions, but the new Mac app also groups historical same-turn duplicate
+replies and identifies the current decision checkpoint. Neither the Mac updater
+nor publishing this wheel performs a server cutover or an iOS installation.
+Existing paused features stay paused. Historical verification records are not
+rewritten by this update.

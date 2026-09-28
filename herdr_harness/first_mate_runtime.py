@@ -19,6 +19,7 @@ from pathlib import Path
 import re
 import signal
 import shutil
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -82,7 +83,8 @@ plans, research, investigation, implementation, review, testing, synthesis and
 deliverables belong in tracked worker assignments and Documents, not this chat.
 
 What reaches the human's chat:
-- On a human turn your final message is your reply. Always answer it.
+- On a human turn answer once. If fm_complete_stage already posted the result,
+  your final text is a private journal note, not a second question or report.
 - On a background turn (a recorded system update: a worker outcome, an
   authorized follow-up, a stability check) your final message is a private work
   note for the journal; the human does not see it. Never narrate progress,
@@ -111,7 +113,15 @@ fm_begin_stage followup_stages on that human turn. A system turn may begin only
 the next stage already recorded on the completed visit; never infer additional
 stages from a vague goal or recommendation. Queued human direction takes priority.
 Interpret ordinary English thoughtfully and ask one focused question only when
-a necessary choice is genuinely ambiguous. Within an authorized stage,
+a necessary choice is genuinely ambiguous. Record the entire explicitly requested
+sequence on the first stage. A request to implement, verify, and deliver already
+authorizes those steps; do not turn internal milestones into approval gates.
+Within an authorized stage, repair routine tool errors, failed builds, and stale
+bookkeeping yourself. Inspect state after a refused operation and continue from
+the committed facts. Never ask the human to repeat "go" to repair your own tool
+ordering. Request human input only for a real scope/product choice, an explicit
+review checkpoint, missing credentials/resources, or unresolved external effects.
+Within an authorized stage,
 delegate substantive work through fm_delegate. Give each worker complete scope,
 acceptance criteria, required Documents, the exact revision to inspect when
 applicable, and any internal human gates. Interpret the human's natural-language intent and set model_profile to architect
@@ -229,6 +239,11 @@ fm_record_verification, including failures, interruptions and suites that did
 not run. Pass the returned run IDs to fm_outcome. Quote the service's scoped
 verdict and its exact missing or previously green suites; an aggregate test
 count alone never establishes coverage.
+Read status once when needed, then use exact document/session references and
+targeted source reads. Do not reload the feature's entire history after a handoff.
+Continue from the latest checkpoint and reuse still-valid checks on the same
+revision. A failed command is a diagnostic to investigate, not by itself a reason
+to ask the human to restart the assignment.
 """
 LEAD_PROMPT = """You are First Mate, the human's lead across every First Mate feature on this
 machine. Each feature has its own First Mate (its "second mate") that runs that
@@ -295,6 +310,42 @@ def _pick(record: Mapping[str, Any] | None, names: tuple[str, ...]) -> dict:
     return {name: record.get(name) for name in names if name in record}
 
 
+def _bounded_agent_data(value: Any, *, text_limit: int = 2400, depth: int = 0) -> Any:
+    """Context is a reference index, never a recursively embedded work archive."""
+    if isinstance(value, str):
+        return value if len(value) <= text_limit else value[:text_limit] + " [truncated; read the referenced evidence]"
+    if depth >= 7:
+        return "[detail omitted; read the referenced evidence]"
+    if isinstance(value, dict):
+        return {key: _bounded_agent_data(item, text_limit=text_limit, depth=depth + 1)
+                for key, item in value.items()}
+    if isinstance(value, list):
+        return [_bounded_agent_data(item, text_limit=text_limit, depth=depth + 1) for item in value[:20]]
+    return value
+
+
+def _agent_verification(assessment: Mapping[str, Any] | None) -> dict:
+    assessment = assessment or {}
+    result = _bounded_agent_data(dict(assessment), text_limit=800)
+    for key, value in assessment.items():
+        if isinstance(value, list):
+            result[key + "_count"] = len(value)
+            result[key + "_truncated"] = len(value) > 20
+    return result
+
+
+def _agent_assignment(assignment: Mapping[str, Any]) -> dict:
+    result = _pick(assignment, ("id", "visit_id", "title", "role", "status", "verdict",
+        "generation", "input_revision", "summary", "code_revision", "native_session_id",
+        "model_selection", "recovery_count", "recovery_limit", "recovery_remaining",
+        "recovery_exhausted", "has_outcome", "next_permitted_actions", "progress_lease"))
+    result["operational"] = _pick(assignment.get("metadata", {}),
+        ("parent_assignment_id", "source_assignment_id", "expected_code_revision", "human_gate",
+         "model_profile", "progress"))
+    result["detail_truncated"] = len(str(assignment.get("summary", ""))) > 2400
+    return _bounded_agent_data(result)
+
+
 def _coordinator_state(snapshot: dict, claim: dict | None = None) -> dict:
     """Build the router's reference-oriented view of the current workflow state.
 
@@ -328,20 +379,15 @@ def _coordinator_state(snapshot: dict, claim: dict | None = None) -> dict:
         "current_memberships": [_pick(membership, ("visit_id", "assignment_id", "revision",
                                                        "authorization_message_id", "carried_from_visit_id"))
                                 for membership in memberships],
-        "assignments": [{**_pick(assignment, ("id", "visit_id", "title", "role", "status", "verdict",
-                                                   "generation", "input_revision", "summary", "code_revision",
-                                                   "native_session_id", "model_selection", "recovery_count", "recovery_limit",
-                                                   "recovery_remaining", "recovery_exhausted", "has_outcome", "next_permitted_actions", "progress_lease")),
-                         "operational": _pick(assignment.get("metadata", {}),
-                                              ("parent_assignment_id", "source_assignment_id",
-                                               "expected_code_revision", "human_gate", "model_profile", "progress"))}
-                        for assignment in assignments],
+        "assignments": [_agent_assignment(assignment) for assignment in assignments[:50]],
+        "assignments_truncated": len(assignments) > 50,
         "document_references": [_pick(document, ("id", "visit_id", "assignment_id", "title",
                                                      "media_type", "content_hash", "generation",
                                                      "input_revision", "native_session_id"))
-                                for document in documents],
+                                for document in documents[-100:]],
+        "documents_truncated": len(documents) > 100,
         "link_references": _link_references(list(snapshot.get("links", [])), 20),
-        "verification": feature.get("verification") or {},
+        "verification": _agent_verification(feature.get("verification")),
         "verification_run_count": len(snapshot.get("verification_runs", [])),
         "verification_runs": [{"id": run.get("id"), "visit_id": run.get("visit_id"),
                                 "assignment_id": run.get("assignment_id"),
@@ -1130,6 +1176,8 @@ class FirstMateRuntime:
                 raise error
 
     def _launch(self, job: dict) -> None:
+        if job.get("retry_not_before", 0) > time.time():
+            return
         directory = self._job_dir(job)
         refresh_lock = (directory / "writer.lock").open("a")
         try:
@@ -1310,6 +1358,13 @@ class FirstMateRuntime:
                 return existing
             break
         current_feature = self.store.get_feature(feature["id"])
+        retry = (_read_json(self.root / "coordinator-retries" / (claim["id"] + ".json"), {})
+                 if kind == "coordinator" else {})
+        if retry:
+            prompt += ("\n\nContinue this SAME authorized human/system turn after a transient interruption. "
+                       "Inspect current state and completed operations below, then perform only unfinished work. "
+                       "Do not repeat a dispatch, external action, checkpoint or human question already recorded. "
+                       "This continuation creates no new authorization.\n" + json.dumps(retry, ensure_ascii=False))
         parent_session_id, parent_session_source = self._job_parent_session(
             current_feature, kind=kind, claim=claim, parent_job=parent_job)
         session = (Path(current_feature["session_file"])
@@ -1330,6 +1385,8 @@ class FirstMateRuntime:
                "parent_session_source": parent_session_source,
                "workspace_mode": claim.get("metadata", {}).get("workspace_mode", "read_only"),
                "charter": {"coordinator": COORDINATOR_PROMPT, "worker": WORKER_PROMPT, "advisor": ADVISOR_PROMPT}[kind]}
+        if retry:
+            job["retry_not_before"] = retry.get("not_before", 0)
         if kind == "coordinator" and current_feature.get("kind") == LEAD_KIND:
             # The lead reuses the coordinator's conversation, context, and
             # handoff machinery with its own charter and fleet tools.
@@ -1347,6 +1404,9 @@ class FirstMateRuntime:
                                              if predecessors else self._profile_snapshot())
         self._apply_policy(job, current_feature)
         if kind == "worker":
+            guidance = self.reliability.continuation_guidance(claim["id"])
+            if guidance:
+                job["prompt"] += "\n\n" + guidance
             if claim.get("attempt", 0) > 1 and not handoff_id:
                 predecessors = [j for j in self._jobs() if j["kind"] == "worker" and j["claim"]["id"] == claim["id"]]
                 if predecessors:
@@ -1434,6 +1494,114 @@ class FirstMateRuntime:
         """Opaque workspace identity; private machine paths never travel with evidence."""
         return "ws_" + hashlib.sha256(str(path).encode()).hexdigest()[:16]
 
+    def _verification_target_directory(self, feature_id: str) -> Path:
+        return self.root / "verification-targets" / hashlib.sha256(feature_id.encode()).hexdigest()
+
+    def _verification_targets(self, feature_id: str) -> list[dict]:
+        """Read retained registrations, never silently discard unreadable scope."""
+        records = []
+        for path in sorted(self._verification_target_directory(feature_id).glob("*.json")):
+            record = _read_json(path)
+            if (not isinstance(record, dict) or record.get("feature_id") != feature_id
+                    or not isinstance(record.get("target_workspace_path"), str)
+                    or not isinstance(record.get("baseline_revision"), str)
+                    or not isinstance(record.get("assignment_id"), str)
+                    or type(record.get("generation")) is not int):
+                raise FirstMateError("Retained verification target registration is unavailable or invalid",
+                                     code="verification_target_unavailable")
+            records.append(record)
+        return records
+
+    @staticmethod
+    def _verification_origin(value: str) -> str:
+        """Compare repository identity without credentials or transport spelling."""
+        from urllib.parse import urlsplit
+
+        value = value.strip()
+        if not value or "?" in value or "#" in value:
+            return ""
+        if "://" not in value:
+            match = re.fullmatch(r"(?:[^@/]+@)?([^/:]+):(.+)", value)
+            if match:
+                host, path = match.groups()
+                return host.lower() + "/" + path.strip("/").removesuffix(".git")
+            if Path(value).is_absolute():
+                return "file:" + str(Path(value).resolve())
+            return ""
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"https", "http", "ssh", "git"} or not parsed.hostname:
+            return ""
+        port = parsed.port
+        default_port = {"https": 443, "http": 80, "ssh": 22, "git": 9418}[parsed.scheme]
+        host = parsed.hostname.lower() + (f":{port}" if port and port != default_port else "")
+        return host + "/" + parsed.path.strip("/").removesuffix(".git")
+
+    def _verification_target(self, feature: dict, assignment: dict, job: dict, params: dict) -> dict | None:
+        """Register an observational target without changing execution ownership.
+
+        One assignment keeps one immutable target through successor generations.
+        A new assignment may inherit its source assignment's retained target.
+        Registration adds coverage scope; it never replaces the dispatch cwd.
+        """
+        records = {record["assignment_id"]: record for record in self._verification_targets(feature["id"])}
+        retained = records.get(assignment["id"])
+        inherited = retained
+        source = assignment.get("metadata", {}).get("source_assignment_id")
+        seen = {assignment["id"]}
+        while inherited is None and source and source not in seen:
+            seen.add(source)
+            previous = self.store.get_assignment(source)
+            if previous["feature_id"] != feature["id"]:
+                raise FirstMateError("Verification target source belongs to another feature", code="verification_scope_mismatch")
+            inherited = records.get(source)
+            source = previous.get("metadata", {}).get("source_assignment_id")
+        explicit = "target_workspace_path" in params or "baseline_revision" in params
+        if not explicit and inherited is None:
+            return None
+        raw_path = params.get("target_workspace_path") if explicit else inherited["target_workspace_path"]
+        baseline = params.get("baseline_revision") if explicit else inherited["baseline_revision"]
+        if (not isinstance(raw_path, str) or not raw_path or len(raw_path) > 4096
+                or not Path(raw_path).is_absolute() or not isinstance(baseline, str)
+                or not re.fullmatch(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})", baseline)):
+            raise FirstMateError("Verification target needs an absolute Git root and an exact baseline commit SHA",
+                                 code="verification_target_invalid", status=400)
+        try:
+            target = str(Path(raw_path).resolve(strict=True))
+            target_root = str(Path(self._git(target, "rev-parse", "--show-toplevel")).resolve())
+            if target != target_root:
+                raise FirstMateError("Verification target must identify the Git working-tree root",
+                                     code="verification_target_invalid", status=400)
+            source_root = self._git(str(job.get("cwd") or feature["cwd"]), "rev-parse", "--show-toplevel")
+            target_common = Path(self._git(target, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
+            source_common = Path(self._git(source_root, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
+            if target_common != source_common:
+                target_origin = self._verification_origin(self._git(target, "config", "--get", "remote.origin.url"))
+                source_origin = self._verification_origin(self._git(source_root, "config", "--get", "remote.origin.url"))
+                if not target_origin or target_origin != source_origin:
+                    raise FirstMateError("Verification target belongs to a different repository",
+                                         code="verification_scope_mismatch", status=400)
+            resolved = self._git(target, "rev-parse", "--verify", baseline + "^{commit}")
+            if resolved.lower() != baseline.lower():
+                raise FirstMateError("Verification baseline must be an exact commit", code="verification_target_invalid", status=400)
+            self._git(target, "merge-base", "--is-ancestor", resolved, "HEAD")
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            raise FirstMateError("Verification target could not be validated", code="verification_target_invalid", status=400) from exc
+        if retained:
+            if retained["target_workspace_path"] != target or retained["baseline_revision"] != resolved:
+                raise FirstMateError("This assignment already has a different verification target; use a new assignment",
+                                     code="verification_target_changed")
+            if retained["generation"] > assignment["generation"]:
+                raise FirstMateError("Verification target belongs to a newer execution", code="stale_owner")
+            return retained
+        registration = {"feature_id": feature["id"], "assignment_id": assignment["id"],
+                        "generation": assignment["generation"], "native_session_id": job.get("native_session_id"),
+                        "target_workspace_path": target, "baseline_revision": resolved,
+                        "registered_at": utc_now(),
+                        "inherited_from_assignment_id": inherited["assignment_id"] if inherited and not explicit else None}
+        path = self._verification_target_directory(feature["id"]) / (hashlib.sha256(assignment["id"].encode()).hexdigest() + ".json")
+        _write_json(path, registration)
+        return registration
+
     def _verification_scope(self, feature: Mapping[str, Any]) -> dict:
         """Current revisions and cumulative changed paths from retained baselines.
 
@@ -1504,6 +1672,28 @@ class FirstMateRuntime:
             if anchor and anchor not in anchors.setdefault(identity, []):
                 anchors[identity].append(anchor)
 
+        # Explicit observational targets are additional retained scope. Keep
+        # every original assignment workspace and its failures untouched.
+        registered_targets: set[str] = set()
+        target_scope_reasons: list[str] = []
+        for target in self._verification_targets(feature["id"]):
+            path = target["target_workspace_path"]
+            identity = self._workspace_identity(path)
+            registered_targets.add(identity)
+            workspaces.setdefault(identity, path)
+            baseline = target["baseline_revision"]
+            if baseline not in anchors.setdefault(identity, []):
+                anchors[identity].append(baseline)
+            # A worker's declared baseline may widen discovery but cannot
+            # narrow the cumulative assignment/source-lineage scope. In
+            # particular, declaring target HEAD must not erase earlier edits.
+            retained_anchor = _anchor(lineages.get(target["assignment_id"], []))
+            if retained_anchor:
+                if retained_anchor not in anchors[identity]:
+                    anchors[identity].append(retained_anchor)
+            else:
+                target_scope_reasons.append(f"Workspace {identity} has no retained assignment baseline for its verification target")
+
         # Superseded worktrees are one history with the deliverable leaf that
         # inherited their commits: alias their retained runs and inventories
         # into every reachable leaf so inherited packages stay required and a
@@ -1524,8 +1714,8 @@ class FirstMateRuntime:
 
         revisions: dict[str, str] = {}
         changed: dict[str, list[str]] = {}
-        reasons: list[str] = []
-        complete = True
+        reasons: list[str] = target_scope_reasons
+        complete = not target_scope_reasons
         for identity, path in workspaces.items():
             try:
                 head = self._git(path, "rev-parse", "HEAD")
@@ -1539,6 +1729,8 @@ class FirstMateRuntime:
             if bases:
                 for base in bases:
                     try:
+                        if identity in registered_targets:
+                            self._git(path, "merge-base", "--is-ancestor", base, "HEAD")
                         output = self._git(path, "diff", "--name-only", f"{base}..HEAD")
                         paths.update(line.strip() for line in output.splitlines() if line.strip())
                     except (FirstMateError, OSError, subprocess.TimeoutExpired) as exc:
@@ -1646,7 +1838,7 @@ class FirstMateRuntime:
 
     def _record_verification(self, job: dict, params: dict, request_id: str) -> dict:
         """Worker-scoped gate-batch recording. Provenance cannot be supplied."""
-        allowed = {"revision", "status", "gates", "summary", "inventory"}
+        allowed = {"revision", "status", "gates", "summary", "inventory", "target_workspace_path", "baseline_revision"}
         if set(params) - allowed:
             raise FirstMateError("Verification report contains an unsupported field", code="invalid_request", status=400)
         feature = self.store.get_feature(job["feature_id"])
@@ -1662,7 +1854,8 @@ class FirstMateRuntime:
                 or feature.get("status") != "running"
                 or not self.store.assignment_is_in_current_visit(assignment["id"])):
             raise FirstMateError("Verification report is outside this execution's active assignment scope", code="stale_owner")
-        workspace_path = str(job.get("cwd") or feature["cwd"])
+        target = self._verification_target(feature, assignment, job, params)
+        workspace_path = target["target_workspace_path"] if target else str(job.get("cwd") or feature["cwd"])
         identity = self._workspace_identity(workspace_path)
         try:
             observed = self._git(workspace_path, "rev-parse", "HEAD")
@@ -1707,7 +1900,7 @@ class FirstMateRuntime:
         else:
             warning = ""
         return {
-            "run": {"id": run["id"], "tested_revision": run["tested_revision"],
+            "run": {"id": run["id"], "workspace": identity, "tested_revision": run["tested_revision"],
                     "observed_revision": run["observed_revision"], "status": run["run_status"],
                     "source_state": run.get("source_state", source_state),
                     "revision_matches": bool(observed) and run["tested_revision"] == observed,
@@ -1731,15 +1924,22 @@ class FirstMateRuntime:
     def reconcile(self) -> None:
         """One deterministic pass, also callable in integration tests."""
         with self._mutex:
-            self._recover_claim_gaps()
+            failed_features = self._recover_claim_gaps()
+            gap_failed_features = set(failed_features)
             jobs = self._jobs()
-            active_features = set()
+            active_features = set(failed_features)
             worker_count = 0
-            had_error = False
+            global_error = False
             for job in jobs:
                 directory = self._job_dir(job)
                 if (directory / "finalized.json").exists():
                     continue
+                if job["feature_id"] in gap_failed_features:
+                    # A failed claim reconstruction also fences this feature's
+                    # existing spools. Retain capacity for uncertain workers.
+                    worker_count += job["kind"] == "worker"
+                    continue
+                worker_reserved = False
                 try:
                     self._observe(job)
                     self._requests(job)
@@ -1788,69 +1988,96 @@ class FirstMateRuntime:
                             active_features.add(job["feature_id"])
                         if job["kind"] == "worker":
                             worker_count += 1
-                        if not (directory / "started.json").exists() and self.capabilities()["available"]:
+                            worker_reserved = True
+                        if (not global_error and job["feature_id"] not in failed_features
+                                and not (directory / "started.json").exists() and self.capabilities()["available"]):
                             self._launch(job)
                 except Exception as exc:
-                    had_error = True
-                    error = str(exc)[:1000]
-                    self._record_runtime_error(exc, directory / "reconcile-error.json")
-                    try:
-                        self._event(job["feature_id"], "runtime.error", "Execution needs attention: " + error,
-                                    {"job_id": job["id"]}, "runtime-error:" + job["id"] + ":" + hashlib.sha256(error.encode()).hexdigest()[:16])
-                    except Exception:
-                        pass
-            if had_error:
-                # Observe other jobs, but never dispatch using incomplete writer
-                # counts or uncertain state from this pass.
+                    failed_features.add(job["feature_id"])
+                    active_features.add(job["feature_id"])
+                    # Reserve the uncertain writer's capacity, but isolate a
+                    # bad dispatch from unrelated features. Storage failure
+                    # still defers all launches because durable writes are global.
+                    if job.get("kind") == "worker" and not worker_reserved:
+                        worker_count += 1
+                    global_error |= self._record_feature_failure(job["feature_id"], exc, job["id"], job=job)
+            if global_error:
                 return
             self._actions()
             self._discover_links()
-            self.reliability.tick(jobs)
+            # Monitoring can still inspect healthy work; failed features keep
+            # their writer identity and are retried on the next scheduler pass.
+            self.reliability.tick(jobs, excluded_feature_ids=failed_features)
             if time.monotonic() - self._last_watch >= 10:
-                self._watch(jobs)
+                self._watch([job for job in jobs if job["feature_id"] not in failed_features])
                 self._last_watch = time.monotonic()
             if not self.capabilities()["available"]:
                 return
             # Archiving is presentation-only. Detached work for an archived
             # feature continues to reconcile until its workflow settles.
             for feature in self.store.list_features("all", include_lead=True):
-                if feature["status"] in {"cancelled", "completed"}:
+                if feature["status"] in {"cancelled", "completed"} or feature["id"] in failed_features:
                     continue
-                if feature["id"] not in active_features:
-                    claim = self.store.claim_message(feature["id"], self.owner)
-                    if claim:
-                        snapshot = self.store.snapshot(feature["id"])
-                        prompt = self._coordinator_input(snapshot, claim)
-                        job = self._new_job(feature, kind="coordinator", prompt=prompt, claim=claim)
-                        self._launch(job)
-                if feature["status"] in {"paused", "blocked", "awaiting_direction", "recovering"}:
-                    continue
-                for assignment in self.store.snapshot(feature["id"])["assignments"]:
-                    if worker_count >= self.max_workers:
-                        break
-                    if assignment["status"] == "queued":
-                        try:
-                            self._policy(feature, kind="worker", claim=assignment)
-                        except ArchitectConfigurationError as exc:
-                            self._block_assignment_configuration(
-                                assignment, exc,
-                                request_id="queued-configuration:" + assignment["id"] + ":" + str(assignment["generation"]),
-                            )
-                            continue
-                        claim = self.store.claim_assignment(assignment["id"], self.owner)
+                try:
+                    if feature["id"] not in active_features:
+                        claim = self.store.claim_message(feature["id"], self.owner)
                         if claim:
+                            snapshot = self.store.snapshot(feature["id"])
+                            prompt = self._coordinator_input(snapshot, claim)
+                            job = self._new_job(feature, kind="coordinator", prompt=prompt, claim=claim)
+                            self._launch(job)
+                    if feature["status"] in {"paused", "blocked", "awaiting_direction", "recovering"}:
+                        continue
+                    for assignment in self.store.snapshot(feature["id"])["assignments"]:
+                        if worker_count >= self.max_workers:
+                            break
+                        if assignment["status"] == "queued":
                             try:
-                                prompt = self._worker_input(feature, claim)
-                                job = self._new_job(feature, kind="worker", prompt=prompt, claim=claim,
-                                                    handoff_id=claim.get("handoff_id"))
+                                self._policy(feature, kind="worker", claim=assignment)
                             except ArchitectConfigurationError as exc:
                                 self._block_assignment_configuration(
-                                    claim, exc,
-                                    request_id="claimed-configuration:" + claim["dispatch_id"],
+                                    assignment, exc,
+                                    request_id="queued-configuration:" + assignment["id"] + ":" + str(assignment["generation"]),
                                 )
                                 continue
-                            self._launch(job)
-                            worker_count += 1
+                            claim = self.store.claim_assignment(assignment["id"], self.owner)
+                            if claim:
+                                try:
+                                    prompt = self._worker_input(feature, claim)
+                                    job = self._new_job(feature, kind="worker", prompt=prompt, claim=claim,
+                                                        handoff_id=claim.get("handoff_id"))
+                                except ArchitectConfigurationError as exc:
+                                    self._block_assignment_configuration(
+                                        claim, exc,
+                                        request_id="claimed-configuration:" + claim["dispatch_id"],
+                                    )
+                                    continue
+                                # A launch may start its writer before raising.
+                                # Reserve exactly one slot before attempting it.
+                                worker_count += 1
+                                self._launch(job)
+                except Exception as exc:
+                    failed_features.add(feature["id"])
+                    if self._record_feature_failure(feature["id"], exc, "dispatch:" + feature["id"]):
+                        return
+
+    def _record_feature_failure(self, feature_id: str, exc: Exception, identity: str,
+                                *, job: dict | None = None) -> bool:
+        """Retain a local fault; return whether shared durability is unsafe."""
+        global_error = (getattr(exc, "errno", None) in {errno.ENOSPC, errno.EDQUOT, errno.EROFS}
+                        or isinstance(exc, sqlite3.Error))
+        path = (self._job_dir(job) / "reconcile-error.json" if job else
+                self.root / "feature-errors" / (feature_id + ".json"))
+        error = str(exc)[:1000]
+        self._record_runtime_error(exc, path)
+        try:
+            self._event(feature_id, "runtime.error", "Execution needs attention: " + error,
+                        {"job_id": job["id"]} if job else {"source_id": identity},
+                        "runtime-error:" + identity + ":" + hashlib.sha256(error.encode()).hexdigest()[:16])
+        except Exception as recording_error:
+            global_error |= (getattr(recording_error, "errno", None) in {errno.ENOSPC, errno.EDQUOT, errno.EROFS}
+                             or isinstance(recording_error, sqlite3.Error))
+        return global_error
 
     def _discover_links(self) -> None:
         """Bounded automatic PR capture; storage faults never replay or drop saved links."""
@@ -1859,32 +2086,48 @@ class FirstMateRuntime:
         except Exception as exc:
             self._record_runtime_error(exc, self.root / "link-discovery-error.json")
 
-    def _recover_claim_gaps(self) -> None:
+    def _recover_claim_gaps(self) -> set[str]:
         """Complete DB-claim-to-spool creation after a crash, using the same ID.
 
         Pi is never launched until job.json exists. Reconstructing a missing
         spool for an existing claim therefore cannot repeat an execution.
         """
         jobs = self._jobs()
+        failed_features: set[str] = set()
         assignment_dispatches = {j["claim"].get("dispatch_id") for j in jobs if j["kind"] == "worker"}
         message_claims = {(j["claim"]["id"], j["owner"]) for j in jobs if j["kind"] == "coordinator"
                           and not (self._job_dir(j) / "finalized.json").exists()}
         for assignment in self.store.list_assignments(statuses=["dispatching"]):
+            if assignment["feature_id"] in failed_features:
+                continue
             if assignment["dispatch_id"] not in assignment_dispatches:
-                feature = self.store.get_feature(assignment["feature_id"])
                 try:
-                    self._new_job(feature, kind="worker", claim=assignment,
-                                  prompt=self._worker_input(feature, assignment))
-                except ArchitectConfigurationError as exc:
-                    self._block_assignment_configuration(
-                        assignment, exc,
-                        request_id="recovered-configuration:" + assignment["dispatch_id"],
-                    )
+                    feature = self.store.get_feature(assignment["feature_id"])
+                    try:
+                        self._new_job(feature, kind="worker", claim=assignment,
+                                      prompt=self._worker_input(feature, assignment))
+                    except ArchitectConfigurationError as exc:
+                        self._block_assignment_configuration(
+                            assignment, exc,
+                            request_id="recovered-configuration:" + assignment["dispatch_id"],
+                        )
+                except Exception as exc:
+                    failed_features.add(assignment["feature_id"])
+                    if self._record_feature_failure(assignment["feature_id"], exc, "claim:" + assignment["dispatch_id"]):
+                        raise
         for message in self.store.pending_messages():
+            if message["feature_id"] in failed_features:
+                continue
             if message["status"] == "processing" and (message["id"], message["owner"]) not in message_claims:
-                snapshot = self.store.snapshot(message["feature_id"])
-                self._new_job(snapshot["feature"], kind="coordinator", claim=message,
-                              prompt=self._coordinator_input(snapshot, message))
+                try:
+                    snapshot = self.store.snapshot(message["feature_id"])
+                    self._new_job(snapshot["feature"], kind="coordinator", claim=message,
+                                  prompt=self._coordinator_input(snapshot, message))
+                except Exception as exc:
+                    failed_features.add(message["feature_id"])
+                    if self._record_feature_failure(message["feature_id"], exc, "claim:" + message["id"]):
+                        raise
+        return failed_features
 
     def _coordinator_input(self, snapshot: dict, claim: dict) -> str:
         if snapshot["feature"].get("kind") == LEAD_KIND:
@@ -2041,6 +2284,17 @@ class FirstMateRuntime:
         if lead.get("coordinator_owner") != job.get("owner"):
             raise FirstMateError("The lead's turn has ended", code="stale_owner")
         claim = job["claim"]
+
+        def action_receipt(payload: dict) -> str:
+            # A continued human turn receives new job and tool-call IDs. Keep
+            # the same exact action tied to its original human grant instead.
+            # Text stays verbatim, so genuinely different directions survive.
+            identity = {"lead_id": lead["id"], "message_id": claim["id"],
+                        "action": action, "payload": payload}
+            return "lead-action:" + hashlib.sha256(json.dumps(
+                identity, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                allow_nan=False).encode()).hexdigest()
+
         if action == "fm_fleet":
             return self._lead_fleet()
         if action == "fm_read_document":
@@ -2058,8 +2312,9 @@ class FirstMateRuntime:
             if not isinstance(cwd, str) or not Path(cwd).is_absolute() or not Path(cwd).is_dir():
                 raise FirstMateError("Choose an existing absolute project folder on this machine",
                                      code="first_mate_directory_invalid", status=400)
-            feature = self.store.create_feature({"title": params.get("title"), "goal": params.get("goal"),
-                                                 "cwd": cwd, "request_id": "lead:" + request_id})
+            payload = {"title": params.get("title"), "goal": params.get("goal"),
+                       "cwd": str(Path(cwd).resolve())}
+            feature = self.store.create_feature({**payload, "request_id": action_receipt(payload)})
             self.wake()
             return {"feature_id": feature["id"], "title": feature["title"], "status": feature["status"]}
         feature = self._lead_target(params)
@@ -2070,8 +2325,10 @@ class FirstMateRuntime:
         # fm_relay: the human's own decision, on the human's own turn.
         if claim.get("role") != "user":
             raise FirstMateError("Relay only on the human's turn", code="lead_unauthorized")
-        message = self.store.relay_human_message(feature["id"], params.get("text"),
-                                                 lead_message_id=claim["id"], request_id=request_id)
+        payload = {"feature_id": feature["id"], "text": params.get("text")}
+        message = self.store.relay_human_message(feature["id"], payload["text"],
+                                                 lead_message_id=claim["id"],
+                                                 request_id=action_receipt(payload))
         self.wake()
         return {"relayed": True, "feature_id": feature["id"], "message_id": message["id"],
                 "status": message["status"]}
@@ -2232,6 +2489,15 @@ class FirstMateRuntime:
         if job.get("requires_recovery_ack") and not job.get("recovery_acknowledged") and action not in {"fm_status", "fm_read_document", "fm_read_session", "fm_acknowledge_recovery", "fm_request_human"}:
             raise FirstMateError("Inspect the retained checkpoint and acknowledge recovery before continuing")
         if action == "fm_status":
+            if params.get("assignment_id"):
+                assignment = self.store.get_assignment(params["assignment_id"])
+                if assignment["feature_id"] != feature_id:
+                    raise FirstMateError("Assignment belongs to another feature")
+                detail = self.snapshot(feature_id)
+                assignment = next(a for a in detail["assignments"] if a["id"] == assignment["id"])
+                return {"assignment": _agent_assignment(assignment),
+                        "document_references": [_pick(d, ("id", "title", "assignment_id", "native_session_id"))
+                            for d in detail["documents"] if d.get("assignment_id") == assignment["id"]][-100:]}
             if job["kind"] == "coordinator":
                 snapshot = self.store.snapshot(feature_id)
                 status = self._coordinator_projection(snapshot, claim)
@@ -2243,17 +2509,19 @@ class FirstMateRuntime:
             # evidence as the public runtime snapshot, not frozen queued metadata.
             # Build that usage/session projection once for this status request.
             snapshot = self.snapshot(feature_id)
-            links = snapshot.get("links", [])
-            verification = snapshot["feature"].get("verification") or {}
-            return {"feature": snapshot["feature"], "visits": snapshot["visits"],
-                    "assignments": [{key: value for key, value in a.items() if key != "prompt"} for a in snapshot["assignments"]],
-                    "documents": snapshot["documents"], "memberships": snapshot.get("memberships", []),
-                    "links": _link_references(links, 50), "links_truncated": len(links) > 50,
-                    "verification": verification,
-                    "verification_runs": self._verification_run_references(feature_id, 50),
-                    "verification_runs_truncated": len(snapshot.get("verification_runs", [])) > 50,
-                    "last_updates": [{"sequence": e["sequence"], "type": e["type"], "summary": e["summary"][:500], "created_at": e["created_at"]}
-                                     for e in snapshot["events"][-10:]]}
+            # Workers used to receive every historical Document body, assignment
+            # metadata and verification row. Repeated status reads alone could
+            # trigger the next handoff before a successor performed useful work.
+            status = _coordinator_state(snapshot, {"metadata": {"assignment_id": claim.get("id")}})
+            own = next((a for a in snapshot["assignments"] if a["id"] == claim.get("id")), None)
+            if own:
+                status["assignments"] = [_agent_assignment(own)] + [a for a in status["assignments"] if a["id"] != own["id"]]
+            status["documents"] = status["document_references"]
+            status["links"] = _link_references(snapshot.get("links", []), 50)
+            status["links_truncated"] = len(snapshot.get("links", [])) > 50
+            status["last_updates"] = [{"sequence": e["sequence"], "type": e["type"],
+                "summary": e["summary"][:500], "created_at": e["created_at"]} for e in snapshot["events"][-10:]]
+            return status
         if action == "fm_read_document":
             document = self.store.get_document(params["document_id"])
             if document["feature_id"] != feature_id:
@@ -2385,7 +2653,7 @@ class FirstMateRuntime:
                         return receipt
                 if assignment["generation"] != plan["generation"]:
                     raise FirstMateError("Recovery target generation changed; inspect the current execution", code="stale_generation")
-                if assignment["recovery_count"] >= 2 and not reset_budget:
+                if claim["role"] == "user" and assignment["recovery_count"] >= 2 and not reset_budget:
                     raise FirstMateError("Recovery budget is exhausted. Do not repeat recover. Use reset_budget=true with new human direction, or fm_revise to replace the work.",
                         code="recovery_exhausted", next_permitted_actions=assignment["next_permitted_actions"])
                 if stop_running:
@@ -2622,6 +2890,92 @@ class FirstMateRuntime:
                 return {"retained": True}
         raise ValueError("Tool is outside this execution's role and assignment scope")
 
+    def _retry_coordinator(self, job: dict, state: dict) -> bool:
+        """Continue a safely stopped transient failure under the same inbox grant.
+
+        Only observational shell activity and reconciled managed operations are
+        eligible. A successful external command is still not safe to replay.
+        """
+        error = str(state.get("error", "")).lower()
+        transient = any(term in error for term in (
+            "timeout", "timed out", "deadline", "during startup", "connection reset",
+            "temporarily unavailable", "overloaded", "rate limit", "429", "502", "503"))
+        if not transient or state.get("startup_validation_failed") or job.get("cancel_requested"):
+            return False
+        feature = self.store.get_feature(job["feature_id"])
+        if feature["status"] in {"paused", "cancelled", "completed", "blocked", "recovering"}:
+            return False
+        snapshot = self.store.snapshot(feature["id"])
+        if any(a.get("metadata", {}).get("human_gate", {}).get("status") == "pending"
+               for a in snapshot["assignments"]):
+            return False
+        if any((m["role"] == "user" and m["status"] == "queued" and m["id"] != job["claim"]["id"])
+               or (m["role"] == "assistant" and m.get("metadata", {}).get("turn_id") == job["claim"]["id"])
+               for m in snapshot["messages"]):
+            # A posted checkpoint already answered this claim, and newer human
+            # direction takes priority over finishing an interrupted old turn.
+            return False
+        directory = self._job_dir(job)
+        operations = []
+        for path in sorted((directory / "requests").glob("*.json")):
+            request = _read_json(path, {})
+            response = _read_json(directory / "responses" / path.name, {})
+            if not request or not isinstance(response.get("ok"), bool):
+                return False
+            operation = {"tool": request.get("action"), "request_id": path.stem,
+                         "status": "completed" if response["ok"] else "refused"}
+            if response["ok"]:
+                # Retain identities that let a successor inspect committed
+                # actions without replaying them or loading whole tool results.
+                params = request.get("params")
+                result = response.get("result")
+                if isinstance(params, Mapping):
+                    operation["params"] = {key: value[:200] for key in
+                        ("feature_id", "assignment_id", "document_id", "stage_key", "title")
+                        if isinstance((value := params.get(key)), str)}
+                    for key in ("text", "goal"):
+                        if isinstance(params.get(key), str):
+                            operation["params"][key + "_preview"] = params[key][:240]
+                            operation["params"][key + "_characters"] = len(params[key])
+                if isinstance(result, Mapping):
+                    operation["result"] = {key: value[:200] if isinstance(value, str) else value
+                        for key in ("id", "feature_id", "assignment_id", "message_id", "visit_id", "status", "relayed")
+                        if isinstance((value := result.get(key)), (str, bool, int))}
+            operations.append(operation)
+        effects = self.reliability._effect_status(job)
+        before_prompt = state.get("prompt_sent") is False and not operations
+        if not before_prompt and (not effects["safe"] or effects["has_mutations"]):
+            return False
+        path = self.root / "coordinator-retries" / (job["claim"]["id"] + ".json")
+        previous = _read_json(path, {})
+        if previous.get("source_job_id") == job["id"]:
+            retry = previous
+        else:
+            attempts = previous.get("attempts", 0)
+            if attempts >= 2:
+                return False
+            retained_operations = previous.get("operations", [])
+            if not isinstance(retained_operations, list):
+                retained_operations = []
+            by_request = {}
+            for operation in [*retained_operations, *operations]:
+                if isinstance(operation, Mapping) and isinstance(operation.get("request_id"), str):
+                    # New facts win and move to the end of the bounded history.
+                    by_request.pop(operation["request_id"], None)
+                    by_request[operation["request_id"]] = operation
+            retry = {"attempts": attempts + 1, "source_job_id": job["id"],
+                     "operations": list(by_request.values())[-30:], "reason": str(state["error"])[:500],
+                     "not_before": time.time() + 5 * (attempts + 1)}
+            _write_json(path, retry)
+        self.store.release_message(job["claim"]["id"], job["owner"],
+            "Automatically continuing the interrupted turn from reconciled state", verified_stopped=True,
+            request_id="transient-retry:" + job["id"])
+        self._event(feature["id"], "coordinator.retry_scheduled",
+            "Transient interruption retained; continuing the same authorized turn automatically.",
+            retry, "coordinator-retry:" + job["id"])
+        _write_json(directory / "finalized.json", {"at": utc_now(), "retry_scheduled": True})
+        return True
+
     def _finish(self, job: dict, state: dict) -> None:
         directory = self._job_dir(job)
         if _locked(directory / "writer.lock"):
@@ -2630,6 +2984,8 @@ class FirstMateRuntime:
         if job["kind"] == "coordinator":
             if job.get("preempt_requested"):
                 self.store.release_message(claim["id"], job["owner"], "Background update deferred for a human message", verified_stopped=True, request_id="preempt:" + job["id"])
+            elif self._retry_coordinator(job, state):
+                return
             else:
                 # A background turn's failure reaches the chat only when it leaves
                 # the stage with nothing running (see finish_message).
@@ -3078,7 +3434,7 @@ def _pi_command(job: dict) -> list[str]:
                prompt_flag, charter, "--extension", job["extension"]]
     if job["kind"] == "advisor" and (job.get("recovery_mode") or job.get("reliability_assessment")):
         command += ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files",
-                    "--tools", "read,grep,find,ls,fm_status,fm_read_document,fm_read_session,fm_advice,fm_recovery_brief"]
+                    "--tools", "read,grep,find,ls,bash,fm_status,fm_read_document,fm_read_session,fm_advice,fm_recovery_brief"]
     parent_session_id = job.get("parent_session_id")
     if parent_session_id is not None:
         if not FirstMateRuntime._valid_pi_parent_session_id(parent_session_id):
@@ -3134,7 +3490,7 @@ def run_detached(directory: Path) -> int:
             os.fsync(empty.fileno())
     _write_json(directory / "started.json", {"pid": os.getpid(), "at": utc_now(),
                                                "extension": job.get("extension")})
-    status = {"pid": os.getpid(), "started_at": utc_now(), "accepted": False,
+    status = {"pid": os.getpid(), "started_at": utc_now(), "accepted": False, "prompt_sent": False,
               "ended": False, "response": "", "last_event_epoch": time.time()}
     _write_json(directory / "status.json", status)
     command = _pi_command(job)
@@ -3235,6 +3591,8 @@ def run_detached(directory: Path) -> int:
             status["error"] = startup_error
             _write_json(directory / "status.json", status)
             raise RuntimeError(startup_error)
+        status["prompt_sent"] = True
+        _write_json(directory / "status.json", status)
         send({"type": "prompt", "id": "dispatch:" + job["id"], "message": job["prompt"]})
         sent_controls = set()
         abort_deadline = None

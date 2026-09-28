@@ -554,6 +554,119 @@ struct PRReviewDiffTextTests {
         #expect(scrolls == true, "Long code must be horizontally reachable inside the shared renderer")
     }
 
+    @Test("Wrap contains long code and preserves text when toggled to Scroll", arguments: ["unified", "split"])
+    @MainActor
+    func wrapsLongCodeAtNarrowWidth(diffStyle: String) async throws {
+        let spaced = String(repeating: "seed water sunlight ", count: 12) + "SPACED_END"
+        let token = String(repeating: "syntheticGardenValue", count: 25) + "TOKEN_END"
+        var file = PRReviewDemo.diff().files[0]
+        file.hunks = [.init(oldStart: 1, oldLines: 2, newStart: 1, newLines: 2, header: "@@", lines: [
+            .init(kind: "del", oldNumber: 1, newNumber: nil, text: "old " + spaced),
+            .init(kind: "del", oldNumber: 2, newNumber: nil, text: "old " + token),
+            .init(kind: "add", oldNumber: nil, newNumber: 1, text: spaced),
+            .init(kind: "add", oldNumber: nil, newNumber: 2, text: token),
+        ])]
+        let mounted = mount(file: file, size: CGSize(width: 480, height: 700))
+        defer { mounted.view.tearDown(); mounted.window.close() }
+        let ready = await waitUntil { mounted.view.renderedIdentity != nil }
+        try #require(ready)
+
+        for overflow in ["wrap", "scroll", "wrap"] {
+            let payload = PRReviewDiffRenderer.payload(file: file, identity: "wrap-regression",
+                highlight: (start: 1, end: 1, side: .after), diffStyle: diffStyle, overflow: overflow)
+            try await renderForOverflowTest(mounted.view, payload: payload)
+            let result = try await mounted.view.evaluateJavaScript("""
+            (() => {
+              const root = document.querySelector('diffs-container').shadowRoot;
+              const lines = [...root.querySelectorAll('[data-line]')];
+              const scrolls = [...root.querySelectorAll('*')].filter(element =>
+                element.scrollWidth > element.clientWidth + 1 &&
+                ['auto', 'scroll'].includes(getComputedStyle(element).overflowX));
+              const reachable = scrolls.some(element => {
+                element.scrollLeft = element.scrollWidth;
+                return element.scrollLeft > 0;
+              });
+              return {
+                contained: document.documentElement.scrollWidth <= innerWidth + 1,
+                wrapped: lines.length === 4 && lines.every(line => {
+                  const rect = line.getBoundingClientRect();
+                  return rect.left >= -1 && rect.right <= innerWidth + 1 &&
+                    rect.height > parseFloat(getComputedStyle(line).lineHeight) * 1.5;
+                }),
+                complete: lines.length === 4 && lines.every(line => /SPACED_END|TOKEN_END/.test(line.textContent)),
+                highlighted: root.querySelector('[data-line][data-selected-line]') !== null,
+                reachable
+              };
+            })()
+            """)
+            let geometry = try #require(result as? [String: Bool])
+            #expect(geometry["complete"] == true)
+            #expect(geometry["highlighted"] == true)
+            if overflow == "wrap" {
+                #expect(geometry["contained"] == true, "Wrap must fit the actual WKWebView viewport")
+                #expect(geometry["wrapped"] == true, "Both sides must wrap spaced and unbroken source lines")
+                let selected = try await selectDiff(mounted.view, from: additionSelector, to: additionSelector)
+                #expect(selected == spaced, "Visual wrapping must not change source selection")
+            } else {
+                #expect(geometry["reachable"] == true, "Scroll must keep the complete long line reachable")
+            }
+        }
+    }
+
+    @Test("Plain patch fallback respects Wrap and Scroll") @MainActor
+    func fallbackWrapsAtNarrowWidth() async throws {
+        let mounted = mount(file: PRReviewDemo.diff().files[0], size: CGSize(width: 480, height: 360))
+        defer { mounted.view.tearDown(); mounted.window.close() }
+        let ready = await waitUntil { mounted.view.renderedIdentity != nil }
+        try #require(ready)
+        let patch = "Binary files " + String(repeating: "syntheticGardenValue", count: 25)
+            + " and " + String(repeating: "seed water sunlight ", count: 12) + "differ"
+        for overflow in ["wrap", "scroll", "wrap"] {
+            let payload = PRReviewDiffRenderer.Payload(identity: "fallback-" + overflow, path: "Garden.bin",
+                oldPath: "", patch: patch, plainText: patch, fontScale: 1, highlight: nil,
+                diffStyle: "unified", overflow: overflow, comparison: nil, comparisonSelection: nil)
+            try await renderForOverflowTest(mounted.view, payload: payload)
+            let result = try await mounted.view.evaluateJavaScript("""
+            (() => {
+              const pre = document.querySelector('.hz-diff-plain-fallback pre');
+              const scroll = document.scrollingElement;
+              scroll.scrollLeft = scroll.scrollWidth;
+              return { text: pre.textContent,
+                contained: scroll.scrollWidth <= innerWidth + 1,
+                wrapped: pre.getBoundingClientRect().height > parseFloat(getComputedStyle(pre).lineHeight) * 1.5,
+                reachable: scroll.scrollLeft > 0 };
+            })()
+            """)
+            let geometry = try #require(result as? [String: Any])
+            #expect(geometry["text"] as? String == patch)
+            #expect(geometry["wrapped"] as? Bool == (overflow == "wrap"))
+            #expect(geometry["contained"] as? Bool == (overflow == "wrap"))
+            if overflow == "scroll" { #expect(geometry["reachable"] as? Bool == true) }
+        }
+    }
+
+    @MainActor
+    private func renderForOverflowTest(_ view: PRReviewDiffTextView, payload: PRReviewDiffRenderer.Payload) async throws {
+        let encoded = try JSONEncoder().encode(payload).base64EncodedString()
+        let renderedStyle = payload.diffStyle == "unified" ? "single" : "split"
+        _ = try await view.evaluateJavaScript("window.herdrNativeDiff.renderJSON('\(encoded)')")
+        var rendered = false
+        for _ in 0..<100 {
+            rendered = (try? await view.evaluateJavaScript("""
+            (() => {
+              const host = document.querySelector('diffs-container');
+              const pre = host?.shadowRoot?.querySelector('[data-diff]') ?? document.querySelector('.hz-diff-plain-fallback');
+              return document.querySelector('main')?.dataset.renderIdentity === '\(payload.identity)' &&
+                pre?.dataset.overflow === '\(payload.overflow)' &&
+                (!host || pre?.dataset.diffType === '\(renderedStyle)');
+            })()
+            """)) as? Bool ?? false
+            if rendered { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(rendered)
+    }
+
     @Test("A scroll requested before page readiness reaches the requested hunk") @MainActor
     func queuesInitialScroll() async throws {
         var file = PRReviewDemo.diff().files[0]

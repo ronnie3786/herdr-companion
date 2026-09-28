@@ -88,7 +88,8 @@ export function SharedDiffRenderer({
 
   if (parsed.fileDiff === null) {
     return (
-      <div className={`hz-diff-plain-fallback${className ? ` ${className}` : ""}`} style={style}>
+      <div className={`hz-diff-plain-fallback${className ? ` ${className}` : ""}`} style={style}
+        data-overflow={overflow}>
         <span>
           {parsed.fallbackReason === "metadata-only"
             ? "This change contains Git metadata rather than line-by-line text. Showing the raw patch."

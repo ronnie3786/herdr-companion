@@ -922,6 +922,16 @@
   white-space: pre;
 }
 
+.hz-diff-plain-fallback[data-overflow="wrap"] {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.hz-diff-plain-fallback[data-overflow="wrap"] pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 @keyframes hz-git-spin {
   to {
     transform: rotate(360deg);

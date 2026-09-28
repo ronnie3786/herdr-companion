@@ -233,7 +233,8 @@ function App() {
 
   if (payload === null) return null;
   return (
-    <main ref={hostRef} className="native-diff" data-render-identity={payload.identity}>
+    <main ref={hostRef} className="native-diff" data-render-identity={payload.identity}
+      data-overflow={payload.overflow ?? "scroll"}>
       <SharedDiffRenderer file={payload.path} patch={payload.patch} fontScale={payload.fontScale}
         diffStyle={payload.diffStyle} overflow={payload.overflow}
         selectedLines={selectedLines} disableWorkerPool onRendered={onRendered} />

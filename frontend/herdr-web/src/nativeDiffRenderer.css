@@ -17,6 +17,13 @@ html, body, #root { width: 100%; min-width: 100%; min-height: 100%; margin: 0; }
 body { overflow: auto; background: var(--herdr-diff-background); }
 .native-diff { min-width: max-content; min-height: 100vh; background: var(--herdr-diff-background); }
 .native-diff > diffs-container { display: block; min-width: 100%; color-scheme: dark; }
+/* Wrapped code needs the viewport width, not the longest line's intrinsic width. */
+.native-diff[data-overflow="wrap"],
+.native-diff[data-overflow="wrap"] > diffs-container {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
 
 .native-selection-actions {
   position: fixed;
@@ -61,4 +68,10 @@ body { overflow: auto; background: var(--herdr-diff-background); }
   position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 90;
   pointer-events: none; overflow: hidden; fill: none; color: #e7c975;
   stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;
+}
+
+.hz-diff-plain-fallback[data-overflow="wrap"] { min-width: 0; max-width: 100%; }
+.hz-diff-plain-fallback[data-overflow="wrap"] pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

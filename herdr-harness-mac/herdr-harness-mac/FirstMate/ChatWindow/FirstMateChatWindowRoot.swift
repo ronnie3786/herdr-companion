@@ -118,6 +118,11 @@ struct FirstMateChatWindowRoot: View {
                 FirstMateCreateSheet(store: store, initialGoal: session.createGoal)
             }
         }
+        .sheet(item: $session.archiveCandidate) { target in
+            FirstMateArchiveConfirmation(feature: target.feature) { reason in
+                await session.archive(target, reason: reason)
+            }
+        }
         .onChange(of: session.createStore.map(ObjectIdentifier.init), initial: true) { _, store in
             createOrigin = store == nil ? nil : session.createOrigin
         }
@@ -142,6 +147,11 @@ struct FirstMateChatWindowRoot: View {
         VStack(spacing: 0) {
             FirstMateChatHeader(session: session, inspectorVisible: layout.inspector != .hidden) {
                 toggleInspector(width: width)
+            }
+            .contextMenu {
+                if case .feature(let id) = session.selection {
+                    Button("Archive feature…", systemImage: "archivebox") { session.requestArchive(id) }
+                }
             }
             FirstMateChatConversationView(session: session, model: model, modelFavorites: modelFavorites)
                 .environment(\.firstMateComposerFocusRequest, composerFocusRequest)

@@ -15,7 +15,11 @@ struct FirstMateOverviewView: View {
         let buildsQuery = MobileAppHubSettings.firstMateQuery(hubURLText: buildsHubURL, featureID: snapshot.feature.id)
         let currentAgents = Array(snapshot.assignments.filter { $0.visitID == snapshot.feature.currentVisitID }.prefix(3))
         VStack(alignment: .leading, spacing: 12) {
-            FirstMatePullRequestsSection(store: store, snapshot: snapshot, surface: .overview)
+            if !snapshot.pullRequestLinks.isEmpty {
+                FirstMatePullRequestsSection(store: store, snapshot: snapshot, surface: .overview)
+                    .padding(12)
+                    .herdrCard()
+            }
             FirstMateBuildsSection(
                 featureID: snapshot.feature.id,
                 assignments: snapshot.assignments.map { ($0.id, $0.title) },
@@ -29,16 +33,13 @@ struct FirstMateOverviewView: View {
                 .accessibilityAddTraits(.isHeader)
             VStack(alignment: .leading, spacing: 6) {
                 HerdrMicroLabel(text: "Goal")
-                // Issue #70: the goal is Markdown, rendered compactly.
-                FirstMateMarkdownContentView(source: snapshot.feature.goal)
-                    .environment(\.firstMateMarkdownDensity, .compact)
+                Text(FirstMateGoalSummary.text(goal: snapshot.feature.goal, title: snapshot.feature.title))
+                    .herdrFont(size: HerdrTheme.TextSize.body)
+                    .foregroundStyle(palette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("first-mate-goal-summary")
             }
-            FirstMateVerificationSummaryView(
-                verification: snapshot.feature.verification,
-                isLastReported: !store.isDemo && store.error != nil
-            )
-            .padding(12)
-            .herdrCard()
             FirstMateUsageSummaryView(usage: snapshot.feature.usage, title: "Full task usage")
                 .padding(12)
                 .herdrCard()

@@ -22,6 +22,15 @@ enum FirstMateUsageFormatting {
     static func modelName(provider: String?, model: String?) -> String {
         let provider = provider?.trimmingCharacters(in: .whitespacesAndNewlines)
         let model = model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        #if os(macOS)
+        if let model, !model.isEmpty {
+            let canonical = model.split(separator: "/").last.map(String.init) ?? model
+            let known = ["gpt", "claude", "gemini", "qwen", "deepseek", "glm", "llama", "mistral", "o1", "o3", "o4"]
+            return known.contains(where: { canonical.lowercased().hasPrefix($0) })
+                ? PiModelDisplayName.short(provider: provider ?? "", modelID: model, name: nil)
+                : canonical
+        }
+        #endif
         switch (provider?.isEmpty == false ? provider : nil, model?.isEmpty == false ? model : nil) {
         case let (.some(provider), .some(model)): return "\(provider) / \(model)"
         case let (.some(provider), nil): return provider

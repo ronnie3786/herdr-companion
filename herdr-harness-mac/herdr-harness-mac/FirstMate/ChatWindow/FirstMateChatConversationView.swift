@@ -189,6 +189,9 @@ private struct FirstMateFeatureChat: View {
         VStack(spacing: 0) {
             FirstMateChatTranscript(session: session, store: store, snapshot: snapshot, conversationID: id, isTyping: typing)
                 .id(id)
+                .contextMenu {
+                    Button("Archive feature…", systemImage: "archivebox") { session.requestArchive(id) }
+                }
             FirstMateExecutionStateNotice(snapshot: snapshot, health: store.runtimeHealth)
             if let error = store.error {
                 Label(error, systemImage: "exclamationmark.triangle")

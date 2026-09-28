@@ -24,6 +24,39 @@ struct FirstMateChatWindowSessionTests {
         #expect(session.store(for: "elsewhere") == nil)
     }
 
+    @Test("Archiving a conversation removes its row and badge and returns the selected chat to My First Mate")
+    func archiveConversation() async throws {
+        let session = FirstMateChatWindowSession(model: ChatFixtures.model(demo: true), shell: ChatFixtures.shell())
+        let id = FirstMateFleetFeatureID(machineID: "demo", featureID: "demo-receipts")
+        session.select(.feature(id))
+        session.requestArchive(id)
+        let target = try #require(session.archiveCandidate)
+        #expect(await session.archive(target, reason: nil) == nil)
+        #expect(session.selection == .lead)
+        #expect(session.conversations.count == 6)
+        #expect(!session.conversations.contains { $0.id == id })
+        #expect(session.badgeCount == 2)
+        let store = try #require(session.store(for: "demo"))
+        #expect(store.snapshots[id.featureID]?.feature.isArchived == true)
+        await store.refresh()
+        #expect(!session.conversations.contains { $0.id == id })
+        #expect(await store.setArchived(featureID: id.featureID, archived: false))
+        #expect(session.conversations.contains { $0.id == id })
+    }
+
+    @Test("Archiving an unselected row preserves the current conversation")
+    func archiveUnselectedConversation() async throws {
+        let session = FirstMateChatWindowSession(model: ChatFixtures.model(demo: true), shell: ChatFixtures.shell())
+        let selected = FirstMateFleetFeatureID(machineID: "demo", featureID: "demo-release")
+        let archived = FirstMateFleetFeatureID(machineID: "demo", featureID: "demo-receipts")
+        session.select(.feature(selected))
+        session.requestArchive(archived)
+        let target = try #require(session.archiveCandidate)
+        #expect(await session.archive(target, reason: nil) == nil)
+        #expect(session.selection == .feature(selected))
+        #expect(!session.conversations.contains { $0.id == archived })
+    }
+
     @Test("Selecting in the window never moves the main window's selection, and the reverse")
     func selectionIndependence() throws {
         let model = ChatFixtures.model(demo: true)

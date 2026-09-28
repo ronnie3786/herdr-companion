@@ -169,6 +169,9 @@ struct FirstMateChatSidebar: View {
                     isHovered: hovered == selection,
                     showsDivider: index > 0 && !isHighlighted(selection) && !isHighlighted(.feature(rows[index - 1].id))
                 ) { choose(selection) }
+                .contextMenu {
+                    Button("Archive feature…", systemImage: "archivebox") { session.requestArchive(conversation.id) }
+                }
                 .onHover { hovered = $0 ? selection : (hovered == selection ? nil : hovered) }
                 .id(selection)
             }
@@ -201,6 +204,9 @@ struct FirstMateChatSidebar: View {
                 ) {
                     FirstMateEmojiDisc(emoji: conversation.emoji, size: 48)
                 } action: { choose(selection) }
+                .contextMenu {
+                    Button("Archive feature…", systemImage: "archivebox") { session.requestArchive(conversation.id) }
+                }
                 .onHover { hovered = $0 ? selection : (hovered == selection ? nil : hovered) }
                 .id(selection)
             }

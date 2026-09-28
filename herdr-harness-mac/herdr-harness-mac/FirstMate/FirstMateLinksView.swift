@@ -94,7 +94,7 @@ private struct FirstMateProminentLinkRow: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .herdrCard(radius: HerdrTheme.Radius.composer)
+        .modifier(FirstMateLinkRowCard(showsCard: surface != .overview))
         .accessibilityIdentifier("first-mate-pr-\(surface.accessibilitySuffix)-\(link.id)")
     }
 }
@@ -316,5 +316,13 @@ private struct FirstMateLinkActionsView: View {
                 .accessibilityIdentifier("\(actionPrefix)copy-\(link.id)")
         }
         .buttonStyle(HerdrButtonStyle(kind: .outline, height: HerdrTheme.ControlHeight.small))
+    }
+}
+
+private struct FirstMateLinkRowCard: ViewModifier {
+    let showsCard: Bool
+    @ViewBuilder func body(content: Content) -> some View {
+        if showsCard { content.herdrCard(radius: HerdrTheme.Radius.composer) }
+        else { content }
     }
 }

@@ -40,7 +40,11 @@ struct FirstMateUsageTests {
         let data = Data(#"{"id":"feature","title":"Timer","goal":"Plan","cwd":"/workspace","status":"ready","revision":1,"created_at":"now","updated_at":"now","coordinator_model":"configured/future-model","usage":{"currency":"USD","cost_usd":1.25,"status":"complete","input_tokens":100,"output_tokens":20,"cache_read_tokens":30,"cache_write_tokens":0,"total_tokens":150,"usage_records":2,"missing_cost_records":0,"session_count":1,"known_cost_sessions":1,"models":[{"provider":"provider-a","model":"used-a","cost_usd":1.0,"status":"complete","input_tokens":80,"output_tokens":10,"cache_read_tokens":20,"cache_write_tokens":0,"total_tokens":110,"usage_records":1,"missing_cost_records":0},{"provider":null,"model":null,"cost_usd":0.25,"status":"complete","input_tokens":20,"output_tokens":10,"cache_read_tokens":10,"cache_write_tokens":0,"total_tokens":40,"usage_records":1,"missing_cost_records":0}],"updated_at":"2026-09-21T20:00:00Z"}}"#.utf8)
         let feature = try JSONDecoder().decode(FirstMateFeature.self, from: data)
         #expect(feature.modelDisplayName == "future-model")
+        #if os(macOS)
+        #expect(FirstMateUsageFormatting.modelNames(feature.usage) == "used-a, Unknown model")
+        #else
         #expect(FirstMateUsageFormatting.modelNames(feature.usage) == "provider-a / used-a, Unknown model")
+        #endif
         #expect(!FirstMateUsageFormatting.modelNames(feature.usage).contains("future-model"))
     }
 

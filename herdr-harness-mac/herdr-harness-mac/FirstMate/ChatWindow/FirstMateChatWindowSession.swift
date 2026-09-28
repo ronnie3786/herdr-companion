@@ -33,6 +33,7 @@ final class FirstMateChatWindowSession {
 
     var selection: Selection = .lead
     var search = ""
+    var archiveCandidate: FirstMateFleetIndex.ArchiveTarget?
     /// nil follows the window width (open at 1280 pt and wider).
     var inspectorPreference: Bool? = nil
     /// A Dock-menu request that arrived before the window could apply it.
@@ -271,6 +272,29 @@ final class FirstMateChatWindowSession {
         return state
     }
 
+    /// Capture the row's exact machine and feature, independent of selection.
+    func requestArchive(_ id: FirstMateFleetFeatureID) {
+        guard let feature = hosts.first(where: { $0.machineID == id.machineID })?.features.first(where: { $0.id == id.featureID }),
+              !feature.isArchived, !feature.isLead else { return }
+        archiveCandidate = shell.firstMateFleet.archiveTarget(machineID: id.machineID, feature: feature)
+    }
+
+    func archive(_ target: FirstMateFleetIndex.ArchiveTarget, reason: FirstMateArchiveReason?) async -> String? {
+        if isDemo {
+            guard let store = store(for: target.machineID),
+                  await store.setArchived(featureID: target.feature.id, archived: true, reason: reason) else {
+                return "Could not archive this feature. Try again."
+            }
+        } else {
+            if let error = await shell.firstMateFleet.archive(target, reason: reason) { return error }
+            // The chat window owns a separate store. Its next poll also sees
+            // the persisted archive, including when another row was selected.
+            await store(for: target.machineID)?.refresh()
+        }
+        if selection == .feature(target.id) { select(.lead) }
+        return nil
+    }
+
     // MARK: Navigation
 
     /// Switches chats by selecting within the machine's store; a store is
@@ -481,6 +505,7 @@ final class FirstMateChatWindowSession {
     static func demoHost(fleet: [FirstMateFleetEntry], snapshots: [String: FirstMateSnapshot], lastUpdated: Date) -> FirstMateFleetHost {
         var entries: [String: FirstMateFleetEntry] = [:]
         for var entry in fleet {
+            if let feature = snapshots[entry.featureID]?.feature { entry.archivedAt = feature.archivedAt }
             if let snapshot = snapshots[entry.featureID],
                let latest = snapshot.messages.last(where: \.isConversation),
                latest.id != entry.latestMessage?.id {

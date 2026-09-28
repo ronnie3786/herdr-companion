@@ -99,6 +99,7 @@ final class FirstMateFleetIndex {
             for index in hosts.indices { hosts[index].isLoading = false }
             if let index = hosts.firstIndex(where: { $0.machineID == target.machineID }) {
                 hosts[index].features.removeAll { $0.id == target.feature.id }
+                hosts[index].fleetEntries?[target.feature.id] = nil
                 contentRevision &+= 1
             }
             return nil

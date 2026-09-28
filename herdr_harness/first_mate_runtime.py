@@ -1610,13 +1610,25 @@ class FirstMateRuntime:
 
         # Explicit observational targets are additional retained scope. Keep
         # every original assignment workspace and its failures untouched.
+        registered_targets: set[str] = set()
+        target_scope_reasons: list[str] = []
         for target in self._verification_targets(feature["id"]):
             path = target["target_workspace_path"]
             identity = self._workspace_identity(path)
+            registered_targets.add(identity)
             workspaces.setdefault(identity, path)
             baseline = target["baseline_revision"]
             if baseline not in anchors.setdefault(identity, []):
                 anchors[identity].append(baseline)
+            # A worker's declared baseline may widen discovery but cannot
+            # narrow the cumulative assignment/source-lineage scope. In
+            # particular, declaring target HEAD must not erase earlier edits.
+            retained_anchor = _anchor(lineages.get(target["assignment_id"], []))
+            if retained_anchor:
+                if retained_anchor not in anchors[identity]:
+                    anchors[identity].append(retained_anchor)
+            else:
+                target_scope_reasons.append(f"Workspace {identity} has no retained assignment baseline for its verification target")
 
         # Superseded worktrees are one history with the deliverable leaf that
         # inherited their commits: alias their retained runs and inventories
@@ -1638,8 +1650,8 @@ class FirstMateRuntime:
 
         revisions: dict[str, str] = {}
         changed: dict[str, list[str]] = {}
-        reasons: list[str] = []
-        complete = True
+        reasons: list[str] = target_scope_reasons
+        complete = not target_scope_reasons
         for identity, path in workspaces.items():
             try:
                 head = self._git(path, "rev-parse", "HEAD")
@@ -1653,6 +1665,8 @@ class FirstMateRuntime:
             if bases:
                 for base in bases:
                     try:
+                        if identity in registered_targets:
+                            self._git(path, "merge-base", "--is-ancestor", base, "HEAD")
                         output = self._git(path, "diff", "--name-only", f"{base}..HEAD")
                         paths.update(line.strip() for line in output.splitlines() if line.strip())
                     except (FirstMateError, OSError, subprocess.TimeoutExpired) as exc:

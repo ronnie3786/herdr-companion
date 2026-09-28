@@ -66,6 +66,49 @@ class VerificationTargetTests(unittest.TestCase):
         self.assertEqual(result["verification"]["failing_suites"][0]["run_id"], old["run"]["id"])
         self.assertEqual(len(self.store.list_verification_runs(self.feature["id"])), 2)
 
+    def test_first_registration_at_target_head_cannot_omit_changed_package(self):
+        result = self.runtime._record_verification(self.job, self.report(
+            baseline_revision=self.target_head,
+            gates=[fixtures.gate("OtherTests", package="pkg/other")],
+            inventory={"package": "pkg/other", "state": "complete",
+                       "suites": [fixtures.suite("OtherTests", package="pkg/other")]}), "head-baseline")
+        self.assertEqual(result["verification"]["status"], "partially_verified")
+        self.assertIn({"workspace": self.target_identity, "path": "pkg/app/Sources/Feature.swift"},
+                      result["verification"]["unmapped_paths"])
+
+    def test_target_keeps_source_lineage_anchor_before_successor_baseline(self):
+        job = self.additional_assignment_job("successor", self.target_head, source=self.assignment["id"])
+        self.runtime._record_verification(job, self.report(baseline_revision=self.target_head), "successor-target")
+        scope = self.runtime._verification_scope(self.feature)
+        self.assertTrue(scope["complete"])
+        self.assertIn("pkg/app/Sources/Feature.swift", scope["changed_paths"][self.target_identity])
+        self.assertIn(self.workspace, scope["revisions"])
+
+    def test_nonancestor_assignment_anchor_leaves_target_scope_unknown(self):
+        (self.repo / "sibling.txt").write_text("synthetic sibling\n")
+        self.git(self.repo, "add", ".")
+        self.git(self.repo, "commit", "-m", "Synthetic sibling anchor")
+        job = self.additional_assignment_job("sibling", self.head())
+        result = self.runtime._record_verification(job, self.report(), "nonancestor-target")
+        scope = self.runtime._verification_scope(self.feature)
+        self.assertFalse(scope["complete"])
+        self.assertIn("pkg/app/Sources/Feature.swift", scope["changed_paths"][self.target_identity])
+        self.assertTrue(any("retained baseline" in reason for reason in scope["reasons"]))
+        self.assertNotEqual(result["verification"]["status"], "verified")
+
+    def additional_assignment_job(self, suffix, baseline, *, source=None):
+        metadata = {"workspace_mode": "read_only", "worktree_path": str(self.repo), "base_revision": baseline}
+        if source:
+            metadata["source_assignment_id"] = source
+        assignment = self.store.create_assignment(self.assignment["visit_id"], {
+            "title": "Synthetic " + suffix, "role": "verifier", "prompt": "Verify synthetic target",
+            "request_id": "assignment-" + suffix, "metadata": metadata})
+        claimed = self.store.claim_assignment(assignment["id"], "worker-" + suffix)
+        self.store.bind_session(assignment["id"], claimed["generation"], "worker-" + suffix,
+                                "native-" + suffix, str(self.root / (suffix + ".jsonl")), "run-" + suffix)
+        return {**self.job, "claim": self.store.get_assignment(assignment["id"]),
+                "native_session_id": "native-" + suffix}
+
     def test_dirty_target_never_uses_clean_dispatch_source_state(self):
         (self.target / "uncommitted.txt").write_text("synthetic target edit\n")
         result = self.runtime._record_verification(self.job, self.report(), "dirty-target")

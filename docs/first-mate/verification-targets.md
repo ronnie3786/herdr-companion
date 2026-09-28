@@ -25,7 +25,10 @@ does not move the worker, acquire write permission, or mutate Git state.
 
 The target and baseline add to cumulative assessment scope. Original assignment
 workspaces, retained runs, failures, and previously passing suites remain in
-scope. A correctly recorded clean target can therefore coexist with a partial
+scope. Each target also retains the earliest assignment/source-lineage baseline:
+the supplied baseline can widen discovery but cannot remove prior changes.
+An unavailable or nonancestor retained baseline leaves scope unknown.
+A correctly recorded clean target can therefore coexist with a partial
 or failed overall assessment. This change does not repair historical runs
 attributed to the wrong directory, discard old failures, or change release
 gates. Historical reassessment requires a separate explicit correction.

@@ -78,7 +78,10 @@ export class NativeGuideAnnotations {
   update(frame: GuideFrame) {
     if (frame.identity !== this.current()?.identity || frame.generation !== this.generation
       || !Number.isInteger(frame.sequence) || frame.sequence <= this.sequence) return;
-    this.sequence=frame.sequence; this.frame=frame; this.refresh();
+    this.sequence=frame.sequence; this.frame=frame;
+    // Native samples are already bounded to 30 Hz. Apply them immediately;
+    // background WebKit pages can throttle animation callbacks independently.
+    this.draw();
   }
   refresh() {
     // Coalesce into the pending paint. Rescheduling every audio sample can

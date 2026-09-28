@@ -54,3 +54,18 @@ it("does not postpone a pending paint when the audio clock samples faster than W
     expect(request).toHaveBeenCalledTimes(2);
   } finally { vi.unstubAllGlobals(); }
 });
+
+it("applies an authoritative media sample even when animation callbacks are suspended", () => {
+  const renderer = Object.create(NativeGuideAnnotations.prototype);
+  renderer.current = () => ({identity:"patch",path:target.path});
+  renderer.generation = "audio";
+  renderer.sequence = -1;
+  renderer.draw = vi.fn();
+  renderer.refresh = vi.fn();
+  renderer.update(frame);
+  expect(renderer.frame).toEqual(frame);
+  expect(renderer.draw).toHaveBeenCalledTimes(1);
+  expect(renderer.refresh).not.toHaveBeenCalled();
+  renderer.update({...frame,sequence:0});
+  expect(renderer.draw).toHaveBeenCalledTimes(1);
+});

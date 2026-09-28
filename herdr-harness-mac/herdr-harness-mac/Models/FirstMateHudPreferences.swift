@@ -7,8 +7,9 @@ enum FirstMateHudPreferences {
     /// by default; it still shows only once a machine has First Mate.
     static let enabledKey = "herdr.mac.firstMate.hud"
     static let defaultEnabled = true
-    /// The face's offset from the visible frame's top-right corner.
-    static let offsetKey = "herdr.mac.firstMate.hud.offset"
+    /// The face's center in screen coordinates, so it returns to the same
+    /// display; a point on no screen falls back to the default place.
+    static let faceKey = "herdr.mac.firstMate.hud.face"
     /// Whether the list is open.
     static let expandedKey = "herdr.mac.firstMate.hud.expanded"
     /// Demo mode only: `-HerdrFirstMateHudDemoCount 6|10|14` sizes the demo fleet.

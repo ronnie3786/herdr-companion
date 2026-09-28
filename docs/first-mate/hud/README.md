@@ -11,7 +11,7 @@ The HUD has its own switch, place, and state; the agent HUD is unchanged. Turn i
 
 Right-clicking the face also offers **Hide First Mate HUD**.
 
-It is on by default, but it only appears once a connected machine has First Mate, or in demo mode.
+It is on by default, but it only appears once a connected companion answers with First Mate. In demo mode it appears only when you ask for it, by setting the switch or passing `-HerdrFirstMateHudDemoCount`, so UI tests and demo recordings stay clear.
 
 ## What Phase 1 does
 
@@ -51,7 +51,8 @@ It is on by default, but it only appears once a connected machine has First Mate
 
 The HUD adds no server API. It reads the process-wide First Mate fleet index, which uses `first-mate-fleet-v1` from companion 0.54.0b1, the same data as the chat window and the Dock badge.
 
-- **Polling:** every 5 s while the HUD shows, whether or not Herdr is the active app; 10 s or 30 s otherwise.
+- **Polling:** every 10 s while the HUD shows, even when another app is in front. Otherwise the fleet polls every 10 s while Herdr is the active app and every 30 s in the background.
+  - The spec asks for 5 s, but each poll also fetches every machine's full feature list, not just the summary.
 - **Older companions:** without the capability, the HUD falls back to the feature list, like the chat window does. A feature that needs you counts as unread, steps are unknown, and emoji are picked on this Mac.
 
 ## Code

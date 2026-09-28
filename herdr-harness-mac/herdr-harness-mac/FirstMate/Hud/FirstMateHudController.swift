@@ -8,7 +8,7 @@ import SwiftUI
 /// It is separate from the agent HUD (`HerdrHudController`): its own panel,
 /// switch (``FirstMateHudPreferences/enabledKey``), place, and state. It reads
 /// the process-wide First Mate fleet index, so it adds no poller of its own; it
-/// only asks the fleet driver to poll every 5 s while it shows. It belongs to
+/// only keeps the fleet driver at its active 10 s poll while it shows. It belongs to
 /// the process (`HerdrShellState`), so it keeps running with every window
 /// closed.
 @MainActor @Observable
@@ -67,7 +67,11 @@ final class FirstMateHudController {
     static let hoverGrace: Duration = .milliseconds(180)
     static let softNoteDuration: TimeInterval = 5.5
     static let speakingDuration: TimeInterval = 1.3
-    static let hudPollingInterval: Duration = .seconds(5)
+    /// The fleet's poll while the HUD shows. The spec's 5 s assumed a
+    /// summary-only poll; each poll also fetches every machine's feature
+    /// list, so the HUD keeps the active-app rate instead of dropping to
+    /// 30 s while another app is in front.
+    static let hudPollingInterval: Duration = .seconds(10)
     static let cardSizes: [String: CGSize] = [
         "readout": CGSize(width: 300, height: 262),
         "message": CGSize(width: 320, height: 292),
@@ -127,6 +131,9 @@ final class FirstMateHudController {
     @ObservationIgnored private var lingerTask: Task<Void, Never>?
     @ObservationIgnored private var latestLineTask: Task<Void, Never>?
     @ObservationIgnored private var noticeTask: Task<Void, Never>?
+    @ObservationIgnored private var speakingTask: Task<Void, Never>?
+    /// Transcribing and sending what was heard; Esc cancels it.
+    @ObservationIgnored private var voiceTask: Task<Void, Never>?
     @ObservationIgnored private var seenMessages: Set<String> = []
     @ObservationIgnored private var hasLoadedItems = false
     @ObservationIgnored private var demoPresentation: [String: (label: String, emoji: String)] = [:]
@@ -159,7 +166,6 @@ final class FirstMateHudController {
 
     // MARK: Derived
 
-    var ordered: [FirstMateHudItem] { items }
     var collapsed: FirstMateHudOverflow.Collapsed { FirstMateHudOverflow.collapsed(items) }
     var expanded: FirstMateHudOverflow.Expanded { FirstMateHudOverflow.expanded(items, showAllMoving: showsAllMoving) }
     var badge: FirstMateHudBadge.Value? { FirstMateHudBadge.value(items) }
@@ -195,7 +201,9 @@ final class FirstMateHudController {
     func start(model: HerdrAppModel, shell: HerdrShellState) {
         self.model = model
         self.shell = shell
-        guard !isInert, !isStarted else { return }
+        // The isolated First Mate recording shows no floating panels, like the
+        // agent HUD.
+        guard !isInert, !isStarted, !ProcessInfo.processInfo.arguments.contains("-HerdrFirstMateDemo") else { return }
         isStarted = true
         trackItems()
         observers = [
@@ -203,16 +211,13 @@ final class FirstMateHudController {
                 MainActor.assumeIsolated { self?.syncVisibility() }
             },
             NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.relayout() }
+                MainActor.assumeIsolated {
+                    // Re-place the face from its saved point on the new screens.
+                    self?.faceCenter = nil
+                    self?.relayout()
+                }
             },
         ]
-        lingerTask = Task { [weak self] in
-            // Merged features leave after two minutes even with no fleet change.
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(15))
-                self?.reloadItems()
-            }
-        }
         syncVisibility()
     }
 
@@ -227,9 +232,15 @@ final class FirstMateHudController {
         }
     }
 
+    /// A machine whose companion answered with First Mate. In demo mode, only
+    /// when asked for (the switch set explicitly, or a demo fleet size), so UI
+    /// tests and demo recordings get no floating panel.
     private var hasFirstMate: Bool {
         guard let model, let shell else { return false }
-        return model.isDemoMode || !shell.firstMateFleet.hosts.isEmpty
+        if model.isDemoMode {
+            return demoCount != nil || defaults.object(forKey: FirstMateHudPreferences.enabledKey) != nil
+        }
+        return shell.firstMateFleet.hosts.contains { !$0.unsupported && $0.lastUpdated != nil }
     }
 
     private func show() {
@@ -241,6 +252,14 @@ final class FirstMateHudController {
             panel.orderFrontRegardless()
             installMouseMonitors()
             shell?.firstMateFleetDriver?.setHudPolling(Self.hudPollingInterval)
+            lingerTask = Task { [weak self] in
+                // Merged features leave after two minutes even with no fleet change.
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(15))
+                    guard !Task.isCancelled else { return }
+                    self?.reloadItems()
+                }
+            }
         }
     }
 
@@ -252,6 +271,8 @@ final class FirstMateHudController {
         panel?.orderOut(nil)
         removeMouseMonitors()
         shell?.firstMateFleetDriver?.setHudPolling(nil)
+        lingerTask?.cancel()
+        lingerTask = nil
     }
 
     private func makePanel() -> HerdrHudPanel {
@@ -364,9 +385,12 @@ final class FirstMateHudController {
 
     // MARK: Layout
 
-    private var visibleFrame: CGRect {
-        renderVisibleFrame ?? panel?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? NSScreen.screens.first?.visibleFrame
-            ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+    /// The visible frame of the screen the face is on, or of the main screen
+    /// when it is on none (a display was unplugged).
+    private func visibleFrame(containing point: CGPoint?) -> CGRect {
+        if let renderVisibleFrame { return renderVisibleFrame }
+        if let point, let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }) { return screen.visibleFrame }
+        return NSScreen.main?.visibleFrame ?? NSScreen.screens.first?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
     }
 
     #if DEBUG
@@ -391,16 +415,18 @@ final class FirstMateHudController {
     }
     #endif
 
-    private func savedFace(visibleFrame: CGRect) -> CGPoint {
-        guard let values = defaults.array(forKey: FirstMateHudPreferences.offsetKey) as? [NSNumber], values.count == 2 else {
-            return FirstMateHudGeometry.defaultFace(visibleFrame: visibleFrame)
+    /// The saved face point, when it is still on a screen; otherwise the
+    /// default place on the main screen.
+    private func savedFace() -> CGPoint {
+        if let values = defaults.array(forKey: FirstMateHudPreferences.faceKey) as? [NSNumber], values.count == 2 {
+            let point = CGPoint(x: values[0].doubleValue, y: values[1].doubleValue)
+            if NSScreen.screens.contains(where: { $0.frame.contains(point) }) { return point }
         }
-        return FirstMateHudGeometry.face(forOffset: CGSize(width: values[0].doubleValue, height: values[1].doubleValue), visibleFrame: visibleFrame)
+        return FirstMateHudGeometry.defaultFace(visibleFrame: visibleFrame(containing: nil))
     }
 
-    private func saveFace(_ face: CGPoint, visibleFrame: CGRect) {
-        let offset = FirstMateHudGeometry.offset(forFace: face, visibleFrame: visibleFrame)
-        defaults.set([offset.width, offset.height], forKey: FirstMateHudPreferences.offsetKey)
+    private func saveFace(_ face: CGPoint) {
+        defaults.set([face.x, face.y], forKey: FirstMateHudPreferences.faceKey)
     }
 
     /// The card's size and where its top wants to be.
@@ -460,8 +486,9 @@ final class FirstMateHudController {
 
     func relayout() {
         guard isStarted, !isDraggingPanel else { return }
-        let visible = visibleFrame
-        let face = faceCenter ?? savedFace(visibleFrame: visible)
+        let wanted = faceCenter ?? savedFace()
+        let visible = visibleFrame(containing: wanted)
+        let face = FirstMateHudGeometry.clampFace(wanted, visibleFrame: visible)
         faceCenter = face
         let column: FirstMateHudGeometry.Column = isExpanded
             ? .expanded(contentHeight: FirstMateHudGeometry.listContentHeight(expanded))
@@ -525,13 +552,10 @@ final class FirstMateHudController {
         isDraggingPanel = false
         guard let panel else { return }
         let frame = panel.frame
-        let visible = visibleFrame
-        let face = FirstMateHudGeometry.clampFace(
-            CGPoint(x: frame.minX + layout.faceCenter.x, y: frame.maxY - layout.faceCenter.y),
-            visibleFrame: visible
-        )
+        let dropped = CGPoint(x: frame.minX + layout.faceCenter.x, y: frame.maxY - layout.faceCenter.y)
+        let face = FirstMateHudGeometry.clampFace(dropped, visibleFrame: visibleFrame(containing: dropped))
         faceCenter = face
-        saveFace(face, visibleFrame: visible)
+        saveFace(face)
         relayout()
     }
 
@@ -579,22 +603,27 @@ final class FirstMateHudController {
         voicePhase = .transcribing
         let target = voiceTarget
         voiceTarget = nil
-        Task { [weak self] in
+        voiceTask?.cancel()
+        voiceTask = Task { [weak self] in
             guard let self else { return }
             let model = self.model
             let outcome = await self.voice.endHold { url in
                 guard let model else { throw CancellationError() }
                 return try await model.transcribeVoiceNote(at: url)
             }
+            // Esc while transcribing or showing the words sends nothing.
+            guard !Task.isCancelled else { return }
             switch outcome {
             case .transcript(let transcription):
                 let text = transcription.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else { self.voicePhase = .idle; self.showNotice("I didn't catch that."); return }
                 self.voicePhase = .heard(text)
                 try? await Task.sleep(for: .milliseconds(500))
+                guard !Task.isCancelled else { return }
                 self.voicePhase = .idle
                 if let target {
-                    self.replyDraft = text
+                    let typed = self.replyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                    self.replyDraft = typed.isEmpty ? text : typed + " " + text
                     self.submitReply(to: target)
                 } else {
                     await self.submit(text)
@@ -611,11 +640,14 @@ final class FirstMateHudController {
         }
     }
 
+    /// Stops talking at any point: listening discards the recording, and
+    /// transcribing or showing the words sends nothing.
     func cancelVoice() {
         holdTask?.cancel()
         holdTask = nil
         if voicePhase == .listening { voice.cancel() }
-        if case .transcribing = voicePhase { return }
+        voiceTask?.cancel()
+        voiceTask = nil
         voiceTarget = nil
         voicePhase = .idle
     }
@@ -723,6 +755,7 @@ final class FirstMateHudController {
     }
 
     func toggleShowAllMoving() {
+        hoverTask?.cancel()
         showsAllMoving.toggle()
         hoverCard = nil
         relayout()
@@ -730,6 +763,7 @@ final class FirstMateHudController {
 
     /// "+N": opens the list with every moving row showing.
     func openTucked() {
+        hoverTask?.cancel()
         showsAllMoving = true
         hoverCard = nil
         if !isExpanded {
@@ -815,8 +849,16 @@ final class FirstMateHudController {
         }
     }
 
+    /// The speaking mouth for 1.3 s, then back to still, so the face stops
+    /// redrawing.
     private func speak() {
         speakingUntil = Date().addingTimeInterval(Self.speakingDuration)
+        speakingTask?.cancel()
+        speakingTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.speakingDuration))
+            guard !Task.isCancelled else { return }
+            self?.speakingUntil = nil
+        }
     }
 
     /// Posts the words to the feature as the person's message.
@@ -825,11 +867,21 @@ final class FirstMateHudController {
         isThinking = true
         defer { isThinking = false }
         if model.isDemoMode {
+            // The chat window's demo store; the HUD's extra demo features
+            // have no chat to send to.
             let store = shell.firstMateChatDemo.store
+            guard store.snapshots[id.featureID] != nil else {
+                showNotice("This demo feature has no chat to send to.")
+                return false
+            }
             let previous = store.selectedFeatureID
             store.select(id.featureID)
             let sent = await store.sendPreparedMessage(text, expectedContext: store.operationContext)
-            if let previous, previous != id.featureID { store.select(previous) }
+            if let previous {
+                if previous != id.featureID { store.select(previous) }
+            } else {
+                store.selectedFeatureID = nil
+            }
             return sent
         }
         guard let configuration = model.firstMateConfiguration(machineID: id.machineID) else {
@@ -856,10 +908,14 @@ final class FirstMateHudController {
         let label = String(editorLabel.trimmingCharacters(in: .whitespacesAndNewlines).prefix(FirstMateHudEditing.labelLimit))
         let emoji = FirstMateHudEditing.firstEmoji(in: editorEmoji)
         guard let model, let shell, let item = item(id), !label.isEmpty else { return }
-        let newEmoji = emoji ?? item.emoji
         closeCard(.editor(id))
+        // Only what changed, so a new emoji never pins the default label
+        // and a new label never pins the default emoji.
+        let newLabel = label == item.label ? nil : label
+        let newEmoji = emoji.flatMap { $0 == item.emoji ? nil : $0 }
+        guard newLabel != nil || newEmoji != nil else { return }
         if model.isDemoMode {
-            demoPresentation[id.featureID] = (label, newEmoji)
+            demoPresentation[id.featureID] = (newLabel ?? item.label, newEmoji ?? item.emoji)
             reloadItems()
             return
         }
@@ -867,7 +923,7 @@ final class FirstMateHudController {
         Task {
             do {
                 _ = try await HerdrAPIClient(configuration: configuration)
-                    .updateFirstMateHud(featureID: id.featureID, label: label, emoji: newEmoji)
+                    .updateFirstMateHud(featureID: id.featureID, label: newLabel, emoji: newEmoji)
                 await shell.firstMateFleet.refresh()
             } catch {
                 showNotice(error.localizedDescription)

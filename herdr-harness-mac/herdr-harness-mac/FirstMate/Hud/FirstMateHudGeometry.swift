@@ -102,17 +102,6 @@ enum FirstMateHudGeometry {
         clampFace(CGPoint(x: visibleFrame.maxX - 380, y: visibleFrame.maxY - 96), visibleFrame: visibleFrame)
     }
 
-    /// The face's place as an offset from the visible frame's top-right
-    /// corner, which is what is saved, so a screen change keeps it in the
-    /// same corner.
-    static func offset(forFace face: CGPoint, visibleFrame: CGRect) -> CGSize {
-        CGSize(width: visibleFrame.maxX - face.x, height: visibleFrame.maxY - face.y)
-    }
-
-    static func face(forOffset offset: CGSize, visibleFrame: CGRect) -> CGPoint {
-        clampFace(CGPoint(x: visibleFrame.maxX - offset.width, y: visibleFrame.maxY - offset.height), visibleFrame: visibleFrame)
-    }
-
     /// Half the collapsed row's width, never narrower than the face.
     static func collapsedHalfWidth(orbCount: Int) -> CGFloat {
         max(faceRadius, CGFloat(orbCount) * orbPitch / 2)

@@ -211,8 +211,8 @@ final class FirstMateFleetDriver {
         Task { await fleet.refresh() }
     }
 
-    /// The First Mate HUD's faster interval while it shows (nil when hidden).
-    /// It floats over other apps, so it must not slow to the background rate.
+    /// The First Mate HUD's interval while it shows (nil when hidden). It
+    /// floats over other apps, so it must not slow to the background rate.
     private(set) var hudInterval: Duration?
 
     /// Sets or clears the HUD's interval. Showing the HUD also refreshes at

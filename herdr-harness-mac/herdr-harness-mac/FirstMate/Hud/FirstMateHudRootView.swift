@@ -7,7 +7,6 @@ struct FirstMateHudRootView: View {
     let controller: FirstMateHudController
     @AppStorage(HerdrAppearancePreferences.glassEnabledKey) private var glassEnabled = HerdrAppearancePreferences.defaultGlassEnabled
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var layout: FirstMateHudGeometry.Output { controller.layout }
     private var face: CGPoint { layout.faceCenter }
@@ -26,12 +25,13 @@ struct FirstMateHudRootView: View {
                 FirstMateHudCardView(controller: controller, card: card)
                     .frame(width: frame.width, height: frame.height, alignment: .top)
                     .position(x: frame.midX, y: frame.midY)
-                    .transition(.opacity)
             }
         }
+        // No layout animation: the panel moves the moment the layout changes,
+        // so anything placed from its origin (the face, the orbs) must not
+        // animate there, or it would visibly slide away and back.
         .frame(width: layout.panelFrame.width, height: layout.panelFrame.height, alignment: .topLeading)
-        .animation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.78), value: controller.isExpanded)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: controller.visibleCard)
+        .transaction { $0.animation = nil }
         .environment(\.herdrGlassActive, HerdrGlass.isActive(enabled: glassEnabled, reduceTransparency: reduceTransparency, colorScheme: .dark))
         .preferredColorScheme(.dark)
         .tint(HerdrTheme.accent)
@@ -48,7 +48,6 @@ struct FirstMateHudRootView: View {
                 let center = FirstMateHudGeometry.orbCenter(index: index, count: count)
                 orbButton(item)
                     .position(x: face.x + center.x, y: face.y + center.y)
-                    .transition(.scale(scale: 0.4).combined(with: .opacity))
             }
             if collapsed.hasMore {
                 let center = FirstMateHudGeometry.orbCenter(index: count - 1, count: count)

@@ -257,8 +257,7 @@ struct FirstMateHudTests {
         let clamped = FirstMateHudGeometry.clampFace(CGPoint(x: -40, y: 2000), visibleFrame: screen)
         #expect(clamped.x == FirstMateHudGeometry.faceRadius + FirstMateHudGeometry.margin)
         #expect(clamped.y == screen.maxY - FirstMateHudGeometry.faceRadius - FirstMateHudGeometry.margin)
-        let offset = FirstMateHudGeometry.offset(forFace: CGPoint(x: 1000, y: 800), visibleFrame: screen)
-        #expect(FirstMateHudGeometry.face(forOffset: offset, visibleFrame: screen) == CGPoint(x: 1000, y: 800))
+        #expect(FirstMateHudGeometry.clampFace(CGPoint(x: 1000, y: 800), visibleFrame: screen) == CGPoint(x: 1000, y: 800))
     }
 
     @Test("A long list scrolls instead of leaving the screen")
@@ -271,12 +270,14 @@ struct FirstMateHudTests {
 
     // MARK: Plumbing
 
-    @Test("The fleet polls every 5 s while the HUD shows, whatever the app state")
+    @Test("While the HUD shows, the fleet keeps its active 10 s poll in the background")
     func pollingInterval() {
         let active = Duration.seconds(10), background = Duration.seconds(30)
+        let hud = FirstMateHudController.hudPollingInterval
         #expect(FirstMateFleetDriver.pollingInterval(isActive: false, hud: nil, active: active, background: background) == .seconds(30))
         #expect(FirstMateFleetDriver.pollingInterval(isActive: true, hud: nil, active: active, background: background) == .seconds(10))
-        #expect(FirstMateFleetDriver.pollingInterval(isActive: false, hud: .seconds(5), active: active, background: background) == .seconds(5))
+        #expect(FirstMateFleetDriver.pollingInterval(isActive: false, hud: hud, active: active, background: background) == .seconds(10))
+        #expect(FirstMateFleetDriver.pollingInterval(isActive: true, hud: .seconds(5), active: active, background: background) == .seconds(5))
     }
 
     @Test("The demo fleet comes in 6, 10, and 14 features")

@@ -61,6 +61,7 @@ struct FirstMateHudFaceView: View {
             FirstMateHudFaceHandle(
                 onPressBegan: controller.facePressBegan,
                 onPressEnded: controller.facePressEnded,
+                canDrag: { controller.canDragFace },
                 onDragBegan: controller.faceDragBegan,
                 onDragEnded: controller.faceDragEnded,
                 menu: faceMenu
@@ -251,6 +252,8 @@ enum FirstMateHudFaceDrawing {
 struct FirstMateHudFaceHandle: NSViewRepresentable {
     let onPressBegan: () -> Void
     let onPressEnded: () -> Void
+    /// False once talking has started: moving the pointer then never drags.
+    let canDrag: () -> Bool
     let onDragBegan: () -> Void
     let onDragEnded: () -> Void
     let menu: () -> NSMenu
@@ -260,6 +263,7 @@ struct FirstMateHudFaceHandle: NSViewRepresentable {
     func updateNSView(_ view: FirstMateHudFaceHandleView, context: Context) {
         view.onPressBegan = onPressBegan
         view.onPressEnded = onPressEnded
+        view.canDrag = canDrag
         view.onDragBegan = onDragBegan
         view.onDragEnded = onDragEnded
         view.makeMenu = menu
@@ -270,6 +274,7 @@ struct FirstMateHudFaceHandle: NSViewRepresentable {
 final class FirstMateHudFaceHandleView: NSView {
     var onPressBegan: (() -> Void)?
     var onPressEnded: (() -> Void)?
+    var canDrag: (() -> Bool)?
     var onDragBegan: (() -> Void)?
     var onDragEnded: (() -> Void)?
     var makeMenu: (() -> NSMenu)?
@@ -294,7 +299,7 @@ final class FirstMateHudFaceHandleView: NSView {
             switch tracked.type {
             case .leftMouseDragged:
                 let location = window.convertPoint(toScreen: tracked.locationInWindow)
-                guard hypot(location.x - start.x, location.y - start.y) > 4 else { return }
+                guard hypot(location.x - start.x, location.y - start.y) > 4, self.canDrag?() ?? true else { return }
                 stop.pointee = true
                 dragged = true
                 self.onDragBegan?()

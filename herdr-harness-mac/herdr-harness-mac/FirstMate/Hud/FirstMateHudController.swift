@@ -504,6 +504,14 @@ final class FirstMateHudController {
         }
     }
 
+    /// A press may still become a drag; talking may not.
+    var canDragFace: Bool {
+        switch voicePhase {
+        case .idle, .pressing: true
+        case .listening, .transcribing, .heard: false
+        }
+    }
+
     /// A drag moves the whole HUD; it cancels any press.
     func faceDragBegan() {
         holdTask?.cancel()

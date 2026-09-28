@@ -130,18 +130,22 @@ export const LEAD_TOOLS = [
 /** The lead First Mate's tools: read the whole fleet, pass the human's words on. */
 function registerLeadTools(register: (name: string, description: string, parameters: any) => void): void {
   const featureId = text("Exact feature_id from fm_fleet");
-  register("fm_fleet", "Read every active feature on this machine: label, status (blocked, turn, ready, working, idle, done), step, what it is doing now, and whether its newest message is unread. Needs-you features come first. Use it for what needs the human, what is moving, and what finished.", Type.Object({}));
-  register("fm_feature_status", "Read one feature: its stage and workers from the authoritative router state, its recent conversation, and its latest journal. Use it before answering about a specific feature.", Type.Object({ feature_id: featureId }));
-  register("fm_read_document", "Read a feature's retained Document by ID (from fm_feature_status) when its detail matters to the human's question.", Type.Object({ document_id: text("Exact document ID"), offset: Type.Optional(Type.Integer({ minimum: 0 })), length: Type.Optional(Type.Integer({ minimum: 1000, maximum: 80000 })) }));
-  register("fm_mark_read", "Mark a feature's newest First Mate message read after you told the human what it says.", Type.Object({ feature_id: featureId }));
+  // A feature on another machine of this companion's roster names it.
+  const machine = Type.Optional(text("The feature's machine ID from fm_fleet's other_machines; omit it for this machine"));
+  register("fm_fleet", "Read every active feature on this machine, and under other_machines each other machine you reach (an offline one is marked, with when it last answered): label, status (blocked, turn, ready, working, idle, done), step, what it is doing now, and whether its newest message is unread. Needs-you features come first. Use it for what needs the human, what is moving, and what finished.", Type.Object({}));
+  register("fm_feature_status", "Read one feature: its stage and workers from the authoritative router state, its recent conversation, and its latest journal. Use it before answering about a specific feature.", Type.Object({ feature_id: featureId, machine }));
+  register("fm_read_document", "Read a feature's retained Document by ID (from fm_feature_status) when its detail matters to the human's question.", Type.Object({ document_id: text("Exact document ID"), offset: Type.Optional(Type.Integer({ minimum: 0 })), length: Type.Optional(Type.Integer({ minimum: 1000, maximum: 80000 })), machine }));
+  register("fm_mark_read", "Mark a feature's newest First Mate message read after you told the human what it says.", Type.Object({ feature_id: featureId, machine }));
   register("fm_relay", "Pass the human's own decision or direction to one feature as their message; that feature's First Mate acts on it and replies in its chat. Only on the human's turn, only what they actually said or decided (edited so it stands alone), never your own suggestion or an approval they did not give. Marks the feature's newest message read.", Type.Object({
     feature_id: featureId,
     text: text("The human's decision or direction for this feature, in their words, naming the question it answers"),
+    machine,
   }));
-  register("fm_create_feature", "Start a new feature when the human asks for one. Its First Mate begins by reading the goal. Needs a clear goal and an existing absolute project folder on this machine; ask the human for the folder if you do not know it.", Type.Object({
+  register("fm_create_feature", "Start a new feature when the human asks for one. Its First Mate begins by reading the goal. Needs a clear goal and an existing absolute project folder on the machine it runs on; ask the human for the folder, or the machine, if you do not know it.", Type.Object({
     title: text("Short feature title"),
     goal: text("The human's goal for the feature, in their words"),
-    cwd: text("Existing absolute project folder on this machine"),
+    cwd: text("Existing absolute project folder on that machine"),
+    machine,
   }));
 }
 

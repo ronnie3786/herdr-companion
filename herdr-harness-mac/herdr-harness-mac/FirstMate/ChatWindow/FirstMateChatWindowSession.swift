@@ -55,6 +55,8 @@ final class FirstMateChatWindowSession {
     @ObservationIgnored private let makeClient: @MainActor (ServerConfiguration) -> any FirstMateClient
     @ObservationIgnored private let fleetSources: @MainActor () -> [FirstMateFleetSource]
     @ObservationIgnored private var selectionGeneration = 0
+    /// The header's machine choice lives in UserDefaults; this publishes it.
+    private var leadPinRevision = 0
     /// The refresh loop's wait for its next pass; cancelling it wakes the loop.
     @ObservationIgnored private var refreshSleep: Task<Void, Never>?
 
@@ -158,10 +160,11 @@ final class FirstMateChatWindowSession {
         stores[Self.demoMachineID] = nil
         let store = FirstMateStore()
         store.configure(client: makeClient(configuration), demo: false)
-        // Messages to this machine's lead carry a snapshot of the others.
+        // Messages to this machine's lead carry a snapshot of the machines it
+        // does not reach itself.
         store.leadContextProvider = { [weak self] in
             guard let self else { return nil }
-            return FirstMateLeadMachine.context(hosts: self.hosts, excluding: machineID)
+            return FirstMateLeadMachine.context(hosts: self.hosts, machines: self.model.machines, excluding: machineID)
         }
         // A rebuilt store keeps the open chat, so its next refresh fetches
         // that snapshot instead of the machine's first feature. If the store
@@ -194,7 +197,28 @@ final class FirstMateChatWindowSession {
         if isDemo {
             return store(for: Self.demoMachineID)?.leadSupported == true ? Self.demoMachineID : nil
         }
-        return FirstMateLeadMachine.current(hosts: hosts, machines: model.machines)
+        return leadChoice.current
+    }
+
+    /// Where the lead lives and where it is now (see ``FirstMateLeadMachine``).
+    var leadChoice: FirstMateLeadMachine.Choice {
+        _ = leadPinRevision
+        return FirstMateLeadMachine.choice(hosts: hosts, machines: model.machines)
+    }
+
+    /// The machine chosen in the header, while it still has a lead.
+    var leadPinnedMachineID: String? {
+        _ = leadPinRevision
+        return FirstMateLeadMachine.pinned().flatMap { leadMachineIDs.contains($0) ? $0 : nil }
+    }
+
+    /// Where Automatic puts the lead right now, for the header's menu.
+    var automaticLeadMachineID: String? {
+        FirstMateLeadMachine.choose(capable: FirstMateLeadMachine.capable(hosts: hosts), pinned: nil,
+                                    local: FirstMateLeadMachine.home(FirstMateLeadMachine.localMachineID(machines: model.machines),
+                                                                     hosts: hosts),
+                                    withConversation: Set(hosts.filter { $0.lead != nil }.map(\.machineID)),
+                                    activeCounts: FirstMateLeadMachine.activeCounts(hosts: hosts)).preferred
     }
 
     /// Machines with a lead, for the header's switcher.
@@ -217,10 +241,12 @@ final class FirstMateChatWindowSession {
             ?? model.machines.first { $0.id == machineID }?.name ?? machineID
     }
 
-    /// Talks to another machine's lead from now on.
-    func setLeadMachine(_ machineID: String) {
-        guard leadMachineIDs.contains(machineID) else { return }
-        FirstMateLeadMachine.save(machineID)
+    /// Talks to another machine's lead from now on, or with nil returns to
+    /// Automatic.
+    func setLeadMachine(_ machineID: String?) {
+        if let machineID, !leadMachineIDs.contains(machineID) { return }
+        FirstMateLeadMachine.pin(machineID)
+        leadPinRevision &+= 1
         if selection == .lead {
             selectionGeneration &+= 1
             wakeRefresh()
@@ -363,9 +389,7 @@ final class FirstMateChatWindowSession {
                 lease.update(store: store, available: true)
                 if case .lead = selection, store.leadFeatureID == nil || store.selectedFeatureID != store.leadFeatureID {
                     // Creates the lead on first use, loads it, and selects it.
-                    if await store.openLead(), !isDemo, let machineID = leadMachineID {
-                        FirstMateLeadMachine.remember(machineID, hosts: hosts)
-                    }
+                    _ = await store.openLead()
                 }
                 await store.refresh()
             } else {

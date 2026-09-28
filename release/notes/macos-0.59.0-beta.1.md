@@ -1,25 +1,24 @@
-# Herdr Companion 0.59.0-beta.1
+# macOS 0.59.0-beta.1
 
-PR Review now has a coding buddy. Open a prepared review's Files tab and choose
-**Start walkthrough** for short chapters that teach what to inspect and why.
-You control **Next**. Ask a question at any point, follow the relevant code, then
-use **Back to walkthrough** to return to your saved position paused.
+## First Mate lives on this Mac
 
-The compact dock expands into explanations, chapter navigation, saved questions,
-and original review excerpts. Sources distinguish available reviewer attribution,
-revision freshness, and the buddy's separate code assessment. Existing review
-skills are reused and are not rerun by starting a walkthrough.
+**My First Mate** and the HUD's chat now talk to the First Mate on this Mac's own companion instead of the machine with the most features. It reaches your other machines itself, so one machine going down never takes First Mate with it.
 
-Listen with the configured Kokoro voice. Circles, underlines, and arrows follow
-spoken phrases on exact diff lines. Pausing, seeking, replaying, and changing
-speed keep drawings synchronized. Voice questions use the existing recorder and
-transcription service; the transcript stays editable before sending.
+- **One First Mate across your machines.** "What needs me?" covers this Mac and every other machine its companion can reach, and a decision for a feature on another machine is passed on the same way as one here. First Mate names the machine when it matters.
+- **A machine goes down, the rest keep working.** When another machine stops answering, First Mate says it is offline and keeps helping with everything else. Your features here never depend on it.
+- **This Mac's companion goes down.** After two missed checks, the chat window and the HUD talk to another machine's First Mate instead and say which machine is offline. They move back once this Mac's companion answers again.
+- **Choose where it runs.** The machine menu in the First Mate chat window's header now has **Automatic** (this Mac's machine) and your other machines. A choice stays until you pick Automatic again.
 
-Install companion **0.59.0b1** separately on the review host for the new guide and
-context APIs. Captioned narration requires the existing private Kokoro service
-configuration. Older servers keep the original PR review workbench. The Mac
-updater installs only the Mac app; this release does not install an iOS build.
+Machines First Mate cannot reach itself (for example, a companion without that machine's credential) still come along as a read-only summary with each message, now marked offline when this Mac cannot reach them either.
 
-Text remains available when audio or a drawing target cannot be used. A changed
-PR revision pauses old guidance until you start a new walkthrough. Completing a
-walkthrough does not mark files viewed or submit a GitHub review.
+## Compatibility and installation
+
+Reaching other machines needs companion **0.59.0b1** or newer on this Mac and on each machine it reaches (`first-mate-lead-peers-v1`). This Mac's companion reaches the machines whose API credential is configured in its private configuration, the same ones `herdr-control --machine` reaches. Until this Mac's companion is updated, First Mate stays where it is today, so installing the app first changes nothing.
+
+Install this preview through **Settings → Updates → Check for Updates…**, with **Include preview builds** enabled. The app is Apple Development-signed, distributed through the signed update feed, and is not notarized. The Mac updater installs only the app; update each companion separately.
+
+## Check the changes
+
+- Open **My First Mate** and ask "What needs me?". Expect features from this Mac and your other machines, each named with its machine where that helps.
+- Tell First Mate a decision for a feature on another machine. Expect your words in that feature's chat.
+- Open the machine menu in the chat window's header. Expect **Automatic** checked, naming this Mac's machine.

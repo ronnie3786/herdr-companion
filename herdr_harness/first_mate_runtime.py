@@ -10,6 +10,7 @@ verdict. No model is invoked for unchanged routine monitoring.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import Future, ThreadPoolExecutor
 import errno
 import fcntl
 import hashlib
@@ -25,7 +26,7 @@ import sys
 import threading
 import time
 import uuid
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from .agent_runs import _assistant_text, _child_path, _resolve_pi_bin
 from .alerts import utc_now
@@ -33,6 +34,7 @@ from .child_environment import agent_environment
 from .resources import pi_extension_path
 from .first_mate_context import FirstMateContext
 from .first_mate_link_discovery import FirstMateLinkDiscovery
+from .first_mate_peers import PeerDirectory
 from .first_mate_routing import (
     ArchitectConfigurationError,
     DELEGATION_PROFILES,
@@ -245,8 +247,8 @@ Continue from the latest checkpoint and reuse still-valid checks on the same
 revision. A failed command is a diagnostic to investigate, not by itself a reason
 to ask the human to restart the assignment.
 """
-LEAD_PROMPT = """You are First Mate, the human's lead across every First Mate feature on this
-machine. Each feature has its own First Mate (its "second mate") that runs that
+LEAD_PROMPT = """You are First Mate, the human's lead across every First Mate feature on their
+machines. Each feature has its own First Mate (its "second mate") that runs that
 feature's stages and workers. You answer the human about all of them, check
 with them, and pass the human's decisions on. You have no stage authority: you
 never begin, approve, or finish a feature's work yourself.
@@ -269,13 +271,17 @@ label. Skip preamble and never restate the question.
   decision is unclear, ask one short question first. After relaying, say so in
   one line; that feature's First Mate replies in its own chat.
 - Start a new feature with fm_create_feature only when the human asks for one,
-  with a clear goal and an existing absolute project folder on this machine.
-  Ask for the folder when you do not know it.
+  with a clear goal and an existing absolute project folder on the machine it
+  runs on. Ask for the folder, or the machine, when you do not know it.
 
-The human may run features on other machines too. A message can carry a
-read-only snapshot of them; answer from it, name the machine, and when the human
-wants something passed to one of those features, say it is on that machine and
-that they can answer in its chat. Your tools reach only this machine.
+Your tools reach this machine and every machine fm_fleet lists under
+other_machines. For a feature on another machine, pass that machine's ID as
+machine; omit it for this machine. When a machine is offline, say so in a few
+words and keep helping with the rest; you cannot read or relay to it until it
+is back. A message can also carry a read-only snapshot of machines your tools
+do not reach; answer from it, name the machine, and when the human wants
+something passed to one of those features, say it is on that machine and that
+they can answer in its chat.
 
 You also have Pi's normal configured tools, skills, and context for short
 lookups: reading files, running a quick command, checking a CLI. Keep them
@@ -630,6 +636,11 @@ class FirstMateRuntime:
         from .first_mate_reliability import FirstMateReliability
         self.reliability = FirstMateReliability(self)
         self.links = FirstMateLinkDiscovery(self.store, root=self.root)
+        # The lead's reach into the other machines of this companion's roster.
+        self.peers = PeerDirectory(self.environ)
+        self._peer_lock = threading.Lock()
+        self._peer_calls: dict[str, dict[str, Future]] = {}
+        self._peer_pool: ThreadPoolExecutor | None = None
 
     def capabilities(self) -> dict:
         return {"available": bool(self.pi_bin and self.extension and self.extension.is_file()),
@@ -1058,6 +1069,11 @@ class FirstMateRuntime:
         if self._manager_lock and not (self._thread and self._thread.is_alive()):
             self._manager_lock.close()
             self._manager_lock = None
+        with self._peer_lock:
+            pool, self._peer_pool = self._peer_pool, None
+            self._peer_calls.clear()
+        if pool is not None:
+            pool.shutdown(wait=False, cancel_futures=True)
 
     def wake(self) -> None:
         self._wake.set()
@@ -2167,7 +2183,8 @@ class FirstMateRuntime:
         ordinary feature detail route."""
         summary = self.store.lead_summary(lead_id)
         selection = self._policy(summary["feature"], kind="coordinator", claim={}).selection()
-        return {**summary, "feature": {**summary["feature"], "model_selection": selection}}
+        return {**summary, "feature": {**summary["feature"], "model_selection": selection},
+                "machine": self.peers.local(), "peers": [peer.public() for peer in self.peers.peers()]}
 
     def _lead_fleet_entries(self) -> list[dict]:
         automatic = getattr(self.reliability, "enabled", True)
@@ -2263,19 +2280,31 @@ class FirstMateRuntime:
 
         The lead reads detail with fm_fleet and fm_feature_status when a turn
         needs it, so its conversation does not grow by a fleet dump per turn.
+        Naming the peers costs no call: their health is what the last one saw.
         """
         elsewhere = self.store.message_context(claim["id"])
         other = ""
         if isinstance(elsewhere, Mapping) and elsewhere.get("machines"):
             other = ("\n\nFeatures on the human's other machines (a read-only snapshot the Mac sent with this "
-                     "message; your tools cannot read or relay to them):\n" + json.dumps(elsewhere, ensure_ascii=False))
+                     "message; your tools cannot read or relay to them; an offline machine's are as last seen):\n" + json.dumps(elsewhere, ensure_ascii=False))
+        reach = ""
+        peers = self.peers.peers()
+        if peers:
+            local = self.peers.local() or {}
+            names = [f'{peer.name} (machine "{peer.id}"' + (", offline right now" if self.peers.offline(peer.id) else "")
+                     + ")" for peer in peers]
+            reach = (f'\nThis machine is {local.get("name") or "unnamed"} (machine "{local.get("id") or ""}"). '
+                     "Your tools also reach " + ", ".join(names) + "; fm_fleet covers every machine.")
         return ("Human message:\n" + claim["text"]
                 + "\n\nFeatures on this machine right now: " + self._lead_fleet_counts()
+                + reach
                 + other
                 + "\nCurrent turn reference: " + json.dumps({"id": claim["id"], "role": claim["role"]}))
 
     def _lead_tool(self, job: dict, action: str, params: dict, request_id: str) -> Any:
-        """The lead's fleet tools, fenced to its live turn. It has no stage authority."""
+        """The lead's fleet tools, fenced to its live turn. It has no stage
+        authority. A `machine` names a peer; that call runs off the runtime
+        loop while this request waits for it."""
         if action not in LEAD_TOOLS:
             raise FirstMateError("That action belongs to a feature's own First Mate", code="lead_unsupported")
         if not isinstance(params, dict):
@@ -2295,6 +2324,102 @@ class FirstMateRuntime:
                 identity, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
                 allow_nan=False).encode()).hexdigest()
 
+        # Only the human's own turn relays or starts features, here or elsewhere.
+        if action == "fm_relay" and claim.get("role") != "user":
+            raise FirstMateError("Relay only on the human's turn", code="lead_unauthorized")
+        if action == "fm_create_feature" and claim.get("role") != "user":
+            raise FirstMateError("Start a feature only on the human's turn", code="lead_unauthorized")
+        params = dict(params)
+        machine = self._lead_machine(params.pop("machine", None))
+        here = (self.peers.local() or {}).get("id")
+        lead_ref = {"machine": here or "", "message_id": claim["id"]}
+        if action == "fm_fleet":
+            return self._lead_fleet_everywhere(request_id, lead_ref)
+        if machine is None:
+            try:
+                return self.lead_action(action, params, receipt=action_receipt, lead_message_id=claim["id"])
+            except FirstMateError as error:
+                if error.code == "not_found" and self.peers.peers():
+                    raise FirstMateError("That is not on this machine; for another machine's feature pass its "
+                                         "machine from fm_fleet", code="not_found", status=404) from None
+                raise
+        # The peer keys its receipt on this one, so a continued turn's retry of
+        # the same relay or feature lands once there too.
+        remote_id = (action_receipt({"machine": machine, **params})
+                     if action in {"fm_relay", "fm_create_feature"} else request_id)
+        calls = {machine: lambda: self.peers.call(machine, action, params, request_id=remote_id, lead=lead_ref)}
+        return self._lead_remote(request_id, calls)[machine].result()
+
+    def _lead_machine(self, value: Any) -> str | None:
+        """The peer a lead tool names, or None for this machine. Models name
+        machines by ID or by name, and send an empty value for "here"."""
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        if not isinstance(value, str):
+            raise FirstMateError("Name a machine from fm_fleet", code="unknown_machine", status=400)
+        wanted = value.strip().casefold()
+        local = self.peers.local() or {}
+        if wanted in {str(local.get("id") or "").casefold(), str(local.get("name") or "").casefold()}:
+            return None
+        for peer in self.peers.peers():
+            if wanted in {peer.id.casefold(), peer.name.casefold()}:
+                return peer.id
+        raise FirstMateError("Name a machine from fm_fleet", code="unknown_machine", status=400)
+
+    def _lead_remote(self, request_id: str, calls: Mapping[str, Callable[[], Any]]) -> dict[str, Future]:
+        """Runs peer calls off the runtime loop. The spool request stays
+        pending (DeferredOperation) until every call has landed; after a
+        restart the same request asks again, which peers' receipts make safe."""
+        with self._peer_lock:
+            futures = self._peer_calls.get(request_id)
+            if futures is None:
+                if self._peer_pool is None:
+                    self._peer_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="first-mate-peer")
+                futures = {key: self._peer_pool.submit(call) for key, call in calls.items()}
+                for future in futures.values():
+                    future.add_done_callback(lambda _: self.wake())
+                self._peer_calls[request_id] = futures
+        if not all(future.done() for future in futures.values()):
+            raise DeferredOperation("Waiting for another machine to answer")
+        with self._peer_lock:
+            self._peer_calls.pop(request_id, None)
+        return futures
+
+    def _lead_fleet_everywhere(self, request_id: str, lead_ref: Mapping[str, str]) -> dict:
+        """This machine's fleet and each peer's. A peer that does not answer
+        is listed offline, with when it last answered, and never waited on
+        again until its retry window passes."""
+        peers = self.peers.peers()
+        if not peers:
+            return self._lead_fleet()
+        calls = {peer.id: (lambda peer=peer: self.peers.call(peer.id, "fm_fleet", {}, request_id=request_id,
+                                                             lead=lead_ref))
+                 for peer in peers if not self.peers.offline(peer.id)}
+        futures = self._lead_remote(request_id, calls) if calls else {}
+        others = []
+        for peer in peers:
+            entry: dict[str, Any] = {"machine": peer.id, "name": peer.name}
+            future = futures.get(peer.id)
+            error = future.exception() if future is not None else None
+            if future is None or (isinstance(error, FirstMateError) and error.code == "machine_offline"):
+                entry["offline"] = True
+                if seen := self.peers.last_seen(peer.id):
+                    entry["last_seen"] = seen
+            elif error is not None:
+                entry["unavailable"] = _clip(error, 240)
+            else:
+                result = future.result()
+                entry["features"] = result.get("features", []) if isinstance(result, Mapping) else []
+            others.append(entry)
+        local = self.peers.local() or {}
+        return {"machine": local.get("id"), "machine_name": local.get("name"), **self._lead_fleet(),
+                "other_machines": others}
+
+    def lead_action(self, action: str, params: Mapping[str, Any], *, receipt: Callable[[dict], str],
+                    lead_message_id: str, lead_machine: str | None = None) -> Any:
+        """One lead action against this machine's features, for this machine's
+        lead or, through ``lead_remote``, a lead on another machine. A relay or
+        new feature is recorded once per ``receipt(payload)``."""
         if action == "fm_fleet":
             return self._lead_fleet()
         if action == "fm_read_document":
@@ -2306,15 +2431,13 @@ class FirstMateRuntime:
                     "next_offset": offset + length if offset + length < len(content) else None,
                     "total_characters": len(content)}
         if action == "fm_create_feature":
-            if claim.get("role") != "user":
-                raise FirstMateError("Start a feature only on the human's turn", code="lead_unauthorized")
             cwd = params.get("cwd")
             if not isinstance(cwd, str) or not Path(cwd).is_absolute() or not Path(cwd).is_dir():
                 raise FirstMateError("Choose an existing absolute project folder on this machine",
                                      code="first_mate_directory_invalid", status=400)
             payload = {"title": params.get("title"), "goal": params.get("goal"),
                        "cwd": str(Path(cwd).resolve())}
-            feature = self.store.create_feature({**payload, "request_id": action_receipt(payload)})
+            feature = self.store.create_feature({**payload, "request_id": receipt(payload)})
             self.wake()
             return {"feature_id": feature["id"], "title": feature["title"], "status": feature["status"]}
         feature = self._lead_target(params)
@@ -2322,16 +2445,29 @@ class FirstMateRuntime:
             return self._lead_feature_status(feature)
         if action == "fm_mark_read":
             return self.store.mark_latest_read(feature["id"])
-        # fm_relay: the human's own decision, on the human's own turn.
-        if claim.get("role") != "user":
-            raise FirstMateError("Relay only on the human's turn", code="lead_unauthorized")
+        # fm_relay: the human's own decision; their lead checked it is their turn.
         payload = {"feature_id": feature["id"], "text": params.get("text")}
-        message = self.store.relay_human_message(feature["id"], payload["text"],
-                                                 lead_message_id=claim["id"],
-                                                 request_id=action_receipt(payload))
+        message = self.store.relay_human_message(feature["id"], payload["text"], lead_message_id=lead_message_id,
+                                                 request_id=receipt(payload), lead_machine=lead_machine)
         self.wake()
         return {"relayed": True, "feature_id": feature["id"], "message_id": message["id"],
                 "status": message["status"]}
+
+    def lead_remote(self, action: str, params: Mapping[str, Any], *, request_id: str, lead_machine: str,
+                    lead_message_id: str) -> Any:
+        """A lead on another machine asks this one (first-mate-lead-peers-v1).
+
+        That lead fenced the call to the human's own turn; the caller holds
+        this companion's full API credential either way. Its request ID is
+        already one per exact action, namespaced here by the asking machine,
+        so a retry replays one receipt.
+        """
+        if action not in LEAD_TOOLS:
+            raise FirstMateError("That action belongs to a feature's own First Mate", code="lead_unsupported")
+        if not isinstance(params, Mapping) or "machine" in params:
+            raise FirstMateError("Remote lead parameters must be one machine's", code="invalid_request", status=400)
+        return self.lead_action(action, params, receipt=lambda _payload: f"remote:{lead_machine}:{request_id}",
+                                lead_message_id=lead_message_id, lead_machine=lead_machine)
 
     @staticmethod
     def _worker_input(feature: dict, claim: dict) -> str:

@@ -55,6 +55,8 @@ struct FirstMateLeadContext: Codable, Equatable, Sendable {
     struct Machine: Codable, Equatable, Sendable {
         var name: String
         var features: [Feature]
+        /// The Mac cannot reach this machine: its features are as last seen.
+        var offline: Bool? = nil
     }
 
     struct Feature: Codable, Equatable, Sendable {
@@ -88,15 +90,27 @@ struct FirstMateLeadSummary: Decodable, Equatable, Sendable {
         }
     }
 
+    /// Another machine whose features this lead reads and relays to itself
+    /// (`first-mate-lead-peers-v1`): its companion holds that machine's
+    /// credential.
+    struct Peer: Decodable, Equatable, Sendable {
+        var id: String
+        var name: String
+        var url: String
+    }
+
     var feature: FirstMateFeature
     /// The lead's newest reply is past its read marker.
     var unread: Bool
     /// A message of yours is queued or the lead is answering.
     var workingOnReply: Bool
     var latestMessage: LatestMessage?
+    /// The machines the lead reaches itself; the Mac's snapshot of other
+    /// machines leaves them out. Nil from an older companion.
+    var peers: [Peer]? = nil
 
     enum CodingKeys: String, CodingKey {
-        case feature, unread
+        case feature, unread, peers
         case workingOnReply = "working_on_reply"
         case latestMessage = "latest_message"
     }
@@ -130,6 +144,7 @@ struct FirstMateCapabilities: Decodable, Sendable {
     var supportsLinks: Bool { capabilities.contains("first-mate-links-v1") }
     var supportsFleet: Bool { capabilities.contains("first-mate-fleet-v1") }
     var supportsLead: Bool { capabilities.contains("first-mate-lead-v1") }
+    var supportsLeadPeers: Bool { capabilities.contains("first-mate-lead-peers-v1") }
 }
 
 /// A link save or visibility response: the affected link plus the same full

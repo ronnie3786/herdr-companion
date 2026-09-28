@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
-from . import attachments, chat_tab_colors, first_mate_fleet, issue_reports, response_audio, result_artifacts, voice
+from . import attachments, chat_tab_colors, first_mate_fleet, first_mate_peers, issue_reports, response_audio, result_artifacts, voice
 from .active_work import ActiveWorkError
 from .first_mate_store import FirstMateError
 from .first_mate_verification import VERIFICATION_CAPABILITY
@@ -453,6 +453,7 @@ def api_description() -> dict:
             "first-mate-quiet-chat-v1",
             "first-mate-skim-v1",
             "first-mate-lead-v1",
+            first_mate_peers.CAPABILITY,
             first_mate_fleet.CAPABILITY,
             VERIFICATION_CAPABILITY,
             "pr-review-v1",
@@ -486,6 +487,7 @@ def api_description() -> dict:
             "firstMateRead": "/api/v1/first-mate/features/{featureId}/read",
             "firstMateHud": "/api/v1/first-mate/features/{featureId}/hud",
             "firstMateLead": "/api/v1/first-mate/lead",
+            "firstMateLeadRemote": "/api/v1/first-mate/lead/remote",
             "prReviews": "/api/v1/pr-reviews",
             "prReview": "/api/v1/pr-reviews/{reviewId}",
             "prReviewCapabilities": "/api/v1/pr-reviews/capabilities",
@@ -570,6 +572,7 @@ def api_description() -> dict:
             "POST /api/v1/first-mate/features/{featureId}/links/{linkId}/visibility",
             "POST /api/v1/first-mate/features/{featureId}/read|hud",
             "POST /api/v1/first-mate/lead",
+            "POST /api/v1/first-mate/lead/remote",
             "PATCH|DELETE /api/v1/notes/{noteId}",
             "POST /api/v1/workspaces",
             "PATCH|DELETE /api/v1/workspaces/{workspaceId}",
@@ -1140,6 +1143,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     "first-mate-quiet-chat-v1",
                     "first-mate-skim-v1",
                     "first-mate-lead-v1",
+                    first_mate_peers.CAPABILITY,
                     first_mate_fleet.CAPABILITY,
                     VERIFICATION_CAPABILITY,
                 ], **runtime.capabilities(),
@@ -1155,6 +1159,25 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     label = _string(body.get("label"), "label", maximum=80)
                     request_id = _string(body.get("request_id"), "request_id", maximum=200)
                     return {"ok": True, "category": store.create_feedback_category(label, request_id)}
+            if tail == ["lead", "remote"] and method == "POST":
+                # A lead First Mate on another machine of this roster runs one
+                # of its tools against this machine's features
+                # (first-mate-lead-peers-v1). It authenticates with this
+                # companion's own API credential, like any client.
+                if query:
+                    raise HTTPValidationError("Remote lead request does not accept query fields")
+                if set(body) != {"action", "params", "request_id", "lead"}:
+                    raise HTTPValidationError("Remote lead request needs exactly action, params, request_id and lead")
+                action = _string(body.get("action"), "action", maximum=40)
+                params, lead = body.get("params"), body.get("lead")
+                if not isinstance(params, dict) or not isinstance(lead, dict) or set(lead) != {"machine", "message_id"}:
+                    raise HTTPValidationError("Remote lead params and lead must be objects")
+                result = runtime.lead_remote(
+                    action, params,
+                    request_id=_string(body.get("request_id"), "request_id", maximum=128),
+                    lead_machine=_string(lead.get("machine"), "lead.machine", maximum=64),
+                    lead_message_id=_string(lead.get("message_id"), "lead.message_id", maximum=128))
+                return {"ok": True, "result": result}
             if tail == ["lead"]:
                 # The machine's lead First Mate (first-mate-lead-v1): one
                 # conversation across every feature. POST creates it on first

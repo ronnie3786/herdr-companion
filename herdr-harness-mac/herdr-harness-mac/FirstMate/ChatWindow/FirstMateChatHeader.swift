@@ -54,13 +54,25 @@ struct FirstMateChatHeader: View {
             case .lead:
                 Text(FirstMateLeadBriefing.headerSubtitle(conversations: session.conversations))
                 if let machineID = session.leadMachineID, session.leadMachineIDs.count > 1 {
-                    // A lead sees one machine's features; choose which.
+                    // The lead lives on this Mac's machine unless one is chosen here.
                     Menu {
+                        let pinned = session.leadPinnedMachineID
+                        Button {
+                            session.setLeadMachine(nil)
+                        } label: {
+                            let automatic = session.automaticLeadMachineID.map { "Automatic (\(session.machineName($0)))" } ?? "Automatic"
+                            if pinned == nil {
+                                Label(automatic, systemImage: "checkmark")
+                            } else {
+                                Text(automatic)
+                            }
+                        }
+                        Divider()
                         ForEach(session.leadMachineIDs, id: \.self) { id in
                             Button {
                                 session.setLeadMachine(id)
                             } label: {
-                                if id == machineID {
+                                if id == pinned {
                                     Label(session.machineName(id), systemImage: "checkmark")
                                 } else {
                                     Text(session.machineName(id))
@@ -76,8 +88,15 @@ struct FirstMateChatHeader: View {
                     .menuStyle(.button)
                     .buttonStyle(.herdrPlain)
                     .fixedSize()
-                    .help("Choose which machine's First Mate to talk to")
+                    .help("Choose which machine First Mate runs on")
                     .accessibilityLabel("First Mate on \(session.machineName(machineID)). Choose a machine")
+                }
+                let choice = session.leadChoice
+                if !session.isDemo, choice.isFallback, let preferred = choice.preferred {
+                    // Another machine's lead stands in until this one answers again.
+                    Text("\(session.machineName(preferred)) is offline")
+                        .foregroundStyle(HerdrTheme.warning)
+                        .help("First Mate lives on \(session.machineName(preferred)). It moves back when that machine answers again.")
                 }
             case .feature:
                 if let conversation {

@@ -12,6 +12,11 @@ import AppKit
 /// it. `play(_:)` owns explicit notification sounds. SwiftUI sensory feedback
 /// can also produce audio; prompt submission suppresses that channel in
 /// `HerdrHaptic.feedback` as well. A future mute setting must cover both sinks.
+///
+/// The `.completed` cue is requested only by
+/// `AgentCompletionFeedbackCoordinator`'s production playback, so one logical
+/// completion is heard once even when the fleet, a completion alert, and a
+/// committed Pi settlement all observe it.
 @MainActor
 enum HerdrMacFeedback {
     /// Master mute. Reserved for a future Settings toggle.

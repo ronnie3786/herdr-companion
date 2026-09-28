@@ -1994,6 +1994,40 @@ struct HerdrHudChatsTests {
         #expect(chat.session.bubbleMetadata.cost == "$0.40")
     }
 
+    @Test("A HUD completion requests exactly one companion cue")
+    func hudCompletionRequestsOneCue() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let chat = fixture.chats.composer
+        chat.draft = "Synthetic question"
+        let task = Task { await chat.submit(model: fixture.model) { fixture.chats.submissionStarted(chat) } }
+        try await wait { chat.thread != nil }
+        let runID = try #require(chat.thread?.lastRunID)
+
+        // Submitting and running are silent.
+        #expect(fixture.completionPlayback.count == 0)
+
+        HudChatsURLProtocol.finish(runID)
+        await task.value
+        try await wait { fixture.completionPlayback.count == 1 }
+        #expect(fixture.completionPlayback.count == 1)
+
+        // A continuation turn is independently eligible for exactly one cue.
+        chat.draft = "Synthetic follow-up"
+        let followTask = Task { await chat.submit(model: fixture.model) { fixture.chats.submissionStarted(chat) } }
+        try await wait { chat.thread?.lastRunID != runID }
+        let followUpRunID = try #require(chat.thread?.lastRunID)
+        #expect(fixture.completionPlayback.count == 1)
+        HudChatsURLProtocol.finish(followUpRunID)
+        await followTask.value
+        try await wait { fixture.completionPlayback.count == 2 }
+
+        // Re-observing the finished conversation is history, not a second cue.
+        _ = await chat.refreshSavedHistoryPassivelyForTesting(model: fixture.model)
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(fixture.completionPlayback.count == 2)
+    }
+
     @Test("A passive refresh reconciles a revised earlier cost while the latest run is unchanged")
     func passiveRefreshReconcilesRevisedEarlierCost() async throws {
         let fixture = try Fixture()
@@ -2057,6 +2091,7 @@ struct HerdrHudChatsTests {
         let model: HerdrAppModel
         let prototype: HerdrHudSession
         let chats: HerdrHudChats
+        let completionPlayback: HudChatCompletionPlaybackRecorder
 
         init(
             machines: [HerdrMachine]? = nil,
@@ -2084,7 +2119,10 @@ struct HerdrHudChatsTests {
             let urlSessionConfiguration = URLSessionConfiguration.ephemeral
             urlSessionConfiguration.protocolClasses = [HudChatsURLProtocol.self]
             let urlSession = URLSession(configuration: urlSessionConfiguration)
+            let playback = HudChatCompletionPlaybackRecorder()
+            completionPlayback = playback
             model = HerdrAppModel(credentials: TestCredentialStore(), arguments: [], userDefaults: defaults)
+            model.agentCompletionFeedback.playback = { playback.record() }
             model.machines = roster
             model.clientFactory = { configuration in
                 HerdrAPIClient(configuration: configuration, session: urlSession)
@@ -2105,6 +2143,14 @@ struct HerdrHudChatsTests {
 private struct HudChatsFixtureError: LocalizedError {
     let message: String
     var errorDescription: String? { message }
+}
+
+/// Records the HUD chat's completion cue instead of playing audio.
+@MainActor
+private final class HudChatCompletionPlaybackRecorder {
+    private(set) var count = 0
+
+    func record() { count += 1 }
 }
 
 /// The protocol adds no mutable instance state; synthetic server state is locked.

@@ -124,6 +124,11 @@ final class PiConversationStore {
     private(set) var transport: PiStreamTransport = .liveStream
 
     @ObservationIgnored private var reducer = PiConversationReducer()
+    /// The process-owned completion owner, captured from the followed model so
+    /// committed settlement reaches it without a view. Never used for private
+    /// recovery candidates: only the committed reducer publishes work.
+    @ObservationIgnored private var completionFeedback: AgentCompletionFeedbackCoordinator?
+    @ObservationIgnored private var completionPaneScope: AgentCompletionFeedbackCoordinator.PaneScope?
     /// Live `session_compact` success evidence captured before an authoritative
     /// recovery. It is carried through the private candidate until the matching
     /// commit publishes it, and never mutates a committed cursor by itself.
@@ -547,6 +552,7 @@ final class PiConversationStore {
         HerdrPerfDiagnostics.checkpoint("pi.publish")
         os_signpost(.event, log: piStreamLog, name: "publish")
         let previousStructureRevision = structureRevision
+        let previousPhase = phase
         retainClosedSession(nextSessionID: reducer.sessionID)
         reconcileStreamingCaches(with: reducer.turns)
         turns = reducer.turns
@@ -569,6 +575,20 @@ final class PiConversationStore {
         thinkingLevel = reducer.thinkingLevel
         revision &+= 1
         publishObserver?(sessionCost, revision)
+        armCompletionIfWorkStarted(previousPhase: previousPhase)
+    }
+
+    /// Committed work start evidence. A published working phase covers an
+    /// accepted prompt, a live agent start, and a snapshot that restored an
+    /// already-active run. Submission itself is silent and does not arm by
+    /// itself, so an old done result cannot be mistaken for new work.
+    private func armCompletionIfWorkStarted(previousPhase: PiConversationPhase) {
+        guard previousPhase != .working,
+              phase == .working,
+              let completionFeedback,
+              let completionPaneScope
+        else { return }
+        completionFeedback.piWorkStarted(scope: completionPaneScope, sessionID: sessionID)
     }
 
     private func retainClosedSession(nextSessionID: String?) {
@@ -697,6 +717,12 @@ final class PiConversationStore {
     /// reconnects resume the committed reducer; only semantic reset boundaries
     /// enter transactional snapshot recovery.
     func follow(model: HerdrAppModel, pane: HerdrPane) async {
+        completionFeedback = model.agentCompletionFeedback
+        completionPaneScope = AgentCompletionFeedbackCoordinator.PaneScope(
+            machineID: pane.machineID,
+            paneID: pane.paneID,
+            terminalID: pane.terminalID
+        )
         if let archiveScope, archiveScope != pane.id { reset() }
         if archiveScope != pane.id {
             archiveScope = pane.id
@@ -1088,6 +1114,17 @@ final class PiConversationStore {
             os_signpost(.begin, log: piStreamLog, name: "reducer.apply")
             let effect = reducer.apply(envelope)
             os_signpost(.end, log: piStreamLog, name: "reducer.apply")
+            // Committed settlement only. The private recovery candidate above
+            // replays the same events without ever reaching this point, so a
+            // refetched history can never play a completion cue.
+            if effect == .completed,
+               let completionFeedback,
+               let completionPaneScope {
+                completionFeedback.piWorkSettled(
+                    scope: completionPaneScope,
+                    sessionID: reducer.sessionID
+                )
+            }
             schedulePublish(trigger(
                 for: effect,
                 previousPhase: previousPhase,

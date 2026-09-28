@@ -29,14 +29,27 @@ enum NotificationManager {
     }
 
     static func post(_ alert: HerdrAlert) async {
+        let request = UNNotificationRequest(
+            identifier: alert.id,
+            content: content(for: alert),
+            trigger: nil
+        )
+        try? await UNUserNotificationCenter.current().add(request)
+    }
+
+    /// The delivered notification for one alert. Completion audio belongs to
+    /// the process-owned companion cue; a Notification Center sound would make
+    /// the same completion audible twice, so this content is always silent
+    /// while its title, body, interruption level, routing, and badge handling
+    /// stay exactly as before.
+    static func content(for alert: HerdrAlert) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
         content.title = alert.title
         content.body = alert.message
-        content.sound = .default
+        content.sound = nil
         content.interruptionLevel = alert.status == .blocked ? .timeSensitive : .active
         content.userInfo = userInfo(for: alert)
-        let request = UNNotificationRequest(identifier: alert.id, content: content, trigger: nil)
-        try? await UNUserNotificationCenter.current().add(request)
+        return content
     }
 
     static func postTest() async {
@@ -47,7 +60,7 @@ enum NotificationManager {
                 paneID: "",
                 status: .done,
                 title: "Herdr alerts are ready",
-                message: "You’ll hear when an agent needs you or finishes in the background.",
+                message: "You’ll see a banner when an agent needs you or finishes in the background.",
                 createdAt: "",
                 isRead: false
             )

@@ -19,7 +19,9 @@ struct HerdrHapticTests {
         #expect(HerdrHaptic.transcriptionSucceeded.feedback == .success)
         #expect(HerdrHaptic.attention.feedback == .warning)
         #expect(HerdrHaptic.stopped.feedback == .stop)
-        #expect(HerdrHaptic.completed.feedback == .success)
+        // Completion audio belongs to the process-owned companion cue; SwiftUI
+        // success feedback would make one completion audible twice.
+        #expect(HerdrHaptic.completed.feedback == nil)
         #expect(HerdrHaptic.failed.feedback == .error)
     }
 

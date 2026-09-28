@@ -4,6 +4,10 @@ import Observation
 @MainActor
 @Observable
 final class HeadlessAgentController {
+    /// Whether this controller drives a user-facing run whose completion should
+    /// play the companion cue. Internal summary and naming work keeps the
+    /// default, so their terminal observations stay silent.
+    let reportsCompletionFeedback: Bool
     private(set) var run: HeadlessAgentRun?
     private(set) var machineID: String?
     private(set) var isSubmitting = false
@@ -12,6 +16,13 @@ final class HeadlessAgentController {
     private(set) var lastErrorStatus: Int?
 
     @ObservationIgnored private var pollingTask: Task<Void, Never>?
+    /// Deterministic test seams for the bounded run poll.
+    @ObservationIgnored var pollingInterval: Duration = .milliseconds(700)
+    @ObservationIgnored var pollingRetryInterval: Duration = .seconds(2)
+
+    init(reportsCompletionFeedback: Bool = false) {
+        self.reportsCompletionFeedback = reportsCompletionFeedback
+    }
 
     deinit {
         pollingTask?.cancel()
@@ -63,6 +74,11 @@ final class HeadlessAgentController {
             isSubmitting = false
             if !started.status.isTerminal {
                 beginPolling(runID: started.id, machineID: machineID, model: model)
+            } else {
+                // The run can finish before its first running poll. A locally
+                // submitted run is current work even then; history observation
+                // never takes this path.
+                reportCompletionIfNeeded(started, machineID: machineID, model: model)
             }
         } catch {
             isSubmitting = false
@@ -160,7 +176,7 @@ final class HeadlessAgentController {
 
     private func beginPolling(runID: String, machineID: String, model: HerdrAppModel) {
         pollingTask = Task { [weak self] in
-            var pollingDelay: Duration = .milliseconds(700)
+            var pollingDelay = self?.pollingInterval ?? .milliseconds(700)
             while !Task.isCancelled {
                 do {
                     try await Task.sleep(for: pollingDelay)
@@ -173,7 +189,8 @@ final class HeadlessAgentController {
                     guard self.run?.id == runID else { return }
                     self.run = latest
                     self.errorMessage = nil
-                    pollingDelay = .milliseconds(700)
+                    pollingDelay = self.pollingInterval
+                    self.reportCompletionIfNeeded(latest, machineID: machineID, model: model)
                     if latest.status.isTerminal {
                         self.pollingTask = nil
                         return
@@ -181,10 +198,25 @@ final class HeadlessAgentController {
                 } catch {
                     guard !Task.isCancelled else { return }
                     self.errorMessage = error.localizedDescription
-                    pollingDelay = .seconds(2)
+                    pollingDelay = self.pollingRetryInterval
                 }
             }
         }
+    }
+
+    /// A completed or promoted run the user asked for is the only headless
+    /// work that plays the companion cue. The coordinator keeps the durable
+    /// machine/run receipt, so repeated observations of the same run and a
+    /// later continuation never play twice.
+    private func reportCompletionIfNeeded(
+        _ run: HeadlessAgentRun,
+        machineID: String,
+        model: HerdrAppModel
+    ) {
+        guard reportsCompletionFeedback,
+              run.status == .completed || run.status == .promoted
+        else { return }
+        model.agentCompletionFeedback.headlessRunFinished(machineID: machineID, runID: run.id)
     }
 
     private func stopPolling() {
